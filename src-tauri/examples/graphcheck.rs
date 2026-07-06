@@ -2,10 +2,20 @@
 //! Prints the GraphData JSON to stdout and timing/shape stats to stderr, so the
 //! read -> layout pipeline can be validated (and benchmarked) without the GUI.
 
-use gitcat_lib::commands::build_graph;
+use gitcat_lib::commands::{build_graph, commit_detail};
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: graphcheck <repo> [limit]");
+    let path = std::env::args().nth(1).expect("usage: graphcheck <repo> [limit | detail <sha>]");
+
+    // `graphcheck <repo> detail <sha>` -> dump the commit_detail JSON for one commit.
+    if std::env::args().nth(2).as_deref() == Some("detail") {
+        let sha = std::env::args().nth(3).expect("usage: graphcheck <repo> detail <sha>");
+        let d = commit_detail(path.clone(), sha).expect("commit_detail failed");
+        eprintln!("files: {}  +{}/-{}  truncated={}", d.files_changed, d.additions, d.deletions, d.truncated);
+        println!("{}", serde_json::to_string(&d).expect("serialize"));
+        return;
+    }
+
     let limit = std::env::args()
         .nth(2)
         .and_then(|s| s.parse().ok())

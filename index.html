@@ -438,6 +438,34 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tw-col .ln{padding:2px 8px}
 .tw-col.ours .ln{background:color-mix(in srgb,var(--accent2) 10%,transparent)}
 .tw-col.theirs .ln{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+/* ============================== ⌘K COMMAND PALETTE ============================== */
+.cmdk{position:fixed;inset:0;z-index:500;display:none}
+.cmdk.on{display:block}
+.cmdk-scrim{position:absolute;inset:0;background:rgba(18,20,28,.5);backdrop-filter:blur(2px)}
+.cmdk-panel{position:relative;width:min(620px,94vw);margin:11vh auto 0;max-height:70vh;display:flex;flex-direction:column;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow);overflow:hidden}
+.cmdk-inp{display:flex;align-items:center;gap:9px;padding:11px 14px;background:var(--elevated);border-bottom:1px solid var(--border)}
+.cmdk-inp .mag{color:var(--muted);font-size:15px;flex:none}
+.cmdk-inp input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font-size:15px;font-family:var(--ui)}
+.cmdk-inp input:focus{outline:none}
+.cmdk-inp input::placeholder{color:var(--muted)}
+.cmdk-inp kbd{flex:none;font-family:var(--mono);font-size:10px;padding:2px 6px;border-radius:5px;background:var(--bg);border:1px solid var(--border);color:var(--muted)}
+.cmdk-list{flex:1;min-height:0;overflow:auto;padding:6px}
+.cmdk-row{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:var(--r-control);cursor:pointer;scroll-margin:6px}
+.cmdk-row.on{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.cmdk-row .kind{flex:none;width:54px;text-align:center;font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.4px;
+  color:var(--muted);border:1px solid var(--border);border-radius:var(--r-chip);padding:2px 0}
+.cmdk-row .kind.head{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 50%,var(--border))}
+.cmdk-row .kind.tag{color:var(--accent2);border-color:color-mix(in srgb,var(--accent2) 50%,var(--border))}
+.cmdk-row .main{flex:1;min-width:0}
+.cmdk-row .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmdk-row .sub{margin-top:1px;font-size:11px;color:var(--muted);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmdk-row .sha{flex:none;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.cmdk-row mark{background:color-mix(in srgb,var(--accent) 32%,transparent);color:inherit;border-radius:2px;padding:0 1px}
+.cmdk-empty{padding:28px 14px;text-align:center;color:var(--muted);font-size:12px}
+.cmdk-foot{display:flex;align-items:center;gap:14px;padding:8px 14px;background:var(--elevated);border-top:1px solid var(--border);color:var(--muted);font-size:11px}
+.cmdk-foot kbd{font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:4px;background:var(--bg);border:1px solid var(--border);margin-right:2px}
+.cmdk-foot .sp{margin-left:auto}
 </style>
 
 <div class="app" id="app" data-mascot="full">
@@ -611,6 +639,18 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 <!-- undo / rescue celebration popover -->
 <div class="tama-cheer" id="tamaCheer"><img class="tama-pic" id="tamaCheerImg" alt="Tama, delighted"><div class="cheer-txt" id="tamaCheerTxt"></div></div>
 
+<!-- ⌘K command palette -->
+<div class="cmdk" id="cmdk" aria-hidden="true">
+  <div class="cmdk-scrim" id="cmdkScrim"></div>
+  <div class="cmdk-panel" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="cmdk-inp"><span class="mag">&#9906;</span>
+      <input id="cmdkInput" type="text" placeholder="Search commits, refs&#8230;" spellcheck="false" autocomplete="off" autocorrect="off">
+      <kbd>esc</kbd></div>
+    <div class="cmdk-list" id="cmdkList" role="listbox" aria-label="Results"></div>
+    <div class="cmdk-foot"><span><kbd>&#8593;</kbd><kbd>&#8595;</kbd> navigate</span><span><kbd>&#8629;</kbd> jump</span><span class="sp" id="cmdkCount"></span></div>
+  </div>
+</div>
+
 <script>
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -698,6 +738,8 @@ let G=null;
    null (e.g. opened in a plain browser for design work) the synthetic generator
    below is used instead, so this file works in both places. */
 let BACKEND=null;
+let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it
+let DETAIL_SEQ=0;    // monotonic id — any older in-flight commit_detail response loses (robust across repo switches)
 function relTime(t){ let s=Math.max(0,Math.floor(Date.now()/1000-t));
   if(s<60)return s+"s ago"; let m=(s/60)|0; if(m<60)return m+"m ago"; let h=(m/60)|0; if(h<24)return h+"h ago";
   let d=(h/24)|0; if(d<30)return d+"d ago"; let mo=(d/30)|0; if(mo<12)return mo+"mo ago"; return ((mo/12)|0)+"y ago"; }
@@ -1061,14 +1103,26 @@ function commitMeta(r){
   return {row:r,subject:msgOf(r),sha:hhex(r),an:{n:a.n,e:a.e,d:fakeAgo(r)+" ago"},cm,differ:rebased,gpg,refs,add,del,merge:!!G.isMerge[r]};
 }
 function select(row){ state.selectedRow=row; renderDetail(commitMeta(row)); renderBisect(); dirty=true; }
+function diffstatHTML(add,del,files,truncated){
+  const tot=(add+del)||1;
+  return `<span class="nums"><span class="add">+${add}</span> <span class="del">−${del}</span></span>`
+    +`<div class="stat-bar"><i class="a" style="width:${Math.round(100*add/tot)}%"></i><i class="d" style="width:${Math.round(100*del/tot)}%"></i></div>`
+    +`<span class="mut mono" style="font-size:11px">${files} file${files===1?"":"s"}${truncated?" (capped)":""}</span>`;
+}
 function renderDetail(c){
+  if(!c){ $("#detail").innerHTML=""; return; }
   const g=GPG[c.gpg];
   const refsHere=c.refs.length?c.refs.map(r=>`<span class="row-chip ${r.t}">${esc(r.n)}</span>`).join(""):'<span class="mut">no refs point here</span>';
   const snaps=G.snapRows; let cov=-1; for(let i=snaps.length-1;i>=0;i--){if(snaps[i]<=c.row){cov=snaps[i];break;}}
+  const live=!!BACKEND;
+  const bodyInit=live ? '<span class="mut">loading…</span>'
+                      : esc(c.merge?"Merge commit — reconciles two lines of history.":"Part of the feature/login work. Signed-off and covered by an auto-snapshot.");
+  const statInit=live ? '<span class="mut mono" style="font-size:11px">loading diff…</span>'
+                      : diffstatHTML(c.add,c.del,CHANGED.length,false);
   $("#detail").innerHTML=`
     <section>
       <div class="d-subject">${esc(c.subject)}</div>
-      <div class="d-body">${esc(c.merge?"Merge commit — reconciles two lines of history.":"Part of the feature/login work. Signed-off and covered by an auto-snapshot.")}</div>
+      <div class="d-body" id="dBody">${bodyInit}</div>
       <div class="id-strip"><span class="hash" id="hashCopy" title="Click to copy">${c.sha}</span><span class="gpg ${g[0]}">${g[1]}</span>
         <span class="mut mono" style="font-size:11px">row ${c.row.toLocaleString()} / ${G.N.toLocaleString()}</span></div>
     </section>
@@ -1085,25 +1139,32 @@ function renderDetail(c){
     </section>
     <section>
       <h4 class="d-lab">Changes</h4>
-      <div class="diffstat"><span class="nums"><span class="add">+${c.add}</span> <span class="del">−${c.del}</span></span>
-        <div class="stat-bar"><i class="a" style="width:${Math.round(100*c.add/(c.add+c.del||1))}%"></i><i class="d" style="width:${Math.round(100*c.del/(c.add+c.del||1))}%"></i></div>
-        <span class="mut mono" style="font-size:11px">3 files</span></div>
+      <div class="diffstat" id="diffstat">${statInit}</div>
       <div class="tree" id="tree"></div>
     </section>
     <section><h4 class="d-lab">Diff</h4><div class="diffview" id="diffview"></div></section>`;
   $("#hashCopy").addEventListener("click",e=>{navigator.clipboard?.writeText(c.sha);e.target.textContent="copied ✓";setTimeout(()=>e.target.textContent=c.sha,900);});
-  renderTree(); renderDiff();
+  if(live){
+    $("#tree").innerHTML='<div class="mut" style="padding:6px 4px">loading files…</div>';
+    $("#diffview").innerHTML='<div class="diff-file-h mut">loading diff…</div>';
+    loadCommitDetail(c.row);
+  }else{
+    curChanged=CHANGED; curDiffs=DIFFS;
+    renderTree(); renderDiff();
+  }
 }
 const CHANGED=[{p:"src/auth/session.ts",st:"M",add:22,del:5},{p:"src/auth/token.ts",st:"M",add:11,del:7},{p:"src/ui/LoginForm.tsx",st:"A",add:5,del:0}];
 function renderTree(){
+  if(!curChanged||!curChanged.length){ $("#tree").innerHTML='<div class="mut" style="padding:6px 4px">no file changes</div>'; return; }
   const root={};
-  CHANGED.forEach(f=>{const parts=f.p.split("/");let n=root;parts.forEach((seg,i)=>{if(i===parts.length-1){(n.files=n.files||[]).push({...f,name:seg});}else{n.dirs=n.dirs||{};n=n.dirs[seg]=n.dirs[seg]||{};}});});
+  curChanged.forEach((f,i)=>{const parts=String(f.p).split("/");let n=root;parts.forEach((seg,j)=>{if(j===parts.length-1){(n.files=n.files||[]).push({...f,name:seg,i});}else{n.dirs=n.dirs||{};n=n.dirs[seg]=n.dirs[seg]||{};}});});
   function render(node){let h="";
-    for(const d in (node.dirs||{})) h+=`<details class="dir" open><summary><span class="tw">▸</span>📁 ${d}</summary><div class="indent">${render(node.dirs[d])}</div></details>`;
-    (node.files||[]).forEach(f=>{h+=`<div class="file" data-p="${f.p}"><span class="st ${f.st}">${f.st}</span><span>${f.name}</span><span class="badge"><span class="add">+${f.add}</span> <span class="del">−${f.del}</span></span></div>`;});
+    for(const d in (node.dirs||{})) h+=`<details class="dir" open><summary><span class="tw">▸</span>📁 ${esc(d)}</summary><div class="indent">${render(node.dirs[d])}</div></details>`;
+    (node.files||[]).forEach(f=>{const st=f.st==="A"?"A":f.st==="D"?"D":"M";
+      h+=`<div class="file" data-i="${f.i}"><span class="st ${st}">${esc(f.st)}</span><span>${esc(f.name)}</span><span class="badge"><span class="add">+${f.add}</span> <span class="del">−${f.del}</span></span></div>`;});
     return h;}
   $("#tree").innerHTML=render(root);
-  $$("#tree .file").forEach(el=>el.addEventListener("click",()=>{$$("#tree .file").forEach(x=>x.classList.remove("active"));el.classList.add("active");renderDiff(el.dataset.p);}));
+  $$("#tree .file").forEach(el=>el.addEventListener("click",()=>{$$("#tree .file").forEach(x=>x.classList.remove("active"));el.classList.add("active");renderDiff(curChanged[+el.dataset.i].p);}));
   $("#tree .file")?.classList.add("active");
 }
 const GRAMMARS={
@@ -1121,13 +1182,63 @@ const DIFFS={
  "src/auth/token.ts":{lang:"ts",lines:[["@@","@@ -4,3 +4,4 @@"],["-","export const refresh = (t) => rotate(t);"],["+","export const refresh = (t, opts = {}) => rotate(t, opts);"]]},
  "src/ui/LoginForm.tsx":{lang:"ts",lines:[["@@","@@ -0,0 +1,5 @@"],["+","export function LoginForm() {"],["+","  const [err, setErr] = useState(null);"],["+","  return submit(err);"],["+","}"]]},
 };
-function renderDiff(path){ path=path||CHANGED[0].p; const d=DIFFS[path]||DIFFS[CHANGED[0].p];
-  let n1=17,n2=17,html=`<div class="diff-file-h">${esc(path)}</div>`;
-  d.lines.forEach(([mk,txt])=>{const cls=mk==="@@"?"hunk":mk==="+"?"add":mk==="-"?"del":"";
-    const code=mk==="@@"?esc(txt):highlight(txt,d.lang);
-    const ln=mk==="@@"?"":(mk==="+"?(n2++):mk==="-"?(n1++):(n1++,n2++));
-    html+=`<div class="diff-line ${cls}"><span class="ln">${ln||""}</span><span class="mk">${mk==="@@"?"":mk}</span><code>${code}</code></div>`;});
-  $("#diffview").innerHTML=html; }
+let curChanged=CHANGED, curDiffs=DIFFS;   // current detail source; demo statics until commit_detail loads
+function renderDiff(path){
+  const keys=Object.keys(curDiffs||{});
+  const explicit=path!=null;                          // a specific file was clicked
+  path=path||(curChanged[0]&&curChanged[0].p)||keys[0];
+  let d=curDiffs[path];
+  if(!d && !explicit) d=curDiffs[keys[0]];            // fall back ONLY for the default (first) view
+  if(!d){
+    $("#diffview").innerHTML=`<div class="diff-file-h">${esc(path||"")}</div>`+
+      `<div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">no textual diff</code></div>`;
+    return;
+  }
+  if(d.binary){
+    $("#diffview").innerHTML=`<div class="diff-file-h">${esc(path)}</div>`+
+      `<div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">binary file — not shown</code></div>`;
+    return;
+  }
+  let n1=0,n2=0,html=`<div class="diff-file-h">${esc(path)}</div>`;
+  d.lines.forEach(([mk,txt])=>{
+    if(mk==="@@"){ const m=/-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?/.exec(txt); if(m){n1=+m[1];n2=+m[2];}
+      html+=`<div class="diff-line hunk"><span class="ln"></span><span class="mk"></span><code>${esc(txt)}</code></div>`; return; }
+    const cls=mk==="+"?"add":mk==="-"?"del":"";
+    const ln=mk==="+"?(n2++):mk==="-"?(n1++):(n1++,n2++);
+    html+=`<div class="diff-line ${cls}"><span class="ln">${ln}</span><span class="mk">${mk==="+"||mk==="-"?mk:""}</span><code>${highlight(txt,d.lang)}</code></div>`;
+  });
+  if(d.truncated) html+=`<div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">… diff truncated (file capped)</code></div>`;
+  $("#diffview").innerHTML=html;
+}
+async function loadCommitDetail(row){
+  const m=BACKEND&&BACKEND.rows[row]; if(!m) return;
+  const myReq=++DETAIL_SEQ;                            // race token: strictly monotonic
+  try{
+    const d=await window.__TAURI__.core.invoke("commit_detail",{path:CUR_REPO,sha:m.sha});
+    if(myReq!==DETAIL_SEQ) return;                     // a newer selection superseded this one
+    const files=Array.isArray(d.fileTree)?d.fileTree:[];
+    curChanged=files.map(f=>({p:f.path,st:f.status,add:f.additions|0,del:f.deletions|0}));
+    curDiffs={};
+    files.forEach(f=>{
+      const lines=[];
+      (f.hunks||[]).forEach(h=>{
+        lines.push(["@@",h.header]);
+        (h.lines||[]).forEach(l=>lines.push([l.kind,l.text]));   // l.kind ∈ " " | "+" | "-"
+      });
+      curDiffs[f.path]={lang:f.lang||"generic",lines,truncated:!!f.truncated,binary:!!f.binary};
+    });
+    const bodyEl=$("#dBody"); if(bodyEl) bodyEl.textContent=(d.body&&d.body.trim())?d.body:"(no message body)";
+    const ds=$("#diffstat"); if(ds) ds.innerHTML=diffstatHTML(d.additions|0,d.deletions|0,(d.filesChanged!=null?d.filesChanged:curChanged.length),!!d.truncated);
+    renderTree(); renderDiff();
+  }catch(e){
+    if(myReq!==DETAIL_SEQ) return;
+    const ds=$("#diffstat"); if(ds) ds.innerHTML=`<span class="mut mono" style="font-size:11px">diff unavailable — ${esc(String(e))}</span>`;
+    const bodyEl=$("#dBody"); if(bodyEl&&/loading/.test(bodyEl.textContent)) bodyEl.textContent="";
+    $("#tree").innerHTML='<div class="mut" style="padding:6px 4px">could not load changes</div>';
+    $("#diffview").innerHTML='<div class="diff-file-h mut">diff unavailable</div>';
+    console.error("commit_detail failed",e);
+  }
+}
 
 /* ============================================================
    8) BISECT — mark good/bad on the graph; recolor candidate range
@@ -1294,6 +1405,7 @@ async function openRepo(path){
   try{
     const g = await window.__TAURI__.core.invoke("load_graph", { path });
     BACKEND = g;
+    CUR_REPO = path;
     const name = path.replace(/[\/\\]+$/,"").split(/[\/\\]/).pop() || path;
     $(".repo-pick span").textContent = name;
     loadGraph(g.n);
@@ -1313,6 +1425,7 @@ async function pickRepo(){
 }
 function bootEmpty(){
   BACKEND=null;
+  CUR_REPO=null;
   G={N:0,commitLane:[],commitColor:[],isMerge:[],gapStart:[0],gapTop:[],gapBot:[],gapColor:[],refs:[],snapRows:[],snapTs:{}};
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
   recomputeLayout(); positionTicks(); renderBisect();
@@ -1334,4 +1447,136 @@ if(IN_TAURI){ bootEmpty(); }        // real app: wait for the user to open a rep
 else { loadGraph(10000); }          // plain browser (design mode): synthetic demo data
 requestAnimationFrame(tick);
 if(!IN_TAURI) setTimeout(()=>{Tama.event("snapshot.surfaced");Tama.say("Safety Manager armed — I snapshot before every mutation. にゃ〜",4200);},800);
+
+/* ============================================================
+   13) ⌘K COMMAND PALETTE — fuzzy search over loaded commits + refs.
+   ============================================================ */
+(function(){
+  const CMD_CAP=50, CMD_BUF=250, REF_DEFAULT=12;
+  const CMD={open:false,_g:null,items:[],refs:[],results:[],toks:[],sel:0};
+  const shortSha=s=>String(s||"").slice(0,8);
+  const byId=id=>document.getElementById(id);
+  const listRows=()=>$$("#cmdkList .cmdk-row");
+
+  function buildCmdIndex(){
+    const out=[], N=G?G.N:0;
+    for(let r=0;r<N;r++){
+      let subject,sha,author;
+      if(BACKEND){ const m=BACKEND.rows[r]; if(!m) continue; subject=m.subject; sha=m.sha; author=(m.an&&m.an.n)||""; }
+      else { subject=msgOf(r); sha=hhex(r); author=AUTHORS[(Math.imul(r,2654435761)>>>5)%AUTHORS.length].n; }
+      out.push({type:"commit",row:r,subject,sha,author,hay:(subject+" "+sha+" "+author).toLowerCase()});
+    }
+    return out;
+  }
+  function buildRefIndex(){
+    const seen=new Set(), out=[], N=G?G.N:0;
+    const norm=t=>t==="tag"?"tag":t==="remote"?"remote":t==="head"?"head":"branch";
+    if(BACKEND){
+      for(let r=0;r<N;r++){ const m=BACKEND.rows[r]; if(!m||!m.refs) continue;
+        for(const rf of m.refs){ if(!rf||seen.has(rf.n)) continue; seen.add(rf.n);
+          out.push({type:"ref",name:rf.n,kind:norm(rf.t),row:r,sha:m.sha}); } }
+    } else {
+      out.push({type:"ref",name:"HEAD",kind:"head",row:0,sha:hhex(0)}); seen.add("HEAD");
+      for(let r=0;r<N;r++){ const g=G.refs[r]; if(!g||seen.has(g.label)) continue; seen.add(g.label);
+        out.push({type:"ref",name:g.label,kind:norm(g.kind),row:r,sha:hhex(r)}); }
+    }
+    return out;
+  }
+
+  const matchToks=(hay,toks)=>{ for(let i=0;i<toks.length;i++) if(hay.indexOf(toks[i])<0) return false; return true; };
+  function cmdScore(it,toks){ let s=0; const subj=it.subject.toLowerCase(), sha=it.sha.toLowerCase();
+    for(const t of toks){ if(sha.startsWith(t)) s-=60; if(subj.startsWith(t)) s-=25; const p=it.hay.indexOf(t); s+=p<0?300:p; }
+    return s+it.row*0.001; }
+
+  function hlEsc(text,toks){ text=String(text);
+    if(!toks||!toks.length) return esc(text);
+    const low=text.toLowerCase(); let at=-1, len=0;
+    for(const t of toks){ const i=low.indexOf(t); if(i>=0 && (at<0||i<at)){ at=i; len=t.length; } }
+    if(at<0) return esc(text);
+    return esc(text.slice(0,at))+"<mark>"+esc(text.slice(at,at+len))+"</mark>"+hlEsc(text.slice(at+len),toks);
+  }
+
+  function cmdFilter(q){
+    q=(q||"").trim().toLowerCase();
+    const toks=q?q.split(/\s+/):[]; CMD.toks=toks;
+    const res=[];
+    if(!toks.length){ for(let i=0;i<CMD.refs.length && res.length<REF_DEFAULT;i++) res.push(CMD.refs[i]); }
+    else { for(let i=0;i<CMD.refs.length && res.length<CMD_CAP;i++){ const rf=CMD.refs[i]; if(matchToks(rf.name.toLowerCase(),toks)) res.push(rf); } }
+    if(res.length<CMD_CAP){
+      const buf=[];
+      for(let i=0;i<CMD.items.length;i++){ const it=CMD.items[i];
+        if(!toks.length){ buf.push(it); if(buf.length>=CMD_CAP) break; }
+        else if(matchToks(it.hay,toks)){ buf.push(it); if(buf.length>=CMD_BUF) break; } }
+      if(toks.length) buf.sort((a,b)=>cmdScore(a,toks)-cmdScore(b,toks));
+      for(let i=0;i<buf.length && res.length<CMD_CAP;i++) res.push(buf[i]);
+    }
+    CMD.results=res; CMD.sel=0; cmdRender();
+  }
+
+  function cmdRender(){
+    const list=byId("cmdkList"), R=CMD.results, toks=CMD.toks;
+    if(!R.length){ list.innerHTML='<div class="cmdk-empty">'+((G&&G.N)?"No matching commits or refs":"No commits loaded — open a repository")+"</div>"; byId("cmdkCount").textContent=""; return; }
+    let h="";
+    for(let i=0;i<R.length;i++){ const it=R[i], on=i===CMD.sel?" on":"";
+      if(it.type==="ref"){
+        h+='<div class="cmdk-row'+on+'" data-i="'+i+'" role="option" aria-selected="'+(i===CMD.sel)+'">'
+          +'<span class="kind '+it.kind+'">'+(it.kind==="head"?"branch":esc(it.kind))+'</span>'
+          +'<div class="main"><div class="ttl">'+hlEsc(it.name,toks)+'</div></div>'
+          +'<span class="sha">'+esc(shortSha(it.sha))+'</span></div>';
+      } else {
+        h+='<div class="cmdk-row'+on+'" data-i="'+i+'" role="option" aria-selected="'+(i===CMD.sel)+'">'
+          +'<span class="kind">commit</span>'
+          +'<div class="main"><div class="ttl">'+hlEsc(it.subject,toks)+'</div><div class="sub">'+hlEsc(it.author,toks)+'</div></div>'
+          +'<span class="sha">'+hlEsc(shortSha(it.sha),toks)+'</span></div>';
+      }
+    }
+    list.innerHTML=h;
+    byId("cmdkCount").textContent=R.length+(R.length>=CMD_CAP?"+":"")+" result"+(R.length===1?"":"s");
+  }
+
+  function cmdSetSel(i){ const n=CMD.results.length; if(!n){ CMD.sel=0; return; }
+    CMD.sel=((i%n)+n)%n;
+    const rows=listRows();
+    for(let j=0;j<rows.length;j++){ const s=j===CMD.sel; rows[j].classList.toggle("on",s); rows[j].setAttribute("aria-selected",s); }
+    if(rows[CMD.sel]) rows[CMD.sel].scrollIntoView({block:"nearest"});
+  }
+
+  function cmdJump(it){ if(!it) return; const row=it.row;
+    cmdClose();
+    if(row==null||row<0||!G||row>=G.N) return;
+    state.scrollTarget=clampScroll(row*layout.rowH-view.cssH*0.4);
+    select(row);
+    try{ cv.focus(); }catch(_){}
+  }
+
+  function cmdOpen(){ if(CMD._g!==G){ CMD.items=buildCmdIndex(); CMD.refs=buildRefIndex(); CMD._g=G; }
+    byId("cmdk").classList.add("on"); byId("cmdk").setAttribute("aria-hidden","false"); CMD.open=true;
+    const inp=byId("cmdkInput"); inp.value=""; cmdFilter(""); requestAnimationFrame(()=>inp.focus());
+  }
+  function cmdClose(){ if(!CMD.open) return; byId("cmdk").classList.remove("on"); byId("cmdk").setAttribute("aria-hidden","true"); CMD.open=false; }
+  function cmdToggle(){ CMD.open?cmdClose():cmdOpen(); }
+
+  const hint=$(".cmd-hint"); if(hint) hint.addEventListener("click",cmdOpen);
+  document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.key.toLowerCase()==="k"){
+    if(!CMD.open && document.querySelector(".scrim.on")) return;   // don't cover an open confirm dialog
+    e.preventDefault(); cmdToggle(); } });
+  byId("cmdkScrim").addEventListener("click",cmdClose);
+  byId("cmdkInput").addEventListener("input",e=>cmdFilter(e.target.value));
+  byId("cmdkInput").addEventListener("keydown",e=>{
+    if(e.key==="ArrowDown"){ e.preventDefault(); cmdSetSel(CMD.sel+1); }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); cmdSetSel(CMD.sel-1); }
+    else if(e.key==="Home"){ e.preventDefault(); cmdSetSel(0); }
+    else if(e.key==="End"){ e.preventDefault(); cmdSetSel(CMD.results.length-1); }
+    else if(e.key==="Enter"){ e.preventDefault(); cmdJump(CMD.results[CMD.sel]); }
+    else if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); cmdClose(); }
+  });
+  const listEl=byId("cmdkList");
+  listEl.addEventListener("click",e=>{ const r=e.target.closest(".cmdk-row"); if(r) cmdJump(CMD.results[+r.dataset.i]); });
+  let _cmdPX=-1,_cmdPY=-1;
+  listEl.addEventListener("mousemove",e=>{
+    if(e.clientX===_cmdPX && e.clientY===_cmdPY) return;   // pointer didn't actually move — don't hijack keyboard nav
+    _cmdPX=e.clientX; _cmdPY=e.clientY;
+    const r=e.target.closest(".cmdk-row"); if(r){ const i=+r.dataset.i; if(i!==CMD.sel) cmdSetSel(i); }
+  });
+})();
 </script>

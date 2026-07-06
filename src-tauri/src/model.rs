@@ -32,6 +32,60 @@ pub struct CommitMeta {
     pub merge: bool,     // >= 2 parents
 }
 
+/// One line inside a diff hunk. `old_no`/`new_no` are the 1-based line numbers
+/// on each side; the added side has `old_no == None`, the deleted side
+/// `new_no == None`, context lines carry both. `text` is the raw line content
+/// with any trailing CR/LF stripped — the frontend HTML-escapes it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffLineRow {
+    pub kind: String,        // " " context | "+" add | "-" del
+    pub old_no: Option<u32>, // 1-based old-file line number, if present
+    pub new_no: Option<u32>, // 1-based new-file line number, if present
+    pub text: String,        // line content, no trailing newline (raw; JS escapes)
+}
+
+/// One hunk within a file patch. `header` is the `@@ -a,b +c,d @@ ...` line.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffHunkRow {
+    pub header: String,
+    pub lines: Vec<DiffLineRow>,
+}
+
+/// One changed file: its status, per-file stats, and hunks. `hunks` is empty
+/// for a binary file (`binary == true`) or when the file was capped
+/// (`truncated == true`). `old_path` is set only for renames/copies.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChange {
+    pub path: String,             // new path (old path for a delete)
+    pub old_path: Option<String>, // set for rename/copy (status R/C)
+    pub status: String,           // "M" | "A" | "D" | "R" | "C" | "T"
+    pub additions: usize,
+    pub deletions: usize,
+    pub binary: bool,             // true -> hunks intentionally empty
+    pub truncated: bool,          // per-file line cap hit -> hunks partial
+    pub lang: String,             // extension hint for the JS highlighter
+    pub hunks: Vec<DiffHunkRow>,
+}
+
+/// Full payload for the M1 commit detail panel: message + real diff tree.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDetail {
+    pub sha: String,       // full 40-char oid
+    pub short_sha: String, // 7-char prefix
+    pub subject: String,   // first line of the message
+    pub body: String,      // message minus subject (may be empty)
+    pub message: String,   // full raw commit message
+    pub additions: usize,  // totals across the (possibly capped) file set
+    pub deletions: usize,
+    pub files_changed: usize,      // number of files reported (after cap)
+    pub truncated: bool,           // diff exceeded the file cap -> list partial
+    pub file_tree: Vec<FileChange>,
+}
+
 /// The full graph payload. Rows are in reverse-chronological/topological order
 /// (child before parent). `lane`/`color`/`merge` are one-per-row.
 ///
