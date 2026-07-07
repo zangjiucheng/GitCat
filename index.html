@@ -576,45 +576,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 
   <!-- ============================ SIDEBAR ============================ -->
   <aside class="sidebar">
-    <div class="ref-filter"><span class="mag">&#9906;</span><input id="refFilter" placeholder="Filter refs&#8230;" spellcheck="false"></div>
-    <div class="ref-scroll" id="refScroll">
-      <details class="ref-group" open><summary><span class="tw">&#9656;</span>Local<span class="count" id="cntLocal">4</span></summary>
-        <div class="ref-list" id="refLocal">
-          <div class="ref-item current"><span class="rname">main</span><span class="ab"><span class="up">&#8593;2</span></span></div>
-          <div class="ref-item"><span class="rname">feat/inline-diff</span><span class="ab"><span class="dn">&#8595;3</span></span></div>
-          <div class="ref-item"><span class="rname">fix/lane-cull</span></div>
-          <div class="ref-item"><span class="rname">release/0.3</span></div>
-        </div>
-      </details>
-      <details class="ref-group" open><summary><span class="tw">&#9656;</span>Remote<span class="count" id="cntRemote">5</span></summary>
-        <div class="ref-list" id="refRemote">
-          <div class="remote-head">&#9729; origin</div>
-          <div class="ref-item"><span class="dot" style="background:var(--l0)"></span><span class="rname">origin/main</span></div>
-          <div class="ref-item"><span class="dot" style="background:var(--l1)"></span><span class="rname">origin/feat/inline-diff</span></div>
-          <div class="ref-item"><span class="dot" style="background:var(--l2)"></span><span class="rname">origin/topic/rerere</span></div>
-          <div class="remote-head">&#9729; upstream</div>
-          <div class="ref-item"><span class="dot" style="background:var(--l3)"></span><span class="rname">upstream/main</span></div>
-          <div class="ref-item"><span class="dot" style="background:var(--l4)"></span><span class="rname">upstream/dev</span></div>
-        </div>
-      </details>
-      <details class="ref-group"><summary><span class="tw">&#9656;</span>Tags<span class="count" id="cntTags">3</span></summary>
-        <div class="ref-list" id="refTags">
-          <div class="ref-item"><span class="rname">v0.3.0</span></div>
-          <div class="ref-item"><span class="rname">v0.2.0</span></div>
-          <div class="ref-item"><span class="rname">nightly-2026-07-05</span></div>
-        </div>
-      </details>
-      <details class="ref-group"><summary><span class="tw">&#9656;</span>Stashes<span class="count">2</span></summary>
-        <div class="ref-item"><span class="rname mono">stash@{0}</span></div>
-        <div class="ref-item"><span class="rname mono">stash@{1}</span></div>
-      </details>
-      <details class="ref-group"><summary><span class="tw">&#9656;</span>Snapshots<span class="count" id="snapCount">&#8212;</span></summary>
-        <div class="ref-list" id="refSnaps">
-          <div class="ref-item"><span class="dot" style="background:var(--accent)"></span><span class="rname mono">backup/&#8230;T14-22-58</span><span class="ab">2m</span></div>
-          <div class="ref-item"><span class="dot" style="background:var(--accent)"></span><span class="rname mono">backup/&#8230;T13-51-04</span><span class="ab">33m</span></div>
-        </div>
-      </details>
-    </div>
+    <div id="sidebarRefs"><!-- filled by the Sidebar Svelte island (src/islands/sidebar) --></div>
 
     <!-- Tama's lamp-nook -->
     <div class="nook tstage" id="nook" data-state="idle" role="status" aria-live="polite">

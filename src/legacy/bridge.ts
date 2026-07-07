@@ -41,6 +41,12 @@ export {
   pickRepo,
   // drawer-wide tab-switching chrome (stateless, shared by all 4 drawer tabs)
   ensureDrawerOpen,
+  // shared single-step destructive-confirm scrim (delete-branch reuses this;
+  // filter-repo has its own dedicated multi-step wizard instead, see FilterRepo.svelte)
+  armDanger,
+  // topbar branch pill (#pillBranch/#pillAb) — stays legacy-owned, sidebarCtrl
+  // calls this after every refresh rather than touching those DOM nodes itself.
+  updateBranchPill,
 } from "./main";
 
 // bisect canvas bridge: bisectCtrl (the real modal, src/islands/bisect) syncs

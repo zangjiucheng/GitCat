@@ -15,6 +15,8 @@ import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import Cmdk from "./islands/cmdk/Cmdk.svelte";
 import Detail from "./islands/detail/Detail.svelte";
 import BisectDrawer from "./islands/bisectdrawer/BisectDrawer.svelte";
+import Sidebar from "./islands/sidebar/Sidebar.svelte";
+import { sidebarCtrl } from "./islands/sidebar/sidebar.svelte.ts";
 import * as bridge from "./legacy/bridge";
 
 mount(Resolver, { target: document.body });
@@ -23,6 +25,9 @@ mount(FilterRepo, { target: document.body });
 mount(Cmdk, { target: document.body });
 mount(Detail, { target: document.getElementById("detail")! });
 mount(BisectDrawer, { target: document.getElementById("pane-bisect")! });
+
+mount(Sidebar, { target: document.getElementById("sidebarRefs")! });
+sidebarCtrl.refresh(bridge.CUR_REPO as unknown as string);
 
 // Drawer-PANE islands (not modals): mounted straight into their own pane so
 // the existing .pane/.pane.on show/hide + drawer-tabs wiring in legacy/main.ts

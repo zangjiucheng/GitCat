@@ -7,6 +7,7 @@ import { filterRepoCtrl } from "../islands/filterrepo/filterrepo.svelte.ts";
 import { cmdkCtrl } from "../islands/cmdk/cmdk.svelte.ts";
 import { detailCtrl } from "../islands/detail/detail.svelte.ts";
 import { bisectDrawerCtrl } from "../islands/bisectdrawer/bisectdrawer.svelte.ts";
+import { sidebarCtrl } from "../islands/sidebar/sidebar.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -96,7 +97,7 @@ let BACKEND=null;
 export let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it — exported (live binding) for the Svelte islands via bridge.ts
 const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
 const tinvoke = (cmd, args={}) => window.__TAURI__.core.invoke(cmd, args);
-let undoBusy=false, checkoutBusy=false;
+let undoBusy=false;
 function relTime(t){ let s=Math.max(0,Math.floor(Date.now()/1000-t));
   if(s<60)return s+"s ago"; let m=(s/60)|0; if(m<60)return m+"m ago"; let h=(m/60)|0; if(h<24)return h+"h ago";
   let d=(h/24)|0; if(d<30)return d+"d ago"; let mo=(d/30)|0; if(mo<12)return mo+"mo ago"; return ((mo/12)|0)+"y ago"; }
@@ -397,13 +398,13 @@ const Safety={ count:214, lastAt:performance.now()-2*60*1000, snaps:[], pad(n){r
     this.count++; this.lastAt=performance.now();
     const d=new Date();
     const ts=d.getFullYear()+"-"+this.pad(d.getMonth()+1)+"-"+this.pad(d.getDate())+"T"+this.pad(d.getHours())+"-"+this.pad(d.getMinutes())+"-"+this.pad(d.getSeconds());
-    $("#undoCount").textContent=this.count; $("#snapCount").textContent=this.count;
+    $("#undoCount").textContent=this.count;
     return {ref:"refs/gitgui/backup/"+ts, hash:hhex(this.count*7+3)}; },
   async refresh(){ if(!IN_TAURI||!CUR_REPO) return;
     try{ const s=await tinvoke("list_snapshots",{path:CUR_REPO});
       this.snaps=Array.isArray(s)?s.slice():[];
-      const n=this.snaps.length; $("#undoCount").textContent=n; $("#snapCount").textContent=n;
-      Tama._tele(); positionTicks(); renderSnapshots();
+      $("#undoCount").textContent=this.snaps.length;
+      Tama._tele(); positionTicks(); sidebarCtrl.setSnapshots(this.snaps);
     }catch(e){ console.error("list_snapshots",e); } },
   teleCount(){ return IN_TAURI ? this.snaps.length : this.count; },
   teleAgo(){ if(IN_TAURI){ return this.snaps.length ? relTime(this.snaps[0].ts).replace(" ago","") : "—"; }
@@ -578,10 +579,6 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ disarmDanger(); }
 // reflog restore is now handled live by the Reflog Svelte island
 // (reflogCtrl.restore(), see src/islands/reflog) — the static demo .log-row
 // markup this used to wire is gone (#pane-reflog is now an island mount point).
-// ref filter
-function applyRefFilter(){ const q=($("#refFilter").value||"").toLowerCase();
-  $$("#refScroll .ref-item").forEach(it=>{const nm=$(".rname",it)?.textContent.toLowerCase()||"";it.style.display=nm.includes(q)?"":"none";}); }
-$("#refFilter").addEventListener("input",applyRefFilter);
 // perf controls
 $("#rowsSel").addEventListener("change",e=>loadGraph(+e.target.value));
 $("#zoomIn").addEventListener("click",()=>zoomAt(view.cssH/2,140));
@@ -650,7 +647,6 @@ function loadGraph(N){
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
   bisectDrawerCtrl.clearLocalMarks();
   recomputeLayout(); positionTicks();
-  $("#snapCount").textContent=Safety.teleCount();
   detailCtrl.showHero(NN, ms);
   Tama._tele(); dirty=true;
 }
@@ -664,7 +660,7 @@ async function openRepo(path){
     const name = path.replace(/[\/\\]+$/,"").split(/[\/\\]/).pop() || path;
     $(".repo-pick span").textContent = name;
     loadGraph(g.n);
-    await refreshRefs();
+    await sidebarCtrl.refresh(CUR_REPO);
     await Safety.refresh();
     Tama.set("hint");
     Tama.say("Loaded "+g.n.toLocaleString()+" commits in "+(g.readMs+g.layoutMs).toFixed(0)+" ms. にゃ〜",4200);
@@ -685,104 +681,24 @@ async function reloadGraph(preserveRow){
     BACKEND=g; loadGraph(g.n);
     if(keepSha){ const row=BACKEND.rows.findIndex(r=>r.sha===keepSha);
       if(row>=0){ select(row); state.scrollTarget=clampScroll(row*layout.rowH-view.cssH/2); dirty=true; } }
-    await refreshRefs(); await Safety.refresh();
+    await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
   }catch(e){ Tama.warn("Reload failed — "+e); console.error(e); }
 }
-async function refreshRefs(){ if(!IN_TAURI||!CUR_REPO) return;
-  try{ renderRefs(await tinvoke("list_refs",{path:CUR_REPO})); }
-  catch(e){ console.error("list_refs",e); } }
-function mkRefItem(html,cls){ const el=document.createElement("div"); el.className="ref-item"+(cls?" "+cls:""); el.innerHTML=html; return el; }
-function renderRefs(d){ d=d||{};
-  const local=d.locals||d.local||[], remotes=d.remotes||[], tags=d.tags||[], cur=d.head||null;
-  const L=$("#refLocal"); L.innerHTML=""; $("#cntLocal").textContent=local.length;
-  local.forEach(b=>{ const name=typeof b==="string"?b:b.name;
-    const isCur=(typeof b==="object"&&b.current)||name===cur;
-    const a=(b&&b.ahead)||0, be=(b&&b.behind)||0;
-    const ab=(a||be)?'<span class="ab">'+(a?'<span class="up">↑'+a+'</span>':"")+(be?'<span class="dn">↓'+be+'</span>':"")+'</span>':"";
-    const it=mkRefItem('<span class="rname">'+esc(name)+'</span>'+ab+'<button class="ref-menu" title="Branch actions" aria-label="Branch actions">⋯</button>', isCur?"current":"");
-    it.dataset.branch=name;
-    it.addEventListener("click",ev=>{ if(ev.target.closest(".ref-menu"))return; if(isCur)return; checkoutBranch(name); });
-    it.addEventListener("contextmenu",ev=>{ ev.preventDefault(); openBranchMenu(name,isCur,it); });
-    $(".ref-menu",it).addEventListener("click",ev=>{ ev.stopPropagation(); openBranchMenu(name,isCur,ev.currentTarget); });
-    L.appendChild(it); });
-  const nb=mkRefItem('<span class="rname nb">＋ New branch…</span>',"new-branch");
-  nb.addEventListener("click",newBranchFlow); L.appendChild(nb);
-  const R=$("#refRemote"); R.innerHTML=""; $("#cntRemote").textContent=remotes.length; let last=null,ci=0;
-  remotes.forEach(rb=>{ const name=typeof rb==="string"?rb:rb.name; const rem=name.split("/")[0];
-    if(rem!==last){ const h=document.createElement("div"); h.className="remote-head"; h.innerHTML="☁ "+esc(rem); R.appendChild(h); last=rem; }
-    R.appendChild(mkRefItem('<span class="dot" style="background:var(--l'+(ci++%7)+')"></span><span class="rname">'+esc(name)+'</span>')); });
-  const T=$("#refTags"); T.innerHTML=""; $("#cntTags").textContent=tags.length;
-  tags.forEach(tg=>{ const name=typeof tg==="string"?tg:tg.name; T.appendChild(mkRefItem('<span class="rname">'+esc(name)+'</span>')); });
-  // top-bar branch pill reflects the REAL HEAD branch + its upstream ahead/behind
+// Sidebar (refs tree + branch menu) is now a Svelte island (src/islands/sidebar).
+// Topbar branch pill stays legacy-owned (a separate future migration) —
+// sidebarCtrl.refresh() calls this after every list_refs fetch instead of
+// touching #pillBranch/#pillAb itself, matching every island's convention of
+// never reaching outside its own mount target.
+function updateBranchPill(cur,locals){
   const pill=$("#pillBranch"), pillAb=$("#pillAb");
-  if(pill){
-    const curB=cur&&local.find(b=>(typeof b==="object"?b.name:b)===cur);
-    pill.textContent=cur||"detached";
-    const a=(curB&&typeof curB==="object"&&curB.ahead)||0, be=(curB&&typeof curB==="object"&&curB.behind)||0;
-    if(pillAb){
-      if(cur&&(a||be)) pillAb.innerHTML="<b>&#8593;"+a+"</b>&#183;<b>&#8595;"+be+"</b>";
-      else pillAb.textContent="";
-    }
+  if(!pill) return;
+  const curB=cur&&locals.find(b=>(typeof b==="object"?b.name:b)===cur);
+  pill.textContent=cur||"detached";
+  const a=(curB&&typeof curB==="object"&&curB.ahead)||0, be=(curB&&typeof curB==="object"&&curB.behind)||0;
+  if(pillAb){
+    if(cur&&(a||be)) pillAb.innerHTML="<b>&#8593;"+a+"</b>&#183;<b>&#8595;"+be+"</b>";
+    else pillAb.textContent="";
   }
-  applyRefFilter();
-}
-function renderSnapshots(){ const box=$("#refSnaps"); if(!box||!IN_TAURI) return;
-  box.innerHTML=""; const snaps=Safety.snaps.slice(0,12);
-  if(!snaps.length){ box.innerHTML='<div class="ref-item"><span class="rname mut">no snapshots yet</span></div>'; return; }
-  snaps.forEach(s=>{ const ago=relTime(s.ts).replace(" ago","");
-    box.appendChild(mkRefItem('<span class="dot" style="background:var(--accent)"></span><span class="rname mono">'+esc((s.sha||"").slice(0,7)||"snapshot")+'</span><span class="ab">'+ago+'</span>')); });
-  applyRefFilter();
-}
-async function checkoutBranch(name){
-  if(!IN_TAURI){ $$("#refLocal .ref-item").forEach(x=>x.classList.remove("current")); Tama.set("hint"); Tama.say("Checked out "+name+" (demo)."); return; }
-  if(checkoutBusy)return; checkoutBusy=true; Tama.set("thinking"); Tama.say("Checking out "+name+"…");
-  try{ const res=await tinvoke("checkout",{path:CUR_REPO,name});
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say("On "+name+" now. にゃ〜",3200); }
-    else Tama.warn((res&&res.message)||("Couldn't check out "+name+" — you may have uncommitted changes."));
-  }catch(e){ Tama.warn("Checkout failed — "+e); console.error(e); } finally{ checkoutBusy=false; } }
-async function newBranchFlow(){
-  const name=(prompt("New branch name (created at HEAD and checked out):")||"").trim(); if(!name) return;
-  if(!IN_TAURI){ Tama.set("hint"); Tama.say("Created "+name+" (demo)."); return; }
-  Tama.set("thinking"); Tama.say("Creating "+name+"…");
-  try{ const res=await tinvoke("create_branch",{path:CUR_REPO,name,checkout:true});
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||("Branch "+name+" created."),3200); }
-    else Tama.warn((res&&res.message)||("Couldn't create "+name+"."));
-  }catch(e){ Tama.warn("Create failed — "+e); console.error(e); } }
-function deleteBranchFlow(name){
-  Tama.set("danger"); Tama.say("Deleting "+name+" — type the branch name to arm it. I pin its tip first.",6000);
-  armDanger({ title:"Delete branch — "+name, steps:false,
-    desc:"This removes the local branch ref. Its tip is pinned to a backup first, so the commits stay recoverable by sha.",
-    lose:'<h5>What happens</h5><ul><li>Removes local branch <code>'+esc(name)+'</code></li><li>Its tip is pinned under <code>refs/gitgui/deleted/…</code> — recover with ＋ New branch → the printed sha</li></ul>',
-    note:"🔁 I pin the branch tip before deleting; ⌘Z restores your CURRENT branch position (not the deleted branch).",
-    name:name, confirmLabel:"Delete branch",
-    onConfirm:async ()=>{ await doDeleteBranch(name,false); } });
-}
-async function doDeleteBranch(name,force){
-  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Deleted "+name+" (demo)."); return; }
-  try{ let res=await tinvoke("delete_branch",{path:CUR_REPO,name,force});
-    if(res&&!res.ok&&!force&&/not (fully )?merged/i.test(res.message||"")){
-      if(confirm(name+" is not fully merged. Force-delete anyway? (the tip is pinned to a backup)")) res=await tinvoke("delete_branch",{path:CUR_REPO,name,force:true});
-      else { Tama.warn("Kept "+name+" — delete cancelled."); return; } }
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||("Deleted "+name+"."),4200); }
-    else Tama.warn((res&&res.message)||("Couldn't delete "+name+"."));
-  }catch(e){ Tama.warn("Delete failed — "+e); console.error(e); } }
-let refMenuEl=null;
-function closeBranchMenu(){ if(refMenuEl){ refMenuEl.remove(); refMenuEl=null; document.removeEventListener("pointerdown",onDocDownMenu,true); } }
-function onDocDownMenu(e){ if(refMenuEl&&!refMenuEl.contains(e.target)) closeBranchMenu(); }
-function openBranchMenu(name,isCurrent,anchor){ closeBranchMenu();
-  const m=document.createElement("div"); m.className="ref-pop";
-  m.innerHTML='<button data-act="checkout"'+(isCurrent?" disabled":"")+'>Checkout</button>'
-    +(isCurrent?"":'<button data-act="rebase">Rebase current branch onto here</button>')
-    +'<button data-act="delete" class="danger"'+(isCurrent?" disabled":"")+'>Delete…</button>';
-  document.body.appendChild(m); refMenuEl=m;
-  const r=anchor.getBoundingClientRect(); m.style.left=Math.min(r.left,innerWidth-168)+"px"; m.style.top=(r.bottom+4)+"px";
-  m.addEventListener("click",ev=>{ const b=ev.target.closest("button"); if(!b||b.disabled)return; const act=b.dataset.act; closeBranchMenu();
-    if(act==="checkout") checkoutBranch(name); else if(act==="delete") deleteBranchFlow(name); else if(act==="rebase") rebaseOntoFlow(name); });
-  setTimeout(()=>document.addEventListener("pointerdown",onDocDownMenu,true),0);
-}
-async function rebaseOntoFlow(name){
-  if(!IN_TAURI){ resolver.openDemo(name,"rebase"); return; }   // ---- design-mode demo ----
-  await resolver.startRebase(CUR_REPO,name);  // ---- real rebase of the current branch onto `name` (Svelte island) ----
 }
 async function pickRepo(){
   if(!IN_TAURI) return;
@@ -797,8 +713,8 @@ async function pickRepo(){
 function bootEmpty(){
   BACKEND=null;
   CUR_REPO=null;
-  $("#undoCount").textContent="0"; $("#snapCount").textContent="0"; Safety.snaps=[];
-  ["#refLocal","#refRemote","#refTags","#refSnaps"].forEach(s=>{const el=$(s);if(el)el.innerHTML="";});
+  $("#undoCount").textContent="0"; Safety.snaps=[];
+  sidebarCtrl.reset();
   G={N:0,commitLane:[],commitColor:[],isMerge:[],gapStart:[0],gapTop:[],gapBot:[],gapColor:[],refs:[],snapRows:[],snapTs:{}};
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
   bisectDrawerCtrl.clearLocalMarks();
@@ -826,4 +742,4 @@ const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>c
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, hhex, msgOf, AUTHORS,
-  fakeAgo, relTime, pickRepo, ensureDrawerOpen };
+  fakeAgo, relTime, pickRepo, ensureDrawerOpen, armDanger, updateBranchPill };
