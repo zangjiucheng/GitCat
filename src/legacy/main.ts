@@ -4,6 +4,7 @@ import { bisectCtrl } from "../islands/bisect/bisect.svelte.ts";
 import { reflogCtrl } from "../islands/reflog/reflog.svelte.ts";
 import { rerereCtrl } from "../islands/rerere/rerere.svelte.ts";
 import { filterRepoCtrl } from "../islands/filterrepo/filterrepo.svelte.ts";
+import { cmdkCtrl } from "../islands/cmdk/cmdk.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -1065,139 +1066,13 @@ requestAnimationFrame(tick);
 if(!IN_TAURI) setTimeout(()=>{Tama.event("snapshot.surfaced");Tama.say("Safety Manager armed — I snapshot before every mutation. にゃ〜",4200);},800);
 
 /* ============================================================
-   13) ⌘K COMMAND PALETTE — fuzzy search over loaded commits + refs.
+   13) ⌘K COMMAND PALETTE — now a Svelte island (src/islands/cmdk).
    ============================================================ */
-(function(){
-  const CMD_CAP=50, CMD_BUF=250, REF_DEFAULT=12;
-  const CMD={open:false,_g:null,items:[],refs:[],results:[],toks:[],sel:0};
-  const shortSha=s=>String(s||"").slice(0,8);
-  const byId=id=>document.getElementById(id);
-  const listRows=()=>$$("#cmdkList .cmdk-row");
-
-  function buildCmdIndex(){
-    const out=[], N=G?G.N:0;
-    for(let r=0;r<N;r++){
-      let subject,sha,author;
-      if(BACKEND){ const m=BACKEND.rows[r]; if(!m) continue; subject=m.subject; sha=m.sha; author=(m.an&&m.an.n)||""; }
-      else { subject=msgOf(r); sha=hhex(r); author=AUTHORS[(Math.imul(r,2654435761)>>>5)%AUTHORS.length].n; }
-      out.push({type:"commit",row:r,subject,sha,author,hay:(subject+" "+sha+" "+author).toLowerCase()});
-    }
-    return out;
-  }
-  function buildRefIndex(){
-    const seen=new Set(), out=[], N=G?G.N:0;
-    const norm=t=>t==="tag"?"tag":t==="remote"?"remote":t==="head"?"head":"branch";
-    if(BACKEND){
-      for(let r=0;r<N;r++){ const m=BACKEND.rows[r]; if(!m||!m.refs) continue;
-        for(const rf of m.refs){ if(!rf||seen.has(rf.n)) continue; seen.add(rf.n);
-          out.push({type:"ref",name:rf.n,kind:norm(rf.t),row:r,sha:m.sha}); } }
-    } else {
-      out.push({type:"ref",name:"HEAD",kind:"head",row:0,sha:hhex(0)}); seen.add("HEAD");
-      for(let r=0;r<N;r++){ const g=G.refs[r]; if(!g||seen.has(g.label)) continue; seen.add(g.label);
-        out.push({type:"ref",name:g.label,kind:norm(g.kind),row:r,sha:hhex(r)}); }
-    }
-    return out;
-  }
-
-  const matchToks=(hay,toks)=>{ for(let i=0;i<toks.length;i++) if(hay.indexOf(toks[i])<0) return false; return true; };
-  function cmdScore(it,toks){ let s=0; const subj=it.subject.toLowerCase(), sha=it.sha.toLowerCase();
-    for(const t of toks){ if(sha.startsWith(t)) s-=60; if(subj.startsWith(t)) s-=25; const p=it.hay.indexOf(t); s+=p<0?300:p; }
-    return s+it.row*0.001; }
-
-  function hlEsc(text,toks){ text=String(text);
-    if(!toks||!toks.length) return esc(text);
-    const low=text.toLowerCase(); let at=-1, len=0;
-    for(const t of toks){ const i=low.indexOf(t); if(i>=0 && (at<0||i<at)){ at=i; len=t.length; } }
-    if(at<0) return esc(text);
-    return esc(text.slice(0,at))+"<mark>"+esc(text.slice(at,at+len))+"</mark>"+hlEsc(text.slice(at+len),toks);
-  }
-
-  function cmdFilter(q){
-    q=(q||"").trim().toLowerCase();
-    const toks=q?q.split(/\s+/):[]; CMD.toks=toks;
-    const res=[];
-    if(!toks.length){ for(let i=0;i<CMD.refs.length && res.length<REF_DEFAULT;i++) res.push(CMD.refs[i]); }
-    else { for(let i=0;i<CMD.refs.length && res.length<CMD_CAP;i++){ const rf=CMD.refs[i]; if(matchToks(rf.name.toLowerCase(),toks)) res.push(rf); } }
-    if(res.length<CMD_CAP){
-      const buf=[];
-      for(let i=0;i<CMD.items.length;i++){ const it=CMD.items[i];
-        if(!toks.length){ buf.push(it); if(buf.length>=CMD_CAP) break; }
-        else if(matchToks(it.hay,toks)){ buf.push(it); if(buf.length>=CMD_BUF) break; } }
-      if(toks.length) buf.sort((a,b)=>cmdScore(a,toks)-cmdScore(b,toks));
-      for(let i=0;i<buf.length && res.length<CMD_CAP;i++) res.push(buf[i]);
-    }
-    CMD.results=res; CMD.sel=0; cmdRender();
-  }
-
-  function cmdRender(){
-    const list=byId("cmdkList"), R=CMD.results, toks=CMD.toks;
-    if(!R.length){ list.innerHTML='<div class="cmdk-empty">'+((G&&G.N)?"No matching commits or refs":"No commits loaded — open a repository")+"</div>"; byId("cmdkCount").textContent=""; return; }
-    let h="";
-    for(let i=0;i<R.length;i++){ const it=R[i], on=i===CMD.sel?" on":"";
-      if(it.type==="ref"){
-        h+='<div class="cmdk-row'+on+'" data-i="'+i+'" role="option" aria-selected="'+(i===CMD.sel)+'">'
-          +'<span class="kind '+it.kind+'">'+(it.kind==="head"?"branch":esc(it.kind))+'</span>'
-          +'<div class="main"><div class="ttl">'+hlEsc(it.name,toks)+'</div></div>'
-          +'<span class="sha">'+esc(shortSha(it.sha))+'</span></div>';
-      } else {
-        h+='<div class="cmdk-row'+on+'" data-i="'+i+'" role="option" aria-selected="'+(i===CMD.sel)+'">'
-          +'<span class="kind">commit</span>'
-          +'<div class="main"><div class="ttl">'+hlEsc(it.subject,toks)+'</div><div class="sub">'+hlEsc(it.author,toks)+'</div></div>'
-          +'<span class="sha">'+hlEsc(shortSha(it.sha),toks)+'</span></div>';
-      }
-    }
-    list.innerHTML=h;
-    byId("cmdkCount").textContent=R.length+(R.length>=CMD_CAP?"+":"")+" result"+(R.length===1?"":"s");
-  }
-
-  function cmdSetSel(i){ const n=CMD.results.length; if(!n){ CMD.sel=0; return; }
-    CMD.sel=((i%n)+n)%n;
-    const rows=listRows();
-    for(let j=0;j<rows.length;j++){ const s=j===CMD.sel; rows[j].classList.toggle("on",s); rows[j].setAttribute("aria-selected",s); }
-    if(rows[CMD.sel]) rows[CMD.sel].scrollIntoView({block:"nearest"});
-  }
-
-  function cmdJump(it){ if(!it) return; const row=it.row;
-    cmdClose();
-    if(row==null||row<0||!G||row>=G.N) return;
-    state.scrollTarget=clampScroll(row*layout.rowH-view.cssH*0.4);
-    select(row);
-    try{ cv.focus(); }catch(_){}
-  }
-
-  function cmdOpen(){ if(CMD._g!==G){ CMD.items=buildCmdIndex(); CMD.refs=buildRefIndex(); CMD._g=G; }
-    byId("cmdk").classList.add("on"); byId("cmdk").setAttribute("aria-hidden","false"); CMD.open=true;
-    const inp=byId("cmdkInput"); inp.value=""; cmdFilter(""); requestAnimationFrame(()=>inp.focus());
-  }
-  function cmdClose(){ if(!CMD.open) return; byId("cmdk").classList.remove("on"); byId("cmdk").setAttribute("aria-hidden","true"); CMD.open=false; }
-  function cmdToggle(){ CMD.open?cmdClose():cmdOpen(); }
-
-  const hint=$(".cmd-hint"); if(hint) hint.addEventListener("click",cmdOpen);
-  document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.key.toLowerCase()==="k"){
-    if(!CMD.open && document.querySelector(".scrim.on")) return;   // don't cover an open confirm dialog
-    e.preventDefault(); cmdToggle(); } });
-  byId("cmdkScrim").addEventListener("click",cmdClose);
-  byId("cmdkInput").addEventListener("input",e=>cmdFilter(e.target.value));
-  byId("cmdkInput").addEventListener("keydown",e=>{
-    if(e.key==="ArrowDown"){ e.preventDefault(); cmdSetSel(CMD.sel+1); }
-    else if(e.key==="ArrowUp"){ e.preventDefault(); cmdSetSel(CMD.sel-1); }
-    else if(e.key==="Home"){ e.preventDefault(); cmdSetSel(0); }
-    else if(e.key==="End"){ e.preventDefault(); cmdSetSel(CMD.results.length-1); }
-    else if(e.key==="Enter"){ e.preventDefault(); cmdJump(CMD.results[CMD.sel]); }
-    else if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); cmdClose(); }
-  });
-  const listEl=byId("cmdkList");
-  listEl.addEventListener("click",e=>{ const r=e.target.closest(".cmdk-row"); if(r) cmdJump(CMD.results[+r.dataset.i]); });
-  let _cmdPX=-1,_cmdPY=-1;
-  listEl.addEventListener("mousemove",e=>{
-    if(e.clientX===_cmdPX && e.clientY===_cmdPY) return;   // pointer didn't actually move — don't hijack keyboard nav
-    _cmdPX=e.clientX; _cmdPY=e.clientY;
-    const r=e.target.closest(".cmdk-row"); if(r){ const i=+r.dataset.i; if(i!==CMD.sel) cmdSetSel(i); }
-  });
-})();
+const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>cmdkCtrl.show());
 
 function requestRedraw(){ dirty=true; }
 function focusBisectCurrent(){ if(bisect.cur!=null){ select(bisect.cur); state.scrollTarget=clampScroll(bisect.cur*layout.rowH-view.cssH/2); dirty=true; } }
 function clearBisectMarks(){ bisect.good=bisect.bad=null; bisect.cur=null; bisect.skips.clear(); renderBisect(); dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  syncBisectMarks, focusBisectCurrent, clearBisectMarks, demoBisectStatus, demoBisectMark, renderBisect };
+  syncBisectMarks, focusBisectCurrent, clearBisectMarks, demoBisectStatus, demoBisectMark, renderBisect,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, hhex, msgOf, AUTHORS };

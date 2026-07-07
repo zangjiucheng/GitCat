@@ -706,16 +706,4 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 <!-- undo / rescue celebration popover -->
 <div class="tama-cheer" id="tamaCheer"><img class="tama-pic" id="tamaCheerImg" alt="Tama, delighted"><div class="cheer-txt" id="tamaCheerTxt"></div></div>
 
-<!-- ⌘K command palette -->
-<div class="cmdk" id="cmdk" aria-hidden="true">
-  <div class="cmdk-scrim" id="cmdkScrim"></div>
-  <div class="cmdk-panel" role="dialog" aria-modal="true" aria-label="Command palette">
-    <div class="cmdk-inp"><span class="mag">&#9906;</span>
-      <input id="cmdkInput" type="text" placeholder="Search commits, refs&#8230;" spellcheck="false" autocomplete="off" autocorrect="off">
-      <kbd>esc</kbd></div>
-    <div class="cmdk-list" id="cmdkList" role="listbox" aria-label="Results"></div>
-    <div class="cmdk-foot"><span><kbd>&#8593;</kbd><kbd>&#8595;</kbd> navigate</span><span><kbd>&#8629;</kbd> jump</span><span class="sp" id="cmdkCount"></span></div>
-  </div>
-</div>
-
 <script type="module" src="/src/main.ts"></script>

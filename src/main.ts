@@ -12,11 +12,13 @@ import Rerere from "./islands/rerere/Rerere.svelte";
 import { rerereCtrl } from "./islands/rerere/rerere.svelte.ts";
 import Plumbing from "./islands/plumbing/Plumbing.svelte";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
+import Cmdk from "./islands/cmdk/Cmdk.svelte";
 import * as bridge from "./legacy/bridge";
 
 mount(Resolver, { target: document.body });
 mount(Bisect, { target: document.body });
 mount(FilterRepo, { target: document.body });
+mount(Cmdk, { target: document.body });
 
 // Drawer-PANE islands (not modals): mounted straight into their own pane so
 // the existing .pane/.pane.on show/hide + drawer-tabs wiring in legacy/main.ts

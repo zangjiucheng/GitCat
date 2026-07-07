@@ -25,4 +25,21 @@ export {
   // binding (see the file header): read it as `bridge.CUR_REPO` at call time,
   // never destructure it into a local const, or you'll freeze a stale value.
   CUR_REPO,
+  // canvas/graph state (⌘K, and later islands, reach into these to jump to a
+  // row) — `G`/`BACKEND` are live/reassigned bindings, read at call time like
+  // `CUR_REPO`; `state`/`layout`/`view`/`cv` are stable object refs whose
+  // PROPERTIES mutate in place, so re-exporting the reference is safe.
+  G,
+  BACKEND,
+  state,
+  layout,
+  view,
+  cv,
+  clampScroll,
+  select,
+  // design-mode (plain-browser) synthetic data helpers, shared by generateGraph
+  // and ⌘K's fallback index when no real repo/BACKEND is loaded.
+  hhex,
+  msgOf,
+  AUTHORS,
 } from "./main";
