@@ -576,45 +576,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 
   <!-- ============================ SIDEBAR ============================ -->
   <aside class="sidebar">
-    <div class="ref-filter"><span class="mag">&#9906;</span><input id="refFilter" placeholder="Filter refs&#8230;" spellcheck="false"></div>
-    <div class="ref-scroll" id="refScroll">
-      <details class="ref-group" open><summary><span class="tw">&#9656;</span>Local<span class="count" id="cntLocal">4</span></summary>
-        <div class="ref-list" id="refLocal">
-          <div class="ref-item current"><span class="rname">main</span><span class="ab"><span class="up">&#8593;2</span></span></div>
-          <div class="ref-item"><span class="rname">feat/inline-diff</span><span class="ab"><span class="dn">&#8595;3</span></span></div>
-          <div class="ref-item"><span class="rname">fix/lane-cull</span></div>
-          <div class="ref-item"><span class="rname">release/0.3</span></div>
-        </div>
-      </details>
-      <details class="ref-group" open><summary><span class="tw">&#9656;</span>Remote<span class="count" id="cntRemote">5</span></summary>
-        <div class="ref-list" id="refRemote">
-          <div class="remote-head">&#9729; origin</div>
-          <div class="ref-item"><span class="dot" style="background:var(--l0)"></span><span class="rname">origin/main</span></div>
-          <div class="ref-item"><span class="dot" style="background:var(--l1)"></span><span class="rname">origin/feat/inline-diff</span></div>
-          <div class="ref-item"><span class="dot" style="background:var(--l2)"></span><span class="rname">origin/topic/rerere</span></div>
-          <div class="remote-head">&#9729; upstream</div>
-          <div class="ref-item"><span class="dot" style="background:var(--l3)"></span><span class="rname">upstream/main</span></div>
-          <div class="ref-item"><span class="dot" style="background:var(--l4)"></span><span class="rname">upstream/dev</span></div>
-        </div>
-      </details>
-      <details class="ref-group"><summary><span class="tw">&#9656;</span>Tags<span class="count" id="cntTags">3</span></summary>
-        <div class="ref-list" id="refTags">
-          <div class="ref-item"><span class="rname">v0.3.0</span></div>
-          <div class="ref-item"><span class="rname">v0.2.0</span></div>
-          <div class="ref-item"><span class="rname">nightly-2026-07-05</span></div>
-        </div>
-      </details>
-      <details class="ref-group"><summary><span class="tw">&#9656;</span>Stashes<span class="count">2</span></summary>
-        <div class="ref-item"><span class="rname mono">stash@{0}</span></div>
-        <div class="ref-item"><span class="rname mono">stash@{1}</span></div>
-      </details>
-      <details class="ref-group"><summary><span class="tw">&#9656;</span>Snapshots<span class="count" id="snapCount">&#8212;</span></summary>
-        <div class="ref-list" id="refSnaps">
-          <div class="ref-item"><span class="dot" style="background:var(--accent)"></span><span class="rname mono">backup/&#8230;T14-22-58</span><span class="ab">2m</span></div>
-          <div class="ref-item"><span class="dot" style="background:var(--accent)"></span><span class="rname mono">backup/&#8230;T13-51-04</span><span class="ab">33m</span></div>
-        </div>
-      </details>
-    </div>
+    <div id="sidebarRefs"><!-- filled by the Sidebar Svelte island (src/islands/sidebar) --></div>
 
     <!-- Tama's lamp-nook -->
     <div class="nook tstage" id="nook" data-state="idle" role="status" aria-live="polite">
@@ -659,18 +621,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
       <button class="x" id="drawerToggle" title="Expand / collapse drawer"><span class="cev">&#9650;</span></button>
     </div>
     <div class="drawer-body">
-      <div class="pane on" id="pane-bisect">
-        <div class="bisect-ctl">
-          <button class="bx good" data-mark="good">&#10003; Mark good</button>
-          <button class="bx bad" data-mark="bad">&#10007; Mark bad</button>
-          <button class="bx skip" data-mark="skip">&#8631; Skip</button>
-          <button class="bx" id="bisectStart" style="color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)">&#9654; Start bisect</button>
-          <button class="bx reset" id="bisectReset">Reset</button>
-        </div>
-        <div class="bisect-range" id="bisectRange"></div>
-        <div class="bisect-prog"><div class="track"><i id="bisectFill"></i></div><div class="steps" id="bisectSteps">&#8776;0 steps left</div></div>
-        <div class="bisect-cur" id="bisectCur">Select a commit in the graph, then mark it <b>good</b> or <b>bad</b> to narrow the range on the canvas.</div>
-      </div>
+      <div class="pane on" id="pane-bisect"><!-- filled by the BisectDrawer Svelte island (src/islands/bisectdrawer) --></div>
       <div class="pane" id="pane-reflog"><!-- filled by the Reflog Svelte island (src/islands/reflog) --></div>
       <div class="pane" id="pane-rerere"><!-- filled by the Rerere Svelte island (src/islands/rerere) --></div>
       <div class="pane" id="pane-plumbing"><!-- filled by the Plumbing Svelte island (src/islands/plumbing) --></div>
@@ -705,17 +656,5 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 
 <!-- undo / rescue celebration popover -->
 <div class="tama-cheer" id="tamaCheer"><img class="tama-pic" id="tamaCheerImg" alt="Tama, delighted"><div class="cheer-txt" id="tamaCheerTxt"></div></div>
-
-<!-- ⌘K command palette -->
-<div class="cmdk" id="cmdk" aria-hidden="true">
-  <div class="cmdk-scrim" id="cmdkScrim"></div>
-  <div class="cmdk-panel" role="dialog" aria-modal="true" aria-label="Command palette">
-    <div class="cmdk-inp"><span class="mag">&#9906;</span>
-      <input id="cmdkInput" type="text" placeholder="Search commits, refs&#8230;" spellcheck="false" autocomplete="off" autocorrect="off">
-      <kbd>esc</kbd></div>
-    <div class="cmdk-list" id="cmdkList" role="listbox" aria-label="Results"></div>
-    <div class="cmdk-foot"><span><kbd>&#8593;</kbd><kbd>&#8595;</kbd> navigate</span><span><kbd>&#8629;</kbd> jump</span><span class="sp" id="cmdkCount"></span></div>
-  </div>
-</div>
 
 <script type="module" src="/src/main.ts"></script>

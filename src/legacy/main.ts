@@ -4,6 +4,10 @@ import { bisectCtrl } from "../islands/bisect/bisect.svelte.ts";
 import { reflogCtrl } from "../islands/reflog/reflog.svelte.ts";
 import { rerereCtrl } from "../islands/rerere/rerere.svelte.ts";
 import { filterRepoCtrl } from "../islands/filterrepo/filterrepo.svelte.ts";
+import { cmdkCtrl } from "../islands/cmdk/cmdk.svelte.ts";
+import { detailCtrl } from "../islands/detail/detail.svelte.ts";
+import { bisectDrawerCtrl } from "../islands/bisectdrawer/bisectdrawer.svelte.ts";
+import { sidebarCtrl } from "../islands/sidebar/sidebar.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -91,10 +95,9 @@ let G=null;
    below is used instead, so this file works in both places. */
 let BACKEND=null;
 export let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it — exported (live binding) for the Svelte islands via bridge.ts
-let DETAIL_SEQ=0;    // monotonic id — any older in-flight commit_detail response loses (robust across repo switches)
 const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
 const tinvoke = (cmd, args={}) => window.__TAURI__.core.invoke(cmd, args);
-let undoBusy=false, checkoutBusy=false;
+let undoBusy=false;
 function relTime(t){ let s=Math.max(0,Math.floor(Date.now()/1000-t));
   if(s<60)return s+"s ago"; let m=(s/60)|0; if(m<60)return m+"m ago"; let h=(m/60)|0; if(h<24)return h+"h ago";
   let d=(h/24)|0; if(d<30)return d+"d ago"; let mo=(d/30)|0; if(mo<12)return mo+"mo ago"; return ((mo/12)|0)+"y ago"; }
@@ -185,9 +188,9 @@ function draw(){
   const last=Math.max(0,Math.min(N-1,Math.floor((st+H)/rowH)));
 
   // bisect band (behind everything)
-  const B=bisect.active();
+  const B=bisectDrawerCtrl.active();
   if(B){ for(let r=first;r<=last;r++){ const y=r*rowH-st;
-    if(r>B.lo&&r<B.hi&&!bisect.skips.has(r)){ ctx.fillStyle=theme.warning; ctx.globalAlpha=0.12; ctx.fillRect(0,y,W,rowH); ctx.globalAlpha=1; } } }
+    if(r>B.lo&&r<B.hi&&!bisectDrawerCtrl.skips.has(r)){ ctx.fillStyle=theme.warning; ctx.globalAlpha=0.12; ctx.fillRect(0,y,W,rowH); ctx.globalAlpha=1; } } }
 
   // edges — one Path2D per lane colour
   for(let c=0;c<NCOL;c++) edgePaths[c]=null;
@@ -216,14 +219,14 @@ function draw(){
     else if(r===state.hoverRow){ ctx.fillStyle=theme.text; ctx.globalAlpha=0.08; ctx.fillRect(0,r*rowH-st,W,rowH); ctx.globalAlpha=1; }
     if(B&&r===B.good){ctx.fillStyle=theme.success;ctx.fillRect(0,r*rowH-st,3,rowH);}
     if(B&&r===B.bad){ctx.fillStyle=theme.danger;ctx.fillRect(0,r*rowH-st,3,rowH);}
-    if(bisect.cur!=null&&r===bisect.cur){ctx.fillStyle=theme.accent;ctx.fillRect(0,r*rowH-st,3,rowH);}
+    if(bisectDrawerCtrl.cur!=null&&r===bisectDrawerCtrl.cur){ctx.fillStyle=theme.accent;ctx.fillRect(0,r*rowH-st,3,rowH);}
     ctx.globalAlpha=dim?0.4:1;
     ctx.beginPath(); ctx.arc(x,y,dotR,0,TAU);
     if(G.isMerge[r]){ctx.fillStyle=theme.bg;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=col;ctx.stroke();}
     else{ctx.fillStyle=col;ctx.fill();}
     if(r===state.selectedRow){ctx.beginPath();ctx.arc(x,y,dotR+3.2,0,TAU);ctx.strokeStyle=theme.text;ctx.lineWidth=1.6;ctx.stroke();}
     else if(r===state.hoverRow){ctx.beginPath();ctx.arc(x,y,dotR+2.6,0,TAU);ctx.strokeStyle=theme.muted;ctx.lineWidth=1;ctx.stroke();}
-    if(bisect.cur!=null&&r===bisect.cur&&r!==state.selectedRow){ctx.beginPath();ctx.arc(x,y,dotR+3.4,0,TAU);ctx.strokeStyle=theme.accent;ctx.lineWidth=2;ctx.stroke();}
+    if(bisectDrawerCtrl.cur!=null&&r===bisectDrawerCtrl.cur&&r!==state.selectedRow){ctx.beginPath();ctx.arc(x,y,dotR+3.4,0,TAU);ctx.strokeStyle=theme.accent;ctx.lineWidth=2;ctx.stroke();}
     let cx=tx; const ref=G.refs[r]; ctx.font=layout.chipFont;
     if(ref) cx=drawChip(cx,y,ref.label,ref.kind)+8;
     if(rowH>=15){
@@ -395,13 +398,13 @@ const Safety={ count:214, lastAt:performance.now()-2*60*1000, snaps:[], pad(n){r
     this.count++; this.lastAt=performance.now();
     const d=new Date();
     const ts=d.getFullYear()+"-"+this.pad(d.getMonth()+1)+"-"+this.pad(d.getDate())+"T"+this.pad(d.getHours())+"-"+this.pad(d.getMinutes())+"-"+this.pad(d.getSeconds());
-    $("#undoCount").textContent=this.count; $("#snapCount").textContent=this.count;
+    $("#undoCount").textContent=this.count;
     return {ref:"refs/gitgui/backup/"+ts, hash:hhex(this.count*7+3)}; },
   async refresh(){ if(!IN_TAURI||!CUR_REPO) return;
     try{ const s=await tinvoke("list_snapshots",{path:CUR_REPO});
       this.snaps=Array.isArray(s)?s.slice():[];
-      const n=this.snaps.length; $("#undoCount").textContent=n; $("#snapCount").textContent=n;
-      Tama._tele(); positionTicks(); renderSnapshots();
+      $("#undoCount").textContent=this.snaps.length;
+      Tama._tele(); positionTicks(); sidebarCtrl.setSnapshots(this.snaps);
     }catch(e){ console.error("list_snapshots",e); } },
   teleCount(){ return IN_TAURI ? this.snaps.length : this.count; },
   teleAgo(){ if(IN_TAURI){ return this.snaps.length ? relTime(this.snaps[0].ts).replace(" ago","") : "—"; }
@@ -472,88 +475,10 @@ setInterval(()=>{ const n=$("#nook"); if(n&&n.dataset.state==="idle"&&performanc
    ============================================================ */
 function esc(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 const AUTHORS=[{n:"Jiucheng Zang",e:"jiucheng@gitcat.dev"},{n:"Tama",e:"tama@gitcat.dev"},{n:"Rin S.",e:"rin@catnip.io"},{n:"A. Turing",e:"alan@enigma.dev"},{n:"Mao",e:"mao@nyan.cat"}];
-const GPG={good:["good","✔ Good signature"],none:["none","○ Unsigned"],bad:["bad","✘ Bad signature"]};
-function commitMeta(r){
-  if(BACKEND){ const m=BACKEND.rows[r]; if(!m) return null;
-    const differ = m.an.n!==m.cm.n || m.an.e!==m.cm.e || m.an.t!==m.cm.t;
-    const refs = m.refs.map(x=>({n:x.n, t:(x.t==="tag"?"tag":x.t==="remote"?"remote":"head")}));
-    return {row:r, subject:m.subject, sha:m.sha,
-      an:{n:m.an.n,e:m.an.e,d:relTime(m.an.t)}, cm:{n:m.cm.n,e:m.cm.e,d:relTime(m.cm.t)},
-      differ, gpg:"none", refs, add:0, del:0, merge:!!(G&&G.isMerge[r])}; }
-  const a=AUTHORS[(Math.imul(r,2654435761)>>>5)%AUTHORS.length];
-  const rebased=(r%7===0&&r>0)||G.isMerge[r];
-  const cm=rebased?{n:"GitCat (rebase)",e:"noreply@gitcat.dev",d:fakeAgo(Math.max(0,r-2))+" ago"}:{n:a.n,e:a.e,d:fakeAgo(r)+" ago"};
-  const gpg=r%11===0?"none":(hhex(r).charCodeAt(1)&7)===0?"bad":"good";
-  const refs=[]; if(r===0)refs.push({n:"HEAD",t:"head"},{n:"main",t:"head"});
-  const gr=G.refs[r]; if(gr&&r!==0)refs.push({n:gr.label,t:gr.kind==="tag"?"tag":gr.kind==="head"?"head":"remote"});
-  const add=8+((r*13)%40), del=(r*7)%20;
-  return {row:r,subject:msgOf(r),sha:hhex(r),an:{n:a.n,e:a.e,d:fakeAgo(r)+" ago"},cm,differ:rebased,gpg,refs,add,del,merge:!!G.isMerge[r]};
-}
-function select(row){ state.selectedRow=row; renderDetail(commitMeta(row)); renderBisect(); dirty=true; }
-function diffstatHTML(add,del,files,truncated){
-  const tot=(add+del)||1;
-  return `<span class="nums"><span class="add">+${add}</span> <span class="del">−${del}</span></span>`
-    +`<div class="stat-bar"><i class="a" style="width:${Math.round(100*add/tot)}%"></i><i class="d" style="width:${Math.round(100*del/tot)}%"></i></div>`
-    +`<span class="mut mono" style="font-size:11px">${files} file${files===1?"":"s"}${truncated?" (capped)":""}</span>`;
-}
-function renderDetail(c){
-  if(!c){ $("#detail").innerHTML=""; return; }
-  const g=GPG[c.gpg];
-  const refsHere=c.refs.length?c.refs.map(r=>`<span class="row-chip ${r.t}">${esc(r.n)}</span>`).join(""):'<span class="mut">no refs point here</span>';
-  const snaps=G.snapRows; let cov=-1; for(let i=snaps.length-1;i>=0;i--){if(snaps[i]<=c.row){cov=snaps[i];break;}}
-  const live=!!BACKEND;
-  const bodyInit=live ? '<span class="mut">loading…</span>'
-                      : esc(c.merge?"Merge commit — reconciles two lines of history.":"Part of the feature/login work. Signed-off and covered by an auto-snapshot.");
-  const statInit=live ? '<span class="mut mono" style="font-size:11px">loading diff…</span>'
-                      : diffstatHTML(c.add,c.del,CHANGED.length,false);
-  $("#detail").innerHTML=`
-    <section>
-      <div class="d-subject">${esc(c.subject)}</div>
-      <div class="d-body" id="dBody">${bodyInit}</div>
-      <div class="id-strip"><span class="hash" id="hashCopy" title="Click to copy">${c.sha}</span><span class="gpg ${g[0]}">${g[1]}</span>
-        <span class="mut mono" style="font-size:11px">row ${c.row.toLocaleString()} / ${G.N.toLocaleString()}</span></div>
-    </section>
-    <section>
-      <div class="who-split">
-        <div class="who ${c.differ?'differ':''}"><h4>Author</h4><div class="nm">${esc(c.an.n)}</div><div class="em">${esc(c.an.e)}</div><div class="dt mono">${c.an.d}</div></div>
-        <div class="who ${c.differ?'differ':''}"><h4>Committer</h4><div class="nm">${esc(c.cm.n)}</div><div class="em">${esc(c.cm.e)}</div><div class="dt mono">${c.cm.d}</div></div>
-      </div>
-      ${c.differ?'<div class="mut" style="font-size:11px;margin-top:6px">⚠ author ≠ committer (patch applied / rebased) — the teaching point cherry-pick &amp; rebase create.</div>':''}
-    </section>
-    <section>
-      <h4 class="d-lab">Refs pointing here</h4><div class="refs-here">${refsHere}</div>
-      ${cov>=0?`<div class="covered"><span class="ck"></span><div>Covered by snapshot <b>backup/…${esc(G.snapTs[cov])} ago</b><br><span class="mut">reachable via a Safety-Manager backup ref — ⌘Z can rewind here.</span></div></div>`:""}
-    </section>
-    <section>
-      <h4 class="d-lab">Changes</h4>
-      <div class="diffstat" id="diffstat">${statInit}</div>
-      <div class="tree" id="tree"></div>
-    </section>
-    <section><h4 class="d-lab">Diff</h4><div class="diffview" id="diffview"></div></section>`;
-  $("#hashCopy").addEventListener("click",e=>{navigator.clipboard?.writeText(c.sha);e.target.textContent="copied ✓";setTimeout(()=>e.target.textContent=c.sha,900);});
-  if(live){
-    $("#tree").innerHTML='<div class="mut" style="padding:6px 4px">loading files…</div>';
-    $("#diffview").innerHTML='<div class="diff-file-h mut">loading diff…</div>';
-    loadCommitDetail(c.row);
-  }else{
-    curChanged=CHANGED; curDiffs=DIFFS;
-    renderTree(); renderDiff();
-  }
-}
-const CHANGED=[{p:"src/auth/session.ts",st:"M",add:22,del:5},{p:"src/auth/token.ts",st:"M",add:11,del:7},{p:"src/ui/LoginForm.tsx",st:"A",add:5,del:0}];
-function renderTree(){
-  if(!curChanged||!curChanged.length){ $("#tree").innerHTML='<div class="mut" style="padding:6px 4px">no file changes</div>'; return; }
-  const root={};
-  curChanged.forEach((f,i)=>{const parts=String(f.p).split("/");let n=root;parts.forEach((seg,j)=>{if(j===parts.length-1){(n.files=n.files||[]).push({...f,name:seg,i});}else{n.dirs=n.dirs||{};n=n.dirs[seg]=n.dirs[seg]||{};}});});
-  function render(node){let h="";
-    for(const d in (node.dirs||{})) h+=`<details class="dir" open><summary><span class="tw">▸</span>📁 ${esc(d)}</summary><div class="indent">${render(node.dirs[d])}</div></details>`;
-    (node.files||[]).forEach(f=>{const st=f.st==="A"?"A":f.st==="D"?"D":"M";
-      h+=`<div class="file" data-i="${f.i}"><span class="st ${st}">${esc(f.st)}</span><span>${esc(f.name)}</span><span class="badge"><span class="add">+${f.add}</span> <span class="del">−${f.del}</span></span></div>`;});
-    return h;}
-  $("#tree").innerHTML=render(root);
-  $$("#tree .file").forEach(el=>el.addEventListener("click",()=>{$$("#tree .file").forEach(x=>x.classList.remove("active"));el.classList.add("active");renderDiff(curChanged[+el.dataset.i].p);}));
-  $("#tree .file")?.classList.add("active");
-}
+// The detail panel itself is now a Svelte island (src/islands/detail) — see
+// detailCtrl.select()/commitMeta(). GRAMMARS/highlight stay here: they're
+// shared with Resolver.svelte's 3-way diff view via bridge.highlight.
+function select(row){ state.selectedRow=row; detailCtrl.select(row); dirty=true; }
 const GRAMMARS={
   ts:[["com",/\/\/[^\n]*|\/\*[\s\S]*?\*\//y],["str",/`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/y],
      ["key",/\b(?:const|let|var|function|return|if|else|for|while|new|class|extends|implements|interface|type|import|export|from|await|async|of|in|typeof|instanceof|null|undefined|true|false|this|void|public|private|readonly|enum)\b/y],
@@ -564,173 +489,12 @@ function highlight(src,lang){const rules=GRAMMARS[lang]||GRAMMARS.generic;let i=
   outer:while(i<src.length){for(const [type,re] of rules){re.lastIndex=i;const m=re.exec(src);
     if(m&&m.index===i){out+=`<span class="tok-${type}">${esc(m[0])}</span>`;i+=m[0].length||1;continue outer;}}
     out+=esc(src[i]);i++;} return out;}
-const DIFFS={
- "src/auth/session.ts":{lang:"ts",lines:[["@@","@@ -18,6 +18,9 @@ export function createSession(user) {"],[" ","  const store = new TokenStore();"],["-","  const ttl = 900;"],["+","  const ttl = 3600; // extended, see #482"],["+","  const limiter = rateLimit({ windowMs: 60000, max: 30 });"],[" ","  return sign({ user, ttl }, secret);"],["+","  // audit: Safety Manager seals a snapshot before mutation"]]},
- "src/auth/token.ts":{lang:"ts",lines:[["@@","@@ -4,3 +4,4 @@"],["-","export const refresh = (t) => rotate(t);"],["+","export const refresh = (t, opts = {}) => rotate(t, opts);"]]},
- "src/ui/LoginForm.tsx":{lang:"ts",lines:[["@@","@@ -0,0 +1,5 @@"],["+","export function LoginForm() {"],["+","  const [err, setErr] = useState(null);"],["+","  return submit(err);"],["+","}"]]},
-};
-let curChanged=CHANGED, curDiffs=DIFFS;   // current detail source; demo statics until commit_detail loads
-function renderDiff(path){
-  const keys=Object.keys(curDiffs||{});
-  const explicit=path!=null;                          // a specific file was clicked
-  path=path||(curChanged[0]&&curChanged[0].p)||keys[0];
-  let d=curDiffs[path];
-  if(!d && !explicit) d=curDiffs[keys[0]];            // fall back ONLY for the default (first) view
-  if(!d){
-    $("#diffview").innerHTML=`<div class="diff-file-h">${esc(path||"")}</div>`+
-      `<div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">no textual diff</code></div>`;
-    return;
-  }
-  if(d.binary){
-    $("#diffview").innerHTML=`<div class="diff-file-h">${esc(path)}</div>`+
-      `<div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">binary file — not shown</code></div>`;
-    return;
-  }
-  let n1=0,n2=0,html=`<div class="diff-file-h">${esc(path)}</div>`;
-  d.lines.forEach(([mk,txt])=>{
-    if(mk==="@@"){ const m=/-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?/.exec(txt); if(m){n1=+m[1];n2=+m[2];}
-      html+=`<div class="diff-line hunk"><span class="ln"></span><span class="mk"></span><code>${esc(txt)}</code></div>`; return; }
-    const cls=mk==="+"?"add":mk==="-"?"del":"";
-    const ln=mk==="+"?(n2++):mk==="-"?(n1++):(n1++,n2++);
-    html+=`<div class="diff-line ${cls}"><span class="ln">${ln}</span><span class="mk">${mk==="+"||mk==="-"?mk:""}</span><code>${highlight(txt,d.lang)}</code></div>`;
-  });
-  if(d.truncated) html+=`<div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">… diff truncated (file capped)</code></div>`;
-  $("#diffview").innerHTML=html;
-}
-async function loadCommitDetail(row){
-  const m=BACKEND&&BACKEND.rows[row]; if(!m) return;
-  const myReq=++DETAIL_SEQ;                            // race token: strictly monotonic
-  try{
-    const d=await window.__TAURI__.core.invoke("commit_detail",{path:CUR_REPO,sha:m.sha});
-    if(myReq!==DETAIL_SEQ) return;                     // a newer selection superseded this one
-    const files=Array.isArray(d.fileTree)?d.fileTree:[];
-    curChanged=files.map(f=>({p:f.path,st:f.status,add:f.additions|0,del:f.deletions|0}));
-    curDiffs={};
-    files.forEach(f=>{
-      const lines=[];
-      (f.hunks||[]).forEach(h=>{
-        lines.push(["@@",h.header]);
-        (h.lines||[]).forEach(l=>lines.push([l.kind,l.text]));   // l.kind ∈ " " | "+" | "-"
-      });
-      curDiffs[f.path]={lang:f.lang||"generic",lines,truncated:!!f.truncated,binary:!!f.binary};
-    });
-    const bodyEl=$("#dBody"); if(bodyEl) bodyEl.textContent=(d.body&&d.body.trim())?d.body:"(no message body)";
-    const ds=$("#diffstat"); if(ds) ds.innerHTML=diffstatHTML(d.additions|0,d.deletions|0,(d.filesChanged!=null?d.filesChanged:curChanged.length),!!d.truncated);
-    renderTree(); renderDiff();
-  }catch(e){
-    if(myReq!==DETAIL_SEQ) return;
-    const ds=$("#diffstat"); if(ds) ds.innerHTML=`<span class="mut mono" style="font-size:11px">diff unavailable — ${esc(String(e))}</span>`;
-    const bodyEl=$("#dBody"); if(bodyEl&&/loading/.test(bodyEl.textContent)) bodyEl.textContent="";
-    $("#tree").innerHTML='<div class="mut" style="padding:6px 4px">could not load changes</div>';
-    $("#diffview").innerHTML='<div class="diff-file-h mut">diff unavailable</div>';
-    console.error("commit_detail failed",e);
-  }
-}
 
 /* ============================================================
-   8) BISECT — mark good/bad on the graph; recolor candidate range
-      on canvas + drawer strip; log2 "≈N steps left".
+   8) BISECT — drawer chrome is now a Svelte island (src/islands/bisectdrawer).
+      draw() above reads bisectDrawerCtrl.active()/.skips/.cur directly each
+      frame to recolor the candidate range + current-test dot on the canvas.
    ============================================================ */
-const bisect={good:null,bad:null,cur:null,skips:new Set(),
-  active(){ if(this.good==null||this.bad==null)return null; const lo=Math.min(this.good,this.bad),hi=Math.max(this.good,this.bad);
-    return {lo,hi,good:this.good,bad:this.bad}; },
-  candidates(){ const B=this.active(); if(!B)return []; const out=[]; for(let r=B.lo+1;r<B.hi;r++) if(!this.skips.has(r))out.push(r); return out; }};
-function renderBisect(){
-  const B=bisect.active(), cand=bisect.candidates(), n=cand.length;
-  const strip=$("#bisectRange"); strip.innerHTML="";
-  if(!B){ $("#bisectSteps").textContent="≈0 steps left"; $("#bisectFill").style.width="0%"; dirty=true; return; }
-  const span=B.hi-B.lo-1; const BUCKETS=Math.min(48,Math.max(span,1));
-  for(let i=0;i<BUCKETS;i++){ const r=B.lo+1+Math.floor(i*span/BUCKETS); const cell=document.createElement("div"); cell.className="bcell";
-    if(bisect.skips.has(r))cell.classList.add("culled"); else cell.classList.add("cand");
-    strip.appendChild(cell); }
-  const total=Math.max(1,Math.ceil(Math.log2(Math.max(2,span)))), steps=n<=1?0:Math.ceil(Math.log2(n));
-  $("#bisectSteps").textContent="≈"+steps+" steps left";
-  $("#bisectFill").style.width=(100*(1-steps/total))+"%";
-  const mid=cand[Math.floor(cand.length/2)];
-  $("#bisectCur").innerHTML = n===0
-    ? `First bad commit isolated → <b>${hhex(bisect.bad)}</b>. ${esc(msgOf(bisect.bad))}`
-    : `Testing next: <b>${hhex(mid)}</b> — ${esc(msgOf(mid))}. <span class="mut">${n} candidate${n>1?"s":""} in range · read from <code>.git/BISECT_LOG</code>.</span>`;
-  dirty=true;
-}
-$$(".bx[data-mark]").forEach(b=>b.addEventListener("click",()=>{
-  const m=b.dataset.mark;
-  if(bisectCtrl.running){ Tama.set("hint"); Tama.say("A bisect is already running — use Good / Skip / Bad in the panel above."); return; }
-  if(state.selectedRow<0){ Tama.set("hint"); Tama.say("Pick a commit in the graph first, then mark it "+m+"."); return; }
-  const r=state.selectedRow;
-  if(m==="good"){bisect.good=r;if(bisect.bad===r)bisect.bad=null;}
-  if(m==="bad"){bisect.bad=r;if(bisect.good===r)bisect.good=null;}
-  if(m==="skip")bisect.skips.add(r);
-  ensureDrawerOpen("bisect"); renderBisect();
-  Tama.set("hint"); Tama.say("Marked "+hhex(r)+" "+m+".");
-}));
-// ---- drawer Reset: end a live/demo bisect if one is running, else clear armed marks ----
-$("#bisectReset").addEventListener("click",()=>{
-  if(bisectCtrl.running){ bisectCtrl.reset(); return; }
-  bisect.good=bisect.bad=null; bisect.cur=null; bisect.skips.clear(); renderBisect();
-  Tama.set("hint"); Tama.say("Bisect reset.");
-});
-// ---- drawer Start: begin (or re-open) the bisect modal ----
-$("#bisectStart").addEventListener("click",()=>{
-  if(bisectCtrl.running){ bisectCtrl.reopen(); return; }
-  startBisect();
-});
-
-/* ============================================================
-   M3 · git bisect — start / mark / status / reset, resolver-style.
-   Every real invoke is BISECT_BUSY-locked and IN_TAURI-guarded; HEAD moves on
-   every step so we reloadGraph(true) then re-derive green/red/current cues from
-   the authoritative BisectStatus SHAs.
-   ============================================================ */
-function bisectRowOf(sha){
-  if(!sha||!BACKEND||!BACKEND.rows) return -1;
-  const s=String(sha);
-  return BACKEND.rows.findIndex(r=> r.sha===s || s.startsWith(r.sha) || r.sha.startsWith(s));
-}
-function syncBisectMarks(st){
-  bisect.good=bisect.bad=null; bisect.cur=null; bisect.skips.clear();
-  if(!st){ dirty=true; return; }
-  const badR=bisectRowOf(st.firstBad?st.firstBad.sha:st.badRef); if(badR>=0) bisect.bad=badR;
-  let goodR=-1;
-  (st.goodRefs||[]).forEach(g=>{ const r=bisectRowOf(g); if(r>badR&&(goodR<0||r<goodR)) goodR=r; });
-  if(goodR<0) (st.goodRefs||[]).forEach(g=>{ const r=bisectRowOf(g); if(r>=0&&(goodR<0||r>goodR)) goodR=r; });
-  if(goodR>=0) bisect.good=goodR;
-  const curR=bisectRowOf(st.firstBad?st.firstBad.sha:(st.current&&st.current.sha)); if(curR>=0) bisect.cur=curR;
-  dirty=true;
-}
-
-async function startBisect(){
-  let goodR=bisect.good, badR=bisect.bad;
-  if(badR==null) badR=0; // convenience: known-bad defaults to HEAD (row 0)
-  if(goodR==null){ ensureDrawerOpen("bisect"); Tama.set("hint");
-    Tama.say("Select a known-good commit and press Mark good, then Start bisect."); return; }
-  const goodSha=(BACKEND&&BACKEND.rows[goodR])?BACKEND.rows[goodR].sha:hhex(goodR);
-  const badSha =(BACKEND&&BACKEND.rows[badR]) ?BACKEND.rows[badR].sha :hhex(badR);
-  if(!IN_TAURI){                                   // ---- design-mode demo -> island ----
-    bisect.good=goodR; bisect.bad=badR; bisect.skips.clear();
-    const st=demoBisectStatus(); renderBisect(); dirty=true;
-    bisectCtrl.openDemo(st);
-    Tama.set("thinking"); Tama.say("Bisecting between "+hhex(goodR)+" (good) and "+hhex(badR)+" (bad).");
-    return;
-  }
-  await bisectCtrl.start(CUR_REPO, badSha, goodSha);   // real: island owns the modal + IPC
-}
-
-// ---- design-mode demo helpers: fake convergence over the synthetic G ----
-function demoBisectStatus(){
-  const B=bisect.active(); if(!B) return {inProgress:false,demo:true};
-  const cand=bisect.candidates();
-  if(cand.length<=0){ bisect.cur=bisect.bad;
-    return {inProgress:false,demo:true,firstBad:{sha:hhex(bisect.bad),subject:msgOf(bisect.bad)},remainingRevs:0,estSteps:0}; }
-  const mid=cand[Math.floor(cand.length/2)]; bisect.cur=mid;
-  return {inProgress:true,demo:true,current:{sha:hhex(mid),subject:msgOf(mid)},
-    remainingRevs:cand.length,estSteps:Math.max(1,Math.ceil(Math.log2(Math.max(2,cand.length))))};
-}
-function demoBisectMark(term){
-  const mid=bisect.cur;
-  if(mid==null){ return demoBisectStatus(); }
-  if(term==="good") bisect.good=mid; else if(term==="bad") bisect.bad=mid; else bisect.skips.add(mid);
-  const st=demoBisectStatus(); renderBisect(); dirty=true; return st;
-}
 
 
 /* ============================================================
@@ -815,10 +579,6 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ disarmDanger(); }
 // reflog restore is now handled live by the Reflog Svelte island
 // (reflogCtrl.restore(), see src/islands/reflog) — the static demo .log-row
 // markup this used to wire is gone (#pane-reflog is now an island mount point).
-// ref filter
-function applyRefFilter(){ const q=($("#refFilter").value||"").toLowerCase();
-  $$("#refScroll .ref-item").forEach(it=>{const nm=$(".rname",it)?.textContent.toLowerCase()||"";it.style.display=nm.includes(q)?"":"none";}); }
-$("#refFilter").addEventListener("input",applyRefFilter);
 // perf controls
 $("#rowsSel").addEventListener("change",e=>loadGraph(+e.target.value));
 $("#zoomIn").addEventListener("click",()=>zoomAt(view.cssH/2,140));
@@ -885,16 +645,9 @@ function loadGraph(N){
     NN=g.n; ms=g.readMs+g.layoutMs;
   } else { G=generateGraph(N); NN=N; ms=performance.now()-t0; }
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
-  bisect.good=bisect.bad=null; bisect.cur=null; bisect.skips.clear();
-  recomputeLayout(); positionTicks(); renderBisect();
-  $("#snapCount").textContent=Safety.teleCount();
-  $("#detail").innerHTML=`
-    <div class="tama-hero">
-      <img class="tama-hero-img" src="${TAMA_IMG.hero}" alt="Tama, GitCat's guardian">
-      <div class="hero-bubble">はじめまして! I'm <b>Tama</b>, GitCat's guardian. I pin a snapshot before every mutation — so your history is always safe with me. <span class="jp">にゃ〜♪</span></div>
-      <div class="hero-stat"><span class="n">${NN.toLocaleString()}</span> commits laid out in <b>${ms.toFixed(0)} ms</b></div>
-      <div class="hero-hint">Click a commit to inspect it · drag a dot onto another to cherry-pick · ⌘Z to rewind</div>
-    </div>`;
+  bisectDrawerCtrl.clearLocalMarks();
+  recomputeLayout(); positionTicks();
+  detailCtrl.showHero(NN, ms);
   Tama._tele(); dirty=true;
 }
 /* ============================================================
@@ -907,7 +660,7 @@ async function openRepo(path){
     const name = path.replace(/[\/\\]+$/,"").split(/[\/\\]/).pop() || path;
     $(".repo-pick span").textContent = name;
     loadGraph(g.n);
-    await refreshRefs();
+    await sidebarCtrl.refresh(CUR_REPO);
     await Safety.refresh();
     Tama.set("hint");
     Tama.say("Loaded "+g.n.toLocaleString()+" commits in "+(g.readMs+g.layoutMs).toFixed(0)+" ms. にゃ〜",4200);
@@ -928,104 +681,24 @@ async function reloadGraph(preserveRow){
     BACKEND=g; loadGraph(g.n);
     if(keepSha){ const row=BACKEND.rows.findIndex(r=>r.sha===keepSha);
       if(row>=0){ select(row); state.scrollTarget=clampScroll(row*layout.rowH-view.cssH/2); dirty=true; } }
-    await refreshRefs(); await Safety.refresh();
+    await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
   }catch(e){ Tama.warn("Reload failed — "+e); console.error(e); }
 }
-async function refreshRefs(){ if(!IN_TAURI||!CUR_REPO) return;
-  try{ renderRefs(await tinvoke("list_refs",{path:CUR_REPO})); }
-  catch(e){ console.error("list_refs",e); } }
-function mkRefItem(html,cls){ const el=document.createElement("div"); el.className="ref-item"+(cls?" "+cls:""); el.innerHTML=html; return el; }
-function renderRefs(d){ d=d||{};
-  const local=d.locals||d.local||[], remotes=d.remotes||[], tags=d.tags||[], cur=d.head||null;
-  const L=$("#refLocal"); L.innerHTML=""; $("#cntLocal").textContent=local.length;
-  local.forEach(b=>{ const name=typeof b==="string"?b:b.name;
-    const isCur=(typeof b==="object"&&b.current)||name===cur;
-    const a=(b&&b.ahead)||0, be=(b&&b.behind)||0;
-    const ab=(a||be)?'<span class="ab">'+(a?'<span class="up">↑'+a+'</span>':"")+(be?'<span class="dn">↓'+be+'</span>':"")+'</span>':"";
-    const it=mkRefItem('<span class="rname">'+esc(name)+'</span>'+ab+'<button class="ref-menu" title="Branch actions" aria-label="Branch actions">⋯</button>', isCur?"current":"");
-    it.dataset.branch=name;
-    it.addEventListener("click",ev=>{ if(ev.target.closest(".ref-menu"))return; if(isCur)return; checkoutBranch(name); });
-    it.addEventListener("contextmenu",ev=>{ ev.preventDefault(); openBranchMenu(name,isCur,it); });
-    $(".ref-menu",it).addEventListener("click",ev=>{ ev.stopPropagation(); openBranchMenu(name,isCur,ev.currentTarget); });
-    L.appendChild(it); });
-  const nb=mkRefItem('<span class="rname nb">＋ New branch…</span>',"new-branch");
-  nb.addEventListener("click",newBranchFlow); L.appendChild(nb);
-  const R=$("#refRemote"); R.innerHTML=""; $("#cntRemote").textContent=remotes.length; let last=null,ci=0;
-  remotes.forEach(rb=>{ const name=typeof rb==="string"?rb:rb.name; const rem=name.split("/")[0];
-    if(rem!==last){ const h=document.createElement("div"); h.className="remote-head"; h.innerHTML="☁ "+esc(rem); R.appendChild(h); last=rem; }
-    R.appendChild(mkRefItem('<span class="dot" style="background:var(--l'+(ci++%7)+')"></span><span class="rname">'+esc(name)+'</span>')); });
-  const T=$("#refTags"); T.innerHTML=""; $("#cntTags").textContent=tags.length;
-  tags.forEach(tg=>{ const name=typeof tg==="string"?tg:tg.name; T.appendChild(mkRefItem('<span class="rname">'+esc(name)+'</span>')); });
-  // top-bar branch pill reflects the REAL HEAD branch + its upstream ahead/behind
+// Sidebar (refs tree + branch menu) is now a Svelte island (src/islands/sidebar).
+// Topbar branch pill stays legacy-owned (a separate future migration) —
+// sidebarCtrl.refresh() calls this after every list_refs fetch instead of
+// touching #pillBranch/#pillAb itself, matching every island's convention of
+// never reaching outside its own mount target.
+function updateBranchPill(cur,locals){
   const pill=$("#pillBranch"), pillAb=$("#pillAb");
-  if(pill){
-    const curB=cur&&local.find(b=>(typeof b==="object"?b.name:b)===cur);
-    pill.textContent=cur||"detached";
-    const a=(curB&&typeof curB==="object"&&curB.ahead)||0, be=(curB&&typeof curB==="object"&&curB.behind)||0;
-    if(pillAb){
-      if(cur&&(a||be)) pillAb.innerHTML="<b>&#8593;"+a+"</b>&#183;<b>&#8595;"+be+"</b>";
-      else pillAb.textContent="";
-    }
+  if(!pill) return;
+  const curB=cur&&locals.find(b=>(typeof b==="object"?b.name:b)===cur);
+  pill.textContent=cur||"detached";
+  const a=(curB&&typeof curB==="object"&&curB.ahead)||0, be=(curB&&typeof curB==="object"&&curB.behind)||0;
+  if(pillAb){
+    if(cur&&(a||be)) pillAb.innerHTML="<b>&#8593;"+a+"</b>&#183;<b>&#8595;"+be+"</b>";
+    else pillAb.textContent="";
   }
-  applyRefFilter();
-}
-function renderSnapshots(){ const box=$("#refSnaps"); if(!box||!IN_TAURI) return;
-  box.innerHTML=""; const snaps=Safety.snaps.slice(0,12);
-  if(!snaps.length){ box.innerHTML='<div class="ref-item"><span class="rname mut">no snapshots yet</span></div>'; return; }
-  snaps.forEach(s=>{ const ago=relTime(s.ts).replace(" ago","");
-    box.appendChild(mkRefItem('<span class="dot" style="background:var(--accent)"></span><span class="rname mono">'+esc((s.sha||"").slice(0,7)||"snapshot")+'</span><span class="ab">'+ago+'</span>')); });
-  applyRefFilter();
-}
-async function checkoutBranch(name){
-  if(!IN_TAURI){ $$("#refLocal .ref-item").forEach(x=>x.classList.remove("current")); Tama.set("hint"); Tama.say("Checked out "+name+" (demo)."); return; }
-  if(checkoutBusy)return; checkoutBusy=true; Tama.set("thinking"); Tama.say("Checking out "+name+"…");
-  try{ const res=await tinvoke("checkout",{path:CUR_REPO,name});
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say("On "+name+" now. にゃ〜",3200); }
-    else Tama.warn((res&&res.message)||("Couldn't check out "+name+" — you may have uncommitted changes."));
-  }catch(e){ Tama.warn("Checkout failed — "+e); console.error(e); } finally{ checkoutBusy=false; } }
-async function newBranchFlow(){
-  const name=(prompt("New branch name (created at HEAD and checked out):")||"").trim(); if(!name) return;
-  if(!IN_TAURI){ Tama.set("hint"); Tama.say("Created "+name+" (demo)."); return; }
-  Tama.set("thinking"); Tama.say("Creating "+name+"…");
-  try{ const res=await tinvoke("create_branch",{path:CUR_REPO,name,checkout:true});
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||("Branch "+name+" created."),3200); }
-    else Tama.warn((res&&res.message)||("Couldn't create "+name+"."));
-  }catch(e){ Tama.warn("Create failed — "+e); console.error(e); } }
-function deleteBranchFlow(name){
-  Tama.set("danger"); Tama.say("Deleting "+name+" — type the branch name to arm it. I pin its tip first.",6000);
-  armDanger({ title:"Delete branch — "+name, steps:false,
-    desc:"This removes the local branch ref. Its tip is pinned to a backup first, so the commits stay recoverable by sha.",
-    lose:'<h5>What happens</h5><ul><li>Removes local branch <code>'+esc(name)+'</code></li><li>Its tip is pinned under <code>refs/gitgui/deleted/…</code> — recover with ＋ New branch → the printed sha</li></ul>',
-    note:"🔁 I pin the branch tip before deleting; ⌘Z restores your CURRENT branch position (not the deleted branch).",
-    name:name, confirmLabel:"Delete branch",
-    onConfirm:async ()=>{ await doDeleteBranch(name,false); } });
-}
-async function doDeleteBranch(name,force){
-  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Deleted "+name+" (demo)."); return; }
-  try{ let res=await tinvoke("delete_branch",{path:CUR_REPO,name,force});
-    if(res&&!res.ok&&!force&&/not (fully )?merged/i.test(res.message||"")){
-      if(confirm(name+" is not fully merged. Force-delete anyway? (the tip is pinned to a backup)")) res=await tinvoke("delete_branch",{path:CUR_REPO,name,force:true});
-      else { Tama.warn("Kept "+name+" — delete cancelled."); return; } }
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||("Deleted "+name+"."),4200); }
-    else Tama.warn((res&&res.message)||("Couldn't delete "+name+"."));
-  }catch(e){ Tama.warn("Delete failed — "+e); console.error(e); } }
-let refMenuEl=null;
-function closeBranchMenu(){ if(refMenuEl){ refMenuEl.remove(); refMenuEl=null; document.removeEventListener("pointerdown",onDocDownMenu,true); } }
-function onDocDownMenu(e){ if(refMenuEl&&!refMenuEl.contains(e.target)) closeBranchMenu(); }
-function openBranchMenu(name,isCurrent,anchor){ closeBranchMenu();
-  const m=document.createElement("div"); m.className="ref-pop";
-  m.innerHTML='<button data-act="checkout"'+(isCurrent?" disabled":"")+'>Checkout</button>'
-    +(isCurrent?"":'<button data-act="rebase">Rebase current branch onto here</button>')
-    +'<button data-act="delete" class="danger"'+(isCurrent?" disabled":"")+'>Delete…</button>';
-  document.body.appendChild(m); refMenuEl=m;
-  const r=anchor.getBoundingClientRect(); m.style.left=Math.min(r.left,innerWidth-168)+"px"; m.style.top=(r.bottom+4)+"px";
-  m.addEventListener("click",ev=>{ const b=ev.target.closest("button"); if(!b||b.disabled)return; const act=b.dataset.act; closeBranchMenu();
-    if(act==="checkout") checkoutBranch(name); else if(act==="delete") deleteBranchFlow(name); else if(act==="rebase") rebaseOntoFlow(name); });
-  setTimeout(()=>document.addEventListener("pointerdown",onDocDownMenu,true),0);
-}
-async function rebaseOntoFlow(name){
-  if(!IN_TAURI){ resolver.openDemo(name,"rebase"); return; }   // ---- design-mode demo ----
-  await resolver.startRebase(CUR_REPO,name);  // ---- real rebase of the current branch onto `name` (Svelte island) ----
 }
 async function pickRepo(){
   if(!IN_TAURI) return;
@@ -1040,16 +713,13 @@ async function pickRepo(){
 function bootEmpty(){
   BACKEND=null;
   CUR_REPO=null;
-  $("#undoCount").textContent="0"; $("#snapCount").textContent="0"; Safety.snaps=[];
-  ["#refLocal","#refRemote","#refTags","#refSnaps"].forEach(s=>{const el=$(s);if(el)el.innerHTML="";});
+  $("#undoCount").textContent="0"; Safety.snaps=[];
+  sidebarCtrl.reset();
   G={N:0,commitLane:[],commitColor:[],isMerge:[],gapStart:[0],gapTop:[],gapBot:[],gapColor:[],refs:[],snapRows:[],snapTs:{}};
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
-  recomputeLayout(); positionTicks(); renderBisect();
-  $("#detail").innerHTML=`<div class="tama-hero"><img class="tama-hero-img" src="${TAMA_IMG.hero}" alt="Tama">
-    <div class="hero-bubble">はじめまして! I'm <b>Tama</b>. Open a Git repository and I'll lay out its whole history in a blink. <span class="jp">にゃ〜♪</span></div>
-    <button class="btn" id="openRepoBtn" style="margin-top:2px">📁 Open a repository…</button>
-    <div class="hero-hint">or click the repo name <b>▾</b> in the top bar</div></div>`;
-  $("#openRepoBtn")?.addEventListener("click",pickRepo);
+  bisectDrawerCtrl.clearLocalMarks();
+  recomputeLayout(); positionTicks();
+  detailCtrl.showEmpty();
   dirty=true;
 }
 $(".repo-pick").addEventListener("click", pickRepo);
@@ -1065,140 +735,12 @@ requestAnimationFrame(tick);
 if(!IN_TAURI) setTimeout(()=>{Tama.event("snapshot.surfaced");Tama.say("Safety Manager armed — I snapshot before every mutation. にゃ〜",4200);},800);
 
 /* ============================================================
-   13) ⌘K COMMAND PALETTE — fuzzy search over loaded commits + refs.
+   13) ⌘K COMMAND PALETTE — now a Svelte island (src/islands/cmdk).
    ============================================================ */
-(function(){
-  const CMD_CAP=50, CMD_BUF=250, REF_DEFAULT=12;
-  const CMD={open:false,_g:null,items:[],refs:[],results:[],toks:[],sel:0};
-  const shortSha=s=>String(s||"").slice(0,8);
-  const byId=id=>document.getElementById(id);
-  const listRows=()=>$$("#cmdkList .cmdk-row");
-
-  function buildCmdIndex(){
-    const out=[], N=G?G.N:0;
-    for(let r=0;r<N;r++){
-      let subject,sha,author;
-      if(BACKEND){ const m=BACKEND.rows[r]; if(!m) continue; subject=m.subject; sha=m.sha; author=(m.an&&m.an.n)||""; }
-      else { subject=msgOf(r); sha=hhex(r); author=AUTHORS[(Math.imul(r,2654435761)>>>5)%AUTHORS.length].n; }
-      out.push({type:"commit",row:r,subject,sha,author,hay:(subject+" "+sha+" "+author).toLowerCase()});
-    }
-    return out;
-  }
-  function buildRefIndex(){
-    const seen=new Set(), out=[], N=G?G.N:0;
-    const norm=t=>t==="tag"?"tag":t==="remote"?"remote":t==="head"?"head":"branch";
-    if(BACKEND){
-      for(let r=0;r<N;r++){ const m=BACKEND.rows[r]; if(!m||!m.refs) continue;
-        for(const rf of m.refs){ if(!rf||seen.has(rf.n)) continue; seen.add(rf.n);
-          out.push({type:"ref",name:rf.n,kind:norm(rf.t),row:r,sha:m.sha}); } }
-    } else {
-      out.push({type:"ref",name:"HEAD",kind:"head",row:0,sha:hhex(0)}); seen.add("HEAD");
-      for(let r=0;r<N;r++){ const g=G.refs[r]; if(!g||seen.has(g.label)) continue; seen.add(g.label);
-        out.push({type:"ref",name:g.label,kind:norm(g.kind),row:r,sha:hhex(r)}); }
-    }
-    return out;
-  }
-
-  const matchToks=(hay,toks)=>{ for(let i=0;i<toks.length;i++) if(hay.indexOf(toks[i])<0) return false; return true; };
-  function cmdScore(it,toks){ let s=0; const subj=it.subject.toLowerCase(), sha=it.sha.toLowerCase();
-    for(const t of toks){ if(sha.startsWith(t)) s-=60; if(subj.startsWith(t)) s-=25; const p=it.hay.indexOf(t); s+=p<0?300:p; }
-    return s+it.row*0.001; }
-
-  function hlEsc(text,toks){ text=String(text);
-    if(!toks||!toks.length) return esc(text);
-    const low=text.toLowerCase(); let at=-1, len=0;
-    for(const t of toks){ const i=low.indexOf(t); if(i>=0 && (at<0||i<at)){ at=i; len=t.length; } }
-    if(at<0) return esc(text);
-    return esc(text.slice(0,at))+"<mark>"+esc(text.slice(at,at+len))+"</mark>"+hlEsc(text.slice(at+len),toks);
-  }
-
-  function cmdFilter(q){
-    q=(q||"").trim().toLowerCase();
-    const toks=q?q.split(/\s+/):[]; CMD.toks=toks;
-    const res=[];
-    if(!toks.length){ for(let i=0;i<CMD.refs.length && res.length<REF_DEFAULT;i++) res.push(CMD.refs[i]); }
-    else { for(let i=0;i<CMD.refs.length && res.length<CMD_CAP;i++){ const rf=CMD.refs[i]; if(matchToks(rf.name.toLowerCase(),toks)) res.push(rf); } }
-    if(res.length<CMD_CAP){
-      const buf=[];
-      for(let i=0;i<CMD.items.length;i++){ const it=CMD.items[i];
-        if(!toks.length){ buf.push(it); if(buf.length>=CMD_CAP) break; }
-        else if(matchToks(it.hay,toks)){ buf.push(it); if(buf.length>=CMD_BUF) break; } }
-      if(toks.length) buf.sort((a,b)=>cmdScore(a,toks)-cmdScore(b,toks));
-      for(let i=0;i<buf.length && res.length<CMD_CAP;i++) res.push(buf[i]);
-    }
-    CMD.results=res; CMD.sel=0; cmdRender();
-  }
-
-  function cmdRender(){
-    const list=byId("cmdkList"), R=CMD.results, toks=CMD.toks;
-    if(!R.length){ list.innerHTML='<div class="cmdk-empty">'+((G&&G.N)?"No matching commits or refs":"No commits loaded — open a repository")+"</div>"; byId("cmdkCount").textContent=""; return; }
-    let h="";
-    for(let i=0;i<R.length;i++){ const it=R[i], on=i===CMD.sel?" on":"";
-      if(it.type==="ref"){
-        h+='<div class="cmdk-row'+on+'" data-i="'+i+'" role="option" aria-selected="'+(i===CMD.sel)+'">'
-          +'<span class="kind '+it.kind+'">'+(it.kind==="head"?"branch":esc(it.kind))+'</span>'
-          +'<div class="main"><div class="ttl">'+hlEsc(it.name,toks)+'</div></div>'
-          +'<span class="sha">'+esc(shortSha(it.sha))+'</span></div>';
-      } else {
-        h+='<div class="cmdk-row'+on+'" data-i="'+i+'" role="option" aria-selected="'+(i===CMD.sel)+'">'
-          +'<span class="kind">commit</span>'
-          +'<div class="main"><div class="ttl">'+hlEsc(it.subject,toks)+'</div><div class="sub">'+hlEsc(it.author,toks)+'</div></div>'
-          +'<span class="sha">'+hlEsc(shortSha(it.sha),toks)+'</span></div>';
-      }
-    }
-    list.innerHTML=h;
-    byId("cmdkCount").textContent=R.length+(R.length>=CMD_CAP?"+":"")+" result"+(R.length===1?"":"s");
-  }
-
-  function cmdSetSel(i){ const n=CMD.results.length; if(!n){ CMD.sel=0; return; }
-    CMD.sel=((i%n)+n)%n;
-    const rows=listRows();
-    for(let j=0;j<rows.length;j++){ const s=j===CMD.sel; rows[j].classList.toggle("on",s); rows[j].setAttribute("aria-selected",s); }
-    if(rows[CMD.sel]) rows[CMD.sel].scrollIntoView({block:"nearest"});
-  }
-
-  function cmdJump(it){ if(!it) return; const row=it.row;
-    cmdClose();
-    if(row==null||row<0||!G||row>=G.N) return;
-    state.scrollTarget=clampScroll(row*layout.rowH-view.cssH*0.4);
-    select(row);
-    try{ cv.focus(); }catch(_){}
-  }
-
-  function cmdOpen(){ if(CMD._g!==G){ CMD.items=buildCmdIndex(); CMD.refs=buildRefIndex(); CMD._g=G; }
-    byId("cmdk").classList.add("on"); byId("cmdk").setAttribute("aria-hidden","false"); CMD.open=true;
-    const inp=byId("cmdkInput"); inp.value=""; cmdFilter(""); requestAnimationFrame(()=>inp.focus());
-  }
-  function cmdClose(){ if(!CMD.open) return; byId("cmdk").classList.remove("on"); byId("cmdk").setAttribute("aria-hidden","true"); CMD.open=false; }
-  function cmdToggle(){ CMD.open?cmdClose():cmdOpen(); }
-
-  const hint=$(".cmd-hint"); if(hint) hint.addEventListener("click",cmdOpen);
-  document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.key.toLowerCase()==="k"){
-    if(!CMD.open && document.querySelector(".scrim.on")) return;   // don't cover an open confirm dialog
-    e.preventDefault(); cmdToggle(); } });
-  byId("cmdkScrim").addEventListener("click",cmdClose);
-  byId("cmdkInput").addEventListener("input",e=>cmdFilter(e.target.value));
-  byId("cmdkInput").addEventListener("keydown",e=>{
-    if(e.key==="ArrowDown"){ e.preventDefault(); cmdSetSel(CMD.sel+1); }
-    else if(e.key==="ArrowUp"){ e.preventDefault(); cmdSetSel(CMD.sel-1); }
-    else if(e.key==="Home"){ e.preventDefault(); cmdSetSel(0); }
-    else if(e.key==="End"){ e.preventDefault(); cmdSetSel(CMD.results.length-1); }
-    else if(e.key==="Enter"){ e.preventDefault(); cmdJump(CMD.results[CMD.sel]); }
-    else if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); cmdClose(); }
-  });
-  const listEl=byId("cmdkList");
-  listEl.addEventListener("click",e=>{ const r=e.target.closest(".cmdk-row"); if(r) cmdJump(CMD.results[+r.dataset.i]); });
-  let _cmdPX=-1,_cmdPY=-1;
-  listEl.addEventListener("mousemove",e=>{
-    if(e.clientX===_cmdPX && e.clientY===_cmdPY) return;   // pointer didn't actually move — don't hijack keyboard nav
-    _cmdPX=e.clientX; _cmdPY=e.clientY;
-    const r=e.target.closest(".cmdk-row"); if(r){ const i=+r.dataset.i; if(i!==CMD.sel) cmdSetSel(i); }
-  });
-})();
+const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>cmdkCtrl.show());
 
 function requestRedraw(){ dirty=true; }
-function focusBisectCurrent(){ if(bisect.cur!=null){ select(bisect.cur); state.scrollTarget=clampScroll(bisect.cur*layout.rowH-view.cssH/2); dirty=true; } }
-function clearBisectMarks(){ bisect.good=bisect.bad=null; bisect.cur=null; bisect.skips.clear(); renderBisect(); dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  syncBisectMarks, focusBisectCurrent, clearBisectMarks, demoBisectStatus, demoBisectMark, renderBisect,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, hhex, msgOf, AUTHORS,
+  fakeAgo, relTime, pickRepo, ensureDrawerOpen, armDanger, updateBranchPill,
   openRepo };

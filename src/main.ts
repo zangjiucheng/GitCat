@@ -14,6 +14,11 @@ import Plumbing from "./islands/plumbing/Plumbing.svelte";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import SetupWizard from "./islands/setupwizard/SetupWizard.svelte";
 import { setupWizardCtrl } from "./islands/setupwizard/setupwizard.svelte.ts";
+import Cmdk from "./islands/cmdk/Cmdk.svelte";
+import Detail from "./islands/detail/Detail.svelte";
+import BisectDrawer from "./islands/bisectdrawer/BisectDrawer.svelte";
+import Sidebar from "./islands/sidebar/Sidebar.svelte";
+import { sidebarCtrl } from "./islands/sidebar/sidebar.svelte.ts";
 import { IN_TAURI } from "./ipc/env";
 import * as bridge from "./legacy/bridge";
 
@@ -34,6 +39,13 @@ if (IN_TAURI) {
 } else {
   setupWizardCtrl.openDemo();
 }
+
+mount(Cmdk, { target: document.body });
+mount(Detail, { target: document.getElementById("detail")! });
+mount(BisectDrawer, { target: document.getElementById("pane-bisect")! });
+
+mount(Sidebar, { target: document.getElementById("sidebarRefs")! });
+sidebarCtrl.refresh(bridge.CUR_REPO as unknown as string);
 
 // Drawer-PANE islands (not modals): mounted straight into their own pane so
 // the existing .pane/.pane.on show/hide + drawer-tabs wiring in legacy/main.ts
