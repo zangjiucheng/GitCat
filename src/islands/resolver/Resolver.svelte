@@ -24,7 +24,7 @@
   <div class="modal resolver">
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" src={resolver.tamaImg} alt="Tama, cautioning" /></div>
-      <div><h3>Cherry-pick hit a conflict</h3><p>{resolver.sub}</p></div>
+      <div><h3>{resolver.title}</h3><p>{resolver.sub}</p></div>
     </div>
     <div class="modal-body">
       <div class="cf-layout">
@@ -67,11 +67,11 @@
         </div>
       </div>
       <div class="backup-note" style="margin-top:12px">
-        &#128257; Snapshot before pick: <code>{resolver.backupRef}</code> &#183; rerere may auto-apply a recorded resolution.
+        &#128257; Snapshot before {resolver.op}: <code>{resolver.backupRef}</code> &#183; rerere may auto-apply a recorded resolution.
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" id="conflictAbort" onclick={() => resolver.abort()}>Abort pick</button>
+      <button class="btn ghost" id="conflictAbort" onclick={() => resolver.abort()}>{resolver.op === "merge" ? "Abort merge" : "Abort pick"}</button>
       <span class="cf-remain mut"
         >{resolver.remainingCount
           ? resolver.remainingCount + " file" + (resolver.remainingCount === 1 ? "" : "s") + " left"

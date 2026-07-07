@@ -27,6 +27,9 @@ vi.mock("../../ipc/bindings", () => ({
     cherryPick: vi.fn(),
     cherryPickContinue: vi.fn(),
     cherryPickAbort: vi.fn(),
+    mergeStart: vi.fn(),
+    mergeContinue: vi.fn(),
+    mergeAbort: vi.fn(),
     conflictStatus: vi.fn(),
     resolveConflictFile: vi.fn(),
   },
@@ -34,7 +37,7 @@ vi.mock("../../ipc/bindings", () => ({
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
-import type { ConflictFile, ConflictStatus, PickResult, ResolveResult } from "../../ipc/bindings";
+import type { ConflictFile, ConflictStatus, MergeResult, PickResult, ResolveResult } from "../../ipc/bindings";
 import { resolver } from "./resolver.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
@@ -48,8 +51,12 @@ function pickResult(partial: Partial<PickResult>): PickResult {
   return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
 }
 
-function conflictStatus(files: ConflictFile[], inProgress = true): ConflictStatus {
-  return { inProgress, op: "cherry-pick", files };
+function mergeResult(partial: Partial<MergeResult>): MergeResult {
+  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
+}
+
+function conflictStatus(files: ConflictFile[], inProgress = true, op = "cherry-pick"): ConflictStatus {
+  return { inProgress, op, files };
 }
 
 function resetResolver() {
@@ -64,6 +71,7 @@ function resetResolver() {
   resolver.remaining = new Set();
   resolver.repo = "";
   resolver.sha = "";
+  resolver.op = "cherry-pick";
 }
 
 beforeEach(() => {
@@ -135,6 +143,136 @@ describe("startPick", () => {
     expect(bridge.tama.warn).toHaveBeenCalled();
     expect(commands.cherryPick).not.toHaveBeenCalled();
     expect(resolver.open).toBe(false);
+  });
+});
+
+describe("startMerge", () => {
+  it("clean result: reloads the graph and closes the modal", async () => {
+    vi.mocked(commands.mergeStart).mockResolvedValueOnce(
+      mergeResult({ state: "clean", message: "Merged." }),
+    );
+
+    await resolver.startMerge("repo1", "sha1");
+
+    expect(commands.mergeStart).toHaveBeenCalledWith("repo1", "sha1");
+    expect(commands.cherryPick).not.toHaveBeenCalled();
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(resolver.open).toBe(false);
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("conflict result: opens the modal, sets op to merge, and populates files from conflict_status", async () => {
+    vi.mocked(commands.mergeStart).mockResolvedValueOnce(
+      mergeResult({
+        ok: false,
+        state: "conflict",
+        conflictedFiles: ["a.ts", "b.ts"],
+        backupRef: "refs/gitgui/backup/z",
+      }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_A, FILE_B], true, "merge")),
+    );
+
+    await resolver.startMerge("repo1", "sha3");
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.busy).toBe(false);
+    expect(resolver.op).toBe("merge");
+    expect(resolver.files).toEqual([FILE_A, FILE_B]);
+    expect(resolver.remaining.size).toBe(2);
+    expect(resolver.backupRef).toBe("refs/gitgui/backup/z");
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+  });
+
+  it("warns via Tama instead of opening the modal without a repo", async () => {
+    await resolver.startMerge("", "sha");
+    expect(bridge.tama.warn).toHaveBeenCalled();
+    expect(commands.mergeStart).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+});
+
+describe("op-dispatch (abort/continue resolve to the op reported by conflict_status)", () => {
+  it("a merge conflict's abort calls mergeAbort, never cherryPickAbort", async () => {
+    vi.mocked(commands.mergeStart).mockResolvedValueOnce(
+      mergeResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_A], true, "merge")),
+    );
+    await resolver.startMerge("repo1", "sha4");
+    expect(resolver.op).toBe("merge");
+
+    vi.mocked(commands.mergeAbort).mockResolvedValueOnce(
+      mergeResult({ state: "clean", message: "Merge aborted." }),
+    );
+
+    await resolver.abort();
+
+    expect(commands.mergeAbort).toHaveBeenCalledWith("repo1");
+    expect(commands.cherryPickAbort).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+
+  it("a merge conflict's continue calls mergeContinue, never cherryPickContinue", async () => {
+    vi.mocked(commands.mergeStart).mockResolvedValueOnce(
+      mergeResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_A], true, "merge")),
+    );
+    await resolver.startMerge("repo1", "sha5");
+
+    vi.mocked(commands.mergeContinue).mockResolvedValueOnce(
+      mergeResult({ state: "clean", message: "Merge committed." }),
+    );
+
+    await resolver.continue();
+
+    expect(commands.mergeContinue).toHaveBeenCalledWith("repo1");
+    expect(commands.cherryPickContinue).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+
+  it("a cherry-pick conflict's abort still calls cherryPickAbort, never mergeAbort (regression)", async () => {
+    vi.mocked(commands.cherryPick).mockResolvedValueOnce(
+      pickResult({ state: "conflict", conflictedFiles: ["a.ts"], backupRef: "refs/gitgui/backup/y" }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A])));
+    await resolver.startPick("repo1", "sha6", false);
+    expect(resolver.op).toBe("cherry-pick");
+
+    vi.mocked(commands.cherryPickAbort).mockResolvedValueOnce(
+      pickResult({ state: "clean", message: "Pick aborted." }),
+    );
+
+    await resolver.abort();
+
+    expect(commands.cherryPickAbort).toHaveBeenCalledWith("repo1");
+    expect(commands.mergeAbort).not.toHaveBeenCalled();
+  });
+
+  it("re-derives op from a live conflict_status refresh (self-describing across take())", async () => {
+    // Started as a cherry-pick optimistically, but the live repo state (as
+    // conflict_status reports it) says merge — refresh() must correct .op.
+    resolver.repo = "repo1";
+    resolver.demo = false;
+    resolver.op = "cherry-pick";
+    resolver.files = [FILE_A];
+    resolver.selected = FILE_A.path;
+    resolver.remaining = new Set([FILE_A.path]);
+
+    vi.mocked(commands.resolveConflictFile).mockResolvedValueOnce({
+      ok: true,
+      remaining: 0,
+      message: "",
+    } satisfies ResolveResult);
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([], true, "merge")));
+
+    await resolver.take("theirs");
+
+    expect(resolver.op).toBe("merge");
   });
 });
 

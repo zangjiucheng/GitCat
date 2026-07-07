@@ -300,9 +300,14 @@ cv.addEventListener("pointermove",(e)=>{
   if(down){
     const dx=p.x-down.x0, dy=p.y-down.y0; if(!down.moved&&Math.hypot(dx,dy)>4)down.moved=true;
     if(down.hit&&down.hit.onDot){ const t=hitTest(p.x,p.y), tRow=t?t.row:null;
-      const legal=legalPick(down.hit.row,tRow);
-      state.drag={source:down.hit.row,x:p.x,y:p.y,target:tRow,legal:legal.ok};
-      updateGhost(down.hit.row,tRow,legal); dirty=true;
+      // Hold Shift while dragging to MERGE the source commit/branch tip into
+      // HEAD instead of cherry-picking it — same gesture, one modifier key
+      // distinguishes the two ops (mirrors e.g. Finder's option-drag-to-copy).
+      // Read live every move so toggling Shift mid-drag updates the ghost.
+      const isMerge=!!e.shiftKey;
+      const legal=isMerge?legalMerge(down.hit.row,tRow):legalPick(down.hit.row,tRow);
+      state.drag={source:down.hit.row,x:p.x,y:p.y,target:tRow,legal:legal.ok,op:isMerge?"merge":"pick"};
+      updateGhost(down.hit.row,tRow,legal,isMerge); dirty=true;
     } else if(down.moved){ state.scrollTarget=clampScroll(down.st0-dy); dirty=true; }
     return;
   }
@@ -314,8 +319,11 @@ function endPointer(e){
   if(sbDrag){sbDrag=null;state.pointerActive=false;return;}
   if(down){
     if(!down.moved&&down.hit) select(down.hit.row);
-    else if(state.drag){const t=hitTest(p.x,p.y), tRow=t?t.row:null, legal=legalPick(state.drag.source,tRow);
-      if(tRow!=null&&legal.ok) cherryPick(state.drag.source,tRow); }
+    else if(state.drag){
+      const isMerge=state.drag.op==="merge", t=hitTest(p.x,p.y), tRow=t?t.row:null;
+      const legal=isMerge?legalMerge(state.drag.source,tRow):legalPick(state.drag.source,tRow);
+      if(tRow!=null&&legal.ok){ if(isMerge) mergeCommit(state.drag.source,tRow); else cherryPick(state.drag.source,tRow); }
+    }
   }
   removeGhost(); state.drag=null; down=null; state.pointerActive=false; dirty=true;
 }
@@ -341,14 +349,25 @@ function legalPick(src,tgt){
   if(tgt>src) return {ok:false,why:"target is an ancestor"};
   return {ok:true,why:"→ "+hhex(tgt)};
 }
+/* merge legality: mirrors legalPick's spirit (same row-order approximation,
+   dropping onto an ancestor or onto itself is illegal) — but unlike
+   cherry-pick, merging a merge commit's tip is perfectly legal, so there is
+   no isMerge(src) rejection here. */
+function legalMerge(src,tgt){
+  if(tgt==null) return {ok:false,why:"drop on a commit"};
+  if(tgt===src) return {ok:false,why:"onto itself"};
+  if(tgt>src) return {ok:false,why:"target is an ancestor"};
+  return {ok:true,why:"⇄ "+hhex(tgt)};
+}
 let ghostEl=null;
-function updateGhost(src,tgt,legal){
+function updateGhost(src,tgt,legal,isMerge){
   if(!ghostEl){ghostEl=document.createElement("div");ghostEl.className="cp-ghost";
     ghostEl.innerHTML='<span class="g-dot"></span><span class="lbl"></span><span class="reason"></span>';document.body.appendChild(ghostEl);}
   const d=state.drag; ghostEl.style.left=(cv.getBoundingClientRect().left+d.x+12)+"px";
   ghostEl.style.top=(cv.getBoundingClientRect().top+d.y+12)+"px";
   ghostEl.classList.toggle("illegal",!legal.ok);
-  $(".lbl",ghostEl).textContent="pick "+hhex(src);
+  ghostEl.classList.toggle("merge",!!isMerge);
+  $(".lbl",ghostEl).textContent=(isMerge?"merge ":"pick ")+hhex(src);
   $(".reason",ghostEl).textContent=legal.ok?legal.why:"✕ "+legal.why;
 }
 function removeGhost(){ if(ghostEl){ghostEl.remove();ghostEl=null;} }
@@ -357,6 +376,11 @@ async function cherryPick(src,dst){
   if(!IN_TAURI){ resolver.openDemo(srcSha); return; }   // ---- design-mode demo ----
   const recordOrigin=!!($("#cpRecordOrigin")&&$("#cpRecordOrigin").checked);
   await resolver.startPick(CUR_REPO, srcSha, recordOrigin);  // ---- real pick onto HEAD (Svelte island) ----
+}
+async function mergeCommit(src,dst){
+  const srcSha=(BACKEND&&BACKEND.rows[src])?BACKEND.rows[src].sha:hhex(src);
+  if(!IN_TAURI){ resolver.openDemo(srcSha,"merge"); return; }   // ---- design-mode demo ----
+  await resolver.startMerge(CUR_REPO, srcSha);  // ---- real merge into HEAD (Svelte island) ----
 }
 
 

@@ -312,6 +312,12 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cp-ghost.illegal{border-color:var(--danger);color:var(--danger)}
 .cp-ghost.illegal .g-dot{background:var(--danger)}
 .cp-ghost .reason{font-weight:500;color:var(--muted);font-size:11px}
+/* Shift+drag = merge (instead of cherry-pick) — same ghost, accent2-tinted so
+   the two gestures read as clearly distinct while dragging. */
+.cp-ghost.merge{border-color:var(--accent2)}
+.cp-ghost.merge .g-dot{background:var(--accent2)}
+.cp-ghost.merge.illegal{border-color:var(--danger);color:var(--danger)}
+.cp-ghost.merge.illegal .g-dot{background:var(--danger)}
 
 /* ============================== DETAIL PANEL ============================== */
 .detail{grid-area:detail;min-height:0;overflow:auto;background:var(--panel);border-left:1px solid var(--border)}
@@ -635,7 +641,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
         <label class="cp-x" title="Record origin: append '(cherry picked from …)' to the commit message"><input type="checkbox" id="cpRecordOrigin"> -x</label>
       </div>
       <div class="delta-readout" id="deltaReadout"></div>
-      <div class="hint">wheel scroll &#183; &#8984;/ctrl+wheel zoom &#183; click select &#183; drag a dot to cherry-pick &#183; &#8984;Z undo</div>
+      <div class="hint">wheel scroll &#183; &#8984;/ctrl+wheel zoom &#183; click select &#183; drag a dot to cherry-pick &#183; shift+drag to merge &#183; &#8984;Z undo</div>
     </div>
   </main>
 

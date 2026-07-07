@@ -165,6 +165,44 @@ async cherryPickAbort(path: string) : Promise<PickResult> {
     return await TAURI_INVOKE("cherry_pick_abort", { path });
 },
 /**
+ * Merge `sha` into the current branch (HEAD). Snapshots FIRST, then runs
+ * `git merge --no-edit --end-of-options <sha>`.
+ * 
+ * A dirty working tree makes git refuse the merge — that surfaces as
+ * `state:"error"` with git's own message; we never force. On a conflict this
+ * resolves to `state:"conflict"` (repo left mid-merge for the resolver), NOT
+ * a failure.
+ * 
+ * JS: `invoke("merge_start", { path, sha })`.
+ */
+async mergeStart(path: string, sha: string) : Promise<MergeResult> {
+    return await TAURI_INVOKE("merge_start", { path, sha });
+},
+/**
+ * Continue an in-progress merge after the user resolved the conflict (files
+ * were `git add`ed by the resolver). Runs `git merge --continue` with
+ * `GIT_EDITOR=true` so it commits the resolution non-interactively.
+ * 
+ * Re-classifies the outcome: `clean` on success, `conflict` again if
+ * conflicts remain unresolved.
+ * 
+ * JS: `invoke("merge_continue", { path })`.
+ */
+async mergeContinue(path: string) : Promise<MergeResult> {
+    return await TAURI_INVOKE("merge_continue", { path });
+},
+/**
+ * Abort an in-progress merge: `git merge --abort` restores the pre-merge
+ * state. This is the escape hatch — it must ALWAYS be able to run, so it
+ * deliberately does NOT take a snapshot (a snapshot failure must never block
+ * the user's way out). Idempotent: "nothing in progress" is a benign success.
+ * 
+ * JS: `invoke("merge_abort", { path })`.
+ */
+async mergeAbort(path: string) : Promise<MergeResult> {
+    return await TAURI_INVOKE("merge_abort", { path });
+},
+/**
  * Start a bisect between a known-bad and one-or-more known-good commits.
  * Snapshots FIRST. JS: invoke("bisect_start", { path, bad, good: [sha,…] }).
  */
@@ -333,6 +371,25 @@ export type GraphData = { n: number; lane: number[]; color: number[]; merge: num
  * to the branch's configured upstream, or `None` when it has no upstream.
  */
 export type LocalBranch = { name: string; sha: string; ahead: number | null; behind: number | null }
+/**
+ * Result of any merge step (initial / continue / abort). Serializes
+ * camelCase: `conflictedFiles`, `backupRef`.
+ */
+export type MergeResult = { ok: boolean; 
+/**
+ * "clean" | "conflict" | "empty" | "error"
+ */
+state: string; 
+/**
+ * Repo-relative paths with unmerged entries — non-empty only when
+ * `state == "conflict"`.
+ */
+conflictedFiles: string[]; message: string; 
+/**
+ * Pre-op safety snapshot ref (present when we snapshotted before mutating),
+ * so the UI can name the snapshot the user can Undo to.
+ */
+backupRef: string | null }
 /**
  * One author/committer identity. `t` is a unix timestamp; the frontend formats it.
  */

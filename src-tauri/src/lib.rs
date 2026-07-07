@@ -4,6 +4,7 @@ pub mod git_pick;
 pub mod git_read;
 pub mod git_write;
 pub mod git_bisect; // M3: git bisect (start / mark good|bad|skip / status / reset)
+pub mod git_merge; // M6 (stage 1): merge (drag-onto-HEAD) + continue / abort
 pub mod layout;
 pub mod model;
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
@@ -37,6 +38,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_pick::cherry_pick,
         git_pick::cherry_pick_continue,
         git_pick::cherry_pick_abort,
+        // Merge (M6 stage 1): drag-onto-HEAD + continue / abort
+        git_merge::merge_start,
+        git_merge::merge_continue,
+        git_merge::merge_abort,
         // Bisect (M3): start / mark good|bad|skip / status / reset
         git_bisect::bisect_start,
         git_bisect::bisect_mark,

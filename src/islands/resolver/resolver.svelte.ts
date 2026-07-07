@@ -1,17 +1,46 @@
-// Cherry-pick conflict resolver — controller (Svelte 5 runes singleton).
+// Conflict resolver — controller (Svelte 5 runes singleton).
 //
-// Owns the resolver's UI state + the whole cherry-pick outcome flow. The legacy
-// canvas-drag handler calls `resolver.startPick(...)` (real) or `openDemo(...)`
-// (browser design mode); the modal buttons call the async methods below. All
-// backend calls go through the typed `ipc` layer; cross-cutting UI effects
-// (graph reload, mascot, cheer) go through the legacy `bridge`.
+// Owns the resolver's UI state + the whole cherry-pick/merge outcome flow. The
+// legacy canvas-drag handler calls `resolver.startPick(...)` (cherry-pick) or
+// `resolver.startMerge(...)` (merge) for a real op, or `openDemo(...)` (browser
+// design mode); the modal buttons call the async methods below. All backend
+// calls go through the typed `ipc` layer; cross-cutting UI effects (graph
+// reload, mascot, cheer) go through the legacy `bridge`.
+//
+// ── op-dispatch design ──────────────────────────────────────────────────────
+// One resolver instance serves BOTH cherry-pick and merge conflicts (rebase is
+// a planned follow-up: conflict.rs's op-allowlist already fails closed for it,
+// see that module's comment). There are two entry points — `startPick` (used
+// by the existing cherry-pick drag handler, unchanged signature) and the new
+// `startMerge` — because each op's *start* command takes different args
+// (cherry-pick's `recordOrigin` has no merge equivalent). Both funnel into the
+// SAME shared `applyOutcome` + modal state (`.open`, `.files`, `.selected`,
+// …), so there is exactly one conflict-resolution UI.
+//
+// `abort()`/`continue()` do NOT remember "which entry point started this" —
+// they dispatch on `.op`, which is re-derived from the LIVE `conflict_status`
+// response every time `refresh()` runs (on open, and after every `take()`/
+// partial `continue()`). This is deliberately more robust than trusting
+// in-memory "which button did I click" state: even if the app were restarted
+// mid-conflict, re-opening the resolver and reading `op` from disk state would
+// still resolve to the right underlying command pair. `startPick`/`startMerge`
+// only set `.op` OPTIMISTICALLY (so the very first conflict banner reads
+// correctly before any `conflict_status` round-trip has happened); the first
+// `refresh()` inside `openConflict` immediately overwrites it with the
+// authoritative value.
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
-import type { ConflictFile, PickResult } from "../../ipc/bindings";
+import type { ConflictFile, MergeResult, PickResult } from "../../ipc/bindings";
 
 // specta generates `side: string`; keep the precise union at the call boundary.
 type ConflictSide = "ours" | "theirs";
+
+// The ops this resolver can drive end-to-end (has *_continue/*_abort wired).
+// Mirrors conflict.rs's resolve_conflict_file allowlist — keep them in sync.
+type ResolverOp = "cherry-pick" | "merge";
+
+type OpResult = PickResult | MergeResult;
 
 const FAKE = [
   {
@@ -21,6 +50,61 @@ const FAKE = [
     theirs: "const ttl = 1800;\nrefresh(token, opts);",
   },
 ];
+
+// One dispatch entry per op: which commands `abort()`/`continue()` call.
+const OPS: Record<ResolverOp, {
+  abort: (repo: string) => Promise<OpResult>;
+  continueOp: (repo: string) => Promise<OpResult>;
+}> = {
+  "cherry-pick": { abort: commands.cherryPickAbort, continueOp: commands.cherryPickContinue },
+  merge: { abort: commands.mergeAbort, continueOp: commands.mergeContinue },
+};
+
+// Op-flavored copy (modal title, banners, fallback messages). Keeping these
+// keyed by op — rather than scattered ternaries — is what makes `applyOutcome`
+// /`openConflict`/`abort`/`continue` op-agnostic below.
+const MSG: Record<ResolverOp, {
+  title: string;
+  verb: string; // "Cherry-pick" | "Merge" — for the default error fallback
+  clean: (sha: string) => string;
+  empty: string;
+  conflictBanner: (sha: string, n: number) => string;
+  cheer: string;
+  abortMsg: string;
+  continueSay: string;
+  continueCheer: string;
+}> = {
+  "cherry-pick": {
+    title: "Cherry-pick hit a conflict",
+    verb: "Cherry-pick",
+    clean: (sha) => "Cherry-picked " + (sha || "") + ".",
+    empty: "Already applied — nothing to pick.",
+    conflictBanner: (sha, n) =>
+      n
+        ? "Picking " + (sha || "the commit") + " conflicts in " + n + " file" + (n === 1 ? "" : "s") +
+          ". Pick a side per file, then Continue — or Abort."
+        : "Cherry-pick of " + (sha || "the commit") + " needs review — resolve, then Continue, or Abort.",
+    cheer: 'Cherry-pick applied. <span class="jp">よし!</span>',
+    abortMsg: "Pick aborted — HEAD unchanged.",
+    continueSay: "Conflict resolved — cherry-pick committed.",
+    continueCheer: 'Conflict resolved — pick committed. <span class="jp">よし!</span>',
+  },
+  merge: {
+    title: "Merge hit a conflict",
+    verb: "Merge",
+    clean: (sha) => "Merged " + (sha || "") + ".",
+    empty: "Already up to date — nothing to merge.",
+    conflictBanner: (sha, n) =>
+      n
+        ? "Merging " + (sha || "the commit") + " conflicts in " + n + " file" + (n === 1 ? "" : "s") +
+          ". Pick a side per file, then Continue — or Abort."
+        : "Merge of " + (sha || "the commit") + " needs review — resolve, then Continue, or Abort.",
+    cheer: 'Merge applied. <span class="jp">よし!</span>',
+    abortMsg: "Merge aborted — HEAD unchanged.",
+    continueSay: "Conflict resolved — merge committed.",
+    continueCheer: 'Conflict resolved — merge committed. <span class="jp">よし!</span>',
+  },
+};
 
 class ResolverState {
   open = $state(false);
@@ -32,6 +116,11 @@ class ResolverState {
   files = $state<ConflictFile[]>([]);
   selected = $state<string | null>(null);
   remaining = $state<Set<string>>(new Set()); // reassigned, never mutated in place (Set isn't deep-proxied)
+  // The in-progress op driving this conflict, e.g. "cherry-pick" | "merge".
+  // Set optimistically by startPick/startMerge/openDemo; re-derived
+  // authoritatively from conflict_status().op on every refresh() — see the
+  // module doc's "op-dispatch design" note above.
+  op = $state<ResolverOp>("cherry-pick");
 
   sha = "";
   repo = "";
@@ -45,6 +134,10 @@ class ResolverState {
   }
   get remainingCount(): number {
     return this.remaining.size;
+  }
+  // Modal title — "Cherry-pick hit a conflict" | "Merge hit a conflict".
+  get title(): string {
+    return MSG[this.op].title;
   }
 
   select(path: string) {
@@ -61,7 +154,7 @@ class ResolverState {
     this.reset();
   }
 
-  // ── real entry (from the canvas drag handler) ─────────────────────────────
+  // ── real entries (from the canvas drag handler) ────────────────────────────
   async startPick(repo: string, sha: string, recordOrigin: boolean) {
     if (this.busy) return;
     if (!repo) {
@@ -69,6 +162,7 @@ class ResolverState {
       return;
     }
     this.demo = false;
+    this.op = "cherry-pick";
     this.repo = repo;
     this.busy = true;
     bridge.tama.event("mutation.caution", { count: 1 });
@@ -82,54 +176,82 @@ class ResolverState {
     }
   }
 
-  // Route a cherry_pick / cherry_pick_continue PickResult to the UI.
-  private async applyOutcome(res: PickResult, sha: string) {
+  // Drag-a-commit/branch-tip-onto-HEAD merge entry (mirrors startPick).
+  async startMerge(repo: string, sha: string) {
+    if (this.busy) return;
+    if (!repo) {
+      bridge.tama.warn("Open a repository first.");
+      return;
+    }
+    this.demo = false;
+    this.op = "merge";
+    this.repo = repo;
+    this.busy = true;
+    bridge.tama.event("mutation.caution", { count: 1 });
+    try {
+      const res = await commands.mergeStart(repo, sha);
+      await this.applyOutcome(res, sha);
+    } catch (e) {
+      bridge.tama.warn("Merge failed — " + e);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  // Route a start/continue result (PickResult or MergeResult — same shape) to
+  // the UI, using `.op`'s copy for messages.
+  private async applyOutcome(res: OpResult, sha: string) {
+    const msg = MSG[this.op];
     switch (res.state) {
       case "clean":
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.event("snapshot.surfaced");
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Cherry-picked " + (sha || "") + ".", 4200);
-        bridge.cheer('Cherry-pick applied. <span class="jp">よし!</span>');
+        bridge.tama.say(res.message || msg.clean(sha || ""), 4200);
+        bridge.cheer(msg.cheer);
         break;
       case "empty":
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.set("hint");
-        bridge.tama.say(res.message || "Already applied — nothing to pick.", 4200);
+        bridge.tama.say(res.message || msg.empty, 4200);
         break;
       case "conflict":
         await this.openConflict(res, sha);
         break;
       default: // "error"
-        bridge.tama.warn(res.message || "Cherry-pick could not start.");
+        bridge.tama.warn(res.message || msg.verb + " could not start.");
         break;
     }
   }
 
-  private async openConflict(res: PickResult, sha: string) {
+  private async openConflict(res: OpResult, sha: string) {
     this.sha = sha || "";
     this.reset();
     this.tamaImg = bridge.TAMA_IMG.alarm;
     const n = res.conflictedFiles ? res.conflictedFiles.length : 0;
-    this.sub = n
-      ? "Picking " + (sha || "the commit") + " conflicts in " + n + " file" + (n === 1 ? "" : "s") +
-        ". Pick a side per file, then Continue — or Abort."
-      : "Cherry-pick of " + (sha || "the commit") + " needs review — resolve, then Continue, or Abort.";
+    this.sub = MSG[this.op].conflictBanner(sha, n);
     if (res.backupRef) this.backupRef = res.backupRef;
     await this.refresh();
     this.open = true;
   }
 
-  // Pull authoritative unmerged files. conflict_status returns Result<T,E> via
-  // the generated client — read r.data on ok, log r.error otherwise.
+  // Pull authoritative unmerged files (AND the authoritative in-progress op —
+  // see the module doc). conflict_status returns Result<T,E> via the
+  // generated client — read r.data on ok, log r.error otherwise.
   private async refresh() {
     let files: ConflictFile[] = [];
     try {
       const r = await commands.conflictStatus(this.repo);
-      if (r.status === "ok") files = Array.isArray(r.data.files) ? r.data.files : [];
-      else console.error("conflict_status", r.error);
+      if (r.status === "ok") {
+        files = Array.isArray(r.data.files) ? r.data.files : [];
+        // Re-derive `.op` from live repo state. Guarded to a known op so an
+        // unsupported state (e.g. "revert"/"rebase"/"none") can never leave
+        // `.op` pointing at a command pair that doesn't exist — abort/continue
+        // would then fall back to the last-known-good op instead of throwing.
+        if (r.data.op === "cherry-pick" || r.data.op === "merge") this.op = r.data.op;
+      } else console.error("conflict_status", r.error);
     } catch (e) {
       console.error("conflict_status", e);
     }
@@ -165,18 +287,18 @@ class ResolverState {
     if (this.demo) {
       this.close();
       bridge.tama.set("hint");
-      bridge.tama.say("Pick aborted — HEAD unchanged.");
+      bridge.tama.say(MSG[this.op].abortMsg);
       return;
     }
     if (this.busy) return;
     this.busy = true;
     try {
-      const r = await commands.cherryPickAbort(this.repo);
+      const r = await OPS[this.op].abort(this.repo);
       if (r && r.state === "clean") {
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.set("hint");
-        bridge.tama.say(r.message || "Pick aborted — HEAD unchanged.");
+        bridge.tama.say(r.message || MSG[this.op].abortMsg);
       } else {
         bridge.tama.warn((r && r.message) || "Abort failed — try again, or abort from the command line.");
       }
@@ -191,14 +313,14 @@ class ResolverState {
     if (this.demo) {
       this.close();
       bridge.tama.set("celebrate");
-      bridge.tama.say("Conflict resolved — cherry-pick committed.");
-      bridge.cheer('Conflict resolved — pick committed. <span class="jp">よし!</span>');
+      bridge.tama.say(MSG[this.op].continueSay);
+      bridge.cheer(MSG[this.op].continueCheer);
       return;
     }
     if (this.busy) return;
     this.busy = true;
     try {
-      const r = await commands.cherryPickContinue(this.repo);
+      const r = await OPS[this.op].continueOp(this.repo);
       if (r.state === "conflict") {
         await this.refresh();
         bridge.tama.warn(r.message || "Still conflicted — resolve the remaining files.");
@@ -213,12 +335,16 @@ class ResolverState {
   }
 
   // ── design-mode demo (browser, no Tauri) ──────────────────────────────────
-  openDemo(sha: string) {
+  openDemo(sha: string, kind: ResolverOp = "cherry-pick") {
     this.demo = true;
+    this.op = kind;
     this.sha = sha;
     this.tamaImg = bridge.TAMA_IMG.alarm;
     this.backupRef = "refs/gitgui/backup/…demo";
-    this.sub = "Picking " + sha + " onto HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed.";
+    this.sub =
+      kind === "merge"
+        ? "Merging " + sha + " into HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed."
+        : "Picking " + sha + " onto HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed.";
     this.files = FAKE.map((f) => ({ ...f }));
     this.selected = FAKE[0].path;
     this.remaining = new Set([FAKE[0].path]);

@@ -192,16 +192,22 @@ pub fn resolve_conflict_file(path: String, file: String, side: String) -> Resolv
         return ResolveResult::err(e);
     }
 
-    // Guard: only resolve inside a cherry-pick — the one op GitCat snapshots
-    // (git_pick::cherry_pick) and can Abort/Continue. cherry_pick_abort/continue
-    // are gated on CHERRY_PICK_HEAD, so a merge/rebase/revert conflict could be
-    // neither backed out nor advanced from the app — never mutate inside one.
+    // Guard: only resolve inside an op GitCat snapshots AND can Abort/Continue
+    // from the app — cherry-pick (git_pick) and merge (git_merge). Their
+    // *_abort/*_continue commands are gated on CHERRY_PICK_HEAD/MERGE_HEAD
+    // respectively, so any OTHER op (rebase, revert) could be neither backed
+    // out nor advanced from the app — never mutate inside one.
+    //
+    // NOTE: this is intentionally an allowlist, not a denylist, so an op that
+    // doesn't (yet) have app-level continue/abort support fails closed. Rebase
+    // is a planned follow-up milestone — add "rebase" here when git_rebase's
+    // rebase_continue/rebase_abort land.
     match Repository::open(&path) {
         Ok(repo) => {
             let op = op_name(repo.state());
-            if op != "cherry-pick" {
+            if op != "cherry-pick" && op != "merge" {
                 return ResolveResult::err(format!(
-                    "Not inside a cherry-pick (repository state: {op}). Resolve {op} \
+                    "Not inside a cherry-pick or merge (repository state: {op}). Resolve {op} \
                      conflicts with git on the command line."
                 ));
             }
