@@ -47,6 +47,19 @@ impl TempRepo {
         repo.must(&["init", "-q", "-b", "main"]);
         // CRITICAL: without this, a commit hangs forever on a GPG passphrase prompt.
         repo.must(&["config", "commit.gpgsign", "false"]);
+        // CRITICAL: repo-LOCAL identity, independent of any GIT_AUTHOR_*/GIT_COMMITTER_*
+        // env vars (see `git()` below) or the machine's global/system git config. Code
+        // under test (e.g. git_pick::cherry_pick_continue) shells out to git directly
+        // and sets no identity env vars of its own — in real usage that's fine, because
+        // a real user's global config already has one. But on a bare CI runner there is
+        // no global config, and git's last-resort GECOS-based fallback can itself resolve
+        // to an EMPTY name (observed on a GitHub Actions runner), which git hard-rejects:
+        // "Committer identity unknown ... fatal: empty ident name ... not allowed". Local
+        // config sits above that fallback and below explicit env vars in git's identity
+        // resolution, so this makes every throwaway repo self-sufficient regardless of
+        // the host's global config or GECOS data.
+        repo.must(&["config", "user.name", "GitCat Test"]);
+        repo.must(&["config", "user.email", "test@gitcat.example"]);
         repo
     }
 
