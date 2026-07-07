@@ -1,4 +1,5 @@
-import { defineConfig } from "vite";
+/// <reference types="vitest/config" />
+import { defineConfig } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
 // @ts-expect-error process is a nodejs global
@@ -29,5 +30,13 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+  },
+
+  // Vitest — Svelte 5 islands (src/islands/**) run under jsdom. See
+  // src/islands/**/*.svelte.test.ts for the controller test suites.
+  test: {
+    environment: "jsdom",
+    globals: false,
+    include: ["src/**/*.{test,spec}.ts"],
   },
 }));
