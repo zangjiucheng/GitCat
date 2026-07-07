@@ -66,10 +66,12 @@ class SetupWizardState {
   }
 
   backToWelcome() {
+    if (this.busy) return; // don't jump steps under an in-flight validate/save/open
     this.step = "welcome";
   }
 
   backToPick() {
+    if (this.busy) return; // don't jump steps under an in-flight validate/save/open
     this.identity = null;
     this.step = "pick";
   }
@@ -141,6 +143,7 @@ class SetupWizardState {
   }
 
   skipIdentity() {
+    if (this.busy) return; // don't jump to done under an in-flight saveIdentity
     this.step = "done";
   }
 
@@ -200,6 +203,10 @@ class SetupWizardState {
 
   // ── skippable at any step ────────────────────────────────────────────────
   skip() {
+    // Honor the re-entrancy lock like the Escape handler: dismissing mid-flight
+    // would let a resolving validate()/openRepo() reopen or jump the wizard
+    // after the user already chose to leave.
+    if (this.busy) return;
     this.resetWizard();
   }
 

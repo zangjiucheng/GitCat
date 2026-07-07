@@ -87,16 +87,16 @@
         <button class="btn ghost" onclick={() => setupWizardCtrl.skip()}>Skip</button>
         <button class="btn" onclick={() => setupWizardCtrl.toPick()}>Get started</button>
       {:else if setupWizardCtrl.step === "pick"}
-        <button class="btn ghost" onclick={() => setupWizardCtrl.skip()}>Skip</button>
-        <button class="btn ghost" onclick={() => setupWizardCtrl.backToWelcome()}>Back</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>Skip</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.backToWelcome()}>Back</button>
         <button class="btn" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.pickDirectory()}>Choose folder&#8230;</button>
       {:else if setupWizardCtrl.step === "identity"}
-        <button class="btn ghost" onclick={() => setupWizardCtrl.skip()}>Skip setup</button>
-        <button class="btn ghost" onclick={() => setupWizardCtrl.backToPick()}>Back</button>
-        <button class="btn ghost" onclick={() => setupWizardCtrl.skipIdentity()}>Not now</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>Skip setup</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.backToPick()}>Back</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skipIdentity()}>Not now</button>
         <button class="btn" disabled={!setupWizardCtrl.canSave} onclick={() => setupWizardCtrl.saveIdentity()}>Save &amp; continue</button>
       {:else if setupWizardCtrl.step === "done"}
-        <button class="btn ghost" onclick={() => setupWizardCtrl.skip()}>Skip</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>Skip</button>
         <button class="btn" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.finish()}>Open repository &#8594;</button>
       {/if}
     </div>
