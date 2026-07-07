@@ -1,0 +1,99 @@
+<script lang="ts">
+  import { resolver } from "./resolver.svelte.ts";
+  import * as bridge from "../../legacy/bridge";
+  import { IN_TAURI } from "../../ipc/commands";
+
+  // ext -> highlight grammar key (was langForConflict)
+  function langFor(path: string): string {
+    const ext = (path || "").split(".").pop()!.toLowerCase();
+    return ["ts", "tsx", "js", "jsx", "mjs", "cjs"].includes(ext) ? "ts" : "generic";
+  }
+  const lines = (txt: string) => (txt || "").split("\n");
+
+  // Escape closes only a design-mode (browser) resolver — never a live real pick.
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key !== "Escape" || !resolver.open) return;
+    if (IN_TAURI) return; // don't strand a live pick — use Abort
+    resolver.close();
+  }
+</script>
+
+<svelte:window on:keydown={onKeydown} />
+
+<div class="scrim" id="conflictScrim" class:on={resolver.open}>
+  <div class="modal resolver">
+    <div class="modal-head">
+      <div class="modal-tama"><img class="tama-pic" src={resolver.tamaImg} alt="Tama, cautioning" /></div>
+      <div><h3>Cherry-pick hit a conflict</h3><p>{resolver.sub}</p></div>
+    </div>
+    <div class="modal-body">
+      <div class="cf-layout">
+        <div class="cf-files">
+          {#each resolver.files as f (f.path)}
+            {@const resolved = !resolver.remaining.has(f.path)}
+            <div
+              class="cf-file"
+              class:sel={f.path === resolver.selected}
+              class:done={resolved}
+              role="button"
+              tabindex="0"
+              onclick={() => resolver.select(f.path)}
+              onkeydown={(e) => (e.key === "Enter" || e.key === " ") && resolver.select(f.path)}
+            >
+              <span class="cf-mk">{resolved ? "✓" : "●"}</span><span class="cf-name">{f.path}</span>
+            </div>
+          {/each}
+        </div>
+        <div class="cf-main">
+          <div class="cf-actions">
+            <span class="cf-cur">{resolver.current?.path ?? ""}</span>
+            <span class="cf-take">
+              <button class="btn" disabled={!resolver.currentLive} onclick={() => resolver.take("ours")}>Take ours</button
+              ><button class="btn" disabled={!resolver.currentLive} onclick={() => resolver.take("theirs")}>Take theirs</button>
+            </span>
+          </div>
+          <div class="three-way" id="cfThree">
+            {#if resolver.current}
+              {@const lang = langFor(resolver.current.path)}
+              {@render col("ours", "Ours (HEAD)", resolver.current.ours, lang)}
+              {@render col("", "Base", resolver.current.base, lang)}
+              {@render col("theirs", "Theirs (picked)", resolver.current.theirs, lang)}
+            {:else}
+              <div class="tw-col" style="grid-column:1/4;padding:14px">
+                <span class="mut">All files resolved — press Continue &amp; commit.</span>
+              </div>
+            {/if}
+          </div>
+        </div>
+      </div>
+      <div class="backup-note" style="margin-top:12px">
+        &#128257; Snapshot before pick: <code>{resolver.backupRef}</code> &#183; rerere may auto-apply a recorded resolution.
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" id="conflictAbort" onclick={() => resolver.abort()}>Abort pick</button>
+      <span class="cf-remain mut"
+        >{resolver.remainingCount
+          ? resolver.remainingCount + " file" + (resolver.remainingCount === 1 ? "" : "s") + " left"
+          : "all resolved"}</span
+      >
+      <button
+        class="btn"
+        style="background:var(--accent2);border-color:var(--accent2)"
+        disabled={resolver.remainingCount > 0}
+        onclick={() => resolver.continue()}>Continue &amp; commit</button
+      >
+    </div>
+  </div>
+</div>
+
+{#snippet col(cls: string, title: string, txt: string, lang: string)}
+  <div class="tw-col {cls}">
+    <h6>{title}</h6>
+    {#each lines(txt) as line}
+      <div class="ln"><code>{@html bridge.highlight(line, lang)}</code></div>
+    {:else}
+      <div class="ln"><span class="mut">— empty —</span></div>
+    {/each}
+  </div>
+{/snippet}
