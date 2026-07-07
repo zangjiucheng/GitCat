@@ -1,3 +1,5 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>GitCat — Main Graph Shell</title>
 <style>
 /* ============================================================
@@ -1460,6 +1462,7 @@ function tick(now){
    11) BOOT
    ============================================================ */
 function loadGraph(N){
+  resize(); // ensure the canvas matches the current wrap size (cold Tauri windows can report 0×0 at boot)
   const t0=performance.now(); let NN, ms;
   if(BACKEND){ const g=BACKEND;
     const refs=g.rows.map(row=> row.refs.length ? {label:row.refs[0].n,
