@@ -73,7 +73,7 @@ pub fn run_git(repo: &str, args: &[&str]) -> Result<GitOut, String> {
 
 /// One backup snapshot, as shown in the ribbon / Snapshots group. `reference`
 /// serializes as `"ref"` for the frontend.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     #[serde(rename = "ref")]
@@ -84,7 +84,7 @@ pub struct Snapshot {
 }
 
 /// Result of a global undo.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UndoResult {
     pub ok: bool,
@@ -404,6 +404,7 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
+#[specta::specta]
 pub fn create_snapshot(path: String) -> Result<Snapshot, String> {
     let repo = open(&path)?;
     let ref_name = snapshot(&repo)?;
@@ -415,11 +416,13 @@ pub fn create_snapshot(path: String) -> Result<Snapshot, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_snapshots(path: String) -> Result<Vec<Snapshot>, String> {
     snapshots(&open(&path)?)
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn undo_last(path: String) -> Result<UndoResult, String> {
     undo(&open(&path)?)
 }

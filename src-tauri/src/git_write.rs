@@ -26,7 +26,7 @@ use serde::Serialize;
 
 /// Uniform result of a write command. `ok:false` carries git's stderr (trimmed)
 /// or a validation/precondition message.
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WriteResult {
     pub ok: bool,
@@ -47,7 +47,7 @@ impl WriteResult {
 
 /// A local branch row for the data-driven sidebar. `ahead`/`behind` are relative
 /// to the branch's configured upstream, or `None` when it has no upstream.
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalBranch {
     pub name: String,
@@ -57,7 +57,7 @@ pub struct LocalBranch {
 }
 
 /// A remote-tracking branch or a tag: just a name and the commit it resolves to.
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SimpleRef {
     pub name: String,
@@ -66,7 +66,7 @@ pub struct SimpleRef {
 
 /// Everything the sidebar needs. `head` is the current branch shorthand, or
 /// `None` when HEAD is detached or unborn.
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RefList {
     pub head: Option<String>,
@@ -200,6 +200,7 @@ fn open_repo(path: &str) -> Result<Repository, WriteResult> {
 /// Tauri command: list local branches (+ ahead/behind vs upstream), remote
 /// branches, and tags, plus the current branch shorthand. Read-only (git2).
 #[tauri::command]
+#[specta::specta]
 pub fn list_refs(path: String) -> Result<RefList, String> {
     list_refs_inner(&path).map_err(|e| e.message().to_string())
 }
@@ -279,6 +280,7 @@ fn list_refs_inner(path: &str) -> Result<RefList, git2::Error> {
 /// `start_point` is an optional commit-ish; defaults to HEAD when omitted.
 /// JS call: `invoke("create_branch", { path, name, startPoint?, checkout? })`.
 #[tauri::command]
+#[specta::specta]
 pub fn create_branch(
     path: String,
     name: String,
@@ -331,6 +333,7 @@ pub fn create_branch(
 /// clobbered is surfaced as `ok:false` with git's message — we never force.
 /// JS call: `invoke("checkout", { path, name })`.
 #[tauri::command]
+#[specta::specta]
 pub fn checkout(path: String, name: String) -> WriteResult {
     if let Err(e) = validate_branch_name(&name) {
         return WriteResult::err(e);
@@ -362,6 +365,7 @@ pub fn checkout(path: String, name: String) -> WriteResult {
 /// restores HEAD only (full-repo ref restore comes later).
 /// JS call: `invoke("delete_branch", { path, name, force })`.
 #[tauri::command]
+#[specta::specta]
 pub fn delete_branch(path: String, name: String, force: bool) -> WriteResult {
     if let Err(e) = validate_branch_name(&name) {
         return WriteResult::err(e);
@@ -417,6 +421,7 @@ pub fn delete_branch(path: String, name: String, force: bool) -> WriteResult {
 /// existing target. Works on the current branch (git updates the HEAD symref).
 /// JS call: `invoke("rename_branch", { path, from, to })`.
 #[tauri::command]
+#[specta::specta]
 pub fn rename_branch(path: String, from: String, to: String) -> WriteResult {
     if let Err(e) = validate_branch_name(&from) {
         return WriteResult::err(e);

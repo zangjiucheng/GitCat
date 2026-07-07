@@ -7,9 +7,12 @@
 // `focusBisectCurrent`, `requestRedraw` is implicit in those) after each step.
 // The legacy drawer arms good/bad rows and calls `bisectCtrl.start/openDemo`.
 
-import * as ipc from "../../ipc/commands";
+import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
-import type { BisectStatus, BisectTerm } from "../../ipc/types";
+import type { BisectStatus } from "../../ipc/bindings";
+
+// specta generates `term: string`; keep the precise union at the call boundary.
+type BisectTerm = "good" | "bad" | "skip";
 
 function escHtml(s: string): string {
   return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -86,7 +89,7 @@ class BisectState {
   private async refresh() {
     let st: BisectStatus | null = null;
     try {
-      st = await ipc.bisectStatus(this.repo);
+      st = await commands.bisectStatus(this.repo);
     } catch (e) {
       console.error("bisect_status", e);
     }
@@ -109,7 +112,7 @@ class BisectState {
     bridge.tama.set("thinking");
     bridge.tama.say("Starting bisect between " + goodSha + " and " + badSha + "…");
     try {
-      const st = await ipc.bisectStart(repo, badSha, [goodSha]); // snapshots + checks out midpoint
+      const st = await commands.bisectStart(repo, badSha, [goodSha]); // snapshots + checks out midpoint
       if (!st || st.ok === false) {
         bridge.tama.warn("Couldn't start bisect — " + ((st && st.message) || "unknown error"));
         return;
@@ -136,7 +139,7 @@ class BisectState {
     bridge.tama.set("thinking");
     bridge.tama.say("");
     try {
-      const st = await ipc.bisectMark(this.repo, term); // HEAD moves (or converges)
+      const st = await commands.bisectMark(this.repo, term); // HEAD moves (or converges)
       await bridge.reloadGraph(true); // rebuild rows
       await this.refresh();
       if (st && st.ok === false) bridge.tama.warn("Bisect mark failed — " + (st.message || "try again."));
@@ -162,7 +165,7 @@ class BisectState {
     }
     this.busy = true;
     try {
-      const r = await ipc.bisectReset(this.repo); // restores original HEAD/branch
+      const r = await commands.bisectReset(this.repo); // restores original HEAD/branch
       if (r && r.ok === false) {
         bridge.tama.warn("Bisect reset failed — " + (r.message || "HEAD still detached; clean the tree and retry."));
         return;

@@ -20,6 +20,7 @@ const DEFAULT_LIMIT: usize = 50_000;
 
 /// Tauri command wrapper — see [`build_graph`].
 #[tauri::command]
+#[specta::specta]
 pub fn load_graph(path: String, limit: Option<usize>) -> Result<GraphData, String> {
     build_graph(&path, limit.unwrap_or(DEFAULT_LIMIT))
 }
@@ -75,6 +76,7 @@ pub fn build_graph(path: &str, limit: usize) -> Result<GraphData, String> {
 /// for a single commit. Diffs the commit tree against its FIRST parent (empty
 /// tree for a root commit; first parent for a merge). Read-only.
 #[tauri::command]
+#[specta::specta]
 pub fn commit_detail(path: String, sha: String) -> Result<CommitDetail, String> {
     commit_detail_inner(&path, &sha).map_err(|e| e.message().to_string())
 }

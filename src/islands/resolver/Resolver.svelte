@@ -1,7 +1,7 @@
 <script lang="ts">
   import { resolver } from "./resolver.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import { IN_TAURI } from "../../ipc/commands";
+  import { IN_TAURI } from "../../ipc/env";
 
   // ext -> highlight grammar key (was langForConflict)
   function langFor(path: string): string {

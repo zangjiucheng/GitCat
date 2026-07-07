@@ -33,7 +33,7 @@ use serde::Serialize;
 
 /// Result of any cherry-pick step (initial / continue / abort). Serializes
 /// camelCase: `conflictedFiles`, `backupRef`.
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PickResult {
     pub ok: bool,
@@ -269,6 +269,7 @@ fn classify(
 ///
 /// JS: `invoke("cherry_pick", { path, sha, recordOrigin? })`.
 #[tauri::command]
+#[specta::specta]
 pub fn cherry_pick(path: String, sha: String, record_origin: Option<bool>) -> PickResult {
     if let Err(e) = validate_sha(&sha) {
         return PickResult::error(e);
@@ -325,6 +326,7 @@ pub fn cherry_pick(path: String, sha: String, record_origin: Option<bool>) -> Pi
 ///
 /// JS: `invoke("cherry_pick_continue", { path })`.
 #[tauri::command]
+#[specta::specta]
 pub fn cherry_pick_continue(path: String) -> PickResult {
     let repo = match Repository::open(&path) {
         Ok(r) => r,
@@ -369,6 +371,7 @@ pub fn cherry_pick_continue(path: String) -> PickResult {
 ///
 /// JS: `invoke("cherry_pick_abort", { path })`.
 #[tauri::command]
+#[specta::specta]
 pub fn cherry_pick_abort(path: String) -> PickResult {
     let repo = match Repository::open(&path) {
         Ok(r) => r,

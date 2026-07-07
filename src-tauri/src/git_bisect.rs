@@ -37,14 +37,14 @@ use std::process::Command;
 use git2::Repository;
 use serde::Serialize;
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitInfo {
     pub sha: String,
     pub subject: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BisectStatus {
     pub ok: bool,
@@ -325,6 +325,7 @@ fn read_status(repo: &Repository, path: &str) -> BisectStatus {
 /// Start a bisect between a known-bad and one-or-more known-good commits.
 /// Snapshots FIRST. JS: invoke("bisect_start", { path, bad, good: [sha,…] }).
 #[tauri::command]
+#[specta::specta]
 pub fn bisect_start(path: String, bad: String, good: Vec<String>) -> BisectStatus {
     let repo = match Repository::open(&path) {
         Ok(r) => r,
@@ -418,6 +419,7 @@ pub fn bisect_start(path: String, bad: String, good: Vec<String>) -> BisectStatu
 /// Mark the checked-out midpoint (HEAD) good/bad/skip. No snapshot.
 /// JS: invoke("bisect_mark", { path, term }) where term ∈ {good,bad,skip}.
 #[tauri::command]
+#[specta::specta]
 pub fn bisect_mark(path: String, term: String) -> BisectStatus {
     let subcmd = match term.as_str() {
         "good" | "bad" | "skip" => term.as_str(),
@@ -455,6 +457,7 @@ pub fn bisect_mark(path: String, term: String) -> BisectStatus {
 /// Read-only bisect status (also serves as `bisect log`). Never mutates.
 /// JS: invoke("bisect_status", { path }).
 #[tauri::command]
+#[specta::specta]
 pub fn bisect_status(path: String) -> BisectStatus {
     match Repository::open(&path) {
         Ok(repo) => read_status(&repo, &path),
@@ -465,6 +468,7 @@ pub fn bisect_status(path: String) -> BisectStatus {
 /// End the bisect and restore the original HEAD/branch. Escape hatch: NO
 /// snapshot; idempotent. JS: invoke("bisect_reset", { path }).
 #[tauri::command]
+#[specta::specta]
 pub fn bisect_reset(path: String) -> BisectStatus {
     let repo = match Repository::open(&path) {
         Ok(r) => r,

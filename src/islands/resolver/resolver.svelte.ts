@@ -6,9 +6,12 @@
 // backend calls go through the typed `ipc` layer; cross-cutting UI effects
 // (graph reload, mascot, cheer) go through the legacy `bridge`.
 
-import * as ipc from "../../ipc/commands";
+import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
-import type { ConflictFile, PickResult, ConflictSide } from "../../ipc/types";
+import type { ConflictFile, PickResult } from "../../ipc/bindings";
+
+// specta generates `side: string`; keep the precise union at the call boundary.
+type ConflictSide = "ours" | "theirs";
 
 const FAKE = [
   {
@@ -70,7 +73,7 @@ class ResolverState {
     this.busy = true;
     bridge.tama.event("mutation.caution", { count: 1 });
     try {
-      const res = await ipc.cherryPick(repo, sha, recordOrigin);
+      const res = await commands.cherryPick(repo, sha, recordOrigin);
       await this.applyOutcome(res, sha);
     } catch (e) {
       bridge.tama.warn("Cherry-pick failed — " + e);
@@ -119,12 +122,14 @@ class ResolverState {
     this.open = true;
   }
 
-  // Pull authoritative unmerged files (conflict_status REJECTS on error).
+  // Pull authoritative unmerged files. conflict_status returns Result<T,E> via
+  // the generated client — read r.data on ok, log r.error otherwise.
   private async refresh() {
     let files: ConflictFile[] = [];
     try {
-      const st = await ipc.conflictStatus(this.repo);
-      files = Array.isArray(st?.files) ? st.files : [];
+      const r = await commands.conflictStatus(this.repo);
+      if (r.status === "ok") files = Array.isArray(r.data.files) ? r.data.files : [];
+      else console.error("conflict_status", r.error);
     } catch (e) {
       console.error("conflict_status", e);
     }
@@ -147,7 +152,7 @@ class ResolverState {
       return;
     }
     try {
-      const r = await ipc.resolveConflictFile(this.repo, f.path, side);
+      const r = await commands.resolveConflictFile(this.repo, f.path, side);
       if (!r.ok) bridge.tama.warn(r.message || "Could not resolve " + f.path);
     } catch (e) {
       bridge.tama.warn("Resolve failed — " + e);
@@ -166,7 +171,7 @@ class ResolverState {
     if (this.busy) return;
     this.busy = true;
     try {
-      const r = await ipc.cherryPickAbort(this.repo);
+      const r = await commands.cherryPickAbort(this.repo);
       if (r && r.state === "clean") {
         this.close();
         await bridge.reloadGraph(true);
@@ -193,7 +198,7 @@ class ResolverState {
     if (this.busy) return;
     this.busy = true;
     try {
-      const r = await ipc.cherryPickContinue(this.repo);
+      const r = await commands.cherryPickContinue(this.repo);
       if (r.state === "conflict") {
         await this.refresh();
         bridge.tama.warn(r.message || "Still conflicted — resolve the remaining files.");

@@ -37,7 +37,7 @@ const MAX_FILES: usize = 200;
 /// commit). A side that is **absent** (e.g. add/add has no base; delete/modify
 /// has no ours or theirs) is the empty string; a **binary** side is the marker
 /// `"‹binary›"`. Each side is UTF-8-lossy and capped to [`CAP_LINES`].
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConflictFile {
     pub path: String,
@@ -51,7 +51,7 @@ pub struct ConflictFile {
 /// true whenever a sequencer op is underway **or** there are unmerged files —
 /// so once every file is resolved (`files` empty) but the cherry-pick has not
 /// been continued yet, `in_progress` stays true and the UI can offer Continue.
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConflictStatus {
     pub in_progress: bool,
@@ -61,7 +61,7 @@ pub struct ConflictStatus {
 
 /// Result of [`resolve_conflict_file`]. `remaining` is the count of files still
 /// unmerged after this resolution (0 means the tree is ready to Continue).
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveResult {
     pub ok: bool,
@@ -76,6 +76,7 @@ pub struct ResolveResult {
 /// Report the in-progress operation and the conflicted files (with all three
 /// merge stages). Read-only. JS: `invoke("conflict_status", { path })`.
 #[tauri::command]
+#[specta::specta]
 pub fn conflict_status(path: String) -> Result<ConflictStatus, String> {
     let repo =
         Repository::open(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
@@ -175,6 +176,7 @@ fn cap_lines(s: &str) -> String {
 /// No snapshot here — see the module doc: the enclosing op was snapshotted and
 /// its `--abort` restores everything.
 #[tauri::command]
+#[specta::specta]
 pub fn resolve_conflict_file(path: String, file: String, side: String) -> ResolveResult {
     // `--ours` = stage 2 (HEAD), `--theirs` = stage 3 (incoming). Reject anything else.
     let flag = match side.as_str() {
