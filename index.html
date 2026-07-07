@@ -136,6 +136,19 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-item .ab .up{color:var(--success)} .ref-item .ab .dn{color:var(--danger)}
 .ref-item .dot{width:8px;height:8px;border-radius:50%;flex:none}
 .remote-head{padding:4px 8px 4px 24px;font-size:11px;color:var(--muted);font-weight:600;display:flex;gap:6px;align-items:center}
+.ref-list{display:flex;flex-direction:column}
+.ref-item .ref-menu{margin-left:auto;opacity:0;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;border-radius:4px;flex:none}
+.ref-item:hover .ref-menu{opacity:1}
+.ref-item .ref-menu:hover{background:var(--elevated);color:var(--text)}
+.ref-item.current .ref-menu{opacity:.65}
+.ref-item .rname.nb{color:var(--accent);font-weight:600}
+.ref-item .rname.mut{color:var(--muted)}
+.ref-item.new-branch:hover{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.ref-pop{position:fixed;z-index:300;min-width:150px;background:var(--panel);border:1px solid var(--border);border-radius:var(--r-control);box-shadow:var(--shadow);padding:4px;display:flex;flex-direction:column;gap:2px}
+.ref-pop button{font:inherit;text-align:left;background:transparent;border:none;color:var(--text);padding:6px 10px;border-radius:6px;cursor:pointer}
+.ref-pop button:hover:not([disabled]){background:var(--elevated)}
+.ref-pop button.danger{color:var(--danger)}
+.ref-pop button[disabled]{opacity:.4;cursor:default}
 .mono{font-family:var(--mono)} .mut{color:var(--muted)}
 
 /* ---------- Tama's lamp-nook (pinned bottom of sidebar) ---------- */
@@ -497,33 +510,41 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   <aside class="sidebar">
     <div class="ref-filter"><span class="mag">&#9906;</span><input id="refFilter" placeholder="Filter refs&#8230;" spellcheck="false"></div>
     <div class="ref-scroll" id="refScroll">
-      <details class="ref-group" open><summary><span class="tw">&#9656;</span>Local<span class="count">4</span></summary>
-        <div class="ref-item current"><span class="rname">main</span><span class="ab"><span class="up">&#8593;2</span></span></div>
-        <div class="ref-item"><span class="rname">feat/inline-diff</span><span class="ab"><span class="dn">&#8595;3</span></span></div>
-        <div class="ref-item"><span class="rname">fix/lane-cull</span></div>
-        <div class="ref-item"><span class="rname">release/0.3</span></div>
+      <details class="ref-group" open><summary><span class="tw">&#9656;</span>Local<span class="count" id="cntLocal">4</span></summary>
+        <div class="ref-list" id="refLocal">
+          <div class="ref-item current"><span class="rname">main</span><span class="ab"><span class="up">&#8593;2</span></span></div>
+          <div class="ref-item"><span class="rname">feat/inline-diff</span><span class="ab"><span class="dn">&#8595;3</span></span></div>
+          <div class="ref-item"><span class="rname">fix/lane-cull</span></div>
+          <div class="ref-item"><span class="rname">release/0.3</span></div>
+        </div>
       </details>
-      <details class="ref-group" open><summary><span class="tw">&#9656;</span>Remote<span class="count">5</span></summary>
-        <div class="remote-head">&#9729; origin</div>
-        <div class="ref-item"><span class="dot" style="background:var(--l0)"></span><span class="rname">origin/main</span></div>
-        <div class="ref-item"><span class="dot" style="background:var(--l1)"></span><span class="rname">origin/feat/inline-diff</span></div>
-        <div class="ref-item"><span class="dot" style="background:var(--l2)"></span><span class="rname">origin/topic/rerere</span></div>
-        <div class="remote-head">&#9729; upstream</div>
-        <div class="ref-item"><span class="dot" style="background:var(--l3)"></span><span class="rname">upstream/main</span></div>
-        <div class="ref-item"><span class="dot" style="background:var(--l4)"></span><span class="rname">upstream/dev</span></div>
+      <details class="ref-group" open><summary><span class="tw">&#9656;</span>Remote<span class="count" id="cntRemote">5</span></summary>
+        <div class="ref-list" id="refRemote">
+          <div class="remote-head">&#9729; origin</div>
+          <div class="ref-item"><span class="dot" style="background:var(--l0)"></span><span class="rname">origin/main</span></div>
+          <div class="ref-item"><span class="dot" style="background:var(--l1)"></span><span class="rname">origin/feat/inline-diff</span></div>
+          <div class="ref-item"><span class="dot" style="background:var(--l2)"></span><span class="rname">origin/topic/rerere</span></div>
+          <div class="remote-head">&#9729; upstream</div>
+          <div class="ref-item"><span class="dot" style="background:var(--l3)"></span><span class="rname">upstream/main</span></div>
+          <div class="ref-item"><span class="dot" style="background:var(--l4)"></span><span class="rname">upstream/dev</span></div>
+        </div>
       </details>
-      <details class="ref-group"><summary><span class="tw">&#9656;</span>Tags<span class="count">3</span></summary>
-        <div class="ref-item"><span class="rname">v0.3.0</span></div>
-        <div class="ref-item"><span class="rname">v0.2.0</span></div>
-        <div class="ref-item"><span class="rname">nightly-2026-07-05</span></div>
+      <details class="ref-group"><summary><span class="tw">&#9656;</span>Tags<span class="count" id="cntTags">3</span></summary>
+        <div class="ref-list" id="refTags">
+          <div class="ref-item"><span class="rname">v0.3.0</span></div>
+          <div class="ref-item"><span class="rname">v0.2.0</span></div>
+          <div class="ref-item"><span class="rname">nightly-2026-07-05</span></div>
+        </div>
       </details>
       <details class="ref-group"><summary><span class="tw">&#9656;</span>Stashes<span class="count">2</span></summary>
         <div class="ref-item"><span class="rname mono">stash@{0}</span></div>
         <div class="ref-item"><span class="rname mono">stash@{1}</span></div>
       </details>
-      <details class="ref-group"><summary><span class="tw">&#9656;</span>Snapshots<span class="count" id="snapCount">—</span></summary>
-        <div class="ref-item"><span class="dot" style="background:var(--accent)"></span><span class="rname mono">backup/&#8230;T14-22-58</span><span class="ab">2m</span></div>
-        <div class="ref-item"><span class="dot" style="background:var(--accent)"></span><span class="rname mono">backup/&#8230;T13-51-04</span><span class="ab">33m</span></div>
+      <details class="ref-group"><summary><span class="tw">&#9656;</span>Snapshots<span class="count" id="snapCount">&#8212;</span></summary>
+        <div class="ref-list" id="refSnaps">
+          <div class="ref-item"><span class="dot" style="background:var(--accent)"></span><span class="rname mono">backup/&#8230;T14-22-58</span><span class="ab">2m</span></div>
+          <div class="ref-item"><span class="dot" style="background:var(--accent)"></span><span class="rname mono">backup/&#8230;T13-51-04</span><span class="ab">33m</span></div>
+        </div>
       </details>
     </div>
 
@@ -600,16 +621,16 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   <div class="modal danger">
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" id="dangerTamaImg" alt="Tama, alarmed"></div>
-      <div><h3>Rewrite history &#8212; filter-repo</h3><p>This rewrites every commit on the selected refs. It cannot be undone with a normal Undo.</p></div>
+      <div><h3 id="dangerTitle">Rewrite history &#8212; filter-repo</h3><p id="dangerDesc">This rewrites every commit on the selected refs. It cannot be undone with a normal Undo.</p></div>
     </div>
-    <div class="msteps"><span class="s done"></span><span class="s done"></span><span class="s now"></span></div>
+    <div class="msteps" id="dangerSteps"><span class="s done"></span><span class="s done"></span><span class="s now"></span></div>
     <div class="modal-body">
-      <div class="will-lose"><h5>What this will rewrite / lose</h5><ul>
+      <div class="will-lose" id="dangerLose"><h5>What this will rewrite / lose</h5><ul>
         <li>Rewrites <code>42</code> commits on <code>main</code> and <code>feat/inline-diff</code></li>
         <li>Original SHAs become unreachable: <code>a1b2c3d</code> &#8230; <code>90ff210</code></li>
         <li>GPG signatures on rewritten commits are dropped</li></ul></div>
-      <div class="backup-note">&#128257; Pre-op backup pinned first: <code id="dangerBackup">refs/gitgui/backup/2026-07-06T14-22-58</code> &#8594; full pre-rewrite state stays recoverable.</div>
-      <div class="confirm-type"><label>Type the branch name <b class="mono">main</b> to arm the rewrite:</label>
+      <div class="backup-note" id="dangerNote">&#128257; Pre-op backup pinned first &#8594; full pre-rewrite state stays recoverable.</div>
+      <div class="confirm-type"><label>Type the branch name <b class="mono" id="dangerTypeName">main</b> to arm the rewrite:</label>
         <input id="confirmInput" placeholder="main" spellcheck="false" autocomplete="off"></div>
     </div>
     <div class="modal-foot"><button class="btn ghost" id="dangerCancel">Cancel</button><button class="btn danger" id="dangerGo" disabled>Rewrite history</button></div>
@@ -740,6 +761,9 @@ let G=null;
 let BACKEND=null;
 let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it
 let DETAIL_SEQ=0;    // monotonic id — any older in-flight commit_detail response loses (robust across repo switches)
+const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
+const tinvoke = (cmd, args={}) => window.__TAURI__.core.invoke(cmd, args);
+let undoBusy=false, checkoutBusy=false;
 function relTime(t){ let s=Math.max(0,Math.floor(Date.now()/1000-t));
   if(s<60)return s+"s ago"; let m=(s/60)|0; if(m<60)return m+"m ago"; let h=(m/60)|0; if(h<24)return h+"h ago";
   let d=(h/24)|0; if(d<30)return d+"d ago"; let mo=(d/30)|0; if(mo<12)return mo+"mo ago"; return ((mo/12)|0)+"y ago"; }
@@ -1014,12 +1038,22 @@ function cherryPick(src,dst){
       and undo run in EVERY mascot mode; Tama only decides whether
       she wakes and what one sentence she says.
    ============================================================ */
-const Safety={ count:214, lastAt:performance.now()-2*60*1000, pad(n){return String(n).padStart(2,"0");},
-  seal(){ this.count++; this.lastAt=performance.now();
-    const d=new Date(); // display only; real writer uses a monotonic suffix
+const Safety={ count:214, lastAt:performance.now()-2*60*1000, snaps:[], pad(n){return String(n).padStart(2,"0");},
+  seal(){ if(IN_TAURI){ const s=this.snaps[0]; return { ref: s?s.ref:"refs/gitgui/backup/-", hash: s?s.sha:"" }; }
+    this.count++; this.lastAt=performance.now();
+    const d=new Date();
     const ts=d.getFullYear()+"-"+this.pad(d.getMonth()+1)+"-"+this.pad(d.getDate())+"T"+this.pad(d.getHours())+"-"+this.pad(d.getMinutes())+"-"+this.pad(d.getSeconds());
     $("#undoCount").textContent=this.count; $("#snapCount").textContent=this.count;
-    return {ref:"refs/gitgui/backup/"+ts, hash:hhex(this.count*7+3)}; } };
+    return {ref:"refs/gitgui/backup/"+ts, hash:hhex(this.count*7+3)}; },
+  async refresh(){ if(!IN_TAURI||!CUR_REPO) return;
+    try{ const s=await tinvoke("list_snapshots",{path:CUR_REPO});
+      this.snaps=Array.isArray(s)?s.slice():[];
+      const n=this.snaps.length; $("#undoCount").textContent=n; $("#snapCount").textContent=n;
+      Tama._tele(); positionTicks(); renderSnapshots();
+    }catch(e){ console.error("list_snapshots",e); } },
+  teleCount(){ return IN_TAURI ? this.snaps.length : this.count; },
+  teleAgo(){ if(IN_TAURI){ return this.snaps.length ? relTime(this.snaps[0].ts).replace(" ago","") : "—"; }
+    const m=Math.max(0,Math.round((performance.now()-this.lastAt)/60000)); return m<1?"just now":m+"m"; } };
 
 class TamaMascot{
   static STATES={idle:{sticky:false},sleep:{sticky:false},hint:{sticky:false,dwell:3200},thinking:{sticky:true},warn:{sticky:true},danger:{sticky:true},celebrate:{sticky:false,dwell:3600},rescue:{sticky:true}};
@@ -1033,6 +1067,7 @@ class TamaMascot{
     if(!cfg.sticky&&!cfg.dwell)this.sticky=null;}
   say(t,ms=3200){if(!t){this.line.classList.remove("show");return;}this.line.textContent=t;this.line.classList.add("show");
     clearTimeout(this.toastT);this.toastT=setTimeout(()=>this.line.classList.remove("show"),ms);}
+  warn(t,ms=5000){this.set("warn");this.say(t,ms);}
   wag(){if(this.reduced)return;this.sprite.classList.remove("wag");void this.sprite.offsetWidth;this.sprite.classList.add("wag");}
   setInteracting(on){this.nook.classList.toggle("is-interacting",on);}
   setMode(m){this.app.dataset.mascot=m;}
@@ -1055,7 +1090,7 @@ class TamaMascot{
     }
   }
   _teleText(t){this.tele.textContent=t;}
-  _tele(){const m=Math.max(0,Math.round((performance.now()-Safety.lastAt)/60000));this.tele.textContent="snapshots "+Safety.count+" · last "+(m<1?"just now":m+"m");}
+  _tele(){this.tele.textContent="snapshots "+Safety.teleCount()+" · last "+Safety.teleAgo();}
   _teleLoop(){this._tele();setInterval(()=>{if(this.nook.dataset.state!=="thinking")this._tele();},20000);}
 }
 const Tama=new TamaMascot({app:$("#app"),nook:$("#nook"),sprite:$("#sprite"),line:$("#toastLine"),tele:$("#telemetry"),chip:$("#chip")});
@@ -1311,28 +1346,64 @@ let cheerT=null;
 function cheer(msg){ $("#tamaCheerTxt").innerHTML=msg; const c=$("#tamaCheer"); c.classList.add("show");
   clearTimeout(cheerT); cheerT=setTimeout(()=>c.classList.remove("show"),3600); }
 // global undo (undo-is-itself-undoable)
-function globalUndo(){ Tama.event("undo.performed",{hash:hhex(1)}); pulseTick(0); cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>'); }
+async function globalUndo(){
+  if(!IN_TAURI){ Tama.event("undo.performed",{hash:hhex(1)}); pulseTick(0);
+    cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>'); return; }
+  if(!CUR_REPO){ Tama.warn("Open a repository first — there's nothing to undo yet."); return; }
+  if(undoBusy) return; undoBusy=true;
+  try{
+    const res=await tinvoke("undo_last",{path:CUR_REPO});
+    if(res&&res.ok){
+      await reloadGraph(true);
+      const to=(res.restoredTo||"").slice(0,7);
+      Tama.event("undo.performed",{hash:to||hhex(1)}); pulseTick(0);
+      cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>');
+    } else { Tama.warn((res&&res.message)||"Nothing to undo — no snapshots yet."); }
+  }catch(e){ Tama.warn("Undo failed — "+e); console.error(e); }
+  finally{ undoBusy=false; }
+}
 $("#undoBtn").addEventListener("click",globalUndo);
-document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="z"&&!e.target.matches("input")){e.preventDefault();globalUndo();} });
+document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="z"&&!e.target.closest("input,textarea,[contenteditable=true]")){e.preventDefault();globalUndo();} });
 // filter-repo danger gate
-$("#filterRepoBtn").addEventListener("click",()=>{ const b=Safety.seal(); $("#dangerBackup").textContent=b.ref;
-  Tama.event("mutation.destructive",{label:"git filter-repo"}); openScrim("#dangerScrim"); });
-$("#confirmInput").addEventListener("input",e=>{$("#dangerGo").disabled=e.target.value.trim()!=="main";});
-$("#dangerCancel").addEventListener("click",()=>{closeScrim("#dangerScrim");$("#confirmInput").value="";$("#dangerGo").disabled=true;Tama.event("mutation.cancel");});
-$("#dangerGo").addEventListener("click",()=>{const b=Safety.seal();closeScrim("#dangerScrim");$("#confirmInput").value="";$("#dangerGo").disabled=true;
-  Tama.event("snapshot.surfaced");Tama.say("History rewritten. Pre-op backup "+b.ref.slice(-8)+" pinned.",4200);});
+let dangerCtx=null;
+function armDanger(ctx){
+  dangerCtx=ctx;
+  $("#dangerTitle").textContent=ctx.title;
+  $("#dangerDesc").textContent=ctx.desc;
+  const st=$("#dangerSteps"); if(st) st.style.display=ctx.steps===false?"none":"";
+  const lose=$("#dangerLose"); lose.innerHTML=ctx.lose||""; lose.style.display=ctx.lose?"":"none";
+  const note=$("#dangerNote"); note.innerHTML=ctx.note||""; note.style.display=ctx.note?"":"none";
+  $("#dangerTypeName").textContent=ctx.name;
+  const inp=$("#confirmInput"); inp.placeholder=ctx.name; inp.value="";
+  $("#dangerGo").textContent=ctx.confirmLabel||"Confirm"; $("#dangerGo").disabled=true;
+  openScrim("#dangerScrim"); setTimeout(()=>inp.focus(),30);
+}
+function disarmDanger(){ closeScrim("#dangerScrim"); const ci=$("#confirmInput"); if(ci) ci.value=""; const gg=$("#dangerGo"); if(gg) gg.disabled=true; dangerCtx=null; }
+$("#confirmInput").addEventListener("input",e=>{ const want=dangerCtx?dangerCtx.name:"main"; $("#dangerGo").disabled=e.target.value.trim()!==want; });
+$("#dangerCancel").addEventListener("click",()=>{ disarmDanger(); Tama.event("mutation.cancel"); });
+$("#dangerGo").addEventListener("click",async ()=>{ const ctx=dangerCtx; disarmDanger(); if(ctx&&ctx.onConfirm) await ctx.onConfirm(); });
+$("#filterRepoBtn").addEventListener("click",()=>{
+  Tama.event("mutation.destructive",{label:"git filter-repo"});
+  armDanger({ title:"Rewrite history — filter-repo",
+    desc:"This rewrites every commit on the selected refs. It cannot be undone with a normal Undo.",
+    lose:'<h5>What this will rewrite / lose</h5><ul><li>Rewrites <code>42</code> commits on <code>main</code></li><li>Original SHAs become unreachable</li><li>GPG signatures are dropped</li></ul>',
+    note:"🔁 A pre-op backup is pinned first → full pre-rewrite state stays recoverable.",
+    name:"main", confirmLabel:"Rewrite history",
+    onConfirm:async ()=>{ const b=Safety.seal(); Tama.set("celebrate"); Tama.say("History rewritten. Pre-op backup "+b.ref.slice(-8)+" pinned.",4200); } });
+});
 // conflict resolver
 $("#conflictAbort").addEventListener("click",()=>{closeScrim("#conflictScrim");Tama.event("idle");Tama.set("hint");Tama.say("Pick aborted — HEAD unchanged.");});
 $("#conflictOurs").addEventListener("click",()=>{closeScrim("#conflictScrim");Tama.event("snapshot.surfaced");Tama.say("Resolved with ours. Recorded to rerere.");});
 $("#conflictResolve").addEventListener("click",()=>{closeScrim("#conflictScrim");Tama.set("celebrate");Tama.say("Conflict resolved — cherry-pick committed.");cheer('Conflict resolved — pick committed. <span class="jp">よし!</span>');});
 function openScrim(sel){$(sel).classList.add("on");}
 function closeScrim(sel){$(sel).classList.remove("on");}
-document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeScrim("#dangerScrim");closeScrim("#conflictScrim");}});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){disarmDanger();closeScrim("#conflictScrim");}});
 // reflog restore
 $$(".log-row .go").forEach(b=>b.addEventListener("click",()=>{Tama.event("undo.performed",{hash:$(".sel",b.closest(".log-row")).textContent});pulseTick(1);}));
 // ref filter
-$("#refFilter").addEventListener("input",e=>{const q=e.target.value.toLowerCase();
-  $$("#refScroll .ref-item").forEach(it=>{const nm=$(".rname",it)?.textContent.toLowerCase()||"";it.style.display=nm.includes(q)?"":"none";});});
+function applyRefFilter(){ const q=($("#refFilter").value||"").toLowerCase();
+  $$("#refScroll .ref-item").forEach(it=>{const nm=$(".rname",it)?.textContent.toLowerCase()||"";it.style.display=nm.includes(q)?"":"none";}); }
+$("#refFilter").addEventListener("input",applyRefFilter);
 // perf controls
 $("#rowsSel").addEventListener("change",e=>loadGraph(+e.target.value));
 $("#zoomIn").addEventListener("click",()=>zoomAt(view.cssH/2,140));
@@ -1342,7 +1413,20 @@ $("#stressBtn").addEventListener("click",e=>{state.stress=!state.stress;e.target
 /* ---- snapshot ribbon: fixed recent ticks · hover ghost · click rewind ---- */
 const RIBBON_TICKS=[0.10,0.24,0.40,0.58,0.74,0.88]; // fractional Y of recent snapshots
 function positionTicks(){ const rb=$("#ribbon"); $$(".tick",rb).forEach(t=>t.remove());
-  const H=rb.clientHeight; RIBBON_TICKS.forEach((f,i)=>{ const t=document.createElement("div"); t.className="tick"; t.style.top=(f*H)+"px";
+  const H=rb.clientHeight;
+  if(IN_TAURI){
+    const snaps=Safety.snaps.slice(0,8); if(!snaps.length) return;
+    snaps.forEach((s,i)=>{ const f=snaps.length>1 ? 0.08+0.84*i/(snaps.length-1) : 0.12;
+      const ago=relTime(s.ts).replace(" ago",""), sha=(s.sha||"").slice(0,7), sub=(s.subject||"snapshot");
+      const t=document.createElement("div"); t.className="tick"; t.style.top=(f*H)+"px";
+      t.title="snapshot "+ago+" ago · "+sha+" "+sub.slice(0,40);
+      t.addEventListener("mouseenter",()=>{const d=$("#deltaReadout");d.textContent=ago+" ago · "+sha+" · "+sub.slice(0,48);d.classList.add("show");});
+      t.addEventListener("mouseleave",()=>$("#deltaReadout").classList.remove("show"));
+      t.addEventListener("click",()=>pulseTick(i));
+      rb.appendChild(t); });
+    return;
+  }
+  RIBBON_TICKS.forEach((f,i)=>{ const t=document.createElement("div"); t.className="tick"; t.style.top=(f*H)+"px";
     t.title="snapshot "+(Safety.count-i)+" — hover to preview, click to rewind";
     t.addEventListener("mouseenter",()=>{const d=$("#deltaReadout");d.textContent="main −"+(i+1)+" · HEAD moved · "+(1+i%3)+" refs changed";d.classList.add("show");});
     t.addEventListener("mouseleave",()=>$("#deltaReadout").classList.remove("show"));
@@ -1387,7 +1471,7 @@ function loadGraph(N){
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
   bisect.good=bisect.bad=null; bisect.skips.clear();
   recomputeLayout(); positionTicks(); renderBisect();
-  $("#snapCount").textContent=Safety.count;
+  $("#snapCount").textContent=Safety.teleCount();
   $("#detail").innerHTML=`
     <div class="tama-hero">
       <img class="tama-hero-img" src="${TAMA_IMG.hero}" alt="Tama, GitCat's guardian">
@@ -1400,18 +1484,109 @@ function loadGraph(N){
 /* ============================================================
    12) REAL REPOSITORY (Tauri): open a repo -> Rust load_graph
    ============================================================ */
-const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
 async function openRepo(path){
   try{
-    const g = await window.__TAURI__.core.invoke("load_graph", { path });
-    BACKEND = g;
-    CUR_REPO = path;
+    const g = await tinvoke("load_graph", { path });
+    BACKEND = g; CUR_REPO = path;
     const name = path.replace(/[\/\\]+$/,"").split(/[\/\\]/).pop() || path;
     $(".repo-pick span").textContent = name;
     loadGraph(g.n);
-    Tama.event("snapshot.surfaced");
+    await refreshRefs();
+    await Safety.refresh();
+    Tama.set("hint");
     Tama.say("Loaded "+g.n.toLocaleString()+" commits in "+(g.readMs+g.layoutMs).toFixed(0)+" ms. にゃ〜",4200);
-  }catch(e){ Tama.set("warn"); Tama.say("Couldn't open that repo — "+e,5000); console.error(e); }
+  }catch(e){ Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); }
+}
+async function reloadGraph(preserveRow){
+  if(!IN_TAURI||!CUR_REPO) return;
+  const keepSha = preserveRow && state.selectedRow>=0 && BACKEND && BACKEND.rows[state.selectedRow]
+    ? BACKEND.rows[state.selectedRow].sha : null;
+  try{
+    const g=await tinvoke("load_graph",{path:CUR_REPO});
+    BACKEND=g; loadGraph(g.n);
+    if(keepSha){ const row=BACKEND.rows.findIndex(r=>r.sha===keepSha);
+      if(row>=0){ select(row); state.scrollTarget=clampScroll(row*layout.rowH-view.cssH/2); dirty=true; } }
+    await refreshRefs(); await Safety.refresh();
+  }catch(e){ Tama.warn("Reload failed — "+e); console.error(e); }
+}
+async function refreshRefs(){ if(!IN_TAURI||!CUR_REPO) return;
+  try{ renderRefs(await tinvoke("list_refs",{path:CUR_REPO})); }
+  catch(e){ console.error("list_refs",e); } }
+function mkRefItem(html,cls){ const el=document.createElement("div"); el.className="ref-item"+(cls?" "+cls:""); el.innerHTML=html; return el; }
+function renderRefs(d){ d=d||{};
+  const local=d.locals||d.local||[], remotes=d.remotes||[], tags=d.tags||[], cur=d.head||null;
+  const L=$("#refLocal"); L.innerHTML=""; $("#cntLocal").textContent=local.length;
+  local.forEach(b=>{ const name=typeof b==="string"?b:b.name;
+    const isCur=(typeof b==="object"&&b.current)||name===cur;
+    const a=(b&&b.ahead)||0, be=(b&&b.behind)||0;
+    const ab=(a||be)?'<span class="ab">'+(a?'<span class="up">↑'+a+'</span>':"")+(be?'<span class="dn">↓'+be+'</span>':"")+'</span>':"";
+    const it=mkRefItem('<span class="rname">'+esc(name)+'</span>'+ab+'<button class="ref-menu" title="Branch actions" aria-label="Branch actions">⋯</button>', isCur?"current":"");
+    it.dataset.branch=name;
+    it.addEventListener("click",ev=>{ if(ev.target.closest(".ref-menu"))return; if(isCur)return; checkoutBranch(name); });
+    it.addEventListener("contextmenu",ev=>{ ev.preventDefault(); openBranchMenu(name,isCur,it); });
+    $(".ref-menu",it).addEventListener("click",ev=>{ ev.stopPropagation(); openBranchMenu(name,isCur,ev.currentTarget); });
+    L.appendChild(it); });
+  const nb=mkRefItem('<span class="rname nb">＋ New branch…</span>',"new-branch");
+  nb.addEventListener("click",newBranchFlow); L.appendChild(nb);
+  const R=$("#refRemote"); R.innerHTML=""; $("#cntRemote").textContent=remotes.length; let last=null,ci=0;
+  remotes.forEach(rb=>{ const name=typeof rb==="string"?rb:rb.name; const rem=name.split("/")[0];
+    if(rem!==last){ const h=document.createElement("div"); h.className="remote-head"; h.innerHTML="☁ "+esc(rem); R.appendChild(h); last=rem; }
+    R.appendChild(mkRefItem('<span class="dot" style="background:var(--l'+(ci++%7)+')"></span><span class="rname">'+esc(name)+'</span>')); });
+  const T=$("#refTags"); T.innerHTML=""; $("#cntTags").textContent=tags.length;
+  tags.forEach(tg=>{ const name=typeof tg==="string"?tg:tg.name; T.appendChild(mkRefItem('<span class="rname">'+esc(name)+'</span>')); });
+  applyRefFilter();
+}
+function renderSnapshots(){ const box=$("#refSnaps"); if(!box||!IN_TAURI) return;
+  box.innerHTML=""; const snaps=Safety.snaps.slice(0,12);
+  if(!snaps.length){ box.innerHTML='<div class="ref-item"><span class="rname mut">no snapshots yet</span></div>'; return; }
+  snaps.forEach(s=>{ const ago=relTime(s.ts).replace(" ago","");
+    box.appendChild(mkRefItem('<span class="dot" style="background:var(--accent)"></span><span class="rname mono">'+esc((s.sha||"").slice(0,7)||"snapshot")+'</span><span class="ab">'+ago+'</span>')); });
+  applyRefFilter();
+}
+async function checkoutBranch(name){
+  if(!IN_TAURI){ $$("#refLocal .ref-item").forEach(x=>x.classList.remove("current")); Tama.set("hint"); Tama.say("Checked out "+name+" (demo)."); return; }
+  if(checkoutBusy)return; checkoutBusy=true; Tama.set("thinking"); Tama.say("Checking out "+name+"…");
+  try{ const res=await tinvoke("checkout",{path:CUR_REPO,name});
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say("On "+name+" now. にゃ〜",3200); }
+    else Tama.warn((res&&res.message)||("Couldn't check out "+name+" — you may have uncommitted changes."));
+  }catch(e){ Tama.warn("Checkout failed — "+e); console.error(e); } finally{ checkoutBusy=false; } }
+async function newBranchFlow(){
+  const name=(prompt("New branch name (created at HEAD and checked out):")||"").trim(); if(!name) return;
+  if(!IN_TAURI){ Tama.set("hint"); Tama.say("Created "+name+" (demo)."); return; }
+  Tama.set("thinking"); Tama.say("Creating "+name+"…");
+  try{ const res=await tinvoke("create_branch",{path:CUR_REPO,name,checkout:true});
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||("Branch "+name+" created."),3200); }
+    else Tama.warn((res&&res.message)||("Couldn't create "+name+"."));
+  }catch(e){ Tama.warn("Create failed — "+e); console.error(e); } }
+function deleteBranchFlow(name){
+  Tama.set("danger"); Tama.say("Deleting "+name+" — type the branch name to arm it. I pin its tip first.",6000);
+  armDanger({ title:"Delete branch — "+name, steps:false,
+    desc:"This removes the local branch ref. Its tip is pinned to a backup first, so the commits stay recoverable by sha.",
+    lose:'<h5>What happens</h5><ul><li>Removes local branch <code>'+esc(name)+'</code></li><li>Its tip is pinned under <code>refs/gitgui/deleted/…</code> — recover with ＋ New branch → the printed sha</li></ul>',
+    note:"🔁 I pin the branch tip before deleting; ⌘Z restores your CURRENT branch position (not the deleted branch).",
+    name:name, confirmLabel:"Delete branch",
+    onConfirm:async ()=>{ await doDeleteBranch(name,false); } });
+}
+async function doDeleteBranch(name,force){
+  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Deleted "+name+" (demo)."); return; }
+  try{ let res=await tinvoke("delete_branch",{path:CUR_REPO,name,force});
+    if(res&&!res.ok&&!force&&/not (fully )?merged/i.test(res.message||"")){
+      if(confirm(name+" is not fully merged. Force-delete anyway? (the tip is pinned to a backup)")) res=await tinvoke("delete_branch",{path:CUR_REPO,name,force:true});
+      else { Tama.warn("Kept "+name+" — delete cancelled."); return; } }
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||("Deleted "+name+"."),4200); }
+    else Tama.warn((res&&res.message)||("Couldn't delete "+name+"."));
+  }catch(e){ Tama.warn("Delete failed — "+e); console.error(e); } }
+let refMenuEl=null;
+function closeBranchMenu(){ if(refMenuEl){ refMenuEl.remove(); refMenuEl=null; document.removeEventListener("pointerdown",onDocDownMenu,true); } }
+function onDocDownMenu(e){ if(refMenuEl&&!refMenuEl.contains(e.target)) closeBranchMenu(); }
+function openBranchMenu(name,isCurrent,anchor){ closeBranchMenu();
+  const m=document.createElement("div"); m.className="ref-pop";
+  m.innerHTML='<button data-act="checkout"'+(isCurrent?" disabled":"")+'>Checkout</button><button data-act="delete" class="danger"'+(isCurrent?" disabled":"")+'>Delete…</button>';
+  document.body.appendChild(m); refMenuEl=m;
+  const r=anchor.getBoundingClientRect(); m.style.left=Math.min(r.left,innerWidth-168)+"px"; m.style.top=(r.bottom+4)+"px";
+  m.addEventListener("click",ev=>{ const b=ev.target.closest("button"); if(!b||b.disabled)return; const act=b.dataset.act; closeBranchMenu();
+    if(act==="checkout") checkoutBranch(name); else if(act==="delete") deleteBranchFlow(name); });
+  setTimeout(()=>document.addEventListener("pointerdown",onDocDownMenu,true),0);
 }
 async function pickRepo(){
   if(!IN_TAURI) return;
@@ -1426,6 +1601,8 @@ async function pickRepo(){
 function bootEmpty(){
   BACKEND=null;
   CUR_REPO=null;
+  $("#undoCount").textContent="0"; $("#snapCount").textContent="0"; Safety.snaps=[];
+  ["#refLocal","#refRemote","#refTags","#refSnaps"].forEach(s=>{const el=$(s);if(el)el.innerHTML="";});
   G={N:0,commitLane:[],commitColor:[],isMerge:[],gapStart:[0],gapTop:[],gapBot:[],gapColor:[],refs:[],snapRows:[],snapTs:{}};
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
   recomputeLayout(); positionTicks(); renderBisect();
