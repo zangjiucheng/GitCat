@@ -1,4 +1,6 @@
 pub mod commands;
+pub mod conflict;
+pub mod git_pick;
 pub mod git_read;
 pub mod git_write;
 pub mod layout;
@@ -21,7 +23,14 @@ pub fn run() {
             git_write::create_branch,
             git_write::checkout,
             git_write::delete_branch,
-            git_write::rename_branch
+            git_write::rename_branch,
+            // Conflict resolver (M2b): inspect stages + per-file ours/theirs
+            conflict::conflict_status,
+            conflict::resolve_conflict_file,
+            // Cherry-pick (M2b): drag-onto-HEAD + continue / abort
+            git_pick::cherry_pick,
+            git_pick::cherry_pick_continue,
+            git_pick::cherry_pick_abort
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

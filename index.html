@@ -453,6 +453,28 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tw-col .ln{padding:2px 8px}
 .tw-col.ours .ln{background:color-mix(in srgb,var(--accent2) 10%,transparent)}
 .tw-col.theirs .ln{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.modal.resolver{width:min(880px,96vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column}
+.modal.resolver .modal-body{overflow:auto;flex:1}
+.btn[disabled]{opacity:.42;cursor:not-allowed;box-shadow:none}
+.resolver .modal-foot #conflictAbort{margin-right:auto}
+.cf-layout{display:grid;grid-template-columns:190px 1fr;gap:12px}
+.cf-files{display:flex;flex-direction:column;gap:2px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:var(--r-panel);padding:4px;background:var(--bg)}
+.cf-file{display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:6px;cursor:pointer;font-size:12px}
+.cf-file:hover{background:var(--elevated)}
+.cf-file.sel{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.cf-file .cf-mk{color:var(--warning);flex:none}
+.cf-file.done .cf-mk{color:var(--accent2)}
+.cf-file.done .cf-name{color:var(--muted);text-decoration:line-through}
+.cf-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cf-main{min-width:0;display:flex;flex-direction:column;gap:8px}
+.cf-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.cf-cur{font-family:var(--mono);font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cf-take{display:flex;gap:6px;flex:none}
+.cf-take .btn{padding:4px 11px;font-size:12px}
+.cf-remain{font-size:12px}
+#cfThree{max-height:360px;overflow:auto}
+.tw-col .ln code{white-space:pre-wrap;word-break:break-word}
+.cp-x{display:inline-flex;align-items:center;gap:4px;color:var(--muted);font-size:11px;cursor:pointer}
 /* ============================== ⌘K COMMAND PALETTE ============================== */
 .cmdk{position:fixed;inset:0;z-index:500;display:none}
 .cmdk.on{display:block}
@@ -572,6 +594,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
         <select id="rowsSel"><option value="1000">1k</option><option value="10000" selected>10k</option><option value="50000">50k</option></select>
         <button id="zoomOut" title="Zoom out">&#8211;</button><button id="zoomIn" title="Zoom in">+</button>
         <button id="stressBtn" title="Auto-scroll stress test">&#9654; stress</button>
+        <label class="cp-x" title="Record origin: append '(cherry picked from …)' to the commit message"><input type="checkbox" id="cpRecordOrigin"> -x</label>
       </div>
       <div class="delta-readout" id="deltaReadout"></div>
       <div class="hint">wheel scroll &#183; &#8984;/ctrl+wheel zoom &#183; click select &#183; drag a dot to cherry-pick &#183; &#8984;Z undo</div>
@@ -647,15 +670,20 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
       <div><h3>Cherry-pick hit a conflict</h3><p id="conflictSub">Resolve the conflict below, or abort. Your pre-op snapshot is safe.</p></div>
     </div>
     <div class="modal-body">
-      <div class="three-way">
-        <div class="tw-col ours"><h6>Ours (HEAD)</h6><div class="ln">const ttl = 3600;</div><div class="ln">refresh(token);</div></div>
-        <div class="tw-col"><h6>Base</h6><div class="ln">const ttl = 900;</div><div class="ln">refresh(token);</div></div>
-        <div class="tw-col theirs"><h6>Theirs (picked)</h6><div class="ln">const ttl = 1800;</div><div class="ln">refresh(token, opts);</div></div>
+      <div class="cf-layout">
+        <div class="cf-files" id="cfFiles"></div>
+        <div class="cf-main">
+          <div class="cf-actions"><span class="cf-cur" id="cfCurPath"></span>
+            <span class="cf-take"><button class="btn" id="cfTakeOurs" disabled>Take ours</button><button class="btn" id="cfTakeTheirs" disabled>Take theirs</button></span>
+          </div>
+          <div class="three-way" id="cfThree"></div>
+        </div>
       </div>
-      <div class="backup-note" style="margin-top:12px">&#128257; Snapshot before pick: <code id="conflictBackup">refs/gitgui/backup/&#8230;T14-24-10</code> &#183; rerere may auto-apply a recorded resolution.</div>
+      <div class="backup-note" style="margin-top:12px">&#128257; Snapshot before pick: <code id="conflictBackup">refs/gitgui/backup/&#8230;</code> &#183; rerere may auto-apply a recorded resolution.</div>
     </div>
-    <div class="modal-foot"><button class="btn ghost" id="conflictAbort">Abort pick</button><button class="btn" id="conflictOurs">Take ours</button>
-      <button class="btn danger" id="conflictResolve" style="background:var(--accent2);border-color:var(--accent2)">Mark resolved</button></div>
+    <div class="modal-foot"><button class="btn ghost" id="conflictAbort">Abort pick</button>
+      <span class="cf-remain mut" id="cfRemain"></span>
+      <button class="btn" id="conflictContinue" disabled style="background:var(--accent2);border-color:var(--accent2)">Continue &amp; commit</button></div>
   </div>
 </div>
 
@@ -762,6 +790,8 @@ let G=null;
    below is used instead, so this file works in both places. */
 let BACKEND=null;
 let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it
+let CONFLICT=null;   // resolver state: {sha, files:[{path,ours,base,theirs}], selected, remaining:Set}
+let PICK_BUSY=false; // re-entrancy lock: one cherry_pick / continue / abort at a time
 let DETAIL_SEQ=0;    // monotonic id — any older in-flight commit_detail response loses (robust across repo switches)
 const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
 const tinvoke = (cmd, args={}) => window.__TAURI__.core.invoke(cmd, args);
@@ -1007,6 +1037,7 @@ cv.addEventListener("keydown",(e)=>{
 function legalPick(src,tgt){
   if(tgt==null) return {ok:false,why:"drop on a commit"};
   if(tgt===src) return {ok:false,why:"onto itself"};
+  if(G&&G.isMerge&&G.isMerge[src]) return {ok:false,why:"can't cherry-pick a merge"};
   if(tgt>src) return {ok:false,why:"target is an ancestor"};
   return {ok:true,why:"→ "+hhex(tgt)};
 }
@@ -1021,18 +1052,141 @@ function updateGhost(src,tgt,legal){
   $(".reason",ghostEl).textContent=legal.ok?legal.why:"✕ "+legal.why;
 }
 function removeGhost(){ if(ghostEl){ghostEl.remove();ghostEl=null;} }
-function cherryPick(src,dst){
-  const backup=Safety.seal();
-  const conflict=(G.isMerge[src]||(hhex(src).charCodeAt(0)&1)); // some picks conflict (demo)
-  if(conflict){
-    Tama.event("mutation.caution",{count:1});
-    $("#conflictSub").textContent="Picking "+hhex(src)+" onto "+hhex(dst)+" conflicts in src/auth/token.ts. Snapshot "+backup.ref.slice(-8)+" sealed.";
-    $("#conflictBackup").textContent=backup.ref;
-    openScrim("#conflictScrim");
-  } else {
-    Tama.event("snapshot.surfaced");
-    Tama.say("Picked "+hhex(src)+" onto "+hhex(dst)+". Sealed "+backup.ref.slice(-8)+".");
+async function cherryPick(src,dst){
+  const srcSha=(BACKEND&&BACKEND.rows[src])?BACKEND.rows[src].sha:hhex(src);
+  if(!IN_TAURI){                                    // ---- design-mode demo ----
+    const backup=Safety.seal();
+    const conflict=(G.isMerge[src]||(hhex(src).charCodeAt(0)&1));
+    if(conflict){
+      Tama.event("mutation.caution",{count:1});
+      $("#conflictSub").textContent="Picking "+srcSha+" onto HEAD conflicts in src/auth/token.ts. Snapshot "+backup.ref.slice(-8)+" sealed.";
+      $("#conflictBackup").textContent=backup.ref;
+      CONFLICT={sha:srcSha,selected:"src/auth/token.ts",remaining:new Set(["src/auth/token.ts"]),
+        files:[{path:"src/auth/token.ts",
+          ours:"const ttl = 3600;\nrefresh(token);",
+          base:"const ttl = 900;\nrefresh(token);",
+          theirs:"const ttl = 1800;\nrefresh(token, opts);"}]};
+      renderConflict();
+      openScrim("#conflictScrim");
+    } else {
+      Tama.event("snapshot.surfaced");
+      Tama.say("Picked "+srcSha+" onto HEAD. Sealed "+backup.ref.slice(-8)+".");
+    }
+    return;
   }
+  if(PICK_BUSY) return;                              // ---- real pick onto HEAD ----
+  if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
+  PICK_BUSY=true;
+  Tama.event("mutation.caution",{count:1});
+  const recordOrigin=!!($("#cpRecordOrigin")&&$("#cpRecordOrigin").checked);
+  try{
+    const res=await tinvoke("cherry_pick",{path:CUR_REPO,sha:srcSha,recordOrigin});
+    await applyCherryOutcome(res,srcSha);
+  }catch(e){ Tama.warn("Cherry-pick failed — "+e); }
+  finally{ PICK_BUSY=false; }
+}
+
+/* Route a cherry_pick / cherry_pick_continue PickResult to the UI. */
+async function applyCherryOutcome(res,sha){
+  switch(res.state){
+    case "clean":
+      CONFLICT=null; closeScrim("#conflictScrim"); await reloadGraph(true);
+      Tama.event("snapshot.surfaced"); Tama.set("celebrate");
+      Tama.say(res.message||("Cherry-picked "+(sha||"")+"."),4200);
+      cheer('Cherry-pick applied. <span class="jp">よし!</span>');
+      break;
+    case "empty":
+      CONFLICT=null; closeScrim("#conflictScrim"); await reloadGraph(true);
+      Tama.set("hint"); Tama.say(res.message||"Already applied — nothing to pick.",4200);
+      break;
+    case "conflict":
+      await openConflict(res,sha);
+      break;
+    default: // "error"
+      CONFLICT=null; Tama.warn(res.message||"Cherry-pick could not start.");
+      break;
+  }
+}
+
+/* Open the resolver on a REAL conflict: fetch stage blobs, render, show. */
+async function openConflict(res,sha){
+  CONFLICT={sha:sha||"",files:[],selected:null,remaining:new Set()};
+  if($("#conflictTamaImg")) $("#conflictTamaImg").src=TAMA_IMG.alarm;
+  const n=res.conflictedFiles?res.conflictedFiles.length:0;
+  $("#conflictSub").textContent=n
+    ? ("Picking "+(sha||"the commit")+" conflicts in "+n+" file"+(n===1?"":"s")+". Pick a side per file, then Continue — or Abort.")
+    : ("Cherry-pick of "+(sha||"the commit")+" needs review — resolve, then Continue, or Abort.");
+  if(res.backupRef) $("#conflictBackup").textContent=res.backupRef;
+  await refreshConflict();
+  openScrim("#conflictScrim");
+}
+
+/* Pull the authoritative unmerged files (+ ours/base/theirs) and (re)render.
+   conflict_status returns {inProgress, op, files:[...]} — read .files, and it
+   REJECTS on error so wrap in try/catch. */
+async function refreshConflict(){
+  let st=null;
+  try{ st=await tinvoke("conflict_status",{path:CUR_REPO}); }
+  catch(e){ console.error("conflict_status",e); }
+  CONFLICT.files=(st&&Array.isArray(st.files))?st.files:[];
+  CONFLICT.remaining=new Set(CONFLICT.files.map(f=>f.path));
+  if(CONFLICT.selected==null||!CONFLICT.remaining.has(CONFLICT.selected))
+    CONFLICT.selected=CONFLICT.files.length?CONFLICT.files[0].path:null;
+  renderConflict();
+}
+
+function langForConflict(path){
+  const ext=(path||"").split(".").pop().toLowerCase();
+  return (ext=="ts"||ext=="tsx"||ext=="js"||ext=="jsx"||ext=="mjs"||ext=="cjs")?"ts":"generic";
+}
+
+function cfCol(cls,title,txt,lang){
+  const body=(txt||"").split("\n").map(l=>'<div class="ln"><code>'+highlight(l,lang)+'</code></div>').join("")
+    ||'<div class="ln"><span class="mut">— empty —</span></div>';
+  return '<div class="tw-col '+cls+'"><h6>'+esc(title)+'</h6>'+body+'</div>';
+}
+
+function renderConflict(){
+  const box=$("#cfFiles"); if(!box) return; box.innerHTML="";
+  CONFLICT.files.forEach(f=>{
+    const resolved=!CONFLICT.remaining.has(f.path);
+    const el=document.createElement("div");
+    el.className="cf-file"+(f.path===CONFLICT.selected?" sel":"")+(resolved?" done":"");
+    el.innerHTML='<span class="cf-mk">'+(resolved?"✓":"●")+'</span><span class="cf-name">'+esc(f.path)+'</span>';
+    el.addEventListener("click",()=>{ CONFLICT.selected=f.path; renderConflict(); });
+    box.appendChild(el);
+  });
+  const f=CONFLICT.files.find(x=>x.path===CONFLICT.selected);
+  $("#cfCurPath").textContent=f?f.path:"";
+  const lang=f?langForConflict(f.path):"generic";
+  const three=$("#cfThree");
+  three.innerHTML=f
+    ? cfCol("ours","Ours (HEAD)",f.ours,lang)+cfCol("","Base",f.base,lang)+cfCol("theirs","Theirs (picked)",f.theirs,lang)
+    : '<div class="tw-col" style="grid-column:1/4;padding:14px"><span class="mut">All files resolved — press Continue &amp; commit.</span></div>';
+  const live=!!(f&&CONFLICT.remaining.has(f.path));
+  if($("#cfTakeOurs")) $("#cfTakeOurs").disabled=!live;
+  if($("#cfTakeTheirs")) $("#cfTakeTheirs").disabled=!live;
+  const rem=CONFLICT.remaining.size;
+  if($("#cfRemain")) $("#cfRemain").textContent=rem?(rem+" file"+(rem===1?"":"s")+" left"):"all resolved";
+  if($("#conflictContinue")) $("#conflictContinue").disabled=rem>0;
+}
+
+/* Take a whole side for the selected file, then re-pull authoritative state
+   (resolve_conflict_file returns remaining as a COUNT, not a list). */
+async function takeSide(side){
+  const f=CONFLICT&&CONFLICT.files.find(x=>x.path===CONFLICT.selected);
+  if(!f) return;
+  if(!IN_TAURI){
+    CONFLICT.remaining.delete(f.path);
+    const nx=CONFLICT.files.find(x=>CONFLICT.remaining.has(x.path));
+    if(nx) CONFLICT.selected=nx.path;
+    renderConflict(); Tama.say("Took "+side+" for "+f.path+" (demo)."); return;
+  }
+  let r;
+  try{ r=await tinvoke("resolve_conflict_file",{path:CUR_REPO,file:f.path,side}); }
+  catch(e){ Tama.warn("Resolve failed — "+e); return; }
+  if(!r.ok) Tama.warn(r.message||("Could not resolve "+f.path));
+  await refreshConflict();
 }
 
 /* ============================================================
@@ -1394,12 +1548,37 @@ $("#filterRepoBtn").addEventListener("click",()=>{
     onConfirm:async ()=>{ const b=Safety.seal(); Tama.set("celebrate"); Tama.say("History rewritten. Pre-op backup "+b.ref.slice(-8)+" pinned.",4200); } });
 });
 // conflict resolver
-$("#conflictAbort").addEventListener("click",()=>{closeScrim("#conflictScrim");Tama.event("idle");Tama.set("hint");Tama.say("Pick aborted — HEAD unchanged.");});
-$("#conflictOurs").addEventListener("click",()=>{closeScrim("#conflictScrim");Tama.event("snapshot.surfaced");Tama.say("Resolved with ours. Recorded to rerere.");});
-$("#conflictResolve").addEventListener("click",()=>{closeScrim("#conflictScrim");Tama.set("celebrate");Tama.say("Conflict resolved — cherry-pick committed.");cheer('Conflict resolved — pick committed. <span class="jp">よし!</span>');});
+$("#conflictAbort").addEventListener("click",async ()=>{
+  if(!IN_TAURI){ CONFLICT=null; closeScrim("#conflictScrim"); Tama.set("hint"); Tama.say("Pick aborted — HEAD unchanged."); return; }
+  if(PICK_BUSY) return; PICK_BUSY=true;
+  try{
+    const r=await tinvoke("cherry_pick_abort",{path:CUR_REPO});
+    if(r&&r.state==="clean"){
+      CONFLICT=null; closeScrim("#conflictScrim"); await reloadGraph(true);
+      Tama.set("hint"); Tama.say(r.message||"Pick aborted — HEAD unchanged.");
+    } else {
+      Tama.warn((r&&r.message)||"Abort failed — try again, or abort from the command line."); // keep resolver open
+    }
+  }catch(e){ Tama.warn("Abort failed — "+e); }
+  finally{ PICK_BUSY=false; }
+});
+$("#conflictContinue").addEventListener("click",async ()=>{
+  if(!IN_TAURI){ CONFLICT=null; closeScrim("#conflictScrim"); Tama.set("celebrate"); Tama.say("Conflict resolved — cherry-pick committed."); cheer('Conflict resolved — pick committed. <span class="jp">よし!</span>'); return; }
+  if(PICK_BUSY) return; PICK_BUSY=true;
+  try{
+    const r=await tinvoke("cherry_pick_continue",{path:CUR_REPO});
+    if(r.state==="conflict"){ await refreshConflict(); Tama.warn(r.message||"Still conflicted — resolve the remaining files."); }
+    else { await applyCherryOutcome(r,(CONFLICT&&CONFLICT.sha)||""); }
+  }catch(e){ Tama.warn("Continue failed — "+e); }
+  finally{ PICK_BUSY=false; }
+});
+$("#cfTakeOurs").addEventListener("click",()=>takeSide("ours"));
+$("#cfTakeTheirs").addEventListener("click",()=>takeSide("theirs"));
 function openScrim(sel){$(sel).classList.add("on");}
 function closeScrim(sel){$(sel).classList.remove("on");}
-document.addEventListener("keydown",e=>{if(e.key==="Escape"){disarmDanger();closeScrim("#conflictScrim");}});
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ disarmDanger();
+  if(IN_TAURI&&CONFLICT&&$("#conflictScrim").classList.contains("on")) return; // don't strand a live pick — use Abort
+  closeScrim("#conflictScrim"); } });
 // reflog restore
 $$(".log-row .go").forEach(b=>b.addEventListener("click",()=>{Tama.event("undo.performed",{hash:$(".sel",b.closest(".log-row")).textContent});pulseTick(1);}));
 // ref filter
