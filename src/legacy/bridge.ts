@@ -47,6 +47,11 @@ export {
   // topbar branch pill (#pillBranch/#pillAb) — stays legacy-owned, sidebarCtrl
   // calls this after every refresh rather than touching those DOM nodes itself.
   updateBranchPill,
+  // real "open a repository" hand-off (native picker -> load_graph -> render)
+  // — the setup wizard's final step calls this exactly like pickRepo() does.
+  // Safe to live-re-export: a hoisted `function` declaration, not a `const`,
+  // so there's no TDZ risk (see file header).
+  openRepo,
 } from "./main";
 
 // bisect canvas bridge: bisectCtrl (the real modal, src/islands/bisect) syncs

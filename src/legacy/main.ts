@@ -653,6 +653,10 @@ function loadGraph(N){
 /* ============================================================
    12) REAL REPOSITORY (Tauri): open a repo -> Rust load_graph
    ============================================================ */
+// Returns true when the repo actually loaded, false when load_graph (or any
+// step) failed. Never throws — callers that don't care (pickRepo) can ignore
+// the result, while the setup wizard uses it to keep its done-step overlay up
+// so the user can retry "Open repository" instead of being dumped out silently.
 async function openRepo(path){
   try{
     const g = await tinvoke("load_graph", { path });
@@ -670,7 +674,8 @@ async function openRepo(path){
     // last, most relevant thing the user sees — it deliberately overrides the
     // generic greeting rather than racing it.
     await bisectCtrl.probeOnOpen(path);
-  }catch(e){ Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); }
+    return true;
+  }catch(e){ Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); return false; }
 }
 async function reloadGraph(preserveRow){
   if(!IN_TAURI||!CUR_REPO) return;
@@ -742,4 +747,5 @@ const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>c
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, hhex, msgOf, AUTHORS,
-  fakeAgo, relTime, pickRepo, ensureDrawerOpen, armDanger, updateBranchPill };
+  fakeAgo, relTime, pickRepo, ensureDrawerOpen, armDanger, updateBranchPill,
+  openRepo };
