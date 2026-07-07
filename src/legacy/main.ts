@@ -629,6 +629,7 @@ function renderBisect(){
 }
 $$(".bx[data-mark]").forEach(b=>b.addEventListener("click",()=>{
   const m=b.dataset.mark;
+  if(bisectCtrl.running){ Tama.set("hint"); Tama.say("A bisect is already running — use Good / Skip / Bad in the panel above."); return; }
   if(state.selectedRow<0){ Tama.set("hint"); Tama.say("Pick a commit in the graph first, then mark it "+m+"."); return; }
   const r=state.selectedRow;
   if(m==="good"){bisect.good=r;if(bisect.bad===r)bisect.bad=null;}
@@ -886,6 +887,12 @@ async function openRepo(path){
     await Safety.refresh();
     Tama.set("hint");
     Tama.say("Loaded "+g.n.toLocaleString()+" commits in "+(g.readMs+g.layoutMs).toFixed(0)+" ms. にゃ〜",4200);
+    // Runs after loadGraph() (which resets the local bisect row-model) so a
+    // recovered live bisect's canvas cues aren't immediately wiped out; and
+    // after the "Loaded N commits" toast so a recovery notice (if any) is the
+    // last, most relevant thing the user sees — it deliberately overrides the
+    // generic greeting rather than racing it.
+    await bisectCtrl.probeOnOpen(path);
   }catch(e){ Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); }
 }
 async function reloadGraph(preserveRow){

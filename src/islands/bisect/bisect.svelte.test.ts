@@ -29,6 +29,16 @@ vi.mock("../../ipc/bindings", () => ({
   },
 }));
 
+// IN_TAURI is mocked per-describe-block (not globally), same pattern as
+// rerere.svelte.test.ts: probeOnOpen is IN_TAURI-guarded (design-mode has no
+// backend to probe), so tests need to flip it.
+let mockInTauri = false;
+vi.mock("../../ipc/env", () => ({
+  get IN_TAURI() {
+    return mockInTauri;
+  },
+}));
+
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { BisectStatus, CommitInfo } from "../../ipc/bindings";
@@ -67,6 +77,7 @@ function resetBisect() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockInTauri = false;
   resetBisect();
 });
 
@@ -234,5 +245,85 @@ describe("openDemo", () => {
     expect(bisectCtrl.vm?.current).toEqual(CUR);
     expect(commands.bisectStart).not.toHaveBeenCalled();
     expect(commands.bisectStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe("probeOnOpen", () => {
+  it("a repo with an in-progress bisect resurfaces the modal, syncing the canvas cues like a normal refresh", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.bisectStatus).mockResolvedValueOnce(
+      status({ inProgress: true, current: CUR, remainingRevs: 5, estSteps: 2 }),
+    );
+
+    await bisectCtrl.probeOnOpen("repo1");
+
+    expect(commands.bisectStatus).toHaveBeenCalledWith("repo1");
+    expect(bisectCtrl.repo).toBe("repo1");
+    expect(bisectCtrl.open).toBe(true);
+    expect(bisectCtrl.vm?.current).toEqual(CUR);
+    expect(bridge.syncBisectMarks).toHaveBeenCalled();
+    expect(bridge.focusBisectCurrent).toHaveBeenCalled();
+    // passive recovery: a one-time heads-up, but never the busy/"thinking"
+    // states start()/mark() use for an active mutation.
+    expect(bridge.tama.say).toHaveBeenCalled();
+    expect(bridge.tama.set).not.toHaveBeenCalledWith("thinking");
+    expect(bisectCtrl.busy).toBe(false);
+  });
+
+  it("a repo with no bisect in progress leaves the modal closed and does not warn or error", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.bisectStatus).mockResolvedValueOnce(status({ inProgress: false, ok: true }));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await bisectCtrl.probeOnOpen("repo1");
+
+    expect(commands.bisectStatus).toHaveBeenCalledWith("repo1");
+    expect(bisectCtrl.open).toBe(false);
+    expect(bisectCtrl.vm).toBeNull();
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+    expect(bridge.syncBisectMarks).not.toHaveBeenCalled();
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("an ok:false status also leaves the modal closed", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.bisectStatus).mockResolvedValueOnce(status({ ok: false, inProgress: false }));
+
+    await bisectCtrl.probeOnOpen("repo1");
+
+    expect(bisectCtrl.open).toBe(false);
+    expect(bridge.syncBisectMarks).not.toHaveBeenCalled();
+  });
+
+  it("a null/empty repo is a no-op: no IPC call, nothing opens", async () => {
+    mockInTauri = true;
+
+    await bisectCtrl.probeOnOpen("");
+
+    expect(commands.bisectStatus).not.toHaveBeenCalled();
+    expect(bisectCtrl.open).toBe(false);
+  });
+
+  it("design-mode (!IN_TAURI) is a no-op even with a repo path: no backend to probe", async () => {
+    mockInTauri = false;
+
+    await bisectCtrl.probeOnOpen("repo1");
+
+    expect(commands.bisectStatus).not.toHaveBeenCalled();
+    expect(bisectCtrl.open).toBe(false);
+  });
+
+  it("a thrown/rejected bisectStatus call is caught, not propagated, and leaves the modal closed", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.bisectStatus).mockRejectedValueOnce(new Error("boom"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(bisectCtrl.probeOnOpen("repo1")).resolves.toBeUndefined();
+
+    expect(bisectCtrl.open).toBe(false);
+    expect(bisectCtrl.vm).toBeNull();
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 });

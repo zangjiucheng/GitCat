@@ -9,6 +9,7 @@
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
+import { IN_TAURI } from "../../ipc/env";
 import type { BisectStatus } from "../../ipc/bindings";
 
 // specta generates `term: string`; keep the precise union at the call boundary.
@@ -94,6 +95,37 @@ class BisectState {
       console.error("bisect_status", e);
     }
     this.applyStatus(st);
+  }
+
+  // ── on-open probe: resume a bisect left running from a prior session ─────
+  // Called once when a repo opens (see legacy/main.ts's openRepo). If the app
+  // quit (or the user switched repos) mid-bisect, the repo's .git is left in
+  // a detached-HEAD, mid-sequencer state on disk with nothing in memory to
+  // say so. This reads the real on-disk state (bisect_status is read-only,
+  // safe to call anytime) and, only if a bisect is genuinely still running,
+  // resurfaces the modal + canvas cues exactly like a normal refresh would.
+  // A clean repo (or any failure) is left completely untouched: no modal, no
+  // toast, nothing closed that wasn't already closed.
+  async probeOnOpen(repo: string): Promise<void> {
+    if (!repo || !IN_TAURI) return;
+    let st: BisectStatus | null = null;
+    try {
+      st = await commands.bisectStatus(repo);
+    } catch (e) {
+      console.error("bisect_status", e);
+      return;
+    }
+    if (!st || st.ok === false || !st.inProgress) return; // nothing to resume
+    this.repo = repo;
+    this.applyStatus(st); // vm + canvas cues, same as a normal refresh
+    this.open = true;
+    // Passive recovery, not an active mutation: no "thinking"/busy state —
+    // just a one-time heads-up that we picked the session back up.
+    bridge.tama.set("hint");
+    bridge.tama.say(
+      "Welcome back — this repo had a bisect in progress, so I've picked it back up. にゃ〜",
+      5200,
+    );
   }
 
   // ── real flow (from the legacy drawer) ────────────────────────────────────
