@@ -20,7 +20,7 @@ jobs:
         working-directory: src-tauri
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Tauri itself (not just git2) needs system dev libraries on Linux: the
       # tauri-runtime-wry backend links against WebKitGTK/GTK/GLib at BUILD time
@@ -92,17 +92,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Must run before actions/setup-node's `cache: pnpm`, which shells out to
       # `pnpm store path` to locate what to cache.
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
