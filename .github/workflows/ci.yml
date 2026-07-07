@@ -1,7 +1,13 @@
 name: CI
 
 on:
+  # Only main gets its own push trigger — a feature branch with an open PR
+  # already gets CI from `pull_request` below, so triggering `push` for every
+  # branch double-runs the whole suite (once per event) on every commit to an
+  # open PR. Restricting push to main is the standard fix: main itself is
+  # never a PR head here, so it can't double-fire the other way either.
   push:
+    branches: [main]
   pull_request:
 
 # Cancel superseded runs on the same branch/PR to save CI minutes.
