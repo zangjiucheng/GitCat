@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Cancel superseded runs on the same branch/PR to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Builds/tests the Rust core (src-tauri, crate `gitcat_lib`).
+  # Independent of the `frontend` job below so the two run in parallel.
+  rust:
+    name: Rust (build + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Caches the cargo registry/index and src-tauri/target, keyed on Cargo.lock.
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # NOTE on native deps for git2/libgit2:
+      # src-tauri/Cargo.toml pins `git2 = { version = "0.20", default-features = false }`.
+      # git2's default features are ["ssh", "https"], which pull in libssh2-sys/openssl-sys
+      # respectively — disabling them (as this repo does) means libgit2-sys builds with
+      # NEITHER of those, so there is nothing for the runner to have OpenSSL/libssh2
+      # dev headers for in the first place.
+      # libgit2-sys's build.rs first tries to find a matching system libgit2 (>=1.9.4,
+      # <1.10.0) via pkg-config; if that's not found (the normal case on a stock
+      # `ubuntu-latest` image, which doesn't ship libgit2-dev) it falls back to compiling
+      # the *vendored* libgit2 C sources bundled in the crate itself using the `cc` crate
+      # directly (NOT the external `cmake` binary — libgit2-sys does not depend on
+      # `cmake`). That vendored path only needs a C compiler and the `pkg-config` binary
+      # (for the initial probe attempt), both of which `ubuntu-latest` ships preinstalled
+      # (build-essential, pkg-config). This was verified locally against this repo's exact
+      # Cargo.lock: the build takes the vendored path (`cargo:rustc-cfg=libgit2_vendored`)
+      # with no extra system packages installed beyond the runner's stock image.
+      # => No `apt-get install` step is needed here.
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Test
+        run: cargo test
+
+      - name: Build examples
+        run: cargo build --examples --locked
+
+  # Type-checks/builds/tests the Svelte 5 frontend.
+  # Independent of the `rust` job above so the two run in parallel.
+  frontend:
+    name: Frontend (check + build + test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Must run before actions/setup-node's `cache: pnpm`, which shells out to
+      # `pnpm store path` to locate what to cache.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check (svelte-check)
+        run: pnpm check
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test (vitest)
+        run: pnpm test
