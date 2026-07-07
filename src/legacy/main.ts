@@ -729,7 +729,7 @@ function bootEmpty(){
 }
 $(".repo-pick").addEventListener("click", pickRepo);
 
-applyTheme("light"); // clean white base by default; ◐ toggles the neutral-dark theme
+applyTheme("dark"); // cozy dark base by default; ◐ toggles back to light
 $("#sprite").innerHTML=TAMA_SVG;
 $("#dangerTamaImg").src=TAMA_IMG.alarm; $("#tamaCheerImg").src=TAMA_IMG.happy;
 new ResizeObserver(()=>resize()).observe(wrap);
