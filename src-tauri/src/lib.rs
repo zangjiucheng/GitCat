@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod conflict;
+pub mod filter_repo; // M5c: filter-repo wizard (backup / preview / run / restore)
 pub mod git_pick;
 pub mod git_read;
 pub mod git_write;
@@ -55,6 +56,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
         rerere::rerere_set_enabled,
         // Plumbing playground (M5b): inspect any rev's raw object (read-only)
         plumbing::plumbing_inspect,
+        // Filter-repo wizard (M5c): backup+preview / run / restore / list backups
+        filter_repo::filter_repo_preview,
+        filter_repo::filter_repo_run,
+        filter_repo::filter_repo_restore,
+        filter_repo::filter_repo_list_backups,
     ])
 }
 

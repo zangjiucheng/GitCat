@@ -11,10 +11,12 @@ import { reflogCtrl } from "./islands/reflog/reflog.svelte.ts";
 import Rerere from "./islands/rerere/Rerere.svelte";
 import { rerereCtrl } from "./islands/rerere/rerere.svelte.ts";
 import Plumbing from "./islands/plumbing/Plumbing.svelte";
+import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import * as bridge from "./legacy/bridge";
 
 mount(Resolver, { target: document.body });
 mount(Bisect, { target: document.body });
+mount(FilterRepo, { target: document.body });
 
 // Drawer-PANE islands (not modals): mounted straight into their own pane so
 // the existing .pane/.pane.on show/hide + drawer-tabs wiring in legacy/main.ts

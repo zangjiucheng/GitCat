@@ -292,6 +292,44 @@ async plumbingInspect(path: string, rev: string) : Promise<Result<PlumbingObject
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Read-only preview shown before the user commits to running filter-repo.
+ */
+async filterRepoPreview(path: string, paths: string[], invert: boolean) : Promise<Result<FilterRepoPreview, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("filter_repo_preview", { path, paths, invert }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Run `git filter-repo` against the given scope, after a mandatory verified
+ * backup. Plain-struct failure model — see module docs.
+ */
+async filterRepoRun(path: string, paths: string[], invert: boolean) : Promise<FilterRepoResult> {
+    return await TAURI_INVOKE("filter_repo_run", { path, paths, invert });
+},
+/**
+ * Restore every ref namespace a previous backup captured. Pins any
+ * at-risk CURRENT tip under `refs/gitgui/deleted/*` first (data-safety,
+ * mirrors safety::undo's pre-move pinning) so nothing is silently orphaned
+ * even if the user regrets the restore itself.
+ */
+async filterRepoRestore(path: string, backupId: string) : Promise<FilterRepoResult> {
+    return await TAURI_INVOKE("filter_repo_restore", { path, backupId });
+},
+/**
+ * List available backups (survives app restarts — reads the on-disk log).
+ */
+async filterRepoListBackups(path: string) : Promise<Result<FilterRepoBackupInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("filter_repo_list_backups", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -357,6 +395,37 @@ export type DiffLineRow = { kind: string; oldNo: number | null; newNo: number | 
  * (`truncated == true`). `old_path` is set only for renames/copies.
  */
 export type FileChange = { path: string; oldPath: string | null; status: string; additions: number; deletions: number; binary: boolean; truncated: boolean; lang: string; hunks: DiffHunkRow[] }
+/**
+ * One backup entry as shown in a "restore from a previous backup" list.
+ */
+export type FilterRepoBackupInfo = { 
+/**
+ * Opaque id passed back into `filter_repo_restore`.
+ */
+id: string; bundlePath: string; ts: number; 
+/**
+ * Symbolic HEAD ref at backup time ("refs/heads/main"), "" if detached.
+ */
+headBranch: string; headSha: string; refCount: number; description: string }
+/**
+ * Read-only preview shown BEFORE the user commits to running filter-repo.
+ */
+export type FilterRepoPreview = { 
+/**
+ * Whether the `git-filter-repo` binary is available at all, so the
+ * wizard's final confirm step can be disabled/greyed cleanly.
+ */
+available: boolean; currentBranch: string; totalCommits: number; 
+/**
+ * `git rev-list --count HEAD -- <paths...>` — how many commits on the
+ * current branch touch the requested scope.
+ */
+touchedCommits: number }
+/**
+ * Result of `filter_repo_run` / `filter_repo_restore`. Plain struct (never a
+ * Rust `Err`) — see module docs on the failure model.
+ */
+export type FilterRepoResult = { ok: boolean; message: string; backupBundle: string | null; commitsBefore: number | null; commitsAfter: number | null }
 /**
  * The full graph payload. Rows are in reverse-chronological/topological order
  * (child before parent). `lane`/`color`/`merge` are one-per-row.

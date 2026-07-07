@@ -3,6 +3,7 @@ import { resolver } from "../islands/resolver/resolver.svelte.ts";
 import { bisectCtrl } from "../islands/bisect/bisect.svelte.ts";
 import { reflogCtrl } from "../islands/reflog/reflog.svelte.ts";
 import { rerereCtrl } from "../islands/rerere/rerere.svelte.ts";
+import { filterRepoCtrl } from "../islands/filterrepo/filterrepo.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -799,14 +800,13 @@ function disarmDanger(){ closeScrim("#dangerScrim"); const ci=$("#confirmInput")
 $("#confirmInput").addEventListener("input",e=>{ const want=dangerCtx?dangerCtx.name:"main"; $("#dangerGo").disabled=e.target.value.trim()!==want; });
 $("#dangerCancel").addEventListener("click",()=>{ disarmDanger(); Tama.event("mutation.cancel"); });
 $("#dangerGo").addEventListener("click",async ()=>{ const ctx=dangerCtx; disarmDanger(); if(ctx&&ctx.onConfirm) await ctx.onConfirm(); });
+// filter-repo now opens its OWN dedicated multi-step wizard (src/islands/
+// filterrepo) instead of the generic single-step armDanger flow above (that
+// flow stays wired for its other callers, e.g. delete-branch): scope ->
+// preview -> typed confirm -> run -> result, plus a restore-from-backup view.
 $("#filterRepoBtn").addEventListener("click",()=>{
-  Tama.event("mutation.destructive",{label:"git filter-repo"});
-  armDanger({ title:"Rewrite history — filter-repo",
-    desc:"This rewrites every commit on the selected refs. It cannot be undone with a normal Undo.",
-    lose:'<h5>What this will rewrite / lose</h5><ul><li>Rewrites <code>42</code> commits on <code>main</code></li><li>Original SHAs become unreachable</li><li>GPG signatures are dropped</li></ul>',
-    note:"🔁 A pre-op backup is pinned first → full pre-rewrite state stays recoverable.",
-    name:"main", confirmLabel:"Rewrite history",
-    onConfirm:async ()=>{ const b=Safety.seal(); Tama.set("celebrate"); Tama.say("History rewritten. Pre-op backup "+b.ref.slice(-8)+" pinned.",4200); } });
+  if(!IN_TAURI){ filterRepoCtrl.openDemo(); return; }
+  filterRepoCtrl.start(CUR_REPO);
 });
 
 function openScrim(sel){$(sel).classList.add("on");}
