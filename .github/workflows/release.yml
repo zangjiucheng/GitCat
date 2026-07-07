@@ -1,0 +1,148 @@
+name: Release
+
+# Tag-push (v1.2.3) builds every platform/arch below and uploads the bundles
+# to a (draft) GitHub Release matching the tag. workflow_dispatch runs the
+# exact same matrix WITHOUT touching Releases at all — a manual "does the
+# whole matrix still build" smoke test, e.g. after bumping a dependency,
+# without needing to cut a real tag first.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+# tauri-action creates/updates the GitHub Release and uploads assets to it —
+# needs write access to Contents (releases are part of the Contents API).
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One slow/flaky platform (e.g. a transient arm64 runner hiccup)
+      # shouldn't cancel the other 5 — every platform reports its own real
+      # pass/fail instead of a misleading blanket cancellation.
+      fail-fast: false
+      matrix:
+        include:
+          # macOS: build NATIVELY on both an Apple Silicon and an Intel
+          # runner rather than cross-compiling a universal binary from one
+          # host — this is Tauri's own documented reference pattern (avoids
+          # any chance of subtle cross-toolchain quirks in git2's vendored
+          # libgit2 C build) and produces two normal per-arch bundles instead
+          # of one fat universal one, matching "matrix build" literally.
+          - name: macOS (Apple Silicon / arm64)
+            runner: macos-latest # GitHub's macos-latest is Apple Silicon (arm64) as of this writing
+            target: aarch64-apple-darwin
+          - name: macOS (Intel / x86_64)
+            runner: macos-15-intel # the current Intel-hosted macOS image label (Intel runners are versioned separately from the Apple Silicon "macos-latest" line now)
+            target: x86_64-apple-darwin
+
+          # Linux: pin to 22.04 (NOT "ubuntu-latest") deliberately — a release
+          # binary linked against a newer glibc/GTK than 22.04 ships raises the
+          # MINIMUM OS version end users need, which is the opposite of what a
+          # release build wants. 22.04-arm is a native arm64 runner (no GTK/
+          # WebKit cross-compilation sysroot needed — same apt packages as x64,
+          # just resolved for the native arch we're already running on).
+          - name: Linux (x86_64)
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: Linux (arm64)
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+
+          # Windows: both native now — GitHub added a hosted native arm64
+          # Windows runner (windows-11-arm), so this avoids cross-compiling
+          # (MSVC's arm64 cross-linker + a rustup cross target) entirely,
+          # same reasoning as preferring native Linux/macOS arm64 runners above.
+          - name: Windows (x86_64)
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: Windows (arm64)
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Same rationale as ci.yml's rust job: tauri-runtime-wry links against
+      # WebKitGTK/GTK/GLib at BUILD time on Linux, regardless of target arch —
+      # see that file's longer comment for the full story. git2 itself needs
+      # nothing extra here (vendored libgit2, ssh/https features disabled).
+      - name: Install Linux system dependencies for Tauri
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libxdo-dev \
+            patchelf
+
+      # Must run before actions/setup-node's `cache: pnpm`, which shells out
+      # to `pnpm store path` to locate what to cache (same as ci.yml).
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust stable toolchain (with this matrix entry's target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Keyed per-target (not just per-OS) so the six matrix entries never
+      # share or clobber each other's incompatible target-triple artifacts —
+      # matters most for the two Windows entries, which share a runner OS.
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Manual smoke-test path (workflow_dispatch): build only, never touch
+      # Releases. Confirms the whole matrix still compiles after a dependency
+      # bump etc. without needing a throwaway tag.
+      - name: Build (no release)
+        if: github.event_name == 'workflow_dispatch'
+        run: pnpm tauri build --target ${{ matrix.target }}
+
+      # Real release path (tag push): build AND upload every platform's
+      # bundle to one shared draft release named after the tag. Draft (not
+      # published) on purpose — review the generated notes/assets and hit
+      # "Publish" by hand once all 6 matrix entries have reported in.
+      #
+      # NOTE: neither macOS nor Windows code-signing is configured yet (no
+      # Apple Developer / Windows code-signing certificate secrets exist in
+      # this repo), so these bundles are unsigned — macOS Gatekeeper and
+      # Windows SmartScreen will both warn on first launch. Fine for now;
+      # wiring up real signing is a separate follow-up, not blocking this
+      # workflow's ability to produce installable (if warned-about) builds.
+      - name: Build + publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "GitCat ${{ github.ref_name }}"
+          releaseBody: "See the assets below for your platform's installer."
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
