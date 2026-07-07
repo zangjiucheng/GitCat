@@ -37,6 +37,9 @@ class SetupWizardState {
   emailInput = $state("");
   saveError = $state("");
 
+  // ── done step ───────────────────────────────────────────────────────────
+  finishError = $state("");
+
   get canSave(): boolean {
     return this.nameInput.trim().length > 0 && this.emailInput.trim().length > 0 && !this.busy;
   }
@@ -124,6 +127,14 @@ class SetupWizardState {
         this.saveError = "";
         this.step = "identity";
       }
+    } catch (e) {
+      // getGitIdentity's binding RETHROWS when TAURI_INVOKE rejects with an
+      // Error (only the non-Error path becomes a {status:"error"} Result), so
+      // without this catch the failure would escape validate() -> pickDirectory()
+      // as an unhandled rejection, leaving the user stranded on "pick" with no
+      // message. Surface it as pathError like every other pick-step failure.
+      this.identity = null;
+      this.pathError = "That doesn't look like a git repository — " + e;
     } finally {
       this.busy = false;
     }
@@ -163,6 +174,7 @@ class SetupWizardState {
   async finish() {
     if (this.busy || !this.repoPath) return;
     this.busy = true;
+    this.finishError = "";
     this.tamaImg = bridge.TAMA_IMG.happy;
     if (this.demo) {
       // Never call bridge.openRepo in demo mode: there is no real Tauri
@@ -172,8 +184,17 @@ class SetupWizardState {
       this.busy = false;
       return;
     }
-    await bridge.openRepo(this.repoPath); // never throws — see legacy/main.ts
-    this.open = false;
+    // openRepo never throws, but it DOES swallow load_graph failures internally
+    // (only a Tama toast) and now reports success/failure. Only tear down the
+    // done-step overlay when the graph actually loaded; on failure keep it up
+    // with an inline error so the user can retry "Open repository".
+    const ok = await bridge.openRepo(this.repoPath);
+    if (ok) {
+      this.open = false;
+    } else {
+      this.tamaImg = bridge.TAMA_IMG.hero;
+      this.finishError = "Couldn't open the repository — please try again.";
+    }
     this.busy = false;
   }
 
@@ -190,6 +211,7 @@ class SetupWizardState {
     this.nameInput = "";
     this.emailInput = "";
     this.saveError = "";
+    this.finishError = "";
     this.busy = false;
     this.open = false;
   }

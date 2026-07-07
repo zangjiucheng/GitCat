@@ -76,6 +76,9 @@
         {:else}
           <p class="mut">No identity set — you can add one later with <code>git config user.name</code>/<code>user.email</code>.</p>
         {/if}
+        {#if setupWizardCtrl.finishError}
+          <div class="pl-err" style="margin-top:10px">{setupWizardCtrl.finishError}</div>
+        {/if}
       {/if}
     </div>
 
