@@ -11,7 +11,7 @@ vi.mock("../../legacy/bridge", () => ({
   cheer: vi.fn(),
   highlight: vi.fn(),
   tama: { set: vi.fn(), say: vi.fn(), warn: vi.fn(), event: vi.fn() },
-  TAMA_IMG: { alarm: "alarm.png", happy: "happy.png" },
+  TAMA_IMG: { alarm: "alarm.png", happy: "happy.png", shocked: "shocked.png" },
   requestRedraw: vi.fn(),
   syncBisectMarks: vi.fn(),
   focusBisectCurrent: vi.fn(),

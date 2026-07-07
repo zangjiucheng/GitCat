@@ -139,7 +139,7 @@ class BisectState {
     this.repo = repo;
     this.cheered = false;
     this.est0 = 0;
-    this.tamaImg = bridge.TAMA_IMG.alarm;
+    this.tamaImg = bridge.TAMA_IMG.curious; // hunting for the first bad commit
     this.busy = true;
     bridge.tama.set("thinking");
     bridge.tama.say("Starting bisect between " + goodSha + " and " + badSha + "…");
@@ -219,7 +219,7 @@ class BisectState {
     this.demo = true;
     this.cheered = false;
     this.est0 = 0;
-    this.tamaImg = bridge.TAMA_IMG.alarm;
+    this.tamaImg = bridge.TAMA_IMG.curious; // hunting for the first bad commit
     this.applyVM(status);
     this.open = true;
   }

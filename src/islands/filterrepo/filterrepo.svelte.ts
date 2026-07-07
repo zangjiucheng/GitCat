@@ -217,6 +217,7 @@ class FilterRepoState {
         bridge.tama.say(res.message || "History rewritten.", 4200);
         bridge.cheer('History rewritten. <span class="jp">よし!</span>');
       } else {
+        this.tamaImg = bridge.TAMA_IMG.shocked;
         bridge.tama.warn(res.message || "filter-repo failed — see the result below.");
       }
     } catch (e) {
@@ -228,6 +229,7 @@ class FilterRepoState {
         commitsAfter: null,
       };
       this.step = "result";
+      this.tamaImg = bridge.TAMA_IMG.shocked;
       bridge.tama.warn(this.result.message);
     } finally {
       this.busy = false;
