@@ -16,6 +16,7 @@
 //! it can never strand the user. Scope (M2a): HEAD / current-branch ref moves
 //! (branch checkout, or a branch-position move). Full-repo ref restore is later.
 
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::process::Command;
@@ -103,6 +104,11 @@ struct OpLog {
     head_before: String, // HEAD sha before
     head_after: String,  // HEAD sha after
     head_ref: String,    // symbolic HEAD at op time ("refs/heads/…" or "" if detached)
+    /// Full-repo snapshot of `refs/heads/<name>` -> tip sha, so undo can restore
+    /// deleted/renamed/moved branches (not just HEAD). Empty for non-snapshot ops
+    /// and pre-M2c op-log lines (undo then falls back to HEAD-only).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    refs: BTreeMap<String, String>,
     detail: String,
 }
 
@@ -130,6 +136,9 @@ pub fn snapshot(repo: &Repository) -> Result<String, String> {
 
     // Which branch (if any) is HEAD on? Recorded so undo can restore identity.
     let head_ref = current_symref(repo);
+    // Whole-branch topology at snapshot time, so undo can restore branches that
+    // are later deleted, renamed, or moved — not just HEAD.
+    let refs = head_refs_map(repo);
 
     append_oplog(
         repo,
@@ -140,6 +149,7 @@ pub fn snapshot(repo: &Repository) -> Result<String, String> {
             head_before: sha.clone(),
             head_after: sha,
             head_ref,
+            refs,
             detail: String::new(),
         },
     );
@@ -163,6 +173,7 @@ pub fn pin_deleted_tip(repo: &Repository, oid: git2::Oid, branch: &str) -> Resul
         head_before: oid.to_string(),
         head_after: oid.to_string(),
         head_ref: current_symref(repo),
+        refs: BTreeMap::new(),
         detail: format!("branch {branch}"),
     });
     Ok(ref_name)
@@ -270,27 +281,99 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
         .map(|c| c.id().to_string())
         .map_err(|e| e.message().to_string())?;
 
-    // Restore the branch we were on (if any), then move it + the working tree to
-    // the snapshot commit. On a clean tree `reset --hard` loses nothing.
-    if let Some(sym) = head_ref.as_deref().filter(|s| !s.is_empty()) {
-        let sr = run_git(workdir, &["symbolic-ref", "HEAD", sym])?;
-        if !sr.ok {
-            return Ok(UndoResult {
-                ok: false,
-                message: format!("Undo failed restoring HEAD: {}", sr.stderr),
-                restored_to: None,
-                sealed,
-            });
+    // ---- Full-repo ref restore (M2c) --------------------------------------
+    // The snapshot recorded every local branch tip; restore the WHOLE set, not
+    // just HEAD. A pre-M2c snapshot has no `refs` map, so `target_refs` is empty
+    // and we fall back to the HEAD-only path — an empty map must NEVER be read as
+    // "delete every branch".
+    let target_refs = oplog_refs(repo, &target.reference);
+    let sym = head_ref.as_deref().unwrap_or("");
+    let mut branch_note = String::new();
+
+    if !target_refs.is_empty() {
+        let current_refs = head_refs_map(repo);
+
+        // Data-safety FIRST: pin every current tip undo is about to MOVE or
+        // DELETE, so no commit can be orphaned. The sealed snapshot only pinned
+        // HEAD; this covers the rest before any ref is rewritten.
+        for (name, cur_sha) in &current_refs {
+            let will_change = target_refs.get(name).map(|t| t != cur_sha).unwrap_or(true);
+            if will_change {
+                if let Ok(oid) = git2::Oid::from_str(cur_sha) {
+                    let _ = pin_deleted_tip(repo, oid, name);
+                }
+            }
         }
-    }
-    let reset = run_git(workdir, &["reset", "--hard", target_sha.as_str()])?;
-    if !reset.ok {
-        return Ok(UndoResult {
-            ok: false,
-            message: format!("Undo failed: {}", reset.stderr),
-            restored_to: None,
-            sealed,
-        });
+
+        // (1) Restore/move every snapshot branch (incl. the current one; the
+        // reset below re-syncs its worktree). `update-ref` may write the
+        // checked-out branch, which `branch -f` refuses. Best-effort: a single
+        // stubborn ref must not abort the whole undo.
+        let mut restored = 0usize;
+        for (name, sha) in &target_refs {
+            if current_refs.get(name).map(|c| c == sha).unwrap_or(false) {
+                continue; // already correct
+            }
+            if run_git(workdir, &["update-ref", name, sha])?.ok {
+                restored += 1;
+            }
+        }
+
+        // (2) Point HEAD at the snapshot's branch (or detach) and sync the tree.
+        // This is the critical step — hard-fail if it can't complete.
+        if !sym.is_empty() {
+            let sr = run_git(workdir, &["symbolic-ref", "HEAD", sym])?;
+            if !sr.ok {
+                return Ok(UndoResult { ok: false,
+                    message: format!("Undo failed restoring HEAD: {}", sr.stderr),
+                    restored_to: None, sealed });
+            }
+            let reset = run_git(workdir, &["reset", "--hard", target_sha.as_str()])?;
+            if !reset.ok {
+                return Ok(UndoResult { ok: false,
+                    message: format!("Undo failed: {}", reset.stderr),
+                    restored_to: None, sealed });
+            }
+        } else {
+            let co = run_git(workdir, &["checkout", "-q", "--detach", target_sha.as_str()])?;
+            if !co.ok {
+                return Ok(UndoResult { ok: false,
+                    message: format!("Undo failed detaching HEAD: {}", co.stderr),
+                    restored_to: None, sealed });
+            }
+        }
+
+        // (3) Delete branches created AFTER the snapshot (not in the map). Safe
+        // now: HEAD was moved off any of them in (2), and their tips are pinned.
+        // Pass the old sha so a racing change can't be silently clobbered.
+        let mut removed = 0usize;
+        for (name, cur_sha) in &current_refs {
+            if target_refs.contains_key(name) || name == sym {
+                continue;
+            }
+            if run_git(workdir, &["update-ref", "-d", name, cur_sha])?.ok {
+                removed += 1;
+            }
+        }
+        if restored > 0 || removed > 0 {
+            branch_note = format!(" · {restored} branch(es) restored, {removed} removed");
+        }
+    } else {
+        // Legacy HEAD-only path (pre-M2c snapshot with no recorded ref map).
+        if !sym.is_empty() {
+            let sr = run_git(workdir, &["symbolic-ref", "HEAD", sym])?;
+            if !sr.ok {
+                return Ok(UndoResult { ok: false,
+                    message: format!("Undo failed restoring HEAD: {}", sr.stderr),
+                    restored_to: None, sealed });
+            }
+        }
+        let reset = run_git(workdir, &["reset", "--hard", target_sha.as_str()])?;
+        if !reset.ok {
+            return Ok(UndoResult { ok: false,
+                message: format!("Undo failed: {}", reset.stderr),
+                restored_to: None, sealed });
+        }
     }
 
     append_oplog(
@@ -302,13 +385,14 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
             head_before: sealed.clone().unwrap_or_default(),
             head_after: target_sha.clone(),
             head_ref: head_ref.unwrap_or_default(),
+            refs: BTreeMap::new(),
             detail: format!("restore {}", target.reference),
         },
     );
 
     Ok(UndoResult {
         ok: true,
-        message: format!("Rewound to {}.", short(&target_sha)),
+        message: format!("Rewound to {}{}.", short(&target_sha), branch_note),
         restored_to: Some(short(&target_sha)),
         sealed,
     })
@@ -425,4 +509,43 @@ fn oplog_head_ref(repo: &Repository, backup_ref: &str) -> Option<String> {
         }
     }
     found
+}
+
+/// Every local branch (`refs/heads/<name>` full refname) -> its tip's full sha.
+/// The whole-branch topology snapshot() records so undo() can restore branches
+/// that are later deleted, renamed, or moved — not just HEAD.
+fn head_refs_map(repo: &Repository) -> BTreeMap<String, String> {
+    let mut m = BTreeMap::new();
+    if let Ok(globs) = repo.references_glob("refs/heads/*") {
+        for r in globs.flatten() {
+            if let (Some(name), Ok(commit)) = (r.name().map(str::to_string), r.peel_to_commit()) {
+                m.insert(name, commit.id().to_string());
+            }
+        }
+    }
+    m
+}
+
+/// The `refs` map recorded when `backup_ref` was pinned (last match wins).
+/// Empty for pre-M2c snapshots (no `refs` key) — undo then restores HEAD only.
+fn oplog_refs(repo: &Repository, backup_ref: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let Ok(data) = fs::read_to_string(oplog_path(repo)) else {
+        return out;
+    };
+    for line in data.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("backupRef").and_then(|x| x.as_str()) != Some(backup_ref) {
+            continue;
+        }
+        if let Some(obj) = v.get("refs").and_then(|x| x.as_object()) {
+            out = obj
+                .iter()
+                .filter_map(|(k, val)| val.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect();
+        }
+    }
+    out
 }
