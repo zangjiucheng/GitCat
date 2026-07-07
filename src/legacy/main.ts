@@ -6,6 +6,7 @@ import { rerereCtrl } from "../islands/rerere/rerere.svelte.ts";
 import { filterRepoCtrl } from "../islands/filterrepo/filterrepo.svelte.ts";
 import { cmdkCtrl } from "../islands/cmdk/cmdk.svelte.ts";
 import { detailCtrl } from "../islands/detail/detail.svelte.ts";
+import { bisectDrawerCtrl } from "../islands/bisectdrawer/bisectdrawer.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -186,9 +187,9 @@ function draw(){
   const last=Math.max(0,Math.min(N-1,Math.floor((st+H)/rowH)));
 
   // bisect band (behind everything)
-  const B=bisect.active();
+  const B=bisectDrawerCtrl.active();
   if(B){ for(let r=first;r<=last;r++){ const y=r*rowH-st;
-    if(r>B.lo&&r<B.hi&&!bisect.skips.has(r)){ ctx.fillStyle=theme.warning; ctx.globalAlpha=0.12; ctx.fillRect(0,y,W,rowH); ctx.globalAlpha=1; } } }
+    if(r>B.lo&&r<B.hi&&!bisectDrawerCtrl.skips.has(r)){ ctx.fillStyle=theme.warning; ctx.globalAlpha=0.12; ctx.fillRect(0,y,W,rowH); ctx.globalAlpha=1; } } }
 
   // edges — one Path2D per lane colour
   for(let c=0;c<NCOL;c++) edgePaths[c]=null;
@@ -217,14 +218,14 @@ function draw(){
     else if(r===state.hoverRow){ ctx.fillStyle=theme.text; ctx.globalAlpha=0.08; ctx.fillRect(0,r*rowH-st,W,rowH); ctx.globalAlpha=1; }
     if(B&&r===B.good){ctx.fillStyle=theme.success;ctx.fillRect(0,r*rowH-st,3,rowH);}
     if(B&&r===B.bad){ctx.fillStyle=theme.danger;ctx.fillRect(0,r*rowH-st,3,rowH);}
-    if(bisect.cur!=null&&r===bisect.cur){ctx.fillStyle=theme.accent;ctx.fillRect(0,r*rowH-st,3,rowH);}
+    if(bisectDrawerCtrl.cur!=null&&r===bisectDrawerCtrl.cur){ctx.fillStyle=theme.accent;ctx.fillRect(0,r*rowH-st,3,rowH);}
     ctx.globalAlpha=dim?0.4:1;
     ctx.beginPath(); ctx.arc(x,y,dotR,0,TAU);
     if(G.isMerge[r]){ctx.fillStyle=theme.bg;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=col;ctx.stroke();}
     else{ctx.fillStyle=col;ctx.fill();}
     if(r===state.selectedRow){ctx.beginPath();ctx.arc(x,y,dotR+3.2,0,TAU);ctx.strokeStyle=theme.text;ctx.lineWidth=1.6;ctx.stroke();}
     else if(r===state.hoverRow){ctx.beginPath();ctx.arc(x,y,dotR+2.6,0,TAU);ctx.strokeStyle=theme.muted;ctx.lineWidth=1;ctx.stroke();}
-    if(bisect.cur!=null&&r===bisect.cur&&r!==state.selectedRow){ctx.beginPath();ctx.arc(x,y,dotR+3.4,0,TAU);ctx.strokeStyle=theme.accent;ctx.lineWidth=2;ctx.stroke();}
+    if(bisectDrawerCtrl.cur!=null&&r===bisectDrawerCtrl.cur&&r!==state.selectedRow){ctx.beginPath();ctx.arc(x,y,dotR+3.4,0,TAU);ctx.strokeStyle=theme.accent;ctx.lineWidth=2;ctx.stroke();}
     let cx=tx; const ref=G.refs[r]; ctx.font=layout.chipFont;
     if(ref) cx=drawChip(cx,y,ref.label,ref.kind)+8;
     if(rowH>=15){
@@ -476,7 +477,7 @@ const AUTHORS=[{n:"Jiucheng Zang",e:"jiucheng@gitcat.dev"},{n:"Tama",e:"tama@git
 // The detail panel itself is now a Svelte island (src/islands/detail) — see
 // detailCtrl.select()/commitMeta(). GRAMMARS/highlight stay here: they're
 // shared with Resolver.svelte's 3-way diff view via bridge.highlight.
-function select(row){ state.selectedRow=row; detailCtrl.select(row); renderBisect(); dirty=true; }
+function select(row){ state.selectedRow=row; detailCtrl.select(row); dirty=true; }
 const GRAMMARS={
   ts:[["com",/\/\/[^\n]*|\/\*[\s\S]*?\*\//y],["str",/`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/y],
      ["key",/\b(?:const|let|var|function|return|if|else|for|while|new|class|extends|implements|interface|type|import|export|from|await|async|of|in|typeof|instanceof|null|undefined|true|false|this|void|public|private|readonly|enum)\b/y],
@@ -489,109 +490,10 @@ function highlight(src,lang){const rules=GRAMMARS[lang]||GRAMMARS.generic;let i=
     out+=esc(src[i]);i++;} return out;}
 
 /* ============================================================
-   8) BISECT — mark good/bad on the graph; recolor candidate range
-      on canvas + drawer strip; log2 "≈N steps left".
+   8) BISECT — drawer chrome is now a Svelte island (src/islands/bisectdrawer).
+      draw() above reads bisectDrawerCtrl.active()/.skips/.cur directly each
+      frame to recolor the candidate range + current-test dot on the canvas.
    ============================================================ */
-const bisect={good:null,bad:null,cur:null,skips:new Set(),
-  active(){ if(this.good==null||this.bad==null)return null; const lo=Math.min(this.good,this.bad),hi=Math.max(this.good,this.bad);
-    return {lo,hi,good:this.good,bad:this.bad}; },
-  candidates(){ const B=this.active(); if(!B)return []; const out=[]; for(let r=B.lo+1;r<B.hi;r++) if(!this.skips.has(r))out.push(r); return out; }};
-function renderBisect(){
-  const B=bisect.active(), cand=bisect.candidates(), n=cand.length;
-  const strip=$("#bisectRange"); strip.innerHTML="";
-  if(!B){ $("#bisectSteps").textContent="≈0 steps left"; $("#bisectFill").style.width="0%"; dirty=true; return; }
-  const span=B.hi-B.lo-1; const BUCKETS=Math.min(48,Math.max(span,1));
-  for(let i=0;i<BUCKETS;i++){ const r=B.lo+1+Math.floor(i*span/BUCKETS); const cell=document.createElement("div"); cell.className="bcell";
-    if(bisect.skips.has(r))cell.classList.add("culled"); else cell.classList.add("cand");
-    strip.appendChild(cell); }
-  const total=Math.max(1,Math.ceil(Math.log2(Math.max(2,span)))), steps=n<=1?0:Math.ceil(Math.log2(n));
-  $("#bisectSteps").textContent="≈"+steps+" steps left";
-  $("#bisectFill").style.width=(100*(1-steps/total))+"%";
-  const mid=cand[Math.floor(cand.length/2)];
-  $("#bisectCur").innerHTML = n===0
-    ? `First bad commit isolated → <b>${hhex(bisect.bad)}</b>. ${esc(msgOf(bisect.bad))}`
-    : `Testing next: <b>${hhex(mid)}</b> — ${esc(msgOf(mid))}. <span class="mut">${n} candidate${n>1?"s":""} in range · read from <code>.git/BISECT_LOG</code>.</span>`;
-  dirty=true;
-}
-$$(".bx[data-mark]").forEach(b=>b.addEventListener("click",()=>{
-  const m=b.dataset.mark;
-  if(bisectCtrl.running){ Tama.set("hint"); Tama.say("A bisect is already running — use Good / Skip / Bad in the panel above."); return; }
-  if(state.selectedRow<0){ Tama.set("hint"); Tama.say("Pick a commit in the graph first, then mark it "+m+"."); return; }
-  const r=state.selectedRow;
-  if(m==="good"){bisect.good=r;if(bisect.bad===r)bisect.bad=null;}
-  if(m==="bad"){bisect.bad=r;if(bisect.good===r)bisect.good=null;}
-  if(m==="skip")bisect.skips.add(r);
-  ensureDrawerOpen("bisect"); renderBisect();
-  Tama.set("hint"); Tama.say("Marked "+hhex(r)+" "+m+".");
-}));
-// ---- drawer Reset: end a live/demo bisect if one is running, else clear armed marks ----
-$("#bisectReset").addEventListener("click",()=>{
-  if(bisectCtrl.running){ bisectCtrl.reset(); return; }
-  bisect.good=bisect.bad=null; bisect.cur=null; bisect.skips.clear(); renderBisect();
-  Tama.set("hint"); Tama.say("Bisect reset.");
-});
-// ---- drawer Start: begin (or re-open) the bisect modal ----
-$("#bisectStart").addEventListener("click",()=>{
-  if(bisectCtrl.running){ bisectCtrl.reopen(); return; }
-  startBisect();
-});
-
-/* ============================================================
-   M3 · git bisect — start / mark / status / reset, resolver-style.
-   Every real invoke is BISECT_BUSY-locked and IN_TAURI-guarded; HEAD moves on
-   every step so we reloadGraph(true) then re-derive green/red/current cues from
-   the authoritative BisectStatus SHAs.
-   ============================================================ */
-function bisectRowOf(sha){
-  if(!sha||!BACKEND||!BACKEND.rows) return -1;
-  const s=String(sha);
-  return BACKEND.rows.findIndex(r=> r.sha===s || s.startsWith(r.sha) || r.sha.startsWith(s));
-}
-function syncBisectMarks(st){
-  bisect.good=bisect.bad=null; bisect.cur=null; bisect.skips.clear();
-  if(!st){ dirty=true; return; }
-  const badR=bisectRowOf(st.firstBad?st.firstBad.sha:st.badRef); if(badR>=0) bisect.bad=badR;
-  let goodR=-1;
-  (st.goodRefs||[]).forEach(g=>{ const r=bisectRowOf(g); if(r>badR&&(goodR<0||r<goodR)) goodR=r; });
-  if(goodR<0) (st.goodRefs||[]).forEach(g=>{ const r=bisectRowOf(g); if(r>=0&&(goodR<0||r>goodR)) goodR=r; });
-  if(goodR>=0) bisect.good=goodR;
-  const curR=bisectRowOf(st.firstBad?st.firstBad.sha:(st.current&&st.current.sha)); if(curR>=0) bisect.cur=curR;
-  dirty=true;
-}
-
-async function startBisect(){
-  let goodR=bisect.good, badR=bisect.bad;
-  if(badR==null) badR=0; // convenience: known-bad defaults to HEAD (row 0)
-  if(goodR==null){ ensureDrawerOpen("bisect"); Tama.set("hint");
-    Tama.say("Select a known-good commit and press Mark good, then Start bisect."); return; }
-  const goodSha=(BACKEND&&BACKEND.rows[goodR])?BACKEND.rows[goodR].sha:hhex(goodR);
-  const badSha =(BACKEND&&BACKEND.rows[badR]) ?BACKEND.rows[badR].sha :hhex(badR);
-  if(!IN_TAURI){                                   // ---- design-mode demo -> island ----
-    bisect.good=goodR; bisect.bad=badR; bisect.skips.clear();
-    const st=demoBisectStatus(); renderBisect(); dirty=true;
-    bisectCtrl.openDemo(st);
-    Tama.set("thinking"); Tama.say("Bisecting between "+hhex(goodR)+" (good) and "+hhex(badR)+" (bad).");
-    return;
-  }
-  await bisectCtrl.start(CUR_REPO, badSha, goodSha);   // real: island owns the modal + IPC
-}
-
-// ---- design-mode demo helpers: fake convergence over the synthetic G ----
-function demoBisectStatus(){
-  const B=bisect.active(); if(!B) return {inProgress:false,demo:true};
-  const cand=bisect.candidates();
-  if(cand.length<=0){ bisect.cur=bisect.bad;
-    return {inProgress:false,demo:true,firstBad:{sha:hhex(bisect.bad),subject:msgOf(bisect.bad)},remainingRevs:0,estSteps:0}; }
-  const mid=cand[Math.floor(cand.length/2)]; bisect.cur=mid;
-  return {inProgress:true,demo:true,current:{sha:hhex(mid),subject:msgOf(mid)},
-    remainingRevs:cand.length,estSteps:Math.max(1,Math.ceil(Math.log2(Math.max(2,cand.length))))};
-}
-function demoBisectMark(term){
-  const mid=bisect.cur;
-  if(mid==null){ return demoBisectStatus(); }
-  if(term==="good") bisect.good=mid; else if(term==="bad") bisect.bad=mid; else bisect.skips.add(mid);
-  const st=demoBisectStatus(); renderBisect(); dirty=true; return st;
-}
 
 
 /* ============================================================
@@ -746,8 +648,8 @@ function loadGraph(N){
     NN=g.n; ms=g.readMs+g.layoutMs;
   } else { G=generateGraph(N); NN=N; ms=performance.now()-t0; }
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
-  bisect.good=bisect.bad=null; bisect.cur=null; bisect.skips.clear();
-  recomputeLayout(); positionTicks(); renderBisect();
+  bisectDrawerCtrl.clearLocalMarks();
+  recomputeLayout(); positionTicks();
   $("#snapCount").textContent=Safety.teleCount();
   detailCtrl.showHero(NN, ms);
   Tama._tele(); dirty=true;
@@ -899,7 +801,8 @@ function bootEmpty(){
   ["#refLocal","#refRemote","#refTags","#refSnaps"].forEach(s=>{const el=$(s);if(el)el.innerHTML="";});
   G={N:0,commitLane:[],commitColor:[],isMerge:[],gapStart:[0],gapTop:[],gapBot:[],gapColor:[],refs:[],snapRows:[],snapTs:{}};
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
-  recomputeLayout(); positionTicks(); renderBisect();
+  bisectDrawerCtrl.clearLocalMarks();
+  recomputeLayout(); positionTicks();
   detailCtrl.showEmpty();
   dirty=true;
 }
@@ -921,9 +824,6 @@ if(!IN_TAURI) setTimeout(()=>{Tama.event("snapshot.surfaced");Tama.say("Safety M
 const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>cmdkCtrl.show());
 
 function requestRedraw(){ dirty=true; }
-function focusBisectCurrent(){ if(bisect.cur!=null){ select(bisect.cur); state.scrollTarget=clampScroll(bisect.cur*layout.rowH-view.cssH/2); dirty=true; } }
-function clearBisectMarks(){ bisect.good=bisect.bad=null; bisect.cur=null; bisect.skips.clear(); renderBisect(); dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  syncBisectMarks, focusBisectCurrent, clearBisectMarks, demoBisectStatus, demoBisectMark, renderBisect,
   G, BACKEND, state, layout, view, cv, clampScroll, select, hhex, msgOf, AUTHORS,
-  fakeAgo, relTime, pickRepo };
+  fakeAgo, relTime, pickRepo, ensureDrawerOpen };
