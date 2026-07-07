@@ -388,6 +388,29 @@ async filterRepoListBackups(path: string) : Promise<Result<FilterRepoBackupInfo[
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * JS: `commands.getGitIdentity(path)` -> `Promise<Result<GitIdentity,string>>`.
+ * Fails only if `path` isn't a git repository at all (used by the setup
+ * wizard as its directory-validation step, doubling as the identity check).
+ */
+async getGitIdentity(path: string) : Promise<Result<GitIdentity, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_git_identity", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.setGitIdentity(path, name, email)` -> `Promise<WriteResult>`
+ * (never rejects; `ok:false` + message on failure). Writes ONLY this repo's
+ * local config (never `--global`). Non-destructive metadata, no ref/history
+ * touched, so — per the safety-model convention used by rerere_set_enabled —
+ * this does NOT take a Safety Manager snapshot first.
+ */
+async setGitIdentity(path: string, name: string, email: string) : Promise<WriteResult> {
+    return await TAURI_INVOKE("set_git_identity", { path, name, email });
 }
 }
 
@@ -484,6 +507,11 @@ touchedCommits: number }
  * Rust `Err`) — see module docs on the failure model.
  */
 export type FilterRepoResult = { ok: boolean; message: string; backupBundle: string | null; commitsBefore: number | null; commitsAfter: number | null }
+export type GitIdentity = { name: string | null; email: string | null; 
+/**
+ * true only when BOTH name and email are set in this repo's local config.
+ */
+configured: boolean }
 /**
  * The full graph payload. Rows are in reverse-chronological/topological order
  * (child before parent). `lane`/`color`/`merge` are one-per-row.

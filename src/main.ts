@@ -12,11 +12,28 @@ import Rerere from "./islands/rerere/Rerere.svelte";
 import { rerereCtrl } from "./islands/rerere/rerere.svelte.ts";
 import Plumbing from "./islands/plumbing/Plumbing.svelte";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
+import SetupWizard from "./islands/setupwizard/SetupWizard.svelte";
+import { setupWizardCtrl } from "./islands/setupwizard/setupwizard.svelte.ts";
+import { IN_TAURI } from "./ipc/env";
 import * as bridge from "./legacy/bridge";
 
 mount(Resolver, { target: document.body });
 mount(Bisect, { target: document.body });
 mount(FilterRepo, { target: document.body });
+mount(SetupWizard, { target: document.body });
+
+// Setup wizard: auto-opens once at boot, ON TOP of the untouched bootEmpty()
+// hero card (real app, no repo open yet) or the synthetic demo graph (browser
+// design mode) — see setupwizard.svelte.ts's header for why Esc/"Skip" simply
+// reveals what's already underneath rather than falling back to anything
+// special-cased here. Reading bridge.CUR_REPO here (not destructured) is safe
+// because legacy/main.ts's top-level bootEmpty() has already run to completion
+// by this point (module evaluation order).
+if (IN_TAURI) {
+  if (!bridge.CUR_REPO) setupWizardCtrl.start();
+} else {
+  setupWizardCtrl.openDemo();
+}
 
 // Drawer-PANE islands (not modals): mounted straight into their own pane so
 // the existing .pane/.pane.on show/hide + drawer-tabs wiring in legacy/main.ts

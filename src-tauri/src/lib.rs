@@ -7,6 +7,7 @@ pub mod git_write;
 pub mod git_bisect; // M3: git bisect (start / mark good|bad|skip / status / reset)
 pub mod git_merge; // M6 (stage 1): merge (drag-onto-HEAD) + continue / abort
 pub mod git_rebase; // M6 (stage 2): linear rebase onto a target + continue / skip / abort
+pub mod identity; // Setup wizard: repo-local git identity (user.name/user.email) check + fix
 pub mod layout;
 pub mod model;
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
@@ -67,6 +68,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         filter_repo::filter_repo_run,
         filter_repo::filter_repo_restore,
         filter_repo::filter_repo_list_backups,
+        // Setup wizard: repo-local git identity check + fix (never touches global config)
+        identity::get_git_identity,
+        identity::set_git_identity,
     ])
 }
 

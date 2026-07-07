@@ -1200,4 +1200,5 @@ function requestRedraw(){ dirty=true; }
 function focusBisectCurrent(){ if(bisect.cur!=null){ select(bisect.cur); state.scrollTarget=clampScroll(bisect.cur*layout.rowH-view.cssH/2); dirty=true; } }
 function clearBisectMarks(){ bisect.good=bisect.bad=null; bisect.cur=null; bisect.skips.clear(); renderBisect(); dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  syncBisectMarks, focusBisectCurrent, clearBisectMarks, demoBisectStatus, demoBisectMark, renderBisect };
+  syncBisectMarks, focusBisectCurrent, clearBisectMarks, demoBisectStatus, demoBisectMark, renderBisect,
+  openRepo };
