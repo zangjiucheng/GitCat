@@ -5,6 +5,7 @@ import { reflogCtrl } from "../islands/reflog/reflog.svelte.ts";
 import { rerereCtrl } from "../islands/rerere/rerere.svelte.ts";
 import { filterRepoCtrl } from "../islands/filterrepo/filterrepo.svelte.ts";
 import { cmdkCtrl } from "../islands/cmdk/cmdk.svelte.ts";
+import { detailCtrl } from "../islands/detail/detail.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -92,7 +93,6 @@ let G=null;
    below is used instead, so this file works in both places. */
 let BACKEND=null;
 export let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it — exported (live binding) for the Svelte islands via bridge.ts
-let DETAIL_SEQ=0;    // monotonic id — any older in-flight commit_detail response loses (robust across repo switches)
 const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
 const tinvoke = (cmd, args={}) => window.__TAURI__.core.invoke(cmd, args);
 let undoBusy=false, checkoutBusy=false;
@@ -473,88 +473,10 @@ setInterval(()=>{ const n=$("#nook"); if(n&&n.dataset.state==="idle"&&performanc
    ============================================================ */
 function esc(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 const AUTHORS=[{n:"Jiucheng Zang",e:"jiucheng@gitcat.dev"},{n:"Tama",e:"tama@gitcat.dev"},{n:"Rin S.",e:"rin@catnip.io"},{n:"A. Turing",e:"alan@enigma.dev"},{n:"Mao",e:"mao@nyan.cat"}];
-const GPG={good:["good","✔ Good signature"],none:["none","○ Unsigned"],bad:["bad","✘ Bad signature"]};
-function commitMeta(r){
-  if(BACKEND){ const m=BACKEND.rows[r]; if(!m) return null;
-    const differ = m.an.n!==m.cm.n || m.an.e!==m.cm.e || m.an.t!==m.cm.t;
-    const refs = m.refs.map(x=>({n:x.n, t:(x.t==="tag"?"tag":x.t==="remote"?"remote":"head")}));
-    return {row:r, subject:m.subject, sha:m.sha,
-      an:{n:m.an.n,e:m.an.e,d:relTime(m.an.t)}, cm:{n:m.cm.n,e:m.cm.e,d:relTime(m.cm.t)},
-      differ, gpg:"none", refs, add:0, del:0, merge:!!(G&&G.isMerge[r])}; }
-  const a=AUTHORS[(Math.imul(r,2654435761)>>>5)%AUTHORS.length];
-  const rebased=(r%7===0&&r>0)||G.isMerge[r];
-  const cm=rebased?{n:"GitCat (rebase)",e:"noreply@gitcat.dev",d:fakeAgo(Math.max(0,r-2))+" ago"}:{n:a.n,e:a.e,d:fakeAgo(r)+" ago"};
-  const gpg=r%11===0?"none":(hhex(r).charCodeAt(1)&7)===0?"bad":"good";
-  const refs=[]; if(r===0)refs.push({n:"HEAD",t:"head"},{n:"main",t:"head"});
-  const gr=G.refs[r]; if(gr&&r!==0)refs.push({n:gr.label,t:gr.kind==="tag"?"tag":gr.kind==="head"?"head":"remote"});
-  const add=8+((r*13)%40), del=(r*7)%20;
-  return {row:r,subject:msgOf(r),sha:hhex(r),an:{n:a.n,e:a.e,d:fakeAgo(r)+" ago"},cm,differ:rebased,gpg,refs,add,del,merge:!!G.isMerge[r]};
-}
-function select(row){ state.selectedRow=row; renderDetail(commitMeta(row)); renderBisect(); dirty=true; }
-function diffstatHTML(add,del,files,truncated){
-  const tot=(add+del)||1;
-  return `<span class="nums"><span class="add">+${add}</span> <span class="del">−${del}</span></span>`
-    +`<div class="stat-bar"><i class="a" style="width:${Math.round(100*add/tot)}%"></i><i class="d" style="width:${Math.round(100*del/tot)}%"></i></div>`
-    +`<span class="mut mono" style="font-size:11px">${files} file${files===1?"":"s"}${truncated?" (capped)":""}</span>`;
-}
-function renderDetail(c){
-  if(!c){ $("#detail").innerHTML=""; return; }
-  const g=GPG[c.gpg];
-  const refsHere=c.refs.length?c.refs.map(r=>`<span class="row-chip ${r.t}">${esc(r.n)}</span>`).join(""):'<span class="mut">no refs point here</span>';
-  const snaps=G.snapRows; let cov=-1; for(let i=snaps.length-1;i>=0;i--){if(snaps[i]<=c.row){cov=snaps[i];break;}}
-  const live=!!BACKEND;
-  const bodyInit=live ? '<span class="mut">loading…</span>'
-                      : esc(c.merge?"Merge commit — reconciles two lines of history.":"Part of the feature/login work. Signed-off and covered by an auto-snapshot.");
-  const statInit=live ? '<span class="mut mono" style="font-size:11px">loading diff…</span>'
-                      : diffstatHTML(c.add,c.del,CHANGED.length,false);
-  $("#detail").innerHTML=`
-    <section>
-      <div class="d-subject">${esc(c.subject)}</div>
-      <div class="d-body" id="dBody">${bodyInit}</div>
-      <div class="id-strip"><span class="hash" id="hashCopy" title="Click to copy">${c.sha}</span><span class="gpg ${g[0]}">${g[1]}</span>
-        <span class="mut mono" style="font-size:11px">row ${c.row.toLocaleString()} / ${G.N.toLocaleString()}</span></div>
-    </section>
-    <section>
-      <div class="who-split">
-        <div class="who ${c.differ?'differ':''}"><h4>Author</h4><div class="nm">${esc(c.an.n)}</div><div class="em">${esc(c.an.e)}</div><div class="dt mono">${c.an.d}</div></div>
-        <div class="who ${c.differ?'differ':''}"><h4>Committer</h4><div class="nm">${esc(c.cm.n)}</div><div class="em">${esc(c.cm.e)}</div><div class="dt mono">${c.cm.d}</div></div>
-      </div>
-      ${c.differ?'<div class="mut" style="font-size:11px;margin-top:6px">⚠ author ≠ committer (patch applied / rebased) — the teaching point cherry-pick &amp; rebase create.</div>':''}
-    </section>
-    <section>
-      <h4 class="d-lab">Refs pointing here</h4><div class="refs-here">${refsHere}</div>
-      ${cov>=0?`<div class="covered"><span class="ck"></span><div>Covered by snapshot <b>backup/…${esc(G.snapTs[cov])} ago</b><br><span class="mut">reachable via a Safety-Manager backup ref — ⌘Z can rewind here.</span></div></div>`:""}
-    </section>
-    <section>
-      <h4 class="d-lab">Changes</h4>
-      <div class="diffstat" id="diffstat">${statInit}</div>
-      <div class="tree" id="tree"></div>
-    </section>
-    <section><h4 class="d-lab">Diff</h4><div class="diffview" id="diffview"></div></section>`;
-  $("#hashCopy").addEventListener("click",e=>{navigator.clipboard?.writeText(c.sha);e.target.textContent="copied ✓";setTimeout(()=>e.target.textContent=c.sha,900);});
-  if(live){
-    $("#tree").innerHTML='<div class="mut" style="padding:6px 4px">loading files…</div>';
-    $("#diffview").innerHTML='<div class="diff-file-h mut">loading diff…</div>';
-    loadCommitDetail(c.row);
-  }else{
-    curChanged=CHANGED; curDiffs=DIFFS;
-    renderTree(); renderDiff();
-  }
-}
-const CHANGED=[{p:"src/auth/session.ts",st:"M",add:22,del:5},{p:"src/auth/token.ts",st:"M",add:11,del:7},{p:"src/ui/LoginForm.tsx",st:"A",add:5,del:0}];
-function renderTree(){
-  if(!curChanged||!curChanged.length){ $("#tree").innerHTML='<div class="mut" style="padding:6px 4px">no file changes</div>'; return; }
-  const root={};
-  curChanged.forEach((f,i)=>{const parts=String(f.p).split("/");let n=root;parts.forEach((seg,j)=>{if(j===parts.length-1){(n.files=n.files||[]).push({...f,name:seg,i});}else{n.dirs=n.dirs||{};n=n.dirs[seg]=n.dirs[seg]||{};}});});
-  function render(node){let h="";
-    for(const d in (node.dirs||{})) h+=`<details class="dir" open><summary><span class="tw">▸</span>📁 ${esc(d)}</summary><div class="indent">${render(node.dirs[d])}</div></details>`;
-    (node.files||[]).forEach(f=>{const st=f.st==="A"?"A":f.st==="D"?"D":"M";
-      h+=`<div class="file" data-i="${f.i}"><span class="st ${st}">${esc(f.st)}</span><span>${esc(f.name)}</span><span class="badge"><span class="add">+${f.add}</span> <span class="del">−${f.del}</span></span></div>`;});
-    return h;}
-  $("#tree").innerHTML=render(root);
-  $$("#tree .file").forEach(el=>el.addEventListener("click",()=>{$$("#tree .file").forEach(x=>x.classList.remove("active"));el.classList.add("active");renderDiff(curChanged[+el.dataset.i].p);}));
-  $("#tree .file")?.classList.add("active");
-}
+// The detail panel itself is now a Svelte island (src/islands/detail) — see
+// detailCtrl.select()/commitMeta(). GRAMMARS/highlight stay here: they're
+// shared with Resolver.svelte's 3-way diff view via bridge.highlight.
+function select(row){ state.selectedRow=row; detailCtrl.select(row); renderBisect(); dirty=true; }
 const GRAMMARS={
   ts:[["com",/\/\/[^\n]*|\/\*[\s\S]*?\*\//y],["str",/`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/y],
      ["key",/\b(?:const|let|var|function|return|if|else|for|while|new|class|extends|implements|interface|type|import|export|from|await|async|of|in|typeof|instanceof|null|undefined|true|false|this|void|public|private|readonly|enum)\b/y],
@@ -565,68 +487,6 @@ function highlight(src,lang){const rules=GRAMMARS[lang]||GRAMMARS.generic;let i=
   outer:while(i<src.length){for(const [type,re] of rules){re.lastIndex=i;const m=re.exec(src);
     if(m&&m.index===i){out+=`<span class="tok-${type}">${esc(m[0])}</span>`;i+=m[0].length||1;continue outer;}}
     out+=esc(src[i]);i++;} return out;}
-const DIFFS={
- "src/auth/session.ts":{lang:"ts",lines:[["@@","@@ -18,6 +18,9 @@ export function createSession(user) {"],[" ","  const store = new TokenStore();"],["-","  const ttl = 900;"],["+","  const ttl = 3600; // extended, see #482"],["+","  const limiter = rateLimit({ windowMs: 60000, max: 30 });"],[" ","  return sign({ user, ttl }, secret);"],["+","  // audit: Safety Manager seals a snapshot before mutation"]]},
- "src/auth/token.ts":{lang:"ts",lines:[["@@","@@ -4,3 +4,4 @@"],["-","export const refresh = (t) => rotate(t);"],["+","export const refresh = (t, opts = {}) => rotate(t, opts);"]]},
- "src/ui/LoginForm.tsx":{lang:"ts",lines:[["@@","@@ -0,0 +1,5 @@"],["+","export function LoginForm() {"],["+","  const [err, setErr] = useState(null);"],["+","  return submit(err);"],["+","}"]]},
-};
-let curChanged=CHANGED, curDiffs=DIFFS;   // current detail source; demo statics until commit_detail loads
-function renderDiff(path){
-  const keys=Object.keys(curDiffs||{});
-  const explicit=path!=null;                          // a specific file was clicked
-  path=path||(curChanged[0]&&curChanged[0].p)||keys[0];
-  let d=curDiffs[path];
-  if(!d && !explicit) d=curDiffs[keys[0]];            // fall back ONLY for the default (first) view
-  if(!d){
-    $("#diffview").innerHTML=`<div class="diff-file-h">${esc(path||"")}</div>`+
-      `<div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">no textual diff</code></div>`;
-    return;
-  }
-  if(d.binary){
-    $("#diffview").innerHTML=`<div class="diff-file-h">${esc(path)}</div>`+
-      `<div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">binary file — not shown</code></div>`;
-    return;
-  }
-  let n1=0,n2=0,html=`<div class="diff-file-h">${esc(path)}</div>`;
-  d.lines.forEach(([mk,txt])=>{
-    if(mk==="@@"){ const m=/-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?/.exec(txt); if(m){n1=+m[1];n2=+m[2];}
-      html+=`<div class="diff-line hunk"><span class="ln"></span><span class="mk"></span><code>${esc(txt)}</code></div>`; return; }
-    const cls=mk==="+"?"add":mk==="-"?"del":"";
-    const ln=mk==="+"?(n2++):mk==="-"?(n1++):(n1++,n2++);
-    html+=`<div class="diff-line ${cls}"><span class="ln">${ln}</span><span class="mk">${mk==="+"||mk==="-"?mk:""}</span><code>${highlight(txt,d.lang)}</code></div>`;
-  });
-  if(d.truncated) html+=`<div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">… diff truncated (file capped)</code></div>`;
-  $("#diffview").innerHTML=html;
-}
-async function loadCommitDetail(row){
-  const m=BACKEND&&BACKEND.rows[row]; if(!m) return;
-  const myReq=++DETAIL_SEQ;                            // race token: strictly monotonic
-  try{
-    const d=await window.__TAURI__.core.invoke("commit_detail",{path:CUR_REPO,sha:m.sha});
-    if(myReq!==DETAIL_SEQ) return;                     // a newer selection superseded this one
-    const files=Array.isArray(d.fileTree)?d.fileTree:[];
-    curChanged=files.map(f=>({p:f.path,st:f.status,add:f.additions|0,del:f.deletions|0}));
-    curDiffs={};
-    files.forEach(f=>{
-      const lines=[];
-      (f.hunks||[]).forEach(h=>{
-        lines.push(["@@",h.header]);
-        (h.lines||[]).forEach(l=>lines.push([l.kind,l.text]));   // l.kind ∈ " " | "+" | "-"
-      });
-      curDiffs[f.path]={lang:f.lang||"generic",lines,truncated:!!f.truncated,binary:!!f.binary};
-    });
-    const bodyEl=$("#dBody"); if(bodyEl) bodyEl.textContent=(d.body&&d.body.trim())?d.body:"(no message body)";
-    const ds=$("#diffstat"); if(ds) ds.innerHTML=diffstatHTML(d.additions|0,d.deletions|0,(d.filesChanged!=null?d.filesChanged:curChanged.length),!!d.truncated);
-    renderTree(); renderDiff();
-  }catch(e){
-    if(myReq!==DETAIL_SEQ) return;
-    const ds=$("#diffstat"); if(ds) ds.innerHTML=`<span class="mut mono" style="font-size:11px">diff unavailable — ${esc(String(e))}</span>`;
-    const bodyEl=$("#dBody"); if(bodyEl&&/loading/.test(bodyEl.textContent)) bodyEl.textContent="";
-    $("#tree").innerHTML='<div class="mut" style="padding:6px 4px">could not load changes</div>';
-    $("#diffview").innerHTML='<div class="diff-file-h mut">diff unavailable</div>';
-    console.error("commit_detail failed",e);
-  }
-}
 
 /* ============================================================
    8) BISECT — mark good/bad on the graph; recolor candidate range
@@ -889,13 +749,7 @@ function loadGraph(N){
   bisect.good=bisect.bad=null; bisect.cur=null; bisect.skips.clear();
   recomputeLayout(); positionTicks(); renderBisect();
   $("#snapCount").textContent=Safety.teleCount();
-  $("#detail").innerHTML=`
-    <div class="tama-hero">
-      <img class="tama-hero-img" src="${TAMA_IMG.hero}" alt="Tama, GitCat's guardian">
-      <div class="hero-bubble">はじめまして! I'm <b>Tama</b>, GitCat's guardian. I pin a snapshot before every mutation — so your history is always safe with me. <span class="jp">にゃ〜♪</span></div>
-      <div class="hero-stat"><span class="n">${NN.toLocaleString()}</span> commits laid out in <b>${ms.toFixed(0)} ms</b></div>
-      <div class="hero-hint">Click a commit to inspect it · drag a dot onto another to cherry-pick · ⌘Z to rewind</div>
-    </div>`;
+  detailCtrl.showHero(NN, ms);
   Tama._tele(); dirty=true;
 }
 /* ============================================================
@@ -1046,11 +900,7 @@ function bootEmpty(){
   G={N:0,commitLane:[],commitColor:[],isMerge:[],gapStart:[0],gapTop:[],gapBot:[],gapColor:[],refs:[],snapRows:[],snapTs:{}};
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
   recomputeLayout(); positionTicks(); renderBisect();
-  $("#detail").innerHTML=`<div class="tama-hero"><img class="tama-hero-img" src="${TAMA_IMG.hero}" alt="Tama">
-    <div class="hero-bubble">はじめまして! I'm <b>Tama</b>. Open a Git repository and I'll lay out its whole history in a blink. <span class="jp">にゃ〜♪</span></div>
-    <button class="btn" id="openRepoBtn" style="margin-top:2px">📁 Open a repository…</button>
-    <div class="hero-hint">or click the repo name <b>▾</b> in the top bar</div></div>`;
-  $("#openRepoBtn")?.addEventListener("click",pickRepo);
+  detailCtrl.showEmpty();
   dirty=true;
 }
 $(".repo-pick").addEventListener("click", pickRepo);
@@ -1075,4 +925,5 @@ function focusBisectCurrent(){ if(bisect.cur!=null){ select(bisect.cur); state.s
 function clearBisectMarks(){ bisect.good=bisect.bad=null; bisect.cur=null; bisect.skips.clear(); renderBisect(); dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   syncBisectMarks, focusBisectCurrent, clearBisectMarks, demoBisectStatus, demoBisectMark, renderBisect,
-  G, BACKEND, state, layout, view, cv, clampScroll, select, hhex, msgOf, AUTHORS };
+  G, BACKEND, state, layout, view, cv, clampScroll, select, hhex, msgOf, AUTHORS,
+  fakeAgo, relTime, pickRepo };

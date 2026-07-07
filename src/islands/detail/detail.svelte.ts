@@ -1,0 +1,336 @@
+// Commit detail panel — controller (Svelte 5 runes singleton).
+//
+// Owns the right-hand `#detail` pane: author/committer split, gpg badge,
+// refs-here, snapshot coverage, diffstat, file tree, and the syntax-
+// highlighted diff itself. Async-loads the real diff on selection (race-
+// guarded by a private monotonic counter — same shape as the old module-level
+// DETAIL_SEQ, just an instance field now) and falls back to small canned demo
+// data in design mode (mirrors reflog/rerere's DEMO convention).
+//
+// `commitMeta` moved in wholesale (its only caller was the old legacy
+// `select()`, which now delegates here) — everything ELSE it depends on
+// (G/BACKEND/AUTHORS/hhex/msgOf/fakeAgo/relTime) is shared with other
+// not-yet-migrated legacy code, so those stay bridged from legacy/main.ts.
+
+import { commands } from "../../ipc/bindings";
+import * as bridge from "../../legacy/bridge";
+import type { CommitDetail } from "../../ipc/bindings";
+
+function esc(s: unknown): string {
+  return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
+}
+
+const GPG: Record<string, [string, string]> = {
+  good: ["good", "✔ Good signature"],
+  none: ["none", "○ Unsigned"],
+  bad: ["bad", "✘ Bad signature"],
+};
+
+type RefChip = { n: string; t: "tag" | "remote" | "head" };
+type CommitVM = {
+  row: number;
+  subject: string;
+  sha: string;
+  an: { n: string; e: string; d: string };
+  cm: { n: string; e: string; d: string };
+  differ: boolean;
+  gpg: "good" | "none" | "bad";
+  refs: RefChip[];
+  add: number;
+  del: number;
+  merge: boolean;
+};
+
+type FileEntry = { p: string; st: string; add: number; del: number };
+type TreeFile = FileEntry & { name: string; i: number };
+export type TreeDir = { dirs: Record<string, TreeDir>; files: TreeFile[] };
+type DiffFile = { lang: string; lines: [string, string][]; truncated: boolean; binary: boolean };
+
+export type DiffRow =
+  | { kind: "hunk"; text: string }
+  | { kind: "line"; ln: number | ""; mk: string; cls: string; html: string }
+  | { kind: "note"; text: string };
+
+type Hero = { kind: "loaded"; n: number; ms: number } | { kind: "empty" };
+
+// Demo data (design-mode only) — a small canned changeset, same spirit as the
+// other islands' DEMO constants so the browser preview still shows a full
+// detail panel without a real backend.
+const DEMO_CHANGED: FileEntry[] = [
+  { p: "src/auth/session.ts", st: "M", add: 22, del: 5 },
+  { p: "src/auth/token.ts", st: "M", add: 11, del: 7 },
+  { p: "src/ui/LoginForm.tsx", st: "A", add: 5, del: 0 },
+];
+const DEMO_DIFFS: Record<string, DiffFile> = {
+  "src/auth/session.ts": {
+    lang: "ts",
+    truncated: false,
+    binary: false,
+    lines: [
+      ["@@", "@@ -18,6 +18,9 @@ export function createSession(user) {"],
+      [" ", "  const store = new TokenStore();"],
+      ["-", "  const ttl = 900;"],
+      ["+", "  const ttl = 3600; // extended, see #482"],
+      ["+", "  const limiter = rateLimit({ windowMs: 60000, max: 30 });"],
+      [" ", "  return sign({ user, ttl }, secret);"],
+      ["+", "  // audit: Safety Manager seals a snapshot before mutation"],
+    ],
+  },
+  "src/auth/token.ts": {
+    lang: "ts",
+    truncated: false,
+    binary: false,
+    lines: [
+      ["@@", "@@ -4,3 +4,4 @@"],
+      ["-", "export const refresh = (t) => rotate(t);"],
+      ["+", "export const refresh = (t, opts = {}) => rotate(t, opts);"],
+    ],
+  },
+  "src/ui/LoginForm.tsx": {
+    lang: "ts",
+    truncated: false,
+    binary: false,
+    lines: [
+      ["@@", "@@ -0,0 +1,5 @@"],
+      ["+", "export function LoginForm() {"],
+      ["+", "  const [err, setErr] = useState(null);"],
+      ["+", "  return submit(err);"],
+      ["+", "}"],
+    ],
+  },
+};
+
+class DetailState {
+  commit = $state<CommitVM | null>(null);
+  hero = $state<Hero | null>(null);
+  bodyText = $state("");
+  copied = $state(false);
+  diffstat = $state<{ add: number; del: number; files: number; truncated: boolean } | null>(null);
+  treeLoading = $state(false);
+  diffLoading = $state(false);
+  selectedFile = $state<string | null>(null);
+  diffHeader = $state("");
+  diffRows = $state<DiffRow[]>([]);
+
+  private curChanged: FileEntry[] = [];
+  private curDiffs: Record<string, DiffFile> = {};
+  private detailSeq = 0;
+
+  private commitMeta(r: number): CommitVM | null {
+    const BACKEND: any = bridge.BACKEND,
+      G: any = bridge.G;
+    if (BACKEND) {
+      const m = BACKEND.rows[r];
+      if (!m) return null;
+      const differ = m.an.n !== m.cm.n || m.an.e !== m.cm.e || m.an.t !== m.cm.t;
+      const refs: RefChip[] = m.refs.map((x: any) => ({
+        n: x.n,
+        t: x.t === "tag" ? "tag" : x.t === "remote" ? "remote" : "head",
+      }));
+      return {
+        row: r,
+        subject: m.subject,
+        sha: m.sha,
+        an: { n: m.an.n, e: m.an.e, d: bridge.relTime(m.an.t) },
+        cm: { n: m.cm.n, e: m.cm.e, d: bridge.relTime(m.cm.t) },
+        differ,
+        gpg: "none",
+        refs,
+        add: 0,
+        del: 0,
+        merge: !!(G && G.isMerge[r]),
+      };
+    }
+    const a = bridge.AUTHORS[(Math.imul(r, 2654435761) >>> 5) % bridge.AUTHORS.length];
+    const rebased = (r % 7 === 0 && r > 0) || G.isMerge[r];
+    const cm = rebased
+      ? { n: "GitCat (rebase)", e: "noreply@gitcat.dev", d: bridge.fakeAgo(Math.max(0, r - 2)) + " ago" }
+      : { n: a.n, e: a.e, d: bridge.fakeAgo(r) + " ago" };
+    const gpg: "good" | "none" | "bad" = r % 11 === 0 ? "none" : (bridge.hhex(r).charCodeAt(1) & 7) === 0 ? "bad" : "good";
+    const refs: RefChip[] = [];
+    if (r === 0) refs.push({ n: "HEAD", t: "head" }, { n: "main", t: "head" });
+    const gr = G.refs[r];
+    if (gr && r !== 0) refs.push({ n: gr.label, t: gr.kind === "tag" ? "tag" : gr.kind === "head" ? "head" : "remote" });
+    const add = 8 + ((r * 13) % 40),
+      del = (r * 7) % 20;
+    return {
+      row: r,
+      subject: bridge.msgOf(r),
+      sha: bridge.hhex(r),
+      an: { n: a.n, e: a.e, d: bridge.fakeAgo(r) + " ago" },
+      cm,
+      differ: rebased,
+      gpg,
+      refs,
+      add,
+      del,
+      merge: !!G.isMerge[r],
+    };
+  }
+
+  get coverage(): { ago: string } | null {
+    const c = this.commit,
+      G: any = bridge.G;
+    if (!c || !G) return null;
+    const snaps: number[] = G.snapRows || [];
+    let cov = -1;
+    for (let i = snaps.length - 1; i >= 0; i--) {
+      if (snaps[i] <= c.row) {
+        cov = snaps[i];
+        break;
+      }
+    }
+    return cov >= 0 ? { ago: G.snapTs[cov] } : null;
+  }
+
+  get gpgBadge(): [string, string] {
+    return this.commit ? GPG[this.commit.gpg] : GPG.none;
+  }
+
+  get tree(): TreeDir {
+    const root: TreeDir = { dirs: {}, files: [] };
+    this.curChanged.forEach((f, i) => {
+      const parts = String(f.p).split("/");
+      let n = root;
+      parts.forEach((seg, j) => {
+        if (j === parts.length - 1) {
+          n.files.push({ ...f, name: seg, i });
+        } else {
+          n.dirs[seg] = n.dirs[seg] || { dirs: {}, files: [] };
+          n = n.dirs[seg];
+        }
+      });
+    });
+    return root;
+  }
+
+  select(row: number) {
+    const c = this.commitMeta(row);
+    this.commit = c;
+    this.hero = null;
+    this.copied = false;
+    if (!c) return;
+    const live = !!bridge.BACKEND;
+    if (live) {
+      this.bodyText = "loading…";
+      this.treeLoading = true;
+      this.diffLoading = true;
+      this.curChanged = [];
+      this.curDiffs = {};
+      this.diffstat = null;
+      this.selectedFile = null;
+      this.diffHeader = "";
+      this.diffRows = [];
+      this.loadCommitDetail(row);
+    } else {
+      this.bodyText = c.merge
+        ? "Merge commit — reconciles two lines of history."
+        : "Part of the feature/login work. Signed-off and covered by an auto-snapshot.";
+      this.curChanged = DEMO_CHANGED;
+      this.curDiffs = DEMO_DIFFS;
+      this.diffstat = { add: c.add, del: c.del, files: DEMO_CHANGED.length, truncated: false };
+      this.treeLoading = false;
+      this.diffLoading = false;
+      this.selectFile();
+    }
+  }
+
+  private async loadCommitDetail(row: number) {
+    const BACKEND: any = bridge.BACKEND;
+    const m = BACKEND && BACKEND.rows[row];
+    if (!m) return;
+    const myReq = ++this.detailSeq;
+    try {
+      const r = await commands.commitDetail(bridge.CUR_REPO as unknown as string, m.sha);
+      if (myReq !== this.detailSeq) return; // a newer selection superseded this one
+      if (r.status !== "ok") throw new Error(r.error);
+      const d: CommitDetail = r.data;
+      const files = Array.isArray(d.fileTree) ? d.fileTree : [];
+      this.curChanged = files.map((f) => ({ p: f.path, st: f.status, add: f.additions | 0, del: f.deletions | 0 }));
+      this.curDiffs = {};
+      files.forEach((f) => {
+        const lines: [string, string][] = [];
+        (f.hunks || []).forEach((h) => {
+          lines.push(["@@", h.header]);
+          (h.lines || []).forEach((l) => lines.push([l.kind, l.text]));
+        });
+        this.curDiffs[f.path] = { lang: f.lang || "generic", lines, truncated: !!f.truncated, binary: !!f.binary };
+      });
+      this.bodyText = d.body && d.body.trim() ? d.body : "(no message body)";
+      this.diffstat = {
+        add: d.additions | 0,
+        del: d.deletions | 0,
+        files: d.filesChanged != null ? d.filesChanged : this.curChanged.length,
+        truncated: !!d.truncated,
+      };
+      this.treeLoading = false;
+      this.diffLoading = false;
+      this.selectFile();
+    } catch (e) {
+      if (myReq !== this.detailSeq) return;
+      this.diffstat = null;
+      this.bodyText = /loading/.test(this.bodyText) ? "" : this.bodyText;
+      this.treeLoading = false;
+      this.diffLoading = false;
+      this.diffHeader = "";
+      this.diffRows = [{ kind: "note", text: "diff unavailable — " + String(e) }];
+      console.error("commit_detail failed", e);
+    }
+  }
+
+  // Render the diff for `path`, or the default (first) file when omitted —
+  // mirrors the legacy renderDiff(path)'s explicit-vs-fallback distinction.
+  selectFile(path?: string) {
+    const explicit = path != null;
+    const keys = Object.keys(this.curDiffs || {});
+    const resolved = path || (this.curChanged[0] && this.curChanged[0].p) || keys[0];
+    this.selectedFile = resolved ?? null;
+    let d = resolved ? this.curDiffs[resolved] : undefined;
+    if (!d && !explicit) d = this.curDiffs[keys[0]];
+    this.diffHeader = resolved || "";
+    if (!d) {
+      this.diffRows = [{ kind: "note", text: "no textual diff" }];
+      return;
+    }
+    if (d.binary) {
+      this.diffRows = [{ kind: "note", text: "binary file — not shown" }];
+      return;
+    }
+    let n1 = 0,
+      n2 = 0;
+    const rows: DiffRow[] = [];
+    d.lines.forEach(([mk, txt]) => {
+      if (mk === "@@") {
+        rows.push({ kind: "hunk", text: txt });
+        return;
+      }
+      const cls = mk === "+" ? "add" : mk === "-" ? "del" : "";
+      const ln = mk === "+" ? n2++ : mk === "-" ? n1++ : (n1++, n2++);
+      rows.push({ kind: "line", ln, mk: mk === "+" || mk === "-" ? mk : "", cls, html: bridge.highlight(txt, d.lang) });
+    });
+    if (d.truncated) rows.push({ kind: "note", text: "… diff truncated (file capped)" });
+    this.diffRows = rows;
+  }
+
+  copySha() {
+    if (!this.commit) return;
+    navigator.clipboard?.writeText(this.commit.sha);
+    this.copied = true;
+    setTimeout(() => {
+      this.copied = false;
+    }, 900);
+  }
+
+  showHero(n: number, ms: number) {
+    this.commit = null;
+    this.hero = { kind: "loaded", n, ms };
+  }
+
+  showEmpty() {
+    this.commit = null;
+    this.hero = { kind: "empty" };
+  }
+}
+
+export const detailCtrl = new DetailState();
+export { esc };

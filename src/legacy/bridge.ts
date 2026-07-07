@@ -42,4 +42,8 @@ export {
   hhex,
   msgOf,
   AUTHORS,
+  fakeAgo,
+  relTime,
+  // native folder-picker flow (the empty-state hero's "Open a repository…" button)
+  pickRepo,
 } from "./main";
