@@ -74,6 +74,11 @@ jobs:
       - name: Build
         run: cargo build --locked
 
+      - name: Install git-filter-repo (prep for the M5c filter-repo wizard's test suite; a no-op until that suite lands)
+        run: |
+          pipx install git-filter-repo
+          git filter-repo --version
+
       - name: Test
         run: cargo test
 

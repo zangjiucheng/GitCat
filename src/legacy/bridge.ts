@@ -21,4 +21,8 @@ export {
   demoBisectStatus,
   demoBisectMark,
   renderBisect,
+  // the open repo's absolute path (or null when none is open) — a live
+  // binding (see the file header): read it as `bridge.CUR_REPO` at call time,
+  // never destructure it into a local const, or you'll freeze a stale value.
+  CUR_REPO,
 } from "./main";

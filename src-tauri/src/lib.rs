@@ -6,6 +6,9 @@ pub mod git_write;
 pub mod git_bisect; // M3: git bisect (start / mark good|bad|skip / status / reset)
 pub mod layout;
 pub mod model;
+pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
+pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
+pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
 
 use tauri_specta::{collect_commands, Builder};
@@ -39,6 +42,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_bisect::bisect_mark,
         git_bisect::bisect_status,
         git_bisect::bisect_reset,
+        // Reflog rescue (M4): read HEAD reflog + restore to a historical entry
+        reflog::reflog,
+        reflog::reflog_restore,
+        // Rerere panel (M5a): status (config + rr-cache + live conflict paths) / toggle
+        rerere::rerere_status,
+        rerere::rerere_set_enabled,
+        // Plumbing playground (M5b): inspect any rev's raw object (read-only)
+        plumbing::plumbing_inspect,
     ])
 }
 

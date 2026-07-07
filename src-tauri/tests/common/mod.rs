@@ -47,6 +47,11 @@ impl TempRepo {
         repo.must(&["init", "-q", "-b", "main"]);
         // CRITICAL: without this, a commit hangs forever on a GPG passphrase prompt.
         repo.must(&["config", "commit.gpgsign", "false"]);
+        // Separate config key from commit.gpgsign — needed once a test creates
+        // an annotated tag (`git tag -a`, e.g. tests/plumbing.rs); without this,
+        // a host with tag signing defaulted on would hang the ENTIRE shared
+        // test binary (this file is `mod common`'d by every tests/*.rs file).
+        repo.must(&["config", "tag.gpgsign", "false"]);
         // CRITICAL: repo-LOCAL identity, independent of any GIT_AUTHOR_*/GIT_COMMITTER_*
         // env vars (see `git()` below) or the machine's global/system git config. Code
         // under test (e.g. git_pick::cherry_pick_continue) shells out to git directly
@@ -70,11 +75,24 @@ impl TempRepo {
 
     /// Run `git -C <dir> <args…>` with reproducible author/committer identity
     /// and dates, capturing (exit-ok, trimmed stdout, trimmed stderr).
+    /// Isolates every invocation from the HOST's own global/system git config
+    /// (`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` point at `/dev/null`, git
+    /// >=2.32) — fixes a real blocking bug: `rerere.autoupdate`,
+    /// `rerere.enabled`, or any other setting a developer's or CI runner's own
+    /// dotfiles happen to set would otherwise silently leak into every test
+    /// repo and make assertions machine-dependent (verified: a personal
+    /// `~/.config/git/config` with `rerere.autoupdate=true` made an M5a rerere
+    /// replay assertion pass locally while it would fail on a clean runner
+    /// with no such config). Local (repo) config, set explicitly via `must`
+    /// calls below, is completely unaffected — only the global/system
+    /// fallback layers are neutralized.
     pub fn git(&self, args: &[&str]) -> (bool, String, String) {
         let out = Command::new("git")
             .arg("-C")
             .arg(&self.dir)
             .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("GIT_AUTHOR_NAME", "GitCat Test")
             .env("GIT_AUTHOR_EMAIL", "test@gitcat.example")
             .env("GIT_COMMITTER_NAME", "GitCat Test")

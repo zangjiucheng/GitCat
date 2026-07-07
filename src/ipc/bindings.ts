@@ -191,6 +191,69 @@ async bisectStatus(path: string) : Promise<BisectStatus> {
  */
 async bisectReset(path: string) : Promise<BisectStatus> {
     return await TAURI_INVOKE("bisect_reset", { path });
+},
+/**
+ * Read HEAD's reflog, newest first. Read-only (git2).
+ * 
+ * JS: `commands.reflog(path)` -> `Result<ReflogEntry[], string>`.
+ */
+async reflog(path: string) : Promise<Result<ReflogEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reflog", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Restore HEAD (and the current branch, if attached) to the commit recorded
+ * at `HEAD@{index}`. A plain-struct result (like `safety::undo`) — failure is
+ * `ok:false` + a message, never a JS rejection, so the UI can always show why.
+ * 
+ * Invariants (identical to `safety::undo`):
+ * 1. Refuses on a dirty working tree (a `reset --hard` would silently
+ * discard uncommitted work) — never forced.
+ * 2. Snapshots the CURRENT state FIRST, so this restore is itself undoable
+ * via the normal global Undo afterward.
+ * 3. Re-validates `index` against a FRESH reflog read (the reflog can
+ * change between the list render and the restore click — a stale index
+ * must never silently land on the wrong commit).
+ * 
+ * JS: `commands.reflogRestore(path, index)` -> `UndoResult`.
+ */
+async reflogRestore(path: string, index: number) : Promise<UndoResult> {
+    return await TAURI_INVOKE("reflog_restore", { path, index });
+},
+/**
+ * JS: `invoke("rerere_status", { path })`.
+ */
+async rerereStatus(path: string) : Promise<Result<RerereStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rerere_status", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Toggle `rerere.enabled` for THIS repository only (never `--global`). JS:
+ * `invoke("rerere_set_enabled", { path, enabled })`.
+ */
+async rerereSetEnabled(path: string, enabled: boolean) : Promise<WriteResult> {
+    return await TAURI_INVOKE("rerere_set_enabled", { path, enabled });
+},
+/**
+ * Resolve `rev` (sha / short-sha / branch / tag / `HEAD~2` / `HEAD^{tree}` /
+ * … — ordinary git rev syntax) and report a detail view of whatever object it
+ * names. JS: `invoke("plumbing_inspect", { path, rev })`.
+ */
+async plumbingInspect(path: string, rev: string) : Promise<Result<PlumbingObject, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plumbing_inspect", { path, rev }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -205,6 +268,12 @@ async bisectReset(path: string) : Promise<BisectStatus> {
 /** user-defined types **/
 
 export type BisectStatus = { ok: boolean; inProgress: boolean; current: CommitInfo | null; badRef: string | null; goodRefs: string[]; remainingRevs: number; estSteps: number; firstBad: CommitInfo | null; log: string[]; message: string; backupRef: string | null }
+export type BlobObject = { sha: string; size: number; isBinary: boolean; 
+/**
+ * UTF-8-lossy content capped to [`CAP_LINES`] lines; `None` for a binary
+ * blob (only `size` is reported).
+ */
+content: string | null; truncated: boolean }
 /**
  * Full payload for the M1 commit detail panel: message + real diff tree.
  */
@@ -214,6 +283,7 @@ export type CommitInfo = { sha: string; subject: string }
  * Per-commit metadata (one entry per row, row = index).
  */
 export type CommitMeta = { sha: string; subject: string; an: Person; cm: Person; refs: RefChip[]; merge: boolean }
+export type CommitObject = { sha: string; shortSha: string; author: PlumbingPerson; committer: PlumbingPerson; parents: string[]; tree: string; message: string }
 /**
  * One conflicted file, with the three merge stages as text.
  * 
@@ -287,6 +357,17 @@ conflictedFiles: string[]; message: string;
  */
 backupRef: string | null }
 /**
+ * Whatever `revparse_single` resolved `rev` to. Internally tagged on `kind`
+ * (verified empirically against specta 2.0.0-rc.22 — this generates a clean
+ * discriminated TS union, each variant's fields flattened alongside the
+ * `kind` tag, e.g. `{ kind: "commit", sha, shortSha, … }`).
+ */
+export type PlumbingObject = ({ kind: "commit" } & CommitObject) | ({ kind: "tree" } & TreeObject) | ({ kind: "blob" } & BlobObject) | ({ kind: "tag" } & TagObject)
+/**
+ * One author/tagger/committer identity. `time` is unix seconds.
+ */
+export type PlumbingPerson = { name: string; email: string; time: number }
+/**
  * A ref chip pointing at a commit. `t` is one of: head | branch | remote | tag.
  */
 export type RefChip = { n: string; t: string }
@@ -295,6 +376,62 @@ export type RefChip = { n: string; t: string }
  * `None` when HEAD is detached or unborn.
  */
 export type RefList = { head: string | null; locals: LocalBranch[]; remotes: SimpleRef[]; tags: SimpleRef[] }
+/**
+ * One HEAD reflog entry, newest first (`index` == the `HEAD@{index}` you'd
+ * pass to plain git). `kind` is a best-effort coarse category derived from
+ * `message`'s leading word, purely for a nicer icon in the UI — not a
+ * guarantee every git reflog message shape is recognized.
+ */
+export type ReflogEntry = { index: number; sha: string; message: string; kind: string; committerName: string; committerEmail: string; ts: number }
+/**
+ * One historical resolution recorded under `<git-common-dir>/rr-cache/<id>/`.
+ * `id` is the cache directory name — a hash of the conflict hunk's content,
+ * NOT of the file it came from. `resolved` is true once a `postimage` file
+ * exists; false while only a `preimage` exists (conflict seen, never
+ * resolved — e.g. an aborted merge).
+ * 
+ * `path` is deliberately NOT a field here: once a conflict is no longer live,
+ * git itself has no mapping from a cache id back to a file path. See
+ * [`RererePath`] for the one case a path IS actually derivable.
+ */
+export type RerereEntry = { id: string; resolved: boolean }
+/**
+ * A path rerere is tracking for the CURRENTLY in-progress conflict. Only
+ * populated while a conflict is live.
+ */
+export type RererePath = { path: string; resolved: boolean }
+/**
+ * Result of [`rerere_status`].
+ */
+export type RerereStatus = { 
+/**
+ * The EFFECTIVE state: what git will actually do on the next conflict.
+ * `configured.unwrap_or(cacheDirPresent)`.
+ */
+enabled: boolean; 
+/**
+ * The explicit `rerere.enabled` value git resolves (local/global,
+ * whichever wins), or `None` if never set anywhere.
+ */
+configured: boolean | null; 
+/**
+ * Whether `<git-common-dir>/rr-cache` exists — the fallback git itself
+ * uses when `configured` is `None`.
+ */
+cacheDirPresent: boolean; 
+/**
+ * Historical rr-cache entries (hash + resolved-status only).
+ */
+entries: RerereEntry[]; 
+/**
+ * True while a merge/cherry-pick/rebase/revert conflict is in progress
+ * AND rerere is tracking at least one path for it.
+ */
+liveConflict: boolean; 
+/**
+ * Paths for the live conflict; always empty when `live_conflict` is false.
+ */
+livePaths: RererePath[] }
 /**
  * Result of [`resolve_conflict_file`]. `remaining` is the count of files still
  * unmerged after this resolution (0 means the tree is ready to Continue).
@@ -309,6 +446,22 @@ export type SimpleRef = { name: string; sha: string }
  * serializes as `"ref"` for the frontend.
  */
 export type Snapshot = { ref: string; ts: number; sha: string; subject: string }
+export type TagObject = { sha: string; name: string; tagger: PlumbingPerson | null; message: string; targetOid: string; targetKind: string }
+/**
+ * One entry inside a tree listing.
+ */
+export type TreeEntryRow = { name: string; 
+/**
+ * Octal file mode as git prints it, e.g. `"100644"`, `"100755"`,
+ * `"040000"`, `"120000"` (symlink), `"160000"` (submodule/gitlink).
+ */
+mode: string; 
+/**
+ * `"blob"` | `"tree"` | `"commit"` (submodule) — whatever the entry's
+ * object type resolves to.
+ */
+kind: string; oid: string }
+export type TreeObject = { sha: string; entries: TreeEntryRow[] }
 /**
  * Result of a global undo.
  */

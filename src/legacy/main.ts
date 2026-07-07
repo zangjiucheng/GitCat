@@ -1,6 +1,8 @@
 // @ts-nocheck
 import { resolver } from "../islands/resolver/resolver.svelte.ts";
 import { bisectCtrl } from "../islands/bisect/bisect.svelte.ts";
+import { reflogCtrl } from "../islands/reflog/reflog.svelte.ts";
+import { rerereCtrl } from "../islands/rerere/rerere.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -87,7 +89,7 @@ let G=null;
    null (e.g. opened in a plain browser for design work) the synthetic generator
    below is used instead, so this file works in both places. */
 let BACKEND=null;
-let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it
+export let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it — exported (live binding) for the Svelte islands via bridge.ts
 let DETAIL_SEQ=0;    // monotonic id — any older in-flight commit_detail response loses (robust across repo switches)
 const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
 const tinvoke = (cmd, args={}) => window.__TAURI__.core.invoke(cmd, args);
@@ -710,7 +712,14 @@ function demoBisectMark(term){
    ============================================================ */
 function ensureDrawerOpen(pane){ app.classList.add("drawer-open");
   if(pane){ $$(".drawer-tabs .dt").forEach(x=>x.setAttribute("aria-selected",x.dataset.pane===pane));
-    $$(".pane").forEach(p=>p.classList.remove("on")); $("#pane-"+pane).classList.add("on"); }
+    $$(".pane").forEach(p=>p.classList.remove("on")); $("#pane-"+pane).classList.add("on");
+    // Per-pane live refresh on tab select (idempotent, safe to call repeatedly
+    // — see each controller's own refresh() doc). "plumbing" is deliberately
+    // excluded: it is pure on-demand (see plumbing.svelte.ts), nothing to
+    // proactively load when its tab opens.
+    if(pane==="reflog") reflogCtrl.refresh(CUR_REPO);
+    else if(pane==="rerere") rerereCtrl.refresh(CUR_REPO);
+  }
   requestAnimationFrame(()=>{resize();}); }
 $$(".drawer-tabs .dt").forEach(t=>t.addEventListener("click",()=>ensureDrawerOpen(t.dataset.pane)));
 $("#drawerToggle").addEventListener("click",()=>{ app.classList.toggle("drawer-open"); requestAnimationFrame(()=>resize()); });
@@ -778,8 +787,9 @@ $("#filterRepoBtn").addEventListener("click",()=>{
 function openScrim(sel){$(sel).classList.add("on");}
 function closeScrim(sel){$(sel).classList.remove("on");}
 document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ disarmDanger(); } });
-// reflog restore
-$$(".log-row .go").forEach(b=>b.addEventListener("click",()=>{Tama.event("undo.performed",{hash:$(".sel",b.closest(".log-row")).textContent});pulseTick(1);}));
+// reflog restore is now handled live by the Reflog Svelte island
+// (reflogCtrl.restore(), see src/islands/reflog) — the static demo .log-row
+// markup this used to wire is gone (#pane-reflog is now an island mount point).
 // ref filter
 function applyRefFilter(){ const q=($("#refFilter").value||"").toLowerCase();
   $$("#refScroll .ref-item").forEach(it=>{const nm=$(".rname",it)?.textContent.toLowerCase()||"";it.style.display=nm.includes(q)?"":"none";}); }

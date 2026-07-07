@@ -416,6 +416,20 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .rr-row .h{font-family:var(--mono);color:var(--muted)}
 .rr-badge{font-size:10px;padding:1px 7px;border-radius:var(--r-pill);background:color-mix(in srgb,var(--success) 16%,transparent);color:var(--success)}
 
+/* ============================== PLUMBING (M5b) ============================== */
+.pl-bar{display:flex;gap:8px;margin-bottom:12px}
+.pl-input{flex:1;min-width:0;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--text);font-size:12.5px}
+.pl-input:focus{outline:none;border-color:var(--accent)}
+.pl-err{color:var(--danger);font-size:12px;background:color-mix(in srgb,var(--danger) 10%,transparent);border:1px solid color-mix(in srgb,var(--danger) 35%,transparent);border-radius:var(--r-control);padding:7px 10px;margin-bottom:10px}
+.pl-empty{padding:20px 4px;font-size:12.5px;line-height:1.6}
+.pl-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.pl-kv{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:4px;margin:10px 0}
+.pl-kv .mono{color:var(--text)}
+.pl-parent{margin-right:8px;display:inline-block}
+.pl-msg{font-family:var(--mono);font-size:12px;line-height:1.55;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-panel);padding:10px 12px;white-space:pre-wrap;word-break:break-word;margin-top:4px;max-height:280px;overflow:auto}
+.pl-tree{max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:var(--r-panel);background:var(--bg);padding:4px}
+.who-split.single{grid-template-columns:1fr}
+
 /* ============================== MODALS ============================== */
 .scrim{position:fixed;inset:0;z-index:300;background:rgba(18,20,28,.62);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;padding:24px}
 .scrim.on{display:flex}
@@ -634,6 +648,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
       <button class="dt" role="tab" aria-selected="true" data-pane="bisect">Bisect</button>
       <button class="dt" role="tab" aria-selected="false" data-pane="reflog">Reflog</button>
       <button class="dt" role="tab" aria-selected="false" data-pane="rerere">Rerere</button>
+      <button class="dt" role="tab" aria-selected="false" data-pane="plumbing">Plumbing</button>
       <span class="medic" id="medic" hidden>&#10010; &#24613;&#25937; recovery available</span>
       <button class="x" id="drawerToggle" title="Expand / collapse drawer"><span class="cev">&#9650;</span></button>
     </div>
@@ -650,17 +665,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
         <div class="bisect-prog"><div class="track"><i id="bisectFill"></i></div><div class="steps" id="bisectSteps">&#8776;0 steps left</div></div>
         <div class="bisect-cur" id="bisectCur">Select a commit in the graph, then mark it <b>good</b> or <b>bad</b> to narrow the range on the canvas.</div>
       </div>
-      <div class="pane" id="pane-reflog">
-        <div class="log-row"><span class="ic">&#9679;</span><span class="sel">a1b2c3d</span><span class="msg">HEAD@{0}: commit: Wire login form to API</span><button class="go">Restore here</button></div>
-        <div class="log-row"><span class="ic">&#9888;</span><span class="sel">e4f5061</span><span class="msg">HEAD@{1}: reset --hard: moving to origin/main</span><button class="go">Restore here</button></div>
-        <div class="log-row"><span class="ic">&#8631;</span><span class="sel">7788aa9</span><span class="msg">HEAD@{2}: rebase (finish): returning to refs/heads/main</span><button class="go">Restore here</button></div>
-        <div class="log-row"><span class="ic">&#127826;</span><span class="sel">bb01ccd</span><span class="msg">HEAD@{3}: cherry-pick: Add form validation</span><button class="go">Restore here</button></div>
-      </div>
-      <div class="pane" id="pane-rerere">
-        <div class="rr-row"><span class="h">src/auth/token.ts</span><span class="rr-badge">resolution recorded</span><span class="mut">reused 3&#215;</span></div>
-        <div class="rr-row"><span class="h">package-lock.json</span><span class="rr-badge">resolution recorded</span><span class="mut">reused 11&#215;</span></div>
-        <div class="rr-row"><span class="h">src/graph/layout.rs</span><span class="mut">pending &#8212; not yet resolved</span></div>
-      </div>
+      <div class="pane" id="pane-reflog"><!-- filled by the Reflog Svelte island (src/islands/reflog) --></div>
+      <div class="pane" id="pane-rerere"><!-- filled by the Rerere Svelte island (src/islands/rerere) --></div>
+      <div class="pane" id="pane-plumbing"><!-- filled by the Plumbing Svelte island (src/islands/plumbing) --></div>
     </div>
   </div>
 </div>
