@@ -6,6 +6,7 @@ pub mod git_read;
 pub mod git_write;
 pub mod git_bisect; // M3: git bisect (start / mark good|bad|skip / status / reset)
 pub mod git_merge; // M6 (stage 1): merge (drag-onto-HEAD) + continue / abort
+pub mod git_rebase; // M6 (stage 2): linear rebase onto a target + continue / skip / abort
 pub mod layout;
 pub mod model;
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
@@ -43,6 +44,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_merge::merge_start,
         git_merge::merge_continue,
         git_merge::merge_abort,
+        // Rebase (M6 stage 2): linear rebase onto a target + continue / skip / abort
+        git_rebase::rebase_start,
+        git_rebase::rebase_continue,
+        git_rebase::rebase_skip,
+        git_rebase::rebase_abort,
         // Bisect (M3): start / mark good|bad|skip / status / reset
         git_bisect::bisect_start,
         git_bisect::bisect_mark,

@@ -203,6 +203,64 @@ async mergeAbort(path: string) : Promise<MergeResult> {
     return await TAURI_INVOKE("merge_abort", { path });
 },
 /**
+ * Rebase the current branch onto `onto`. Snapshots FIRST, then runs
+ * `git rebase --end-of-options <onto>` (linear only — no `-i`; a
+ * `GIT_SEQUENCE_EDITOR=true`/`GIT_EDITOR=true` non-interactive editor is set
+ * so nothing can block a headless app).
+ * 
+ * A dirty working tree makes git refuse the rebase — that surfaces as
+ * `state:"error"` with git's own message; we never force. On a conflict this
+ * resolves to `state:"conflict"` (repo left mid-rebase for the resolver), NOT
+ * a failure.
+ * 
+ * JS: `invoke("rebase_start", { path, onto })`.
+ */
+async rebaseStart(path: string, onto: string) : Promise<RebaseResult> {
+    return await TAURI_INVOKE("rebase_start", { path, onto });
+},
+/**
+ * Continue an in-progress rebase after the user resolved the conflict (files
+ * were `git add`ed by the resolver). Runs `git rebase --continue` with
+ * `GIT_EDITOR=true`/`GIT_SEQUENCE_EDITOR=true` so it commits the resolution
+ * non-interactively.
+ * 
+ * Re-classifies the outcome: `clean` once the whole sequence finishes,
+ * `conflict` again if THIS commit is still unresolved, or — critically —
+ * `conflict` again if resolving this commit landed on the NEXT conflicting
+ * commit in the sequence (empirically verified, see tests/rebase.rs).
+ * 
+ * JS: `invoke("rebase_continue", { path })`.
+ */
+async rebaseContinue(path: string) : Promise<RebaseResult> {
+    return await TAURI_INVOKE("rebase_continue", { path });
+},
+/**
+ * Skip the commit the rebase is currently stopped on — DROPS it from the
+ * resulting history entirely (distinct from Abort/Continue; this is the one
+ * op where mid-sequence skip is meaningful). Runs `git rebase --skip` with
+ * the same non-interactive editor guards.
+ * 
+ * Re-classifies the outcome exactly like `rebase_continue`: `clean` once the
+ * sequence finishes, or `conflict` again if skipping landed on the next
+ * conflicting commit (empirically verified, see tests/rebase.rs).
+ * 
+ * JS: `invoke("rebase_skip", { path })`.
+ */
+async rebaseSkip(path: string) : Promise<RebaseResult> {
+    return await TAURI_INVOKE("rebase_skip", { path });
+},
+/**
+ * Abort an in-progress rebase: `git rebase --abort` restores the pre-rebase
+ * state. This is the escape hatch — it must ALWAYS be able to run, so it
+ * deliberately does NOT take a snapshot (a snapshot failure must never block
+ * the user's way out). Idempotent: "nothing in progress" is a benign success.
+ * 
+ * JS: `invoke("rebase_abort", { path })`.
+ */
+async rebaseAbort(path: string) : Promise<RebaseResult> {
+    return await TAURI_INVOKE("rebase_abort", { path });
+},
+/**
  * Start a bisect between a known-bad and one-or-more known-good commits.
  * Snapshots FIRST. JS: invoke("bisect_start", { path, bad, good: [sha,…] }).
  */
@@ -493,6 +551,25 @@ export type PlumbingObject = ({ kind: "commit" } & CommitObject) | ({ kind: "tre
  * One author/tagger/committer identity. `time` is unix seconds.
  */
 export type PlumbingPerson = { name: string; email: string; time: number }
+/**
+ * Result of any rebase step (start / continue / skip / abort). Serializes
+ * camelCase: `conflictedFiles`, `backupRef`.
+ */
+export type RebaseResult = { ok: boolean; 
+/**
+ * "clean" | "conflict" | "empty" | "error"
+ */
+state: string; 
+/**
+ * Repo-relative paths with unmerged entries — non-empty only when
+ * `state == "conflict"`.
+ */
+conflictedFiles: string[]; message: string; 
+/**
+ * Pre-op safety snapshot ref (present when we snapshotted before mutating),
+ * so the UI can name the snapshot the user can Undo to.
+ */
+backupRef: string | null }
 /**
  * A ref chip pointing at a commit. `t` is one of: head | branch | remote | tag.
  */

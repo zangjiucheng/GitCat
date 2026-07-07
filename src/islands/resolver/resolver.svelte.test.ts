@@ -30,6 +30,10 @@ vi.mock("../../ipc/bindings", () => ({
     mergeStart: vi.fn(),
     mergeContinue: vi.fn(),
     mergeAbort: vi.fn(),
+    rebaseStart: vi.fn(),
+    rebaseContinue: vi.fn(),
+    rebaseSkip: vi.fn(),
+    rebaseAbort: vi.fn(),
     conflictStatus: vi.fn(),
     resolveConflictFile: vi.fn(),
   },
@@ -37,7 +41,14 @@ vi.mock("../../ipc/bindings", () => ({
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
-import type { ConflictFile, ConflictStatus, MergeResult, PickResult, ResolveResult } from "../../ipc/bindings";
+import type {
+  ConflictFile,
+  ConflictStatus,
+  MergeResult,
+  PickResult,
+  RebaseResult,
+  ResolveResult,
+} from "../../ipc/bindings";
 import { resolver } from "./resolver.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
@@ -52,6 +63,10 @@ function pickResult(partial: Partial<PickResult>): PickResult {
 }
 
 function mergeResult(partial: Partial<MergeResult>): MergeResult {
+  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
+}
+
+function rebaseResult(partial: Partial<RebaseResult>): RebaseResult {
   return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
 }
 
@@ -193,6 +208,53 @@ describe("startMerge", () => {
   });
 });
 
+describe("startRebase", () => {
+  it("clean result: reloads the graph and closes the modal", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(
+      rebaseResult({ state: "clean", message: "Rebased." }),
+    );
+
+    await resolver.startRebase("repo1", "main");
+
+    expect(commands.rebaseStart).toHaveBeenCalledWith("repo1", "main");
+    expect(commands.mergeStart).not.toHaveBeenCalled();
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(resolver.open).toBe(false);
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("conflict result: opens the modal, sets op to rebase, and populates files from conflict_status", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(
+      rebaseResult({
+        ok: false,
+        state: "conflict",
+        conflictedFiles: ["a.ts", "b.ts"],
+        backupRef: "refs/gitgui/backup/r1",
+      }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_A, FILE_B], true, "rebase")),
+    );
+
+    await resolver.startRebase("repo1", "main");
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.busy).toBe(false);
+    expect(resolver.op).toBe("rebase");
+    expect(resolver.files).toEqual([FILE_A, FILE_B]);
+    expect(resolver.remaining.size).toBe(2);
+    expect(resolver.backupRef).toBe("refs/gitgui/backup/r1");
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+  });
+
+  it("warns via Tama instead of opening the modal without a repo", async () => {
+    await resolver.startRebase("", "main");
+    expect(bridge.tama.warn).toHaveBeenCalled();
+    expect(commands.rebaseStart).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+});
+
 describe("op-dispatch (abort/continue resolve to the op reported by conflict_status)", () => {
   it("a merge conflict's abort calls mergeAbort, never cherryPickAbort", async () => {
     vi.mocked(commands.mergeStart).mockResolvedValueOnce(
@@ -251,6 +313,77 @@ describe("op-dispatch (abort/continue resolve to the op reported by conflict_sta
 
     expect(commands.cherryPickAbort).toHaveBeenCalledWith("repo1");
     expect(commands.mergeAbort).not.toHaveBeenCalled();
+  });
+
+  it("a rebase conflict's abort calls rebaseAbort, never mergeAbort/cherryPickAbort", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_A], true, "rebase")),
+    );
+    await resolver.startRebase("repo1", "main");
+    expect(resolver.op).toBe("rebase");
+
+    vi.mocked(commands.rebaseAbort).mockResolvedValueOnce(
+      rebaseResult({ state: "clean", message: "Rebase aborted." }),
+    );
+
+    await resolver.abort();
+
+    expect(commands.rebaseAbort).toHaveBeenCalledWith("repo1");
+    expect(commands.mergeAbort).not.toHaveBeenCalled();
+    expect(commands.cherryPickAbort).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+
+  it("a rebase conflict's continue calls rebaseContinue, never mergeContinue/cherryPickContinue", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_A], true, "rebase")),
+    );
+    await resolver.startRebase("repo1", "main");
+
+    vi.mocked(commands.rebaseContinue).mockResolvedValueOnce(
+      rebaseResult({ state: "clean", message: "Rebase complete." }),
+    );
+
+    await resolver.continue();
+
+    expect(commands.rebaseContinue).toHaveBeenCalledWith("repo1");
+    expect(commands.mergeContinue).not.toHaveBeenCalled();
+    expect(commands.cherryPickContinue).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+
+  it("continuing a rebase past one conflict into a SECOND conflict keeps the modal open with the new file list", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_A], true, "rebase")),
+    );
+    await resolver.startRebase("repo1", "main");
+
+    // rebase_continue's own state-inspection classifies landing on the next
+    // conflicting commit as "conflict" again (see git_rebase.rs) — the
+    // resolver's existing generic conflict handling in continue() must react
+    // identically to this as it does to cherry-pick/merge conflicts.
+    vi.mocked(commands.rebaseContinue).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "conflict", conflictedFiles: ["b.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_B], true, "rebase")),
+    );
+
+    await resolver.continue();
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.op).toBe("rebase");
+    expect(resolver.files.map((f) => f.path)).toEqual(["b.ts"]);
+    expect(bridge.tama.warn).toHaveBeenCalled();
   });
 
   it("re-derives op from a live conflict_status refresh (self-describing across take())", async () => {
@@ -391,5 +524,61 @@ describe("continue", () => {
     expect(resolver.open).toBe(false);
     expect(commands.cherryPickContinue).not.toHaveBeenCalled();
     expect(bridge.cheer).toHaveBeenCalled();
+  });
+});
+
+describe("skip", () => {
+  it("is a no-op when the current op is not rebase (cherry-pick/merge have no skip concept)", async () => {
+    resolver.open = true;
+    resolver.repo = "repo1";
+    resolver.op = "cherry-pick";
+
+    await resolver.skip();
+
+    expect(commands.rebaseSkip).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(true);
+  });
+
+  it("state 'conflict' (landed on the next conflicting commit) keeps the modal open and refreshes", async () => {
+    resolver.open = true;
+    resolver.repo = "repo1";
+    resolver.op = "rebase";
+    vi.mocked(commands.rebaseSkip).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "conflict", conflictedFiles: ["b.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_B], true, "rebase")),
+    );
+
+    await resolver.skip();
+
+    expect(commands.rebaseSkip).toHaveBeenCalledWith("repo1");
+    expect(resolver.open).toBe(true);
+    expect(resolver.files.map((f) => f.path)).toEqual(["b.ts"]);
+    expect(bridge.tama.warn).toHaveBeenCalled();
+  });
+
+  it("state 'clean' (skipped commit finished the rebase) closes the modal and reloads the graph", async () => {
+    resolver.open = true;
+    resolver.repo = "repo1";
+    resolver.op = "rebase";
+    vi.mocked(commands.rebaseSkip).mockResolvedValueOnce(
+      rebaseResult({ state: "clean", message: "Skipped — rebased onto main." }),
+    );
+
+    await resolver.skip();
+
+    expect(resolver.open).toBe(false);
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+  });
+
+  it("demo mode: closes without any IPC call", async () => {
+    resolver.openDemo("sha", "rebase");
+
+    await resolver.skip();
+
+    expect(resolver.open).toBe(false);
+    expect(commands.rebaseSkip).not.toHaveBeenCalled();
+    expect(bridge.tama.say).toHaveBeenCalled();
   });
 });

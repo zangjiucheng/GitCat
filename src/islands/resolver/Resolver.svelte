@@ -10,6 +10,13 @@
   }
   const lines = (txt: string) => (txt || "").split("\n");
 
+  // Abort button copy — op-flavored ("Abort merge"/"Abort pick"/"Abort rebase").
+  function abortLabel(op: string): string {
+    if (op === "merge") return "Abort merge";
+    if (op === "rebase") return "Abort rebase";
+    return "Abort pick";
+  }
+
   // Escape closes only a design-mode (browser) resolver — never a live real pick.
   function onKeydown(e: KeyboardEvent) {
     if (e.key !== "Escape" || !resolver.open) return;
@@ -71,7 +78,10 @@
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" id="conflictAbort" onclick={() => resolver.abort()}>{resolver.op === "merge" ? "Abort merge" : "Abort pick"}</button>
+      <button class="btn ghost" id="conflictAbort" onclick={() => resolver.abort()}>{abortLabel(resolver.op)}</button>
+      {#if resolver.op === "rebase"}
+        <button class="btn ghost" id="conflictSkip" onclick={() => resolver.skip()}>Skip this commit</button>
+      {/if}
       <span class="cf-remain mut"
         >{resolver.remainingCount
           ? resolver.remainingCount + " file" + (resolver.remainingCount === 1 ? "" : "s") + " left"

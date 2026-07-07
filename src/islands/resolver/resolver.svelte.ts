@@ -1,21 +1,28 @@
 // Conflict resolver — controller (Svelte 5 runes singleton).
 //
-// Owns the resolver's UI state + the whole cherry-pick/merge outcome flow. The
-// legacy canvas-drag handler calls `resolver.startPick(...)` (cherry-pick) or
-// `resolver.startMerge(...)` (merge) for a real op, or `openDemo(...)` (browser
-// design mode); the modal buttons call the async methods below. All backend
-// calls go through the typed `ipc` layer; cross-cutting UI effects (graph
-// reload, mascot, cheer) go through the legacy `bridge`.
+// Owns the resolver's UI state + the whole cherry-pick/merge/rebase outcome
+// flow. The legacy canvas-drag handler calls `resolver.startPick(...)`
+// (cherry-pick) or `resolver.startMerge(...)` (merge) for a real op, the
+// branch-menu calls `resolver.startRebase(...)` (rebase), or `openDemo(...)`
+// (browser design mode); the modal buttons call the async methods below. All
+// backend calls go through the typed `ipc` layer; cross-cutting UI effects
+// (graph reload, mascot, cheer) go through the legacy `bridge`.
 //
 // ── op-dispatch design ──────────────────────────────────────────────────────
-// One resolver instance serves BOTH cherry-pick and merge conflicts (rebase is
-// a planned follow-up: conflict.rs's op-allowlist already fails closed for it,
-// see that module's comment). There are two entry points — `startPick` (used
-// by the existing cherry-pick drag handler, unchanged signature) and the new
-// `startMerge` — because each op's *start* command takes different args
-// (cherry-pick's `recordOrigin` has no merge equivalent). Both funnel into the
-// SAME shared `applyOutcome` + modal state (`.open`, `.files`, `.selected`,
-// …), so there is exactly one conflict-resolution UI.
+// One resolver instance serves cherry-pick, merge, AND rebase conflicts. There
+// are three entry points — `startPick` (used by the existing cherry-pick drag
+// handler, unchanged signature), `startMerge`, and `startRebase` — because
+// each op's *start* command takes different args (cherry-pick's
+// `recordOrigin`, rebase's `onto`, have no equivalent on the others). All
+// funnel into the SAME shared `applyOutcome` + modal state (`.open`, `.files`,
+// `.selected`, …), so there is exactly one conflict-resolution UI.
+//
+// Rebase is also the ONE op where a mid-sequence SKIP is meaningful — it drops
+// the commit currently being replayed entirely, distinct from Abort (undo
+// everything) and Continue (keep going after a resolved conflict). `skip()`
+// below is only ever wired to a UI affordance when `.op === "rebase"`
+// (Resolver.svelte conditionally renders the Skip button) — cherry-pick/merge
+// have no skip concept.
 //
 // `abort()`/`continue()` do NOT remember "which entry point started this" —
 // they dispatch on `.op`, which is re-derived from the LIVE `conflict_status`
@@ -31,16 +38,16 @@
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
-import type { ConflictFile, MergeResult, PickResult } from "../../ipc/bindings";
+import type { ConflictFile, MergeResult, PickResult, RebaseResult } from "../../ipc/bindings";
 
 // specta generates `side: string`; keep the precise union at the call boundary.
 type ConflictSide = "ours" | "theirs";
 
 // The ops this resolver can drive end-to-end (has *_continue/*_abort wired).
 // Mirrors conflict.rs's resolve_conflict_file allowlist — keep them in sync.
-type ResolverOp = "cherry-pick" | "merge";
+type ResolverOp = "cherry-pick" | "merge" | "rebase";
 
-type OpResult = PickResult | MergeResult;
+type OpResult = PickResult | MergeResult | RebaseResult;
 
 const FAKE = [
   {
@@ -58,6 +65,7 @@ const OPS: Record<ResolverOp, {
 }> = {
   "cherry-pick": { abort: commands.cherryPickAbort, continueOp: commands.cherryPickContinue },
   merge: { abort: commands.mergeAbort, continueOp: commands.mergeContinue },
+  rebase: { abort: commands.rebaseAbort, continueOp: commands.rebaseContinue },
 };
 
 // Op-flavored copy (modal title, banners, fallback messages). Keeping these
@@ -103,6 +111,21 @@ const MSG: Record<ResolverOp, {
     abortMsg: "Merge aborted — HEAD unchanged.",
     continueSay: "Conflict resolved — merge committed.",
     continueCheer: 'Conflict resolved — merge committed. <span class="jp">よし!</span>',
+  },
+  rebase: {
+    title: "Rebase hit a conflict",
+    verb: "Rebase",
+    clean: (sha) => "Rebased onto " + (sha || "") + ".",
+    empty: "Already up to date — nothing to rebase.",
+    conflictBanner: (sha, n) =>
+      n
+        ? "Rebasing onto " + (sha || "the target") + " conflicts in " + n + " file" + (n === 1 ? "" : "s") +
+          ". Pick a side per file, then Continue — or Skip this commit, or Abort."
+        : "Rebase onto " + (sha || "the target") + " needs review — resolve, then Continue, Skip, or Abort.",
+    cheer: 'Rebase complete. <span class="jp">よし!</span>',
+    abortMsg: "Rebase aborted — back to the pre-rebase state.",
+    continueSay: "Conflict resolved — rebase continuing.",
+    continueCheer: 'Conflict resolved — rebase continuing. <span class="jp">よし!</span>',
   },
 };
 
@@ -198,8 +221,32 @@ class ResolverState {
     }
   }
 
-  // Route a start/continue result (PickResult or MergeResult — same shape) to
-  // the UI, using `.op`'s copy for messages.
+  // Rebase the current branch onto `onto` (mirrors startMerge; the branch-menu
+  // "Rebase current branch onto here" action calls this with the target
+  // branch's tip sha/name).
+  async startRebase(repo: string, onto: string) {
+    if (this.busy) return;
+    if (!repo) {
+      bridge.tama.warn("Open a repository first.");
+      return;
+    }
+    this.demo = false;
+    this.op = "rebase";
+    this.repo = repo;
+    this.busy = true;
+    bridge.tama.event("mutation.caution", { count: 1 });
+    try {
+      const res = await commands.rebaseStart(repo, onto);
+      await this.applyOutcome(res, onto);
+    } catch (e) {
+      bridge.tama.warn("Rebase failed — " + e);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  // Route a start/continue result (PickResult, MergeResult, or RebaseResult —
+  // same shape) to the UI, using `.op`'s copy for messages.
   private async applyOutcome(res: OpResult, sha: string) {
     const msg = MSG[this.op];
     switch (res.state) {
@@ -247,10 +294,10 @@ class ResolverState {
       if (r.status === "ok") {
         files = Array.isArray(r.data.files) ? r.data.files : [];
         // Re-derive `.op` from live repo state. Guarded to a known op so an
-        // unsupported state (e.g. "revert"/"rebase"/"none") can never leave
-        // `.op` pointing at a command pair that doesn't exist — abort/continue
+        // unsupported state (e.g. "revert"/"none") can never leave `.op`
+        // pointing at a command pair that doesn't exist — abort/continue
         // would then fall back to the last-known-good op instead of throwing.
-        if (r.data.op === "cherry-pick" || r.data.op === "merge") this.op = r.data.op;
+        if (r.data.op === "cherry-pick" || r.data.op === "merge" || r.data.op === "rebase") this.op = r.data.op;
       } else console.error("conflict_status", r.error);
     } catch (e) {
       console.error("conflict_status", e);
@@ -281,6 +328,36 @@ class ResolverState {
       return;
     }
     await this.refresh();
+  }
+
+  // Drop the commit the rebase is currently stopped on entirely — rebase-only
+  // (no cherry-pick/merge equivalent; Resolver.svelte only renders the Skip
+  // button when `.op === "rebase"`). Re-classifies exactly like continue():
+  // "conflict" again if skipping landed on the NEXT conflicting commit, or the
+  // final outcome otherwise.
+  async skip() {
+    if (this.op !== "rebase") return;
+    if (this.demo) {
+      this.close();
+      bridge.tama.set("hint");
+      bridge.tama.say("Skipped this commit (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      const r = await commands.rebaseSkip(this.repo);
+      if (r.state === "conflict") {
+        await this.refresh();
+        bridge.tama.warn(r.message || "Still conflicted — resolve the remaining files.");
+      } else {
+        await this.applyOutcome(r, this.sha);
+      }
+    } catch (e) {
+      bridge.tama.warn("Skip failed — " + e);
+    } finally {
+      this.busy = false;
+    }
   }
 
   async abort() {
@@ -344,7 +421,9 @@ class ResolverState {
     this.sub =
       kind === "merge"
         ? "Merging " + sha + " into HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed."
-        : "Picking " + sha + " onto HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed.";
+        : kind === "rebase"
+          ? "Rebasing onto " + sha + " conflicts in src/auth/token.ts. Snapshot …demo sealed."
+          : "Picking " + sha + " onto HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed.";
     this.files = FAKE.map((f) => ({ ...f }));
     this.selected = FAKE[0].path;
     this.remaining = new Set([FAKE[0].path]);

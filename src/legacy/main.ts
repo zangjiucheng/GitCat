@@ -1014,12 +1014,18 @@ function closeBranchMenu(){ if(refMenuEl){ refMenuEl.remove(); refMenuEl=null; d
 function onDocDownMenu(e){ if(refMenuEl&&!refMenuEl.contains(e.target)) closeBranchMenu(); }
 function openBranchMenu(name,isCurrent,anchor){ closeBranchMenu();
   const m=document.createElement("div"); m.className="ref-pop";
-  m.innerHTML='<button data-act="checkout"'+(isCurrent?" disabled":"")+'>Checkout</button><button data-act="delete" class="danger"'+(isCurrent?" disabled":"")+'>Delete…</button>';
+  m.innerHTML='<button data-act="checkout"'+(isCurrent?" disabled":"")+'>Checkout</button>'
+    +(isCurrent?"":'<button data-act="rebase">Rebase current branch onto here</button>')
+    +'<button data-act="delete" class="danger"'+(isCurrent?" disabled":"")+'>Delete…</button>';
   document.body.appendChild(m); refMenuEl=m;
   const r=anchor.getBoundingClientRect(); m.style.left=Math.min(r.left,innerWidth-168)+"px"; m.style.top=(r.bottom+4)+"px";
   m.addEventListener("click",ev=>{ const b=ev.target.closest("button"); if(!b||b.disabled)return; const act=b.dataset.act; closeBranchMenu();
-    if(act==="checkout") checkoutBranch(name); else if(act==="delete") deleteBranchFlow(name); });
+    if(act==="checkout") checkoutBranch(name); else if(act==="delete") deleteBranchFlow(name); else if(act==="rebase") rebaseOntoFlow(name); });
   setTimeout(()=>document.addEventListener("pointerdown",onDocDownMenu,true),0);
+}
+async function rebaseOntoFlow(name){
+  if(!IN_TAURI){ resolver.openDemo(name,"rebase"); return; }   // ---- design-mode demo ----
+  await resolver.startRebase(CUR_REPO,name);  // ---- real rebase of the current branch onto `name` (Svelte island) ----
 }
 async function pickRepo(){
   if(!IN_TAURI) return;
