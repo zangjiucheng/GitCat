@@ -8,7 +8,7 @@ Tauri 2 + Rust + Svelte 5, with a warm "Lamplight / Cozy Terminal" identity — 
 
 [![CI](https://github.com/zangjiucheng/GitCat/actions/workflows/ci.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/ci.yml)
 [![Release](https://github.com/zangjiucheng/GitCat/actions/workflows/release.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/release.yml)
-[![License: GPL v3](https://img.shields.io/github/license/zangjiucheng/GitCat)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 ![GitCat screenshot](docs/screenshot.png)
 
@@ -21,11 +21,13 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 ## Features
 
 **Core graph + history**
+
 - Fast commit graph (git2 read + a hand-tuned Rust swimlane layout) on a virtualized canvas — smooth even on large repos
 - Full commit detail panel: author/committer split, GPG status, diffstat, file tree, syntax-highlighted diff
 - ⌘K command palette — fuzzy search across commits and refs
 
 **Everyday git, made safe**
+
 - Sidebar: branches / remotes / tags / snapshots, resizable, with a branch context menu
 - Checkout a local branch, or a remote one — checking out `origin/feature-x` creates and switches to a local tracking branch automatically
 - New Branch lets you pick the start point (any local/remote ref), not just HEAD
@@ -36,11 +38,13 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 - `git-filter-repo` wizard — scope, preview, typed-confirm, and a full backup/restore safety net for the one genuinely irreversible operation in the app
 
 **Safety Manager**
+
 - Every mutation snapshots first; global Undo (⌘Z) is itself undoable
 - Reflog rescue — browse and restore to any historical HEAD position
 - rerere status/toggle panel
 
 **Setup + polish**
+
 - First-run setup wizard: pick a repo (click, or drag a folder in), check/fix its git identity, jump into the graph — shown once, not on every launch
 - A real native app menu (File / Repository / Edit / View / Window / Help) and About panel, not just a default OS stub
 - Dark theme by default (light available via the toggle)
@@ -51,6 +55,7 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 Download the installer for your platform from the [Releases page](https://github.com/zangjiucheng/GitCat/releases) — macOS (Apple Silicon + Intel), Windows (x86_64 + arm64), and Linux (x86_64 + arm64, `.deb`/`.rpm`/`.AppImage`) are all built from the same tag via a 6-platform release matrix.
 
 > Builds are currently **unsigned** (no code-signing certificate configured yet):
+>
 > - **macOS**: right-click the app → **Open** the first time to get past Gatekeeper.
 > - **Windows**: click **More info** → **Run anyway** on the SmartScreen prompt.
 
