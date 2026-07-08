@@ -673,7 +673,8 @@ $("#stressBtn").addEventListener("click",e=>{state.stress=!state.stress;e.target
 // there; zoom buttons and the cherry-pick -x toggle stay visible always.
 if(!import.meta.env.DEV) $("#perfDevTools").style.display="none";
 
-/* ---- snapshot ribbon: recent ticks positioned by ACTUAL elapsed time ----
+/* ---- snapshot ribbon: recent ticks positioned by ACTUAL elapsed time,
+   with a zoomable time window ----
    Ticks used to sit at fixed equal-interval positions regardless of when
    each snapshot actually happened — a burst of five snapshots in the last
    minute and a sixth from three days ago looked exactly as "evenly spread
@@ -684,10 +685,20 @@ if(!import.meta.env.DEV) $("#perfDevTools").style.display="none";
    recent burst still spreads out near the top while a long tail of older
    snapshots compresses toward the bottom instead of being pushed off
    entirely — then walks top-to-bottom enforcing a minimum pixel gap, so
-   same-second (or very close) snapshots never visually overlap. Also lifts
-   the old hard cap of 8 to whatever actually fits at that minimum gap, so a
-   taller window genuinely shows more. */
+   same-second (or very close) snapshots never visually overlap.
+   ribbonWindowSec is the time RANGE currently shown, not just visual
+   density — wheel-zoom over the ribbon (mirrors the graph's own wheel-zoom)
+   narrows it (scroll up: fewer, more recent, more spread out) or widens it
+   (scroll down: further back, more compressed), dropping anything outside
+   the window out of view entirely, same as zooming a real timeline/calendar
+   view. Starts at `null` — auto-fit to whichever full range already exists
+   — so the very first render already shows everything available (no more
+   flat 8-tick cap) rather than requiring a zoom just to see more. Double-
+   click the ribbon to reset back to auto-fit. */
 const RIBBON_MIN_TICK_PX=7, RIBBON_TOP_FRAC=0.08, RIBBON_BOT_FRAC=0.92;
+const RIBBON_WINDOW_MIN=300, RIBBON_WINDOW_MAX=180*86400; // 5 minutes .. ~6 months
+let ribbonWindowSec=null; // null = auto-fit; a number once the user has zoomed
+
 function ribbonTickFracs(agesAscending,H){
   const maxAge=Math.max(1,...agesAscending);
   const span=RIBBON_BOT_FRAC-RIBBON_TOP_FRAC;
@@ -696,20 +707,35 @@ function ribbonTickFracs(agesAscending,H){
   for(let i=1;i<fracs.length;i++){ if(fracs[i]<fracs[i-1]+minGap) fracs[i]=fracs[i-1]+minGap; }
   return fracs;
 }
+function ribbonWindowLabel(sec){
+  if(sec<3600) return Math.max(1,Math.round(sec/60))+"m";
+  if(sec<86400) return Math.round(sec/3600)+"h";
+  if(sec<86400*90) return Math.round(sec/86400)+"d";
+  return Math.round(sec/(86400*30))+"mo";
+}
 function positionTicks(){ const rb=$("#ribbon"); $$(".tick",rb).forEach(t=>t.remove());
   const H=rb.clientHeight; if(!H) return;
   // Cap sized so the worst case (every tick pushed to the minimum gap)
   // still fits the usable band — scales with window height instead of a
   // flat number that ignored how much room was actually available.
   const cap=Math.max(6,Math.floor(((RIBBON_BOT_FRAC-RIBBON_TOP_FRAC)*H)/RIBBON_MIN_TICK_PX));
+  const now=Date.now()/1000, label=$("#ribbonWindow");
   if(IN_TAURI){
-    const snaps=Safety.snaps.slice(0,cap); if(!snaps.length) return;
-    const now=Date.now()/1000;
-    const fracs=ribbonTickFracs(snaps.map(s=>Math.max(0,now-s.ts)),H);
-    snaps.forEach((s,i)=>{ const f=fracs[i];
+    const all=Safety.snaps;
+    if(!all.length){ if(label) label.textContent=""; return; }
+    const oldestAge=Math.max(1,now-all[all.length-1].ts);
+    const windowSec=Math.max(RIBBON_WINDOW_MIN,Math.min(ribbonWindowSec??oldestAge,RIBBON_WINDOW_MAX));
+    if(label) label.textContent=ribbonWindowLabel(windowSec);
+    const within=all.filter(s=>now-s.ts<=windowSec).slice(0,cap);
+    if(!within.length) return;
+    const fracs=ribbonTickFracs(within.map(s=>Math.max(0,now-s.ts)),H);
+    within.forEach((s,i)=>{ const f=fracs[i];
       const ago=relTime(s.ts).replace(" ago",""), sha=(s.sha||"").slice(0,7), sub=(s.subject||"snapshot");
+      // No native title: it's unclipped/unstyleable and, this close to the
+      // narrow ribbon, renders past its edge on top of the graph's own text
+      // — #deltaReadout (below) already shows the same info, safely
+      // contained in a fixed corner of the canvas.
       const t=document.createElement("div"); t.className="tick"; t.style.top=(f*H)+"px";
-      t.title="snapshot "+ago+" ago · "+sha+" "+sub.slice(0,40);
       t.addEventListener("mouseenter",()=>{const d=$("#deltaReadout");d.textContent=ago+" ago · "+sha+" · "+sub.slice(0,48);d.classList.add("show");});
       t.addEventListener("mouseleave",()=>$("#deltaReadout").classList.remove("show"));
       t.addEventListener("click",()=>pulseTick(i));
@@ -717,19 +743,35 @@ function positionTicks(){ const rb=$("#ribbon"); $$(".tick",rb).forEach(t=>t.rem
     return;
   }
   // Design-mode preview: synthetic snapshots at deliberately UNEVEN ages
-  // (seconds through days) so the log-scale compression is visible without
-  // a real repo — the old flat equal-interval array couldn't demonstrate
-  // this at all.
-  const demoAges=[15,55,150,420,1200,3600,10800,32400,86400,216000,450000].slice(0,cap);
+  // (seconds through months) so the log-scale compression AND the zoom
+  // window are both visible without a real repo.
+  const demoAgesAll=[15,55,150,420,1200,3600,10800,32400,86400,216000,450000,1200000,4000000,9000000];
+  const oldestAge=demoAgesAll[demoAgesAll.length-1];
+  const windowSec=Math.max(RIBBON_WINDOW_MIN,Math.min(ribbonWindowSec??oldestAge,RIBBON_WINDOW_MAX));
+  if(label) label.textContent=ribbonWindowLabel(windowSec);
+  const demoAges=demoAgesAll.filter(age=>age<=windowSec).slice(0,cap);
+  if(!demoAges.length) return;
   const fracs=ribbonTickFracs(demoAges,H);
   demoAges.forEach((age,i)=>{ const f=fracs[i];
     const t=document.createElement("div"); t.className="tick"; t.style.top=(f*H)+"px";
-    t.title="snapshot "+relTime(Date.now()/1000-age)+" — hover to preview, click to rewind";
     t.addEventListener("mouseenter",()=>{const d=$("#deltaReadout");d.textContent="main −"+(i+1)+" · HEAD moved · "+(1+i%3)+" refs changed";d.classList.add("show");});
     t.addEventListener("mouseleave",()=>$("#deltaReadout").classList.remove("show"));
     t.addEventListener("click",()=>{pulseTick(i);Tama.event("undo.performed",{hash:hhex(i+2)});});
     rb.appendChild(t); }); }
 function pulseTick(i){const ticks=$$(".tick");const t=ticks[i]||ticks[0];if(t){t.classList.remove("pulse");void t.offsetWidth;t.classList.add("pulse");}}
+$("#ribbon").addEventListener("wheel",e=>{
+  e.preventDefault();
+  const H=$("#ribbon").clientHeight; if(!H) return;
+  if(ribbonWindowSec==null){
+    // First zoom: seed from whatever's auto-fit right now, so it zooms
+    // FROM the current view instead of jumping from some arbitrary default.
+    if(IN_TAURI){ const all=Safety.snaps; ribbonWindowSec=all.length?Math.max(1,Date.now()/1000-all[all.length-1].ts):RIBBON_WINDOW_MIN; }
+    else ribbonWindowSec=9000000;
+  }
+  ribbonWindowSec=Math.max(RIBBON_WINDOW_MIN,Math.min(RIBBON_WINDOW_MAX,ribbonWindowSec*Math.exp(e.deltaY*0.0016)));
+  positionTicks();
+},{passive:false});
+$("#ribbon").addEventListener("dblclick",()=>{ ribbonWindowSec=null; positionTicks(); });
 
 /* ---- shared is-interacting flag → hard-pause Tama during pan/zoom ---- */
 ["wheel","pointerdown"].forEach(ev=>wrap.addEventListener(ev,()=>{},{passive:true}));

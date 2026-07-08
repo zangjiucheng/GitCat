@@ -186,6 +186,19 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .snap-meta{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted)}
 .snap-sha{font:inherit;font-family:var(--mono);color:var(--muted);background:transparent;border:none;padding:0;cursor:copy}
 .snap-sha:hover{color:var(--accent)}
+/* Sidebar hover tooltip that can NEVER escape its own row — native `title`
+   attributes are unstyleable and unclipped, positioned by the browser near
+   the cursor with no awareness of the app's own sidebar/graph boundary, so
+   a wide one (a remote branch name, a full timestamp) can render past the
+   narrow sidebar's edge and sit on top of unrelated text in the graph pane
+   next to it (confirmed: "Check out origin/…" rendering over commit
+   messages). left+right both set means this box's width is bounded by its
+   own parent — never the viewport — so it truncates instead of escaping. */
+[data-tip]{position:relative}
+[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:24px;right:6px;top:100%;margin-top:2px;
+  background:var(--elevated);border:1px solid var(--border);border-radius:6px;padding:3px 7px;
+  font-size:10.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  z-index:20;box-shadow:var(--shadow);pointer-events:none}
 .ref-pop{position:fixed;z-index:300;min-width:150px;background:var(--panel);border:1px solid var(--border);border-radius:var(--r-control);box-shadow:var(--shadow);padding:4px;display:flex;flex-direction:column;gap:2px}
 .ref-pop button{font:inherit;text-align:left;background:transparent;border:none;color:var(--text);padding:6px 10px;border-radius:6px;cursor:pointer}
 .ref-pop button:hover:not([disabled]){background:var(--elevated)}
@@ -321,6 +334,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   background:linear-gradient(var(--panel),var(--bg));position:relative;overflow:hidden}
 .ribbon .rlabel{writing-mode:vertical-rl;transform:rotate(180deg);position:absolute;left:5px;bottom:10px;
   font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);pointer-events:none}
+/* Current zoom window ("6h", "2d", ...) — the ribbon itself is only
+   var(--ribbon-w) wide, too narrow for a real tooltip explaining the
+   gesture (see index.html's shared .hint line instead), so this small
+   always-visible label is the discoverability cue that the timeline has a
+   zoomable time dimension at all. */
+.ribbon .rwindow{position:absolute;top:6px;left:0;right:0;text-align:center;font-size:9px;
+  font-family:var(--mono);color:var(--muted);pointer-events:none}
 .tick{position:absolute;left:11px;right:7px;height:7px;border-radius:2px;cursor:pointer;
   background:color-mix(in srgb,var(--accent) 55%,transparent);transition:transform .12s,background .12s}
 .tick:hover{background:var(--accent);transform:scaleX(1.18)}
@@ -685,7 +705,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 
   <!-- ============================ GRAPH ============================ -->
   <main class="graph">
-    <div class="ribbon" id="ribbon"><span class="rlabel">snapshots</span></div>
+    <div class="ribbon" id="ribbon"><span class="rlabel">snapshots</span><span class="rwindow" id="ribbonWindow"></span></div>
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="cv" tabindex="0"></canvas>
       <div class="perf" id="perf">
@@ -699,7 +719,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
         <label class="cp-x" title="Record origin: append '(cherry picked from …)' to the commit message"><input type="checkbox" id="cpRecordOrigin"> -x</label>
       </div>
       <div class="delta-readout" id="deltaReadout"></div>
-      <div class="hint">wheel scroll &#183; &#8984;/ctrl+wheel zoom &#183; click select &#183; drag a dot to cherry-pick &#183; shift+drag to merge &#183; &#8984;Z undo</div>
+      <div class="hint">wheel scroll &#183; &#8984;/ctrl+wheel zoom &#183; click select &#183; drag a dot to cherry-pick &#183; shift+drag to merge &#183; &#8984;Z undo &#183; scroll the ribbon to zoom the snapshot timeline</div>
     </div>
   </main>
 

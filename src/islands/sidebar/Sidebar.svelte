@@ -150,7 +150,7 @@
             class="ref-item"
             role="button"
             tabindex="0"
-            title="Check out {r.name}"
+            data-tip={r.name}
             onclick={() => sidebarCtrl.checkoutRemote(r.name)}
             onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.checkoutRemote(r.name)}
           >
@@ -181,7 +181,7 @@
       {:else}
         {#each sidebarCtrl.snapshots.slice(0, SNAP_CAP) as s (s.ref)}
           {@const sha7 = (s.sha || "").slice(0, 7) || "snapshot"}
-          <div class="snap-item" title={new Date(s.ts * 1000).toLocaleString()}>
+          <div class="snap-item" data-tip={new Date(s.ts * 1000).toLocaleString()}>
             <span class="dot" style="background:var(--accent)"></span>
             <div class="snap-main">
               <span class="snap-subject">{s.subject || "(no message)"}</span>
