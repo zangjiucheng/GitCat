@@ -175,7 +175,7 @@ pub fn reflog_restore(path: String, index: usize) -> UndoResult {
 // ---------------------------------------------------------------------------
 
 fn open(path: &str) -> Result<Repository, String> {
-    Repository::open(path).map_err(|e| format!("cannot open repository: {}", e.message()))
+    crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))
 }
 
 fn fail(message: String) -> UndoResult {

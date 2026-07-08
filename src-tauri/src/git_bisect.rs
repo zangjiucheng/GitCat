@@ -327,7 +327,7 @@ fn read_status(repo: &Repository, path: &str) -> BisectStatus {
 #[tauri::command]
 #[specta::specta]
 pub fn bisect_start(path: String, bad: String, good: Vec<String>) -> BisectStatus {
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
     };
@@ -429,7 +429,7 @@ pub fn bisect_mark(path: String, term: String) -> BisectStatus {
             ))
         }
     };
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
     };
@@ -459,7 +459,7 @@ pub fn bisect_mark(path: String, term: String) -> BisectStatus {
 #[tauri::command]
 #[specta::specta]
 pub fn bisect_status(path: String) -> BisectStatus {
-    match Repository::open(&path) {
+    match crate::trust::open_repo(&path) {
         Ok(repo) => read_status(&repo, &path),
         Err(e) => BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
     }
@@ -470,7 +470,7 @@ pub fn bisect_status(path: String) -> BisectStatus {
 #[tauri::command]
 #[specta::specta]
 pub fn bisect_reset(path: String) -> BisectStatus {
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
     };

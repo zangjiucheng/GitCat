@@ -284,7 +284,7 @@ pub fn merge_start(path: String, sha: String) -> MergeResult {
     if let Err(e) = validate_sha(&sha) {
         return MergeResult::error(e);
     }
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
     };
@@ -330,7 +330,7 @@ pub fn merge_start(path: String, sha: String) -> MergeResult {
 #[tauri::command]
 #[specta::specta]
 pub fn merge_continue(path: String) -> MergeResult {
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
     };
@@ -376,7 +376,7 @@ pub fn merge_continue(path: String) -> MergeResult {
 #[tauri::command]
 #[specta::specta]
 pub fn merge_abort(path: String) -> MergeResult {
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
     };

@@ -189,7 +189,7 @@ fn short_backup(r: &str) -> String {
 /// Open the repo, mapping a failure into a `WriteResult` error. Used by every
 /// mutating command before it snapshots.
 fn open_repo(path: &str) -> Result<Repository, WriteResult> {
-    Repository::open(path)
+    crate::trust::open_repo(path)
         .map_err(|e| WriteResult::err(format!("Cannot open repository: {}", e.message())))
 }
 
@@ -206,7 +206,7 @@ pub fn list_refs(path: String) -> Result<RefList, String> {
 }
 
 fn list_refs_inner(path: &str) -> Result<RefList, git2::Error> {
-    let repo = Repository::open(path)?;
+    let repo = crate::trust::open_repo(path)?;
 
     // Current branch shorthand; None when detached (HEAD is not a branch) or unborn.
     let head = match repo.head() {

@@ -9,7 +9,7 @@
 //! `HEAD`, `HEAD~2`, `HEAD^{tree}`, …) so this doubles as a small rev-parse
 //! sandbox for power users.
 
-use git2::{ObjectType, Repository, Signature};
+use git2::{ObjectType, Signature};
 use serde::Serialize;
 
 /// Blob text is capped to this many lines (mirrors conflict.rs CAP_LINES) so a
@@ -116,7 +116,7 @@ pub fn plumbing_inspect(path: String, rev: String) -> Result<PlumbingObject, Str
         return Err("Enter a rev, sha, or ref to inspect.".to_string());
     }
     let repo =
-        Repository::open(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+        crate::trust::open_repo(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
     let obj = repo
         .revparse_single(&rev)
         .map_err(|e| format!("Not a valid rev in this repository: {rev:?} ({})", e.message()))?;
