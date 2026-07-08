@@ -464,8 +464,18 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .modal-cta{border:1.5px dashed color-mix(in srgb,var(--accent) 45%,var(--border));border-radius:var(--r-panel);padding:26px 18px;text-align:center}
 .modal-cta .ic{font-size:30px;line-height:1;margin-bottom:10px}
 .modal-cta .t{font-size:13.5px;font-weight:600;color:var(--text);margin-bottom:5px}
+.modal-cta .t.mono{font-size:12px;word-break:break-all}
 .modal-cta .sub{font-size:12px;color:var(--muted);line-height:1.6;max-width:320px;margin:0 auto}
 .modal-cta .sub b{color:var(--accent)}
+/* .modal-drop: the modal-cta box also acts as a click-to-browse / drop-a-
+   folder-here target (setup wizard's pick step) — cursor+hover say "this is
+   interactive", .dragover highlights solid while a native OS drag hovers the
+   window (see setupwizard.svelte.ts's armDropZone), .busy dims it mid-validate. */
+.modal-drop{cursor:pointer;transition:border-color .12s,background-color .12s}
+.modal-drop:hover{border-color:color-mix(in srgb,var(--accent2) 55%,var(--border));background:color-mix(in srgb,var(--accent2) 5%,transparent)}
+.modal-drop:focus-visible{outline:2px solid var(--accent2);outline-offset:2px}
+.modal-drop.dragover{border-style:solid;border-color:var(--accent2);background:color-mix(in srgb,var(--accent2) 10%,transparent)}
+.modal-drop.busy{cursor:default;opacity:.65;pointer-events:none}
 /* Scannable numbered step preview (setup wizard's welcome screen) — replaces
    a single dense sentence with real visual weight per step. */
 .modal-steplist{display:flex;flex-direction:column;gap:12px}

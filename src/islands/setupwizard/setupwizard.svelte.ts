@@ -8,6 +8,10 @@
 // Same real/demo duality as every other island (filterrepo, bisect, rerere):
 // legacy/main.ts's caller (via main.ts, see there) decides start() vs.
 // openDemo() based on IN_TAURI — this controller never imports ipc/env.
+//
+// The pick step's drop zone accepts a dragged-and-dropped folder as well as
+// the native picker dialog (armDropZone()/disarmDropZone(), reactively
+// toggled by the view based on step/open — see SetupWizard.svelte).
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
@@ -30,6 +34,8 @@ class SetupWizardState {
   // ── pick step ──────────────────────────────────────────────────────────
   repoPath = $state<string | null>(null);
   pathError = $state("");
+  dragOver = $state(false); // true while a native OS drag is hovering the window
+  private dragUnlisten: (() => void) | null = null;
 
   // ── identity step ──────────────────────────────────────────────────────
   identity = $state<GitIdentity | null>(null);
@@ -101,6 +107,51 @@ class SetupWizardState {
     }
     if (!dir) return; // user cancelled the native picker — stay on "pick"
     this.repoPath = typeof dir === "string" ? dir : (dir as any).path || String(dir);
+    await this.validate();
+  }
+
+  // ── drag-and-drop onto the pick-step drop zone ──────────────────────────
+  // Tauri intercepts native OS drag-and-drop at the webview level (it never
+  // reaches the DOM as browser dragover/drop events), so this listens via
+  // window.__TAURI__.webview's onDragDropEvent instead. The wizard is a
+  // full-window modal with nothing else droppable underneath, so — unlike a
+  // real multi-target page — there's no need to hit-test the drop position
+  // against the drop-zone's DOM rect; any drop while armed is for us.
+  async armDropZone() {
+    if (this.demo || this.dragUnlisten) return; // no real webview in design-mode preview
+    try {
+      const w = window as unknown as { __TAURI__?: any };
+      const wv = w.__TAURI__?.webview;
+      if (!wv?.getCurrentWebview) return;
+      this.dragUnlisten = await wv.getCurrentWebview().onDragDropEvent((e: any) => {
+        const p = e.payload;
+        if (p.type === "drop") {
+          this.dragOver = false;
+          if (p.paths?.[0]) this.acceptDroppedPath(p.paths[0]);
+        } else if (p.type === "enter" || p.type === "over") {
+          this.dragOver = true;
+        } else {
+          this.dragOver = false;
+        }
+      });
+    } catch {
+      // no drag-drop API available (older webview, or design-mode) — the
+      // click-to-browse path still works, so this is a silent no-op.
+    }
+  }
+
+  disarmDropZone() {
+    this.dragOver = false;
+    if (this.dragUnlisten) {
+      this.dragUnlisten();
+      this.dragUnlisten = null;
+    }
+  }
+
+  async acceptDroppedPath(path: string) {
+    if (this.busy) return;
+    this.pathError = "";
+    this.repoPath = path;
     await this.validate();
   }
 
@@ -208,6 +259,11 @@ class SetupWizardState {
     // after the user already chose to leave.
     if (this.busy) return;
     this.resetWizard();
+    // Skipping always leaves the app with no repo open yet (finish() is the
+    // only path that opens one) — point at both ways back in, since the
+    // empty-state hero card's own button is easy to miss right after a modal
+    // closes.
+    bridge.tama.say("No rush — open a repository anytime via 📁 or the repo name ▾ up top. にゃ〜", 4200);
   }
 
   private resetWizard() {

@@ -1,10 +1,10 @@
 <script lang="ts">
   // Setup wizard — view. Deliberately NO <style> block: reuses the existing
-  // global .scrim/.modal/.msteps/.confirm-type/.pl-err/.pl-kv/.hero-hint
-  // classes (see index.html / FilterRepo.svelte), so this looks consistent
-  // with the rest of the app's chrome — plus two new shared classes this
-  // wizard motivated: .modal-cta (a prominent "nothing chosen yet" prompt for
-  // the pick step, instead of empty space) and .modal-steplist (the welcome
+  // global .scrim/.modal/.msteps/.confirm-type/.pl-err/.hero-hint classes
+  // (see index.html / FilterRepo.svelte), so this looks consistent with the
+  // rest of the app's chrome — plus two new shared classes this wizard
+  // motivated: .modal-cta (a prominent "nothing chosen yet" prompt for the
+  // pick step, instead of empty space) and .modal-steplist (the welcome
   // step's numbered preview). The wrapper carries its own `.setupwizard`
   // modifier class (see index.html) so it gets an accent2 header/step-dot
   // tint instead of .modal-head's base danger-red, which is tuned for the
@@ -14,6 +14,15 @@
   // FilterRepo), as an overlay on top of whatever legacy/main.ts already
   // rendered underneath (the hero card, or the demo graph) — Esc/Skip just
   // reveals what's already there.
+  //
+  // The pick step's .modal-cta doubles as the *only* affordance for
+  // choosing a folder (the `.modal-drop` modifier): clicking or
+  // Enter/Space-ing it opens the native picker, same as a real
+  // "drag file here, or click to browse" widget, and it also accepts a
+  // dropped OS folder (see setupwizard.svelte.ts's armDropZone/
+  // acceptDroppedPath) — reusing this one box for the already-selected state
+  // too so dropping a different folder onto it re-picks, rather than needing
+  // a separate footer button once something's chosen.
   import { setupWizardCtrl, type SetupWizardStep } from "./setupwizard.svelte.ts";
 
   const STEP_ORDER: SetupWizardStep[] = ["welcome", "pick", "identity", "done"];
@@ -27,6 +36,21 @@
     if (setupWizardCtrl.busy) return; // don't strand an in-flight dialog/save/open
     setupWizardCtrl.skip();
   }
+
+  function onDropZoneKeydown(e: KeyboardEvent) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    if (!setupWizardCtrl.busy) setupWizardCtrl.pickDirectory();
+  }
+
+  // Arm/disarm the native drag-and-drop listener as the drop zone itself
+  // mounts/unmounts, rather than at every individual step-transition call
+  // site — one reactive owner instead of scattering arm()/disarm() calls
+  // across toPick()/backToPick()/backToWelcome()/validate()/skip().
+  $effect(() => {
+    if (setupWizardCtrl.open && setupWizardCtrl.step === "pick") setupWizardCtrl.armDropZone();
+    else setupWizardCtrl.disarmDropZone();
+  });
 </script>
 
 <svelte:window on:keydown={onKeydown} />
@@ -74,15 +98,25 @@
           </div>
         </div>
       {:else if setupWizardCtrl.step === "pick"}
-        {#if setupWizardCtrl.repoPath}
-          <div class="pl-kv"><div><span class="mut">selected</span> <span class="mono">{setupWizardCtrl.repoPath}</span></div></div>
-        {:else}
-          <div class="modal-cta">
-            <div class="ic">&#128193;</div>
-            <div class="t">No folder selected yet</div>
-            <div class="sub">Click <b>Choose folder&#8230;</b> below to pick the repository you want to work in.</div>
-          </div>
-        {/if}
+        <div
+          class="modal-cta modal-drop"
+          class:dragover={setupWizardCtrl.dragOver}
+          class:busy={setupWizardCtrl.busy}
+          role="button"
+          tabindex="0"
+          aria-disabled={setupWizardCtrl.busy}
+          onclick={() => setupWizardCtrl.pickDirectory()}
+          onkeydown={onDropZoneKeydown}
+        >
+          <div class="ic">&#128193;</div>
+          {#if setupWizardCtrl.repoPath}
+            <div class="t mono">{setupWizardCtrl.repoPath}</div>
+            <div class="sub">{setupWizardCtrl.busy ? "Checking…" : "Click, or drop another folder, to change it"}</div>
+          {:else}
+            <div class="t">Drop a folder here</div>
+            <div class="sub">or click to browse for one</div>
+          {/if}
+        </div>
         {#if setupWizardCtrl.pathError}
           <div class="pl-err" style="margin-top:10px">{setupWizardCtrl.pathError}</div>
         {/if}
@@ -116,7 +150,6 @@
       {:else if setupWizardCtrl.step === "pick"}
         <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>Skip</button>
         <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.backToWelcome()}>Back</button>
-        <button class="btn" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.pickDirectory()}>Choose folder&#8230;</button>
       {:else if setupWizardCtrl.step === "identity"}
         <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>Skip setup</button>
         <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.backToPick()}>Back</button>
