@@ -28,15 +28,17 @@ mount(Bisect, { target: document.body });
 mount(FilterRepo, { target: document.body });
 mount(SetupWizard, { target: document.body });
 
-// Setup wizard: auto-opens once at boot, ON TOP of the untouched bootEmpty()
-// hero card (real app, no repo open yet) or the synthetic demo graph (browser
+// Setup wizard: auto-opens at boot, ON TOP of the untouched bootEmpty() hero
+// card (real app, no repo open yet) or the synthetic demo graph (browser
 // design mode) — see setupwizard.svelte.ts's header for why Esc/"Skip" simply
 // reveals what's already underneath rather than falling back to anything
 // special-cased here. Reading bridge.CUR_REPO here (not destructured) is safe
 // because legacy/main.ts's top-level bootEmpty() has already run to completion
-// by this point (module evaluation order).
+// by this point (module evaluation order). Only a FIRST run, not every launch
+// with no repo open — hasBeenDismissed() persists across launches (see
+// setupwizard.svelte.ts) once the user has skipped or finished it once.
 if (IN_TAURI) {
-  if (!bridge.CUR_REPO) setupWizardCtrl.start();
+  if (!bridge.CUR_REPO && !setupWizardCtrl.hasBeenDismissed()) setupWizardCtrl.start();
 } else {
   setupWizardCtrl.openDemo();
 }

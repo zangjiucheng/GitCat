@@ -12,6 +12,15 @@
 // The pick step's drop zone accepts a dragged-and-dropped folder as well as
 // the native picker dialog (armDropZone()/disarmDropZone(), reactively
 // toggled by the view based on step/open — see SetupWizard.svelte).
+//
+// main.ts only auto-calls start() once per install, not once per launch:
+// it's a FIRST-RUN flow, not a "no repo currently open" nag — a user who's
+// already been through it (skip or finish) knows where the "Open a
+// repository…" hero button / topbar repo-picker are. hasBeenDismissed()
+// persists that (localStorage, app-wide — not per-repo, since deciding
+// whether to interrupt at boot happens before any repo is even chosen).
+// openDemo() (design-mode preview) deliberately ignores this, so iterating
+// on the wizard's own UI doesn't require clearing storage every reload.
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
@@ -23,6 +32,8 @@ export type SetupWizardStep = "welcome" | "pick" | "identity" | "done";
 // island's DEMO_* constants, so the browser preview still demos the full flow.
 const DEMO_PATH = "/home/demo/my-project";
 const DEMO_IDENTITY: GitIdentity = { name: null, email: null, configured: false };
+
+const DISMISSED_KEY = "gitcat.setupWizardDismissed";
 
 class SetupWizardState {
   open = $state(false);
@@ -48,6 +59,22 @@ class SetupWizardState {
 
   get canSave(): boolean {
     return this.nameInput.trim().length > 0 && this.emailInput.trim().length > 0 && !this.busy;
+  }
+
+  hasBeenDismissed(): boolean {
+    try {
+      return localStorage.getItem(DISMISSED_KEY) === "1";
+    } catch {
+      return false; // storage disabled (e.g. private mode) — worst case it keeps reappearing
+    }
+  }
+
+  private markDismissed() {
+    try {
+      localStorage.setItem(DISMISSED_KEY, "1");
+    } catch {
+      // ignore — see hasBeenDismissed()
+    }
   }
 
   // ── real entry — main.ts calls this at boot when IN_TAURI && no repo open ──
@@ -236,6 +263,7 @@ class SetupWizardState {
       bridge.tama.say("This is where your repository's graph would open. にゃ〜 (demo)", 4200);
       this.open = false;
       this.busy = false;
+      this.markDismissed();
       return;
     }
     // openRepo never throws, but it DOES swallow load_graph failures internally
@@ -245,6 +273,7 @@ class SetupWizardState {
     const ok = await bridge.openRepo(this.repoPath);
     if (ok) {
       this.open = false;
+      this.markDismissed();
     } else {
       this.tamaImg = bridge.TAMA_IMG.hero;
       this.finishError = "Couldn't open the repository — please try again.";
@@ -259,6 +288,7 @@ class SetupWizardState {
     // after the user already chose to leave.
     if (this.busy) return;
     this.resetWizard();
+    this.markDismissed();
     // Skipping always leaves the app with no repo open yet (finish() is the
     // only path that opens one) — point at both ways back in, since the
     // empty-state hero card's own button is easy to miss right after a modal
