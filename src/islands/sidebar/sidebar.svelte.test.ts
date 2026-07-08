@@ -54,6 +54,8 @@ function resetAll() {
   sidebarCtrl.filter = "";
   sidebarCtrl.busy = false;
   sidebarCtrl.menu = null;
+  sidebarCtrl.hasRepo = false;
+  sidebarCtrl.copiedSnapshotSha = "";
   mockInTauri = false;
   vi.clearAllMocks();
 }
@@ -75,6 +77,7 @@ describe("refresh", () => {
     await sidebarCtrl.refresh("/repo");
     expect(sidebarCtrl.locals.length).toBeGreaterThan(0);
     expect(sidebarCtrl.head).toBe("main");
+    expect(sidebarCtrl.hasRepo).toBe(true);
     expect(commands.listRefs).not.toHaveBeenCalled();
     expect(bridge.updateBranchPill).toHaveBeenCalled();
   });
@@ -92,20 +95,23 @@ describe("refresh", () => {
     await sidebarCtrl.refresh("/repo");
     expect(sidebarCtrl.locals).toEqual([{ name: "main", sha: "abc1234", ahead: 1, behind: 0 }]);
     expect(sidebarCtrl.head).toBe("main");
+    expect(sidebarCtrl.hasRepo).toBe(true);
     expect(bridge.updateBranchPill).toHaveBeenCalledWith("main", sidebarCtrl.locals);
   });
 
-  it("real mode: logs and leaves state untouched on error", async () => {
+  it("real mode: logs and leaves ref state untouched on error, but hasRepo still flips (a repo IS open, listing just failed)", async () => {
     mockInTauri = true;
     vi.mocked(commands.listRefs).mockResolvedValueOnce(err("repo not found"));
     await sidebarCtrl.refresh("/repo");
     expect(sidebarCtrl.locals).toEqual([]);
+    expect(sidebarCtrl.hasRepo).toBe(true);
   });
 
-  it("real mode: no-ops without a repo path", async () => {
+  it("real mode: no-ops without a repo path, hasRepo stays false", async () => {
     mockInTauri = true;
     await sidebarCtrl.refresh("");
     expect(commands.listRefs).not.toHaveBeenCalled();
+    expect(sidebarCtrl.hasRepo).toBe(false);
   });
 });
 
@@ -295,13 +301,31 @@ describe("setSnapshots / reset", () => {
     expect(sidebarCtrl.snapshots).not.toBe(snaps);
   });
 
-  it("reset clears everything including an open menu", () => {
+  it("reset clears everything including an open menu and hasRepo", () => {
     sidebarCtrl.locals = [{ name: "main", sha: "x", ahead: null, behind: null }];
     sidebarCtrl.head = "main";
     sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
+    sidebarCtrl.hasRepo = true;
     sidebarCtrl.reset();
     expect(sidebarCtrl.locals).toEqual([]);
     expect(sidebarCtrl.head).toBeNull();
     expect(sidebarCtrl.menu).toBeNull();
+    expect(sidebarCtrl.hasRepo).toBe(false);
+  });
+});
+
+describe("copySnapshotSha", () => {
+  it("writes to the clipboard and clears the copied flag after a delay", () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    sidebarCtrl.copySnapshotSha("abc1234");
+    expect(writeText).toHaveBeenCalledWith("abc1234");
+    expect(sidebarCtrl.copiedSnapshotSha).toBe("abc1234");
+
+    vi.advanceTimersByTime(900);
+    expect(sidebarCtrl.copiedSnapshotSha).toBe("");
+    vi.useRealTimers();
   });
 });

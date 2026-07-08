@@ -58,6 +58,15 @@ class SidebarState {
   // otherwise a local/remote ref name to pass as create_branch's start_point,
   // which the backend has supported since M2a; this just exposes it in the UI.
   newBranchFrom = $state("");
+  // Tracks CUR_REPO's own truthiness (not "did the last list_refs succeed" —
+  // a transient refresh error shouldn't flip the sidebar back to the empty
+  // state). Distinct from `head` being null, which also legitimately happens
+  // for an open-but-unborn/detached repo. bridge.CUR_REPO itself is a plain
+  // (non-$state) live binding, so the view can't react to it directly — this
+  // is the reactive proxy for "is a repo open at all" (see Sidebar.svelte's
+  // empty-state branch) that the rest of the file already needed anyway.
+  hasRepo = $state(false);
+  copiedSnapshotSha = $state("");
 
   async refresh(repo: string) {
     if (!IN_TAURI) {
@@ -65,10 +74,12 @@ class SidebarState {
       this.remotes = DEMO_REMOTES;
       this.tags = DEMO_TAGS;
       this.head = "main";
+      this.hasRepo = true;
       bridge.updateBranchPill(this.head, this.locals);
       return;
     }
     if (!repo) return;
+    this.hasRepo = true;
     try {
       const r = await commands.listRefs(repo);
       if (r.status !== "ok") {
@@ -89,6 +100,14 @@ class SidebarState {
     this.snapshots = Array.isArray(snaps) ? snaps.slice() : [];
   }
 
+  copySnapshotSha(sha: string) {
+    navigator.clipboard?.writeText(sha);
+    this.copiedSnapshotSha = sha;
+    setTimeout(() => {
+      if (this.copiedSnapshotSha === sha) this.copiedSnapshotSha = "";
+    }, 900);
+  }
+
   reset() {
     this.locals = [];
     this.remotes = [];
@@ -96,6 +115,7 @@ class SidebarState {
     this.head = null;
     this.snapshots = [];
     this.menu = null;
+    this.hasRepo = false;
   }
 
   async checkout(name: string) {

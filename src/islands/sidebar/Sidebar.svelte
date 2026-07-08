@@ -52,6 +52,14 @@
 
 <svelte:window onpointerdown={onWindowPointerdown} />
 
+{#if !sidebarCtrl.hasRepo}
+  <div class="sidebar-empty">
+    <div class="ic">&#128193;</div>
+    <div class="t">No repository open</div>
+    <div class="sub">Branches, remotes, and snapshots will show up here once you open one.</div>
+    <button class="btn" onclick={() => bridge.pickRepo()}>&#128193; Open a repository&#8230;</button>
+  </div>
+{:else}
 <div class="ref-filter">
   <span class="mag">&#9906;</span>
   <input id="refFilter" placeholder="Filter refs&#8230;" spellcheck="false" bind:value={sidebarCtrl.filter} />
@@ -172,10 +180,16 @@
         <div class="ref-item"><span class="rname mut">no snapshots yet</span></div>
       {:else}
         {#each sidebarCtrl.snapshots.slice(0, SNAP_CAP) as s (s.ref)}
-          <div class="ref-item">
+          {@const sha7 = (s.sha || "").slice(0, 7) || "snapshot"}
+          <div class="snap-item" title={new Date(s.ts * 1000).toLocaleString()}>
             <span class="dot" style="background:var(--accent)"></span>
-            <span class="rname mono">{(s.sha || "").slice(0, 7) || "snapshot"}</span>
-            <span class="ab">{bridge.relTime(s.ts).replace(" ago", "")}</span>
+            <div class="snap-main">
+              <span class="snap-subject">{s.subject || "(no message)"}</span>
+              <span class="snap-meta">
+                <button class="snap-sha" onclick={() => sidebarCtrl.copySnapshotSha(s.sha)}>{sidebarCtrl.copiedSnapshotSha === s.sha ? "copied ✓" : sha7}</button>
+                <span class="mut">&#183; {bridge.relTime(s.ts).replace(" ago", "")}</span>
+              </span>
+            </div>
           </div>
         {/each}
         {#if sidebarCtrl.snapshots.length > SNAP_CAP}
@@ -185,6 +199,7 @@
     </div>
   </details>
 </div>
+{/if}
 
 {#if sidebarCtrl.menu}
   {@const menu = sidebarCtrl.menu}
