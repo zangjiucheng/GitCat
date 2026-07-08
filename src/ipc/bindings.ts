@@ -30,6 +30,13 @@ async commitDetail(path: string, sha: string) : Promise<Result<CommitDetail, str
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * JS: `commands.getAppInfo()`. No repo/path needed — this is pure static
+ * build-time metadata (Cargo.toml's `[package]` table), never `Err`.
+ */
+async getAppInfo() : Promise<AppInfo> {
+    return await TAURI_INVOKE("get_app_info");
+},
 async createSnapshot(path: string) : Promise<Result<Snapshot, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("create_snapshot", { path }) };
@@ -462,6 +469,12 @@ async unwatchRepo() : Promise<void> {
 
 /** user-defined types **/
 
+/**
+ * Static app metadata for the custom About panel — the same `PackageInfo`
+ * fields `menu.rs`'s native-About builder reads, just reshaped as a plain
+ * serializable struct instead of Tauri's menu-only `AboutMetadata` type.
+ */
+export type AppInfo = { name: string; version: string; description: string; authors: string[]; copyright: string; website: string }
 export type BisectStatus = { ok: boolean; inProgress: boolean; current: CommitInfo | null; badRef: string | null; goodRefs: string[]; remainingRevs: number; estSteps: number; firstBad: CommitInfo | null; log: string[]; message: string; backupRef: string | null }
 export type BlobObject = { sha: string; size: number; isBinary: boolean; 
 /**
