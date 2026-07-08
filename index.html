@@ -300,6 +300,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .perf select,.perf button{font:inherit;color:var(--text);background:var(--elevated);border:1px solid var(--border);
   border-radius:6px;padding:2px 6px;cursor:pointer}
 .perf .sep{width:1px;height:14px;background:var(--border)}
+.perf-dev{display:flex;align-items:center;gap:8px}
 .hint{position:absolute;left:14px;bottom:10px;z-index:6;color:var(--muted);font-size:11px;pointer-events:none;font-family:var(--mono);
   background:color-mix(in srgb,var(--panel) 70%,transparent);padding:3px 8px;border-radius:6px}
 .delta-readout{position:absolute;top:44px;right:14px;z-index:6;font-family:var(--mono);font-size:11px;color:var(--text);
@@ -621,11 +622,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="cv" tabindex="0"></canvas>
       <div class="perf" id="perf">
-        <span id="hud"><b>—</b> fps</span><span class="sep"></span>
-        <label style="color:var(--muted)">rows</label>
-        <select id="rowsSel"><option value="1000">1k</option><option value="10000" selected>10k</option><option value="50000">50k</option></select>
+        <span class="perf-dev" id="perfDevTools">
+          <span id="hud"><b>—</b> fps</span><span class="sep"></span>
+          <label style="color:var(--muted)">rows</label>
+          <select id="rowsSel"><option value="1000">1k</option><option value="10000" selected>10k</option><option value="50000">50k</option></select>
+          <button id="stressBtn" title="Auto-scroll stress test">&#9654; stress</button>
+        </span>
         <button id="zoomOut" title="Zoom out">&#8211;</button><button id="zoomIn" title="Zoom in">+</button>
-        <button id="stressBtn" title="Auto-scroll stress test">&#9654; stress</button>
         <label class="cp-x" title="Record origin: append '(cherry picked from …)' to the commit message"><input type="checkbox" id="cpRecordOrigin"> -x</label>
       </div>
       <div class="delta-readout" id="deltaReadout"></div>

@@ -584,6 +584,10 @@ $("#rowsSel").addEventListener("change",e=>loadGraph(+e.target.value));
 $("#zoomIn").addEventListener("click",()=>zoomAt(view.cssH/2,140));
 $("#zoomOut").addEventListener("click",()=>zoomAt(view.cssH/2,-140));
 $("#stressBtn").addEventListener("click",e=>{state.stress=!state.stress;e.target.innerHTML=state.stress?"&#9646;&#9646; stress":"&#9654; stress";});
+// dev-only perf HUD (fps/ms readout, demo row-count picker, stress test) —
+// meaningless in a real production build against a real repo, so hide it
+// there; zoom buttons and the cherry-pick -x toggle stay visible always.
+if(!import.meta.env.DEV) $("#perfDevTools").style.display="none";
 
 /* ---- snapshot ribbon: fixed recent ticks · hover ghost · click rewind ---- */
 const RIBBON_TICKS=[0.10,0.24,0.40,0.58,0.74,0.88]; // fractional Y of recent snapshots
