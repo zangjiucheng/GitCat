@@ -141,6 +141,40 @@ describe("checkout", () => {
   });
 });
 
+describe("checkoutRemote", () => {
+  it("with no matching local branch: creates one tracking the remote ref", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "", backupRef: null });
+    await sidebarCtrl.checkoutRemote("origin/feature-x");
+    expect(commands.createBranch).toHaveBeenCalledWith("/repo", "feature-x", "origin/feature-x", true);
+    expect(commands.checkout).not.toHaveBeenCalled();
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+  });
+
+  it("with an existing local branch of the same short name: switches to it instead of creating a duplicate", async () => {
+    mockInTauri = true;
+    sidebarCtrl.locals = [{ name: "feature-x", sha: "a1", ahead: null, behind: null }];
+    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null });
+    await sidebarCtrl.checkoutRemote("origin/feature-x");
+    expect(commands.checkout).toHaveBeenCalledWith("/repo", "feature-x");
+    expect(commands.createBranch).not.toHaveBeenCalled();
+  });
+
+  it("design mode is a cosmetic no-op with a toast", async () => {
+    mockInTauri = false;
+    await sidebarCtrl.checkoutRemote("origin/feature-x");
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(commands.createBranch).not.toHaveBeenCalled();
+  });
+
+  it("is re-entrancy locked while busy", async () => {
+    mockInTauri = true;
+    sidebarCtrl.busy = true;
+    await sidebarCtrl.checkoutRemote("origin/feature-x");
+    expect(commands.createBranch).not.toHaveBeenCalled();
+  });
+});
+
 describe("newBranch", () => {
   it("startNewBranch opens the inline input, cancelNewBranch closes it", () => {
     sidebarCtrl.startNewBranch();
@@ -159,7 +193,7 @@ describe("newBranch", () => {
     expect(commands.createBranch).not.toHaveBeenCalled();
   });
 
-  it("real mode: creates the branch and reloads on success", async () => {
+  it("real mode: creates the branch from HEAD (no from selected) and reloads on success", async () => {
     mockInTauri = true;
     vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null });
     sidebarCtrl.startNewBranch();
@@ -168,6 +202,17 @@ describe("newBranch", () => {
     expect(commands.createBranch).toHaveBeenCalledWith("/repo", "feature/new", null, true);
     expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
     expect(sidebarCtrl.newBranchOpen).toBe(false);
+  });
+
+  it("real mode: passes the selected start point through as create_branch's start_point", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null });
+    sidebarCtrl.startNewBranch();
+    sidebarCtrl.newBranchInput = "feature/new";
+    sidebarCtrl.newBranchFrom = "origin/main";
+    await sidebarCtrl.confirmNewBranch();
+    expect(commands.createBranch).toHaveBeenCalledWith("/repo", "feature/new", "origin/main", true);
+    expect(sidebarCtrl.newBranchFrom).toBe("");
   });
 });
 

@@ -6,12 +6,12 @@
 //    by the OS/webview, no event ever reaches Rust. These aren't just
 //    decorative — without an Edit menu wiring Cut/Copy/Paste/Select All,
 //    those shortcuts don't work at all in a Tauri webview's text inputs.
-//  - custom (Open Repository…, New Branch…, Toggle Theme, Command Palette,
-//    the two Help links): fire a MenuEvent caught in handle_event() below.
-//    The two Help links (GitHub / Report an Issue) are handled entirely in
-//    Rust via the opener plugin; the rest need the frontend (they're Svelte
-//    controller calls), so they're forwarded as a "menu-action" JS event —
-//    see the listener in src/main.ts.
+//  - custom (Open Repository…, New Branch…, Fetch/Pull/Push, Toggle Theme,
+//    Command Palette, the two Help links): fire a MenuEvent caught in
+//    handle_event() below. The two Help links (GitHub / Report an Issue) are
+//    handled entirely in Rust via the opener plugin; the rest need the
+//    frontend (they're Svelte controller / legacy chrome calls), so they're
+//    forwarded as a "menu-action" JS event — see the listener in src/main.ts.
 //
 // Deliberately NOT included: Undo/Redo. The app already binds ⌘Z to its own
 // global Safety-Manager undo (see globalUndo() in legacy/main.ts) — adding a
@@ -69,6 +69,16 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         b.build()?
     };
 
+    let repo_menu = {
+        // No accelerators — same reasoning as View's Toggle Theme/Command
+        // Palette below: these are mouse/menu-discoverable, not a second
+        // keyboard binding competing with anything.
+        let fetch = MenuItemBuilder::with_id("fetch", "Fetch").build(app)?;
+        let pull = MenuItemBuilder::with_id("pull", "Pull").build(app)?;
+        let push = MenuItemBuilder::with_id("push", "Push").build(app)?;
+        SubmenuBuilder::new(app, "Repository").item(&fetch).item(&pull).item(&push).build()?
+    };
+
     // Cut/Copy/Paste/Select All aren't decorative here: without them wired up
     // via a real menu, those OS-level shortcuts don't reach text inputs at
     // all in a Tauri webview. Undo/Redo deliberately omitted — see module doc.
@@ -101,6 +111,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
     let builder = builder.item(&app_menu);
     builder
         .item(&file_menu)
+        .item(&repo_menu)
         .item(&edit_menu)
         .item(&view_menu)
         .item(&window_menu)
@@ -116,9 +127,10 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         "report-issue" => {
             let _ = app.opener().open_url(ISSUES_URL, None::<&str>);
         }
-        // Everything else is a frontend (Svelte controller) action — forward
-        // the id as a JS event rather than duplicating that logic in Rust.
-        id @ ("open-repo" | "new-branch" | "toggle-theme" | "cmdk") => {
+        // Everything else is a frontend (Svelte controller / legacy chrome)
+        // action — forward the id as a JS event rather than duplicating that
+        // logic in Rust.
+        id @ ("open-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

@@ -90,6 +90,15 @@ if (IN_TAURI) {
       case "cmdk":
         cmdkCtrl.show();
         break;
+      case "fetch":
+        bridge.doFetch();
+        break;
+      case "pull":
+        bridge.doPull();
+        break;
+      case "push":
+        bridge.doPush();
+        break;
     }
   });
 }

@@ -580,6 +580,51 @@ async function globalUndo(){
 }
 $("#undoBtn").addEventListener("click",globalUndo);
 document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="z"&&!e.target.closest("input,textarea,[contenteditable=true]")){e.preventDefault();globalUndo();} });
+
+// remote sync: fetch / pull (ff-only) / push — one shared busy flag so an
+// in-flight network op can't overlap with another (see src-tauri/src/git_remote.rs
+// for why fetch/push never snapshot but pull does).
+let syncBusy=false;
+async function doFetch(){
+  if(!IN_TAURI){ Tama.set("hint"); Tama.say("Fetched (demo). にゃ〜",3200); return; }
+  if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
+  if(syncBusy) return; syncBusy=true;
+  Tama.set("thinking"); Tama.say("Fetching…");
+  try{
+    const res=await tinvoke("fetch",{path:CUR_REPO,remote:null});
+    if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("hint"); Tama.say(res.message||"Fetched.",3200); }
+    else Tama.warn((res&&res.message)||"Fetch failed.");
+  }catch(e){ Tama.warn("Fetch failed — "+e); console.error(e); }
+  finally{ syncBusy=false; }
+}
+async function doPull(){
+  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pulled (demo). にゃ〜",3200); return; }
+  if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
+  if(syncBusy) return; syncBusy=true;
+  Tama.set("thinking"); Tama.say("Pulling…");
+  try{
+    const res=await tinvoke("pull",{path:CUR_REPO});
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pulled.",3200); }
+    else Tama.warn((res&&res.message)||"Pull failed.");
+  }catch(e){ Tama.warn("Pull failed — "+e); console.error(e); }
+  finally{ syncBusy=false; }
+}
+async function doPush(){
+  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pushed (demo). にゃ〜",3200); return; }
+  if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
+  if(syncBusy) return; syncBusy=true;
+  Tama.set("thinking"); Tama.say("Pushing…");
+  try{
+    const res=await tinvoke("push",{path:CUR_REPO});
+    if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("celebrate"); Tama.say(res.message||"Pushed.",3200); }
+    else Tama.warn((res&&res.message)||"Push failed.");
+  }catch(e){ Tama.warn("Push failed — "+e); console.error(e); }
+  finally{ syncBusy=false; }
+}
+$("#fetchBtn").addEventListener("click",doFetch);
+$("#pullBtn").addEventListener("click",doPull);
+$("#pushBtn").addEventListener("click",doPush);
+
 // filter-repo danger gate
 let dangerCtx=null;
 function armDanger(ctx){
@@ -786,4 +831,4 @@ function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, pickRepo, ensureDrawerOpen, armDanger, updateBranchPill,
-  openRepo };
+  openRepo, doFetch, doPull, doPush };

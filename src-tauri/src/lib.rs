@@ -3,6 +3,7 @@ pub mod conflict;
 pub mod filter_repo; // M5c: filter-repo wizard (backup / preview / run / restore)
 pub mod git_pick;
 pub mod git_read;
+pub mod git_remote; // fetch / pull (ff-only) / push
 pub mod git_write;
 pub mod git_bisect; // M3: git bisect (start / mark good|bad|skip / status / reset)
 pub mod git_merge; // M6 (stage 1): merge (drag-onto-HEAD) + continue / abort
@@ -35,6 +36,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_write::checkout,
         git_write::delete_branch,
         git_write::rename_branch,
+        // Remote sync: fetch / pull (ff-only) / push
+        git_remote::fetch,
+        git_remote::pull,
+        git_remote::push,
         // Conflict resolver (M2b): inspect stages + per-file ours/theirs
         conflict::conflict_status,
         conflict::resolve_conflict_file,

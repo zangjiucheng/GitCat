@@ -52,6 +52,12 @@ export {
   // Safe to live-re-export: a hoisted `function` declaration, not a `const`,
   // so there's no TDZ risk (see file header).
   openRepo,
+  // remote sync (fetch/pull/push) — the topbar buttons' own handlers, reused
+  // by the native menu's "menu-action" listener (see src/main.ts) so both
+  // entry points share one implementation.
+  doFetch,
+  doPull,
+  doPush,
 } from "./main";
 
 // bisect canvas bridge: bisectCtrl (the real modal, src/islands/bisect) syncs

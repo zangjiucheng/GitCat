@@ -68,6 +68,22 @@ impl TempRepo {
         repo
     }
 
+    /// A bare repo (no working tree) — stands in for a real remote in
+    /// fetch/pull/push tests: a plain filesystem path is a perfectly valid
+    /// git remote URL, no network needed, and bare accepts a push to any
+    /// branch without `receive.denyCurrentBranch` getting in the way (there
+    /// is no checked-out branch to collide with).
+    pub fn init_bare(tag: &str) -> Self {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir()
+            .join(format!("gitcat-test-{tag}-{}-{}-{}", std::process::id(), nanos, seq));
+        std::fs::create_dir_all(&dir).expect("mkdir temp bare repo");
+        let repo = TempRepo { dir };
+        repo.must(&["init", "-q", "--bare", "-b", "main"]);
+        repo
+    }
+
     /// The repo path as a String (what every Tauri command signature wants).
     pub fn path(&self) -> String {
         self.dir.to_string_lossy().to_string()

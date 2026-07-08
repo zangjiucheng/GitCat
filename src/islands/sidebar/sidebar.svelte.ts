@@ -54,6 +54,10 @@ class SidebarState {
   menu = $state<BranchMenu | null>(null);
   newBranchOpen = $state(false);
   newBranchInput = $state("");
+  // "" means branch from HEAD (the default create_branch already had) —
+  // otherwise a local/remote ref name to pass as create_branch's start_point,
+  // which the backend has supported since M2a; this just exposes it in the UI.
+  newBranchFrom = $state("");
 
   async refresh(repo: string) {
     if (!IN_TAURI) {
@@ -121,6 +125,47 @@ class SidebarState {
     }
   }
 
+  // Check out a REMOTE branch (e.g. "origin/feature-x") — previously remote
+  // rows in the sidebar were display-only, with no way to start working on
+  // someone else's branch at all. Mirrors `git checkout <shortname>`'s own
+  // DWIM: if a local branch with the short name already exists, just switch
+  // to it (assume it's the one tracking this remote); otherwise create one
+  // via create_branch's existing start_point param — git's default
+  // branch.autoSetupMerge sets up tracking automatically since the start
+  // point is a remote-tracking ref, no extra plumbing needed here.
+  async checkoutRemote(remoteRef: string) {
+    if (this.busy) return;
+    const slash = remoteRef.indexOf("/");
+    const shortName = slash >= 0 ? remoteRef.slice(slash + 1) : remoteRef;
+    if (this.locals.some((b) => b.name === shortName)) {
+      await this.checkout(shortName);
+      return;
+    }
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say("Checked out " + shortName + " tracking " + remoteRef + " (demo).");
+      return;
+    }
+    this.busy = true;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Creating " + shortName + " to track " + remoteRef + "…");
+    try {
+      const res = await commands.createBranch(bridge.CUR_REPO as unknown as string, shortName, remoteRef, true);
+      if (res && res.ok) {
+        await bridge.reloadGraph(true);
+        bridge.tama.set("celebrate");
+        bridge.tama.say("On " + shortName + " now, tracking " + remoteRef + ". にゃ〜", 3200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't check out " + remoteRef + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Checkout failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+    }
+  }
+
   // Tauri's webview (WKWebView on macOS in particular) doesn't implement
   // window.prompt() — it returns null immediately with no dialog ever shown,
   // so the old prompt()-based flow silently did nothing. Swap it for an
@@ -129,12 +174,14 @@ class SidebarState {
   // one field).
   startNewBranch() {
     this.newBranchInput = "";
+    this.newBranchFrom = "";
     this.newBranchOpen = true;
   }
 
   cancelNewBranch() {
     this.newBranchOpen = false;
     this.newBranchInput = "";
+    this.newBranchFrom = "";
   }
 
   async confirmNewBranch() {
@@ -143,17 +190,19 @@ class SidebarState {
       this.cancelNewBranch();
       return;
     }
+    const from = this.newBranchFrom || null; // "" (HEAD) -> null, same as create_branch's own default
     this.newBranchOpen = false;
     this.newBranchInput = "";
+    this.newBranchFrom = "";
     if (!IN_TAURI) {
       bridge.tama.set("hint");
-      bridge.tama.say("Created " + name + " (demo).");
+      bridge.tama.say("Created " + name + (from ? " from " + from : "") + " (demo).");
       return;
     }
     bridge.tama.set("thinking");
     bridge.tama.say("Creating " + name + "…");
     try {
-      const res = await commands.createBranch(bridge.CUR_REPO as unknown as string, name, null, true);
+      const res = await commands.createBranch(bridge.CUR_REPO as unknown as string, name, from, true);
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");

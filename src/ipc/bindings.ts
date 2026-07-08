@@ -102,6 +102,33 @@ async renameBranch(path: string, from: string, to: string) : Promise<WriteResult
     return await TAURI_INVOKE("rename_branch", { path, from, to });
 },
 /**
+ * Update remote-tracking refs. `remote` fetches just that one remote;
+ * omitted, it fetches every configured remote (`--all`). Always `--prune`s
+ * stale remote-tracking branches that no longer exist on the remote.
+ * JS call: `invoke("fetch", { path, remote? })`.
+ */
+async fetch(path: string, remote: string | null) : Promise<RemoteResult> {
+    return await TAURI_INVOKE("fetch", { path, remote });
+},
+/**
+ * Fast-forward the current branch to its upstream (`git pull --ff-only`).
+ * Refuses (git's own message) rather than merging/rebasing on divergence —
+ * see module doc for why.
+ * JS call: `invoke("pull", { path })`.
+ */
+async pull(path: string) : Promise<RemoteResult> {
+    return await TAURI_INVOKE("pull", { path });
+},
+/**
+ * Push the current branch. Publishes to "origin" with `--set-upstream` when
+ * it has no configured upstream yet; otherwise a plain `git push`. Never
+ * force-pushes — a non-fast-forward rejection surfaces git's own message.
+ * JS call: `invoke("push", { path })`.
+ */
+async push(path: string) : Promise<RemoteResult> {
+    return await TAURI_INVOKE("push", { path });
+},
+/**
  * Report the in-progress operation and the conflicted files (with all three
  * merge stages). Read-only. JS: `invoke("conflict_status", { path })`.
  */
@@ -614,6 +641,11 @@ export type RefList = { head: string | null; locals: LocalBranch[]; remotes: Sim
  * guarantee every git reflog message shape is recognized.
  */
 export type ReflogEntry = { index: number; sha: string; message: string; kind: string; committerName: string; committerEmail: string; ts: number }
+export type RemoteResult = { ok: boolean; message: string; 
+/**
+ * Pre-op safety snapshot ref — only ever `Some` for `pull` (see module doc).
+ */
+backupRef: string | null }
 /**
  * One historical resolution recorded under `<git-common-dir>/rr-cache/<id>/`.
  * `id` is the cache directory name — a hash of the conflict hunk's content,

@@ -95,6 +95,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   padding:5px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--muted);cursor:text}
 .cmd-hint kbd{margin-left:auto;font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:5px;
   background:var(--elevated);border:1px solid var(--border);color:var(--muted)}
+.sync-actions{display:flex;align-items:center;gap:6px}
 .tb-btn{display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--elevated);
   border:1px solid var(--border);border-radius:var(--r-control);font-weight:600;white-space:nowrap}
 .tb-btn:hover{border-color:var(--muted)}
@@ -152,8 +153,16 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-item .rname.nb{color:var(--accent);font-weight:600}
 .ref-item .rname.mut{color:var(--muted)}
 .ref-item.new-branch:hover{background:color-mix(in srgb,var(--accent) 12%,transparent)}
-.ref-item .nb-input{flex:1;background:transparent;border:none;border-bottom:1px solid var(--accent);
+/* The New Branch inline form — name input + "branch from" picker, stacked
+   (the sidebar is too narrow for them side by side). Its own wrapper class
+   (not .ref-item) since outside-click-to-cancel needs a stable container
+   ref that includes BOTH controls — see Sidebar.svelte's onWindowPointerdown. */
+.nb-form{display:flex;flex-direction:column;gap:5px;padding:6px 8px 8px 24px}
+.nb-form .nb-input{background:transparent;border:none;border-bottom:1px solid var(--accent);
   color:var(--text);font:inherit;font-size:12px;padding:2px 0;outline:none}
+.nb-form .nb-from{font:inherit;font-size:11px;color:var(--muted);background:var(--bg);
+  border:1px solid var(--border);border-radius:5px;padding:3px 5px;outline:none;max-width:100%}
+.nb-form .nb-from:focus{border-color:var(--accent);color:var(--text)}
 .ref-pop{position:fixed;z-index:300;min-width:150px;background:var(--panel);border:1px solid var(--border);border-radius:var(--r-control);box-shadow:var(--shadow);padding:4px;display:flex;flex-direction:column;gap:2px}
 .ref-pop button{font:inherit;text-align:left;background:transparent;border:none;color:var(--text);padding:6px 10px;border-radius:6px;cursor:pointer}
 .ref-pop button:hover:not([disabled]){background:var(--elevated)}
@@ -622,6 +631,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
     </svg>GitCat</div>
     <button class="repo-pick"><span>gitcat</span><span class="chev">&#9662;</span></button>
     <div class="branch-pill"><span class="ic">&#9282;</span><span id="pillBranch">main</span><span class="ab" id="pillAb"><b>&#8593;2</b>&#183;<b>&#8595;0</b></span></div>
+    <div class="sync-actions">
+      <button class="tb-btn" id="fetchBtn" title="Fetch — update remote-tracking refs">&#8635; Fetch</button>
+      <button class="tb-btn" id="pullBtn" title="Pull (fast-forward only)">&#8595; Pull</button>
+      <button class="tb-btn" id="pushBtn" title="Push">&#8593; Push</button>
+    </div>
     <div class="spacer"></div>
     <div class="cmd-hint" title="Command palette"><span>Search commits, refs, actions&#8230;</span><kbd>&#8984;K</kbd></div>
     <div class="spacer"></div>

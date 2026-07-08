@@ -5,10 +5,14 @@
 
   let menuEl: HTMLDivElement | undefined = $state();
   let newBranchEl: HTMLInputElement | undefined = $state();
+  let newBranchFormEl: HTMLDivElement | undefined = $state();
 
   function onWindowPointerdown(e: PointerEvent) {
-    if (!sidebarCtrl.menu) return;
-    if (menuEl && !menuEl.contains(e.target as Node)) sidebarCtrl.closeMenu();
+    if (sidebarCtrl.menu && menuEl && !menuEl.contains(e.target as Node)) sidebarCtrl.closeMenu();
+    // Outside-click cancels the New Branch form — NOT onblur on the name
+    // input, which would fire (and wrongly cancel everything) the instant
+    // focus moves to the "from" <select> sitting right next to it.
+    if (sidebarCtrl.newBranchOpen && newBranchFormEl && !newBranchFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewBranch();
   }
 
   $effect(() => {
@@ -93,7 +97,7 @@
         </div>
       {/each}
       {#if sidebarCtrl.newBranchOpen}
-        <div class="ref-item new-branch">
+        <div class="nb-form" bind:this={newBranchFormEl}>
           <input
             class="nb-input"
             bind:this={newBranchEl}
@@ -102,8 +106,24 @@
             spellcheck="false"
             autocomplete="off"
             onkeydown={onNewBranchKeydown}
-            onblur={() => sidebarCtrl.cancelNewBranch()}
           />
+          <select class="nb-from" bind:value={sidebarCtrl.newBranchFrom} title="Branch from" onkeydown={onNewBranchKeydown}>
+            <option value="">from HEAD (current)</option>
+            {#if sidebarCtrl.locals.length}
+              <optgroup label="Local">
+                {#each sidebarCtrl.locals as b (b.name)}
+                  <option value={b.name}>{b.name}</option>
+                {/each}
+              </optgroup>
+            {/if}
+            {#if sidebarCtrl.remotes.length}
+              <optgroup label="Remote">
+                {#each sidebarCtrl.remotes as r (r.name)}
+                  <option value={r.name}>{r.name}</option>
+                {/each}
+              </optgroup>
+            {/if}
+          </select>
         </div>
       {:else}
         <div class="ref-item new-branch" role="button" tabindex="0" onclick={() => sidebarCtrl.startNewBranch()} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.startNewBranch()}>
@@ -118,7 +138,16 @@
       {#each remoteGroups(sidebarCtrl.remotes.filter((r) => matches(r.name))) as g, gi (g.head + gi)}
         <div class="remote-head">&#9729; {g.head}</div>
         {#each g.items as r (r.name)}
-          <div class="ref-item"><span class="dot" style="background:var(--l{gi % 7})"></span><span class="rname">{r.name}</span></div>
+          <div
+            class="ref-item"
+            role="button"
+            tabindex="0"
+            title="Check out {r.name}"
+            onclick={() => sidebarCtrl.checkoutRemote(r.name)}
+            onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.checkoutRemote(r.name)}
+          >
+            <span class="dot" style="background:var(--l{gi % 7})"></span><span class="rname">{r.name}</span>
+          </div>
         {/each}
       {/each}
     </div>
