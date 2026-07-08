@@ -30,12 +30,35 @@
 //! from literal `git bisect good|bad <sha>` log lines; convergence + first bad
 //! from the log's `# first bad commit: [<40hex>]` line; in-progress from
 //! .git/BISECT_START. Every git call is forced to LC_ALL=C.
+//!
+//! AUTOMATED MODE (`bisect_run_start`): the equivalent of `git bisect run
+//! <script>`, but driven from Rust so progress can be pushed to the frontend
+//! as it happens instead of only seeing the final result. It does NOT
+//! reimplement mark logic — every step funnels through the exact same
+//! `apply_mark` that `bisect_mark` calls. `BisectRunState` (`app.manage()`d
+//! in lib.rs) carries TWO independently-purposed `AtomicBool`s: a
+//! cancellation flag (polled between every step) and a mutual-exclusion
+//! "already running" guard, STRUCTURALLY enforced via `compare_exchange` —
+//! mirrors `watch::WatchState`'s single-watcher invariant, which is likewise
+//! enforced structurally (a `Mutex<Option<Debouncer>>`) rather than merely
+//! documented/assumed. Without that guard, two concurrent `bisect_run_start`
+//! calls (a double-click race, or a direct/raw IPC call bypassing the
+//! frontend's own `autoRunning` guard) could each spin up a `run_bisect`
+//! loop against the same repo at the same time, interleaving
+//! `git bisect good/bad/skip` calls and checkouts against the same on-disk
+//! sequencer state. The core loop (`run_bisect`) is split out from the
+//! `#[tauri::command]` exactly like `watch::start_watching` is split from
+//! `watch_repo`, so it's directly unit-testable without a real
+//! AppHandle/State — as is the run/claim/release wrapper `try_run_bisect`
+//! (see tests/bisect.rs).
 
 use std::fs;
-use std::process::Command;
+use std::process::{Command, ExitStatus};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use git2::Repository;
 use serde::Serialize;
+use tauri::{AppHandle, Emitter, State, Wry};
 
 #[derive(Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -416,6 +439,29 @@ pub fn bisect_start(path: String, bad: String, good: Vec<String>) -> BisectStatu
     status
 }
 
+/// Apply one good/bad/skip determination to the currently checked-out
+/// commit and return the resulting status. The SINGLE place either
+/// `bisect_mark` or the automated `bisect_run_start` loop shells out
+/// `git bisect good|bad|skip` — neither reimplements the other's logic.
+/// Caller must have already verified `in_progress(repo)`.
+fn apply_mark(repo: &Repository, path: &str, subcmd: &str) -> BisectStatus {
+    match git(path, &["bisect", subcmd]) {
+        Ok(o) if o.ok => read_status(repo, path),
+        Ok(o) => {
+            let mut s = read_status(repo, path);
+            s.ok = false;
+            s.message = git_msg(&o);
+            s
+        }
+        Err(e) => {
+            let mut s = read_status(repo, path);
+            s.ok = false;
+            s.message = e;
+            s
+        }
+    }
+}
+
 /// Mark the checked-out midpoint (HEAD) good/bad/skip. No snapshot.
 /// JS: invoke("bisect_mark", { path, term }) where term ∈ {good,bad,skip}.
 #[tauri::command]
@@ -437,21 +483,7 @@ pub fn bisect_mark(path: String, term: String) -> BisectStatus {
         return BisectStatus::refused("No bisect in progress — start one first.");
     }
 
-    match git(&path, &["bisect", subcmd]) {
-        Ok(o) if o.ok => read_status(&repo, &path),
-        Ok(o) => {
-            let mut s = read_status(&repo, &path);
-            s.ok = false;
-            s.message = git_msg(&o);
-            s
-        }
-        Err(e) => {
-            let mut s = read_status(&repo, &path);
-            s.ok = false;
-            s.message = e;
-            s
-        }
-    }
+    apply_mark(&repo, &path, subcmd)
 }
 
 /// Read-only bisect status (also serves as `bisect log`). Never mutates.
@@ -511,4 +543,279 @@ pub fn bisect_reset(path: String) -> BisectStatus {
             s
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Automated mode: `bisect_run_start` == `git bisect run <command>`, but driven
+// step-by-step from Rust so each determination can be pushed to the frontend
+// as "bisect-run-progress" while it runs.
+// ---------------------------------------------------------------------------
+
+/// State for an in-flight automated bisect run, `app.manage()`d in lib.rs —
+/// ONE per app, mirroring `watch::WatchState`'s "one repo watched at a time"
+/// scope (this app never runs two bisect-run loops at once either). Two
+/// independently-purposed flags:
+///
+///   * `cancel` — `bisect_run_cancel` sets it; the `run_bisect` loop polls it
+///     between every step and `try_run_bisect` always clears it back to
+///     `false` when the loop exits — converged, aborted, cancelled, or hard
+///     error — so a later run always starts from a clean flag regardless of
+///     how the previous one ended.
+///   * `running` — the mutual-exclusion guard. Unlike `cancel` (a signal),
+///     this is a STRUCTURALLY-enforced lock: `try_start`'s
+///     `compare_exchange` lets exactly one caller claim it, so a second
+///     `bisect_run_start` while one is already in flight (a double-click
+///     race, or a direct/raw IPC call bypassing the frontend's own
+///     `autoRunning` guard) refuses cleanly via `try_run_bisect` returning
+///     `None`, rather than two `run_bisect` loops interleaving
+///     `git bisect good/bad/skip` calls and checkouts against the same
+///     on-disk sequencer state. Mirrors `watch::WatchState`'s single-watcher
+///     invariant, which is likewise structurally enforced (a
+///     `Mutex<Option<Debouncer>>`), not just documented as an assumption.
+#[derive(Default)]
+pub struct BisectRunState {
+    cancel: AtomicBool,
+    running: AtomicBool,
+}
+
+impl BisectRunState {
+    fn request_cancel(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
+    }
+    fn is_cancelled(&self) -> bool {
+        self.cancel.load(Ordering::SeqCst)
+    }
+    fn clear_cancel(&self) {
+        self.cancel.store(false, Ordering::SeqCst);
+    }
+    /// Atomically claim the "a run is in flight" guard. Returns `true` only
+    /// for the one caller that successfully transitions `running` from
+    /// `false` to `true` — if two threads race here at once, `compare_exchange`
+    /// guarantees exactly one of them observes `Ok` (this is what makes the
+    /// guard a REAL lock rather than a check-then-act race).
+    fn try_start(&self) -> bool {
+        self.running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+    /// Release the claim. Must run on every exit path out of a run that
+    /// successfully claimed it — mirrors the existing discipline of always
+    /// clearing `cancel` on every exit path, below.
+    fn finish(&self) {
+        self.running.store(false, Ordering::SeqCst);
+    }
+}
+
+/// One step's verdict, per `git bisect run`'s documented exit-code contract:
+/// 0 = good; 125 = skip; any other code in 1..=127 (except 125) = bad; 126 or
+/// 127 (the shell's own "found but not executable" / "command not found"
+/// conventions) or anything outside 0..=127 means the command itself could
+/// not be meaningfully run — abort rather than misread it as "bad".
+///
+/// KNOWN LIMITATION (Windows): 126/127 are a Unix `sh -c` convention. On
+/// Windows, `run_test_command` shells out via `cmd.exe /C <command>`
+/// instead, which has its own, DIFFERENT exit-code conventions for
+/// "couldn't run the command at all" — e.g. ERRORLEVEL 9009 for "command not
+/// found", which happens to still fall into the generic
+/// out-of-range-abort case below since it's >127, but other Windows
+/// failure modes that return a code in 1..=127 are NOT distinguished from a
+/// genuine "bad" result here and will be misclassified as "bad" rather than
+/// "abort". This is a documented, unaddressed gap (mirrors filter_repo.rs's
+/// restore-scope caveat in spirit) rather than a silent one — fixing it
+/// properly would need a way to verify actual `cmd.exe` behavior across
+/// Windows versions, which this change does not attempt speculatively.
+enum Step {
+    Good,
+    Bad,
+    Skip,
+    Abort(String),
+}
+
+fn classify_exit(status: &ExitStatus) -> Step {
+    match status.code() {
+        None => Step::Abort("the test command was killed by a signal".to_string()),
+        Some(0) => Step::Good,
+        Some(125) => Step::Skip,
+        Some(126) => Step::Abort(
+            "the test command exited 126 (found but not executable) — the command itself could not run".to_string(),
+        ),
+        Some(127) => Step::Abort(
+            "the test command exited 127 (command not found) — the command itself could not run".to_string(),
+        ),
+        Some(c) if (1..=127).contains(&c) => Step::Bad,
+        Some(c) => Step::Abort(format!("the test command exited with out-of-range status {c}")),
+    }
+}
+
+/// Run `command` through a shell (`sh -c` on Unix, `cmd /C` on Windows — this
+/// codebase has no existing shell-invocation helper to reuse, and the release
+/// workflow ships Windows builds, so both are handled explicitly) with its
+/// current working directory set to the repo's working tree, i.e. against
+/// whatever commit is currently checked out. Returns `Err` only when the
+/// shell itself could not be spawned (e.g. missing on the host) — NOT for a
+/// nonzero exit, which is the normal, expected way a test command reports
+/// good/bad/skip. See `classify_exit`'s doc comment for the Unix-derived
+/// exit-code convention this result is fed into, and its documented gap on
+/// Windows.
+fn run_test_command(path: &str, command: &str) -> Result<ExitStatus, String> {
+    let mut cmd = if cfg!(target_os = "windows") {
+        let mut c = Command::new("cmd");
+        c.arg("/C").arg(command);
+        c
+    } else {
+        let mut c = Command::new("sh");
+        c.arg("-c").arg(command);
+        c
+    };
+    cmd.current_dir(path);
+    cmd.status().map_err(|e| format!("Could not run the test command: {e}"))
+}
+
+/// The automated step loop itself, independent of any running Tauri app —
+/// `should_cancel` is polled between every step, `on_progress` is called with
+/// the resulting status after every step actually applied. Split out from the
+/// `bisect_run_start` command so it's directly unit-testable (a
+/// `#[tauri::command]` needing a real `AppHandle`/`State` isn't callable from
+/// a plain integration test the way this codebase's other command functions
+/// are — see watch.rs's `start_watching`/`watch_repo` split, and
+/// tests/bisect.rs).
+///
+/// Preconditions/stop conditions mirror `bisect_mark`/its caller exactly:
+/// refuses (does not loop at all) if no bisect is in progress; stops and
+/// returns once `first_bad.is_some()` (the same convergence signal
+/// `bisect_mark`'s caller already relies on), once the test command's exit
+/// code signals an abort condition, or once `should_cancel()` returns true —
+/// every stop path leaves an honest, distinguishable `message` behind.
+pub fn run_bisect(
+    path: &str,
+    command: &str,
+    should_cancel: impl Fn() -> bool,
+    mut on_progress: impl FnMut(&BisectStatus),
+) -> BisectStatus {
+    let repo = match Repository::open(path) {
+        Ok(r) => r,
+        Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
+    };
+    if !in_progress(&repo) {
+        return BisectStatus::refused("No bisect in progress — start one first.");
+    }
+
+    loop {
+        if should_cancel() {
+            let mut s = read_status(&repo, path);
+            s.message = format!("Automated bisect run cancelled. {}", s.message);
+            return s;
+        }
+
+        let exit = match run_test_command(path, command) {
+            Ok(e) => e,
+            Err(e) => {
+                let mut s = read_status(&repo, path);
+                s.ok = false;
+                s.message = format!("Automated bisect run aborted — {e}.");
+                return s;
+            }
+        };
+
+        let subcmd = match classify_exit(&exit) {
+            Step::Good => "good",
+            Step::Bad => "bad",
+            Step::Skip => "skip",
+            Step::Abort(reason) => {
+                let mut s = read_status(&repo, path);
+                s.ok = false;
+                s.message = format!("Automated bisect run aborted — {reason}.");
+                return s;
+            }
+        };
+
+        let mut s = apply_mark(&repo, path, subcmd);
+        on_progress(&s);
+
+        if s.first_bad.is_some() {
+            s.message = format!("Automated bisect run converged. {}", s.message);
+            return s;
+        }
+        if !s.ok {
+            // `git bisect <mark>` itself failed (not a test-command problem) —
+            // stop rather than loop forever; s.message already carries why.
+            return s;
+        }
+    }
+}
+
+/// Claim `state`'s "already running" guard (see `BisectRunState::try_start`)
+/// and, ONLY if the claim succeeds, run `run_bisect` to completion, always
+/// releasing the guard afterward. Returns `None` — and does not call
+/// `run_bisect` AT ALL — when another run is already in flight: this is
+/// Bug 1's actual fix, a second concurrent `bisect_run_start` must refuse
+/// cleanly rather than spinning up a second loop against the same on-disk
+/// sequencer state. Split out from the `#[tauri::command]` so it's directly
+/// unit-testable without a real AppHandle/State (mirrors `run_bisect`'s own
+/// split from `bisect_run_start`; see tests/bisect.rs).
+pub fn try_run_bisect(
+    state: &BisectRunState,
+    path: &str,
+    command: &str,
+    should_cancel: impl Fn() -> bool,
+    on_progress: impl FnMut(&BisectStatus),
+) -> Option<BisectStatus> {
+    if !state.try_start() {
+        return None;
+    }
+    state.clear_cancel(); // a stale cancel from a previous run must never leak into this one
+    let result = run_bisect(path, command, should_cancel, on_progress);
+    state.clear_cancel(); // always leave the flag clear on the way out, whatever the reason
+    state.finish(); // release the run-in-progress claim on every exit path, mirroring the above
+    Some(result)
+}
+
+/// Automate an already-started bisect: repeatedly run `command` against the
+/// current checkout, mark good/bad/skip per its exit code, and keep going
+/// until convergence, an abort condition, or cancellation. Does NOT call
+/// `bisect_start` itself — matches the existing UI flow where the user has
+/// already picked bad+good and clicked Start. Refuses cleanly (no run
+/// attempted) if another automated run is already in flight for this app —
+/// see `try_run_bisect`.
+/// JS: invoke("bisect_run_start", { path, command }).
+#[tauri::command]
+#[specta::specta]
+pub fn bisect_run_start(app: AppHandle<Wry>, state: State<BisectRunState>, path: String, command: String) -> BisectStatus {
+    let outcome = try_run_bisect(
+        &state,
+        &path,
+        &command,
+        || state.is_cancelled(),
+        |status| {
+            let _ = app.emit("bisect-run-progress", status);
+        },
+    );
+    match outcome {
+        Some(result) => result,
+        None => match Repository::open(&path) {
+            // Report the ACTUAL current status (mirrors bisect_start's own
+            // already-in-progress handling) rather than a blank refusal, so
+            // the frontend's canvas cues stay accurate even though this
+            // particular call was refused.
+            Ok(repo) => {
+                let mut s = read_status(&repo, &path);
+                s.ok = false;
+                s.message =
+                    "An automated bisect run is already in progress — cancel it before starting another.".into();
+                s
+            }
+            Err(e) => BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
+        },
+    }
+}
+
+/// Request that an in-flight `bisect_run_start` loop stop before its next
+/// step. Always callable (mirrors `bisect_reset`'s "must always be able to
+/// run" escape-hatch spirit), though this only sets a flag rather than
+/// mutating repo state. JS: invoke("bisect_run_cancel").
+#[tauri::command]
+#[specta::specta]
+pub fn bisect_run_cancel(state: State<BisectRunState>) -> Result<(), String> {
+    state.request_cancel();
+    Ok(())
 }

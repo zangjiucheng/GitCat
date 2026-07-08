@@ -30,6 +30,33 @@
           <div class="bz-sha">{bisectCtrl.vm?.current?.sha ?? "—"}</div>
           <div class="bz-subj">{bisectCtrl.vm?.current?.subject ?? ""}</div>
         </div>
+        <div class="bz-run">
+          <div class="bz-run-h">Automate with a command</div>
+          <div class="bz-run-row">
+            {#if bisectCtrl.autoRunning}
+              <span class="bz-run-status"><span class="spinner"></span> Testing commits automatically&#8230;</span>
+              <button class="btn ghost bz-cancel" onclick={() => bisectCtrl.cancelRun()}>&#9632; Cancel</button>
+            {:else}
+              <input
+                class="bz-run-input mono"
+                type="text"
+                placeholder="e.g. npm test, ./check.sh"
+                spellcheck="false"
+                autocomplete="off"
+                disabled={bisectCtrl.busy}
+                bind:value={bisectCtrl.runCommand}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") bisectCtrl.startRun(bisectCtrl.repo);
+                }}
+              />
+              <button
+                class="btn"
+                disabled={bisectCtrl.marksDisabled || !bisectCtrl.runCommand.trim()}
+                onclick={() => bisectCtrl.startRun(bisectCtrl.repo)}>&#9654; Run automatically</button
+              >
+            {/if}
+          </div>
+        </div>
       {:else}
         <div class="bz-result">
           <div class="bz-result-h">&#10003; First bad commit</div>
@@ -42,7 +69,12 @@
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" id="bzQuit" disabled={bisectCtrl.busy} onclick={() => bisectCtrl.reset()}
+      <button
+        class="btn ghost"
+        id="bzQuit"
+        disabled={bisectCtrl.busy || bisectCtrl.autoRunning}
+        onclick={() => bisectCtrl.reset()}
+        title={bisectCtrl.autoRunning ? "Cancel the automated run first" : ""}
         >{#if bisectCtrl.busy && !bisectCtrl.activeTerm}<span class="spinner"></span> Resetting…{:else}{bisectCtrl.done
             ? "Reset — restore HEAD"
             : "Quit & reset"}{/if}</button

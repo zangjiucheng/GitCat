@@ -607,6 +607,33 @@ async bisectReset(path: string) : Promise<BisectStatus> {
     return await TAURI_INVOKE("bisect_reset", { path });
 },
 /**
+ * Automate an already-started bisect: repeatedly run `command` against the
+ * current checkout, mark good/bad/skip per its exit code, and keep going
+ * until convergence, an abort condition, or cancellation. Does NOT call
+ * `bisect_start` itself — matches the existing UI flow where the user has
+ * already picked bad+good and clicked Start. Refuses cleanly (no run
+ * attempted) if another automated run is already in flight for this app —
+ * see `try_run_bisect`.
+ * JS: invoke("bisect_run_start", { path, command }).
+ */
+async bisectRunStart(path: string, command: string) : Promise<BisectStatus> {
+    return await TAURI_INVOKE("bisect_run_start", { path, command });
+},
+/**
+ * Request that an in-flight `bisect_run_start` loop stop before its next
+ * step. Always callable (mirrors `bisect_reset`'s "must always be able to
+ * run" escape-hatch spirit), though this only sets a flag rather than
+ * mutating repo state. JS: invoke("bisect_run_cancel").
+ */
+async bisectRunCancel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("bisect_run_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Read HEAD's reflog, newest first. Read-only (git2).
  * 
  * JS: `commands.reflog(path)` -> `Result<ReflogEntry[], string>`.

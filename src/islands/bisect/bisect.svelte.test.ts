@@ -26,6 +26,8 @@ vi.mock("../../ipc/bindings", () => ({
     bisectMark: vi.fn(),
     bisectStatus: vi.fn(),
     bisectReset: vi.fn(),
+    bisectRunStart: vi.fn(),
+    bisectRunCancel: vi.fn(),
   },
 }));
 
@@ -73,12 +75,17 @@ function resetBisect() {
   bisectCtrl.est0 = 0;
   bisectCtrl.cheered = false;
   bisectCtrl.repo = "";
+  bisectCtrl.runCommand = "";
+  bisectCtrl.autoRunning = false;
 }
+
+type TauriWindow = Window & { __TAURI__?: { event: { listen: ReturnType<typeof vi.fn> } } };
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockInTauri = false;
   resetBisect();
+  delete (window as TauriWindow).__TAURI__;
 });
 
 describe("isolation", () => {
@@ -189,6 +196,169 @@ describe("mark", () => {
     expect(bridge.demoBisectMark).toHaveBeenCalledWith("skip");
     expect(commands.bisectMark).not.toHaveBeenCalled();
     expect(bisectCtrl.vm?.remainingRevs).toBe(3);
+  });
+
+  // Bug 3 regression: defense-in-depth — mark()'s own guard must reject a
+  // call while an automated run is active, matching reset()'s existing
+  // `busy || autoRunning` pattern. Unreachable via the shipped UI today
+  // (`marksDisabled` already disables the mark buttons on `autoRunning`), but
+  // there's no backend-side lock against a concurrent `bisect_mark` call
+  // either, so this guards a stray/direct call from racing the automated
+  // run's own good/bad/skip calls mid-loop.
+  it("is a no-op while an automated run is active, even though busy/repo would otherwise allow it", async () => {
+    bisectCtrl.repo = "repo1";
+    bisectCtrl.busy = false;
+    bisectCtrl.autoRunning = true;
+
+    await bisectCtrl.mark("bad");
+
+    expect(commands.bisectMark).not.toHaveBeenCalled();
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+  });
+});
+
+// Deferred helper: lets a test hold `bisectRunStart`'s promise open so it can
+// fire simulated "bisect-run-progress" events (via the captured listener
+// handler) while the awaited call is still pending, exactly like the real
+// long-lived backend loop.
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+describe("startRun / cancelRun", () => {
+  let mockUnlisten: ReturnType<typeof vi.fn>;
+  let mockListen: ReturnType<typeof vi.fn>;
+  let capturedHandler: ((e: { payload: BisectStatus }) => void) | null;
+
+  beforeEach(() => {
+    mockUnlisten = vi.fn();
+    capturedHandler = null;
+    // Not `async` — captures the handler SYNCHRONOUSLY (before the returned
+    // promise even needs a microtask to resolve), so tests can assert on the
+    // subscribe-before-blocking-call ordering deterministically.
+    mockListen = vi.fn((_event: string, handler: (e: { payload: BisectStatus }) => void) => {
+      capturedHandler = handler;
+      return Promise.resolve(mockUnlisten);
+    });
+    (window as unknown as TauriWindow).__TAURI__ = { event: { listen: mockListen } };
+  });
+
+  it("subscribes to bisect-run-progress BEFORE the blocking call, toggles autoRunning, and calls bisectRunStart with repo+command", async () => {
+    bisectCtrl.repo = "repo1";
+    bisectCtrl.runCommand = "  npm test  ";
+    const { promise, resolve } = deferred<BisectStatus>();
+    vi.mocked(commands.bisectRunStart).mockReturnValueOnce(promise);
+
+    const runP = bisectCtrl.startRun("repo1");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockListen).toHaveBeenCalledWith("bisect-run-progress", expect.any(Function));
+    expect(commands.bisectRunStart).toHaveBeenCalledWith("repo1", "npm test");
+    expect(bisectCtrl.autoRunning).toBe(true);
+
+    resolve(status({ inProgress: false, firstBad: BAD }));
+    await runP;
+
+    expect(bisectCtrl.autoRunning).toBe(false);
+  });
+
+  it("progress events received mid-run update state via the same path a manual mark uses, and the listener is unsubscribed once the run completes", async () => {
+    bisectCtrl.repo = "repo1";
+    bisectCtrl.runCommand = "npm test";
+    const { promise, resolve } = deferred<BisectStatus>();
+    vi.mocked(commands.bisectRunStart).mockReturnValueOnce(promise);
+
+    const runP = bisectCtrl.startRun("repo1");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(capturedHandler).toBeTypeOf("function");
+    capturedHandler!({ payload: status({ inProgress: true, current: CUR, remainingRevs: 3, estSteps: 2 }) });
+
+    // same effects applyStatus() gives a manual mark: vm updated + canvas cues driven
+    expect(bisectCtrl.vm?.current).toEqual(CUR);
+    expect(bisectCtrl.statText).toBe("3 revisions left · ~2 steps");
+    expect(bridge.syncBisectMarks).toHaveBeenCalled();
+    expect(bridge.focusBisectCurrent).toHaveBeenCalled();
+    expect(mockUnlisten).not.toHaveBeenCalled();
+
+    resolve(status({ inProgress: false, firstBad: BAD }));
+    await runP;
+
+    expect(mockUnlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancelRun calls bisectRunCancel", async () => {
+    vi.mocked(commands.bisectRunCancel).mockResolvedValueOnce({ status: "ok", data: null });
+
+    await bisectCtrl.cancelRun();
+
+    expect(commands.bisectRunCancel).toHaveBeenCalled();
+  });
+
+  it("refuses to start without a command", async () => {
+    bisectCtrl.repo = "repo1";
+    bisectCtrl.runCommand = "   ";
+
+    await bisectCtrl.startRun("repo1");
+
+    expect(commands.bisectRunStart).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalled();
+    expect(bisectCtrl.autoRunning).toBe(false);
+  });
+
+  describe("cancelIfRunning", () => {
+    it("requests cancellation when an automated run is active", async () => {
+      vi.mocked(commands.bisectRunCancel).mockResolvedValueOnce({ status: "ok", data: null });
+      bisectCtrl.autoRunning = true;
+
+      await bisectCtrl.cancelIfRunning();
+
+      expect(commands.bisectRunCancel).toHaveBeenCalled();
+    });
+
+    it("is a no-op when no run is active", async () => {
+      bisectCtrl.autoRunning = false;
+
+      await bisectCtrl.cancelIfRunning();
+
+      expect(commands.bisectRunCancel).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// Bug 2 regression: closing the modal must not silently abandon an in-flight
+// automated run — the backend loop is a real, long-lived blocking call that
+// keeps executing headlessly otherwise. legacy/main.ts's openRepo() (a whole
+// vanilla canvas app that boots on import — see the isolation note at the top
+// of this file) shares the exact same guard via bisectCtrl.cancelIfRunning,
+// tested directly above; openRepo() itself has no test harness in this
+// codebase (every other test mocks legacy/bridge specifically to avoid
+// evaluating legacy/main.ts), so it isn't re-tested here.
+describe("close", () => {
+  it("hides the modal instantly and requests cancellation when an automated run is active", () => {
+    bisectCtrl.open = true;
+    bisectCtrl.autoRunning = true;
+
+    bisectCtrl.close();
+
+    expect(bisectCtrl.open).toBe(false);
+    expect(commands.bisectRunCancel).toHaveBeenCalled();
+  });
+
+  it("hides the modal without requesting cancellation when no run is active", () => {
+    bisectCtrl.open = true;
+    bisectCtrl.autoRunning = false;
+
+    bisectCtrl.close();
+
+    expect(bisectCtrl.open).toBe(false);
+    expect(commands.bisectRunCancel).not.toHaveBeenCalled();
   });
 });
 

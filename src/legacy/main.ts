@@ -1012,6 +1012,14 @@ let openRepoBusy=false;
 async function openRepo(path){
   if(openRepoBusy) return false;
   openRepoBusy=true;
+  // An automated bisect run (bisect_run_start) is a real, long-lived blocking
+  // Tauri call actually executing the user's command against THIS repo's
+  // working tree. Switching repos out from under it would leave it running
+  // headlessly against a repo the UI can no longer see or stop, with
+  // "bisect-run-progress" events silently misapplied once CUR_REPO moves on
+  // below — so request cancellation first (best-effort, see
+  // bisectCtrl.cancelIfRunning's own documented TOCTOU note).
+  await bisectCtrl.cancelIfRunning();
   const pickBtn=$(".repo-pick");
   let pickSpinner=null;
   if(pickBtn){ pickBtn.disabled=true; pickSpinner=document.createElement("span"); pickSpinner.className="spinner"; pickBtn.insertBefore(pickSpinner,pickBtn.firstChild); }

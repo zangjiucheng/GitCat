@@ -90,6 +90,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_bisect::bisect_mark,
         git_bisect::bisect_status,
         git_bisect::bisect_reset,
+        // Bisect automated mode: `git bisect run <command>` equivalent
+        git_bisect::bisect_run_start,
+        git_bisect::bisect_run_cancel,
         // Reflog rescue (M4): read HEAD reflog + restore to a historical entry
         reflog::reflog,
         reflog::reflog_restore,
@@ -129,6 +132,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(watch::WatchState::default())
+        .manage(git_bisect::BisectRunState::default())
         // invoke_handler is the tauri-specta equivalent of generate_handler! —
         // command runtime behavior (Ok resolves / Err rejects) is unchanged.
         .invoke_handler(builder.invoke_handler())
