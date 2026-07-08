@@ -42,6 +42,10 @@ const DEMO_TAGS: SimpleRef[] = [
 ];
 
 export type BranchMenu = { name: string; isCurrent: boolean; x: number; y: number };
+// Tags never have an "isCurrent" concept (you don't "check out" a tag in this
+// app — see sidebarCtrl.deleteTag's own doc comment), so this is intentionally
+// a separate, smaller shape rather than reusing BranchMenu with a dummy field.
+export type TagMenu = { name: string; x: number; y: number };
 
 class SidebarState {
   locals = $state<LocalBranch[]>([]);
@@ -62,6 +66,21 @@ class SidebarState {
   // otherwise a local/remote ref name to pass as create_branch's start_point,
   // which the backend has supported since M2a; this just exposes it in the UI.
   newBranchFrom = $state("");
+  // Tag context menu ("Push to origin" / "Delete…") — separate popover state
+  // from the branch `menu` above (see TagMenu's own doc comment). Only one of
+  // `menu`/`tagMenu` is ever non-null at a time — opening either closes the
+  // other (see openMenu/openTagMenu).
+  tagMenu = $state<TagMenu | null>(null);
+  newTagOpen = $state(false);
+  newTagName = $state("");
+  // "" means lightweight (no -a/-m); non-empty means annotated with this
+  // message — same "empty means the simpler default" minimalism as
+  // newBranchFrom's "" meaning HEAD, just for create_tag's `message` param.
+  newTagMessage = $state("");
+  // "" means at HEAD (the default create_tag already had) — otherwise a
+  // local/remote ref name to pass as create_tag's target, mirroring
+  // newBranchFrom exactly (same dropdown shape, same param semantics).
+  newTagFrom = $state("");
   // Tracks CUR_REPO's own truthiness (not "did the last list_refs succeed" —
   // a transient refresh error shouldn't flip the sidebar back to the empty
   // state). Distinct from `head` being null, which also legitimately happens
@@ -119,6 +138,7 @@ class SidebarState {
     this.head = null;
     this.snapshots = [];
     this.menu = null;
+    this.tagMenu = null;
     this.hasRepo = false;
   }
 
@@ -315,12 +335,164 @@ class SidebarState {
   }
 
   openMenu(name: string, isCurrent: boolean, anchor: HTMLElement) {
+    this.tagMenu = null; // only one popover open at a time
     const r = anchor.getBoundingClientRect();
     this.menu = { name, isCurrent, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
 
   closeMenu() {
     this.menu = null;
+  }
+
+  // "+ New tag…" inline form — same window.prompt()-doesn't-exist-in-
+  // Tauri's-webview rationale as startNewBranch above.
+  startNewTag() {
+    this.newTagName = "";
+    this.newTagMessage = "";
+    this.newTagFrom = "";
+    this.newTagOpen = true;
+  }
+
+  cancelNewTag() {
+    this.newTagOpen = false;
+    this.newTagName = "";
+    this.newTagMessage = "";
+    this.newTagFrom = "";
+  }
+
+  async confirmNewTag() {
+    const name = this.newTagName.trim();
+    if (!name) {
+      this.cancelNewTag();
+      return;
+    }
+    if (this.busy) return;
+    const target = this.newTagFrom || null; // "" (HEAD) -> null, same as create_tag's own default
+    const message = this.newTagMessage.trim() || null; // "" -> lightweight tag
+    if (!IN_TAURI) {
+      this.newTagOpen = false;
+      this.newTagName = "";
+      this.newTagMessage = "";
+      this.newTagFrom = "";
+      bridge.tama.set("hint");
+      bridge.tama.say("Created tag " + name + (target ? " at " + target : "") + " (demo).");
+      return;
+    }
+    // Keep the form open (disabled, spinnered) for the duration of the
+    // request, same rationale as confirmNewBranch above.
+    this.busy = true;
+    this.busyTarget = name;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Creating tag " + name + "…");
+    try {
+      const res = await commands.createTag(bridge.CUR_REPO as unknown as string, name, target, message);
+      if (res && res.ok) {
+        this.newTagOpen = false;
+        this.newTagName = "";
+        this.newTagMessage = "";
+        this.newTagFrom = "";
+        await bridge.reloadGraph(true);
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Tag " + name + " created.", 3200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't create tag " + name + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Create failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  deleteTag(name: string) {
+    bridge.tama.set("danger");
+    bridge.tama.say("Deleting tag " + name + " — type the tag name to arm it. I pin its target first.", 6000);
+    bridge.armDanger({
+      title: "Delete tag — " + name,
+      steps: false,
+      desc: "This removes the tag ref. Its target is pinned to a backup first, so it stays recoverable.",
+      lose:
+        "<h5>What happens</h5><ul><li>Removes tag <code>" +
+        esc(name) +
+        "</code></li><li>Its target is pinned under <code>refs/gitgui/deleted-tag/…</code> — recover with <code>git tag " +
+        esc(name) +
+        " &lt;pinned ref&gt;</code></li></ul>",
+      note: "🔁 I pin the tag's target before deleting; this is NOT restorable via the global Undo (⌘Z) — that only rewinds branches, never tags.",
+      name,
+      confirmLabel: "Delete tag",
+      onConfirm: async () => {
+        await this.doDeleteTag(name);
+      },
+    });
+  }
+
+  private async doDeleteTag(name: string) {
+    if (!IN_TAURI) {
+      bridge.tama.set("celebrate");
+      bridge.tama.say("Deleted tag " + name + " (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = name;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Deleting tag " + name + "…");
+    try {
+      const res = await commands.deleteTag(bridge.CUR_REPO as unknown as string, name);
+      if (res && res.ok) {
+        await bridge.reloadGraph(true);
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Deleted tag " + name + ".", 4200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't delete tag " + name + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Delete failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  async pushTag(name: string) {
+    if (!IN_TAURI) {
+      bridge.tama.set("celebrate");
+      bridge.tama.say("Pushed tag " + name + " (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = name;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Pushing tag " + name + "…");
+    try {
+      const res = await commands.pushTag(bridge.CUR_REPO as unknown as string, null, name);
+      if (res && res.ok) {
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Pushed tag " + name + ".", 3200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't push tag " + name + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Push failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  openTagMenu(name: string, anchor: HTMLElement) {
+    this.menu = null; // only one popover open at a time
+    const r = anchor.getBoundingClientRect();
+    this.tagMenu = { name, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
+  }
+
+  closeTagMenu() {
+    this.tagMenu = null;
   }
 
   async rebaseOnto(name: string) {

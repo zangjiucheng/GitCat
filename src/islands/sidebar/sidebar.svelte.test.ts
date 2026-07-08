@@ -23,6 +23,9 @@ vi.mock("../../ipc/bindings", () => ({
     checkout: vi.fn(),
     createBranch: vi.fn(),
     deleteBranch: vi.fn(),
+    createTag: vi.fn(),
+    deleteTag: vi.fn(),
+    pushTag: vi.fn(),
   },
 }));
 
@@ -54,6 +57,11 @@ function resetAll() {
   sidebarCtrl.filter = "";
   sidebarCtrl.busy = false;
   sidebarCtrl.menu = null;
+  sidebarCtrl.tagMenu = null;
+  sidebarCtrl.newTagOpen = false;
+  sidebarCtrl.newTagName = "";
+  sidebarCtrl.newTagMessage = "";
+  sidebarCtrl.newTagFrom = "";
   sidebarCtrl.hasRepo = false;
   sidebarCtrl.copiedSnapshotSha = "";
   mockInTauri = false;
@@ -276,6 +284,149 @@ describe("openMenu / closeMenu", () => {
     sidebarCtrl.closeMenu();
     expect(sidebarCtrl.menu).toBeNull();
   });
+
+  it("opening the branch menu closes an open tag menu", () => {
+    sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
+    const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
+    sidebarCtrl.openMenu("feature", false, anchor);
+    expect(sidebarCtrl.tagMenu).toBeNull();
+  });
+});
+
+describe("openTagMenu / closeTagMenu", () => {
+  it("positions the tag menu clamped to the viewport width, from the anchor's rect", () => {
+    const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
+    sidebarCtrl.openTagMenu("v1.0.0", anchor);
+    expect(sidebarCtrl.tagMenu).toEqual({ name: "v1.0.0", x: 10, y: 44 });
+  });
+
+  it("closeTagMenu clears it", () => {
+    sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
+    sidebarCtrl.closeTagMenu();
+    expect(sidebarCtrl.tagMenu).toBeNull();
+  });
+
+  it("opening the tag menu closes an open branch menu", () => {
+    sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
+    const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
+    sidebarCtrl.openTagMenu("v1.0.0", anchor);
+    expect(sidebarCtrl.menu).toBeNull();
+  });
+});
+
+describe("newTag", () => {
+  it("startNewTag opens the inline form, cancelNewTag closes it", () => {
+    sidebarCtrl.startNewTag();
+    expect(sidebarCtrl.newTagOpen).toBe(true);
+    sidebarCtrl.newTagName = "v1.0.0";
+    sidebarCtrl.newTagMessage = "release";
+    sidebarCtrl.cancelNewTag();
+    expect(sidebarCtrl.newTagOpen).toBe(false);
+    expect(sidebarCtrl.newTagName).toBe("");
+    expect(sidebarCtrl.newTagMessage).toBe("");
+  });
+
+  it("confirmNewTag does nothing (just closes) on an empty/blank name", async () => {
+    sidebarCtrl.startNewTag();
+    sidebarCtrl.newTagName = "   ";
+    await sidebarCtrl.confirmNewTag();
+    expect(sidebarCtrl.newTagOpen).toBe(false);
+    expect(commands.createTag).not.toHaveBeenCalled();
+  });
+
+  it("real mode: creates a lightweight tag at HEAD (no message, no from) and reloads on success", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.createTag).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null });
+    sidebarCtrl.startNewTag();
+    sidebarCtrl.newTagName = "v1.0.0";
+    await sidebarCtrl.confirmNewTag();
+    expect(commands.createTag).toHaveBeenCalledWith("/repo", "v1.0.0", null, null);
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(sidebarCtrl.newTagOpen).toBe(false);
+  });
+
+  it("real mode: passes a non-empty message through as an annotated tag, and the selected target", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.createTag).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null });
+    sidebarCtrl.startNewTag();
+    sidebarCtrl.newTagName = "v1.0.0";
+    sidebarCtrl.newTagMessage = "release notes";
+    sidebarCtrl.newTagFrom = "origin/main";
+    await sidebarCtrl.confirmNewTag();
+    expect(commands.createTag).toHaveBeenCalledWith("/repo", "v1.0.0", "origin/main", "release notes");
+    expect(sidebarCtrl.newTagFrom).toBe("");
+  });
+
+  it("real mode: warns and does not reload on failure", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.createTag).mockResolvedValueOnce({ ok: false, message: "tag already exists", backupRef: null });
+    sidebarCtrl.startNewTag();
+    sidebarCtrl.newTagName = "v1.0.0";
+    await sidebarCtrl.confirmNewTag();
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("tag already exists"));
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+    expect(sidebarCtrl.newTagOpen).toBe(true);
+  });
+});
+
+describe("deleteTag", () => {
+  it("arms the shared danger scrim with a delete-tag context", () => {
+    sidebarCtrl.deleteTag("v1.0.0");
+    expect(bridge.armDanger).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "v1.0.0", confirmLabel: "Delete tag", onConfirm: expect.any(Function) }),
+    );
+  });
+
+  it("onConfirm calls delete_tag and reloads on success", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.deleteTag).mockResolvedValueOnce({ ok: true, message: "deleted", backupRef: "refs/gitgui/deleted-tag/x" });
+    sidebarCtrl.deleteTag("v1.0.0");
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+    expect(commands.deleteTag).toHaveBeenCalledWith("/repo", "v1.0.0");
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+  });
+
+  it("onConfirm warns and does not reload on failure", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.deleteTag).mockResolvedValueOnce({ ok: false, message: "tag does not exist", backupRef: null });
+    sidebarCtrl.deleteTag("v1.0.0");
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("tag does not exist"));
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+  });
+});
+
+describe("pushTag", () => {
+  it("design mode is a cosmetic no-op with a toast", async () => {
+    mockInTauri = false;
+    await sidebarCtrl.pushTag("v1.0.0");
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(commands.pushTag).not.toHaveBeenCalled();
+  });
+
+  it("real mode: pushes the tag to origin (default remote) and cheers on success", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.pushTag).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null });
+    await sidebarCtrl.pushTag("v1.0.0");
+    expect(commands.pushTag).toHaveBeenCalledWith("/repo", null, "v1.0.0");
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
+  });
+
+  it("real mode: warns on failure", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.pushTag).mockResolvedValueOnce({ ok: false, message: "rejected", backupRef: null });
+    await sidebarCtrl.pushTag("v1.0.0");
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("rejected"));
+  });
+
+  it("is re-entrancy locked while busy", async () => {
+    mockInTauri = true;
+    sidebarCtrl.busy = true;
+    await sidebarCtrl.pushTag("v1.0.0");
+    expect(commands.pushTag).not.toHaveBeenCalled();
+  });
 });
 
 describe("rebaseOnto", () => {
@@ -301,15 +452,17 @@ describe("setSnapshots / reset", () => {
     expect(sidebarCtrl.snapshots).not.toBe(snaps);
   });
 
-  it("reset clears everything including an open menu and hasRepo", () => {
+  it("reset clears everything including an open menu, tag menu, and hasRepo", () => {
     sidebarCtrl.locals = [{ name: "main", sha: "x", ahead: null, behind: null }];
     sidebarCtrl.head = "main";
     sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
+    sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
     sidebarCtrl.hasRepo = true;
     sidebarCtrl.reset();
     expect(sidebarCtrl.locals).toEqual([]);
     expect(sidebarCtrl.head).toBeNull();
     expect(sidebarCtrl.menu).toBeNull();
+    expect(sidebarCtrl.tagMenu).toBeNull();
     expect(sidebarCtrl.hasRepo).toBe(false);
   });
 });

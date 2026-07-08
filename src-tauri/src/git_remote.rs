@@ -22,6 +22,19 @@
 //! git's own rejection message rather than silently forcing. A branch with no
 //! configured upstream is published to "origin" (`--set-upstream`) — the
 //! overwhelmingly common case for a repo with a single remote.
+//!
+//! `push_tag` lives HERE rather than in `git_tag.rs` (which owns
+//! create/delete): pushing a tag needs zero tag-lifecycle machinery — no
+//! snapshot, no `pin_deleted_tag`-style safety net, nothing local changes at
+//! all (identical to plain `push`'s own rationale above) — while it needs
+//! EVERY ONE of this module's existing remote-sync conventions: `RemoteResult`,
+//! `run_git`/`git_error_message`, and above all "never force, surface git's
+//! own rejection" (a tag MOVE requires `--force` in real git; there is no
+//! separate force-push-a-moved-tag flag here, exactly mirroring `push`'s own
+//! choice never to add one). Adding a fourth `{ok, message, backup_ref}`
+//! result type in `git_tag.rs` just to relocate this one command would
+//! duplicate a type this module already owns for exactly this shape of
+//! operation — so it stays here instead, alongside `fetch`/`pull`/`push`.
 
 use std::process::Command;
 
@@ -101,6 +114,44 @@ fn validate_remote_name(name: &str) -> Result<(), String> {
     }
     if name.chars().any(|c| c.is_control() || c == ' ') {
         return Err(format!("Remote name has an illegal whitespace/control character: {name:?}"));
+    }
+    Ok(())
+}
+
+/// Own copy of `git_tag.rs`'s `validate_tag_name` (same per-module-copy
+/// convention as `validate_remote_name` above, which is itself already a copy
+/// of `git_write.rs`'s `validate_branch_name`) — `push_tag`'s `name` is raw
+/// user input (unlike plain `push`'s branch, which comes from `repo.head()`
+/// and is never independently validated), so it needs the identical
+/// flag-injection/name-validity guard `create_tag`/`delete_tag` apply. See
+/// `git_tag.rs`'s doc comment for the empirically-verified rules this
+/// encodes (identical to branch names except `name == "@"`, which `git tag`
+/// itself refuses with a confusing error).
+fn validate_tag_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("Tag name is empty.".into());
+    }
+    if name.starts_with('-') {
+        return Err(format!("Refusing a tag name that looks like a flag: {name:?}"));
+    }
+    for ch in name.chars() {
+        if ch.is_control() || ch == ' ' || ch == '\u{7f}' {
+            return Err(format!("Tag name has an illegal whitespace/control character: {name:?}"));
+        }
+        if matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\') {
+            return Err(format!("Tag name has an illegal character '{ch}': {name:?}"));
+        }
+    }
+    if name.contains("..")
+        || name.contains("@{")
+        || name.contains("//")
+        || name.starts_with('/')
+        || name.ends_with('/')
+        || name.ends_with('.')
+        || name.ends_with(".lock")
+        || name == "@"
+    {
+        return Err(format!("Not a valid tag name: {name:?}"));
     }
     Ok(())
 }
@@ -194,6 +245,55 @@ pub fn push(path: String) -> RemoteResult {
             None,
         ),
         // e.g. "! [rejected] ... (non-fast-forward)" or "fatal: 'origin' does not appear to be a git repository"
+        Ok(out) => RemoteResult::err(git_error_message(&out)),
+        Err(e) => RemoteResult::err(e),
+    }
+}
+
+/// Push a single tag (`git push <remote> refs/tags/<name>:refs/tags/<name>`).
+/// `remote` defaults to "origin" when omitted (mirrors `push`'s own
+/// default-remote choice above — tags have no upstream-tracking concept to
+/// consult, so there's no analogous "does it already have one?" check to
+/// make). Never force-pushes: a tag MOVE (the same name already exists on
+/// the remote at a different commit) requires `--force` in real git, and
+/// exactly like plain `push` above, this surfaces that rejection verbatim
+/// rather than silently forcing — there is no separate
+/// force-push-a-moved-tag flag. See this module's doc comment for why
+/// `push_tag` lives here rather than in `git_tag.rs`.
+///
+/// The source side of the refspec MUST be fully qualified as
+/// `refs/tags/<name>`, never a bare `<name>`: given a bare source, git
+/// resolves it by scanning ref namespaces itself (`refs/tags/<name>`,
+/// `refs/heads/<name>`, ...) rather than assuming tags — and GitCat lets a
+/// branch and a tag share a name (`create_branch`/`create_tag` never check
+/// the other namespace). Empirically confirmed: with a branch `X` but no
+/// tag `X`, a bare `git push origin X` silently pushes/creates a *branch*
+/// `refs/heads/X` on the remote and reports success ("new branch X -> X"),
+/// even though this function claims to push a tag. Qualifying the source as
+/// `refs/tags/<name>` makes git refuse with "src refspec ... does not match
+/// any" whenever no such tag exists locally, instead of silently falling
+/// back to a same-named branch. The destination is spelled out too
+/// (`:refs/tags/<name>`) so the remote-side ref this creates/updates is
+/// never left for git to infer either.
+/// JS call: `invoke("push_tag", { path, remote?, name })`.
+#[tauri::command]
+#[specta::specta]
+pub fn push_tag(path: String, remote: Option<String>, name: String) -> RemoteResult {
+    let remote = remote.unwrap_or_else(|| "origin".to_string());
+    if let Err(e) = validate_remote_name(&remote) {
+        return RemoteResult::err(e);
+    }
+    if let Err(e) = validate_tag_name(&name) {
+        return RemoteResult::err(e);
+    }
+    // No git2, no snapshot: pushing a tag doesn't touch local state at all —
+    // same rationale as plain `push` (see module doc comment).
+    let refspec = format!("refs/tags/{name}:refs/tags/{name}");
+    match run_git(&path, &["push", "--end-of-options", &remote, &refspec]) {
+        Ok(out) if out.ok => RemoteResult::ok(format!("Pushed tag {name} to {remote}."), None),
+        // e.g. "! [rejected] <name> -> <name> (already exists)" — never forced.
+        // Or, if `name` is a branch with no same-named local tag: "error: src
+        // refspec refs/tags/<name> does not match any" — never a branch push.
         Ok(out) => RemoteResult::err(git_error_message(&out)),
         Err(e) => RemoteResult::err(e),
     }

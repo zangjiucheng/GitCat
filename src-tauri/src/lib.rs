@@ -3,7 +3,8 @@ pub mod conflict;
 pub mod filter_repo; // M5c: filter-repo wizard (backup / preview / run / restore)
 pub mod git_pick;
 pub mod git_read;
-pub mod git_remote; // fetch / pull (ff-only) / push
+pub mod git_remote; // fetch / pull (ff-only) / push / push_tag
+pub mod git_tag; // Tags: create / delete (push_tag lives in git_remote.rs — see its doc comment)
 pub mod git_write;
 pub mod workdir; // working-tree status + stage/unstage/discard/commit + stash
 pub mod git_bisect; // M3: git bisect (start / mark good|bad|skip / status / reset)
@@ -39,6 +40,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_write::checkout,
         git_write::delete_branch,
         git_write::rename_branch,
+        // Tags: create/delete/push
+        git_tag::create_tag,
+        git_tag::delete_tag,
+        git_remote::push_tag,
         // Workdir: working-tree status + stage/unstage/discard/commit + stash
         workdir::workdir_status,
         workdir::workdir_file_diff,
@@ -55,7 +60,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
         workdir::stash_undo_apply,
         workdir::stash_conflict_abort,
         workdir::stash_conflict_continue,
-        // Remote sync: fetch / pull (ff-only) / push
+        // Remote sync: fetch / pull (ff-only) / push (push_tag is registered
+        // above, in the Tags block, even though it's implemented here)
         git_remote::fetch,
         git_remote::pull,
         git_remote::push,

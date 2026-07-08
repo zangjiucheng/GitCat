@@ -6,6 +6,9 @@
   let menuEl: HTMLDivElement | undefined = $state();
   let newBranchEl: HTMLInputElement | undefined = $state();
   let newBranchFormEl: HTMLDivElement | undefined = $state();
+  let tagMenuEl: HTMLDivElement | undefined = $state();
+  let newTagEl: HTMLInputElement | undefined = $state();
+  let newTagFormEl: HTMLDivElement | undefined = $state();
 
   function onWindowPointerdown(e: PointerEvent) {
     if (sidebarCtrl.menu && menuEl && !menuEl.contains(e.target as Node)) sidebarCtrl.closeMenu();
@@ -15,15 +18,26 @@
     // while busy so the form (and its in-flight spinner) can't be dismissed
     // out from under a request that's already been sent.
     if (sidebarCtrl.newBranchOpen && !sidebarCtrl.busy && newBranchFormEl && !newBranchFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewBranch();
+    if (sidebarCtrl.tagMenu && tagMenuEl && !tagMenuEl.contains(e.target as Node)) sidebarCtrl.closeTagMenu();
+    if (sidebarCtrl.newTagOpen && !sidebarCtrl.busy && newTagFormEl && !newTagFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewTag();
   }
 
   $effect(() => {
     if (sidebarCtrl.newBranchOpen) requestAnimationFrame(() => newBranchEl?.focus());
   });
 
+  $effect(() => {
+    if (sidebarCtrl.newTagOpen) requestAnimationFrame(() => newTagEl?.focus());
+  });
+
   function onNewBranchKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") sidebarCtrl.confirmNewBranch();
     else if (e.key === "Escape" && !sidebarCtrl.busy) sidebarCtrl.cancelNewBranch();
+  }
+
+  function onNewTagKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") sidebarCtrl.confirmNewTag();
+    else if (e.key === "Escape" && !sidebarCtrl.busy) sidebarCtrl.cancelNewTag();
   }
 
   // Safety Manager snapshots before every mutation, so a long session can
@@ -176,14 +190,82 @@
     <summary><span class="tw">&#9656;</span>Tags<span class="count" id="cntTags">{sidebarCtrl.tags.length}</span></summary>
     <div class="ref-list" id="refTags">
       {#each sidebarCtrl.tags.filter((t) => matches(t.name)) as t (t.name)}
-        <div class="ref-item"><span class="rname">{t.name}</span></div>
+        <div
+          class="ref-item"
+          class:busy={sidebarCtrl.busy}
+          data-tag={t.name}
+          role="button"
+          tabindex="0"
+          onkeydown={(e) => (e.key === "Enter" || e.key === " ") && !sidebarCtrl.busy && sidebarCtrl.openTagMenu(t.name, e.currentTarget as HTMLElement)}
+          oncontextmenu={(e) => {
+            e.preventDefault();
+            if (!sidebarCtrl.busy) sidebarCtrl.openTagMenu(t.name, e.currentTarget as HTMLElement);
+          }}
+        >
+          <span class="rname">{t.name}</span>
+          {#if sidebarCtrl.busyTarget === t.name}
+            <span class="spinner"></span>
+          {/if}
+          <button
+            class="ref-menu"
+            title="Tag actions"
+            aria-label="Tag actions"
+            disabled={sidebarCtrl.busy}
+            onclick={(e) => {
+              e.stopPropagation();
+              sidebarCtrl.openTagMenu(t.name, e.currentTarget as HTMLElement);
+            }}>&#8942;</button
+          >
+        </div>
       {/each}
+      {#if sidebarCtrl.newTagOpen}
+        <div class="nb-form" class:busy={sidebarCtrl.busy} bind:this={newTagFormEl}>
+          <input
+            class="nb-input"
+            bind:this={newTagEl}
+            bind:value={sidebarCtrl.newTagName}
+            placeholder="tag name&#8230;"
+            spellcheck="false"
+            autocomplete="off"
+            disabled={sidebarCtrl.busy}
+            onkeydown={onNewTagKeydown}
+          />
+          <input
+            class="nb-input"
+            bind:value={sidebarCtrl.newTagMessage}
+            placeholder="message (optional &#8212; annotated tag)&#8230;"
+            spellcheck="false"
+            autocomplete="off"
+            disabled={sidebarCtrl.busy}
+            onkeydown={onNewTagKeydown}
+          />
+          <div class="nb-row">
+            <select class="nb-from" bind:value={sidebarCtrl.newTagFrom} title="Tag target" disabled={sidebarCtrl.busy} onkeydown={onNewTagKeydown}>
+              <option value="">at HEAD (current)</option>
+              {#if sidebarCtrl.locals.length}
+                <optgroup label="Local">
+                  {#each sidebarCtrl.locals as b (b.name)}
+                    <option value={b.name}>{b.name}</option>
+                  {/each}
+                </optgroup>
+              {/if}
+              {#if sidebarCtrl.remotes.length}
+                <optgroup label="Remote">
+                  {#each sidebarCtrl.remotes as r (r.name)}
+                    <option value={r.name}>{r.name}</option>
+                  {/each}
+                </optgroup>
+              {/if}
+            </select>
+            {#if sidebarCtrl.busy}<span class="spinner"></span>{/if}
+          </div>
+        </div>
+      {:else}
+        <div class="ref-item new-branch" role="button" tabindex="0" onclick={() => sidebarCtrl.startNewTag()} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.startNewTag()}>
+          <span class="rname nb">&#65291; New tag&#8230;</span>
+        </div>
+      {/if}
     </div>
-  </details>
-  <details class="ref-group">
-    <summary><span class="tw">&#9656;</span>Stashes<span class="count">2</span></summary>
-    <div class="ref-item"><span class="rname mono">stash@{"{0}"}</span></div>
-    <div class="ref-item"><span class="rname mono">stash@{"{1}"}</span></div>
   </details>
   <details class="ref-group">
     <summary><span class="tw">&#9656;</span>Snapshots<span class="count" id="snapCount">{sidebarCtrl.snapshots.length || "—"}</span></summary>
@@ -227,5 +309,14 @@
       <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.rebaseOnto(name); }}>Rebase current branch onto here</button>
     {/if}
     <button class="danger" disabled={menu.isCurrent} onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.deleteBranch(name); }}>Delete&#8230;</button>
+  </div>
+{/if}
+
+{#if sidebarCtrl.tagMenu}
+  {@const tm = sidebarCtrl.tagMenu}
+  <div class="ref-pop" bind:this={tagMenuEl} style="left:{tm.x}px;top:{tm.y}px">
+    <!-- Same capture-before-close rationale as the branch menu above. -->
+    <button onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.pushTag(name); }}>Push to origin</button>
+    <button class="danger" onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.deleteTag(name); }}>Delete&#8230;</button>
   </div>
 {/if}

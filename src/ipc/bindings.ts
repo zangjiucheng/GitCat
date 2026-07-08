@@ -102,6 +102,61 @@ async renameBranch(path: string, from: string, to: string) : Promise<WriteResult
     return await TAURI_INVOKE("rename_branch", { path, from, to });
 },
 /**
+ * Create a tag. `target` is an optional commit-ish; defaults to HEAD when
+ * omitted (mirrors `create_branch`'s `start_point` handling exactly: the arg
+ * is simply left off the git invocation and git itself defaults to HEAD —
+ * no git2 read of HEAD needed on our side). `message` present -> an
+ * annotated tag (`git tag -a -m <message> <name> [<target>]`); absent ->
+ * lightweight (`git tag <name> [<target>]`). No snapshot — see module doc
+ * comment for why creating a tag needs none.
+ * JS call: `invoke("create_tag", { path, name, target?, message? })`.
+ */
+async createTag(path: string, name: string, target: string | null, message: string | null) : Promise<WriteResult> {
+    return await TAURI_INVOKE("create_tag", { path, name, target, message });
+},
+/**
+ * Delete a tag. THE ONE THAT NEEDS CARE — see module doc comment. Pins the
+ * tag's current direct target under `refs/gitgui/deleted-tag/*` BEFORE ever
+ * running `git tag -d`, and refuses the whole delete if that pin fails. The
+ * success message names the pinned ref directly and is explicit that
+ * recovery is NOT via the global Undo (⌘Z) button.
+ * JS call: `invoke("delete_tag", { path, name })`.
+ */
+async deleteTag(path: string, name: string) : Promise<WriteResult> {
+    return await TAURI_INVOKE("delete_tag", { path, name });
+},
+/**
+ * Push a single tag (`git push <remote> refs/tags/<name>:refs/tags/<name>`).
+ * `remote` defaults to "origin" when omitted (mirrors `push`'s own
+ * default-remote choice above — tags have no upstream-tracking concept to
+ * consult, so there's no analogous "does it already have one?" check to
+ * make). Never force-pushes: a tag MOVE (the same name already exists on
+ * the remote at a different commit) requires `--force` in real git, and
+ * exactly like plain `push` above, this surfaces that rejection verbatim
+ * rather than silently forcing — there is no separate
+ * force-push-a-moved-tag flag. See this module's doc comment for why
+ * `push_tag` lives here rather than in `git_tag.rs`.
+ * 
+ * The source side of the refspec MUST be fully qualified as
+ * `refs/tags/<name>`, never a bare `<name>`: given a bare source, git
+ * resolves it by scanning ref namespaces itself (`refs/tags/<name>`,
+ * `refs/heads/<name>`, ...) rather than assuming tags — and GitCat lets a
+ * branch and a tag share a name (`create_branch`/`create_tag` never check
+ * the other namespace). Empirically confirmed: with a branch `X` but no
+ * tag `X`, a bare `git push origin X` silently pushes/creates a *branch*
+ * `refs/heads/X` on the remote and reports success ("new branch X -> X"),
+ * even though this function claims to push a tag. Qualifying the source as
+ * `refs/tags/<name>` makes git refuse with "src refspec ... does not match
+ * any" whenever no such tag exists locally, instead of silently falling
+ * back to a same-named branch. The destination is spelled out too
+ * (`:refs/tags/<name>`) so the remote-side ref this creates/updates is
+ * never left for git to infer either.
+ * JS call: `invoke("push_tag", { path, remote?, name })`.
+ */
+async pushTag(path: string, remote: string | null, name: string) : Promise<RemoteResult> {
+    return await TAURI_INVOKE("push_tag", { path, remote, name });
+},
+/**
  * Tauri command: full working-tree/index status for the pinned "Uncommitted
  * changes" row + staging panel. Read-only (git2).
  * JS: `invoke("workdir_status", { path })`.
