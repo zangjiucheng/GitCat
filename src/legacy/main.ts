@@ -323,6 +323,7 @@ function endPointer(e){
   if(sbDrag){sbDrag=null;state.pointerActive=false;return;}
   if(down){
     if(!down.moved&&down.hit) select(down.hit.row);
+    else if(!down.moved&&!down.hit) deselect();
     else if(state.drag){
       const isMerge=state.drag.op==="merge", t=hitTest(p.x,p.y), tRow=t?t.row:null;
       const legal=isMerge?legalMerge(state.drag.source,tRow):legalPick(state.drag.source,tRow);
@@ -483,6 +484,10 @@ const AUTHORS=[{n:"Jiucheng Zang",e:"jiucheng@gitcat.dev"},{n:"Tama",e:"tama@git
 // detailCtrl.select()/commitMeta(). GRAMMARS/highlight stay here: they're
 // shared with Resolver.svelte's 3-way diff view via bridge.highlight.
 function select(row){ state.selectedRow=row; detailCtrl.select(row); dirty=true; }
+// Clicking empty canvas space (no commit dot under the pointer) while a
+// commit is selected — brings back Tama's hero card instead of leaving the
+// detail panel stuck on the last-selected commit forever.
+function deselect(){ if(state.selectedRow<0) return; state.selectedRow=-1; detailCtrl.deselect(); dirty=true; }
 const GRAMMARS={
   ts:[["com",/\/\/[^\n]*|\/\*[\s\S]*?\*\//y],["str",/`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/y],
      ["key",/\b(?:const|let|var|function|return|if|else|for|while|new|class|extends|implements|interface|type|import|export|from|await|async|of|in|typeof|instanceof|null|undefined|true|false|this|void|public|private|readonly|enum)\b/y],

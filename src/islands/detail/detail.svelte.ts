@@ -115,6 +115,10 @@ class DetailState {
   private curChanged: FileEntry[] = [];
   private curDiffs: Record<string, DiffFile> = {};
   private detailSeq = 0;
+  // What deselect() (clicking empty canvas space) should restore — the
+  // "loaded" hero's n/ms if a graph is open, or null when there's no repo
+  // open at all (deselect then falls back to the empty-state hero).
+  private lastHero: { n: number; ms: number } | null = null;
 
   private commitMeta(r: number): CommitVM | null {
     const BACKEND: any = bridge.BACKEND,
@@ -322,13 +326,25 @@ class DetailState {
   }
 
   showHero(n: number, ms: number) {
+    this.lastHero = { n, ms };
     this.commit = null;
     this.hero = { kind: "loaded", n, ms };
   }
 
   showEmpty() {
+    this.lastHero = null;
     this.commit = null;
     this.hero = { kind: "empty" };
+  }
+
+  // Clicking empty canvas space (no commit under the pointer) while a commit
+  // is selected — previously a no-op, so the detail panel got stuck showing
+  // the last-selected commit forever with no way back to Tama's hero card
+  // short of selecting another commit. Restores whichever hero showHero()/
+  // showEmpty() last set, same as if nothing had ever been selected.
+  deselect() {
+    this.commit = null;
+    this.hero = this.lastHero ? { kind: "loaded", ...this.lastHero } : { kind: "empty" };
   }
 }
 

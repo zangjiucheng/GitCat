@@ -92,6 +92,27 @@ describe("showHero / showEmpty", () => {
   });
 });
 
+describe("deselect", () => {
+  it("after showHero + select, restores the same loaded hero (clicking empty canvas space)", () => {
+    setDemoGraph();
+    detailCtrl.showHero(128, 293.4);
+    detailCtrl.select(0);
+    expect(detailCtrl.commit).not.toBeNull();
+    detailCtrl.deselect();
+    expect(detailCtrl.hero).toEqual({ kind: "loaded", n: 128, ms: 293.4 });
+    expect(detailCtrl.commit).toBeNull();
+  });
+
+  it("after showEmpty + select, restores the empty hero", () => {
+    setDemoGraph();
+    detailCtrl.showEmpty();
+    detailCtrl.select(0);
+    detailCtrl.deselect();
+    expect(detailCtrl.hero).toEqual({ kind: "empty" });
+    expect(detailCtrl.commit).toBeNull();
+  });
+});
+
 describe("select (design mode / demo data)", () => {
   it("populates commit + demo diffstat/tree synchronously (no backend)", () => {
     setDemoGraph();
