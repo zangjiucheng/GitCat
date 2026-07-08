@@ -1,17 +1,22 @@
-// Native application menu — the "系统 menu" (system menu) + About panel.
+// Native application menu — the "系统 menu" (system menu).
 //
 // Two kinds of items:
-//  - predefined (About, Cut/Copy/Paste/Select All, Minimize, Close Window,
-//    Quit, and on macOS Services/Hide/Hide Others/Show All): handled entirely
-//    by the OS/webview, no event ever reaches Rust. These aren't just
-//    decorative — without an Edit menu wiring Cut/Copy/Paste/Select All,
-//    those shortcuts don't work at all in a Tauri webview's text inputs.
+//  - predefined (Cut/Copy/Paste/Select All, Minimize, Close Window, Quit, and
+//    on macOS Services/Hide/Hide Others/Show All): handled entirely by the
+//    OS/webview, no event ever reaches Rust. These aren't just decorative —
+//    without an Edit menu wiring Cut/Copy/Paste/Select All, those shortcuts
+//    don't work at all in a Tauri webview's text inputs.
 //  - custom (Open Repository…, New Branch…, Fetch/Pull/Push, Toggle Theme,
-//    Command Palette, the two Help links): fire a MenuEvent caught in
+//    Command Palette, About, the two Help links): fire a MenuEvent caught in
 //    handle_event() below. The two Help links (GitHub / Report an Issue) are
 //    handled entirely in Rust via the opener plugin; the rest need the
 //    frontend (they're Svelte controller / legacy chrome calls), so they're
 //    forwarded as a "menu-action" JS event — see the listener in src/main.ts.
+//
+// About is deliberately a CUSTOM item, not the native `.about()` menu-builder
+// panel: the OS-rendered About dialog can't be animated or restyled at all,
+// so it's replaced with an in-app modal (see src/islands/about) that reads
+// the same package metadata via the `get_app_info` command instead.
 //
 // Deliberately NOT included: Undo/Redo. The app already binds ⌘Z to its own
 // global Safety-Manager undo (see globalUndo() in legacy/main.ts) — adding a
@@ -19,7 +24,7 @@
 // (or instead of) the existing JS keydown listener, which would be a strictly
 // worse outcome than just not having the item.
 use tauri::{
-    menu::{AboutMetadataBuilder, Menu, MenuBuilder, MenuEvent, MenuItemBuilder, SubmenuBuilder},
+    menu::{Menu, MenuBuilder, MenuEvent, MenuItemBuilder, SubmenuBuilder},
     AppHandle, Emitter, Wry,
 };
 use tauri_plugin_opener::OpenerExt;
@@ -28,22 +33,11 @@ const REPO_URL: &str = "https://github.com/zangjiucheng/GitCat";
 const ISSUES_URL: &str = "https://github.com/zangjiucheng/GitCat/issues/new";
 
 pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
-    let pkg = app.package_info();
-    let about = AboutMetadataBuilder::new()
-        .name(Some(pkg.name.clone()))
-        .version(Some(pkg.version.to_string()))
-        .authors(Some(pkg.authors.split(':').map(|s| s.trim().to_string()).collect()))
-        .comments(Some(pkg.description.to_string()))
-        .copyright(Some("\u{a9} Jiucheng Zang".to_string()))
-        .website(Some(REPO_URL.to_string()))
-        .website_label(Some("GitHub".to_string()))
-        .build();
+    let about_item = MenuItemBuilder::with_id("about", "About GitCat").build(app)?;
 
-    // `about` is moved into whichever ONE of these two cfg-gated branches
-    // actually exists for the target platform — never both in the same build.
     #[cfg(target_os = "macos")]
-    let app_menu = SubmenuBuilder::new(app, &pkg.name)
-        .about(Some(about))
+    let app_menu = SubmenuBuilder::new(app, &app.package_info().name)
+        .item(&about_item)
         .separator()
         .services()
         .separator()
@@ -102,7 +96,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // macOS already surfaces About in the app menu above; Windows/Linux
         // have no app menu, so Help is the conventional home for it there.
         #[cfg(not(target_os = "macos"))]
-        let b = b.separator().about(Some(about));
+        let b = b.separator().item(&about_item);
         b.build()?
     };
 
@@ -130,7 +124,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // Everything else is a frontend (Svelte controller / legacy chrome)
         // action — forward the id as a JS event rather than duplicating that
         // logic in Rust.
-        id @ ("open-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push") => {
+        id @ ("open-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

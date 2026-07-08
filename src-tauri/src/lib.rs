@@ -10,7 +10,7 @@ pub mod git_merge; // M6 (stage 1): merge (drag-onto-HEAD) + continue / abort
 pub mod git_rebase; // M6 (stage 2): linear rebase onto a target + continue / skip / abort
 pub mod identity; // Setup wizard: repo-local git identity (user.name/user.email) check + fix
 pub mod layout;
-pub mod menu; // native app menu (File/Edit/View/Window/Help) + About panel
+pub mod menu; // native app menu (File/Edit/View/Window/Help)
 pub mod model;
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
@@ -28,6 +28,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::load_graph,
         commands::commit_detail,
+        commands::get_app_info,
         // Safety Manager (snapshot / list / global undo)
         safety::create_snapshot,
         safety::list_snapshots,
