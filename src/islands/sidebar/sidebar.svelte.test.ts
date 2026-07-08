@@ -142,19 +142,32 @@ describe("checkout", () => {
 });
 
 describe("newBranch", () => {
-  it("does nothing if the user cancels the prompt", async () => {
-    vi.spyOn(window, "prompt").mockReturnValueOnce(null);
-    await sidebarCtrl.newBranch();
+  it("startNewBranch opens the inline input, cancelNewBranch closes it", () => {
+    sidebarCtrl.startNewBranch();
+    expect(sidebarCtrl.newBranchOpen).toBe(true);
+    sidebarCtrl.newBranchInput = "wip";
+    sidebarCtrl.cancelNewBranch();
+    expect(sidebarCtrl.newBranchOpen).toBe(false);
+    expect(sidebarCtrl.newBranchInput).toBe("");
+  });
+
+  it("confirmNewBranch does nothing (just closes) on an empty/blank name", async () => {
+    sidebarCtrl.startNewBranch();
+    sidebarCtrl.newBranchInput = "   ";
+    await sidebarCtrl.confirmNewBranch();
+    expect(sidebarCtrl.newBranchOpen).toBe(false);
     expect(commands.createBranch).not.toHaveBeenCalled();
   });
 
   it("real mode: creates the branch and reloads on success", async () => {
     mockInTauri = true;
-    vi.spyOn(window, "prompt").mockReturnValueOnce("feature/new");
     vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null });
-    await sidebarCtrl.newBranch();
+    sidebarCtrl.startNewBranch();
+    sidebarCtrl.newBranchInput = "feature/new";
+    await sidebarCtrl.confirmNewBranch();
     expect(commands.createBranch).toHaveBeenCalledWith("/repo", "feature/new", null, true);
     expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(sidebarCtrl.newBranchOpen).toBe(false);
   });
 });
 

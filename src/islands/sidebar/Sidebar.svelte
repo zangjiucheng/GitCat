@@ -4,11 +4,28 @@
   import type { SimpleRef } from "../../ipc/bindings";
 
   let menuEl: HTMLDivElement | undefined = $state();
+  let newBranchEl: HTMLInputElement | undefined = $state();
 
   function onWindowPointerdown(e: PointerEvent) {
     if (!sidebarCtrl.menu) return;
     if (menuEl && !menuEl.contains(e.target as Node)) sidebarCtrl.closeMenu();
   }
+
+  $effect(() => {
+    if (sidebarCtrl.newBranchOpen) requestAnimationFrame(() => newBranchEl?.focus());
+  });
+
+  function onNewBranchKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") sidebarCtrl.confirmNewBranch();
+    else if (e.key === "Escape") sidebarCtrl.cancelNewBranch();
+  }
+
+  // Safety Manager snapshots before every mutation, so a long session can
+  // realistically accumulate hundreds — cap the rendered rows for a non-
+  // virtualized list, but say so (the trailing "+N more" row) rather than
+  // silently dropping the tail like the old slice(0, 12) did, which let the
+  // count badge and the visible rows quietly disagree.
+  const SNAP_CAP = 50;
 
   function matches(name: string): boolean {
     const q = sidebarCtrl.filter.trim().toLowerCase();
@@ -75,9 +92,24 @@
           >
         </div>
       {/each}
-      <div class="ref-item new-branch" role="button" tabindex="0" onclick={() => sidebarCtrl.newBranch()} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.newBranch()}>
-        <span class="rname nb">&#65291; New branch&#8230;</span>
-      </div>
+      {#if sidebarCtrl.newBranchOpen}
+        <div class="ref-item new-branch">
+          <input
+            class="nb-input"
+            bind:this={newBranchEl}
+            bind:value={sidebarCtrl.newBranchInput}
+            placeholder="branch name&#8230;"
+            spellcheck="false"
+            autocomplete="off"
+            onkeydown={onNewBranchKeydown}
+            onblur={() => sidebarCtrl.cancelNewBranch()}
+          />
+        </div>
+      {:else}
+        <div class="ref-item new-branch" role="button" tabindex="0" onclick={() => sidebarCtrl.startNewBranch()} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.startNewBranch()}>
+          <span class="rname nb">&#65291; New branch&#8230;</span>
+        </div>
+      {/if}
     </div>
   </details>
   <details class="ref-group" open>
@@ -110,13 +142,16 @@
       {#if !sidebarCtrl.snapshots.length}
         <div class="ref-item"><span class="rname mut">no snapshots yet</span></div>
       {:else}
-        {#each sidebarCtrl.snapshots.slice(0, 12) as s (s.ref)}
+        {#each sidebarCtrl.snapshots.slice(0, SNAP_CAP) as s (s.ref)}
           <div class="ref-item">
             <span class="dot" style="background:var(--accent)"></span>
             <span class="rname mono">{(s.sha || "").slice(0, 7) || "snapshot"}</span>
             <span class="ab">{bridge.relTime(s.ts).replace(" ago", "")}</span>
           </div>
         {/each}
+        {#if sidebarCtrl.snapshots.length > SNAP_CAP}
+          <div class="ref-item"><span class="rname mut">+{sidebarCtrl.snapshots.length - SNAP_CAP} more &#183; newest shown first</span></div>
+        {/if}
       {/if}
     </div>
   </details>

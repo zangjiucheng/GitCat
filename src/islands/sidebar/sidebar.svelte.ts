@@ -52,6 +52,8 @@ class SidebarState {
   filter = $state("");
   busy = $state(false);
   menu = $state<BranchMenu | null>(null);
+  newBranchOpen = $state(false);
+  newBranchInput = $state("");
 
   async refresh(repo: string) {
     if (!IN_TAURI) {
@@ -119,9 +121,30 @@ class SidebarState {
     }
   }
 
-  async newBranch() {
-    const name = (prompt("New branch name (created at HEAD and checked out):") || "").trim();
-    if (!name) return;
+  // Tauri's webview (WKWebView on macOS in particular) doesn't implement
+  // window.prompt() — it returns null immediately with no dialog ever shown,
+  // so the old prompt()-based flow silently did nothing. Swap it for an
+  // inline input in the "＋ New branch…" row itself instead (same shape as
+  // every other island's typed-input flow, just without a whole modal for
+  // one field).
+  startNewBranch() {
+    this.newBranchInput = "";
+    this.newBranchOpen = true;
+  }
+
+  cancelNewBranch() {
+    this.newBranchOpen = false;
+    this.newBranchInput = "";
+  }
+
+  async confirmNewBranch() {
+    const name = this.newBranchInput.trim();
+    if (!name) {
+      this.cancelNewBranch();
+      return;
+    }
+    this.newBranchOpen = false;
+    this.newBranchInput = "";
     if (!IN_TAURI) {
       bridge.tama.set("hint");
       bridge.tama.say("Created " + name + " (demo).");
