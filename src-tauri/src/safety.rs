@@ -432,7 +432,7 @@ pub fn undo_last(path: String) -> Result<UndoResult, String> {
 // ---------------------------------------------------------------------------
 
 fn open(path: &str) -> Result<Repository, String> {
-    Repository::open(path).map_err(|e| format!("cannot open repository: {}", e.message()))
+    crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))
 }
 
 /// Unique backup ref: `refs/gitgui/backup/<secs>-<nanos>-<seq>`. `secs` is the

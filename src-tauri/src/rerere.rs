@@ -48,7 +48,6 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use git2::Repository;
 use serde::Serialize;
 
 use crate::git_write::WriteResult;
@@ -113,7 +112,7 @@ pub struct RerereStatus {
 #[tauri::command]
 #[specta::specta]
 pub fn rerere_status(path: String) -> Result<RerereStatus, String> {
-    let repo = Repository::open(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+    let repo = crate::trust::open_repo(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
     // `commondir()`, not `path()`: in a linked worktree `path()` is the
     // worktree-private gitdir, but rr-cache is shared repo-wide.
     let common_dir = repo.commondir().to_path_buf();
@@ -203,7 +202,7 @@ fn run_lines(path: &str, args: &[&str]) -> Vec<String> {
 #[tauri::command]
 #[specta::specta]
 pub fn rerere_set_enabled(path: String, enabled: bool) -> WriteResult {
-    if let Err(e) = Repository::open(&path) {
+    if let Err(e) = crate::trust::open_repo(&path) {
         return WriteResult { ok: false, message: format!("Cannot open repository: {}", e.message()), backup_ref: None };
     }
     let value = if enabled { "true" } else { "false" };

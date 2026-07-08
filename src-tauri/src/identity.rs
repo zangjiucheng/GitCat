@@ -10,7 +10,6 @@
 //! as git_write.rs and safety.rs — libgit2 is for reads elsewhere, never for
 //! identity mutation here).
 
-use git2::Repository;
 use serde::Serialize;
 
 use crate::git_write::WriteResult;
@@ -31,7 +30,7 @@ pub struct GitIdentity {
 #[tauri::command]
 #[specta::specta]
 pub fn get_git_identity(path: String) -> Result<GitIdentity, String> {
-    Repository::open(&path)
+    crate::trust::open_repo(&path)
         .map_err(|e| format!("That doesn't look like a git repository — {}", e.message()))?;
     let name = read_local(&path, "user.name");
     let email = read_local(&path, "user.email");
@@ -60,7 +59,7 @@ fn read_local(path: &str, key: &str) -> Option<String> {
 #[tauri::command]
 #[specta::specta]
 pub fn set_git_identity(path: String, name: String, email: String) -> WriteResult {
-    if let Err(e) = Repository::open(&path) {
+    if let Err(e) = crate::trust::open_repo(&path) {
         return WriteResult {
             ok: false,
             message: format!("Cannot open repository: {}", e.message()),

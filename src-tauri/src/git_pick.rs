@@ -274,7 +274,7 @@ pub fn cherry_pick(path: String, sha: String, record_origin: Option<bool>) -> Pi
     if let Err(e) = validate_sha(&sha) {
         return PickResult::error(e);
     }
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return PickResult::error(format!("Cannot open repository: {}", e.message())),
     };
@@ -328,7 +328,7 @@ pub fn cherry_pick(path: String, sha: String, record_origin: Option<bool>) -> Pi
 #[tauri::command]
 #[specta::specta]
 pub fn cherry_pick_continue(path: String) -> PickResult {
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return PickResult::error(format!("Cannot open repository: {}", e.message())),
     };
@@ -373,7 +373,7 @@ pub fn cherry_pick_continue(path: String) -> PickResult {
 #[tauri::command]
 #[specta::specta]
 pub fn cherry_pick_abort(path: String) -> PickResult {
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return PickResult::error(format!("Cannot open repository: {}", e.message())),
     };

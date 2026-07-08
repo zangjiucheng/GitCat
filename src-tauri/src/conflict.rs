@@ -79,7 +79,7 @@ pub struct ResolveResult {
 #[specta::specta]
 pub fn conflict_status(path: String) -> Result<ConflictStatus, String> {
     let repo =
-        Repository::open(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+        crate::trust::open_repo(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
     let op = op_name(repo.state());
     let files = read_conflicts(&repo).map_err(|e| e.message().to_string())?;
     let in_progress = op != "none" || !files.is_empty();
@@ -201,7 +201,7 @@ pub fn resolve_conflict_file(path: String, file: String, side: String) -> Resolv
     //
     // NOTE: this is intentionally an allowlist, not a denylist, so an op that
     // doesn't (yet) have app-level continue/abort support fails closed.
-    match Repository::open(&path) {
+    match crate::trust::open_repo(&path) {
         Ok(repo) => {
             let op = op_name(repo.state());
             if op != "cherry-pick" && op != "merge" && op != "rebase" {

@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use git2::{Delta, DiffFindOptions, DiffOptions, Patch, Repository};
+use git2::{Delta, DiffFindOptions, DiffOptions, Patch};
 
 use crate::git_read::read_repo;
 use crate::layout::{layout, NCOL};
@@ -82,7 +82,7 @@ pub fn commit_detail(path: String, sha: String) -> Result<CommitDetail, String> 
 }
 
 fn commit_detail_inner(path: &str, sha: &str) -> Result<CommitDetail, git2::Error> {
-    let repo = Repository::open(path)?;
+    let repo = crate::trust::open_repo(path)?;
     // `sha` may be a 7-char abbreviation (the graph rows carry short shas) or a
     // full 40-char oid; find_commit_by_prefix resolves either.
     let commit = repo.find_commit_by_prefix(sha)?;

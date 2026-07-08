@@ -49,7 +49,7 @@ fn is_relevant(path: &Path) -> bool {
 /// isn't callable from a plain integration test the way this codebase's
 /// other command functions are — see tests/watch.rs).
 pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Result<Debouncer<RecommendedWatcher>, String> {
-    let repo = git2::Repository::open(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+    let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
     let git_dir = repo.path().to_path_buf();
 
     let mut debouncer = new_debouncer(DEBOUNCE, move |res: DebounceEventResult| {
