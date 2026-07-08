@@ -78,7 +78,7 @@
     <h4 class="d-lab">Changes</h4>
     <div class="diffstat" id="diffstat">
       {#if detailCtrl.diffLoading}
-        <span class="mut mono" style="font-size:11px">loading diff&#8230;</span>
+        <span class="mut mono" style="font-size:11px"><span class="spinner"></span> loading diff&#8230;</span>
       {:else if detailCtrl.diffstat}
         {@const s = detailCtrl.diffstat}
         <span class="nums"><span class="add">+{s.add}</span> <span class="del">&minus;{s.del}</span></span>
@@ -91,7 +91,7 @@
     </div>
     <div class="tree" id="tree">
       {#if detailCtrl.treeLoading}
-        <div class="mut" style="padding:6px 4px">loading files&#8230;</div>
+        <div class="mut" style="padding:6px 4px"><span class="spinner"></span> loading files&#8230;</div>
       {:else if !detailCtrl.tree.files.length && !Object.keys(detailCtrl.tree.dirs).length}
         <div class="mut" style="padding:6px 4px">no file changes</div>
       {:else}
@@ -103,7 +103,7 @@
     <h4 class="d-lab">Diff</h4>
     <div class="diffview" id="diffview">
       {#if detailCtrl.diffLoading}
-        <div class="diff-file-h mut">loading diff&#8230;</div>
+        <div class="diff-file-h mut"><span class="spinner"></span> loading diff&#8230;</div>
       {:else}
         <div class="diff-file-h">{detailCtrl.diffHeader}</div>
         {#each detailCtrl.diffRows as row}

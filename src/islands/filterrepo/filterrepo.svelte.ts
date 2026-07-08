@@ -79,6 +79,11 @@ class FilterRepoState {
   // ── restore view ───────────────────────────────────────────────────────
   backups = $state<FilterRepoBackupInfo[]>([]);
   backupsError = $state("");
+  // Separate from `restoreBusy` (which guards the destructive restore ITSELF):
+  // without this, the empty-backups message rendered while the list was still
+  // being fetched (backups=[] from resetWizard()) was indistinguishable from a
+  // confirmed-empty backup dir — see FilterRepo.svelte's "restore" step.
+  backupsLoading = $state(false);
   selectedBackupId = $state<string | null>(null);
   restoreConfirmText = $state("");
   restoreResult = $state<FilterRepoResult | null>(null);
@@ -169,6 +174,10 @@ class FilterRepoState {
   }
 
   backToScope() {
+    // Defense-in-depth: the scope step's own Next button already disables via
+    // canPreview's `!busy`, so this only matters if a future caller wires Back
+    // up somewhere reachable mid-request.
+    if (this.busy) return;
     this.step = "scope";
   }
 
@@ -179,6 +188,12 @@ class FilterRepoState {
   }
 
   backToPreview() {
+    // The confirm step's Back button stays clickable for the ENTIRE duration
+    // of runFilterRepo() (step doesn't change to "result" until it resolves),
+    // so without this guard a user could navigate away mid-rewrite and then
+    // get yanked back to "result" out of nowhere once the awaited call
+    // finally settles. See FilterRepo.svelte, which also disables the button.
+    if (this.busy) return;
     this.step = "preview";
   }
 
@@ -281,7 +296,7 @@ class FilterRepoState {
       this.backupsError = "";
       return;
     }
-    this.restoreBusy = true;
+    this.backupsLoading = true;
     try {
       const r = await commands.filterRepoListBackups(this.repo);
       if (r.status === "ok") {
@@ -295,11 +310,12 @@ class FilterRepoState {
       this.backups = [];
       this.backupsError = "Could not list backups — " + e;
     } finally {
-      this.restoreBusy = false;
+      this.backupsLoading = false;
     }
   }
 
   selectBackup(id: string) {
+    if (this.restoreBusy) return;
     if (this.selectedBackupId === id) return;
     this.selectedBackupId = id;
     this.restoreConfirmText = "";
@@ -363,6 +379,7 @@ class FilterRepoState {
     this.result = null;
     this.backups = [];
     this.backupsError = "";
+    this.backupsLoading = false;
     this.selectedBackupId = null;
     this.restoreConfirmText = "";
     this.restoreResult = null;

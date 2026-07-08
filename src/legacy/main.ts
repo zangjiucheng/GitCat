@@ -327,7 +327,19 @@ function endPointer(e){
     else if(state.drag){
       const isMerge=state.drag.op==="merge", t=hitTest(p.x,p.y), tRow=t?t.row:null;
       const legal=isMerge?legalMerge(state.drag.source,tRow):legalPick(state.drag.source,tRow);
-      if(tRow!=null&&legal.ok){ if(isMerge) mergeCommit(state.drag.source,tRow); else cherryPick(state.drag.source,tRow); }
+      if(tRow!=null&&legal.ok){
+        // Keep the ghost on screen (relabeled "pending") for the duration of
+        // the pick/merge instead of tearing it down on this same tick — it
+        // used to vanish the instant the drop was accepted, leaving nothing
+        // visible for however long the actual IPC call + resolver.startPick/
+        // startMerge took to settle (a real conflict modal doesn't appear
+        // until then either).
+        if(ghostEl){ ghostEl.classList.add("pending"); $(".reason",ghostEl).textContent=isMerge?"Merging…":"Picking…"; }
+        const op=isMerge?mergeCommit(state.drag.source,tRow):cherryPick(state.drag.source,tRow);
+        op.finally(removeGhost);
+        state.drag=null; down=null; state.pointerActive=false; dirty=true;
+        return;
+      }
     }
   }
   removeGhost(); state.drag=null; down=null; state.pointerActive=false; dirty=true;
@@ -347,7 +359,14 @@ cv.addEventListener("keydown",(e)=>{
 /* cherry-pick legality: dropping onto an ancestor (older row, same reachable
    line) is illegal. Approximation for the demo: a target strictly BELOW the
    source (larger row index) reads as an ancestor -> reject; onto itself -> reject. */
+// `resolver.busy` check comes first in both: without it, a second drag could
+// start (and show a fully "legal" green ghost, and animate a drop) while a
+// PRIOR pick/merge was still resolving — resolver.startPick/startMerge would
+// then silently no-op via their own re-entrancy guard, dropping the second
+// gesture on the floor with zero visible feedback. Marking it illegal here
+// instead surfaces a real reason in the ghost tooltip.
 function legalPick(src,tgt){
+  if(resolver.busy) return {ok:false,why:"a pick/merge is already in progress"};
   if(tgt==null) return {ok:false,why:"drop on a commit"};
   if(tgt===src) return {ok:false,why:"onto itself"};
   if(G&&G.isMerge&&G.isMerge[src]) return {ok:false,why:"can't cherry-pick a merge"};
@@ -359,6 +378,7 @@ function legalPick(src,tgt){
    cherry-pick, merging a merge commit's tip is perfectly legal, so there is
    no isMerge(src) rejection here. */
 function legalMerge(src,tgt){
+  if(resolver.busy) return {ok:false,why:"a pick/merge is already in progress"};
   if(tgt==null) return {ok:false,why:"drop on a commit"};
   if(tgt===src) return {ok:false,why:"onto itself"};
   if(tgt>src) return {ok:false,why:"target is an ancestor"};
@@ -367,7 +387,7 @@ function legalMerge(src,tgt){
 let ghostEl=null;
 function updateGhost(src,tgt,legal,isMerge){
   if(!ghostEl){ghostEl=document.createElement("div");ghostEl.className="cp-ghost";
-    ghostEl.innerHTML='<span class="g-dot"></span><span class="lbl"></span><span class="reason"></span>';document.body.appendChild(ghostEl);}
+    ghostEl.innerHTML='<span class="g-dot"></span><span class="spinner"></span><span class="lbl"></span><span class="reason"></span>';document.body.appendChild(ghostEl);}
   const d=state.drag; ghostEl.style.left=(cv.getBoundingClientRect().left+d.x+12)+"px";
   ghostEl.style.top=(cv.getBoundingClientRect().top+d.y+12)+"px";
   ghostEl.classList.toggle("illegal",!legal.ok);
@@ -572,6 +592,13 @@ async function globalUndo(){
   // so the shortcut doesn't round-trip to the backend for a guaranteed no-op.
   if(!Safety.snaps.length){ Tama.warn("Nothing to undo yet — no snapshots have been taken."); return; }
   if(undoBusy) return; undoBusy=true;
+  // #undoBtn's disabled state was previously driven ONLY by Safety.updateBadge()
+  // (zero-snapshot check) — undoBusy guarded re-entrancy in code but gave zero
+  // visible feedback (not even Tama's corner mascot) for however long undo_last
+  // + the follow-up reloadGraph took.
+  const btn=$("#undoBtn"), labelEl=btn.querySelector("span"), label=labelEl.innerHTML;
+  btn.disabled=true; labelEl.innerHTML='<span class="spinner"></span> Undoing…';
+  Tama.set("thinking");
   try{
     const res=await tinvoke("undo_last",{path:CUR_REPO});
     if(res&&res.ok){
@@ -581,7 +608,7 @@ async function globalUndo(){
       cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>',TAMA_IMG.confident);
     } else { Tama.warn((res&&res.message)||"Nothing to undo — no snapshots yet."); }
   }catch(e){ Tama.warn("Undo failed — "+e); console.error(e); }
-  finally{ undoBusy=false; }
+  finally{ undoBusy=false; labelEl.innerHTML=label; Safety.updateBadge(); }
 }
 $("#undoBtn").addEventListener("click",globalUndo);
 document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="z"&&!e.target.closest("input,textarea,[contenteditable=true]")){e.preventDefault();globalUndo();} });
@@ -590,41 +617,60 @@ document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key.toLowe
 // in-flight network op can't overlap with another (see src-tauri/src/git_remote.rs
 // for why fetch/push never snapshot but pull does).
 let syncBusy=false;
+// All three buttons dim while ANY one is in flight (they share syncBusy) —
+// only the one actually clicked gets the spinner + verb-label swap.
+function setSyncButtonsBusy(activeId,busyLabel){
+  ["fetchBtn","pullBtn","pushBtn"].forEach(id=>{
+    const b=$("#"+id); if(!b) return;
+    b.disabled=true;
+    if(id===activeId){ b.dataset.label=b.innerHTML; b.innerHTML='<span class="spinner"></span> '+busyLabel; }
+  });
+}
+function clearSyncButtonsBusy(){
+  ["fetchBtn","pullBtn","pushBtn"].forEach(id=>{
+    const b=$("#"+id); if(!b) return;
+    b.disabled=false;
+    if(b.dataset.label){ b.innerHTML=b.dataset.label; delete b.dataset.label; }
+  });
+}
 async function doFetch(){
   if(!IN_TAURI){ Tama.set("hint"); Tama.say("Fetched (demo). にゃ〜",3200); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
+  setSyncButtonsBusy("fetchBtn","Fetching…");
   Tama.set("thinking"); Tama.say("Fetching…");
   try{
     const res=await tinvoke("fetch",{path:CUR_REPO,remote:null});
     if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("hint"); Tama.say(res.message||"Fetched.",3200); }
     else Tama.warn((res&&res.message)||"Fetch failed.");
   }catch(e){ Tama.warn("Fetch failed — "+e); console.error(e); }
-  finally{ syncBusy=false; }
+  finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPull(){
   if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pulled (demo). にゃ〜",3200); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
+  setSyncButtonsBusy("pullBtn","Pulling…");
   Tama.set("thinking"); Tama.say("Pulling…");
   try{
     const res=await tinvoke("pull",{path:CUR_REPO});
     if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pulled.",3200); }
     else Tama.warn((res&&res.message)||"Pull failed.");
   }catch(e){ Tama.warn("Pull failed — "+e); console.error(e); }
-  finally{ syncBusy=false; }
+  finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPush(){
   if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pushed (demo). にゃ〜",3200); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
+  setSyncButtonsBusy("pushBtn","Pushing…");
   Tama.set("thinking"); Tama.say("Pushing…");
   try{
     const res=await tinvoke("push",{path:CUR_REPO});
     if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("celebrate"); Tama.say(res.message||"Pushed.",3200); }
     else Tama.warn((res&&res.message)||"Push failed.");
   }catch(e){ Tama.warn("Push failed — "+e); console.error(e); }
-  finally{ syncBusy=false; }
+  finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 $("#fetchBtn").addEventListener("click",doFetch);
 $("#pullBtn").addEventListener("click",doPull);
@@ -647,7 +693,23 @@ function armDanger(ctx){
 function disarmDanger(){ closeScrim("#dangerScrim"); const ci=$("#confirmInput"); if(ci) ci.value=""; const gg=$("#dangerGo"); if(gg) gg.disabled=true; dangerCtx=null; }
 $("#confirmInput").addEventListener("input",e=>{ const want=dangerCtx?dangerCtx.name:"main"; $("#dangerGo").disabled=e.target.value.trim()!==want; });
 $("#dangerCancel").addEventListener("click",()=>{ disarmDanger(); Tama.event("mutation.cancel"); });
-$("#dangerGo").addEventListener("click",async ()=>{ const ctx=dangerCtx; disarmDanger(); if(ctx&&ctx.onConfirm) await ctx.onConfirm(); });
+let dangerBusy=false;
+$("#dangerGo").addEventListener("click",async ()=>{
+  if(dangerBusy) return;
+  const ctx=dangerCtx;
+  if(!ctx||!ctx.onConfirm) { disarmDanger(); return; }
+  dangerBusy=true;
+  const go=$("#dangerGo"), cancel=$("#dangerCancel"), inp=$("#confirmInput");
+  const label=go.textContent;
+  go.disabled=true; go.innerHTML='<span class="spinner"></span> Working…';
+  cancel.disabled=true; if(inp) inp.disabled=true;
+  try{ await ctx.onConfirm(); }
+  finally{
+    dangerBusy=false;
+    go.textContent=label; cancel.disabled=false; if(inp) inp.disabled=false;
+    disarmDanger();
+  }
+});
 // filter-repo now opens its OWN dedicated multi-step wizard (src/islands/
 // filterrepo) instead of the generic single-step armDanger flow above (that
 // flow stays wired for its other callers, e.g. delete-branch): scope ->
@@ -821,7 +883,14 @@ function loadGraph(N){
 // step) failed. Never throws — callers that don't care (pickRepo) can ignore
 // the result, while the setup wizard uses it to keep its done-step overlay up
 // so the user can retry "Open repository" instead of being dumped out silently.
+let openRepoBusy=false;
 async function openRepo(path){
+  if(openRepoBusy) return false;
+  openRepoBusy=true;
+  const pickBtn=$(".repo-pick");
+  let pickSpinner=null;
+  if(pickBtn){ pickBtn.disabled=true; pickSpinner=document.createElement("span"); pickSpinner.className="spinner"; pickBtn.insertBefore(pickSpinner,pickBtn.firstChild); }
+  Tama.set("thinking");
   try{
     const g = await tinvoke("load_graph", { path });
     BACKEND = g; CUR_REPO = path;
@@ -845,9 +914,15 @@ async function openRepo(path){
     await bisectCtrl.probeOnOpen(path);
     return true;
   }catch(e){ Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); return false; }
+  finally{ openRepoBusy=false; if(pickBtn){ pickBtn.disabled=false; if(pickSpinner) pickSpinner.remove(); } }
 }
+// Called from ~10 different sites (every real mutation across every island)
+// with no shared lock of its own before this guard — two callers firing back
+// to back could overlap two load_graph calls and race on BACKEND/state.
+let reloadGraphBusy=false;
 async function reloadGraph(preserveRow){
-  if(!IN_TAURI||!CUR_REPO) return;
+  if(!IN_TAURI||!CUR_REPO||reloadGraphBusy) return;
+  reloadGraphBusy=true;
   const keepSha = preserveRow && state.selectedRow>=0 && BACKEND && BACKEND.rows[state.selectedRow]
     ? BACKEND.rows[state.selectedRow].sha : null;
   try{
@@ -857,6 +932,7 @@ async function reloadGraph(preserveRow){
       if(row>=0){ select(row); state.scrollTarget=clampScroll(row*layout.rowH-view.cssH/2); dirty=true; } }
     await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
   }catch(e){ Tama.warn("Reload failed — "+e); console.error(e); }
+  finally{ reloadGraphBusy=false; }
 }
 // Sidebar (refs tree + branch menu) is now a Svelte island (src/islands/sidebar).
 // Topbar branch pill stays legacy-owned (a separate future migration) —
@@ -875,14 +951,14 @@ function updateBranchPill(cur,locals){
   }
 }
 async function pickRepo(){
-  if(!IN_TAURI) return;
+  if(!IN_TAURI||openRepoBusy) return;
   let dir=null;
   try{
     const d=window.__TAURI__.dialog;
     dir = (d&&d.open) ? await d.open({directory:true,title:"Open a Git repository"})
                       : await window.__TAURI__.core.invoke("plugin:dialog|open",{options:{directory:true,title:"Open a Git repository"}});
   }catch(e){ console.error(e); Tama.say("Dialog error — "+e); return; }
-  if(dir) openRepo(typeof dir==="string"?dir:(dir.path||String(dir)));
+  if(dir) await openRepo(typeof dir==="string"?dir:(dir.path||String(dir)));
 }
 function bootEmpty(){
   BACKEND=null;

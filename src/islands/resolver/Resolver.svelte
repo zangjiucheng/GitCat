@@ -55,8 +55,11 @@
           <div class="cf-actions">
             <span class="cf-cur">{resolver.current?.path ?? ""}</span>
             <span class="cf-take">
-              <button class="btn" disabled={!resolver.currentLive} onclick={() => resolver.take("ours")}>Take ours</button
-              ><button class="btn" disabled={!resolver.currentLive} onclick={() => resolver.take("theirs")}>Take theirs</button>
+              <button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("ours")}
+                >{#if resolver.activeAction === "ours"}<span class="spinner"></span> Taking…{:else}Take ours{/if}</button
+              ><button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("theirs")}
+                >{#if resolver.activeAction === "theirs"}<span class="spinner"></span> Taking…{:else}Take theirs{/if}</button
+              >
             </span>
           </div>
           <div class="three-way" id="cfThree">
@@ -78,9 +81,13 @@
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" id="conflictAbort" onclick={() => resolver.abort()}>{abortLabel(resolver.op)}</button>
+      <button class="btn ghost" id="conflictAbort" disabled={resolver.busy} onclick={() => resolver.abort()}
+        >{#if resolver.activeAction === "abort"}<span class="spinner"></span> Aborting…{:else}{abortLabel(resolver.op)}{/if}</button
+      >
       {#if resolver.op === "rebase"}
-        <button class="btn ghost" id="conflictSkip" onclick={() => resolver.skip()}>Skip this commit</button>
+        <button class="btn ghost" id="conflictSkip" disabled={resolver.busy} onclick={() => resolver.skip()}
+          >{#if resolver.activeAction === "skip"}<span class="spinner"></span> Skipping…{:else}Skip this commit{/if}</button
+        >
       {/if}
       <span class="cf-remain mut"
         >{resolver.remainingCount
@@ -90,8 +97,9 @@
       <button
         class="btn"
         style="background:var(--accent2);border-color:var(--accent2)"
-        disabled={resolver.remainingCount > 0}
-        onclick={() => resolver.continue()}>Continue &amp; commit</button
+        disabled={resolver.remainingCount > 0 || resolver.busy}
+        onclick={() => resolver.continue()}
+        >{#if resolver.activeAction === "continue"}<span class="spinner"></span> Committing…{:else}Continue &amp; commit{/if}</button
       >
     </div>
   </div>

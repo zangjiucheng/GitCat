@@ -39,6 +39,8 @@ const DEMO: ReflogEntry[] = [
 class ReflogState {
   entries = $state<ReflogEntry[]>([]);
   busy = $state(false); // re-entrancy lock while a restore is in flight
+  loading = $state(false); // refresh() in flight — separate from `busy` (restore)
+  restoringIndex = $state<number | null>(null); // which row's "Restore here" is in flight
   error = $state("");
   demo = $state(false);
 
@@ -57,34 +59,38 @@ class ReflogState {
   // from before a repo was open. Safe to call repeatedly / with repo:null.
   async refresh(repo: string | null): Promise<void> {
     this.repo = repo ?? "";
-
-    if (!IN_TAURI) {
-      // design-mode preview: no backend, seed the canned demo list.
-      this.demo = true;
-      this.error = "";
-      this.entries = DEMO.map((e) => ({ ...e }));
-      return;
-    }
-    this.demo = false;
-
-    if (!this.repo) {
-      this.entries = [];
-      this.error = "";
-      return;
-    }
-
+    this.loading = true;
     try {
-      const r = await commands.reflog(this.repo);
-      if (r.status === "ok") {
-        this.entries = r.data;
+      if (!IN_TAURI) {
+        // design-mode preview: no backend, seed the canned demo list.
+        this.demo = true;
         this.error = "";
-      } else {
-        this.entries = [];
-        this.error = String(r.error ?? "Could not read the reflog.");
+        this.entries = DEMO.map((e) => ({ ...e }));
+        return;
       }
-    } catch (e) {
-      this.entries = [];
-      this.error = "Could not read the reflog — " + e;
+      this.demo = false;
+
+      if (!this.repo) {
+        this.entries = [];
+        this.error = "";
+        return;
+      }
+
+      try {
+        const r = await commands.reflog(this.repo);
+        if (r.status === "ok") {
+          this.entries = r.data;
+          this.error = "";
+        } else {
+          this.entries = [];
+          this.error = String(r.error ?? "Could not read the reflog.");
+        }
+      } catch (e) {
+        this.entries = [];
+        this.error = "Could not read the reflog — " + e;
+      }
+    } finally {
+      this.loading = false;
     }
   }
 
@@ -109,6 +115,7 @@ class ReflogState {
     }
 
     this.busy = true;
+    this.restoringIndex = index;
     try {
       const res = await commands.reflogRestore(this.repo, index);
       if (res.ok) {
@@ -125,6 +132,7 @@ class ReflogState {
       bridge.tama.warn("Restore failed — " + e);
     } finally {
       this.busy = false;
+      this.restoringIndex = null;
     }
   }
 }

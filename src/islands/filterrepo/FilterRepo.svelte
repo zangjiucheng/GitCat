@@ -28,10 +28,10 @@
   }
 
   // Escape closes only a design-mode (browser) wizard — never strand a real,
-  // in-flight rewrite; use the explicit buttons for that.
+  // in-flight rewrite OR restore; use the explicit buttons for that.
   function onKeydown(e: KeyboardEvent) {
     if (e.key !== "Escape" || !filterRepoCtrl.open) return;
-    if (IN_TAURI && filterRepoCtrl.busy) return;
+    if (IN_TAURI && (filterRepoCtrl.busy || filterRepoCtrl.restoreBusy)) return;
     filterRepoCtrl.close();
   }
 </script>
@@ -113,24 +113,30 @@
           {/if}
         {/if}
       {:else if filterRepoCtrl.step === "confirm"}
-        <div class="will-lose">
-          <h5>What this will rewrite</h5>
-          <ul>
-            <li>Rewrites <code>{filterRepoCtrl.preview?.touchedCommits ?? 0}</code> commits on <code>{filterRepoCtrl.preview?.currentBranch || "(detached)"}</code></li>
-            <li>Scope: <code>{filterRepoCtrl.pathList.join(", ")}</code> — {filterRepoCtrl.invert ? "removed, everything else kept" : "KEPT, everything else removed"}</li>
-          </ul>
-        </div>
-        <div class="backup-note">&#128257; Pre-op backup is saved and verified first &#8594; full pre-rewrite state stays recoverable.</div>
-        <div class="confirm-type">
-          <label for="filterRepoConfirm">Type <b class="mono">{REWRITE_PHRASE}</b> to arm the rewrite:</label>
-          <input
-            id="filterRepoConfirm"
-            placeholder={REWRITE_PHRASE}
-            spellcheck="false"
-            autocomplete="off"
-            bind:value={filterRepoCtrl.confirmText}
-          />
-        </div>
+        {#if filterRepoCtrl.busy}
+          <div class="backup-note" style="display:flex;align-items:center;gap:8px">
+            <span class="spinner"></span> Rewriting history&#8230; this can take a while for large repos. Don&#8217;t close GitCat.
+          </div>
+        {:else}
+          <div class="will-lose">
+            <h5>What this will rewrite</h5>
+            <ul>
+              <li>Rewrites <code>{filterRepoCtrl.preview?.touchedCommits ?? 0}</code> commits on <code>{filterRepoCtrl.preview?.currentBranch || "(detached)"}</code></li>
+              <li>Scope: <code>{filterRepoCtrl.pathList.join(", ")}</code> — {filterRepoCtrl.invert ? "removed, everything else kept" : "KEPT, everything else removed"}</li>
+            </ul>
+          </div>
+          <div class="backup-note">&#128257; Pre-op backup is saved and verified first &#8594; full pre-rewrite state stays recoverable.</div>
+          <div class="confirm-type">
+            <label for="filterRepoConfirm">Type <b class="mono">{REWRITE_PHRASE}</b> to arm the rewrite:</label>
+            <input
+              id="filterRepoConfirm"
+              placeholder={REWRITE_PHRASE}
+              spellcheck="false"
+              autocomplete="off"
+              bind:value={filterRepoCtrl.confirmText}
+            />
+          </div>
+        {/if}
       {:else if filterRepoCtrl.step === "result"}
         {#if filterRepoCtrl.result}
           <div class={filterRepoCtrl.result.ok ? "backup-note" : "pl-err"}>
@@ -149,12 +155,14 @@
           {/if}
         {/if}
       {:else if filterRepoCtrl.step === "restore"}
-        {#if filterRepoCtrl.backupsError}
+        {#if filterRepoCtrl.backupsLoading}
+          <div class="mut pl-empty"><span class="spinner"></span> Loading backups&#8230;</div>
+        {:else if filterRepoCtrl.backupsError}
           <div class="pl-err">{filterRepoCtrl.backupsError}</div>
         {:else if filterRepoCtrl.backups.length === 0}
           <div class="mut pl-empty">No backups recorded yet — a backup is created automatically the first time you run filter-repo.</div>
         {:else}
-          <div class="cf-files" id="filterRepoBackupList">
+          <div class="cf-files" id="filterRepoBackupList" class:busy={filterRepoCtrl.restoreBusy}>
             {#each filterRepoCtrl.backups as b (b.id)}
               <div
                 class="cf-file"
@@ -180,10 +188,16 @@
                 placeholder={RESTORE_PHRASE}
                 spellcheck="false"
                 autocomplete="off"
+                disabled={filterRepoCtrl.restoreBusy}
                 bind:value={filterRepoCtrl.restoreConfirmText}
               />
             </div>
           {/if}
+        {/if}
+        {#if filterRepoCtrl.restoreBusy}
+          <div class="backup-note" style="margin-top:10px;display:flex;align-items:center;gap:8px">
+            <span class="spinner"></span> Restoring backup&#8230; don&#8217;t close GitCat.
+          </div>
         {/if}
         {#if filterRepoCtrl.restoreResult}
           <div class={filterRepoCtrl.restoreResult.ok ? "backup-note" : "pl-err"} style="margin-top:10px">
@@ -197,21 +211,27 @@
       {#if filterRepoCtrl.step === "scope"}
         <button class="btn ghost" onclick={() => filterRepoCtrl.close()}>Cancel</button>
         <button class="btn ghost" onclick={() => (filterRepoCtrl.demo ? filterRepoCtrl.openRestoreDemo() : filterRepoCtrl.openRestore())}>Restore from backup&#8230;</button>
-        <button class="btn" disabled={!filterRepoCtrl.canPreview} onclick={() => filterRepoCtrl.runPreview()}>Next: Preview</button>
+        <button class="btn" disabled={!filterRepoCtrl.canPreview} onclick={() => filterRepoCtrl.runPreview()}
+          >{#if filterRepoCtrl.busy}<span class="spinner"></span> Previewing…{:else}Next: Preview{/if}</button
+        >
       {:else if filterRepoCtrl.step === "preview"}
         <button class="btn ghost" onclick={() => filterRepoCtrl.backToScope()}>Back</button>
         <button class="btn" disabled={!filterRepoCtrl.canProceedToConfirm} onclick={() => filterRepoCtrl.proceedToConfirm()}>Next: Confirm</button>
       {:else if filterRepoCtrl.step === "confirm"}
-        <button class="btn ghost" onclick={() => filterRepoCtrl.backToPreview()}>Back</button>
-        <button class="btn danger" disabled={!filterRepoCtrl.canRun} onclick={() => filterRepoCtrl.runFilterRepo()}>Rewrite history</button>
+        <button class="btn ghost" disabled={filterRepoCtrl.busy} onclick={() => filterRepoCtrl.backToPreview()}>Back</button>
+        <button class="btn danger" disabled={!filterRepoCtrl.canRun} onclick={() => filterRepoCtrl.runFilterRepo()}
+          >{#if filterRepoCtrl.busy}<span class="spinner"></span> Rewriting…{:else}Rewrite history{/if}</button
+        >
       {:else if filterRepoCtrl.step === "result"}
         {#if filterRepoCtrl.result && !filterRepoCtrl.result.ok}
           <button class="btn ghost" onclick={() => (filterRepoCtrl.demo ? filterRepoCtrl.openRestoreDemo() : filterRepoCtrl.openRestore())}>Restore from backup&#8230;</button>
         {/if}
         <button class="btn" onclick={() => filterRepoCtrl.close()}>Close</button>
       {:else if filterRepoCtrl.step === "restore"}
-        <button class="btn ghost" onclick={() => filterRepoCtrl.close()}>Close</button>
-        <button class="btn danger" disabled={!filterRepoCtrl.canRestore} onclick={() => filterRepoCtrl.runRestore()}>Restore backup</button>
+        <button class="btn ghost" disabled={filterRepoCtrl.restoreBusy} onclick={() => filterRepoCtrl.close()}>Close</button>
+        <button class="btn danger" disabled={!filterRepoCtrl.canRestore} onclick={() => filterRepoCtrl.runRestore()}
+          >{#if filterRepoCtrl.restoreBusy}<span class="spinner"></span> Restoring…{:else}Restore backup{/if}</button
+        >
       {/if}
     </div>
   </div>

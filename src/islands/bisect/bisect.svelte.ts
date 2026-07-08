@@ -22,6 +22,9 @@ function escHtml(s: string): string {
 class BisectState {
   open = $state(false);
   busy = $state(false);
+  // Which good/bad/skip button `busy` is currently for — lets the modal
+  // spinner sit on the one actually pressed instead of all three at once.
+  activeTerm = $state<BisectTerm | null>(null);
   demo = $state(false);
   vm = $state<BisectStatus | null>(null);
   tamaImg = $state("");
@@ -168,6 +171,7 @@ class BisectState {
     }
     if (this.busy || !this.repo) return;
     this.busy = true;
+    this.activeTerm = term;
     bridge.tama.set("thinking");
     bridge.tama.say("");
     try {
@@ -179,6 +183,7 @@ class BisectState {
       bridge.tama.warn("Bisect mark failed — " + e);
     } finally {
       this.busy = false;
+      this.activeTerm = null;
     }
   }
 

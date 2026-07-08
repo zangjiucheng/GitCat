@@ -51,6 +51,10 @@ class SidebarState {
   snapshots = $state<Snapshot[]>([]);
   filter = $state("");
   busy = $state(false);
+  // Which row `busy` applies to (a local branch name or a full remote ref
+  // like "origin/main") — lets the view spinner-out just the one row being
+  // acted on instead of dimming the whole tree.
+  busyTarget = $state<string | null>(null);
   menu = $state<BranchMenu | null>(null);
   newBranchOpen = $state(false);
   newBranchInput = $state("");
@@ -126,6 +130,7 @@ class SidebarState {
     }
     if (this.busy) return;
     this.busy = true;
+    this.busyTarget = name;
     bridge.tama.set("thinking");
     bridge.tama.say("Checking out " + name + "…");
     try {
@@ -142,6 +147,7 @@ class SidebarState {
       console.error(e);
     } finally {
       this.busy = false;
+      this.busyTarget = null;
     }
   }
 
@@ -167,6 +173,7 @@ class SidebarState {
       return;
     }
     this.busy = true;
+    this.busyTarget = remoteRef;
     bridge.tama.set("thinking");
     bridge.tama.say("Creating " + shortName + " to track " + remoteRef + "…");
     try {
@@ -183,6 +190,7 @@ class SidebarState {
       console.error(e);
     } finally {
       this.busy = false;
+      this.busyTarget = null;
     }
   }
 
@@ -210,20 +218,30 @@ class SidebarState {
       this.cancelNewBranch();
       return;
     }
+    if (this.busy) return;
     const from = this.newBranchFrom || null; // "" (HEAD) -> null, same as create_branch's own default
-    this.newBranchOpen = false;
-    this.newBranchInput = "";
-    this.newBranchFrom = "";
     if (!IN_TAURI) {
+      this.newBranchOpen = false;
+      this.newBranchInput = "";
+      this.newBranchFrom = "";
       bridge.tama.set("hint");
       bridge.tama.say("Created " + name + (from ? " from " + from : "") + " (demo).");
       return;
     }
+    // Keep the form open (disabled, spinnered — see Sidebar.svelte) for the
+    // duration of the request instead of closing it up front: closing before
+    // the await resolves gave zero indication a request was even in flight,
+    // and on failure silently threw away whatever the user had typed.
+    this.busy = true;
+    this.busyTarget = name;
     bridge.tama.set("thinking");
     bridge.tama.say("Creating " + name + "…");
     try {
       const res = await commands.createBranch(bridge.CUR_REPO as unknown as string, name, from, true);
       if (res && res.ok) {
+        this.newBranchOpen = false;
+        this.newBranchInput = "";
+        this.newBranchFrom = "";
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
         bridge.tama.say(res.message || "Branch " + name + " created.", 3200);
@@ -233,6 +251,9 @@ class SidebarState {
     } catch (e) {
       bridge.tama.warn("Create failed — " + e);
       console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
     }
   }
 
@@ -262,6 +283,11 @@ class SidebarState {
       bridge.tama.say("Deleted " + name + " (demo).");
       return;
     }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = name;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Deleting " + name + "…");
     try {
       let res = await commands.deleteBranch(bridge.CUR_REPO as unknown as string, name, force);
       if (res && !res.ok && !force && /not (fully )?merged/i.test(res.message || "")) {
@@ -282,6 +308,9 @@ class SidebarState {
     } catch (e) {
       bridge.tama.warn("Delete failed — " + e);
       console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
     }
   }
 

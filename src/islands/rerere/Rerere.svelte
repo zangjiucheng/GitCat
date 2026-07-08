@@ -17,12 +17,18 @@
     <input type="checkbox" checked={rerereCtrl.enabled} disabled={rerereCtrl.busy || !rerereCtrl.vm} onchange={onToggle} />
     rerere {rerereCtrl.enabled ? "on" : "off"}
   </label>
-  <span class="mut">{rerereCtrl.sourceNote}</span>
+  {#if rerereCtrl.busy}
+    <span class="mut"><span class="spinner"></span> Saving&#8230;</span>
+  {:else}
+    <span class="mut">{rerereCtrl.sourceNote}</span>
+  {/if}
 </div>
 
 {#if !rerereCtrl.vm}
   <div class="rr-row">
-    <span class="mut">{IN_TAURI ? "Open a repository to see recorded resolutions." : "Loading…"}</span>
+    <span class="mut"
+      >{#if rerereCtrl.busy}<span class="spinner"></span> Loading&#8230;{:else if IN_TAURI}Open a repository to see recorded resolutions.{:else}Loading&#8230;{/if}</span
+    >
   </div>
 {:else}
   {#if rerereCtrl.vm.liveConflict}

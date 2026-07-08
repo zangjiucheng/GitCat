@@ -132,6 +132,11 @@ const MSG: Record<ResolverOp, {
 class ResolverState {
   open = $state(false);
   busy = $state(false); // re-entrancy lock (was PICK_BUSY)
+  // Which of the modal's own action buttons is the current `busy` spell for
+  // — "ours"/"theirs" (take), "skip", "abort", or "continue" — so the modal
+  // can spinner/label-swap the ONE button actually clicked instead of every
+  // button reacting identically to one shared flag.
+  activeAction = $state<"ours" | "theirs" | "skip" | "abort" | "continue" | null>(null);
   demo = $state(false);
   sub = $state("");
   backupRef = $state("");
@@ -320,12 +325,18 @@ class ResolverState {
       bridge.tama.say("Took " + side + " for " + f.path + " (demo).");
       return;
     }
+    if (this.busy) return;
+    this.busy = true;
+    this.activeAction = side;
     try {
       const r = await commands.resolveConflictFile(this.repo, f.path, side);
       if (!r.ok) bridge.tama.warn(r.message || "Could not resolve " + f.path);
     } catch (e) {
       bridge.tama.warn("Resolve failed — " + e);
       return;
+    } finally {
+      this.busy = false;
+      this.activeAction = null;
     }
     await this.refresh();
   }
@@ -345,6 +356,7 @@ class ResolverState {
     }
     if (this.busy) return;
     this.busy = true;
+    this.activeAction = "skip";
     try {
       const r = await commands.rebaseSkip(this.repo);
       if (r.state === "conflict") {
@@ -357,6 +369,7 @@ class ResolverState {
       bridge.tama.warn("Skip failed — " + e);
     } finally {
       this.busy = false;
+      this.activeAction = null;
     }
   }
 
@@ -369,6 +382,7 @@ class ResolverState {
     }
     if (this.busy) return;
     this.busy = true;
+    this.activeAction = "abort";
     try {
       const r = await OPS[this.op].abort(this.repo);
       if (r && r.state === "clean") {
@@ -383,6 +397,7 @@ class ResolverState {
       bridge.tama.warn("Abort failed — " + e);
     } finally {
       this.busy = false;
+      this.activeAction = null;
     }
   }
 
@@ -396,6 +411,7 @@ class ResolverState {
     }
     if (this.busy) return;
     this.busy = true;
+    this.activeAction = "continue";
     try {
       const r = await OPS[this.op].continueOp(this.repo);
       if (r.state === "conflict") {
@@ -408,6 +424,7 @@ class ResolverState {
       bridge.tama.warn("Continue failed — " + e);
     } finally {
       this.busy = false;
+      this.activeAction = null;
     }
   }
 

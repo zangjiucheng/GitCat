@@ -111,7 +111,9 @@
           <div class="ic">&#128193;</div>
           {#if setupWizardCtrl.repoPath}
             <div class="t mono">{setupWizardCtrl.repoPath}</div>
-            <div class="sub">{setupWizardCtrl.busy ? "Checking…" : "Click, or drop another folder, to change it"}</div>
+            <div class="sub">
+              {#if setupWizardCtrl.busy}<span class="spinner"></span> Checking&#8230;{:else}Click, or drop another folder, to change it{/if}
+            </div>
           {:else}
             <div class="t">Drop a folder here</div>
             <div class="sub">or click to browse for one</div>
@@ -154,10 +156,14 @@
         <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>Skip setup</button>
         <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.backToPick()}>Back</button>
         <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skipIdentity()}>Not now</button>
-        <button class="btn" disabled={!setupWizardCtrl.canSave} onclick={() => setupWizardCtrl.saveIdentity()}>Save &amp; continue</button>
+        <button class="btn" disabled={!setupWizardCtrl.canSave} onclick={() => setupWizardCtrl.saveIdentity()}
+          >{#if setupWizardCtrl.busy}<span class="spinner"></span> Saving&#8230;{:else}Save &amp; continue{/if}</button
+        >
       {:else if setupWizardCtrl.step === "done"}
         <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>Skip</button>
-        <button class="btn" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.finish()}>Open repository &#8594;</button>
+        <button class="btn" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.finish()}
+          >{#if setupWizardCtrl.busy}<span class="spinner"></span> Opening&#8230;{:else}Open repository &#8594;{/if}</button
+        >
       {/if}
     </div>
   </div>

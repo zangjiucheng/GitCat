@@ -11,8 +11,10 @@
     if (sidebarCtrl.menu && menuEl && !menuEl.contains(e.target as Node)) sidebarCtrl.closeMenu();
     // Outside-click cancels the New Branch form — NOT onblur on the name
     // input, which would fire (and wrongly cancel everything) the instant
-    // focus moves to the "from" <select> sitting right next to it.
-    if (sidebarCtrl.newBranchOpen && newBranchFormEl && !newBranchFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewBranch();
+    // focus moves to the "from" <select> sitting right next to it. Blocked
+    // while busy so the form (and its in-flight spinner) can't be dismissed
+    // out from under a request that's already been sent.
+    if (sidebarCtrl.newBranchOpen && !sidebarCtrl.busy && newBranchFormEl && !newBranchFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewBranch();
   }
 
   $effect(() => {
@@ -21,7 +23,7 @@
 
   function onNewBranchKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") sidebarCtrl.confirmNewBranch();
-    else if (e.key === "Escape") sidebarCtrl.cancelNewBranch();
+    else if (e.key === "Escape" && !sidebarCtrl.busy) sidebarCtrl.cancelNewBranch();
   }
 
   // Safety Manager snapshots before every mutation, so a long session can
@@ -73,21 +75,24 @@
         <div
           class="ref-item"
           class:current={isCur}
+          class:busy={sidebarCtrl.busy}
           data-branch={b.name}
           role="button"
           tabindex="0"
           onclick={(e) => {
-            if ((e.target as HTMLElement).closest(".ref-menu") || isCur) return;
+            if ((e.target as HTMLElement).closest(".ref-menu") || isCur || sidebarCtrl.busy) return;
             sidebarCtrl.checkout(b.name);
           }}
-          onkeydown={(e) => (e.key === "Enter" || e.key === " ") && !isCur && sidebarCtrl.checkout(b.name)}
+          onkeydown={(e) => (e.key === "Enter" || e.key === " ") && !isCur && !sidebarCtrl.busy && sidebarCtrl.checkout(b.name)}
           oncontextmenu={(e) => {
             e.preventDefault();
-            sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement);
+            if (!sidebarCtrl.busy) sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement);
           }}
         >
           <span class="rname">{b.name}</span>
-          {#if b.ahead || b.behind}
+          {#if sidebarCtrl.busyTarget === b.name}
+            <span class="spinner"></span>
+          {:else if b.ahead || b.behind}
             <span class="ab">
               {#if b.ahead}<span class="up">&#8593;{b.ahead}</span>{/if}
               {#if b.behind}<span class="dn">&#8595;{b.behind}</span>{/if}
@@ -97,6 +102,7 @@
             class="ref-menu"
             title="Branch actions"
             aria-label="Branch actions"
+            disabled={sidebarCtrl.busy}
             onclick={(e) => {
               e.stopPropagation();
               sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement);
@@ -105,7 +111,7 @@
         </div>
       {/each}
       {#if sidebarCtrl.newBranchOpen}
-        <div class="nb-form" bind:this={newBranchFormEl}>
+        <div class="nb-form" class:busy={sidebarCtrl.busy} bind:this={newBranchFormEl}>
           <input
             class="nb-input"
             bind:this={newBranchEl}
@@ -113,25 +119,29 @@
             placeholder="branch name&#8230;"
             spellcheck="false"
             autocomplete="off"
+            disabled={sidebarCtrl.busy}
             onkeydown={onNewBranchKeydown}
           />
-          <select class="nb-from" bind:value={sidebarCtrl.newBranchFrom} title="Branch from" onkeydown={onNewBranchKeydown}>
-            <option value="">from HEAD (current)</option>
-            {#if sidebarCtrl.locals.length}
-              <optgroup label="Local">
-                {#each sidebarCtrl.locals as b (b.name)}
-                  <option value={b.name}>{b.name}</option>
-                {/each}
-              </optgroup>
-            {/if}
-            {#if sidebarCtrl.remotes.length}
-              <optgroup label="Remote">
-                {#each sidebarCtrl.remotes as r (r.name)}
-                  <option value={r.name}>{r.name}</option>
-                {/each}
-              </optgroup>
-            {/if}
-          </select>
+          <div class="nb-row">
+            <select class="nb-from" bind:value={sidebarCtrl.newBranchFrom} title="Branch from" disabled={sidebarCtrl.busy} onkeydown={onNewBranchKeydown}>
+              <option value="">from HEAD (current)</option>
+              {#if sidebarCtrl.locals.length}
+                <optgroup label="Local">
+                  {#each sidebarCtrl.locals as b (b.name)}
+                    <option value={b.name}>{b.name}</option>
+                  {/each}
+                </optgroup>
+              {/if}
+              {#if sidebarCtrl.remotes.length}
+                <optgroup label="Remote">
+                  {#each sidebarCtrl.remotes as r (r.name)}
+                    <option value={r.name}>{r.name}</option>
+                  {/each}
+                </optgroup>
+              {/if}
+            </select>
+            {#if sidebarCtrl.busy}<span class="spinner"></span>{/if}
+          </div>
         </div>
       {:else}
         <div class="ref-item new-branch" role="button" tabindex="0" onclick={() => sidebarCtrl.startNewBranch()} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.startNewBranch()}>
@@ -148,13 +158,15 @@
         {#each g.items as r (r.name)}
           <div
             class="ref-item"
+            class:busy={sidebarCtrl.busy}
             role="button"
             tabindex="0"
             data-tip={r.name}
-            onclick={() => sidebarCtrl.checkoutRemote(r.name)}
-            onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.checkoutRemote(r.name)}
+            onclick={() => !sidebarCtrl.busy && sidebarCtrl.checkoutRemote(r.name)}
+            onkeydown={(e) => (e.key === "Enter" || e.key === " ") && !sidebarCtrl.busy && sidebarCtrl.checkoutRemote(r.name)}
           >
             <span class="dot" style="background:var(--l{gi % 7})"></span><span class="rname">{r.name}</span>
+            {#if sidebarCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
           </div>
         {/each}
       {/each}

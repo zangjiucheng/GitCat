@@ -164,6 +164,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-item .rname.nb{color:var(--accent);font-weight:600}
 .ref-item .rname.mut{color:var(--muted)}
 .ref-item.new-branch:hover{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+/* Any row mid-checkout/delete dims and stops accepting clicks — the
+   sidebar-wide `busy` flag covers every row (not just the one acted on)
+   since checkout/delete/create-branch all share one in-flight slot. */
+.ref-item.busy{opacity:.5;pointer-events:none}
+.ref-item .spinner{margin-left:auto;flex:none}
 /* The New Branch inline form — name input + "branch from" picker, stacked
    (the sidebar is too narrow for them side by side). Its own wrapper class
    (not .ref-item) since outside-click-to-cancel needs a stable container
@@ -171,9 +176,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .nb-form{display:flex;flex-direction:column;gap:5px;padding:6px 8px 8px 24px}
 .nb-form .nb-input{background:transparent;border:none;border-bottom:1px solid var(--accent);
   color:var(--text);font:inherit;font-size:12px;padding:2px 0;outline:none}
+.nb-form .nb-row{display:flex;align-items:center;gap:6px}
 .nb-form .nb-from{font:inherit;font-size:11px;color:var(--muted);background:var(--bg);
-  border:1px solid var(--border);border-radius:5px;padding:3px 5px;outline:none;max-width:100%}
+  border:1px solid var(--border);border-radius:5px;padding:3px 5px;outline:none;max-width:100%;flex:1;min-width:0}
 .nb-form .nb-from:focus{border-color:var(--accent);color:var(--text)}
+.nb-form.busy .nb-input{opacity:.6}
 /* Snapshots — 2-line rows (subject + sha/time) instead of sha+time alone, so
    you can actually tell WHAT state each snapshot captured without opening
    it. Its own class (not .ref-item) since it needs an internal flex-column
@@ -375,6 +382,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cp-ghost.merge .g-dot{background:var(--accent2)}
 .cp-ghost.merge.illegal{border-color:var(--danger);color:var(--danger)}
 .cp-ghost.merge.illegal .g-dot{background:var(--danger)}
+.cp-ghost .spinner{display:none}
+.cp-ghost.pending .g-dot{display:none}
+.cp-ghost.pending .spinner{display:inline-block}
 
 /* ============================== DETAIL PANEL ============================== */
 .detail{grid-area:detail;min-height:0;overflow:auto;background:var(--panel);border-left:1px solid var(--border);position:relative}
@@ -571,6 +581,16 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .modal.resolver{width:min(880px,96vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column}
 .modal.resolver .modal-body{overflow:auto;flex:1}
 .btn[disabled]{opacity:.42;cursor:not-allowed;box-shadow:none}
+/* Shared loading-state building block, applied consistently across every
+   async operation in the app — most previously signaled "in progress" only
+   via Tama's easy-to-miss corner mascot state, or nothing at all. CSS-only
+   (no image asset), inherits color via currentColor so it matches whatever
+   button/text/badge it sits inside. */
+@keyframes gc-spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block;width:12px;height:12px;flex:none;
+  border:2px solid currentColor;border-right-color:transparent;border-radius:50%;
+  animation:gc-spin .6s linear infinite;opacity:.75;vertical-align:-2px}
+.btn .spinner,.tb-btn .spinner{margin-right:1px}
 .resolver .modal-foot #conflictAbort{margin-right:auto}
 .cf-layout{display:grid;grid-template-columns:190px 1fr;gap:12px}
 .cf-files{display:flex;flex-direction:column;gap:2px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:var(--r-panel);padding:4px;background:var(--bg)}
@@ -580,6 +600,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cf-file .cf-mk{color:var(--warning);flex:none}
 .cf-file.done .cf-mk{color:var(--accent2)}
 .cf-file.done .cf-name{color:var(--muted);text-decoration:line-through}
+/* filter-repo's backup list, while a restore of one of them is in flight —
+   blocks picking a DIFFERENT backup mid-restore. */
+.cf-files.busy{opacity:.55;pointer-events:none}
 .cf-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cf-main{min-width:0;display:flex;flex-direction:column;gap:8px}
 .cf-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}

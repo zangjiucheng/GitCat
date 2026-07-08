@@ -42,17 +42,19 @@
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" id="bzQuit" onclick={() => bisectCtrl.reset()}
-        >{bisectCtrl.done ? "Reset — restore HEAD" : "Quit & reset"}</button
+      <button class="btn ghost" id="bzQuit" disabled={bisectCtrl.busy} onclick={() => bisectCtrl.reset()}
+        >{#if bisectCtrl.busy && !bisectCtrl.activeTerm}<span class="spinner"></span> Resetting…{:else}{bisectCtrl.done
+            ? "Reset — restore HEAD"
+            : "Quit & reset"}{/if}</button
       >
       {#if !bisectCtrl.done}
         <span class="bz-mark-group">
           <button class="btn bz-good" disabled={bisectCtrl.marksDisabled} onclick={() => bisectCtrl.mark("good")}
-            >&#10003; Good</button
+            >{#if bisectCtrl.activeTerm === "good"}<span class="spinner"></span>{:else}&#10003; Good{/if}</button
           ><button class="btn bz-skip" disabled={bisectCtrl.marksDisabled} onclick={() => bisectCtrl.mark("skip")}
-            >&#8631; Skip</button
+            >{#if bisectCtrl.activeTerm === "skip"}<span class="spinner"></span>{:else}&#8631; Skip{/if}</button
           ><button class="btn bz-bad" disabled={bisectCtrl.marksDisabled} onclick={() => bisectCtrl.mark("bad")}
-            >&#10007; Bad</button
+            >{#if bisectCtrl.activeTerm === "bad"}<span class="spinner"></span>{:else}&#10007; Bad{/if}</button
           >
         </span>
       {/if}

@@ -112,29 +112,38 @@ class SetupWizardState {
   async pickDirectory() {
     if (this.busy) return;
     this.pathError = "";
-
-    if (this.demo) {
-      this.repoPath = DEMO_PATH;
-      await this.validate();
-      return;
-    }
-
-    let dir: unknown = null;
+    // `busy` now covers the NATIVE DIALOG itself, not just the validate() call
+    // after it resolves — previously the drop-zone's busy state and the
+    // Skip/Back buttons' disabled bindings did nothing while the OS folder
+    // picker was on screen, so a user could click Back mid-dialog and then
+    // get forced back to "pick" anyway once the dialog resolved.
+    this.busy = true;
     try {
-      const w = window as unknown as { __TAURI__?: any };
-      const d = w.__TAURI__?.dialog;
-      dir = d?.open
-        ? await d.open({ directory: true, title: "Open a Git repository" })
-        : await w.__TAURI__.core.invoke("plugin:dialog|open", {
-            options: { directory: true, title: "Open a Git repository" },
-          });
-    } catch (e) {
-      this.pathError = "Dialog error — " + e;
-      return;
+      if (this.demo) {
+        this.repoPath = DEMO_PATH;
+        await this.validate();
+        return;
+      }
+
+      let dir: unknown = null;
+      try {
+        const w = window as unknown as { __TAURI__?: any };
+        const d = w.__TAURI__?.dialog;
+        dir = d?.open
+          ? await d.open({ directory: true, title: "Open a Git repository" })
+          : await w.__TAURI__.core.invoke("plugin:dialog|open", {
+              options: { directory: true, title: "Open a Git repository" },
+            });
+      } catch (e) {
+        this.pathError = "Dialog error — " + e;
+        return;
+      }
+      if (!dir) return; // user cancelled the native picker — stay on "pick"
+      this.repoPath = typeof dir === "string" ? dir : (dir as any).path || String(dir);
+      await this.validate();
+    } finally {
+      this.busy = false;
     }
-    if (!dir) return; // user cancelled the native picker — stay on "pick"
-    this.repoPath = typeof dir === "string" ? dir : (dir as any).path || String(dir);
-    await this.validate();
   }
 
   // ── drag-and-drop onto the pick-step drop zone ──────────────────────────
@@ -179,12 +188,20 @@ class SetupWizardState {
     if (this.busy) return;
     this.pathError = "";
     this.repoPath = path;
-    await this.validate();
+    this.busy = true;
+    try {
+      await this.validate();
+    } finally {
+      this.busy = false;
+    }
   }
 
+  // Re-entrancy is the CALLER's job (pickDirectory/acceptDroppedPath both wrap
+  // their whole operation — dialog included — in busy=true/finally busy=false)
+  // so this stays a plain helper with no lock of its own; it would otherwise
+  // conflict with a caller that (correctly) sets busy before calling in.
   private async validate() {
     if (!this.repoPath) return;
-    this.busy = true;
     this.pathError = "";
     try {
       if (this.demo) {
@@ -215,8 +232,6 @@ class SetupWizardState {
       // message. Surface it as pathError like every other pick-step failure.
       this.identity = null;
       this.pathError = "That doesn't look like a git repository — " + e;
-    } finally {
-      this.busy = false;
     }
   }
 
@@ -256,7 +271,10 @@ class SetupWizardState {
     if (this.busy || !this.repoPath) return;
     this.busy = true;
     this.finishError = "";
-    this.tamaImg = bridge.TAMA_IMG.happy;
+    // "thinking" while the graph actually loads — was set to the SAME "happy"
+    // image finish() ends on for success, so there was no visual difference
+    // between "still opening" and "done" for however long load_graph took.
+    this.tamaImg = bridge.TAMA_IMG.thinking;
     if (this.demo) {
       // Never call bridge.openRepo in demo mode: there is no real Tauri
       // backend to hit, and tinvoke has no IN_TAURI guard of its own.
