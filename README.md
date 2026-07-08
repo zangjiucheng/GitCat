@@ -8,6 +8,7 @@ Tauri 2 + Rust + Svelte 5, with a warm "Lamplight / Cozy Terminal" identity — 
 
 [![CI](https://github.com/zangjiucheng/GitCat/actions/workflows/ci.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/ci.yml)
 [![Release](https://github.com/zangjiucheng/GitCat/actions/workflows/release.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/release.yml)
+[![License: GPL v3](https://img.shields.io/github/license/zangjiucheng/GitCat)](LICENSE)
 
 ![GitCat screenshot](docs/screenshot.png)
 
@@ -25,7 +26,10 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 - ⌘K command palette — fuzzy search across commits and refs
 
 **Everyday git, made safe**
-- Sidebar: branches / remotes / tags / stashes / snapshots, checkout, create/delete branches, branch context menu
+- Sidebar: branches / remotes / tags / snapshots, resizable, with a branch context menu
+- Checkout a local branch, or a remote one — checking out `origin/feature-x` creates and switches to a local tracking branch automatically
+- New Branch lets you pick the start point (any local/remote ref), not just HEAD
+- Fetch / Pull (fast-forward only) / Push, from the top bar or the native Repository menu
 - Drag-and-drop cherry-pick and merge (shift-drag) onto HEAD, with a real 3-way conflict resolver
 - Linear rebase onto any branch — including multi-commit conflict sequences and mid-sequence skip
 - `git bisect` — mark good/bad/skip, live canvas cues for the narrowing range, automatic first-bad detection
@@ -37,7 +41,8 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 - rerere status/toggle panel
 
 **Setup + polish**
-- First-run setup wizard: pick a repo, check/fix its git identity, jump into the graph
+- First-run setup wizard: pick a repo (click, or drag a folder in), check/fix its git identity, jump into the graph — shown once, not on every launch
+- A real native app menu (File / Repository / Edit / View / Window / Help) and About panel, not just a default OS stub
 - Dark theme by default (light available via the toggle)
 - Eight Tama expressions reacting to what's actually happening — searching, thinking, celebrating, or genuinely alarmed
 
@@ -75,3 +80,9 @@ cargo test          # run the Rust test suite
 - **Rust core** (`src-tauri/`) — [git2](https://github.com/rust-lang/git2-rs) for reads, the `git` CLI for writes (every mutation snapshots first), [tauri-specta](https://github.com/specta-rs/tauri-specta) for a fully typed IPC boundary auto-generated into `src/ipc/bindings.ts`
 - **Frontend** — Svelte 5 "islands" (one per feature: resolver, bisect, reflog, rerere, plumbing, filter-repo, setup wizard, sidebar, ⌘K, commit detail) layered over a hand-tuned vanilla canvas for the commit graph itself
 - **CI/CD** — GitHub Actions: `cargo test` + `pnpm test` on every push/PR, and a 6-platform release matrix (macOS/Linux/Windows × arm64/x86_64) on tagged releases
+
+## License
+
+GitCat is free software, licensed under the [GNU General Public License v3.0 or later](LICENSE).
+
+Copyright (C) 2026 Jiucheng Zang
