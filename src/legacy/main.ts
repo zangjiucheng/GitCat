@@ -754,6 +754,11 @@ async function openRepo(path){
     loadGraph(g.n);
     await sidebarCtrl.refresh(CUR_REPO);
     await Safety.refresh();
+    // Live refresh: watch this repo's git-dir for changes made outside the
+    // app (terminal commits, another tool, a background fetch) — see
+    // src-tauri/src/watch.rs. Best-effort: a watch failure shouldn't block
+    // opening the repo, the app still works fine without live refresh.
+    tinvoke("watch_repo",{path}).catch(e=>console.error("watch_repo",e));
     Tama.set("hint");
     Tama.say("Loaded "+g.n.toLocaleString()+" commits in "+(g.readMs+g.layoutMs).toFixed(0)+" ms. にゃ〜",4200);
     // Runs after loadGraph() (which resets the local bisect row-model) so a
@@ -807,6 +812,7 @@ function bootEmpty(){
   BACKEND=null;
   CUR_REPO=null;
   Safety.snaps=[]; Safety.updateBadge();
+  if(IN_TAURI) tinvoke("unwatch_repo").catch(e=>console.error("unwatch_repo",e));
   sidebarCtrl.reset();
   G={N:0,commitLane:[],commitColor:[],isMerge:[],gapStart:[0],gapTop:[],gapBot:[],gapColor:[],refs:[],snapRows:[],snapTs:{}};
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;

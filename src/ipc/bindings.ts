@@ -438,6 +438,17 @@ async getGitIdentity(path: string) : Promise<Result<GitIdentity, string>> {
  */
 async setGitIdentity(path: string, name: string, email: string) : Promise<WriteResult> {
     return await TAURI_INVOKE("set_git_identity", { path, name, email });
+},
+async watchRepo(path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("watch_repo", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async unwatchRepo() : Promise<void> {
+    await TAURI_INVOKE("unwatch_repo");
 }
 }
 

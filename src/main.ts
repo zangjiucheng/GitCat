@@ -101,4 +101,20 @@ if (IN_TAURI) {
         break;
     }
   });
+
+  // Live refresh: the backend watches the open repo's git-dir and emits this
+  // when something changes it from OUTSIDE the app (a terminal commit,
+  // another tool, a background fetch, a hook) — see src-tauri/src/watch.rs.
+  // Re-entrancy guarded so a burst of external activity can't queue up
+  // overlapping reloads.
+  let repoChangeReloadInFlight = false;
+  w.__TAURI__?.event.listen("repo-changed", async () => {
+    if (repoChangeReloadInFlight || !bridge.CUR_REPO) return;
+    repoChangeReloadInFlight = true;
+    try {
+      await bridge.reloadGraph(true);
+    } finally {
+      repoChangeReloadInFlight = false;
+    }
+  });
 }

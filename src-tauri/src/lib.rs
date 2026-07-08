@@ -16,6 +16,7 @@ pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
+pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
 
 use tauri_specta::{collect_commands, Builder};
 
@@ -77,6 +78,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // Setup wizard: repo-local git identity check + fix (never touches global config)
         identity::get_git_identity,
         identity::set_git_identity,
+        // Live refresh: watch/unwatch the open repo's git-dir for external changes
+        watch::watch_repo,
+        watch::unwatch_repo,
     ])
 }
 
@@ -96,6 +100,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(watch::WatchState::default())
         // invoke_handler is the tauri-specta equivalent of generate_handler! —
         // command runtime behavior (Ok resolves / Err rejects) is unchanged.
         .invoke_handler(builder.invoke_handler())
