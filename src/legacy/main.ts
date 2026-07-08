@@ -673,13 +673,40 @@ $("#stressBtn").addEventListener("click",e=>{state.stress=!state.stress;e.target
 // there; zoom buttons and the cherry-pick -x toggle stay visible always.
 if(!import.meta.env.DEV) $("#perfDevTools").style.display="none";
 
-/* ---- snapshot ribbon: fixed recent ticks · hover ghost · click rewind ---- */
-const RIBBON_TICKS=[0.10,0.24,0.40,0.58,0.74,0.88]; // fractional Y of recent snapshots
+/* ---- snapshot ribbon: recent ticks positioned by ACTUAL elapsed time ----
+   Ticks used to sit at fixed equal-interval positions regardless of when
+   each snapshot actually happened — a burst of five snapshots in the last
+   minute and a sixth from three days ago looked exactly as "evenly spread
+   out" as six snapshots one hour apart each. Real usage is bursty (lots of
+   mutations in one session, then a long gap), so equal spacing carried no
+   information about *when* things happened at all.
+   ribbonTickFracs() log-compresses elapsed time (log1p, not linear) so a
+   recent burst still spreads out near the top while a long tail of older
+   snapshots compresses toward the bottom instead of being pushed off
+   entirely — then walks top-to-bottom enforcing a minimum pixel gap, so
+   same-second (or very close) snapshots never visually overlap. Also lifts
+   the old hard cap of 8 to whatever actually fits at that minimum gap, so a
+   taller window genuinely shows more. */
+const RIBBON_MIN_TICK_PX=7, RIBBON_TOP_FRAC=0.08, RIBBON_BOT_FRAC=0.92;
+function ribbonTickFracs(agesAscending,H){
+  const maxAge=Math.max(1,...agesAscending);
+  const span=RIBBON_BOT_FRAC-RIBBON_TOP_FRAC;
+  const fracs=agesAscending.map(age=>RIBBON_TOP_FRAC+span*(Math.log1p(Math.max(0,age))/Math.log1p(maxAge)));
+  const minGap=RIBBON_MIN_TICK_PX/H;
+  for(let i=1;i<fracs.length;i++){ if(fracs[i]<fracs[i-1]+minGap) fracs[i]=fracs[i-1]+minGap; }
+  return fracs;
+}
 function positionTicks(){ const rb=$("#ribbon"); $$(".tick",rb).forEach(t=>t.remove());
-  const H=rb.clientHeight;
+  const H=rb.clientHeight; if(!H) return;
+  // Cap sized so the worst case (every tick pushed to the minimum gap)
+  // still fits the usable band — scales with window height instead of a
+  // flat number that ignored how much room was actually available.
+  const cap=Math.max(6,Math.floor(((RIBBON_BOT_FRAC-RIBBON_TOP_FRAC)*H)/RIBBON_MIN_TICK_PX));
   if(IN_TAURI){
-    const snaps=Safety.snaps.slice(0,8); if(!snaps.length) return;
-    snaps.forEach((s,i)=>{ const f=snaps.length>1 ? 0.08+0.84*i/(snaps.length-1) : 0.12;
+    const snaps=Safety.snaps.slice(0,cap); if(!snaps.length) return;
+    const now=Date.now()/1000;
+    const fracs=ribbonTickFracs(snaps.map(s=>Math.max(0,now-s.ts)),H);
+    snaps.forEach((s,i)=>{ const f=fracs[i];
       const ago=relTime(s.ts).replace(" ago",""), sha=(s.sha||"").slice(0,7), sub=(s.subject||"snapshot");
       const t=document.createElement("div"); t.className="tick"; t.style.top=(f*H)+"px";
       t.title="snapshot "+ago+" ago · "+sha+" "+sub.slice(0,40);
@@ -689,8 +716,15 @@ function positionTicks(){ const rb=$("#ribbon"); $$(".tick",rb).forEach(t=>t.rem
       rb.appendChild(t); });
     return;
   }
-  RIBBON_TICKS.forEach((f,i)=>{ const t=document.createElement("div"); t.className="tick"; t.style.top=(f*H)+"px";
-    t.title="snapshot "+(Safety.count-i)+" — hover to preview, click to rewind";
+  // Design-mode preview: synthetic snapshots at deliberately UNEVEN ages
+  // (seconds through days) so the log-scale compression is visible without
+  // a real repo — the old flat equal-interval array couldn't demonstrate
+  // this at all.
+  const demoAges=[15,55,150,420,1200,3600,10800,32400,86400,216000,450000].slice(0,cap);
+  const fracs=ribbonTickFracs(demoAges,H);
+  demoAges.forEach((age,i)=>{ const f=fracs[i];
+    const t=document.createElement("div"); t.className="tick"; t.style.top=(f*H)+"px";
+    t.title="snapshot "+relTime(Date.now()/1000-age)+" — hover to preview, click to rewind";
     t.addEventListener("mouseenter",()=>{const d=$("#deltaReadout");d.textContent="main −"+(i+1)+" · HEAD moved · "+(1+i%3)+" refs changed";d.classList.add("show");});
     t.addEventListener("mouseleave",()=>$("#deltaReadout").classList.remove("show"));
     t.addEventListener("click",()=>{pulseTick(i);Tama.event("undo.performed",{hash:hhex(i+2)});});
