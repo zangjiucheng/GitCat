@@ -160,10 +160,16 @@
 {#if sidebarCtrl.menu}
   {@const menu = sidebarCtrl.menu}
   <div class="ref-pop" bind:this={menuEl} style="left:{menu.x}px;top:{menu.y}px">
-    <button disabled={menu.isCurrent} onclick={() => { sidebarCtrl.closeMenu(); sidebarCtrl.checkout(menu.name); }}>Checkout</button>
+    <!-- Capture menu.name into a local BEFORE closeMenu() — closeMenu() nulls
+         sidebarCtrl.menu, and reading menu.name afterward (closeMenu() first,
+         action call second) threw "Cannot read properties of null" on every
+         one of these three actions since the very first version of this
+         island: `menu` above isn't a frozen snapshot, it re-derives from the
+         live sidebarCtrl.menu state on each read. -->
+    <button disabled={menu.isCurrent} onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.checkout(name); }}>Checkout</button>
     {#if !menu.isCurrent}
-      <button onclick={() => { sidebarCtrl.closeMenu(); sidebarCtrl.rebaseOnto(menu.name); }}>Rebase current branch onto here</button>
+      <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.rebaseOnto(name); }}>Rebase current branch onto here</button>
     {/if}
-    <button class="danger" disabled={menu.isCurrent} onclick={() => { sidebarCtrl.closeMenu(); sidebarCtrl.deleteBranch(menu.name); }}>Delete&#8230;</button>
+    <button class="danger" disabled={menu.isCurrent} onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.deleteBranch(name); }}>Delete&#8230;</button>
   </div>
 {/if}
