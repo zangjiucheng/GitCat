@@ -394,16 +394,21 @@ async function mergeCommit(src,dst){
       she wakes and what one sentence she says.
    ============================================================ */
 const Safety={ count:214, lastAt:performance.now()-2*60*1000, snaps:[], pad(n){return String(n).padStart(2,"0");},
+  // Single point that writes #undoCount AND toggles #undoBtn's disabled
+  // state — there's genuinely nothing for Undo to do at zero snapshots
+  // (globalUndo mirrors this same zero-check for the ⌘Z shortcut, which
+  // bypasses a disabled button entirely).
+  updateBadge(){ const n=IN_TAURI?this.snaps.length:this.count; $("#undoCount").textContent=n; $("#undoBtn").disabled=n===0; },
   seal(){ if(IN_TAURI){ const s=this.snaps[0]; return { ref: s?s.ref:"refs/gitgui/backup/-", hash: s?s.sha:"" }; }
     this.count++; this.lastAt=performance.now();
     const d=new Date();
     const ts=d.getFullYear()+"-"+this.pad(d.getMonth()+1)+"-"+this.pad(d.getDate())+"T"+this.pad(d.getHours())+"-"+this.pad(d.getMinutes())+"-"+this.pad(d.getSeconds());
-    $("#undoCount").textContent=this.count;
+    this.updateBadge();
     return {ref:"refs/gitgui/backup/"+ts, hash:hhex(this.count*7+3)}; },
   async refresh(){ if(!IN_TAURI||!CUR_REPO) return;
     try{ const s=await tinvoke("list_snapshots",{path:CUR_REPO});
       this.snaps=Array.isArray(s)?s.slice():[];
-      $("#undoCount").textContent=this.snaps.length;
+      this.updateBadge();
       Tama._tele(); positionTicks(); sidebarCtrl.setSnapshots(this.snaps);
     }catch(e){ console.error("list_snapshots",e); } },
   teleCount(){ return IN_TAURI ? this.snaps.length : this.count; },
@@ -514,6 +519,35 @@ function ensureDrawerOpen(pane){ app.classList.add("drawer-open");
 $$(".drawer-tabs .dt").forEach(t=>t.addEventListener("click",()=>ensureDrawerOpen(t.dataset.pane)));
 $("#drawerToggle").addEventListener("click",()=>{ app.classList.toggle("drawer-open"); requestAnimationFrame(()=>resize()); });
 
+// sidebar/detail drag-to-resize — live-updates the .app grid's --sidebar-w/
+// --detail-w custom properties (see the .app rule); the canvas's own
+// ResizeObserver (below, on canvasWrap) already reacts to the resulting
+// width change, so no separate resize() call is needed here.
+function wireResizeHandle(handle,cssVar,min,max,fromRight){
+  if(!handle) return;
+  let startX=0,startW=0;
+  const root=document.documentElement;
+  function onMove(e){
+    const dx=e.clientX-startX, raw=fromRight?startW-dx:startW+dx;
+    root.style.setProperty(cssVar, Math.max(min,Math.min(max,raw))+"px");
+  }
+  function onUp(){
+    document.removeEventListener("pointermove",onMove);
+    document.removeEventListener("pointerup",onUp);
+    handle.classList.remove("active"); root.classList.remove("resizing");
+  }
+  handle.addEventListener("pointerdown",e=>{
+    e.preventDefault();
+    startX=e.clientX;
+    startW=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||handle.parentElement.getBoundingClientRect().width;
+    handle.classList.add("active"); root.classList.add("resizing");
+    document.addEventListener("pointermove",onMove);
+    document.addEventListener("pointerup",onUp);
+  });
+}
+wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false);
+wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true);
+
 // theme
 function applyTheme(name){ document.documentElement.setAttribute("data-theme",name); readTheme(); }
 $("#themeBtn").addEventListener("click",()=>{
@@ -532,6 +566,10 @@ async function globalUndo(){
   if(!IN_TAURI){ Tama.event("undo.performed",{hash:hhex(1)}); pulseTick(0);
     cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>',TAMA_IMG.confident); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first — there's nothing to undo yet."); return; }
+  // #undoBtn is disabled whenever Safety.snaps is empty (see updateBadge()),
+  // but ⌘Z bypasses a disabled button entirely — mirror the same check here
+  // so the shortcut doesn't round-trip to the backend for a guaranteed no-op.
+  if(!Safety.snaps.length){ Tama.warn("Nothing to undo yet — no snapshots have been taken."); return; }
   if(undoBusy) return; undoBusy=true;
   try{
     const res=await tinvoke("undo_last",{path:CUR_REPO});
@@ -722,7 +760,7 @@ async function pickRepo(){
 function bootEmpty(){
   BACKEND=null;
   CUR_REPO=null;
-  $("#undoCount").textContent="0"; Safety.snaps=[];
+  Safety.snaps=[]; Safety.updateBadge();
   sidebarCtrl.reset();
   G={N:0,commitLane:[],commitColor:[],isMerge:[],gapStart:[0],gapTop:[],gapBot:[],gapColor:[],refs:[],snapRows:[],snapTs:{}};
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
