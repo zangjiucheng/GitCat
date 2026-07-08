@@ -456,6 +456,24 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .backup-note{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;color:var(--muted);
   background:color-mix(in srgb,var(--accent2) 10%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 30%,transparent);border-radius:var(--r-control);padding:8px 10px}
 .backup-note code{font-family:var(--mono);color:var(--accent2)}
+/* Prominent "nothing chosen yet" prompt for a modal step whose body would
+   otherwise render empty (e.g. the setup wizard's "pick a folder" step before
+   a folder is chosen) — a dashed accent-colored call-to-action box instead of
+   blank space, so the step still has visual weight while waiting on the user. */
+.modal-cta{border:1.5px dashed color-mix(in srgb,var(--accent) 45%,var(--border));border-radius:var(--r-panel);padding:26px 18px;text-align:center}
+.modal-cta .ic{font-size:30px;line-height:1;margin-bottom:10px}
+.modal-cta .t{font-size:13.5px;font-weight:600;color:var(--text);margin-bottom:5px}
+.modal-cta .sub{font-size:12px;color:var(--muted);line-height:1.6;max-width:320px;margin:0 auto}
+.modal-cta .sub b{color:var(--accent)}
+/* Scannable numbered step preview (setup wizard's welcome screen) — replaces
+   a single dense sentence with real visual weight per step. */
+.modal-steplist{display:flex;flex-direction:column;gap:12px}
+.modal-steplist .row{display:flex;align-items:flex-start;gap:12px}
+.modal-steplist .n{flex:none;width:24px;height:24px;border-radius:50%;margin-top:1px;
+  background:color-mix(in srgb,var(--accent2) 16%,var(--panel));border:1px solid color-mix(in srgb,var(--accent2) 40%,var(--border));
+  color:var(--accent2);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.modal-steplist .txt{font-size:13px;color:var(--text);line-height:1.4}
+.modal-steplist .txt .mut{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
 .confirm-type{margin-top:14px}
 .confirm-type label{font-size:12px;color:var(--muted)}
 .confirm-type input{width:100%;margin-top:5px;padding:8px 10px;font-family:var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--text)}
@@ -499,6 +517,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .modal.bisecter{width:min(560px,96vw)}
 .bisecter .modal-head{background:color-mix(in srgb,var(--accent) 10%,var(--panel))}
 .bisecter .modal-head .tama{filter:drop-shadow(0 0 6px color-mix(in srgb,var(--accent) 55%,transparent))}
+/* ---------- Setup wizard: welcoming, not alarming — .modal-head/.msteps'
+   base styling is tuned for the (genuinely dangerous) filter-repo wizard, so
+   every other modal overrides it with its own semantic color; this one was
+   missing that override and inherited the danger-red tint by mistake. ---------- */
+.setupwizard .modal-head{background:color-mix(in srgb,var(--accent2) 10%,var(--panel))}
+.setupwizard .modal-head .tama{filter:drop-shadow(0 0 6px color-mix(in srgb,var(--accent2) 55%,transparent))}
+.setupwizard .msteps .s.done{background:var(--accent2)}
+.setupwizard .msteps .s.now{background:var(--accent)}
 .bz-prog{display:flex;align-items:center;gap:10px}
 .bz-track{flex:1;height:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-pill);overflow:hidden}
 .bz-track i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}

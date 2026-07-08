@@ -2,10 +2,18 @@
   // Setup wizard — view. Deliberately NO <style> block: reuses the existing
   // global .scrim/.modal/.msteps/.confirm-type/.pl-err/.pl-kv/.hero-hint
   // classes (see index.html / FilterRepo.svelte), so this looks consistent
-  // with the rest of the app's chrome. Mounted straight to document.body
-  // (like Resolver/Bisect/FilterRepo), as an overlay on top of whatever
-  // legacy/main.ts already rendered underneath (the hero card, or the demo
-  // graph) — Esc/Skip just reveals what's already there.
+  // with the rest of the app's chrome — plus two new shared classes this
+  // wizard motivated: .modal-cta (a prominent "nothing chosen yet" prompt for
+  // the pick step, instead of empty space) and .modal-steplist (the welcome
+  // step's numbered preview). The wrapper carries its own `.setupwizard`
+  // modifier class (see index.html) so it gets an accent2 header/step-dot
+  // tint instead of .modal-head's base danger-red, which is tuned for the
+  // filter-repo wizard — every OTHER modal already overrides that per its own
+  // tone (.resolver = warning, .bisecter = accent); this one had been missing
+  // that override. Mounted straight to document.body (like Resolver/Bisect/
+  // FilterRepo), as an overlay on top of whatever legacy/main.ts already
+  // rendered underneath (the hero card, or the demo graph) — Esc/Skip just
+  // reveals what's already there.
   import { setupWizardCtrl, type SetupWizardStep } from "./setupwizard.svelte.ts";
 
   const STEP_ORDER: SetupWizardStep[] = ["welcome", "pick", "identity", "done"];
@@ -24,7 +32,7 @@
 <svelte:window on:keydown={onKeydown} />
 
 <div class="scrim" id="setupWizardScrim" class:on={setupWizardCtrl.open}>
-  <div class="modal">
+  <div class="modal setupwizard">
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" src={setupWizardCtrl.tamaImg} alt="Tama" /></div>
       <div>
@@ -51,10 +59,29 @@
 
     <div class="modal-body">
       {#if setupWizardCtrl.step === "welcome"}
-        <p class="mut">Three quick steps: pick a repository, confirm who you are (only for that repo), then jump into the graph.</p>
+        <div class="modal-steplist">
+          <div class="row">
+            <span class="n">1</span>
+            <span class="txt">Pick a repository<span class="mut">Point me at a folder on your machine</span></span>
+          </div>
+          <div class="row">
+            <span class="n">2</span>
+            <span class="txt">Confirm who you are<span class="mut">Only for that repo — your global git identity is never touched</span></span>
+          </div>
+          <div class="row">
+            <span class="n">3</span>
+            <span class="txt">Jump into the graph<span class="mut">You're ready to go</span></span>
+          </div>
+        </div>
       {:else if setupWizardCtrl.step === "pick"}
         {#if setupWizardCtrl.repoPath}
           <div class="pl-kv"><div><span class="mut">selected</span> <span class="mono">{setupWizardCtrl.repoPath}</span></div></div>
+        {:else}
+          <div class="modal-cta">
+            <div class="ic">&#128193;</div>
+            <div class="t">No folder selected yet</div>
+            <div class="sub">Click <b>Choose folder&#8230;</b> below to pick the repository you want to work in.</div>
+          </div>
         {/if}
         {#if setupWizardCtrl.pathError}
           <div class="pl-err" style="margin-top:10px">{setupWizardCtrl.pathError}</div>
