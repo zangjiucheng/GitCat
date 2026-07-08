@@ -66,7 +66,7 @@
   <span class="mag">&#9906;</span>
   <input id="refFilter" placeholder="Filter refs&#8230;" spellcheck="false" bind:value={sidebarCtrl.filter} />
 </div>
-<div class="ref-scroll" id="refScroll">
+<div class="ref-scroll" id="refScroll" data-vimnav-list>
   <details class="ref-group" open>
     <summary><span class="tw">&#9656;</span>Local<span class="count" id="cntLocal">{sidebarCtrl.locals.length}</span></summary>
     <div class="ref-list" id="refLocal">

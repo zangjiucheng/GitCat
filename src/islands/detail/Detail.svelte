@@ -89,7 +89,7 @@
         <span class="mut mono" style="font-size:11px">{s.files} file{s.files === 1 ? "" : "s"}{s.truncated ? " (capped)" : ""}</span>
       {/if}
     </div>
-    <div class="tree" id="tree">
+    <div class="tree" id="tree" data-vimnav-list>
       {#if detailCtrl.treeLoading}
         <div class="mut" style="padding:6px 4px"><span class="spinner"></span> loading files&#8230;</div>
       {:else if !detailCtrl.tree.files.length && !Object.keys(detailCtrl.tree.dirs).length}
