@@ -177,7 +177,10 @@ class CmdkState {
     this.close();
     const G: any = bridge.G;
     if (row == null || row < 0 || !G || row >= G.N) return;
-    bridge.state.scrollTarget = bridge.clampScroll(row * bridge.layout.rowH - bridge.view.cssH * 0.4);
+    // Position within the scrollable viewport BELOW the pinned "Uncommitted
+    // changes" header (view.cssH-bandH()), not the full canvas height — see
+    // legacy/main.ts's bandH() doc comment.
+    bridge.state.scrollTarget = bridge.clampScroll(row * bridge.layout.rowH - (bridge.view.cssH - bridge.bandH()) * 0.4);
     bridge.select(row);
     try {
       bridge.cv.focus();

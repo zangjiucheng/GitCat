@@ -10,11 +10,20 @@
   }
   const lines = (txt: string) => (txt || "").split("\n");
 
-  // Abort button copy — op-flavored ("Abort merge"/"Abort pick"/"Abort rebase").
+  // Abort button copy — op-flavored ("Abort merge"/"Abort pick"/"Abort rebase"/"Abort stash").
   function abortLabel(op: string): string {
     if (op === "merge") return "Abort merge";
     if (op === "rebase") return "Abort rebase";
+    if (op === "stash") return "Abort stash";
     return "Abort pick";
+  }
+
+  // Continue button copy — every other op's continue step creates a commit;
+  // finishing a stash conflict doesn't (apply leaves the entry as-is, a
+  // resolved pop only drops it — see stash_conflict_continue's doc comment),
+  // so "& commit" would be misleading there.
+  function continueLabel(op: string): string {
+    return op === "stash" ? "Continue" : "Continue & commit";
   }
 
   // Escape closes only a design-mode (browser) resolver — never a live real pick.
@@ -99,7 +108,7 @@
         style="background:var(--accent2);border-color:var(--accent2)"
         disabled={resolver.remainingCount > 0 || resolver.busy}
         onclick={() => resolver.continue()}
-        >{#if resolver.activeAction === "continue"}<span class="spinner"></span> Committing…{:else}Continue &amp; commit{/if}</button
+        >{#if resolver.activeAction === "continue"}<span class="spinner"></span> Committing…{:else}{continueLabel(resolver.op)}{/if}</button
       >
     </div>
   </div>

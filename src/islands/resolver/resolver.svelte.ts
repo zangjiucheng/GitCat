@@ -38,16 +38,21 @@
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
-import type { ConflictFile, MergeResult, PickResult, RebaseResult } from "../../ipc/bindings";
+import type { ConflictFile, MergeResult, PickResult, RebaseResult, StashResolveResult, WorkdirResult } from "../../ipc/bindings";
 
 // specta generates `side: string`; keep the precise union at the call boundary.
 type ConflictSide = "ours" | "theirs";
 
 // The ops this resolver can drive end-to-end (has *_continue/*_abort wired).
 // Mirrors conflict.rs's resolve_conflict_file allowlist — keep them in sync.
-type ResolverOp = "cherry-pick" | "merge" | "rebase";
+// "stash" is the odd one out: there's no matching `startStash()` entry point
+// below (see `openStashConflict()`) because the "start" command (stash_apply/
+// stash_pop) is already owned by workdirCtrl, which needs the result for its
+// OWN non-conflict success/failure toasts too — see workdir.svelte.ts's
+// `applyOrPopStash`.
+type ResolverOp = "cherry-pick" | "merge" | "rebase" | "stash";
 
-type OpResult = PickResult | MergeResult | RebaseResult;
+type OpResult = PickResult | MergeResult | RebaseResult | StashResolveResult;
 
 const FAKE = [
   {
@@ -66,6 +71,7 @@ const OPS: Record<ResolverOp, {
   "cherry-pick": { abort: commands.cherryPickAbort, continueOp: commands.cherryPickContinue },
   merge: { abort: commands.mergeAbort, continueOp: commands.mergeContinue },
   rebase: { abort: commands.rebaseAbort, continueOp: commands.rebaseContinue },
+  stash: { abort: commands.stashConflictAbort, continueOp: commands.stashConflictContinue },
 };
 
 // Op-flavored copy (modal title, banners, fallback messages). Keeping these
@@ -126,6 +132,27 @@ const MSG: Record<ResolverOp, {
     abortMsg: "Rebase aborted — back to the pre-rebase state.",
     continueSay: "Conflict resolved — rebase continuing.",
     continueCheer: 'Conflict resolved — rebase continuing. <span class="jp">よし!</span>',
+  },
+  // No sha of its own (a stash conflict is keyed by stash index, not a
+  // commit) — `sha` args below are always "". `clean`/`empty` are near-dead
+  // fallbacks: stash_conflict_abort/continue always populate `message`
+  // (StashResolveResult never omits it), and "empty" can't happen at all for
+  // this op (see StashResolveResult's doc comment) — kept only so this entry
+  // type-checks against the same shape every other op uses.
+  stash: {
+    title: "Stash conflict",
+    verb: "Stash",
+    clean: () => "Stash conflict resolved.",
+    empty: "Nothing to finish — already resolved.",
+    conflictBanner: (_sha, n) =>
+      n
+        ? "That stash conflicts in " + n + " file" + (n === 1 ? "" : "s") +
+          ". Pick a side per file, then Continue — or Abort."
+        : "That stash needs review — resolve, then Continue, or Abort.",
+    cheer: 'Stash conflict resolved. <span class="jp">よし!</span>',
+    abortMsg: "Reset back to before the stash was applied.",
+    continueSay: "Conflict resolved — stash finished.",
+    continueCheer: 'Conflict resolved — stash finished. <span class="jp">よし!</span>',
   },
 };
 
@@ -278,7 +305,12 @@ class ResolverState {
     }
   }
 
-  private async openConflict(res: OpResult, sha: string) {
+  // Takes a minimal structural slice (not the full `OpResult`/`WorkdirResult`
+  // union) so `openStashConflict()` below can share this with a
+  // `WorkdirResult` (stash_apply/stash_pop's own result type, which has no
+  // `.state`/`.ok` fields in common with `PickResult`/`MergeResult`/
+  // `RebaseResult` — the caller already knows it's a conflict).
+  private async openConflict(res: { conflictedFiles: string[]; backupRef: string | null }, sha: string) {
     this.sha = sha || "";
     this.reset();
     this.tamaImg = bridge.TAMA_IMG.alarm;
@@ -287,6 +319,20 @@ class ResolverState {
     if (res.backupRef) this.backupRef = res.backupRef;
     await this.refresh();
     this.open = true;
+  }
+
+  // Public entry for a stash-apply/pop conflict (workdir.svelte.ts's
+  // `applyOrPopStash`). Unlike startPick/startMerge/startRebase, this does
+  // NOT call a backend "start" command itself — stash_apply/stash_pop is
+  // already owned by workdirCtrl (it needs the result for its own non-
+  // conflict success/failure toasts too) — it just takes the already-
+  // returned `WorkdirResult` and opens the same shared Resolver UI a
+  // cherry-pick/merge/rebase conflict would.
+  async openStashConflict(repo: string, res: WorkdirResult) {
+    this.demo = false;
+    this.op = "stash";
+    this.repo = repo;
+    await this.openConflict(res, "");
   }
 
   // Pull authoritative unmerged files (AND the authoritative in-progress op —
@@ -302,7 +348,8 @@ class ResolverState {
         // unsupported state (e.g. "revert"/"none") can never leave `.op`
         // pointing at a command pair that doesn't exist — abort/continue
         // would then fall back to the last-known-good op instead of throwing.
-        if (r.data.op === "cherry-pick" || r.data.op === "merge" || r.data.op === "rebase") this.op = r.data.op;
+        if (r.data.op === "cherry-pick" || r.data.op === "merge" || r.data.op === "rebase" || r.data.op === "stash")
+          this.op = r.data.op;
       } else console.error("conflict_status", r.error);
     } catch (e) {
       console.error("conflict_status", e);

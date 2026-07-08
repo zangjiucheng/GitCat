@@ -1,9 +1,13 @@
 <script lang="ts">
   import { detailCtrl, type TreeDir } from "./detail.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import { workdirCtrl } from "../workdir/workdir.svelte.ts";
+  import Workdir from "../workdir/Workdir.svelte";
 </script>
 
-{#if detailCtrl.hero}
+{#if workdirCtrl.selected}
+  <Workdir />
+{:else if detailCtrl.hero}
   <div class="tama-hero">
     <img class="tama-hero-img" src={bridge.TAMA_IMG.hero} alt={detailCtrl.hero.kind === "empty" ? "Tama" : "Tama, GitCat's guardian"} />
     {#if detailCtrl.hero.kind === "loaded"}

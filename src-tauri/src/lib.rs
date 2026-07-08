@@ -5,6 +5,7 @@ pub mod git_pick;
 pub mod git_read;
 pub mod git_remote; // fetch / pull (ff-only) / push
 pub mod git_write;
+pub mod workdir; // working-tree status + stage/unstage/discard/commit + stash
 pub mod git_bisect; // M3: git bisect (start / mark good|bad|skip / status / reset)
 pub mod git_merge; // M6 (stage 1): merge (drag-onto-HEAD) + continue / abort
 pub mod git_rebase; // M6 (stage 2): linear rebase onto a target + continue / skip / abort
@@ -37,6 +38,22 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_write::checkout,
         git_write::delete_branch,
         git_write::rename_branch,
+        // Workdir: working-tree status + stage/unstage/discard/commit + stash
+        workdir::workdir_status,
+        workdir::workdir_file_diff,
+        workdir::stage_file,
+        workdir::unstage_file,
+        workdir::stage_all,
+        workdir::discard_file,
+        workdir::commit,
+        workdir::stash_list,
+        workdir::stash_save,
+        workdir::stash_apply,
+        workdir::stash_pop,
+        workdir::stash_drop,
+        workdir::stash_undo_apply,
+        workdir::stash_conflict_abort,
+        workdir::stash_conflict_continue,
         // Remote sync: fetch / pull (ff-only) / push
         git_remote::fetch,
         git_remote::pull,

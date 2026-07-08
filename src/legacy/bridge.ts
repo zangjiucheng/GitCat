@@ -29,7 +29,19 @@ export {
   view,
   cv,
   clampScroll,
+  // Height of the pinned "Uncommitted changes" header this frame (0 when it
+  // isn't shown) — every "scroll a row into view" computation outside this
+  // file (⌘K jump-to-row, the bisect drawer's focus-current) must subtract
+  // it from the usable viewport height exactly like legacy/main.ts's own
+  // draw()/hitTest()/zoomAt()/reloadGraph() do. Hoisted `function`, so no
+  // TDZ risk (same reasoning as select/openRepo above).
+  bandH,
   select,
+  // selects the pinned "Uncommitted changes" row (state.selectedRow=-2) and
+  // opens workdirCtrl's staging/commit view in #detail — the workdir-row
+  // counterpart to select(row)/deselect() above. Hoisted `function`, so no
+  // TDZ risk (same reasoning as select/openRepo above).
+  selectWorkdir,
   // design-mode (plain-browser) synthetic data helpers, shared by generateGraph
   // and ⌘K's fallback index when no real repo/BACKEND is loaded.
   hhex,

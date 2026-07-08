@@ -460,6 +460,67 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tok-key{color:var(--accent);font-weight:600} .tok-str{color:var(--success)} .tok-num{color:var(--accent2)}
 .tok-com{color:var(--muted);font-style:italic} .tok-fn{color:var(--l2)} .tok-punc{color:var(--muted)}
 
+/* ============================== WORKDIR (staging + commit + stash) ==============================
+   Renders in the SAME #detail slot as the sections above, swapped in by
+   Workdir.svelte whenever the pinned "Uncommitted changes" row is selected
+   (see legacy/main.ts's selectWorkdir() / the -2 row sentinel). Deliberately
+   reuses .detail section/.d-lab/.diffview/.diff-line/.hash/.gpg/.spinner/.btn
+   verbatim (same visual language as the commit detail panel); only the
+   staging-list rows, commit box, and stash list below are new. */
+.wd-msg{width:100%;resize:vertical;min-height:52px;padding:8px 10px;background:var(--bg);
+  border:1px solid var(--border);border-radius:var(--r-control);color:var(--text);font:inherit;font-size:12.5px}
+.wd-msg:focus{outline:none;border-color:var(--accent)}
+.wd-msg:disabled{opacity:.6}
+.wd-commit-row{display:flex;align-items:center;gap:10px;margin-top:8px}
+.wd-amend{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);flex:1;min-width:0}
+.wd-commit-row .btn{margin-left:auto;flex:none}
+.wd-sec-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.wd-stage-all{margin-left:auto;font-size:11px;font-weight:600;color:var(--accent2);background:transparent;
+  border:1px solid color-mix(in srgb,var(--accent2) 45%,var(--border));border-radius:var(--r-control);padding:3px 9px}
+.wd-stage-all:hover:not([disabled]){background:color-mix(in srgb,var(--accent2) 12%,transparent)}
+.wd-stage-all[disabled]{opacity:.5;cursor:default}
+.wd-files{display:flex;flex-direction:column;gap:1px}
+.wd-file{display:flex;align-items:center;gap:7px;padding:4px 5px;border-radius:6px;cursor:pointer;font-size:12px}
+.wd-file:hover{background:var(--elevated)}
+.wd-file.active{background:color-mix(in srgb,var(--accent) 15%,transparent)}
+.wd-file .st{width:14px;text-align:center;font-family:var(--mono);font-weight:700;font-size:11px;flex:none}
+.wd-file .st[data-status="M"]{color:var(--warning)}
+.wd-file .st[data-status="A"]{color:var(--success)}
+.wd-file .st[data-status="D"]{color:var(--danger)}
+.wd-file .st[data-status="R"]{color:var(--l2)}
+.wd-file .st[data-status="T"]{color:var(--accent2)}
+.wd-file .st[data-status="?"]{color:var(--accent)}
+.wd-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wd-act{flex:none;width:22px;height:22px;display:grid;place-items:center;border-radius:5px;border:1px solid transparent;
+  background:transparent;color:var(--muted);font-size:13px;line-height:1}
+.wd-act:hover:not([disabled]){background:var(--panel);border-color:var(--border);color:var(--text)}
+.wd-act.danger:hover:not([disabled]){color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,transparent)}
+.wd-act[disabled]{opacity:.4;cursor:not-allowed}
+.wd-file .spinner{flex:none}
+.wd-stash-list{display:flex;flex-direction:column;gap:2px}
+.wd-stash-item{display:flex;align-items:flex-start;gap:8px;padding:6px 5px;border-radius:6px}
+.wd-stash-item:hover{background:var(--elevated)}
+.wd-stash-item .dot{margin-top:5px;width:8px;height:8px;border-radius:50%;flex:none}
+.wd-stash-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
+.wd-stash-msg{font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wd-stash-meta{font-size:10.5px}
+.wd-stash-act{display:flex;gap:4px;flex:none}
+.wd-stash-act button{font-size:11px;font-weight:600;padding:3px 8px;border-radius:6px;border:1px solid var(--border);
+  background:var(--elevated);color:var(--text)}
+.wd-stash-act button:hover:not([disabled]){border-color:var(--muted)}
+.wd-stash-act button.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
+.wd-stash-act button[disabled]{opacity:.45;cursor:not-allowed}
+.wd-stash-new{margin-top:6px;width:100%;text-align:left;padding:6px 8px;border-radius:6px;border:1px dashed var(--border);
+  background:transparent;color:var(--accent);font-weight:600;font-size:12px}
+.wd-stash-new:hover{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.wd-stash-form{display:flex;flex-direction:column;gap:6px;margin-top:6px;padding:8px;border:1px solid var(--border);border-radius:var(--r-panel)}
+.wd-stash-form input[type="text"],.wd-stash-form input:not([type]){width:100%;background:var(--bg);border:1px solid var(--border);
+  border-radius:var(--r-control);color:var(--text);font:inherit;font-size:12px;padding:6px 8px;outline:none}
+.wd-stash-form input:focus{border-color:var(--accent)}
+.wd-stash-form .nb-row{display:flex;align-items:center;gap:8px}
+.wd-stash-form .wd-amend{flex:1}
+.wd-stash-form.busy input{opacity:.6}
+
 /* ============================== DRAWER ============================== */
 .drawer{grid-area:drawer;min-height:0;background:var(--panel);border-top:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
 .drawer-tabs{display:flex;align-items:center;gap:2px;padding:6px 10px;border-bottom:1px solid var(--border);flex:none}

@@ -102,6 +102,203 @@ async renameBranch(path: string, from: string, to: string) : Promise<WriteResult
     return await TAURI_INVOKE("rename_branch", { path, from, to });
 },
 /**
+ * Tauri command: full working-tree/index status for the pinned "Uncommitted
+ * changes" row + staging panel. Read-only (git2).
+ * JS: `invoke("workdir_status", { path })`.
+ */
+async workdirStatus(path: string) : Promise<Result<WorkdirStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workdir_status", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: the real diff for ONE file, either the staged side (index
+ * vs HEAD) or the unstaged side (workdir vs index). Reuses `model::FileChange`
+ * verbatim so the frontend's diff viewer can share `Detail.svelte`'s markup.
+ * JS: `invoke("workdir_file_diff", { path, file, staged })`.
+ */
+async workdirFileDiff(path: string, file: string, staged: boolean) : Promise<Result<FileChange, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workdir_file_diff", { path, file, staged }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stage one file's full state (new/modified/deleted) with a single explicit
+ * pathspec. JS: `invoke("stage_file", { path, file })`.
+ */
+async stageFile(path: string, file: string) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("stage_file", { path, file });
+},
+/**
+ * Unstage one file (`git restore --staged`), leaving the working tree as-is.
+ * JS: `invoke("unstage_file", { path, file })`.
+ */
+async unstageFile(path: string, file: string) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("unstage_file", { path, file });
+},
+/**
+ * Stage every unstaged/untracked path (`git add -A`).
+ * JS: `invoke("stage_all", { path })`.
+ */
+async stageAll(path: string) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("stage_all", { path });
+},
+/**
+ * Discard unstaged changes to one file. Destructive: this is the ONE gap the
+ * Safety-Manager ref mechanism cannot cover (see doc comment), so it ALWAYS
+ * writes a content backup first, then mutates. `untracked=false` restores a
+ * tracked file's content to what's in the index (`git restore --worktree`);
+ * `untracked=true` removes an untracked file (`git clean -f`). An UNSTAGED
+ * RENAME (`old_path` set, `untracked=false`) is a special case handled by
+ * [`discard_unstaged_rename`] — see its doc comment for why the plain path
+ * below can't handle it (it always finds zero deltas and refuses with "No
+ * unstaged changes to discard", even though the status view correctly shows
+ * a rename). The caller (frontend controller) is responsible for a
+ * typed-confirm gate before this is ever invoked — this command itself does
+ * not prompt.
+ * JS: `invoke("discard_file", { path, file, untracked })`.
+ */
+async discardFile(path: string, file: string, untracked: boolean) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("discard_file", { path, file, untracked });
+},
+/**
+ * Create a commit from the current index, or amend the previous one.
+ * Snapshots FIRST (amend rewrites the previous commit's sha — history-
+ * mutating). `!amend && message` empty/whitespace-only -> refused before any
+ * snapshot. `amend && message` empty/`None` -> `--amend --no-edit` (keeps the
+ * prior message). `amend && message` non-empty -> `--amend -m <message>`.
+ * Otherwise -> `-m <message>`. Nothing preemptively re-checks "is anything
+ * staged" — a refusal ("nothing to commit") surfaces verbatim from git.
+ * JS: `invoke("commit", { path, message, amend })`.
+ */
+async commit(path: string, message: string | null, amend: boolean | null) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("commit", { path, message, amend });
+},
+/**
+ * Tauri command: list stash entries, newest first, via
+ * `git stash list --format=%gd\x01%H\x01%gs` (libgit2 has no stash API).
+ * JS: `invoke("stash_list", { path })`.
+ */
+async stashList(path: string) : Promise<Result<StashEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stash_list", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `git stash push [-u] [-m <message>]`. Snapshots FIRST.
+ * JS: `invoke("stash_save", { path, message, includeUntracked })`.
+ */
+async stashSave(path: string, message: string | null, includeUntracked: boolean | null) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("stash_save", { path, message, includeUntracked });
+},
+/**
+ * `git stash apply stash@{index}`. On a conflict, git never drops the stash
+ * entry — `stash_list` will still show it. `expected_sha` is an OPTIONAL
+ * sanity check (see [`check_stash_identity`]): pass the `StashEntry.sha`
+ * last fetched for this index, and the op refuses instead of silently
+ * acting on a different entry if the stash list changed since (e.g. an
+ * external `git stash` command). JS: `invoke("stash_apply", { path, index,
+ * expectedSha })`.
+ */
+async stashApply(path: string, index: number, expectedSha: string | null) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("stash_apply", { path, index, expectedSha });
+},
+/**
+ * `git stash pop stash@{index}`. On a conflict, git leaves the stash entry in
+ * place (only a clean pop drops it). `expected_sha`: see [`stash_apply`].
+ * JS: `invoke("stash_pop", { path, index, expectedSha })`.
+ */
+async stashPop(path: string, index: number, expectedSha: string | null) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("stash_pop", { path, index, expectedSha });
+},
+/**
+ * `git stash drop stash@{index}`. Snapshots HEAD first like every other
+ * stash op (see doc comment), but — unlike that HEAD snapshot — a stash
+ * drop's own content is NOT reachable through `safety::undo()`/global Undo
+ * at all (`snapshot()` only ever tracks `refs/heads/*`, never `refs/stash`),
+ * so this pins the STASH's own commit under a dedicated ref
+ * ([`pin_dropped_stash`]) BEFORE ever running `git stash drop`, and reports
+ * that pin honestly in `dropped_stash_ref`/`message` instead of implying
+ * the generic Undo button restores it. `expected_sha`: see [`stash_apply`].
+ * JS: `invoke("stash_drop", { path, index, expectedSha })`.
+ */
+async stashDrop(path: string, index: number, expectedSha: string | null) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("stash_drop", { path, index, expectedSha });
+},
+/**
+ * Undo a `stash_apply`/`stash_pop` by re-stashing whatever is now dirty,
+ * restoring a clean working tree via a real `git stash push -u`. Wired into
+ * the global Undo (⌘Z) flow by the frontend specifically for these two ops
+ * (the frontend knows locally which mutation just ran; see the workdir
+ * controller) — NOT a change to `safety::undo()`'s own dirty-tree guard,
+ * which keeps refusing on every OTHER kind of dirty state exactly as
+ * before.
+ * 
+ * HONEST about what this does and doesn't restore: nothing at the ref level
+ * (HEAD/branches) ever moved, so there is nothing to rewind there. This is
+ * NOT a byte-for-byte replay of the exact stash that was applied/popped —
+ * apply's original entry is left untouched (this push creates an ADDITIONAL
+ * entry alongside it); pop's original entry was already dropped on a clean
+ * pop (this push recreates its CONTENT under a brand-new stash commit/
+ * timestamp, not the same object). The practical guarantee is the same one
+ * Undo makes everywhere else: the working tree ends up clean again and
+ * nothing is lost. Refuses if conflicted paths remain from a stash conflict
+ * — that is `stash_conflict_abort`/`stash_conflict_continue`'s job (a stash
+ * conflict is never a "just re-stash it" situation).
+ * JS: `invoke("stash_undo_apply", { path })`.
+ */
+async stashUndoApply(path: string) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("stash_undo_apply", { path });
+},
+/**
+ * Abort a stash-apply/pop conflict left by `apply_or_pop`. `git stash
+ * apply`/`pop` has no native `--abort` of its own (unlike merge/rebase/
+ * cherry-pick), so this uses the mechanism the finding calls for: reset the
+ * working tree AND index back to the pre-attempt state via the safety
+ * snapshot's own backup ref (`git reset --hard <backup_ref>`) sealed by
+ * `apply_or_pop` right before it ran. The stash entry itself is UNTOUCHED
+ * either way (apply never removes it; a conflicted pop never drops it
+ * either — empirically verified, see module doc comment), so nothing about
+ * the stash list changes. CAVEAT (documented, not hidden): `backup_ref` only
+ * ever pins HEAD's COMMIT, not the working tree — if the tree already had
+ * OTHER uncommitted changes before this apply/pop was attempted, this reset
+ * discards those too, same limitation `safety::undo()`'s own dirty-tree
+ * guard exists to avoid elsewhere; there is no git-level way around that for
+ * an op that (unlike merge/rebase) is explicitly designed to run on top of a
+ * dirty tree.
+ * JS: `invoke("stash_conflict_abort", { path })`.
+ */
+async stashConflictAbort(path: string) : Promise<StashResolveResult> {
+    return await TAURI_INVOKE("stash_conflict_abort", { path });
+},
+/**
+ * Finish a stash-apply/pop conflict after the user resolved every file (via
+ * the shared Resolver's per-file `resolve_conflict_file`, allowlisted for
+ * `"stash"` — see `conflict.rs`) and staged the result. Refuses (reporting
+ * `state:"conflict"` again, same convention as `git_merge::classify`/
+ * `git_rebase`'s classify) if unmerged paths remain. For `apply`, nothing
+ * further is needed — the stash entry was never touched. For `pop`, the
+ * whole point of popping was to remove the stash entry, but a CONFLICTED
+ * pop never drops it (empirically verified, see module doc comment) — so
+ * only NOW, once the user has actually kept the resolution, do we drop it,
+ * re-verifying its identity first (in case the stash list changed during
+ * the conflict) rather than blindly dropping whatever now sits at that
+ * index.
+ * JS: `invoke("stash_conflict_continue", { path })`.
+ */
+async stashConflictContinue(path: string) : Promise<StashResolveResult> {
+    return await TAURI_INVOKE("stash_conflict_continue", { path });
+},
+/**
  * Update remote-tracking refs. `remote` fetches just that one remote;
  * omitted, it fetches every configured remote (`--all`). Always `--prune`s
  * stale remote-tracking branches that no longer exist on the remote.
@@ -491,10 +688,13 @@ export type CommitObject = { sha: string; shortSha: string; author: PlumbingPers
 export type ConflictFile = { path: string; ours: string; base: string; theirs: string }
 /**
  * Result of [`conflict_status`]. `op` is one of
- * `"cherry-pick" | "merge" | "rebase" | "revert" | "none"`. `in_progress` is
- * true whenever a sequencer op is underway **or** there are unmerged files —
- * so once every file is resolved (`files` empty) but the cherry-pick has not
- * been continued yet, `in_progress` stays true and the UI can offer Continue.
+ * `"cherry-pick" | "merge" | "rebase" | "revert" | "stash" | "none"` — see
+ * [`detect_op`] for why `"stash"` exists (a `git stash apply`/`pop` conflict
+ * leaves `RepositoryState` at `Clean`, unlike every other op here).
+ * `in_progress` is true whenever a sequencer op is underway **or** there are
+ * unmerged files — so once every file is resolved (`files` empty) but the
+ * cherry-pick has not been continued yet, `in_progress` stays true and the
+ * UI can offer Continue.
  */
 export type ConflictStatus = { inProgress: boolean; op: string; files: ConflictFile[] }
 /**
@@ -720,6 +920,25 @@ export type SimpleRef = { name: string; sha: string }
  * serializes as `"ref"` for the frontend.
  */
 export type Snapshot = { ref: string; ts: number; sha: string; subject: string }
+/**
+ * One stash entry, newest (`stash@{0}`) first.
+ */
+export type StashEntry = { index: number; sha: string; branch: string | null; message: string }
+/**
+ * Result of a stash-conflict finalize step (`stash_conflict_abort` /
+ * `stash_conflict_continue`). Deliberately the SAME shape as
+ * `MergeResult`/`RebaseResult` (see `git_merge.rs`'s doc comment for why each
+ * op module gets its own type rather than sharing one across module
+ * boundaries): the shared Resolver's `OPS`/dispatch table treats every op's
+ * result structurally (`.state`/`.conflictedFiles`/`.message`/`.backupRef`),
+ * so a "stash" entry with this shape slots in exactly like the others.
+ */
+export type StashResolveResult = { ok: boolean; 
+/**
+ * "clean" | "conflict" | "error" (never "empty" — finalizing a stash
+ * conflict is never a no-op).
+ */
+state: string; conflictedFiles: string[]; message: string; backupRef: string | null }
 export type TagObject = { sha: string; name: string; tagger: PlumbingPerson | null; message: string; targetOid: string; targetKind: string }
 /**
  * One entry inside a tree listing.
@@ -740,6 +959,44 @@ export type TreeObject = { sha: string; entries: TreeEntryRow[] }
  * Result of a global undo.
  */
 export type UndoResult = { ok: boolean; message: string; restoredTo: string | null; sealed: string | null }
+/**
+ * One working-tree/index entry. `status` reuses `FileChange`'s vocabulary
+ * (A/M/D/R/T) plus `"?"` for untracked (git's own porcelain symbol; distinct
+ * from `"A"` so a brand-new-but-staged file and a not-yet-tracked file never
+ * look the same).
+ */
+export type WorkdirEntry = { path: string; oldPath: string | null; status: string }
+/**
+ * Result of any working-tree mutation. Same `{ok, message}` contract as
+ * `WriteResult`/`MergeResult`, extended with TWO different safety-net
+ * channels (see this module's doc comment for which op populates which).
+ */
+export type WorkdirResult = { ok: boolean; message: string; 
+/**
+ * Non-empty only for a `stash_apply`/`stash_pop` left mid-conflict.
+ */
+conflictedFiles: string[]; 
+/**
+ * Safety-Manager ref snapshot (`commit`/`stash_*` only).
+ */
+backupRef: string | null; 
+/**
+ * Path to a saved pre-discard copy (`discard_file` only).
+ */
+backupPatch: string | null; 
+/**
+ * Ref pinning a DROPPED stash's own commit so it survives `git gc`
+ * (`stash_drop` only). `safety::snapshot`'s `backup_ref` only ever tracks
+ * `refs/heads/*` — never `refs/stash` — so it can't make a dropped stash
+ * itself recoverable; this is the honest, separate recovery channel (see
+ * `pin_dropped_stash`). Recover with `git stash apply <this ref>` (or
+ * `git branch <name> <this ref>` to just inspect it).
+ */
+droppedStashRef: string | null }
+/**
+ * Full working-tree snapshot backing the pinned "Uncommitted changes" row.
+ */
+export type WorkdirStatus = { staged: WorkdirEntry[]; unstaged: WorkdirEntry[]; conflicted: number; branch: string | null; hasStash: boolean }
 /**
  * Uniform result of a write command. `ok:false` carries git's stderr (trimmed)
  * or a validation/precondition message.

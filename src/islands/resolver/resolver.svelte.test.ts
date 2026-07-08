@@ -34,6 +34,8 @@ vi.mock("../../ipc/bindings", () => ({
     rebaseContinue: vi.fn(),
     rebaseSkip: vi.fn(),
     rebaseAbort: vi.fn(),
+    stashConflictAbort: vi.fn(),
+    stashConflictContinue: vi.fn(),
     conflictStatus: vi.fn(),
     resolveConflictFile: vi.fn(),
   },
@@ -48,6 +50,8 @@ import type {
   PickResult,
   RebaseResult,
   ResolveResult,
+  StashResolveResult,
+  WorkdirResult,
 } from "../../ipc/bindings";
 import { resolver } from "./resolver.svelte.ts";
 
@@ -68,6 +72,14 @@ function mergeResult(partial: Partial<MergeResult>): MergeResult {
 
 function rebaseResult(partial: Partial<RebaseResult>): RebaseResult {
   return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
+}
+
+function stashResolveResult(partial: Partial<StashResolveResult>): StashResolveResult {
+  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
+}
+
+function workdirResult(partial: Partial<WorkdirResult>): WorkdirResult {
+  return { ok: false, message: "", conflictedFiles: [], backupRef: null, backupPatch: null, droppedStashRef: null, ...partial };
 }
 
 function conflictStatus(files: ConflictFile[], inProgress = true, op = "cherry-pick"): ConflictStatus {
@@ -580,5 +592,93 @@ describe("skip", () => {
     expect(resolver.open).toBe(false);
     expect(commands.rebaseSkip).not.toHaveBeenCalled();
     expect(bridge.tama.say).toHaveBeenCalled();
+  });
+});
+
+// Regression coverage for finding #7's frontend half: a stash-apply/pop
+// conflict (surfaced by workdirCtrl.applyOrPopStash, NOT one of resolver's
+// own startX() entry points — see openStashConflict's own doc comment) must
+// route into this SAME shared modal, wired to the real
+// stash_conflict_abort/stash_conflict_continue backend commands, instead of
+// only ever showing a Tama toast.
+describe("openStashConflict (stash-apply/pop conflict, #7)", () => {
+  it("opens the modal with op set to stash and populates files from conflict_status", async () => {
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "stash")));
+
+    await resolver.openStashConflict(
+      "repo1",
+      workdirResult({ conflictedFiles: ["a.ts"], backupRef: "refs/gitgui/backup/s1" }),
+    );
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.op).toBe("stash");
+    expect(resolver.files).toEqual([FILE_A]);
+    expect(resolver.backupRef).toBe("refs/gitgui/backup/s1");
+  });
+
+  it("a stash conflict's abort calls stashConflictAbort, never mergeAbort/cherryPickAbort/rebaseAbort", async () => {
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "stash")));
+    await resolver.openStashConflict("repo1", workdirResult({ conflictedFiles: ["a.ts"] }));
+    expect(resolver.op).toBe("stash");
+
+    vi.mocked(commands.stashConflictAbort).mockResolvedValueOnce(
+      stashResolveResult({ state: "clean", message: "Reset back to before the stash was applied." }),
+    );
+
+    await resolver.abort();
+
+    expect(commands.stashConflictAbort).toHaveBeenCalledWith("repo1");
+    expect(commands.mergeAbort).not.toHaveBeenCalled();
+    expect(commands.cherryPickAbort).not.toHaveBeenCalled();
+    expect(commands.rebaseAbort).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+
+  it("a stash conflict's continue calls stashConflictContinue, never the other ops' continue commands", async () => {
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "stash")));
+    await resolver.openStashConflict("repo1", workdirResult({ conflictedFiles: ["a.ts"] }));
+
+    vi.mocked(commands.stashConflictContinue).mockResolvedValueOnce(
+      stashResolveResult({ state: "clean", message: "Stash finished." }),
+    );
+
+    await resolver.continue();
+
+    expect(commands.stashConflictContinue).toHaveBeenCalledWith("repo1");
+    expect(commands.mergeContinue).not.toHaveBeenCalled();
+    expect(commands.cherryPickContinue).not.toHaveBeenCalled();
+    expect(commands.rebaseContinue).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+
+  it("continue keeps the modal open and refreshes when still conflicted", async () => {
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "stash")));
+    await resolver.openStashConflict("repo1", workdirResult({ conflictedFiles: ["a.ts"] }));
+
+    vi.mocked(commands.stashConflictContinue).mockResolvedValueOnce(
+      stashResolveResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"], message: "still unmerged" }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "stash")));
+
+    await resolver.continue();
+
+    expect(resolver.open).toBe(true);
+    expect(bridge.tama.warn).toHaveBeenCalled();
+  });
+
+  it("refresh() re-derives .op as stash from a live conflict_status report", async () => {
+    resolver.repo = "repo1";
+    resolver.demo = false;
+    resolver.op = "cherry-pick";
+    resolver.files = [FILE_A];
+    resolver.selected = FILE_A.path;
+    resolver.remaining = new Set([FILE_A.path]);
+
+    vi.mocked(commands.resolveConflictFile).mockResolvedValueOnce({ ok: true, remaining: 0, message: "" } satisfies ResolveResult);
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([], true, "stash")));
+
+    await resolver.take("theirs");
+
+    expect(resolver.op).toBe("stash");
   });
 });

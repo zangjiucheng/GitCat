@@ -47,10 +47,13 @@ pub struct ConflictFile {
 }
 
 /// Result of [`conflict_status`]. `op` is one of
-/// `"cherry-pick" | "merge" | "rebase" | "revert" | "none"`. `in_progress` is
-/// true whenever a sequencer op is underway **or** there are unmerged files —
-/// so once every file is resolved (`files` empty) but the cherry-pick has not
-/// been continued yet, `in_progress` stays true and the UI can offer Continue.
+/// `"cherry-pick" | "merge" | "rebase" | "revert" | "stash" | "none"` — see
+/// [`detect_op`] for why `"stash"` exists (a `git stash apply`/`pop` conflict
+/// leaves `RepositoryState` at `Clean`, unlike every other op here).
+/// `in_progress` is true whenever a sequencer op is underway **or** there are
+/// unmerged files — so once every file is resolved (`files` empty) but the
+/// cherry-pick has not been continued yet, `in_progress` stays true and the
+/// UI can offer Continue.
 #[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConflictStatus {
@@ -80,13 +83,15 @@ pub struct ResolveResult {
 pub fn conflict_status(path: String) -> Result<ConflictStatus, String> {
     let repo =
         Repository::open(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
-    let op = op_name(repo.state());
+    let op = detect_op(&repo).map_err(|e| e.message().to_string())?;
     let files = read_conflicts(&repo).map_err(|e| e.message().to_string())?;
     let in_progress = op != "none" || !files.is_empty();
     Ok(ConflictStatus { in_progress, op: op.to_string(), files })
 }
 
-/// Map libgit2's repository state to the resolver's op label.
+/// Map libgit2's repository state to the resolver's op label. Pure function
+/// of `RepositoryState` alone — see [`detect_op`] for the one case
+/// (`"stash"`) this can never report on its own.
 fn op_name(state: RepositoryState) -> &'static str {
     match state {
         RepositoryState::CherryPick | RepositoryState::CherryPickSequence => "cherry-pick",
@@ -99,6 +104,25 @@ fn op_name(state: RepositoryState) -> &'static str {
         | RepositoryState::ApplyMailboxOrRebase => "rebase",
         RepositoryState::Clean | RepositoryState::Bisect => "none",
     }
+}
+
+/// The resolver's op label for the repo's CURRENT state — extends
+/// `op_name`'s pure `RepositoryState` mapping with ONE more case: `git stash
+/// apply`/`stash pop` leaves `RepositoryState` at `Clean` even mid-conflict
+/// (empirically verified: neither sets `MERGE_HEAD` or any sequencer file the
+/// way merge/rebase/cherry-pick do), so a Clean state that STILL has unmerged
+/// INDEX entries (checked via `git2::Index::has_conflicts`, cheap and
+/// side-effect-free) is recognized as `"stash"` rather than `"none"`. Kept as
+/// ONE shared function (rather than duplicating this check) because both
+/// `conflict_status` (read) and `resolve_conflict_file`'s allowlist (write
+/// guard) must agree on it — a split here would let one recognize a stash
+/// conflict while the other refuses to act on it.
+fn detect_op(repo: &Repository) -> Result<&'static str, git2::Error> {
+    let op = op_name(repo.state());
+    if op == "none" && repo.index()?.has_conflicts() {
+        return Ok("stash");
+    }
+    Ok(op)
 }
 
 /// Walk the index's conflict entries and materialise each side's blob as text.
@@ -193,20 +217,24 @@ pub fn resolve_conflict_file(path: String, file: String, side: String) -> Resolv
     }
 
     // Guard: only resolve inside an op GitCat snapshots AND can Abort/Continue
-    // from the app — cherry-pick (git_pick), merge (git_merge), and rebase
-    // (git_rebase). Their *_abort/*_continue commands are gated on
-    // CHERRY_PICK_HEAD/MERGE_HEAD/the rebase-merge sequencer dir respectively,
-    // so any OTHER op (revert, …) could be neither backed out nor advanced
-    // from the app — never mutate inside one.
+    // from the app — cherry-pick (git_pick), merge (git_merge), rebase
+    // (git_rebase), and stash (workdir::stash_conflict_abort/_continue).
+    // Their *_abort/*_continue commands are gated on CHERRY_PICK_HEAD/
+    // MERGE_HEAD/the rebase-merge sequencer dir/the stash-conflict sidecar
+    // file respectively, so any OTHER op (revert, …) could be neither backed
+    // out nor advanced from the app — never mutate inside one.
     //
     // NOTE: this is intentionally an allowlist, not a denylist, so an op that
     // doesn't (yet) have app-level continue/abort support fails closed.
     match Repository::open(&path) {
         Ok(repo) => {
-            let op = op_name(repo.state());
-            if op != "cherry-pick" && op != "merge" && op != "rebase" {
+            let op = match detect_op(&repo) {
+                Ok(o) => o,
+                Err(e) => return ResolveResult::err(format!("cannot inspect repository state: {}", e.message())),
+            };
+            if op != "cherry-pick" && op != "merge" && op != "rebase" && op != "stash" {
                 return ResolveResult::err(format!(
-                    "Not inside a cherry-pick, merge, or rebase (repository state: {op}). \
+                    "Not inside a cherry-pick, merge, rebase, or stash conflict (repository state: {op}). \
                      Resolve {op} conflicts with git on the command line."
                 ));
             }

@@ -10,6 +10,7 @@ vi.mock("../../legacy/bridge", () => ({
   state: { selectedRow: -1, scrollTarget: 0 },
   layout: { rowH: 22 },
   view: { cssH: 400 },
+  bandH: vi.fn(() => 0),
   clampScroll: (v: number) => (v < 0 ? 0 : v),
   select: vi.fn(),
   requestRedraw: vi.fn(),

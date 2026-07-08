@@ -208,7 +208,10 @@ class BisectDrawerState {
   focusBisectCurrent() {
     if (this.cur == null) return;
     bridge.select(this.cur);
-    bridge.state.scrollTarget = bridge.clampScroll(this.cur * bridge.layout.rowH - bridge.view.cssH / 2);
+    // Center within the scrollable viewport BELOW the pinned "Uncommitted
+    // changes" header (view.cssH-bandH()), not the full canvas height — see
+    // legacy/main.ts's bandH() doc comment.
+    bridge.state.scrollTarget = bridge.clampScroll(this.cur * bridge.layout.rowH - (bridge.view.cssH - bridge.bandH()) / 2);
     bridge.requestRedraw();
   }
 

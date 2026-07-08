@@ -17,6 +17,7 @@ import { setupWizardCtrl } from "./islands/setupwizard/setupwizard.svelte.ts";
 import Cmdk from "./islands/cmdk/Cmdk.svelte";
 import { cmdkCtrl } from "./islands/cmdk/cmdk.svelte.ts";
 import Detail from "./islands/detail/Detail.svelte";
+import { workdirCtrl } from "./islands/workdir/workdir.svelte.ts";
 import BisectDrawer from "./islands/bisectdrawer/BisectDrawer.svelte";
 import Sidebar from "./islands/sidebar/Sidebar.svelte";
 import { sidebarCtrl } from "./islands/sidebar/sidebar.svelte.ts";
@@ -44,6 +45,15 @@ if (IN_TAURI) {
 }
 
 mount(Cmdk, { target: document.body });
+// Workdir is NOT mounted as its own top-level tree here even though the
+// design spec's own §4 "Wiring" prose describes a second `mount(Workdir, …)`
+// alongside Detail's — that would double-render the panel: Detail.svelte
+// (below) already peer-imports the Workdir COMPONENT (not just its
+// controller) and nests `<Workdir />` inline as the leading branch of its own
+// `{#if}` chain (exactly as the spec's own Detail.svelte snippet in that same
+// section shows), so mounting Workdir a second time onto the identical
+// `#detail` node would render the staging panel twice whenever
+// `workdirCtrl.selected` is true. One mount point, one source of truth.
 mount(Detail, { target: document.getElementById("detail")! });
 mount(BisectDrawer, { target: document.getElementById("pane-bisect")! });
 
@@ -113,6 +123,18 @@ if (IN_TAURI) {
     repoChangeReloadInFlight = true;
     try {
       await bridge.reloadGraph(true);
+      // Working-tree state (stage/unstage/dirty files) can change from
+      // OUTSIDE the app exactly like refs can (an external `git add`, a
+      // terminal edit, a save from another editor) — keep the pinned row's
+      // badge and, if open, the staging panel itself live. The stash list is
+      // its own separate read (`git stash` from a terminal fires this same
+      // event — confirmed via watch.rs) and was previously never refreshed
+      // here, so an external stash change could silently invalidate the
+      // index the panel was showing (see stash_apply/pop/drop's
+      // `expected_sha` identity check on the backend for the other half of
+      // this fix).
+      const repo = bridge.CUR_REPO as unknown as string;
+      await Promise.all([workdirCtrl.refreshStatus(repo), workdirCtrl.refreshStashes(repo)]);
     } finally {
       repoChangeReloadInFlight = false;
     }

@@ -8,6 +8,11 @@ import { cmdkCtrl } from "../islands/cmdk/cmdk.svelte.ts";
 import { detailCtrl } from "../islands/detail/detail.svelte.ts";
 import { bisectDrawerCtrl } from "../islands/bisectdrawer/bisectdrawer.svelte.ts";
 import { sidebarCtrl } from "../islands/sidebar/sidebar.svelte.ts";
+import { workdirCtrl } from "../islands/workdir/workdir.svelte.ts";
+// Typed client for the one raw `tinvoke()` call below that needs it
+// (globalUndo()'s stash-undo branch) — see that function's own comment for
+// why only that branch uses it instead of another `tinvoke()`.
+import { commands } from "../ipc/bindings";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -165,7 +170,17 @@ function recomputeLayout(){
   layout.dotR=DOT_R_BASE*(0.85+0.15*z);
   layout.chipFont=Math.round(11*Math.min(1.3,z))+"px "+FONT_UI;
   layout.contentH=(G?G.N:0)*layout.rowH;
-  state.maxScroll=Math.max(0,layout.contentH-view.cssH);
+  // +bandH(): the pinned header steals bandH() px of on-screen vertical
+  // space from every real row (see bandH()'s own comment + the doc block
+  // right above drawWorkdirBand()) but reserves NO extra scroll room for
+  // itself — without this term the LAST row's y-position at
+  // scrollTop===maxScroll works out to exactly view.cssH (fully off-canvas,
+  // unreachable/unclickable) whenever bandH()>0, i.e. on every repo with a
+  // workdir panel (any open repo, or browser design-mode) that has more
+  // commits than fit on screen. bandH() itself is hoisted (function
+  // declaration below), so calling it here before its own definition is
+  // safe — same reasoning as every other early call site.
+  state.maxScroll=Math.max(0,layout.contentH+bandH()-view.cssH);
   state.scrollTarget=clampScroll(state.scrollTarget); state.scrollTop=clampScroll(state.scrollTop);
   dirty=true;
 }
@@ -180,23 +195,23 @@ function resize(){
    ============================================================ */
 function draw(){
   const t0=performance.now();
-  const {rowH,dotR}=layout, st=state.scrollTop, W=view.cssW, H=view.cssH, N=G.N;
+  const {rowH,dotR}=layout, st=state.scrollTop, W=view.cssW, H=view.cssH, N=G.N, bh=bandH();
   ctx.setTransform(view.dpr,0,0,view.dpr,0,0);
   ctx.fillStyle=theme.bg; ctx.fillRect(0,0,W,H);
-  if(N===0){ perf.lastDrawMs=performance.now()-t0; return; }
+  if(N===0){ if(workdirAvailable()) drawWorkdirBand(); perf.lastDrawMs=performance.now()-t0; return; }
   const first=Math.max(0,Math.min(N-1,Math.floor(st/rowH)));
   const last=Math.max(0,Math.min(N-1,Math.floor((st+H)/rowH)));
 
-  // bisect band (behind everything)
+  // bisect band (behind everything) — real rows are offset by +bh (see bandH())
   const B=bisectDrawerCtrl.active();
-  if(B){ for(let r=first;r<=last;r++){ const y=r*rowH-st;
+  if(B){ for(let r=first;r<=last;r++){ const y=r*rowH-st+bh;
     if(r>B.lo&&r<B.hi&&!bisectDrawerCtrl.skips.has(r)){ ctx.fillStyle=theme.warning; ctx.globalAlpha=0.12; ctx.fillRect(0,y,W,rowH); ctx.globalAlpha=1; } } }
 
   // edges — one Path2D per lane colour
   for(let c=0;c<NCOL;c++) edgePaths[c]=null;
   const gStart=Math.max(0,first-1), gEnd=Math.min(N-2,last);
   for(let g=gStart;g<=gEnd;g++){
-    const yTop=g*rowH+rowH*0.5-st, yBot=(g+1)*rowH+rowH*0.5-st, yMid=(yTop+yBot)*0.5;
+    const yTop=g*rowH+rowH*0.5-st+bh, yBot=(g+1)*rowH+rowH*0.5-st+bh, yMid=(yTop+yBot)*0.5;
     const s=G.gapStart[g], e=G.gapStart[g+1];
     for(let k=s;k<e;k++){const top=G.gapTop[k],bot=G.gapBot[k],col=G.gapColor[k];
       let p=edgePaths[col]; if(!p) p=edgePaths[col]=new Path2D();
@@ -212,14 +227,14 @@ function draw(){
 
   ctx.textBaseline="middle"; ctx.font=layout.chipFont;
   for(let r=first;r<=last;r++){
-    const y=r*rowH+rowH*0.5-st, x=laneX(G.commitLane[r]), col=LANE_COLORS[G.commitColor[r]];
+    const y=r*rowH+rowH*0.5-st+bh, x=laneX(G.commitLane[r]), col=LANE_COLORS[G.commitColor[r]];
     const dim = B && !(r>B.lo&&r<B.hi) && r!==B.good && r!==B.bad;
-    if(r===state.selectedRow){ ctx.fillStyle=theme.accent; ctx.globalAlpha=0.20; ctx.fillRect(0,r*rowH-st,W,rowH); ctx.globalAlpha=1;
-      ctx.fillStyle=theme.accent; ctx.fillRect(0,r*rowH-st,3,rowH); }
-    else if(r===state.hoverRow){ ctx.fillStyle=theme.text; ctx.globalAlpha=0.08; ctx.fillRect(0,r*rowH-st,W,rowH); ctx.globalAlpha=1; }
-    if(B&&r===B.good){ctx.fillStyle=theme.success;ctx.fillRect(0,r*rowH-st,3,rowH);}
-    if(B&&r===B.bad){ctx.fillStyle=theme.danger;ctx.fillRect(0,r*rowH-st,3,rowH);}
-    if(bisectDrawerCtrl.cur!=null&&r===bisectDrawerCtrl.cur){ctx.fillStyle=theme.accent;ctx.fillRect(0,r*rowH-st,3,rowH);}
+    if(r===state.selectedRow){ ctx.fillStyle=theme.accent; ctx.globalAlpha=0.20; ctx.fillRect(0,r*rowH-st+bh,W,rowH); ctx.globalAlpha=1;
+      ctx.fillStyle=theme.accent; ctx.fillRect(0,r*rowH-st+bh,3,rowH); }
+    else if(r===state.hoverRow){ ctx.fillStyle=theme.text; ctx.globalAlpha=0.08; ctx.fillRect(0,r*rowH-st+bh,W,rowH); ctx.globalAlpha=1; }
+    if(B&&r===B.good){ctx.fillStyle=theme.success;ctx.fillRect(0,r*rowH-st+bh,3,rowH);}
+    if(B&&r===B.bad){ctx.fillStyle=theme.danger;ctx.fillRect(0,r*rowH-st+bh,3,rowH);}
+    if(bisectDrawerCtrl.cur!=null&&r===bisectDrawerCtrl.cur){ctx.fillStyle=theme.accent;ctx.fillRect(0,r*rowH-st+bh,3,rowH);}
     ctx.globalAlpha=dim?0.4:1;
     ctx.beginPath(); ctx.arc(x,y,dotR,0,TAU);
     if(G.isMerge[r]){ctx.fillStyle=theme.bg;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=col;ctx.stroke();}
@@ -239,9 +254,53 @@ function draw(){
     }
     ctx.globalAlpha=1;
   }
+  drawWorkdirBand();
   if(state.drag) drawDragGhost();
   drawScrollbar(st,H,W);
   perf.lastDrawMs=performance.now()-t0;
+}
+// The pinned "Uncommitted changes" row — a genuine fixed HEADER (bandH()
+// tall, one row) sitting ABOVE the scrollable row viewport, like a sticky
+// table header. Real rows are offset by +bandH() (see draw()'s row loop,
+// hitTest(), drawDragGhost(), zoomAt()) so row 0 gets its own real slot
+// right below the header instead of sharing screen space with it —
+// previously the band was painted OVER whatever real row happened to be
+// scrolled to the very top, permanently hiding row 0 and eating its clicks
+// (hitTest checked the band before ever falling through to real-row math).
+// contentH is deliberately UNCHANGED (row-count only; the header is chrome,
+// not scrollable content) — only the row<->y mapping shifts, and
+// recomputeLayout()'s maxScroll has bandH() folded into it (see there) so
+// the LAST row still gets a full slot at max scroll. This comment used to
+// call the un-adjusted case "a much smaller, rarer cosmetic" overhang past
+// the canvas edge — that undersold it: at scrollTop===maxScroll the last
+// row's y-position worked out to EXACTLY view.cssH, i.e. it rendered and
+// hit-tested entirely off-canvas — 100% unreachable/unclickable (the root
+// commit, permanently) on any repo with more commits than fit on screen,
+// not a cosmetic sliver. Fixed by adding bandH() to maxScroll's own formula.
+// Uses theme.accent2 for its dot — deliberately NOT one of the
+// --l0../LANE_COLORS lane colours, so it never reads as "a real commit".
+function drawWorkdirBand(){
+  const rowH=layout.rowH, W=view.cssW, dotR=layout.dotR;
+  const active=state.selectedRow===-2, hover=state.hoverRow===-2;
+  ctx.fillStyle=theme.panel; ctx.fillRect(0,0,W,rowH);
+  if(active){ ctx.fillStyle=theme.accent; ctx.globalAlpha=0.20; ctx.fillRect(0,0,W,rowH); ctx.globalAlpha=1;
+    ctx.fillStyle=theme.accent; ctx.fillRect(0,0,3,rowH); }
+  else if(hover){ ctx.fillStyle=theme.text; ctx.globalAlpha=0.08; ctx.fillRect(0,0,W,rowH); ctx.globalAlpha=1; }
+  const y=rowH*0.5, x=laneX(0);
+  ctx.beginPath(); ctx.arc(x,y,dotR,0,TAU); ctx.fillStyle=theme.accent2; ctx.fill();
+  if(active){ ctx.beginPath(); ctx.arc(x,y,dotR+3.2,0,TAU); ctx.strokeStyle=theme.text; ctx.lineWidth=1.6; ctx.stroke(); }
+  else if(hover){ ctx.beginPath(); ctx.arc(x,y,dotR+2.6,0,TAU); ctx.strokeStyle=theme.muted; ctx.lineWidth=1; ctx.stroke(); }
+  ctx.textBaseline="middle"; ctx.textAlign="left";
+  ctx.font=Math.round(12.5*Math.min(1.25,layout.zoom))+"px "+FONT_UI; ctx.fillStyle=theme.text;
+  ctx.fillText("Uncommitted changes",x+dotR+14,y);
+  const s=workdirCtrl.status;
+  const nConflict=s?s.conflicted:0, nStaged=s?s.staged.length:0, nUnstaged=s?s.unstaged.length:0;
+  const badge=nConflict?(nConflict+" conflicted"):(nStaged||nUnstaged)?(nStaged+" staged · "+nUnstaged+" unstaged"):"clean";
+  ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px ui-monospace,monospace";
+  ctx.fillStyle=nConflict?theme.danger:theme.muted; ctx.textAlign="right";
+  ctx.fillText(badge,W-14,y); ctx.textAlign="left";
+  ctx.strokeStyle=theme.border; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,rowH+0.5); ctx.lineTo(W,rowH+0.5); ctx.stroke();
 }
 function drawChip(x,y,label,kind){
   const col=kind==="branch"?LANE_COLORS[0]:kind==="tag"?theme.accent2||"#7FB6A6":theme.accent;
@@ -254,12 +313,12 @@ function drawChip(x,y,label,kind){
   return x+w;
 }
 function drawDragGhost(){
-  const d=state.drag, rowH=layout.rowH, st=state.scrollTop;
-  const sy=d.source*rowH+rowH*0.5-st, sx=laneX(G.commitLane[d.source]);
+  const d=state.drag, rowH=layout.rowH, st=state.scrollTop, bh=bandH();
+  const sy=d.source*rowH+rowH*0.5-st+bh, sx=laneX(G.commitLane[d.source]);
   ctx.setLineDash([4,4]); ctx.strokeStyle=d.legal?theme.accent:theme.danger; ctx.lineWidth=1.5;
   ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(d.x,d.y); ctx.stroke(); ctx.setLineDash([]);
   ctx.beginPath(); ctx.arc(d.x,d.y,layout.dotR+1,0,TAU); ctx.fillStyle=d.legal?theme.accent:theme.danger; ctx.fill();
-  if(d.target!=null){const ty=d.target*rowH-st; ctx.strokeStyle=d.legal?theme.accent:theme.danger; ctx.lineWidth=1.4;
+  if(d.target!=null){const ty=d.target*rowH-st+bh; ctx.strokeStyle=d.legal?theme.accent:theme.danger; ctx.lineWidth=1.4;
     ctx.setLineDash([5,3]); ctx.strokeRect(1,ty,view.cssW-2,rowH); ctx.setLineDash([]);}
 }
 function scrollbarGeom(H,W){ if(layout.contentH<=H) return null;
@@ -273,10 +332,33 @@ function drawScrollbar(st,H,W){ const g=scrollbarGeom(H,W); if(!g)return;
 /* ============================================================
    5) HIT TEST — pure arithmetic, works at any commit count
    ============================================================ */
+// True when the pinned "Uncommitted changes" band should be drawn/hittable:
+// a real repo is open (Tauri), or we're in browser design mode (where a repo
+// is never "open" but the synthetic graph stands in for one throughout).
+function workdirAvailable(){ return IN_TAURI ? !!CUR_REPO : true; }
+// Height of the pinned band THIS frame — one full row tall (it scales with
+// zoom exactly like every other row; drawWorkdirBand() always draws it
+// layout.rowH tall) when it's actually being shown, else 0. Every place that
+// converts a row index to an on-screen y, or a screen y back to a row
+// index, must add/subtract this — real rows get a genuine slot BELOW the
+// fixed header instead of sharing one with it. Exported via bridge.ts so
+// the ⌘K and bisect-drawer "scroll a row into view" call sites (which live
+// outside this file) can stay consistent with it too.
+function bandH(){ return workdirAvailable()?layout.rowH:0; }
 function hitTest(mx,my){
-  const rowH=layout.rowH, row=Math.floor((state.scrollTop+my)/rowH);
+  const rowH=layout.rowH, bh=bandH();
+  // The pinned band lives in FIXED screen space (independent of
+  // state.scrollTop, same trick the ribbon uses) at the very top of the
+  // viewport — check it before falling through to the real-row math below.
+  // onDot:false so a pointerdown here is never mistaken for the start of a
+  // cherry-pick/merge drag (see the pointermove handler).
+  if(bh>0&&my>=0&&my<bh) return {row:-2,lane:0,onDot:false,x:laneX(0),y:bh*0.5};
+  // Real rows start at screen y=bh (the header's own height) — subtract it
+  // BEFORE dividing by rowH, or every row reads one slot too high, and row 0
+  // becomes unreachable/mis-hit exactly like the bug this fixes.
+  const row=Math.floor((state.scrollTop+(my-bh))/rowH);
   if(row<0||row>=G.N) return null;
-  const lane=G.commitLane[row], x=laneX(lane), y=row*rowH+rowH*0.5-state.scrollTop;
+  const lane=G.commitLane[row], x=laneX(lane), y=row*rowH+rowH*0.5-state.scrollTop+bh;
   const dx=mx-x, dy=my-y, hitR=layout.dotR+6;
   return {row,lane,onDot:(dx*dx+dy*dy)<=hitR*hitR,x,y};
 }
@@ -286,9 +368,17 @@ cv.addEventListener("wheel",(e)=>{
   if(e.ctrlKey||e.metaKey){e.preventDefault();zoomAt(rel(e).y,-e.deltaY);}
   else{e.preventDefault();state.scrollTarget=clampScroll(state.scrollTarget+e.deltaY);dirty=true;}
 },{passive:false});
-function zoomAt(cy,dir){const contentY=state.scrollTop+cy, frac=contentY/layout.rowH;
+function zoomAt(cy,dir){
+  // Anchor on the content point under the cursor — same math as before, just
+  // shifted by the header's height first. bandH() is read again AFTER
+  // recomputeLayout() since the header scales with zoom exactly like every
+  // other row (see bandH()'s own comment).
+  const bh0=bandH(), contentY=state.scrollTop+cy-bh0, frac=contentY/layout.rowH;
   layout.zoom=Math.max(0.55,Math.min(2.4,layout.zoom*Math.exp(dir*0.0016)));
-  recomputeLayout(); state.scrollTop=state.scrollTarget=clampScroll(frac*layout.rowH-cy); positionTicks();}
+  recomputeLayout();
+  state.scrollTop=state.scrollTarget=clampScroll(frac*layout.rowH-cy+bandH());
+  positionTicks();
+}
 
 let down=null, sbDrag=null;
 cv.addEventListener("pointerdown",(e)=>{
@@ -322,7 +412,7 @@ function endPointer(e){
   const p=rel(e);
   if(sbDrag){sbDrag=null;state.pointerActive=false;return;}
   if(down){
-    if(!down.moved&&down.hit) select(down.hit.row);
+    if(!down.moved&&down.hit){ if(down.hit.row===-2) selectWorkdir(); else select(down.hit.row); }
     else if(!down.moved&&!down.hit) deselect();
     else if(state.drag){
       const isMerge=state.drag.op==="merge", t=hitTest(p.x,p.y), tRow=t?t.row:null;
@@ -367,6 +457,7 @@ cv.addEventListener("keydown",(e)=>{
 // instead surfaces a real reason in the ghost tooltip.
 function legalPick(src,tgt){
   if(resolver.busy) return {ok:false,why:"a pick/merge is already in progress"};
+  if(tgt===-2) return {ok:false,why:"drop on a commit, not the working tree"};
   if(tgt==null) return {ok:false,why:"drop on a commit"};
   if(tgt===src) return {ok:false,why:"onto itself"};
   if(G&&G.isMerge&&G.isMerge[src]) return {ok:false,why:"can't cherry-pick a merge"};
@@ -379,6 +470,7 @@ function legalPick(src,tgt){
    no isMerge(src) rejection here. */
 function legalMerge(src,tgt){
   if(resolver.busy) return {ok:false,why:"a pick/merge is already in progress"};
+  if(tgt===-2) return {ok:false,why:"drop on a commit, not the working tree"};
   if(tgt==null) return {ok:false,why:"drop on a commit"};
   if(tgt===src) return {ok:false,why:"onto itself"};
   if(tgt>src) return {ok:false,why:"target is an ancestor"};
@@ -503,11 +595,21 @@ const AUTHORS=[{n:"Jiucheng Zang",e:"jiucheng@gitcat.dev"},{n:"Tama",e:"tama@git
 // The detail panel itself is now a Svelte island (src/islands/detail) — see
 // detailCtrl.select()/commitMeta(). GRAMMARS/highlight stay here: they're
 // shared with Resolver.svelte's 3-way diff view via bridge.highlight.
-function select(row){ state.selectedRow=row; detailCtrl.select(row); dirty=true; }
+// row is a real 0-indexed row; -2 is the pinned "Uncommitted changes" row's
+// OWN sentinel (see selectWorkdir below) and never reaches here directly —
+// hitTest()/endPointer route a -2 hit to selectWorkdir() instead. Closes the
+// working-tree panel (if it was open) so the two selections stay mutually
+// exclusive in the shared #detail slot.
+function select(row){ state.selectedRow=row; workdirCtrl.deselect(); detailCtrl.select(row); dirty=true; }
+// The pinned row: lives in fixed screen space above the scrolling graph
+// (drawWorkdirBand()/hitTest()), consumes no slot in G.N, and swaps #detail
+// to the Workdir Svelte island instead of a real commit's detail. -2 is
+// distinct from -1 (nothing selected) and any real row (>=0).
+function selectWorkdir(){ state.selectedRow=-2; workdirCtrl.select(CUR_REPO); dirty=true; }
 // Clicking empty canvas space (no commit dot under the pointer) while a
-// commit is selected — brings back Tama's hero card instead of leaving the
-// detail panel stuck on the last-selected commit forever.
-function deselect(){ if(state.selectedRow<0) return; state.selectedRow=-1; detailCtrl.deselect(); dirty=true; }
+// commit OR the pinned row is selected — brings back Tama's hero card
+// instead of leaving the detail panel stuck on the last selection forever.
+function deselect(){ if(state.selectedRow===-1) return; state.selectedRow=-1; workdirCtrl.deselect(); detailCtrl.deselect(); dirty=true; }
 const GRAMMARS={
   ts:[["com",/\/\/[^\n]*|\/\*[\s\S]*?\*\//y],["str",/`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/y],
      ["key",/\b(?:const|let|var|function|return|if|else|for|while|new|class|extends|implements|interface|type|import|export|from|await|async|of|in|typeof|instanceof|null|undefined|true|false|this|void|public|private|readonly|enum)\b/y],
@@ -587,10 +689,23 @@ async function globalUndo(){
   if(!IN_TAURI){ Tama.event("undo.performed",{hash:hhex(1)}); pulseTick(0);
     cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>',TAMA_IMG.confident); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first — there's nothing to undo yet."); return; }
+  // Bug-B fix: right after a successful stash apply/pop, the working tree is
+  // dirty in a way the generic undo_last can never rewind — nothing at the
+  // ref level moved (see stash_undo_apply's doc comment, workdir.rs), so
+  // undo_last would either no-op or restore the WRONG thing. workdirCtrl
+  // tracks exactly this (pendingStashUndo, invalidated by any other
+  // stage/unstage/discard/commit/stash action since — see workdir.svelte.ts's
+  // file-header comment) and undoKind() is the pure read of it; check it
+  // BEFORE the Safety.snaps guard below, since that guard is about the
+  // ref-snapshot list undo_last relies on and has nothing to do with whether
+  // there's a stash apply/pop to undo.
+  const useStashUndo=workdirCtrl.undoKind()==="stash";
   // #undoBtn is disabled whenever Safety.snaps is empty (see updateBadge()),
   // but ⌘Z bypasses a disabled button entirely — mirror the same check here
   // so the shortcut doesn't round-trip to the backend for a guaranteed no-op.
-  if(!Safety.snaps.length){ Tama.warn("Nothing to undo yet — no snapshots have been taken."); return; }
+  // Skipped entirely for the stash-undo path: stash_undo_apply takes its own
+  // safety snapshot and needs no prior ref snapshot to already exist.
+  if(!useStashUndo&&!Safety.snaps.length){ Tama.warn("Nothing to undo yet — no snapshots have been taken."); return; }
   if(undoBusy) return; undoBusy=true;
   // #undoBtn's disabled state was previously driven ONLY by Safety.updateBadge()
   // (zero-snapshot check) — undoBusy guarded re-entrancy in code but gave zero
@@ -600,9 +715,19 @@ async function globalUndo(){
   btn.disabled=true; labelEl.innerHTML='<span class="spinner"></span> Undoing…';
   Tama.set("thinking");
   try{
-    const res=await tinvoke("undo_last",{path:CUR_REPO});
+    // Typed client (commands.stashUndoApply) for the new branch per the fix
+    // design; the pre-existing undo_last branch is untouched (still the raw
+    // tinvoke() call) — every other operation's Undo behavior stays exactly
+    // as it was.
+    const res=useStashUndo?await commands.stashUndoApply(CUR_REPO):await tinvoke("undo_last",{path:CUR_REPO});
+    if(useStashUndo) workdirCtrl.pendingStashUndo=false; // consumed regardless of outcome — see doc comment above
     if(res&&res.ok){
-      await reloadGraph(true);
+      // stash_undo_apply never moves HEAD/branches (see its doc comment) —
+      // reloading the commit graph would be a no-op for it, so refresh the
+      // workdir panel's own status/stash list instead, same as
+      // applyOrPopStash's own success path does.
+      if(useStashUndo){ await workdirCtrl.refreshStatus(CUR_REPO); await workdirCtrl.refreshStashes(CUR_REPO); }
+      else await reloadGraph(true);
       const to=(res.restoredTo||"").slice(0,7);
       Tama.event("undo.performed",{hash:to||hhex(1)}); pulseTick(0);
       cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>',TAMA_IMG.confident);
@@ -894,6 +1019,15 @@ async function openRepo(path){
   try{
     const g = await tinvoke("load_graph", { path });
     BACKEND = g; CUR_REPO = path;
+    // Switching repos must close the pinned "Uncommitted changes" panel (if
+    // open) FIRST — its file list belongs to whichever repo was open when
+    // select() last populated it. Left open here, it would keep showing the
+    // OLD repo's stale files while every Stage/Unstage/Discard/Commit button
+    // reads the clicked file path from that stale list combined with the
+    // NEW repo path (CUR_REPO, just reassigned above) — silently acting on
+    // the wrong repo+file combination. deselect() mirrors bootEmpty()'s own
+    // reset sequence; a later selectWorkdir() reopens it against the new repo.
+    workdirCtrl.deselect();
     const name = path.replace(/[\/\\]+$/,"").split(/[\/\\]/).pop() || path;
     $(".repo-pick span").textContent = name;
     loadGraph(g.n);
@@ -925,11 +1059,19 @@ async function reloadGraph(preserveRow){
   reloadGraphBusy=true;
   const keepSha = preserveRow && state.selectedRow>=0 && BACKEND && BACKEND.rows[state.selectedRow]
     ? BACKEND.rows[state.selectedRow].sha : null;
+  // The pinned "Uncommitted changes" row has no sha to re-locate by — its own
+  // sentinel (-2) IS the identity, so just remember it was open and reopen it
+  // after loadGraph() (which unconditionally resets state.selectedRow to -1)
+  // instead of trying (and failing) to find it in BACKEND.rows below.
+  const keepWorkdir = preserveRow && state.selectedRow===-2;
   try{
     const g=await tinvoke("load_graph",{path:CUR_REPO});
     BACKEND=g; loadGraph(g.n);
     if(keepSha){ const row=BACKEND.rows.findIndex(r=>r.sha===keepSha);
-      if(row>=0){ select(row); state.scrollTarget=clampScroll(row*layout.rowH-view.cssH/2); dirty=true; } }
+      // Center within the scrollable viewport BELOW the pinned header
+      // (view.cssH-bandH()), not the full canvas height — see bandH()'s comment.
+      if(row>=0){ select(row); state.scrollTarget=clampScroll(row*layout.rowH-(view.cssH-bandH())/2); dirty=true; } }
+    else if(keepWorkdir){ selectWorkdir(); }
     await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
   }catch(e){ Tama.warn("Reload failed — "+e); console.error(e); }
   finally{ reloadGraphBusy=false; }
@@ -969,6 +1111,7 @@ function bootEmpty(){
   G={N:0,commitLane:[],commitColor:[],isMerge:[],gapStart:[0],gapTop:[],gapBot:[],gapColor:[],refs:[],snapRows:[],snapTs:{}};
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
   bisectDrawerCtrl.clearLocalMarks();
+  workdirCtrl.deselect(); // no repo open -> the pinned row can't be selected either
   recomputeLayout(); positionTicks();
   detailCtrl.showEmpty();
   dirty=true;
@@ -992,6 +1135,6 @@ const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>c
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  G, BACKEND, state, layout, view, cv, clampScroll, select, hhex, msgOf, AUTHORS,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, pickRepo, ensureDrawerOpen, armDanger, updateBranchPill,
-  openRepo, doFetch, doPull, doPush };
+  openRepo, doFetch, doPull, doPush, bandH };

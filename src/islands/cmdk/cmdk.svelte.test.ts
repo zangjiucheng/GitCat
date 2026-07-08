@@ -14,6 +14,7 @@ vi.mock("../../legacy/bridge", () => ({
   layout: { rowH: 22 },
   view: { cssH: 400 },
   cv: { focus: vi.fn() },
+  bandH: vi.fn(() => 0),
   clampScroll: (v: number) => (v < 0 ? 0 : v > 1000 ? 1000 : v),
   select: vi.fn(),
   hhex: (r: number) => "hex" + r,
