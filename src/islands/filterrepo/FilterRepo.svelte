@@ -162,7 +162,7 @@
         {:else if filterRepoCtrl.backups.length === 0}
           <div class="mut pl-empty">No backups recorded yet — a backup is created automatically the first time you run filter-repo.</div>
         {:else}
-          <div class="cf-files" id="filterRepoBackupList" class:busy={filterRepoCtrl.restoreBusy}>
+          <div class="cf-files" id="filterRepoBackupList" class:busy={filterRepoCtrl.restoreBusy} data-vimnav-list>
             {#each filterRepoCtrl.backups as b (b.id)}
               <div
                 class="cf-file"

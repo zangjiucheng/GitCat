@@ -1,5 +1,6 @@
 <script lang="ts">
   import { cmdkCtrl, shortSha, CMD_CAP } from "./cmdk.svelte.ts";
+  import { isTextInputFocused } from "../vimnav/vimnav.svelte.ts";
 
   let inputEl: HTMLInputElement | undefined = $state();
   let listEl: HTMLDivElement | undefined = $state();
@@ -21,6 +22,16 @@
   function onWindowKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
       if (!cmdkCtrl.open && document.querySelector(".scrim.on")) return; // don't cover an open confirm dialog
+      e.preventDefault();
+      cmdkCtrl.toggle();
+      return;
+    }
+    // vim-style "/" search — a real typed character elsewhere, so this needs
+    // the text-input guard the metaKey/ctrlKey check above doesn't (nobody
+    // types Ctrl+K into a text field the same way they'd type a bare "/").
+    if (e.key === "/") {
+      if (isTextInputFocused(e.target as Element | null)) return;
+      if (!cmdkCtrl.open && document.querySelector(".scrim.on")) return;
       e.preventDefault();
       cmdkCtrl.toggle();
     }

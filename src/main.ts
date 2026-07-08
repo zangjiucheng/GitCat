@@ -16,6 +16,7 @@ import SetupWizard from "./islands/setupwizard/SetupWizard.svelte";
 import { setupWizardCtrl } from "./islands/setupwizard/setupwizard.svelte.ts";
 import Cmdk from "./islands/cmdk/Cmdk.svelte";
 import { cmdkCtrl } from "./islands/cmdk/cmdk.svelte.ts";
+import VimNav from "./islands/vimnav/VimNav.svelte";
 import Detail from "./islands/detail/Detail.svelte";
 import BisectDrawer from "./islands/bisectdrawer/BisectDrawer.svelte";
 import Sidebar from "./islands/sidebar/Sidebar.svelte";
@@ -44,6 +45,7 @@ if (IN_TAURI) {
 }
 
 mount(Cmdk, { target: document.body });
+mount(VimNav, { target: document.body });
 mount(Detail, { target: document.getElementById("detail")! });
 mount(BisectDrawer, { target: document.getElementById("pane-bisect")! });
 
