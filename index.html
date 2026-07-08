@@ -106,9 +106,6 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tb-btn.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,transparent);
   background:color-mix(in srgb,var(--danger) 8%,var(--elevated))}
 .tb-btn.danger:hover{background:color-mix(in srgb,var(--danger) 16%,var(--elevated))}
-.seg{display:flex;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);padding:2px}
-.seg button{padding:4px 9px;border:0;background:transparent;border-radius:6px;color:var(--muted);font-weight:600;font-size:12px}
-.seg button[aria-pressed="true"]{background:var(--elevated);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.15)}
 .icon-btn{width:32px;height:32px;display:grid;place-items:center;background:var(--elevated);
   border:1px solid var(--border);border-radius:var(--r-control)}
 .icon-btn:hover{border-color:var(--muted)}
@@ -116,6 +113,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 /* ============================== SIDEBAR ============================== */
 .sidebar{grid-area:sidebar;display:flex;flex-direction:column;min-height:0;position:relative;
   background:var(--panel);border-right:1px solid var(--border)}
+/* #sidebarRefs (the Sidebar Svelte island's mount point) is a plain wrapper
+   div, not itself a flex item bounded by .sidebar's height — without this it
+   grows to fit the full ref list, pushing the Tama nook below it down and
+   off the fixed bottom-left spot instead of the list scrolling internally.
+   flex:1 gives it the remaining height under the nook; display:flex column
+   is what makes .ref-scroll's own flex:1/overflow:auto (below) apply at all. */
+#sidebarRefs{display:flex;flex-direction:column;flex:1;min-height:0}
 .ref-filter{padding:10px;border-bottom:1px solid var(--border);position:relative}
 .ref-filter input{width:100%;padding:7px 10px 7px 30px;background:var(--bg);border:1px solid var(--border);
   border-radius:var(--r-control);color:var(--text);font-size:12px}
@@ -181,10 +185,6 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 @keyframes pip{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--success) 55%,transparent)}70%,100%{box-shadow:0 0 0 5px transparent}}
 .chip{display:none;width:22px;height:22px;border-radius:7px;flex:none;align-items:center;justify-content:center;
   background:color-mix(in srgb,var(--sa) 22%,transparent);border:1.5px solid var(--sa);color:var(--sa);font:800 12px var(--display)}
-.app[data-mascot="minimal"] .sprite{display:none}
-.app[data-mascot="minimal"] .chip{display:inline-flex}
-.app[data-mascot="minimal"] .nook{--nook-h:60px}
-.app[data-mascot="off"] .nook{display:none}
 /* sprite expression visibility per state (one shows) */
 .eyes,.zzz,.yarn,.halo,.collar,.medic-tag,.paw-wait,.bristle,.tail-check,.mouth-open,.mouth-o,.spark,.eyes-wide{opacity:0}
 .tail-rest,.mouth-rest{opacity:1} .eyes{transition:opacity .16s}
@@ -600,7 +600,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cmdk-foot .sp{margin-left:auto}
 </style>
 
-<div class="app" id="app" data-mascot="full">
+<div class="app" id="app">
 
   <!-- ============================ TOP BAR ============================ -->
   <header class="topbar">
@@ -626,11 +626,6 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
     <div class="cmd-hint" title="Command palette"><span>Search commits, refs, actions&#8230;</span><kbd>&#8984;K</kbd></div>
     <div class="spacer"></div>
     <button class="tb-btn undo" id="undoBtn" title="Global Undo — Safety Manager (⌘Z)"><span>&#8624; Undo</span><span class="badge" id="undoCount">214</span></button>
-    <div class="seg" id="mascotSeg" role="group" aria-label="Mascot">
-      <button data-mascot="full" aria-pressed="true">Full</button>
-      <button data-mascot="minimal" aria-pressed="false">Min</button>
-      <button data-mascot="off" aria-pressed="false">Off</button>
-    </div>
     <button class="tb-btn danger" id="filterRepoBtn" title="Rewrite history (danger)">&#9888; filter-repo</button>
     <button class="icon-btn" id="themeBtn" title="Toggle theme">&#9680;</button>
   </header>

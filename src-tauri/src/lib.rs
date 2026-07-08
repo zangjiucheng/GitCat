@@ -9,6 +9,7 @@ pub mod git_merge; // M6 (stage 1): merge (drag-onto-HEAD) + continue / abort
 pub mod git_rebase; // M6 (stage 2): linear rebase onto a target + continue / skip / abort
 pub mod identity; // Setup wizard: repo-local git identity (user.name/user.email) check + fix
 pub mod layout;
+pub mod menu; // native app menu (File/Edit/View/Window/Help) + About panel
 pub mod model;
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
@@ -93,6 +94,8 @@ pub fn run() {
         // invoke_handler is the tauri-specta equivalent of generate_handler! —
         // command runtime behavior (Ok resolves / Err rejects) is unchanged.
         .invoke_handler(builder.invoke_handler())
+        .menu(|app| menu::build(app))
+        .on_menu_event(menu::handle_event)
         .setup(move |app| {
             builder.mount_events(app);
             Ok(())

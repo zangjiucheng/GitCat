@@ -418,7 +418,7 @@ const Safety={ count:214, lastAt:performance.now()-2*60*1000, snaps:[], pad(n){r
 class TamaMascot{
   static STATES={idle:{sticky:false},sleep:{sticky:false},hint:{sticky:false,dwell:3200},thinking:{sticky:true},warn:{sticky:true},danger:{sticky:true},celebrate:{sticky:false,dwell:3600},rescue:{sticky:true}};
   static CHIP={idle:"◡",sleep:"z",hint:"i",thinking:"…",warn:"!",danger:"!!",celebrate:"✓",rescue:"+"};
-  constructor(el){this.nook=el.nook;this.sprite=el.sprite;this.line=el.line;this.tele=el.tele;this.chip=el.chip;this.app=el.app;
+  constructor(el){this.nook=el.nook;this.sprite=el.sprite;this.line=el.line;this.tele=el.tele;this.chip=el.chip;
     this.sticky=null;this.toastT=null;this.dwellT=null;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
   set(s){clearTimeout(this.dwellT);const cfg=TamaMascot.STATES[s]||TamaMascot.STATES.idle;
     this.nook.dataset.state=s;this.chip.textContent=TamaMascot.CHIP[s]||"z";
@@ -430,7 +430,6 @@ class TamaMascot{
   warn(t,ms=5000){this.set("warn");this.say(t,ms);}
   wag(){if(this.reduced)return;this.sprite.classList.remove("wag");void this.sprite.offsetWidth;this.sprite.classList.add("wag");}
   setInteracting(on){this.nook.classList.toggle("is-interacting",on);}
-  setMode(m){this.app.dataset.mascot=m;}
   event(name,p={}){
     switch(name){
       case "fetch.upToDate": case "checkout.clean": this.wag(); return null;
@@ -453,7 +452,7 @@ class TamaMascot{
   _tele(){this.tele.textContent="snapshots "+Safety.teleCount()+" · last "+Safety.teleAgo();}
   _teleLoop(){this._tele();setInterval(()=>{if(this.nook.dataset.state!=="thinking")this._tele();},20000);}
 }
-const Tama=new TamaMascot({app:$("#app"),nook:$("#nook"),sprite:$("#sprite"),line:$("#toastLine"),tele:$("#telemetry"),chip:$("#chip")});
+const Tama=new TamaMascot({nook:$("#nook"),sprite:$("#sprite"),line:$("#toastLine"),tele:$("#telemetry"),chip:$("#chip")});
 
 /* The nook cat watches your cursor, and naps when you go idle. */
 Tama.lastMove=performance.now();
@@ -554,9 +553,6 @@ $("#themeBtn").addEventListener("click",()=>{
   const cur=document.documentElement.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light");
   applyTheme(cur==="dark"?"light":"dark");
 });
-// mascot mode
-$("#mascotSeg").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;
-  $$("#mascotSeg button").forEach(x=>x.setAttribute("aria-pressed",x===b));Tama.setMode(b.dataset.mascot);requestAnimationFrame(resize);});
 // painted-Tama celebration popover
 let cheerT=null;
 function cheer(msg,img=null){ $("#tamaCheerTxt").innerHTML=msg; $("#tamaCheerImg").src=img||TAMA_IMG.happy; const c=$("#tamaCheer"); c.classList.add("show");

@@ -15,6 +15,7 @@ import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import SetupWizard from "./islands/setupwizard/SetupWizard.svelte";
 import { setupWizardCtrl } from "./islands/setupwizard/setupwizard.svelte.ts";
 import Cmdk from "./islands/cmdk/Cmdk.svelte";
+import { cmdkCtrl } from "./islands/cmdk/cmdk.svelte.ts";
 import Detail from "./islands/detail/Detail.svelte";
 import BisectDrawer from "./islands/bisectdrawer/BisectDrawer.svelte";
 import Sidebar from "./islands/sidebar/Sidebar.svelte";
@@ -63,3 +64,30 @@ rerereCtrl.refresh(bridge.CUR_REPO);
 // plumbing.svelte.ts) so it only needs a mount, never an initial data call.
 const plumbingPane = document.getElementById("pane-plumbing");
 if (plumbingPane) mount(Plumbing, { target: plumbingPane });
+
+// Native app menu -> frontend action bridge (see src-tauri/src/menu.rs).
+// Only the items whose action lives in Svelte-controller land forward here —
+// the Help links (opened via the opener plugin) and every predefined item
+// (Cut/Copy/Paste/Select All/Quit/etc.) are handled entirely on the Rust/OS
+// side and never reach this listener. window.__TAURI__ (not a static
+// @tauri-apps/api import) matches every other real-Tauri-only call site in
+// this codebase (see setupwizard.svelte.ts's pickDirectory/armDropZone).
+if (IN_TAURI) {
+  const w = window as unknown as { __TAURI__?: any };
+  w.__TAURI__?.event.listen("menu-action", (e: { payload: string }) => {
+    switch (e.payload) {
+      case "open-repo":
+        bridge.pickRepo();
+        break;
+      case "new-branch":
+        sidebarCtrl.startNewBranch();
+        break;
+      case "toggle-theme":
+        document.getElementById("themeBtn")?.dispatchEvent(new MouseEvent("click"));
+        break;
+      case "cmdk":
+        cmdkCtrl.show();
+        break;
+    }
+  });
+}
