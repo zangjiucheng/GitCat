@@ -9,6 +9,7 @@ pub mod workdir; // working-tree status + stage/unstage/discard/commit + stash
 pub mod git_bisect; // M3: git bisect (start / mark good|bad|skip / status / reset)
 pub mod git_merge; // M6 (stage 1): merge (drag-onto-HEAD) + continue / abort
 pub mod git_rebase; // M6 (stage 2): linear rebase onto a target + continue / skip / abort
+pub mod git_revert; // M6 (stage 3): revert a single commit onto HEAD + continue / abort
 pub mod identity; // Setup wizard: repo-local git identity (user.name/user.email) check + fix
 pub mod layout;
 pub mod menu; // native app menu (File/Edit/View/Window/Help) + About panel
@@ -74,6 +75,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_rebase::rebase_continue,
         git_rebase::rebase_skip,
         git_rebase::rebase_abort,
+        // Revert (M6 stage 3): revert a single commit onto HEAD + continue / abort
+        git_revert::revert_start,
+        git_revert::revert_continue,
+        git_revert::revert_abort,
         // Bisect (M3): start / mark good|bad|skip / status / reset
         git_bisect::bisect_start,
         git_bisect::bisect_mark,

@@ -218,11 +218,12 @@ pub fn resolve_conflict_file(path: String, file: String, side: String) -> Resolv
 
     // Guard: only resolve inside an op GitCat snapshots AND can Abort/Continue
     // from the app — cherry-pick (git_pick), merge (git_merge), rebase
-    // (git_rebase), and stash (workdir::stash_conflict_abort/_continue).
-    // Their *_abort/*_continue commands are gated on CHERRY_PICK_HEAD/
-    // MERGE_HEAD/the rebase-merge sequencer dir/the stash-conflict sidecar
-    // file respectively, so any OTHER op (revert, …) could be neither backed
-    // out nor advanced from the app — never mutate inside one.
+    // (git_rebase), revert (git_revert), and stash
+    // (workdir::stash_conflict_abort/_continue). Their *_abort/*_continue
+    // commands are gated on CHERRY_PICK_HEAD/MERGE_HEAD/the rebase-merge
+    // sequencer dir/REVERT_HEAD/the stash-conflict sidecar file respectively,
+    // so any OTHER op could be neither backed out nor advanced from the app —
+    // never mutate inside one.
     //
     // NOTE: this is intentionally an allowlist, not a denylist, so an op that
     // doesn't (yet) have app-level continue/abort support fails closed.
@@ -232,9 +233,9 @@ pub fn resolve_conflict_file(path: String, file: String, side: String) -> Resolv
                 Ok(o) => o,
                 Err(e) => return ResolveResult::err(format!("cannot inspect repository state: {}", e.message())),
             };
-            if op != "cherry-pick" && op != "merge" && op != "rebase" && op != "stash" {
+            if op != "cherry-pick" && op != "merge" && op != "rebase" && op != "revert" && op != "stash" {
                 return ResolveResult::err(format!(
-                    "Not inside a cherry-pick, merge, rebase, or stash conflict (repository state: {op}). \
+                    "Not inside a cherry-pick, merge, rebase, revert, or stash conflict (repository state: {op}). \
                      Resolve {op} conflicts with git on the command line."
                 ));
             }

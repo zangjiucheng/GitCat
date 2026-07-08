@@ -485,6 +485,45 @@ async rebaseAbort(path: string) : Promise<RebaseResult> {
     return await TAURI_INVOKE("rebase_abort", { path });
 },
 /**
+ * Revert `sha` onto the current branch (HEAD). Snapshots FIRST, then runs
+ * `git revert [-s] --no-edit --end-of-options <sha>`. `signoff` (the `-s`
+ * toggle) appends a "Signed-off-by" trailer to the revert commit's message.
+ * 
+ * A dirty working tree makes git refuse the revert — that surfaces as
+ * `state:"error"` with git's own message; we never force. On a conflict this
+ * resolves to `state:"conflict"` (repo left mid-revert for the resolver), NOT
+ * a failure.
+ * 
+ * JS: `invoke("revert_start", { path, sha, signoff? })`.
+ */
+async revertStart(path: string, sha: string, signoff: boolean | null) : Promise<RevertResult> {
+    return await TAURI_INVOKE("revert_start", { path, sha, signoff });
+},
+/**
+ * Continue an in-progress revert after the user resolved the conflict (files
+ * were `git add`ed by the resolver). Runs `git revert --continue` with
+ * `GIT_EDITOR=true` so it commits the resolution non-interactively.
+ * 
+ * Re-classifies the outcome: `clean` on success, `conflict` again if
+ * conflicts remain unresolved.
+ * 
+ * JS: `invoke("revert_continue", { path })`.
+ */
+async revertContinue(path: string) : Promise<RevertResult> {
+    return await TAURI_INVOKE("revert_continue", { path });
+},
+/**
+ * Abort an in-progress revert: `git revert --abort` restores the pre-revert
+ * state. This is the escape hatch — it must ALWAYS be able to run, so it
+ * deliberately does NOT take a snapshot (a snapshot failure must never block
+ * the user's way out). Idempotent: "nothing in progress" is a benign success.
+ * 
+ * JS: `invoke("revert_abort", { path })`.
+ */
+async revertAbort(path: string) : Promise<RevertResult> {
+    return await TAURI_INVOKE("revert_abort", { path });
+},
+/**
  * Start a bisect between a known-bad and one-or-more known-good commits.
  * Snapshots FIRST. JS: invoke("bisect_start", { path, bad, good: [sha,…] }).
  */
@@ -911,6 +950,25 @@ livePaths: RererePath[] }
  * unmerged after this resolution (0 means the tree is ready to Continue).
  */
 export type ResolveResult = { ok: boolean; remaining: number; message: string }
+/**
+ * Result of any revert step (initial / continue / abort). Serializes
+ * camelCase: `conflictedFiles`, `backupRef`.
+ */
+export type RevertResult = { ok: boolean; 
+/**
+ * "clean" | "conflict" | "empty" | "error"
+ */
+state: string; 
+/**
+ * Repo-relative paths with unmerged entries — non-empty only when
+ * `state == "conflict"`.
+ */
+conflictedFiles: string[]; message: string; 
+/**
+ * Pre-op safety snapshot ref (present when we snapshotted before mutating),
+ * so the UI can name the snapshot the user can Undo to.
+ */
+backupRef: string | null }
 /**
  * A remote-tracking branch or a tag: just a name and the commit it resolves to.
  */

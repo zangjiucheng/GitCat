@@ -15,6 +15,8 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { CommitDetail } from "../../ipc/bindings";
+import { resolver } from "../resolver/resolver.svelte.ts";
+import { IN_TAURI } from "../../ipc/env";
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
@@ -191,6 +193,21 @@ class DetailState {
     return this.commit ? GPG[this.commit.gpg] : GPG.none;
   }
 
+  // Whether the "Revert commit" button should be disabled: the existing
+  // `resolver.busy` re-entrancy guard, OR the selected commit being a merge.
+  // `git revert` (like `git cherry-pick`) refuses a merge commit with a
+  // jargon-y "commit X is a merge but no -m option was given" unless `-m`/
+  // `--mainline` is given, which revert_start deliberately doesn't support
+  // (see git_revert.rs's module doc — same deliberate scope limit as
+  // cherry-pick). Cherry-pick's own equivalent limitation is enforced earlier,
+  // at the drag gesture (`legalPick` in legacy/main.ts: `G.isMerge[src] =>
+  // "can't cherry-pick a merge"`), so the user never even attempts it and no
+  // safety snapshot is wasted. Revert has a real button instead of a drag
+  // gesture, so the button itself is where that same guard belongs.
+  get revertDisabled(): boolean {
+    return resolver.busy || !!this.commit?.merge;
+  }
+
   get tree(): TreeDir {
     const root: TreeDir = { dirs: {}, files: [] };
     this.curChanged.forEach((f, i) => {
@@ -323,6 +340,37 @@ class DetailState {
     setTimeout(() => {
       this.copied = false;
     }, 900);
+  }
+
+  // "Revert commit" button — the entry point for git revert. There is no
+  // per-commit-row context menu anywhere in this app: cherry-pick/merge use
+  // the canvas drag gesture (whose drop target is actually ignored — both
+  // always apply onto HEAD) and rebase uses the sidebar's branch menu.
+  // Revert has no meaningful "target" either — it always applies onto HEAD
+  // given only the source commit to revert — so a drag gesture would be
+  // misleading (there's nothing to drop it "onto" that means anything).
+  // This reuses the existing select-a-commit -> detail-panel -> act flow
+  // instead of inventing a context-menu system just for one action. Mirrors
+  // sidebarCtrl.rebaseOnto's IN_TAURI branch (and legacy/main.ts's
+  // cherryPick()/mergeCommit()): design mode opens the resolver's demo,
+  // real mode calls the resolver's real start* entry point. Guarded on
+  // `this.commit` so it's a no-op for the hero/empty state; Detail.svelte
+  // only renders the button inside the branch that requires a real selected
+  // commit (mutually exclusive with the hero AND the workdir pinned row via
+  // the same `{#if workdirCtrl.selected}{:else if detailCtrl.hero}{:else if
+  // detailCtrl.commit}` chain that already governs the whole panel). Also
+  // guarded on `c.merge` (belt-and-braces alongside Detail.svelte's
+  // `disabled={detailCtrl.revertDisabled}`, see that getter's doc comment):
+  // revert_start doesn't support `-m`/`--mainline`, so a merge commit would
+  // otherwise take a real safety snapshot before failing on git's raw stderr.
+  async revertCommit() {
+    const c = this.commit;
+    if (!c || c.merge) return;
+    if (!IN_TAURI) {
+      resolver.openDemo(c.sha, "revert"); // ---- design-mode demo ----
+      return;
+    }
+    await resolver.startRevert(bridge.CUR_REPO as unknown as string, c.sha); // ---- real revert onto HEAD (Svelte island) ----
   }
 
   showHero(n: number, ms: number) {

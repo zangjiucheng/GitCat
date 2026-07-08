@@ -34,6 +34,9 @@ vi.mock("../../ipc/bindings", () => ({
     rebaseContinue: vi.fn(),
     rebaseSkip: vi.fn(),
     rebaseAbort: vi.fn(),
+    revertStart: vi.fn(),
+    revertContinue: vi.fn(),
+    revertAbort: vi.fn(),
     stashConflictAbort: vi.fn(),
     stashConflictContinue: vi.fn(),
     conflictStatus: vi.fn(),
@@ -50,6 +53,7 @@ import type {
   PickResult,
   RebaseResult,
   ResolveResult,
+  RevertResult,
   StashResolveResult,
   WorkdirResult,
 } from "../../ipc/bindings";
@@ -71,6 +75,10 @@ function mergeResult(partial: Partial<MergeResult>): MergeResult {
 }
 
 function rebaseResult(partial: Partial<RebaseResult>): RebaseResult {
+  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
+}
+
+function revertResult(partial: Partial<RevertResult>): RevertResult {
   return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
 }
 
@@ -267,6 +275,61 @@ describe("startRebase", () => {
   });
 });
 
+describe("startRevert", () => {
+  it("clean result: reloads the graph and closes the modal", async () => {
+    vi.mocked(commands.revertStart).mockResolvedValueOnce(
+      revertResult({ state: "clean", message: "Reverted." }),
+    );
+
+    await resolver.startRevert("repo1", "sha1", true);
+
+    expect(commands.revertStart).toHaveBeenCalledWith("repo1", "sha1", true);
+    expect(commands.mergeStart).not.toHaveBeenCalled();
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(resolver.open).toBe(false);
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("defaults signoff to false when omitted", async () => {
+    vi.mocked(commands.revertStart).mockResolvedValueOnce(revertResult({ state: "clean" }));
+
+    await resolver.startRevert("repo1", "sha1");
+
+    expect(commands.revertStart).toHaveBeenCalledWith("repo1", "sha1", false);
+  });
+
+  it("conflict result: opens the modal, sets op to revert, and populates files from conflict_status", async () => {
+    vi.mocked(commands.revertStart).mockResolvedValueOnce(
+      revertResult({
+        ok: false,
+        state: "conflict",
+        conflictedFiles: ["a.ts", "b.ts"],
+        backupRef: "refs/gitgui/backup/rv1",
+      }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_A, FILE_B], true, "revert")),
+    );
+
+    await resolver.startRevert("repo1", "sha7", false);
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.busy).toBe(false);
+    expect(resolver.op).toBe("revert");
+    expect(resolver.files).toEqual([FILE_A, FILE_B]);
+    expect(resolver.remaining.size).toBe(2);
+    expect(resolver.backupRef).toBe("refs/gitgui/backup/rv1");
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+  });
+
+  it("warns via Tama instead of opening the modal without a repo", async () => {
+    await resolver.startRevert("", "sha");
+    expect(bridge.tama.warn).toHaveBeenCalled();
+    expect(commands.revertStart).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+});
+
 describe("op-dispatch (abort/continue resolve to the op reported by conflict_status)", () => {
   it("a merge conflict's abort calls mergeAbort, never cherryPickAbort", async () => {
     vi.mocked(commands.mergeStart).mockResolvedValueOnce(
@@ -398,6 +461,51 @@ describe("op-dispatch (abort/continue resolve to the op reported by conflict_sta
     expect(bridge.tama.warn).toHaveBeenCalled();
   });
 
+  it("a revert conflict's abort calls revertAbort, never mergeAbort/cherryPickAbort/rebaseAbort", async () => {
+    vi.mocked(commands.revertStart).mockResolvedValueOnce(
+      revertResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_A], true, "revert")),
+    );
+    await resolver.startRevert("repo1", "sha8", false);
+    expect(resolver.op).toBe("revert");
+
+    vi.mocked(commands.revertAbort).mockResolvedValueOnce(
+      revertResult({ state: "clean", message: "Revert aborted." }),
+    );
+
+    await resolver.abort();
+
+    expect(commands.revertAbort).toHaveBeenCalledWith("repo1");
+    expect(commands.mergeAbort).not.toHaveBeenCalled();
+    expect(commands.cherryPickAbort).not.toHaveBeenCalled();
+    expect(commands.rebaseAbort).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+
+  it("a revert conflict's continue calls revertContinue, never mergeContinue/cherryPickContinue/rebaseContinue", async () => {
+    vi.mocked(commands.revertStart).mockResolvedValueOnce(
+      revertResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_A], true, "revert")),
+    );
+    await resolver.startRevert("repo1", "sha9", false);
+
+    vi.mocked(commands.revertContinue).mockResolvedValueOnce(
+      revertResult({ state: "clean", message: "Revert committed." }),
+    );
+
+    await resolver.continue();
+
+    expect(commands.revertContinue).toHaveBeenCalledWith("repo1");
+    expect(commands.mergeContinue).not.toHaveBeenCalled();
+    expect(commands.cherryPickContinue).not.toHaveBeenCalled();
+    expect(commands.rebaseContinue).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+
   it("re-derives op from a live conflict_status refresh (self-describing across take())", async () => {
     // Started as a cherry-pick optimistically, but the live repo state (as
     // conflict_status reports it) says merge — refresh() must correct .op.
@@ -418,6 +526,28 @@ describe("op-dispatch (abort/continue resolve to the op reported by conflict_sta
     await resolver.take("theirs");
 
     expect(resolver.op).toBe("merge");
+  });
+
+  it("refresh() re-derives op as revert from a live conflict_status report", async () => {
+    // Started as a cherry-pick optimistically, but the live repo state (as
+    // conflict_status reports it) says revert — refresh() must correct .op.
+    resolver.repo = "repo1";
+    resolver.demo = false;
+    resolver.op = "cherry-pick";
+    resolver.files = [FILE_A];
+    resolver.selected = FILE_A.path;
+    resolver.remaining = new Set([FILE_A.path]);
+
+    vi.mocked(commands.resolveConflictFile).mockResolvedValueOnce({
+      ok: true,
+      remaining: 0,
+      message: "",
+    } satisfies ResolveResult);
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([], true, "revert")));
+
+    await resolver.take("theirs");
+
+    expect(resolver.op).toBe("revert");
   });
 });
 

@@ -10,10 +10,11 @@
   }
   const lines = (txt: string) => (txt || "").split("\n");
 
-  // Abort button copy — op-flavored ("Abort merge"/"Abort pick"/"Abort rebase"/"Abort stash").
+  // Abort button copy — op-flavored ("Abort merge"/"Abort pick"/"Abort rebase"/"Abort revert"/"Abort stash").
   function abortLabel(op: string): string {
     if (op === "merge") return "Abort merge";
     if (op === "rebase") return "Abort rebase";
+    if (op === "revert") return "Abort revert";
     if (op === "stash") return "Abort stash";
     return "Abort pick";
   }

@@ -1,21 +1,24 @@
 // Conflict resolver — controller (Svelte 5 runes singleton).
 //
-// Owns the resolver's UI state + the whole cherry-pick/merge/rebase outcome
-// flow. The legacy canvas-drag handler calls `resolver.startPick(...)`
+// Owns the resolver's UI state + the whole cherry-pick/merge/rebase/revert
+// outcome flow. The legacy canvas-drag handler calls `resolver.startPick(...)`
 // (cherry-pick) or `resolver.startMerge(...)` (merge) for a real op, the
-// branch-menu calls `resolver.startRebase(...)` (rebase), or `openDemo(...)`
-// (browser design mode); the modal buttons call the async methods below. All
-// backend calls go through the typed `ipc` layer; cross-cutting UI effects
-// (graph reload, mascot, cheer) go through the legacy `bridge`.
+// branch-menu calls `resolver.startRebase(...)` (rebase), the detail panel's
+// "Revert commit" button calls `resolver.startRevert(...)` (revert), or
+// `openDemo(...)` (browser design mode); the modal buttons call the async
+// methods below. All backend calls go through the typed `ipc` layer;
+// cross-cutting UI effects (graph reload, mascot, cheer) go through the
+// legacy `bridge`.
 //
 // ── op-dispatch design ──────────────────────────────────────────────────────
-// One resolver instance serves cherry-pick, merge, AND rebase conflicts. There
-// are three entry points — `startPick` (used by the existing cherry-pick drag
-// handler, unchanged signature), `startMerge`, and `startRebase` — because
-// each op's *start* command takes different args (cherry-pick's
-// `recordOrigin`, rebase's `onto`, have no equivalent on the others). All
-// funnel into the SAME shared `applyOutcome` + modal state (`.open`, `.files`,
-// `.selected`, …), so there is exactly one conflict-resolution UI.
+// One resolver instance serves cherry-pick, merge, rebase, AND revert
+// conflicts. There are four entry points — `startPick` (used by the existing
+// cherry-pick drag handler, unchanged signature), `startMerge`, `startRebase`,
+// and `startRevert` — because each op's *start* command takes different args
+// (cherry-pick's `recordOrigin`, rebase's `onto`, revert's `signoff`, have no
+// equivalent on the others). All funnel into the SAME shared `applyOutcome` +
+// modal state (`.open`, `.files`, `.selected`, …), so there is exactly one
+// conflict-resolution UI.
 //
 // Rebase is also the ONE op where a mid-sequence SKIP is meaningful — it drops
 // the commit currently being replayed entirely, distinct from Abort (undo
@@ -38,7 +41,7 @@
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
-import type { ConflictFile, MergeResult, PickResult, RebaseResult, StashResolveResult, WorkdirResult } from "../../ipc/bindings";
+import type { ConflictFile, MergeResult, PickResult, RebaseResult, RevertResult, StashResolveResult, WorkdirResult } from "../../ipc/bindings";
 
 // specta generates `side: string`; keep the precise union at the call boundary.
 type ConflictSide = "ours" | "theirs";
@@ -50,9 +53,9 @@ type ConflictSide = "ours" | "theirs";
 // stash_pop) is already owned by workdirCtrl, which needs the result for its
 // OWN non-conflict success/failure toasts too — see workdir.svelte.ts's
 // `applyOrPopStash`.
-type ResolverOp = "cherry-pick" | "merge" | "rebase" | "stash";
+type ResolverOp = "cherry-pick" | "merge" | "rebase" | "revert" | "stash";
 
-type OpResult = PickResult | MergeResult | RebaseResult | StashResolveResult;
+type OpResult = PickResult | MergeResult | RebaseResult | RevertResult | StashResolveResult;
 
 const FAKE = [
   {
@@ -71,6 +74,7 @@ const OPS: Record<ResolverOp, {
   "cherry-pick": { abort: commands.cherryPickAbort, continueOp: commands.cherryPickContinue },
   merge: { abort: commands.mergeAbort, continueOp: commands.mergeContinue },
   rebase: { abort: commands.rebaseAbort, continueOp: commands.rebaseContinue },
+  revert: { abort: commands.revertAbort, continueOp: commands.revertContinue },
   stash: { abort: commands.stashConflictAbort, continueOp: commands.stashConflictContinue },
 };
 
@@ -133,6 +137,21 @@ const MSG: Record<ResolverOp, {
     continueSay: "Conflict resolved — rebase continuing.",
     continueCheer: 'Conflict resolved — rebase continuing. <span class="jp">よし!</span>',
   },
+  revert: {
+    title: "Revert hit a conflict",
+    verb: "Revert",
+    clean: (sha) => "Reverted " + (sha || "") + ".",
+    empty: "Nothing to revert — that change isn't present.",
+    conflictBanner: (sha, n) =>
+      n
+        ? "Reverting " + (sha || "the commit") + " conflicts in " + n + " file" + (n === 1 ? "" : "s") +
+          ". Pick a side per file, then Continue — or Abort."
+        : "Revert of " + (sha || "the commit") + " needs review — resolve, then Continue, or Abort.",
+    cheer: 'Revert applied. <span class="jp">よし!</span>',
+    abortMsg: "Revert aborted — HEAD unchanged.",
+    continueSay: "Conflict resolved — revert committed.",
+    continueCheer: 'Conflict resolved — revert committed. <span class="jp">よし!</span>',
+  },
   // No sha of its own (a stash conflict is keyed by stash index, not a
   // commit) — `sha` args below are always "". `clean`/`empty` are near-dead
   // fallbacks: stash_conflict_abort/continue always populate `message`
@@ -172,9 +191,9 @@ class ResolverState {
   selected = $state<string | null>(null);
   remaining = $state<Set<string>>(new Set()); // reassigned, never mutated in place (Set isn't deep-proxied)
   // The in-progress op driving this conflict, e.g. "cherry-pick" | "merge".
-  // Set optimistically by startPick/startMerge/openDemo; re-derived
-  // authoritatively from conflict_status().op on every refresh() — see the
-  // module doc's "op-dispatch design" note above.
+  // Set optimistically by startPick/startMerge/startRebase/startRevert/
+  // openDemo; re-derived authoritatively from conflict_status().op on every
+  // refresh() — see the module doc's "op-dispatch design" note above.
   op = $state<ResolverOp>("cherry-pick");
 
   sha = "";
@@ -277,8 +296,35 @@ class ResolverState {
     }
   }
 
-  // Route a start/continue result (PickResult, MergeResult, or RebaseResult —
-  // same shape) to the UI, using `.op`'s copy for messages.
+  // Revert `sha` onto HEAD (mirrors startPick/startMerge). The detail panel's
+  // "Revert commit" button is the entry point (see detail.svelte.ts's
+  // `revertCommit()`) — revert always applies onto HEAD given only the source
+  // commit, so unlike cherry-pick/merge there's no drag-drop target at all.
+  // `signoff` mirrors cherry-pick's `recordOrigin`: a single optional
+  // message-annotation toggle, defaulted off.
+  async startRevert(repo: string, sha: string, signoff = false) {
+    if (this.busy) return;
+    if (!repo) {
+      bridge.tama.warn("Open a repository first.");
+      return;
+    }
+    this.demo = false;
+    this.op = "revert";
+    this.repo = repo;
+    this.busy = true;
+    bridge.tama.event("mutation.caution", { count: 1 });
+    try {
+      const res = await commands.revertStart(repo, sha, signoff);
+      await this.applyOutcome(res, sha);
+    } catch (e) {
+      bridge.tama.warn("Revert failed — " + e);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  // Route a start/continue result (PickResult, MergeResult, RebaseResult, or
+  // RevertResult — same shape) to the UI, using `.op`'s copy for messages.
   private async applyOutcome(res: OpResult, sha: string) {
     const msg = MSG[this.op];
     switch (res.state) {
@@ -345,10 +391,16 @@ class ResolverState {
       if (r.status === "ok") {
         files = Array.isArray(r.data.files) ? r.data.files : [];
         // Re-derive `.op` from live repo state. Guarded to a known op so an
-        // unsupported state (e.g. "revert"/"none") can never leave `.op`
-        // pointing at a command pair that doesn't exist — abort/continue
-        // would then fall back to the last-known-good op instead of throwing.
-        if (r.data.op === "cherry-pick" || r.data.op === "merge" || r.data.op === "rebase" || r.data.op === "stash")
+        // unsupported state (e.g. "none") can never leave `.op` pointing at a
+        // command pair that doesn't exist — abort/continue would then fall
+        // back to the last-known-good op instead of throwing.
+        if (
+          r.data.op === "cherry-pick" ||
+          r.data.op === "merge" ||
+          r.data.op === "rebase" ||
+          r.data.op === "revert" ||
+          r.data.op === "stash"
+        )
           this.op = r.data.op;
       } else console.error("conflict_status", r.error);
     } catch (e) {
@@ -487,7 +539,9 @@ class ResolverState {
         ? "Merging " + sha + " into HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed."
         : kind === "rebase"
           ? "Rebasing onto " + sha + " conflicts in src/auth/token.ts. Snapshot …demo sealed."
-          : "Picking " + sha + " onto HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed.";
+          : kind === "revert"
+            ? "Reverting " + sha + " conflicts in src/auth/token.ts. Snapshot …demo sealed."
+            : "Picking " + sha + " onto HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed.";
     this.files = FAKE.map((f) => ({ ...f }));
     this.selected = FAKE[0].path;
     this.remaining = new Set([FAKE[0].path]);

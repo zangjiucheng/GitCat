@@ -20,8 +20,23 @@ vi.mock("../../legacy/bridge", () => ({
   pickRepo: vi.fn(),
 }));
 
+let mockInTauri = false;
+vi.mock("../../ipc/env", () => ({
+  get IN_TAURI() {
+    return mockInTauri;
+  },
+}));
+
+vi.mock("../resolver/resolver.svelte.ts", () => ({
+  resolver: {
+    openDemo: vi.fn(),
+    startRevert: vi.fn(async () => {}),
+  },
+}));
+
 import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
+import { resolver } from "../resolver/resolver.svelte.ts";
 import { detailCtrl } from "./detail.svelte.ts";
 
 vi.mock("../../ipc/bindings", () => ({
@@ -39,6 +54,16 @@ function err(error: string): { status: "error"; error: string } {
 
 function setDemoGraph(N = 5) {
   (bridge as any).G = { N, isMerge: new Array(N).fill(0), refs: new Array(N).fill(null), snapRows: [], snapTs: {} };
+  (bridge as any).BACKEND = null;
+}
+
+// Same shape as setDemoGraph, but marks `mergeRow` as a merge commit
+// (G.isMerge[mergeRow] = 1) — for the revertDisabled / merge-commit guard
+// tests below.
+function setDemoGraphWithMerge(mergeRow: number, N = 5) {
+  const isMerge = new Array(N).fill(0);
+  isMerge[mergeRow] = 1;
+  (bridge as any).G = { N, isMerge, refs: new Array(N).fill(null), snapRows: [], snapTs: {} };
   (bridge as any).BACKEND = null;
 }
 
@@ -270,5 +295,123 @@ describe("coverage", () => {
     (bridge as any).G = { N: 10, isMerge: new Array(10).fill(0), refs: new Array(10).fill(null), snapRows: [2, 6], snapTs: { 2: "5m", 6: "1m" } };
     detailCtrl.select(7);
     expect(detailCtrl.coverage).toEqual({ ago: "1m" });
+  });
+});
+
+// The "Revert commit" button — the app's entry point for git revert (see
+// Detail.svelte / detail.svelte.ts's revertCommit() doc comment for why: no
+// per-commit-row context menu exists anywhere, and revert always applies onto
+// HEAD given only the source commit, so the drag gestures cherry-pick/merge
+// use don't fit). Detail.svelte only ever renders this button inside the
+// `{:else if detailCtrl.commit}` branch of its `{#if workdirCtrl.selected}
+// {:else if detailCtrl.hero} {:else if detailCtrl.commit}` chain — the SAME
+// chain that already keeps the hero card and the workdir pinned row's own
+// panel mutually exclusive with the commit detail view. So "not shown for
+// the hero/empty state or the workdir pinned row" is structurally guaranteed
+// by that chain (there's no separate .svelte-component render harness in
+// this repo — every other island's test suite is controller-only, same as
+// this file); what IS unit-testable here is the controller-level guard this
+// button's handler relies on: revertCommit() is a no-op without a selected
+// commit (covers hero/empty), and calls the right backend entry point with
+// the right repo+sha when one is selected.
+describe("revertCommit", () => {
+  it("is a no-op when there is no selected commit (hero/empty state)", async () => {
+    setDemoGraph();
+    detailCtrl.showEmpty();
+    expect(detailCtrl.commit).toBeNull();
+
+    await detailCtrl.revertCommit();
+
+    expect(resolver.startRevert).not.toHaveBeenCalled();
+    expect(resolver.openDemo).not.toHaveBeenCalled();
+  });
+
+  it("design mode (not IN_TAURI) opens the resolver's revert demo, not startRevert", async () => {
+    mockInTauri = false;
+    setDemoGraph();
+    detailCtrl.select(0);
+
+    await detailCtrl.revertCommit();
+
+    expect(resolver.openDemo).toHaveBeenCalledWith(detailCtrl.commit!.sha, "revert");
+    expect(resolver.startRevert).not.toHaveBeenCalled();
+  });
+
+  it("real mode calls resolver.startRevert with the repo and the selected commit's sha", async () => {
+    mockInTauri = true;
+    setBackendGraph([{ sha: "aaa1111", subject: "one", an: { n: "Dev", e: "d@x.dev", t: 100 }, cm: { n: "Dev", e: "d@x.dev", t: 100 }, refs: [] }]);
+    vi.mocked(commands.commitDetail).mockResolvedValueOnce(
+      ok({
+        sha: "aaa1111",
+        shortSha: "aaa1111",
+        subject: "one",
+        body: "",
+        message: "one",
+        additions: 0,
+        deletions: 0,
+        filesChanged: 0,
+        truncated: false,
+        fileTree: [],
+      }),
+    );
+    detailCtrl.select(0);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await detailCtrl.revertCommit();
+
+    expect(resolver.startRevert).toHaveBeenCalledWith("/repo", "aaa1111");
+    expect(resolver.openDemo).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op for a merge commit even if somehow invoked (belt-and-braces alongside the disabled button)", async () => {
+    mockInTauri = true;
+    setDemoGraphWithMerge(2);
+    detailCtrl.select(2);
+    expect(detailCtrl.commit?.merge).toBe(true);
+
+    await detailCtrl.revertCommit();
+
+    expect(resolver.startRevert).not.toHaveBeenCalled();
+    expect(resolver.openDemo).not.toHaveBeenCalled();
+  });
+});
+
+// The "Revert commit" button's disabled state (Detail.svelte:
+// `disabled={detailCtrl.revertDisabled}`). Like `revertCommit()` above, there
+// is no .svelte-component render harness in this repo, so what's tested here
+// is the controller-level getter the template's `disabled` attribute reads —
+// same rationale as the `revertCommit` suite's doc comment. Covers: disabled
+// for a merge commit (git revert, like cherry-pick, needs `-m`/`--mainline`
+// for a merge commit and revert_start deliberately doesn't support it — see
+// legacy/main.ts's `legalPick`'s equivalent `G.isMerge[src]` guard for
+// cherry-pick's drag gesture), enabled for a normal commit, and disabled
+// while `resolver.busy` (the pre-existing re-entrancy guard, now folded into
+// the same getter).
+describe("revertDisabled (merge-commit guard)", () => {
+  it("is disabled when the selected commit is a merge", () => {
+    setDemoGraphWithMerge(2);
+    detailCtrl.select(2);
+    expect(detailCtrl.commit?.merge).toBe(true);
+    expect(detailCtrl.revertDisabled).toBe(true);
+  });
+
+  it("is enabled for a normal (non-merge) commit", () => {
+    setDemoGraph();
+    detailCtrl.select(0);
+    expect(detailCtrl.commit?.merge).toBe(false);
+    expect(detailCtrl.revertDisabled).toBe(false);
+  });
+
+  it("is disabled while resolver.busy, regardless of merge state", () => {
+    setDemoGraph();
+    detailCtrl.select(0);
+    expect(detailCtrl.commit?.merge).toBe(false);
+    (resolver as any).busy = true;
+    try {
+      expect(detailCtrl.revertDisabled).toBe(true);
+    } finally {
+      (resolver as any).busy = false;
+    }
   });
 });

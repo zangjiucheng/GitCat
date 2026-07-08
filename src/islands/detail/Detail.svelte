@@ -3,6 +3,7 @@
   import * as bridge from "../../legacy/bridge";
   import { workdirCtrl } from "../workdir/workdir.svelte.ts";
   import Workdir from "../workdir/Workdir.svelte";
+  import { resolver } from "../resolver/resolver.svelte.ts";
 </script>
 
 {#if workdirCtrl.selected}
@@ -50,6 +51,15 @@
       <span class="gpg {gpg[0]}">{gpg[1]}</span>
       <span class="mut mono" style="font-size:11px">row {c.row.toLocaleString()} / {(bridge.G?.N ?? 0).toLocaleString()}</span>
     </div>
+    <button
+      class="btn ghost"
+      id="revertCommitBtn"
+      style="margin-top:8px"
+      disabled={detailCtrl.revertDisabled}
+      title={c.merge ? "Can't revert a merge commit" : undefined}
+      onclick={() => detailCtrl.revertCommit()}
+      >{#if resolver.busy}<span class="spinner"></span>{/if}&#8617; Revert commit</button
+    >
   </section>
   <section>
     <div class="who-split">
