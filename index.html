@@ -320,6 +320,16 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-pop button.danger{color:var(--danger)}
 .ref-pop button[disabled]{opacity:.4;cursor:default}
 .mono{font-family:var(--mono)} .mut{color:var(--muted)}
+/* Commit-row context menu (src/islands/commitmenu) — a `.ref-pop`, just wider
+   (the branch/tag/submodule popovers' own 150px min-width is too narrow for a
+   sha+subject header) and with ONE new element `.ref-pop` itself doesn't
+   cover: a small non-interactive header line naming which commit the actions
+   below apply to. Everything else (buttons, disabled state, the branch/tag
+   sub-form) reuses `.ref-pop`/`.nb-form`/`.nb-input`/`.nb-row`/`.mut` verbatim. */
+.ref-pop.cm-pop{min-width:230px}
+.cm-head{padding:4px 10px 7px;margin-bottom:2px;border-bottom:1px solid var(--border);font-size:11px;line-height:1.35}
+.cm-head .sha{color:var(--text)}
+.cm-head .subject{display:block;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* ---------- Tama's lamp-nook (pinned bottom of sidebar) ---------- */
 .nook{height:var(--nook-h);flex:none;position:relative;overflow:hidden;border-top:1px solid var(--border);

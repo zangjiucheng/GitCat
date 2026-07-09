@@ -9,6 +9,7 @@ import { detailCtrl } from "../islands/detail/detail.svelte.ts";
 import { bisectDrawerCtrl } from "../islands/bisectdrawer/bisectdrawer.svelte.ts";
 import { sidebarCtrl } from "../islands/sidebar/sidebar.svelte.ts";
 import { workdirCtrl } from "../islands/workdir/workdir.svelte.ts";
+import { commitMenuCtrl } from "../islands/commitmenu/commitmenu.svelte.ts";
 // Typed client for the one raw `tinvoke()` call below that needs it
 // (globalUndo()'s stash-undo branch) — see that function's own comment for
 // why only that branch uses it instead of another `tinvoke()`.
@@ -382,6 +383,16 @@ function zoomAt(cy,dir){
 
 let down=null, sbDrag=null;
 cv.addEventListener("pointerdown",(e)=>{
+  // Primary (left) button only — a right-click (button 2, or a middle-click)
+  // must never arm `down`/a potential drag. Without this, right-clicking
+  // directly on a commit's dot would arm a drag exactly like a left-click,
+  // and any tiny mouse movement before the button lifts would turn it into
+  // a live cherry-pick/merge gesture racing the "contextmenu" listener below
+  // — two actions from one right-click. Returning here before anything else
+  // runs (focus/capture/hitTest/`down=`) keeps this purely additive: it only
+  // excludes non-primary-button presses, every left-click path (row select,
+  // scrollbar drag, cherry-pick/merge drag, panning) is untouched.
+  if(e.button!==0) return;
   cv.focus(); cv.setPointerCapture(e.pointerId); const p=rel(e), g=scrollbarGeom(view.cssH,view.cssW);
   state.pointerActive=true;
   if(g&&p.x>=g.x-4){sbDrag={grab:p.y-g.thumbY,thumbH:g.thumbH};return;}
@@ -435,6 +446,26 @@ function endPointer(e){
   removeGhost(); state.drag=null; down=null; state.pointerActive=false; dirty=true;
 }
 cv.addEventListener("pointerup",endPointer); cv.addEventListener("pointercancel",endPointer);
+// Commit-row context menu (src/islands/commitmenu) — the canvas's first-ever
+// "contextmenu" listener (there was previously NO per-commit-row menu at all;
+// see that island's own header). preventDefault so the native OS/browser menu
+// never shows; ignore anywhere that isn't a real commit row (row<0 — either
+// empty canvas space, hitTest()'s null, or the pinned "Uncommitted changes"
+// band's row:-2 sentinel — none of cherry-pick/merge/revert/branch/tag make
+// sense there). select(row) first so the Detail panel reflects the
+// right-clicked commit exactly like a left-click would — consistent visual
+// feedback before the menu even opens. sha resolution mirrors cherryPick()/
+// mergeCommit()'s own line below (real BACKEND row sha, else hhex(row) in
+// design mode).
+cv.addEventListener("contextmenu",(e)=>{
+  e.preventDefault();
+  const p=rel(e), hit=hitTest(p.x,p.y);
+  if(!hit||hit.row<0) return;
+  const row=hit.row;
+  select(row);
+  const sha=(BACKEND&&BACKEND.rows[row])?BACKEND.rows[row].sha:hhex(row);
+  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), e.clientX, e.clientY);
+});
 cv.addEventListener("keydown",(e)=>{
   const rowH=layout.rowH;
   if(e.key==="ArrowDown")state.scrollTarget=clampScroll(state.scrollTarget+rowH);
