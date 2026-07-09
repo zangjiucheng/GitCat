@@ -23,6 +23,21 @@
 // — a refusal (e.g. git's own "local changes would be overwritten" guard)
 // surfaces through bridge.tama.warn exactly like checkout/delete's existing
 // failure path, never a silent no-op.
+//
+// Submodules (M3 — add + sync, on top of M2's init/update):
+// startNewSubmodule/cancelNewSubmodule/confirmNewSubmodule are the "+ Add
+// submodule…" inline form, same shape (and same window.prompt()-doesn't-
+// exist-in-Tauri's-webview rationale) as startNewBranch/startNewTag above —
+// calls submodule_add and, on success, refreshes via refreshSubmodules()
+// exactly like initAndUpdateSubmodule/updateSubmodule. syncSubmodule (per
+// row, offered regardless of status — see its own doc comment) and
+// syncAllSubmodules (the bulk "Sync all" row, alongside "Update all") call
+// submodule_sync; unlike the mutations above, neither refreshes the
+// submodule list on success — submodule_status's `url` field is read from
+// `.gitmodules` (via git2's `Submodule::url()`), which `submodule_sync`
+// never touches (it only rewrites `.git/config`), so there is nothing a
+// refresh would show differently, exactly like pushTag's own "nothing local
+// to refresh" precedent below.
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
@@ -102,6 +117,12 @@ export function submoduleAction(status: string): SubmoduleAction {
 // as the workdir island's "__commit__"/"__all__"/"__stash__" section-level
 // sentinels for scoping a spinner to a whole action rather than one row.
 export const SUBMODULES_ALL = "__submodules__";
+// Sentinel busyTarget for the bulk "Sync all submodules" action — a distinct
+// string from SUBMODULES_ALL above (not reused) so the "Update all" and
+// "Sync all" buttons' spinners never cross-react to each other's in-flight
+// request even though both bulk actions share the same busy lock and the
+// same `submodulesRecursive` toggle.
+export const SUBMODULES_SYNC_ALL = "__submodules_sync__";
 
 class SidebarState {
   locals = $state<LocalBranch[]>([]);
@@ -154,6 +175,17 @@ class SidebarState {
   // precedent), while the one place a nested submodule-of-a-submodule is
   // actually likely to matter is "update everything at once".
   submodulesRecursive = $state(false);
+  // "+ Add submodule…" inline form state — same shape as newBranchOpen/
+  // newBranchInput/newTagOpen/newTagName above (see startNewSubmodule's own
+  // doc comment for why this is an inline form rather than window.prompt()).
+  newSubmoduleOpen = $state(false);
+  newSubmoduleUrl = $state("");
+  newSubmodulePath = $state("");
+  // "" means the remote's own default branch (submodule_add's own default
+  // when `branch` is omitted) — otherwise checked out inside the freshly
+  // cloned submodule instead, same "empty means the simpler default"
+  // minimalism as newBranchFrom/newTagMessage above.
+  newSubmoduleBranch = $state("");
 
   async refresh(repo: string) {
     if (!IN_TAURI) {
@@ -304,6 +336,148 @@ class SidebarState {
       }
     } catch (e) {
       bridge.tama.warn("Update failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  // "+ Add submodule…" inline form — same window.prompt()-doesn't-exist-in-
+  // Tauri's-webview rationale as startNewBranch/startNewTag above; clones a
+  // brand-new submodule (`submodule_add`) rather than acting on an existing
+  // `.gitmodules`-registered row.
+  startNewSubmodule() {
+    this.newSubmoduleUrl = "";
+    this.newSubmodulePath = "";
+    this.newSubmoduleBranch = "";
+    this.newSubmoduleOpen = true;
+  }
+
+  cancelNewSubmodule() {
+    this.newSubmoduleOpen = false;
+    this.newSubmoduleUrl = "";
+    this.newSubmodulePath = "";
+    this.newSubmoduleBranch = "";
+  }
+
+  async confirmNewSubmodule() {
+    const url = this.newSubmoduleUrl.trim();
+    const path = this.newSubmodulePath.trim();
+    // Client-side guard mirrors confirmNewBranch/confirmNewTag's blank-name
+    // check — both fields are required (submodule_add's own Rust-side
+    // validate_repository_url/validate_submodule_path would refuse a blank
+    // string anyway, but there's no reason to round-trip to the backend just
+    // to learn that).
+    if (!url || !path) {
+      this.cancelNewSubmodule();
+      return;
+    }
+    if (this.busy) return;
+    const branch = this.newSubmoduleBranch.trim() || null; // "" -> remote's own default branch
+    if (!IN_TAURI) {
+      this.newSubmoduleOpen = false;
+      this.newSubmoduleUrl = "";
+      this.newSubmodulePath = "";
+      this.newSubmoduleBranch = "";
+      bridge.tama.set("hint");
+      bridge.tama.say("Added submodule " + path + " (demo).");
+      return;
+    }
+    // Keep the form open (disabled, spinnered) for the duration of the
+    // request, same rationale as confirmNewBranch/confirmNewTag above.
+    this.busy = true;
+    this.busyTarget = path;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Adding submodule " + path + "…");
+    try {
+      const res = await commands.submoduleAdd(bridge.CUR_REPO as unknown as string, url, path, branch);
+      if (res && res.ok) {
+        this.newSubmoduleOpen = false;
+        this.newSubmoduleUrl = "";
+        this.newSubmodulePath = "";
+        this.newSubmoduleBranch = "";
+        await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Added submodule " + path + ".", 3200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't add submodule " + path + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Add failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  // "Sync" — per row, rewrites the superproject's OWN .git/config url for
+  // just this one submodule from whatever `.gitmodules` currently has
+  // (`submodule_sync`). Offered for EVERY row regardless of status (unlike
+  // initAndUpdateSubmodule/updateSubmodule, gated by submoduleAction) — it
+  // never touches the submodule's own working tree or index, just a config
+  // value, so there's nothing about "dirty"/"conflicted" for it to collide
+  // with. recursive:false — same bulk-only-toggle reasoning as
+  // submodulesRecursive's own doc comment (a submodule-of-a-submodule sync is
+  // the one case likely to matter "for everything at once", not per row).
+  async syncSubmodule(path: string) {
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say("Synced " + path + " (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = path;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Syncing " + path + "…");
+    try {
+      const res = await commands.submoduleSync(bridge.CUR_REPO as unknown as string, path, false);
+      if (res && res.ok) {
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Synced " + path + ".", 3200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't sync " + path + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Sync failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  // Bulk "Sync all" — submodule_path:null syncs EVERY .gitmodules-registered
+  // submodule's .git/config url in one call, sitting alongside the existing
+  // bulk "Update all" row and sharing its `submodulesRecursive` toggle
+  // (applies to whichever bulk action is actually clicked). Uses its own
+  // SUBMODULES_SYNC_ALL sentinel (not SUBMODULES_ALL) as busyTarget so the
+  // two bulk buttons' spinners stay independent even though only one bulk
+  // action can ever be in flight at a time (same shared `busy` lock as
+  // everything else in this file).
+  async syncAllSubmodules(recursive: boolean) {
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say("Synced all submodules (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = SUBMODULES_SYNC_ALL;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Syncing submodules…");
+    try {
+      const res = await commands.submoduleSync(bridge.CUR_REPO as unknown as string, null, recursive);
+      if (res && res.ok) {
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Submodules synced.", 3200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't sync submodules.");
+      }
+    } catch (e) {
+      bridge.tama.warn("Sync failed — " + e);
       console.error(e);
     } finally {
       this.busy = false;

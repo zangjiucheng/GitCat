@@ -890,6 +890,52 @@ async submoduleInit(path: string, submodulePath: string) : Promise<WriteResult> 
  */
 async submoduleUpdate(path: string, submodulePath: string | null, recursive: boolean, init: boolean) : Promise<WriteResult> {
     return await TAURI_INVOKE("submodule_update", { path, submodulePath, recursive, init });
+},
+/**
+ * Clone `repository_url` as a brand-new submodule at `submodule_path`,
+ * registering it in `.gitmodules` and staging both the new gitlink and the
+ * new `.gitmodules` entry (`git submodule add`) — mirrors real `git
+ * submodule add` exactly: clone + register + stage, nothing committed.
+ * 
+ * `branch`, when set, checks out that branch inside the freshly cloned
+ * submodule instead of the remote's default branch (`-b <branch>`), and
+ * records `submodule.<name>.branch = <branch>` in `.gitmodules` too — real
+ * git's own behavior, not something this command adds on top.
+ * 
+ * No pre-check for `submodule_path` colliding with an existing file/
+ * directory or an already-registered submodule — see module doc comment for
+ * the empirical verification behind that decision; git's own refusal is
+ * surfaced verbatim below.
+ * 
+ * No snapshot — see module doc comment (purely additive, identical
+ * reasoning to `create_branch`/`create_tag`).
+ * JS call: `invoke("submodule_add", { path, repositoryUrl, submodulePath, branch? })`.
+ */
+async submoduleAdd(path: string, repositoryUrl: string, submodulePath: string, branch: string | null) : Promise<WriteResult> {
+    return await TAURI_INVOKE("submodule_add", { path, repositoryUrl, submodulePath, branch });
+},
+/**
+ * Rewrite the superproject's OWN `.git/config` entries for submodule(s)'
+ * configured remote URL from whatever is CURRENTLY committed in
+ * `.gitmodules` (`git submodule sync`) — needed after someone hand-edits
+ * `.gitmodules`'s `url` field directly (by hand, or via a merge): that edit
+ * alone never touches `.git/config`, and a plain `submodule_update` still
+ * fetches from the STALE `.git/config` url until a sync rewrites it.
+ * 
+ * - `submodule_path: None` syncs EVERY registered submodule in one
+ * invocation (no path restriction at all) — mirrors `submodule_update`'s
+ * own None-means-all convention exactly. `Some(p)` restricts to just that
+ * one path (`-- <p>`).
+ * - `recursive: true` adds `--recursive`, so a submodule's OWN nested
+ * submodules (a submodule-of-a-submodule) get their urls synced too, in
+ * the same call.
+ * 
+ * No snapshot: only ever rewrites `.git/config` — no ref moves, no index/
+ * workdir change, nothing history-affecting for Undo to protect.
+ * JS call: `invoke("submodule_sync", { path, submodulePath?, recursive })`.
+ */
+async submoduleSync(path: string, submodulePath: string | null, recursive: boolean) : Promise<WriteResult> {
+    return await TAURI_INVOKE("submodule_sync", { path, submodulePath, recursive });
 }
 }
 

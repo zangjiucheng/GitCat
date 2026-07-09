@@ -54,7 +54,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::TempRepo;
-use gitcat_lib::submodule::{submodule_init, submodule_status, submodule_update};
+use gitcat_lib::submodule::{submodule_add, submodule_init, submodule_status, submodule_sync, submodule_update};
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -674,4 +674,232 @@ fn submodule_update_all_updates_multiple_submodules_in_one_call() {
     let b = rows_after.iter().find(|r| r.path == "subB").expect("subB row");
     assert_eq!(a.workdir_sha.as_deref(), Some(a0.as_str()));
     assert_eq!(b.workdir_sha.as_deref(), Some(b0.as_str()));
+}
+
+// ---------------------------------------------------------------------------
+// M3: submodule_add / submodule_sync
+// ---------------------------------------------------------------------------
+//
+// `submodule_add` drives a real clone over `file://`-ish local paths, so
+// every test below that calls it needs `AllowFileProtocol::scoped()` for the
+// same reason `submodule_update`'s own clone-driving tests above do (see the
+// big comment above `AllowFileProtocol` for why it's a process-wide-locked
+// guard rather than a plain save/restore).
+//
+// `submodule_sync` never fetches or clones anything — it only rewrites
+// `.git/config` from what's already committed in `.gitmodules` — so none of
+// its tests need `AllowFileProtocol`.
+
+#[test]
+fn submodule_add_clones_new_submodule_and_it_is_immediately_clean() {
+    let _allow = AllowFileProtocol::scoped();
+
+    let child = TempRepo::init("submodule_add_child");
+    let child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_add_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+
+    let result = submodule_add(parent.path(), child.path(), "sub".to_string(), None);
+    assert!(result.ok, "submodule_add failed: {}", result.message);
+    assert!(result.backup_ref.is_none(), "submodule_add must never snapshot (see module doc comment)");
+
+    // Cloned into the working tree...
+    let content =
+        std::fs::read_to_string(parent.dir.join("sub").join("f.txt")).expect("read cloned submodule file");
+    assert_eq!(content, "hello\n");
+    // ...and registered + staged (NOT committed — mirrors real `git submodule
+    // add` exactly, matching this module's doc comment).
+    let (ok, out, _) = parent.git(&["status", "--porcelain"]);
+    assert!(ok);
+    assert!(out.contains("A  .gitmodules"), "expected .gitmodules to be staged as added: {out:?}");
+    assert!(out.contains("A  sub"), "expected the new gitlink to be staged as added: {out:?}");
+
+    // And it shows up in submodule_status as "clean" immediately — no commit
+    // required first. EMPIRICALLY VERIFIED: `head_sha` is `None` at this
+    // point (git2's `Submodule::head_id()` reads the gitlink from the HEAD
+    // TREE specifically, and `git submodule add` only stages it — nothing is
+    // committed yet, so HEAD's tree doesn't have it); `workdir_sha` (read
+    // from the actual checked-out submodule) is already populated. Neither
+    // bit-derived classification cares about `head_sha` being `None` here —
+    // none of `WD_UNINITIALIZED`/`WD_DELETED`/`WD_MODIFIED` fire for a
+    // freshly cloned-and-staged submodule — so the row still, correctly,
+    // reads "clean".
+    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.path, "sub");
+    assert_eq!(row.status, "clean", "a freshly added submodule must read as clean right away");
+    assert!(row.head_sha.is_none(), "HEAD's tree has no gitlink yet before the addition is committed");
+    assert_eq!(row.workdir_sha.as_deref(), Some(child_c0.as_str()));
+}
+
+#[test]
+fn submodule_add_with_branch_checks_out_that_branch_not_the_default() {
+    let _allow = AllowFileProtocol::scoped();
+
+    let child = TempRepo::init("submodule_add_branch_child");
+    let _main_c0 = child.commit("f.txt", "main content\n", "main c0");
+    child.must(&["checkout", "-q", "-b", "feature"]);
+    let feature_c0 = child.commit("f.txt", "feature content\n", "feature c0");
+    child.must(&["checkout", "-q", "main"]);
+
+    let parent = TempRepo::init("submodule_add_branch_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+
+    let result = submodule_add(parent.path(), child.path(), "sub".to_string(), Some("feature".to_string()));
+    assert!(result.ok, "submodule_add (with branch) failed: {}", result.message);
+
+    // The submodule's own checked-out branch is "feature", NOT the child
+    // repo's default branch ("main") — and its content/HEAD matches feature's
+    // commit, not main's.
+    let (_, sub_branch, _) = parent.git(&["-C", "sub", "symbolic-ref", "--short", "HEAD"]);
+    assert_eq!(sub_branch, "feature", "expected the submodule to have checked out the requested branch");
+    let content =
+        std::fs::read_to_string(parent.dir.join("sub").join("f.txt")).expect("read cloned submodule file");
+    assert_eq!(content, "feature content\n", "expected the feature branch's content, not main's");
+    let (_, sub_head, _) = parent.git(&["-C", "sub", "rev-parse", "HEAD"]);
+    assert_eq!(sub_head, feature_c0);
+
+    // .gitmodules records the branch too (real git's own behavior).
+    let gitmodules = parent.read(".gitmodules");
+    assert!(gitmodules.contains("branch = feature"), "expected .gitmodules to record the branch: {gitmodules:?}");
+}
+
+#[test]
+fn submodule_add_refuses_cleanly_for_a_colliding_path() {
+    let _allow = AllowFileProtocol::scoped();
+
+    let child = TempRepo::init("submodule_add_collide_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_add_collide_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    // A regular tracked file already occupies the path we'll try to add a
+    // submodule at.
+    let _existing = parent.commit("existing.txt", "not a submodule\n", "add existing file");
+
+    let result = submodule_add(parent.path(), child.path(), "existing.txt".to_string(), None);
+    assert!(!result.ok, "expected submodule_add to refuse a colliding path, got ok: {}", result.message);
+    assert!(result.backup_ref.is_none());
+    // EMPIRICALLY VERIFIED (git 2.53, see submodule.rs's module doc comment):
+    // real `git submodule add` refuses a tracked-file collision with exactly
+    // this message — asserted here rather than a vaguer substring so a
+    // regression that silently changes WHICH refusal fires would be caught.
+    assert!(
+        result.message.contains("already exists in the index"),
+        "expected git's own tracked-path collision refusal, got: {:?}",
+        result.message
+    );
+
+    // Nothing was actually staged/registered by the refused attempt.
+    let (ok, out, _) = parent.git(&["status", "--porcelain"]);
+    assert!(ok);
+    assert!(out.is_empty(), "a refused add must leave the working tree untouched: {out:?}");
+    assert!(!parent.dir.join(".gitmodules").exists(), "a refused add must not create .gitmodules");
+}
+
+// validate_submodule_path itself has no `..`/absolute-path check (only
+// empty/leading-dash/control-chars, per its own doc comment) — this is safe
+// in practice ONLY because real `git submodule add` independently refuses a
+// path outside the repository on its own, before ever cloning anything
+// (EMPIRICALLY VERIFIED, git 2.53: "fatal: '<path>' is outside repository at
+// '<repo>'", exit 128, nothing created outside the repo). Pin that safety net
+// with a real regression test rather than leaving it implicit.
+#[test]
+fn submodule_add_refuses_a_path_traversal_target() {
+    let _allow = AllowFileProtocol::scoped();
+
+    let child = TempRepo::init("submodule_add_traversal_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_add_traversal_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+
+    let result = submodule_add(parent.path(), child.path(), "../../etc/evil".to_string(), None);
+    assert!(!result.ok, "expected submodule_add to refuse a path-traversal target, got ok: {}", result.message);
+    assert!(result.backup_ref.is_none());
+    assert!(
+        result.message.contains("outside repository"),
+        "expected git's own outside-repository refusal, got: {:?}",
+        result.message
+    );
+    assert!(!parent.dir.join(".gitmodules").exists(), "a refused traversal add must not create .gitmodules");
+}
+
+#[test]
+fn submodule_sync_rewrites_git_config_url_after_gitmodules_is_hand_edited() {
+    let child = TempRepo::init("submodule_sync_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+    let child_new = TempRepo::init("submodule_sync_child_new");
+    let _new_c0 = child_new.commit("g.txt", "new home\n", "c0");
+
+    let parent = TempRepo::init("submodule_sync_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    // .git/config currently agrees with .gitmodules: both point at `child`.
+    let (_, url_before, _) = parent.git(&["config", "--get", "submodule.sub.url"]);
+    assert_eq!(url_before, child.path(), "expected .git/config to start out pointing at the original child repo");
+
+    // Hand-edit ONLY .gitmodules's url field — mirrors a manual text edit or
+    // a merge, never touches .git/config on its own.
+    parent.must(&["config", "-f", ".gitmodules", "submodule.sub.url", &child_new.path()]);
+    parent.must(&["add", ".gitmodules"]);
+    parent.must(&["commit", "-q", "-m", "point sub at a new home"]);
+
+    // Confirm the split BEFORE syncing: .gitmodules moved, .git/config did not.
+    let gitmodules = parent.read(".gitmodules");
+    assert!(gitmodules.contains(&child_new.path()), "expected .gitmodules to record the new url");
+    let (_, url_still_stale, _) = parent.git(&["config", "--get", "submodule.sub.url"]);
+    assert_eq!(url_still_stale, child.path(), ".git/config must still be stale before sync runs");
+
+    let result = submodule_sync(parent.path(), Some("sub".to_string()), false);
+    assert!(result.ok, "submodule_sync failed: {}", result.message);
+    assert!(result.backup_ref.is_none(), "submodule_sync must never snapshot (see module doc comment)");
+
+    // Read .git/config directly (not just trusting ok:true) — this is the
+    // whole point of the command.
+    let (_, url_after, _) = parent.git(&["config", "--get", "submodule.sub.url"]);
+    assert_eq!(url_after, child_new.path(), "expected .git/config's url to be rewritten to match .gitmodules");
+}
+
+#[test]
+fn submodule_sync_with_no_path_syncs_every_registered_submodule_in_one_call() {
+    let child_a = TempRepo::init("submodule_syncall_a");
+    let _a0 = child_a.commit("a.txt", "a\n", "a0");
+    let child_a_new = TempRepo::init("submodule_syncall_a_new");
+    let _an0 = child_a_new.commit("a.txt", "a-new\n", "a-new0");
+
+    let child_b = TempRepo::init("submodule_syncall_b");
+    let _b0 = child_b.commit("b.txt", "b\n", "b0");
+    let child_b_new = TempRepo::init("submodule_syncall_b_new");
+    let _bn0 = child_b_new.commit("b.txt", "b-new\n", "b-new0");
+
+    let parent = TempRepo::init("submodule_syncall_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child_a, "subA");
+    add_submodule(&parent, &child_b, "subB");
+
+    // Hand-edit BOTH .gitmodules urls to a different home.
+    parent.must(&["config", "-f", ".gitmodules", "submodule.subA.url", &child_a_new.path()]);
+    parent.must(&["config", "-f", ".gitmodules", "submodule.subB.url", &child_b_new.path()]);
+    parent.must(&["add", ".gitmodules"]);
+    parent.must(&["commit", "-q", "-m", "repoint both submodules"]);
+
+    // Both are stale in .git/config before sync.
+    let (_, a_before, _) = parent.git(&["config", "--get", "submodule.subA.url"]);
+    let (_, b_before, _) = parent.git(&["config", "--get", "submodule.subB.url"]);
+    assert_eq!(a_before, child_a.path());
+    assert_eq!(b_before, child_b.path());
+
+    // submodule_path: None => sync EVERY registered submodule, no path
+    // restriction — mirrors submodule_update's own None-means-all convention.
+    let result = submodule_sync(parent.path(), None, false);
+    assert!(result.ok, "submodule_sync (all) failed: {}", result.message);
+
+    let (_, a_after, _) = parent.git(&["config", "--get", "submodule.subA.url"]);
+    let (_, b_after, _) = parent.git(&["config", "--get", "submodule.subB.url"]);
+    assert_eq!(a_after, child_a_new.path(), "expected subA's .git/config url to be rewritten");
+    assert_eq!(b_after, child_b_new.path(), "expected subB's .git/config url to be rewritten");
 }

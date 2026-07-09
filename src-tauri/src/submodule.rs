@@ -1,5 +1,5 @@
-//! Submodule status (M1 of 4) + init/update (M2 of 4). add/sync/deinit/remove/
-//! foreach are separate later milestones.
+//! Submodule status (M1 of 4) + init/update (M2 of 4) + add/sync (M3 of 4).
+//! deinit/remove/foreach are separate later milestones.
 //!
 //! Read-only, git2-based (mirrors `git_write::list_refs`'s read half): iterates
 //! every submodule registered in `.gitmodules` via `Repository::submodules()`
@@ -105,6 +105,65 @@
 //! convenience for a never-initialized row (`init:true`, which folds
 //! `submodule_init`'s registration step into the same `git submodule update
 //! --init` invocation rather than requiring two round-trips).
+//!
+//! ---------------------------------------------------------------------------
+//! M3: `submodule_add` / `submodule_sync` — new submodule + URL re-sync.
+//! ---------------------------------------------------------------------------
+//!
+//! `--end-of-options` DOES NOT WORK HERE — EMPIRICALLY VERIFIED (git 2.53)
+//! before writing either command below, since every other mutation in this
+//! codebase leans on it: `git submodule add --end-of-options -- <url> <path>`
+//! (and `git submodule sync --end-of-options -- <path>`) both fail outright
+//! with git's own top-level USAGE error, never reaching the actual add/sync
+//! logic. Unlike the plumbing commands this codebase's other modules shell
+//! out to (`branch`, `tag`, `checkout`, ...), which all understand the
+//! generic `--end-of-options` the top-level `git` driver provides,
+//! `git-submodule` is its own porcelain argument parser (a wrapper script /
+//! `submodule--helper` dispatch) that only recognizes a bare `--` to end
+//! option parsing. So both commands below place a plain `--` immediately
+//! before their positional args instead, exactly like real `git submodule
+//! add`/`sync --help`'s own usage grammar shows, and rely on
+//! `validate_repository_url`/`validate_branch_name`/`validate_submodule_path`
+//! rejecting anything that starts with `-` before it ever reaches the CLI —
+//! same defense-in-depth split this codebase already uses everywhere else,
+//! just with `--` standing in for `--end-of-options` for this one git
+//! subcommand family.
+//!
+//! PATH COLLISION (`submodule_add`'s `submodule_path` already exists, or is
+//! already a registered submodule): NO Rust-side pre-check — EMPIRICALLY
+//! VERIFIED (git 2.53, throwaway fixture, every colliding case tried) that
+//! real `git submodule add` already refuses cleanly and unambiguously on its
+//! own:
+//!   - a tracked file OR tracked directory already at that path: "fatal:
+//!     '<path>' already exists in the index"
+//!   - an untracked directory in the way, whether empty or with untracked
+//!     content: "fatal: '<path>' already exists and is not a valid git repo"
+//!   - a path that's already a registered submodule (its gitlink already in
+//!     the index from a prior `add`): also "fatal: '<path>' already exists in
+//!     the index" (same message as the first case — plausible, since a
+//!     registered submodule's gitlink IS an index entry)
+//! All three are already specific about WHY the path is unusable, so a
+//! redundant Rust-side existence/registration check would only duplicate
+//! git's own clean refusal, not add real signal over it — surfaced verbatim
+//! below, matching this codebase's existing "never force, surface git's own
+//! rejection" convention (`checkout`/`pull`/`submodule_update`'s own dirty-
+//! submodule refusal above).
+//!
+//! No snapshot on either command:
+//!   * [`submodule_add`] clones a new submodule, adds one new `.gitmodules`
+//!     entry, and stages both — purely additive (a new gitlink + a new
+//!     tracked file, both freshly staged, nothing committed yet). Nothing
+//!     reachable becomes unreachable and no ref moves — identical reasoning
+//!     to `create_branch`/`create_tag`'s own no-snapshot rationale for
+//!     additive-only operations.
+//!   * [`submodule_sync`] only rewrites entries under `submodule.*` in the
+//!     superproject's OWN `.git/config` from what's currently committed in
+//!     `.gitmodules` — no ref moves, no index/workdir change, nothing
+//!     history-affecting for Undo to protect (needed after someone hand-edits
+//!     `.gitmodules`'s `url` field directly, e.g. by hand or via a merge —
+//!     that edit alone never updates `.git/config`; `git submodule sync` is
+//!     the dedicated command that copies it over, verified empirically in
+//!     `tests/submodule.rs` by reading `.git/config` directly before/after).
 
 use std::process::Command;
 
@@ -368,6 +427,185 @@ pub fn submodule_update(path: String, submodule_path: Option<String>, recursive:
         ),
         // e.g. "error: Your local changes to the following files would be
         // overwritten by checkout ... Aborting" — never forced, surfaced verbatim.
+        Ok(out) => err_result(git_error_message(&out)),
+        Err(e) => err_result(e),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// M3: add / sync (see module doc comment for the empirically-verified
+// `--end-of-options` incompatibility and the path-collision decision)
+// ---------------------------------------------------------------------------
+
+/// Reject anything that could be read as a flag or carries a control
+/// character. Deliberately MUCH looser than `validate_branch_name` below (or
+/// `git_tag.rs`'s `validate_tag_name`) — a repository URL legitimately
+/// contains characters those name validators reject outright: `:` and `/` in
+/// `https://host/path`, `~` in an scp-like `git@host:~user/repo.git`, `@`
+/// separating user from host, `?`/`*`/`[` in an http(s) query string or a
+/// bracketed IPv6 host. Reusing either name validator here would wrongly
+/// refuse perfectly valid URLs (the exact mistake this module's doc comment
+/// warns against). The bare `--` this command always places right before the
+/// URL (see module doc comment for why not `--end-of-options` here
+/// specifically) is the real defense; this just catches the obviously-wrong
+/// cases with a clear message — same posture as `validate_revision` in
+/// `git_write.rs`/`git_tag.rs`.
+fn validate_repository_url(url: &str) -> Result<(), String> {
+    if url.is_empty() {
+        return Err("Repository URL is empty.".into());
+    }
+    if url.starts_with('-') {
+        return Err(format!("Refusing a repository URL that looks like a flag: {url:?}"));
+    }
+    if url.chars().any(|c| c.is_control()) {
+        return Err(format!("Repository URL has a control character: {url:?}"));
+    }
+    Ok(())
+}
+
+/// Own copy of `git_write.rs`'s `validate_branch_name` (same per-module-copy
+/// convention `git_tag.rs`/`git_remote.rs` already follow for this exact
+/// guard) — `submodule_add`'s `branch` is raw user input identical in shape
+/// to a branch name anywhere else in this codebase (it becomes
+/// `submodule.<name>.branch` in `.gitmodules` and is checked out with a plain
+/// `git checkout <branch>` inside the new submodule), so it gets the
+/// identical flag-injection/ref-name guard.
+fn validate_branch_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("Branch name is empty.".into());
+    }
+    if name.starts_with('-') {
+        return Err(format!("Refusing a branch name that looks like a flag: {name:?}"));
+    }
+    for ch in name.chars() {
+        if ch.is_control() || ch == ' ' || ch == '\u{7f}' {
+            return Err(format!("Branch name has an illegal whitespace/control character: {name:?}"));
+        }
+        if matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\') {
+            return Err(format!("Branch name has an illegal character '{ch}': {name:?}"));
+        }
+    }
+    if name.contains("..")
+        || name.contains("@{")
+        || name.contains("//")
+        || name.starts_with('/')
+        || name.ends_with('/')
+        || name.ends_with('.')
+        || name.ends_with(".lock")
+        || name == "@"
+    {
+        return Err(format!("Not a valid branch name: {name:?}"));
+    }
+    Ok(())
+}
+
+/// Clone `repository_url` as a brand-new submodule at `submodule_path`,
+/// registering it in `.gitmodules` and staging both the new gitlink and the
+/// new `.gitmodules` entry (`git submodule add`) — mirrors real `git
+/// submodule add` exactly: clone + register + stage, nothing committed.
+///
+/// `branch`, when set, checks out that branch inside the freshly cloned
+/// submodule instead of the remote's default branch (`-b <branch>`), and
+/// records `submodule.<name>.branch = <branch>` in `.gitmodules` too — real
+/// git's own behavior, not something this command adds on top.
+///
+/// No pre-check for `submodule_path` colliding with an existing file/
+/// directory or an already-registered submodule — see module doc comment for
+/// the empirical verification behind that decision; git's own refusal is
+/// surfaced verbatim below.
+///
+/// No snapshot — see module doc comment (purely additive, identical
+/// reasoning to `create_branch`/`create_tag`).
+/// JS call: `invoke("submodule_add", { path, repositoryUrl, submodulePath, branch? })`.
+#[tauri::command]
+#[specta::specta]
+pub fn submodule_add(
+    path: String,
+    repository_url: String,
+    submodule_path: String,
+    branch: Option<String>,
+) -> WriteResult {
+    if let Err(e) = validate_repository_url(&repository_url) {
+        return err_result(e);
+    }
+    if let Err(e) = validate_submodule_path(&submodule_path) {
+        return err_result(e);
+    }
+    if let Some(b) = &branch {
+        if let Err(e) = validate_branch_name(b) {
+            return err_result(e);
+        }
+    }
+
+    let mut args: Vec<&str> = vec!["submodule", "add"];
+    if let Some(b) = &branch {
+        args.push("-b");
+        args.push(b.as_str());
+    }
+    // Bare `--`, NOT `--end-of-options` — see module doc comment.
+    args.push("--");
+    args.push(&repository_url);
+    args.push(&submodule_path);
+
+    match run_git(&path, &args) {
+        Ok(out) if out.ok => ok_result(
+            match &branch {
+                Some(b) => format!("Added submodule {submodule_path} (branch {b})."),
+                None => format!("Added submodule {submodule_path}."),
+            },
+            None,
+        ),
+        // e.g. "fatal: '<path>' already exists in the index" / "fatal:
+        // '<path>' already exists and is not a valid git repo" — see module
+        // doc comment for why no pre-check duplicates this.
+        Ok(out) => err_result(git_error_message(&out)),
+        Err(e) => err_result(e),
+    }
+}
+
+/// Rewrite the superproject's OWN `.git/config` entries for submodule(s)'
+/// configured remote URL from whatever is CURRENTLY committed in
+/// `.gitmodules` (`git submodule sync`) — needed after someone hand-edits
+/// `.gitmodules`'s `url` field directly (by hand, or via a merge): that edit
+/// alone never touches `.git/config`, and a plain `submodule_update` still
+/// fetches from the STALE `.git/config` url until a sync rewrites it.
+///
+/// - `submodule_path: None` syncs EVERY registered submodule in one
+///   invocation (no path restriction at all) — mirrors `submodule_update`'s
+///   own None-means-all convention exactly. `Some(p)` restricts to just that
+///   one path (`-- <p>`).
+/// - `recursive: true` adds `--recursive`, so a submodule's OWN nested
+///   submodules (a submodule-of-a-submodule) get their urls synced too, in
+///   the same call.
+///
+/// No snapshot: only ever rewrites `.git/config` — no ref moves, no index/
+/// workdir change, nothing history-affecting for Undo to protect.
+/// JS call: `invoke("submodule_sync", { path, submodulePath?, recursive })`.
+#[tauri::command]
+#[specta::specta]
+pub fn submodule_sync(path: String, submodule_path: Option<String>, recursive: bool) -> WriteResult {
+    if let Some(p) = &submodule_path {
+        if let Err(e) = validate_submodule_path(p) {
+            return err_result(e);
+        }
+    }
+    let mut args: Vec<&str> = vec!["submodule", "sync"];
+    if recursive {
+        args.push("--recursive");
+    }
+    if let Some(p) = &submodule_path {
+        // Bare `--`, NOT `--end-of-options` — see module doc comment.
+        args.push("--");
+        args.push(p.as_str());
+    }
+    match run_git(&path, &args) {
+        Ok(out) if out.ok => ok_result(
+            match &submodule_path {
+                Some(p) => format!("Synced submodule {p}."),
+                None => "Synced all submodules.".to_string(),
+            },
+            None,
+        ),
         Ok(out) => err_result(git_error_message(&out)),
         Err(e) => err_result(e),
     }

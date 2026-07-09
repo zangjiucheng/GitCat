@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { sidebarCtrl, submoduleAction, SUBMODULES_ALL } from "./sidebar.svelte.ts";
+  import { sidebarCtrl, submoduleAction, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import type { SimpleRef, SubmoduleInfo } from "../../ipc/bindings";
 
@@ -9,6 +9,8 @@
   let tagMenuEl: HTMLDivElement | undefined = $state();
   let newTagEl: HTMLInputElement | undefined = $state();
   let newTagFormEl: HTMLDivElement | undefined = $state();
+  let newSubmoduleEl: HTMLInputElement | undefined = $state();
+  let newSubmoduleFormEl: HTMLDivElement | undefined = $state();
 
   function onWindowPointerdown(e: PointerEvent) {
     if (sidebarCtrl.menu && menuEl && !menuEl.contains(e.target as Node)) sidebarCtrl.closeMenu();
@@ -20,6 +22,9 @@
     if (sidebarCtrl.newBranchOpen && !sidebarCtrl.busy && newBranchFormEl && !newBranchFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewBranch();
     if (sidebarCtrl.tagMenu && tagMenuEl && !tagMenuEl.contains(e.target as Node)) sidebarCtrl.closeTagMenu();
     if (sidebarCtrl.newTagOpen && !sidebarCtrl.busy && newTagFormEl && !newTagFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewTag();
+    // Outside-click cancels the Add Submodule form — same busy-blocked
+    // rationale as the New Branch/New Tag forms above.
+    if (sidebarCtrl.newSubmoduleOpen && !sidebarCtrl.busy && newSubmoduleFormEl && !newSubmoduleFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewSubmodule();
   }
 
   $effect(() => {
@@ -30,6 +35,10 @@
     if (sidebarCtrl.newTagOpen) requestAnimationFrame(() => newTagEl?.focus());
   });
 
+  $effect(() => {
+    if (sidebarCtrl.newSubmoduleOpen) requestAnimationFrame(() => newSubmoduleEl?.focus());
+  });
+
   function onNewBranchKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") sidebarCtrl.confirmNewBranch();
     else if (e.key === "Escape" && !sidebarCtrl.busy) sidebarCtrl.cancelNewBranch();
@@ -38,6 +47,11 @@
   function onNewTagKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") sidebarCtrl.confirmNewTag();
     else if (e.key === "Escape" && !sidebarCtrl.busy) sidebarCtrl.cancelNewTag();
+  }
+
+  function onNewSubmoduleKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") sidebarCtrl.confirmNewSubmodule();
+    else if (e.key === "Escape" && !sidebarCtrl.busy) sidebarCtrl.cancelNewSubmodule();
   }
 
   // Safety Manager snapshots before every mutation, so a long session can
@@ -300,16 +314,24 @@
       {#if !sidebarCtrl.submodules.length}
         <div class="sub-item"><span class="rname mut">no submodules</span></div>
       {:else}
-        <!-- Bulk "Update all" — submodule_path:null in one call, folding
-             init:true (never-cloned ones included) and an optional recursive
-             toggle for submodule-of-a-submodule setups. Lives at the top of
-             the list rather than crammed into <summary> (clicking inside a
-             <summary> toggles the whole details/open state, and no other
-             ref-group section has ever needed an interactive control there). -->
+        <!-- Bulk "Update all"/"Sync all" — submodule_path:null in one call
+             each, folding init:true (never-cloned ones included, for Update
+             all) and sharing one optional recursive toggle for submodule-of-
+             a-submodule setups. Lives at the top of the list rather than
+             crammed into <summary> (clicking inside a <summary> toggles the
+             whole details/open state, and no other ref-group section has
+             ever needed an interactive control there). -->
         <div class="sub-head">
           <label class="sub-recursive"
             ><input type="checkbox" bind:checked={sidebarCtrl.submodulesRecursive} disabled={sidebarCtrl.busy} /> recursive</label
           >
+          <button
+            class="sub-update-all"
+            disabled={sidebarCtrl.busy}
+            onclick={() => sidebarCtrl.syncAllSubmodules(sidebarCtrl.submodulesRecursive)}
+          >
+            {#if sidebarCtrl.busy && sidebarCtrl.busyTarget === SUBMODULES_SYNC_ALL}<span class="spinner"></span>{:else}Sync all{/if}
+          </button>
           <button
             class="sub-update-all"
             disabled={sidebarCtrl.busy}
@@ -325,15 +347,62 @@
             <span class="sub-status" data-status={s.status}>{subStatusLabel(s.status)}</span>
             {#if sidebarCtrl.busyTarget === s.path}
               <span class="spinner"></span>
-            {:else if action === "init"}
-              <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.initAndUpdateSubmodule(s.path)}>Init + update</button>
-            {:else if action === "update"}
-              <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.updateSubmodule(s.path)}>Update</button>
-            {:else if action === "blocked"}
-              <button class="sub-act" disabled title={subBlockedTip(s.status)}>Update</button>
+            {:else}
+              <!-- Sync is offered for EVERY row regardless of status (unlike
+                   Init/Update below, gated by submoduleAction) — it only
+                   rewrites .git/config's url, never the submodule's own
+                   working tree/index, so there's nothing for
+                   "dirty"/"conflicted" to block. -->
+              <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.syncSubmodule(s.path)}>Sync</button>
+              {#if action === "init"}
+                <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.initAndUpdateSubmodule(s.path)}>Init + update</button>
+              {:else if action === "update"}
+                <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.updateSubmodule(s.path)}>Update</button>
+              {:else if action === "blocked"}
+                <button class="sub-act" disabled title={subBlockedTip(s.status)}>Update</button>
+              {/if}
             {/if}
           </div>
         {/each}
+      {/if}
+      {#if sidebarCtrl.newSubmoduleOpen}
+        <div class="nb-form" class:busy={sidebarCtrl.busy} bind:this={newSubmoduleFormEl}>
+          <input
+            class="nb-input"
+            bind:this={newSubmoduleEl}
+            bind:value={sidebarCtrl.newSubmoduleUrl}
+            placeholder="repository URL&#8230;"
+            spellcheck="false"
+            autocomplete="off"
+            disabled={sidebarCtrl.busy}
+            onkeydown={onNewSubmoduleKeydown}
+          />
+          <input
+            class="nb-input"
+            bind:value={sidebarCtrl.newSubmodulePath}
+            placeholder="path (e.g. vendor/lib)&#8230;"
+            spellcheck="false"
+            autocomplete="off"
+            disabled={sidebarCtrl.busy}
+            onkeydown={onNewSubmoduleKeydown}
+          />
+          <input
+            class="nb-input"
+            bind:value={sidebarCtrl.newSubmoduleBranch}
+            placeholder="branch (optional)&#8230;"
+            spellcheck="false"
+            autocomplete="off"
+            disabled={sidebarCtrl.busy}
+            onkeydown={onNewSubmoduleKeydown}
+          />
+          {#if sidebarCtrl.busy}
+            <div class="nb-row"><span class="spinner"></span></div>
+          {/if}
+        </div>
+      {:else}
+        <div class="ref-item new-branch" role="button" tabindex="0" onclick={() => sidebarCtrl.startNewSubmodule()} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.startNewSubmodule()}>
+          <span class="rname nb">&#65291; Add submodule&#8230;</span>
+        </div>
       {/if}
     </div>
   </details>

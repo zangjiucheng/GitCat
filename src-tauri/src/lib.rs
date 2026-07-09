@@ -19,7 +19,7 @@ pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
-pub mod submodule; // M1 status (read-only) + M2 init/update; add/sync/deinit/remove are later milestones
+pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync; deinit/remove/foreach are later milestones
 pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious ownership"
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
 
@@ -124,6 +124,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // + checkout, optionally --init/--recursive, never --force)
         submodule::submodule_init,
         submodule::submodule_update,
+        // Submodules (M3 of 4): add (clone a brand-new submodule) / sync
+        // (re-copy .gitmodules's url into .git/config)
+        submodule::submodule_add,
+        submodule::submodule_sync,
     ])
 }
 

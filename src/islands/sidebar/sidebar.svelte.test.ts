@@ -29,6 +29,8 @@ vi.mock("../../ipc/bindings", () => ({
     submoduleStatus: vi.fn(),
     submoduleInit: vi.fn(),
     submoduleUpdate: vi.fn(),
+    submoduleAdd: vi.fn(),
+    submoduleSync: vi.fn(),
   },
 }));
 
@@ -42,7 +44,7 @@ vi.mock("../resolver/resolver.svelte.ts", () => ({
 import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
-import { sidebarCtrl, submoduleAction, SUBMODULES_ALL } from "./sidebar.svelte.ts";
+import { sidebarCtrl, submoduleAction, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
@@ -69,6 +71,10 @@ function resetAll() {
   sidebarCtrl.hasRepo = false;
   sidebarCtrl.copiedSnapshotSha = "";
   sidebarCtrl.submodulesRecursive = false;
+  sidebarCtrl.newSubmoduleOpen = false;
+  sidebarCtrl.newSubmoduleUrl = "";
+  sidebarCtrl.newSubmodulePath = "";
+  sidebarCtrl.newSubmoduleBranch = "";
   mockInTauri = false;
   vi.clearAllMocks();
   // Default: no submodules, so the many pre-existing "refresh"/checkout/etc.
@@ -370,6 +376,100 @@ describe("updateAllSubmodules (bulk 'Update all')", () => {
     expect(sidebarCtrl.busy).toBe(true);
     expect(sidebarCtrl.busyTarget).toBe(SUBMODULES_ALL);
     resolveFn({ ok: true, message: "updated", backupRef: null });
+    await pending;
+    expect(sidebarCtrl.busyTarget).toBeNull();
+  });
+});
+
+describe("syncSubmodule (per-row 'Sync', any status)", () => {
+  it("design mode is a cosmetic no-op with a toast", async () => {
+    mockInTauri = false;
+    await sidebarCtrl.syncSubmodule("vendor/a");
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(commands.submoduleSync).not.toHaveBeenCalled();
+  });
+
+  it("real mode: calls submodule_sync with recursive:false and cheers on success", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: true, message: "synced", backupRef: null });
+    await sidebarCtrl.syncSubmodule("vendor/a");
+    expect(commands.submoduleSync).toHaveBeenCalledWith("/repo", "vendor/a", false);
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
+  });
+
+  it("real mode: a failure surfaces via tama.warn", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: false, message: "no url found for submodule path", backupRef: null });
+    await sidebarCtrl.syncSubmodule("vendor/a");
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("no url found"));
+  });
+
+  it("is re-entrancy locked while busy", async () => {
+    mockInTauri = true;
+    sidebarCtrl.busy = true;
+    await sidebarCtrl.syncSubmodule("vendor/a");
+    expect(commands.submoduleSync).not.toHaveBeenCalled();
+  });
+
+  it("scopes busy/busyTarget to just the acted-on row (not the whole Submodules section) while in flight", async () => {
+    mockInTauri = true;
+    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null }) => void;
+    vi.mocked(commands.submoduleSync).mockImplementationOnce(() => new Promise((resolve) => (resolveFn = resolve)));
+    const pending = sidebarCtrl.syncSubmodule("vendor/a");
+    expect(sidebarCtrl.busy).toBe(true);
+    expect(sidebarCtrl.busyTarget).toBe("vendor/a");
+    resolveFn({ ok: true, message: "synced", backupRef: null });
+    await pending;
+    expect(sidebarCtrl.busy).toBe(false);
+    expect(sidebarCtrl.busyTarget).toBeNull();
+  });
+});
+
+describe("syncAllSubmodules (bulk 'Sync all')", () => {
+  it("design mode is a cosmetic no-op with a toast", async () => {
+    mockInTauri = false;
+    await sidebarCtrl.syncAllSubmodules(false);
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(commands.submoduleSync).not.toHaveBeenCalled();
+  });
+
+  it("real mode: calls submodule_sync with submodulePath:null, passing the recursive flag through", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: true, message: "synced", backupRef: null });
+    await sidebarCtrl.syncAllSubmodules(true);
+    expect(commands.submoduleSync).toHaveBeenCalledWith("/repo", null, true);
+  });
+
+  it("real mode: recursive:false is passed through unchanged when the toggle is off", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: true, message: "synced", backupRef: null });
+    await sidebarCtrl.syncAllSubmodules(false);
+    expect(commands.submoduleSync).toHaveBeenCalledWith("/repo", null, false);
+  });
+
+  it("real mode: a failure surfaces via tama.warn", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: false, message: "no url found for submodule path", backupRef: null });
+    await sidebarCtrl.syncAllSubmodules(false);
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("no url found"));
+  });
+
+  it("is re-entrancy locked while busy", async () => {
+    mockInTauri = true;
+    sidebarCtrl.busy = true;
+    await sidebarCtrl.syncAllSubmodules(true);
+    expect(commands.submoduleSync).not.toHaveBeenCalled();
+  });
+
+  it("uses the SUBMODULES_SYNC_ALL sentinel as busyTarget while in flight (distinct from SUBMODULES_ALL and any row's path)", async () => {
+    mockInTauri = true;
+    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null }) => void;
+    vi.mocked(commands.submoduleSync).mockImplementationOnce(() => new Promise((resolve) => (resolveFn = resolve)));
+    const pending = sidebarCtrl.syncAllSubmodules(false);
+    expect(sidebarCtrl.busy).toBe(true);
+    expect(sidebarCtrl.busyTarget).toBe(SUBMODULES_SYNC_ALL);
+    expect(sidebarCtrl.busyTarget).not.toBe(SUBMODULES_ALL);
+    resolveFn({ ok: true, message: "synced", backupRef: null });
     await pending;
     expect(sidebarCtrl.busyTarget).toBeNull();
   });
