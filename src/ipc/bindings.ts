@@ -936,6 +936,65 @@ async submoduleAdd(path: string, repositoryUrl: string, submodulePath: string, b
  */
 async submoduleSync(path: string, submodulePath: string | null, recursive: boolean) : Promise<WriteResult> {
     return await TAURI_INVOKE("submodule_sync", { path, submodulePath, recursive });
+},
+/**
+ * Unregister a submodule and clear its checked-out working tree (`git
+ * submodule deinit [-f] -- <path>`) — see this section's doc comment for the
+ * exact, empirically-verified semantics. Its committed history in
+ * `.git/modules/<name>` is NEVER touched by this command; `submodule_init` +
+ * `submodule_update` restore it instantly afterward, even fully offline.
+ * 
+ * `force:false` runs the plain command and surfaces git's own refusal
+ * verbatim (a dirty submodule tree OR a merge-conflicted gitlink both refuse
+ * with the identical "local modifications ... use '-f'" message) —
+ * `backup_patch` is always `None` on this path, nothing is ever discarded.
+ * 
+ * `force:true` first checks the submodule's OWN tree directly for anything
+ * that would be discarded (staged index, unstaged edits, untracked files —
+ * see `backup_submodule_dirty_content`); if genuinely nothing is dirty, the
+ * backup step is skipped entirely (still `backup_patch: None`) and `deinit
+ * -f` runs directly. This also correctly covers the merge-conflicted-gitlink
+ * case: the submodule's own tree can be clean even while the SUPERPROJECT's
+ * index is conflicted, so no needless backup is written there either — the
+ * conflict itself lives in the superproject's index, which deinit never
+ * touches. If something IS found, the backup is written FIRST; if that
+ * backup write itself fails, the WHOLE operation is refused — no git command
+ * is run at all (mirrors `discard_file`'s exact backup-or-refuse discipline,
+ * workdir.rs). `backup_patch` is then populated regardless of whether the
+ * subsequent `deinit -f` itself goes on to succeed or fail (mirrors
+ * `discard_file`'s "backup already written even though the mutation failed
+ * — keep pointing at it").
+ * 
+ * No Safety-Manager snapshot — see this section's doc comment.
+ * JS call: `invoke("submodule_deinit", { path, submodulePath, force })`.
+ */
+async submoduleDeinit(path: string, submodulePath: string, force: boolean) : Promise<SubmoduleRemovalResult> {
+    return await TAURI_INVOKE("submodule_deinit", { path, submodulePath, force });
+},
+/**
+ * Remove a submodule from the repository entirely: clear+unregister it (same
+ * as [`submodule_deinit`]'s force path) then stage its removal from the
+ * index AND strip+stage its matching `.gitmodules` section (`git rm -f --
+ * <path>`) — see this section's doc comment for the exact, empirically-
+ * verified `git rm` behavior this relies on. Its committed history in
+ * `.git/modules/<name>` is NEVER deleted (same as deinit).
+ * 
+ * Always behaves as force internally — no `force` parameter (see this
+ * section's doc comment for why: the confirm dialog is the gate, not a
+ * second forced round-trip). Runs the identical "is there anything of the
+ * submodule's own to back up" check as `submodule_deinit`'s force path
+ * first (skip the backup write if genuinely clean, refuse-the-whole-op if
+ * something is dirty and the backup write itself fails).
+ * 
+ * Never auto-commits — only ever STAGES (`M .gitmodules` / `D <path>`),
+ * mirroring `submodule_add`'s own "stage, don't commit" precedent; commit
+ * via the existing `workdir.rs::commit`.
+ * 
+ * No Safety-Manager snapshot — see this section's doc comment.
+ * JS call: `invoke("submodule_remove", { path, submodulePath })`.
+ */
+async submoduleRemove(path: string, submodulePath: string) : Promise<SubmoduleRemovalResult> {
+    return await TAURI_INVOKE("submodule_remove", { path, submodulePath });
 }
 }
 
@@ -1271,7 +1330,7 @@ state: string; conflictedFiles: string[]; message: string; backupRef: string | n
  */
 export type SubmoduleInfo = { name: string; path: string; url: string | null; 
 /**
- * "conflicted" | "not-initialized" | "out-of-date" | "dirty" | "clean"
+ * "conflicted" | "removed" | "not-initialized" | "out-of-date" | "dirty" | "clean"
  */
 status: string; 
 /**
@@ -1283,6 +1342,30 @@ headSha: string | null;
  * when it has never been cloned (not-initialized).
  */
 workdirSha: string | null }
+/**
+ * Result of [`submodule_deinit`] / [`submodule_remove`] — deliberately NOT
+ * `WriteResult`: those two commands need a `backup_patch` channel
+ * `WriteResult` doesn't have, and widening the shared type for every OTHER
+ * caller across the codebase to carry-but-never-populate a field only these
+ * two commands use would fight this codebase's own stated precedent (one
+ * type per module once the shape genuinely differs).
+ */
+export type SubmoduleRemovalResult = { ok: boolean; message: string; 
+/**
+ * Always `None` — neither command ever takes a Safety-Manager ref
+ * snapshot (see this section's doc comment). Present for structural
+ * uniformity with every other WriteResult-family type in the codebase.
+ */
+backupRef: string | null; 
+/**
+ * Git-dir-relative path to a saved pre-force copy of the submodule's own
+ * dirty content (its staged index, its unstaged working-tree edits, its
+ * untracked files) — `Some` exactly when
+ * [`backup_submodule_dirty_content`] found and backed up something,
+ * `None` on every `force:false` `submodule_deinit` call and every call
+ * where the submodule's own tree genuinely had nothing to lose.
+ */
+backupPatch: string | null }
 export type TagObject = { sha: string; name: string; tagger: PlumbingPerson | null; message: string; targetOid: string; targetKind: string }
 /**
  * One planner row's chosen action, as sent back to [`rebase_interactive_start`].

@@ -1,5 +1,5 @@
-//! Submodule status (M1 of 4) + init/update (M2 of 4) + add/sync (M3 of 4).
-//! deinit/remove/foreach are separate later milestones.
+//! Submodule status (M1 of 4) + init/update (M2 of 4) + add/sync (M3 of 4) +
+//! deinit/remove (M4 of 4). `foreach` is a separate, later milestone.
 //!
 //! Read-only, git2-based (mirrors `git_write::list_refs`'s read half): iterates
 //! every submodule registered in `.gitmodules` via `Repository::submodules()`
@@ -7,7 +7,7 @@
 //!
 //! Classification (empirically verified against real `git submodule status` in
 //! a throwaway nested-submodule fixture — see the doc comment on
-//! `classify_status` for the exact bit patterns observed for each of the 5
+//! `classify_status` for the exact bit patterns observed for each of the 6
 //! states, and how they line up with git's own `-`/`+`/` `/`U` prefixes):
 //!   - "conflicted": the superproject's OWN index has an unresolved merge
 //!     conflict at this submodule's gitlink path (two branches pointed the
@@ -18,6 +18,15 @@
 //!     over every bit-derived classification below (a conflicted gitlink entry
 //!     can otherwise leave head_sha/workdir_sha looking plausible while the
 //!     repo is genuinely mid-conflict).
+//!   - "removed": INDEX_DELETED set — `submodule_remove` has already STAGED
+//!     this submodule's removal (its gitlink deleted from the index) but
+//!     nothing is committed yet, so it still shows up here (HEAD's own
+//!     committed `.gitmodules` is unchanged). Added as a bug fix (see M4's own
+//!     doc comment below): none of the WD_* bits below fire for this case
+//!     either, so without this check it fell all the way through to "clean" —
+//!     a ghost row for a submodule that's already gone in every way that
+//!     matters. Checked BEFORE every WD_* arm below (same reasoning as
+//!     "conflicted" above).
 //!   - "not-initialized": WD_UNINITIALIZED or WD_DELETED set (git's `-`
 //!     prefix). WD_UNINITIALIZED is produced by a fresh `git clone` of the
 //!     superproject with no `git submodule init/update` run afterward — NOT by
@@ -165,9 +174,12 @@
 //!     the dedicated command that copies it over, verified empirically in
 //!     `tests/submodule.rs` by reading `.git/config` directly before/after).
 
+use std::fs;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use git2::SubmoduleIgnore;
+use git2::{Diff, DiffOptions, Patch, Repository, StatusOptions, SubmoduleIgnore};
 use serde::Serialize;
 
 use crate::git_write::WriteResult;
@@ -179,7 +191,7 @@ pub struct SubmoduleInfo {
     pub name: String,
     pub path: String,
     pub url: Option<String>,
-    /// "conflicted" | "not-initialized" | "out-of-date" | "dirty" | "clean"
+    /// "conflicted" | "removed" | "not-initialized" | "out-of-date" | "dirty" | "clean"
     pub status: String,
     /// Commit the superproject's index/HEAD tracks for this submodule.
     pub head_sha: Option<String>,
@@ -229,13 +241,33 @@ fn submodule_status_inner(path: &str) -> Result<Vec<SubmoduleInfo>, git2::Error>
     Ok(out)
 }
 
-/// Map a `SubmoduleStatus` bitset to one of the 4 bit-derived UI-facing
+/// Map a `SubmoduleStatus` bitset to one of the 5 bit-derived UI-facing
 /// classifications ("conflicted" is handled separately — see
 /// `submodule_conflicted` — since it isn't a `SubmoduleStatus` bit at all).
 /// See the module doc comment for the empirical verification behind each arm.
+///
+/// BUG-6 FIX: `INDEX_DELETED` is checked FIRST, above every `WD_*` arm below
+/// — EMPIRICALLY VERIFIED that right after `submodule_remove` STAGES its `D
+/// <path>` (nothing committed yet), `repo.submodule_status()` comes back as
+/// exactly `IN_HEAD | INDEX_DELETED` (HEAD's own committed `.gitmodules`
+/// still lists the submodule — nothing's been committed — but the INDEX no
+/// longer has its gitlink), with NONE of the `WD_*` bits this function
+/// already checked (the workdir. is gone too, deinited first). Every existing
+/// arm below fell through to "clean" for this bit combination — a genuine
+/// ghost row: `submodule_status` kept reporting a just-staged-for-removal
+/// submodule as an ordinary, actionable "clean" one. A NEW status
+/// ("removed", rather than overloading "not-initialized" — that one still
+/// means "registered in .gitmodules, never cloned OR emptied without being
+/// unregistered", a meaningfully different situation from "already staged
+/// out of the index entirely") makes the frontend able to hide every row
+/// action (see `submoduleAction`/Sidebar.svelte) and show a distinct,
+/// unambiguous label instead of silently reusing an existing, wrong-shaped
+/// state.
 fn classify_status(bits: git2::SubmoduleStatus) -> String {
     use git2::SubmoduleStatus as S;
-    if bits.contains(S::WD_UNINITIALIZED) || bits.contains(S::WD_DELETED) {
+    if bits.contains(S::INDEX_DELETED) {
+        "removed".to_string()
+    } else if bits.contains(S::WD_UNINITIALIZED) || bits.contains(S::WD_DELETED) {
         "not-initialized".to_string()
     } else if bits.contains(S::WD_MODIFIED) {
         "out-of-date".to_string()
@@ -608,5 +640,655 @@ pub fn submodule_sync(path: String, submodule_path: Option<String>, recursive: b
         ),
         Ok(out) => err_result(git_error_message(&out)),
         Err(e) => err_result(e),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// M4: deinit / remove
+// ---------------------------------------------------------------------------
+//
+// EMPIRICALLY VERIFIED (git 2.53.0, throwaway fixtures, re-verified by hand
+// before writing this code — not trusted from a design doc alone):
+//   * `git submodule deinit [-f] -- <path>` clears the submodule's OWN
+//     working tree down to an empty directory and `git config --unset`s its
+//     `[submodule "<path>"]` section from the SUPERPROJECT's `.git/config` —
+//     but never touches `.gitmodules`, never touches the superproject's own
+//     index/HEAD/gitlink entry, and (this is the safety property the UI is
+//     built around) NEVER touches `.git/modules/<name>` — the submodule's own
+//     object database (its refs/objects/history). A subsequent
+//     `submodule_init` + `submodule_update` (even with the original remote
+//     permanently gone — verified by `mv`ing the source repo away first)
+//     restores the exact checked-out content with ZERO network/fetch
+//     activity, straight from `.git/modules/<name>`.
+//   * Without `-f`, deinit refuses cleanly (exit 128) on ANY of: an
+//     uncommitted tracked edit, an untracked file, OR a merge-conflicted
+//     gitlink entry in the SUPERPROJECT's own index (verified: the
+//     submodule's own tree can be perfectly clean and it still refuses) —
+//     always the same message: "error: the following file has local
+//     modifications: ... fatal: ... use '-f' to discard them". With `-f`, all
+//     of that content is silently gone — "Cleared directory '<path>'" is the
+//     entire trace, confirming the backup-before-force need is real, not
+//     hypothetical. A conflicted-gitlink `deinit -f` does NOT resolve the
+//     conflict itself (that lives in the superproject's index, untouched by
+//     deinit).
+//   * `git rm -f -- <path>` (after a `deinit -f`) removes the gitlink AND
+//     strips+stages the matching `[submodule ...]` section of `.gitmodules`
+//     in one step (real, current git's documented `git-rm` behavior — see
+//     `man git-rm`), leaving exactly `M  .gitmodules` / `D  <path>` staged,
+//     nothing committed, no stray directory. `--cached` is deliberately NOT
+//     used: verified it leaves an empty stray directory forever AND does not
+//     auto-strip `.gitmodules`. Path -> registered name resolution is done by
+//     `git rm` internally (verified with a submodule added via `--name` !=
+//     path), so this module keeps passing paths, never names, matching
+//     init/update/sync/add.
+//   * `git rm -f` on a conflicted gitlink resolves that path's 3-way conflict
+//     as a side effect (collapses to one clean `D` entry) — a genuine (not
+//     just tolerated) benefit of `submodule_remove` on a conflicted row.
+//
+// SAFETY MANAGER: no ref snapshot on either command (same reasoning as every
+// other command in this file — see its doc comments above). `submodule_deinit`
+// only ever touches the submodule's OWN working tree and the superproject's
+// OWN `.git/config` — never a ref. `submodule_remove` additionally only ever
+// STAGES an index change (a gitlink deletion + a `.gitmodules` edit) —
+// staging is not a ref move either, identical reasoning to `stage_file`/
+// `stage_all`'s own no-snapshot rationale (workdir.rs). The one genuinely
+// destructible thing here — a submodule's own UNCOMMITTED content — is
+// categorically outside what a ref-snapshot could ever protect (same
+// reasoning as `discard_file`'s own case, workdir.rs): the content-backup
+// mechanism below is the correct and sufficient safety net for it.
+//
+// `submodule_deinit` does NOT pre-flight "would deinit refuse without -f" in
+// Rust — `force:false` just tries the plain command and surfaces whatever
+// git says verbatim (dirty OR conflicted-gitlink refusal, either way an
+// honest git message). `force:true`'s only extra job is deciding whether a
+// backup write is needed first, which is answered by a DIRECT walk of the
+// submodule's own tree (its own staged index, its own unstaged working-tree
+// edits, its own untracked files) — a strictly narrower, more literal
+// question than replicating git's own refusal logic, and one that gives the
+// right answer regardless of *why* git would otherwise have refused (see
+// `backup_submodule_dirty_content`).
+//
+// `submodule_remove` takes no `force` parameter — it always behaves as force
+// internally (the whole point of "remove" is unconditional; the frontend's
+// own confirm dialog is the gate, not a second forced round-trip) and never
+// auto-commits — only ever stages, mirroring `submodule_add`'s own "clone +
+// register + stage, nothing committed" precedent (the only mutating-but-not-
+// inherently-commit-creating precedent anywhere in this codebase).
+
+/// Result of [`submodule_deinit`] / [`submodule_remove`] — deliberately NOT
+/// `WriteResult`: those two commands need a `backup_patch` channel
+/// `WriteResult` doesn't have, and widening the shared type for every OTHER
+/// caller across the codebase to carry-but-never-populate a field only these
+/// two commands use would fight this codebase's own stated precedent (one
+/// type per module once the shape genuinely differs).
+#[derive(Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmoduleRemovalResult {
+    pub ok: bool,
+    pub message: String,
+    /// Always `None` — neither command ever takes a Safety-Manager ref
+    /// snapshot (see this section's doc comment). Present for structural
+    /// uniformity with every other WriteResult-family type in the codebase.
+    pub backup_ref: Option<String>,
+    /// Git-dir-relative path to a saved pre-force copy of the submodule's own
+    /// dirty content (its staged index, its unstaged working-tree edits, its
+    /// untracked files) — `Some` exactly when
+    /// [`backup_submodule_dirty_content`] found and backed up something,
+    /// `None` on every `force:false` `submodule_deinit` call and every call
+    /// where the submodule's own tree genuinely had nothing to lose.
+    pub backup_patch: Option<String>,
+}
+
+/// Mirrors `WorkdirResult::ok` — see `ok_result`/`err_result` above for why
+/// this module builds struct literals directly rather than reaching for
+/// private ctors on a shared type.
+fn ok_removal(message: impl Into<String>, backup_patch: Option<String>) -> SubmoduleRemovalResult {
+    SubmoduleRemovalResult { ok: true, message: message.into(), backup_ref: None, backup_patch }
+}
+fn err_removal(message: impl Into<String>) -> SubmoduleRemovalResult {
+    SubmoduleRemovalResult { ok: false, message: message.into(), backup_ref: None, backup_patch: None }
+}
+/// A failure AFTER a backup was already written (the git command itself then
+/// failed) — keeps `backup_patch` populated, mirroring `discard_file`'s own
+/// "the backup was already written even though the mutation failed — keep
+/// pointing at it" discipline (workdir.rs).
+fn err_removal_with_backup(message: impl Into<String>, backup_patch: Option<String>) -> SubmoduleRemovalResult {
+    SubmoduleRemovalResult { ok: false, message: message.into(), backup_ref: None, backup_patch }
+}
+
+/// Process-wide monotonic tie-breaker for submodule-backup directory names,
+/// mirroring `workdir.rs`'s `DISCARD_SEQ` — a separate counter since this
+/// names its own directory namespace.
+static SUBMODULE_BACKUP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// `<superproject-git-dir>/gitgui/submodule-backup/` — reuses the existing
+/// `<git-dir>/gitgui/` convention (`oplog.jsonl`, `discard-backup/`).
+fn submodule_backup_root(repo: &Repository) -> std::path::PathBuf {
+    repo.path().join("gitgui").join("submodule-backup")
+}
+
+/// `<secs>-<nanos>-<seq>-<submodule_path with / -> _>`, unique even for two
+/// backups of the same submodule path in the same nanosecond.
+fn submodule_backup_stem(submodule_path: &str) -> String {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let seq = SUBMODULE_BACKUP_SEQ.fetch_add(1, Ordering::SeqCst);
+    let sanitized = submodule_path.replace('/', "_");
+    format!("{}-{}-{}-{}", now.as_secs(), now.subsec_nanos(), seq, sanitized)
+}
+
+/// The registered submodule (if any) whose `.gitmodules` PATH matches
+/// `submodule_path` exactly — the same path walk `submodule_status_inner`
+/// already performs, reused here for two different follow-up needs: opening
+/// the submodule's own repo (backup) and resolving its registered NAME
+/// (remove's defensive `.gitmodules`-cleanup fallback).
+fn find_submodule_by_path<'a>(repo: &'a Repository, submodule_path: &str) -> Option<git2::Submodule<'a>> {
+    let sm_path = std::path::Path::new(submodule_path);
+    repo.submodules().ok()?.into_iter().find(|sm| sm.path() == sm_path)
+}
+
+/// Open the SUBMODULE's own repository (not the superproject's), via git2's
+/// purpose-built `Submodule::open()` — works transparently whether the
+/// submodule uses an old-style nested `.git` or the modern gitfile-pointer
+/// layout. Returns `None` when the submodule is not registered at this path,
+/// OR `Submodule::open()` itself errored for ANY reason.
+///
+/// BUG-1 FIX — a `None` here does NOT by itself mean "nothing of its own to
+/// back up": EMPIRICALLY VERIFIED (throwaway fixtures) that `Submodule::open()`
+/// returns the exact SAME `ErrorCode::NotFound`/`ErrorClass::Os` "failed to
+/// resolve path '.../.git'" error for two completely different situations —
+/// (a) a genuinely never-checked-out submodule (fresh clone, no `init`/
+/// `update` run — nothing to lose), AND (b) a submodule whose `.git` gitfile
+/// pointer was simply deleted (or, verified separately, corrupted/malformed —
+/// a THIRD, distinct error class/code for that variant) while its real
+/// tracked content remains sitting in the working tree (everything to lose).
+/// The error alone cannot tell these apart, so callers of this function must
+/// NEVER treat a bare `None` as "safe to proceed" — see
+/// `submodule_workdir_has_any_content`, the direct filesystem fallback check
+/// `backup_submodule_dirty_content` uses instead to make that call correctly.
+fn open_submodule_repo(repo: &Repository, submodule_path: &str) -> Option<Repository> {
+    find_submodule_by_path(repo, submodule_path)?.open().ok()
+}
+
+/// Fallback safety check for when [`open_submodule_repo`] returns `None`: does
+/// `submodule_path`'s own working-tree directory exist and hold ANY entry at
+/// all (not recursing — a single stray entry already means "there is
+/// something here")? A missing or genuinely empty directory really is nothing
+/// to lose (a never-checked-out submodule, or one already cleared); anything
+/// else means `Submodule::open()` failed for some OTHER reason (corrupted/
+/// malformed gitfile, permissions, ...) while real content sits right there —
+/// see `open_submodule_repo`'s doc comment for the empirical verification
+/// behind why the error alone can't make this distinction.
+fn submodule_workdir_has_any_content(repo: &Repository, submodule_path: &str) -> bool {
+    let Some(workdir) = repo.workdir() else { return false };
+    match fs::read_dir(workdir.join(submodule_path)) {
+        Ok(mut entries) => entries.next().is_some(),
+        Err(_) => false, // doesn't exist at all -> definitely nothing to lose
+    }
+}
+
+/// The submodule's registered NAME (its `.gitmodules` section key, which can
+/// differ from its path — verified empirically, e.g. via `git submodule add
+/// --name custom <url> <path>`), resolved BEFORE any mutation: once
+/// `.gitmodules`/the index are changed this lookup is no longer possible the
+/// normal way. Used only by `submodule_remove`'s defensive fallback (see
+/// `ensure_gitmodules_section_removed`).
+fn resolve_submodule_name(repo: &Repository, submodule_path: &str) -> Option<String> {
+    find_submodule_by_path(repo, submodule_path)?.name().map(|s| s.to_string())
+}
+
+/// One whole `git2::Diff` rendered as a single `git apply`-able unified patch
+/// text, by concatenating each delta's own `Patch::to_buf()` — a `Diff` has
+/// no combined-buffer method of its own (only per-delta `Patch` does), same
+/// building block `backup_tracked_patch` (workdir.rs) already uses for one
+/// delta at a time. A binary delta (`Patch::from_diff` returning `Ok(None)`)
+/// is treated as a hard error here, not silently skipped — mirrors
+/// `backup_tracked_patch`'s own "Could not build a patch ... (binary file?)"
+/// refusal, so a binary change inside a submodule can never be silently
+/// force-discarded with no way to recover it.
+fn diff_to_patch_text(diff: &Diff<'_>) -> Result<String, String> {
+    let mut out = String::new();
+    let n = diff.deltas().len();
+    for i in 0..n {
+        let mut patch = Patch::from_diff(diff, i).map_err(|e| e.message().to_string())?.ok_or_else(|| {
+            let p = diff
+                .get_delta(i)
+                .and_then(|d| d.new_file().path().or_else(|| d.old_file().path()))
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            format!("could not build a patch for {p} (binary file?)")
+        })?;
+        let buf = patch.to_buf().map_err(|e| e.message().to_string())?;
+        out.push_str(buf.as_str().unwrap_or_default());
+    }
+    Ok(out)
+}
+
+/// True if `repo`'s own tree — a staged (index vs HEAD) change, an unstaged
+/// (workdir vs index) change, or an untracked/ignored file — has ANYTHING a
+/// `deinit -f` would discard. The boolean-only sibling of
+/// `backup_submodule_dirty_content`'s own three-way dirty check below, shared
+/// with [`first_dirty_nested_submodule`] where only a yes/no answer is needed
+/// (never the actual patch/backup bytes — see that function's own doc comment
+/// for why DETECTION, not a full recursive backup, is this codebase's answer
+/// one level down). BUG-5 FIX applies here too: `include_ignored`/
+/// `recurse_ignored_dirs` so a nested submodule's own gitignored-but-real
+/// files are correctly counted as "dirty" too, matching what `deinit -f`'s
+/// clear actually removes.
+fn repo_has_dirty_content(repo: &Repository) -> Result<bool, String> {
+    let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+    let staged_diff = repo
+        .diff_tree_to_index(head_tree.as_ref(), None, None)
+        .map_err(|e| format!("could not diff staged changes: {}", e.message()))?;
+    if staged_diff.deltas().len() > 0 {
+        return Ok(true);
+    }
+    let unstaged_diff = repo
+        .diff_index_to_workdir(None, None)
+        .map_err(|e| format!("could not diff unstaged changes: {}", e.message()))?;
+    if unstaged_diff.deltas().len() > 0 {
+        return Ok(true);
+    }
+    let mut status_opts = StatusOptions::new();
+    status_opts.include_untracked(true).recurse_untracked_dirs(true).include_ignored(true).recurse_ignored_dirs(true);
+    let statuses = repo.statuses(Some(&mut status_opts)).map_err(|e| format!("could not read untracked/ignored files: {}", e.message()))?;
+    Ok(statuses.iter().any(|e| e.status().is_wt_new() || e.status().is_ignored()))
+}
+
+/// BUG-2 FIX: a submodule can itself have its OWN registered submodules (a
+/// "submodule of a submodule") — EMPIRICALLY VERIFIED (design phase, checked
+/// against real `git submodule deinit --help`/docs) that `git submodule
+/// deinit` has NO `--recursive` flag at all, so force-deiniting/removing the
+/// OUTER submodule wipes whatever the inner one has checked out too, with no
+/// way to ask git to preserve or even skip it first. A full recursive
+/// backup-and-proceed (nested diffs, nested patches, nested untracked files,
+/// arbitrary depth) is a much larger and harder-to-get-right surface than the
+/// single-level backup above, so this is pragmatically handled as DETECTION
+/// instead: recurse into `sub_repo`'s own `repo.submodules()`, to any depth,
+/// and report the first one found dirty (via `repo_has_dirty_content`) so the
+/// caller can refuse the WHOLE operation naming exactly which nested path is
+/// at risk, rather than silently destroying it.
+///
+/// Returns `Ok(None)` when nothing nested is dirty (including when a nested
+/// submodule isn't checked out at all — same nothing-to-lose reasoning
+/// `open_submodule_repo` uses one level up: a merely-not-checked-out nested
+/// submodule is intentionally NOT chased further via
+/// `submodule_workdir_has_any_content`'s own fallback — that fallback exists
+/// to keep a corrupted-but-content-bearing TOP-LEVEL target from being
+/// silently treated as clean; a nested submodule this deep that's merely
+/// unreadable is already exceedingly rare and, worst case, is still caught by
+/// this same recursive walk failing to find it dirty and the outer operation
+/// proceeding no worse than it would have before this fix existed). `Err`
+/// only when a nested submodule's dirty state genuinely could not be
+/// determined (mirrors `backup_submodule_dirty_content`'s own
+/// refuse-don't-guess posture for read failures).
+fn first_dirty_nested_submodule(sub_repo: &Repository) -> Result<Option<String>, String> {
+    let nested = sub_repo.submodules().map_err(|e| format!("could not enumerate nested submodules: {}", e.message()))?;
+    for nested_sm in nested {
+        let nested_path = nested_sm.path().to_string_lossy().to_string();
+        let Some(nested_repo) = nested_sm.open().ok() else {
+            continue; // not checked out -> nothing of its own to lose
+        };
+        if repo_has_dirty_content(&nested_repo)? {
+            return Ok(Some(nested_path));
+        }
+        if let Some(deeper) = first_dirty_nested_submodule(&nested_repo)? {
+            return Ok(Some(format!("{nested_path}/{deeper}")));
+        }
+    }
+    Ok(None)
+}
+
+/// The core of the design decision above: is there anything in the
+/// submodule's OWN repository (its own staged index vs HEAD, its own
+/// unstaged working tree vs index, its own untracked files) that a `deinit
+/// -f`/the deinit-then-`rm` sequence would silently discard? If so, back it
+/// up FIRST as a small directory bundle under
+/// `<superproject-git-dir>/gitgui/submodule-backup/<stem>/` (`staged.patch` /
+/// `unstaged.patch` / `untracked/<relative path>`, any of which is omitted
+/// when empty) and return its git-dir-relative path. Returns `Ok(None)` — no
+/// directory even created — when genuinely nothing is dirty, INCLUDING when
+/// the submodule isn't checked out at all (nothing of its own working tree
+/// exists to lose — see `open_submodule_repo`/`submodule_workdir_has_any_content`
+/// for the BUG-1 fix distinguishing that from "checked out but unreadable").
+/// `Err` when something IS dirty but backing it up failed, OR (BUG-2 fix) when
+/// the target submodule has a nested submodule-of-its-own that is itself
+/// dirty (refuse-and-inform, never a silent partial backup) — callers must
+/// treat either `Err` as "refuse the whole operation", exactly `discard_file`'s
+/// backup-or-refuse discipline (workdir.rs).
+fn backup_submodule_dirty_content(repo: &Repository, submodule_path: &str) -> Result<Option<String>, String> {
+    let sub_repo = match open_submodule_repo(repo, submodule_path) {
+        Some(r) => r,
+        None => {
+            // BUG-1 FIX: `Submodule::open()` failing does NOT by itself mean
+            // "nothing to lose" — see `open_submodule_repo`'s doc comment for
+            // the empirical verification. Fall back to a direct filesystem
+            // check: an empty (or nonexistent) directory really is nothing to
+            // lose; anything else means we cannot tell whether it's dirty and
+            // must refuse rather than silently proceeding to a force-deinit/
+            // remove that could wipe real, un-backed-up content.
+            if submodule_workdir_has_any_content(repo, submodule_path) {
+                return Err(format!(
+                    "{submodule_path}'s own repository could not be opened (possibly corrupted, or its .git \
+                     pointer is unreadable), but its working directory is not empty — refusing to guess whether \
+                     it holds uncommitted work"
+                ));
+            }
+            return Ok(None);
+        }
+    };
+
+    // BUG-2 FIX: refuse the WHOLE operation up front if a submodule nested
+    // inside THIS one is itself dirty — see `first_dirty_nested_submodule`'s
+    // doc comment for why detection (not recursive backup) is the answer here.
+    if let Some(nested_path) = first_dirty_nested_submodule(&sub_repo)? {
+        return Err(format!(
+            "{submodule_path}'s own nested submodule {nested_path} has uncommitted changes of its own, and a \
+             force-deinit/remove has no way to preserve them (git submodule deinit has no --recursive flag) — \
+             refusing. Resolve or back up {submodule_path}/{nested_path} first"
+        ));
+    }
+
+    let mut staged_opts = DiffOptions::new();
+    staged_opts.context_lines(3);
+    let head_tree = sub_repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+    let staged_diff = sub_repo
+        .diff_tree_to_index(head_tree.as_ref(), None, Some(&mut staged_opts))
+        .map_err(|e| format!("could not diff the submodule's staged changes: {}", e.message()))?;
+
+    let mut unstaged_opts = DiffOptions::new();
+    unstaged_opts.context_lines(3);
+    let unstaged_diff = sub_repo
+        .diff_index_to_workdir(None, Some(&mut unstaged_opts))
+        .map_err(|e| format!("could not diff the submodule's unstaged changes: {}", e.message()))?;
+
+    // BUG-5 FIX: `include_ignored`/`recurse_ignored_dirs` too, not just
+    // `include_untracked` — EMPIRICALLY CONFIRMED `git submodule deinit -f`
+    // clears gitignored files inside the submodule right along with plain
+    // untracked ones, so the backup scope must match (exactly
+    // `workdir.rs::discard_file`'s own scope-matches-`git clean -f`
+    // discipline, one level down).
+    let mut status_opts = StatusOptions::new();
+    status_opts.include_untracked(true).recurse_untracked_dirs(true).include_ignored(true).recurse_ignored_dirs(true);
+    let statuses = sub_repo
+        .statuses(Some(&mut status_opts))
+        .map_err(|e| format!("could not read the submodule's untracked files: {}", e.message()))?;
+    let untracked: Vec<String> = statuses
+        .iter()
+        .filter(|e| e.status().is_wt_new() || e.status().is_ignored())
+        .filter_map(|e| e.path().map(|p| p.to_string()))
+        .collect();
+
+    let staged_empty = staged_diff.deltas().len() == 0;
+    let unstaged_empty = unstaged_diff.deltas().len() == 0;
+    if staged_empty && unstaged_empty && untracked.is_empty() {
+        return Ok(None);
+    }
+
+    let stem = submodule_backup_stem(submodule_path);
+    let dir = submodule_backup_root(repo).join(&stem);
+    fs::create_dir_all(&dir).map_err(|e| format!("could not create submodule backup dir: {e}"))?;
+
+    if !staged_empty {
+        let text = diff_to_patch_text(&staged_diff)?;
+        fs::write(dir.join("staged.patch"), text).map_err(|e| format!("could not write staged.patch: {e}"))?;
+    }
+    if !unstaged_empty {
+        let text = diff_to_patch_text(&unstaged_diff)?;
+        fs::write(dir.join("unstaged.patch"), text).map_err(|e| format!("could not write unstaged.patch: {e}"))?;
+    }
+    if !untracked.is_empty() {
+        let sub_workdir = sub_repo
+            .workdir()
+            .ok_or_else(|| "submodule has no working directory".to_string())?
+            .to_path_buf();
+        let untracked_root = dir.join("untracked");
+        for rel in &untracked {
+            let src = sub_workdir.join(rel);
+            let dest = untracked_root.join(rel);
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("could not create backup dir for {rel}: {e}"))?;
+            }
+            // BUG-4 FIX: `fs::symlink_metadata` (NOT `fs::metadata`/a plain
+            // `fs::read`, both of which FOLLOW a symlink) first — a stray,
+            // genuinely broken/dangling symlink (its target since deleted)
+            // has no bytes of its own to read at all. EMPIRICALLY VERIFIED a
+            // plain `fs::read` on one errors with "No such file or
+            // directory", which previously turned an otherwise-harmless
+            // force-deinit into a hard refusal over one dead link. There is
+            // no byte content to preserve for a dangling link either way, so
+            // the best available backup is simply recording WHERE it pointed.
+            let meta = fs::symlink_metadata(&src).map_err(|e| format!("could not stat {rel}: {e}"))?;
+            if meta.file_type().is_symlink() {
+                let target = fs::read_link(&src).map_err(|e| format!("could not read symlink target for {rel}: {e}"))?;
+                fs::write(&dest, target.to_string_lossy().as_bytes())
+                    .map_err(|e| format!("could not back up symlink target for {rel}: {e}"))?;
+            } else {
+                let bytes = fs::read(&src).map_err(|e| format!("could not read {rel}: {e}"))?;
+                fs::write(&dest, &bytes).map_err(|e| format!("could not back up {rel}: {e}"))?;
+            }
+        }
+    }
+
+    // git-dir-relative, matching backup_tracked_patch/backup_untracked_bytes's
+    // own "gitgui/discard-backup/..." convention.
+    Ok(Some(format!("gitgui/submodule-backup/{stem}")))
+}
+
+/// Unregister a submodule and clear its checked-out working tree (`git
+/// submodule deinit [-f] -- <path>`) — see this section's doc comment for the
+/// exact, empirically-verified semantics. Its committed history in
+/// `.git/modules/<name>` is NEVER touched by this command; `submodule_init` +
+/// `submodule_update` restore it instantly afterward, even fully offline.
+///
+/// `force:false` runs the plain command and surfaces git's own refusal
+/// verbatim (a dirty submodule tree OR a merge-conflicted gitlink both refuse
+/// with the identical "local modifications ... use '-f'" message) —
+/// `backup_patch` is always `None` on this path, nothing is ever discarded.
+///
+/// `force:true` first checks the submodule's OWN tree directly for anything
+/// that would be discarded (staged index, unstaged edits, untracked files —
+/// see `backup_submodule_dirty_content`); if genuinely nothing is dirty, the
+/// backup step is skipped entirely (still `backup_patch: None`) and `deinit
+/// -f` runs directly. This also correctly covers the merge-conflicted-gitlink
+/// case: the submodule's own tree can be clean even while the SUPERPROJECT's
+/// index is conflicted, so no needless backup is written there either — the
+/// conflict itself lives in the superproject's index, which deinit never
+/// touches. If something IS found, the backup is written FIRST; if that
+/// backup write itself fails, the WHOLE operation is refused — no git command
+/// is run at all (mirrors `discard_file`'s exact backup-or-refuse discipline,
+/// workdir.rs). `backup_patch` is then populated regardless of whether the
+/// subsequent `deinit -f` itself goes on to succeed or fail (mirrors
+/// `discard_file`'s "backup already written even though the mutation failed
+/// — keep pointing at it").
+///
+/// No Safety-Manager snapshot — see this section's doc comment.
+/// JS call: `invoke("submodule_deinit", { path, submodulePath, force })`.
+#[tauri::command]
+#[specta::specta]
+pub fn submodule_deinit(path: String, submodule_path: String, force: bool) -> SubmoduleRemovalResult {
+    if let Err(e) = validate_submodule_path(&submodule_path) {
+        return err_removal(e);
+    }
+
+    if !force {
+        return match run_git(&path, &["submodule", "deinit", "--", &submodule_path]) {
+            Ok(out) if out.ok => ok_removal(format!("Deinitialized submodule {submodule_path}."), None),
+            // e.g. "fatal: Submodule work tree '<path>' contains local
+            // modifications; use '-f' to discard them" (dirty tree OR a
+            // merge-conflicted gitlink — see this section's doc comment) —
+            // never forced, surfaced verbatim.
+            Ok(out) => err_removal(git_error_message(&out)),
+            Err(e) => err_removal(e),
+        };
+    }
+
+    let repo = match crate::trust::open_repo(&path) {
+        Ok(r) => r,
+        Err(e) => return err_removal(format!("Cannot open repository: {}", e.message())),
+    };
+    let backup_patch = match backup_submodule_dirty_content(&repo, &submodule_path) {
+        Ok(p) => p,
+        Err(e) => {
+            return err_removal(format!(
+                "Could not back up {submodule_path}'s own uncommitted changes before force-deiniting, refusing: {e}"
+            ))
+        }
+    };
+
+    match run_git(&path, &["submodule", "deinit", "-f", "--", &submodule_path]) {
+        Ok(out) if out.ok => ok_removal(
+            match &backup_patch {
+                Some(b) => format!("Deinitialized submodule {submodule_path} (backup: {b})."),
+                None => format!("Deinitialized submodule {submodule_path}."),
+            },
+            backup_patch,
+        ),
+        Ok(out) => err_removal_with_backup(git_error_message(&out), backup_patch),
+        Err(e) => err_removal_with_backup(e, backup_patch),
+    }
+}
+
+/// Remove a submodule from the repository entirely: clear+unregister it (same
+/// as [`submodule_deinit`]'s force path) then stage its removal from the
+/// index AND strip+stage its matching `.gitmodules` section (`git rm -f --
+/// <path>`) — see this section's doc comment for the exact, empirically-
+/// verified `git rm` behavior this relies on. Its committed history in
+/// `.git/modules/<name>` is NEVER deleted (same as deinit).
+///
+/// Always behaves as force internally — no `force` parameter (see this
+/// section's doc comment for why: the confirm dialog is the gate, not a
+/// second forced round-trip). Runs the identical "is there anything of the
+/// submodule's own to back up" check as `submodule_deinit`'s force path
+/// first (skip the backup write if genuinely clean, refuse-the-whole-op if
+/// something is dirty and the backup write itself fails).
+///
+/// Never auto-commits — only ever STAGES (`M .gitmodules` / `D <path>`),
+/// mirroring `submodule_add`'s own "stage, don't commit" precedent; commit
+/// via the existing `workdir.rs::commit`.
+///
+/// No Safety-Manager snapshot — see this section's doc comment.
+/// JS call: `invoke("submodule_remove", { path, submodulePath })`.
+#[tauri::command]
+#[specta::specta]
+pub fn submodule_remove(path: String, submodule_path: String) -> SubmoduleRemovalResult {
+    if let Err(e) = validate_submodule_path(&submodule_path) {
+        return err_removal(e);
+    }
+
+    let repo = match crate::trust::open_repo(&path) {
+        Ok(r) => r,
+        Err(e) => return err_removal(format!("Cannot open repository: {}", e.message())),
+    };
+
+    // Resolved BEFORE any mutation — see `resolve_submodule_name`'s doc
+    // comment for why this can't be done afterward.
+    let name = resolve_submodule_name(&repo, &submodule_path);
+
+    let backup_patch = match backup_submodule_dirty_content(&repo, &submodule_path) {
+        Ok(p) => p,
+        Err(e) => {
+            return err_removal(format!(
+                "Could not back up {submodule_path}'s own uncommitted changes before removing, refusing: {e}"
+            ))
+        }
+    };
+
+    if let Err(msg) = match run_git(&path, &["submodule", "deinit", "-f", "--", &submodule_path]) {
+        Ok(out) if out.ok => Ok(()),
+        Ok(out) => Err(git_error_message(&out)),
+        Err(e) => Err(e),
+    } {
+        return err_removal_with_backup(msg, backup_patch);
+    }
+
+    match run_git(&path, &["rm", "-f", "--", &submodule_path]) {
+        Ok(out) if out.ok => {
+            // Defensive fallback for a git version whose `git rm` does NOT
+            // auto-strip `.gitmodules` (this codebase's own git 2.53.0 does —
+            // see this section's doc comment — so this is expected to be a
+            // no-op on the version this was verified against, but keeps the
+            // command correct — and, per BUG-3's fix, HONEST about failures —
+            // on any installed git or filesystem condition (e.g. .gitmodules
+            // temporarily unwritable) that leaves the section behind).
+            if let Some(name) = &name {
+                if let Err(msg) = ensure_gitmodules_section_removed(&path, name) {
+                    // The gitlink itself IS already staged as deleted at this
+                    // point (git rm -f above succeeded) — say so, rather than
+                    // letting a caller believe NOTHING happened.
+                    return err_removal_with_backup(
+                        format!(
+                            "{submodule_path}'s gitlink was staged for removal, but {msg}. Run `git status` to see \
+                             the partial state before retrying"
+                        ),
+                        backup_patch,
+                    );
+                }
+            }
+            ok_removal(
+                match &backup_patch {
+                    Some(b) => format!("Removed submodule {submodule_path} (backup: {b})."),
+                    None => format!("Removed submodule {submodule_path}."),
+                },
+                backup_patch,
+            )
+        }
+        Ok(out) => err_removal_with_backup(git_error_message(&out), backup_patch),
+        Err(e) => err_removal_with_backup(e, backup_patch),
+    }
+}
+
+/// Fallback for `submodule_remove`: if `.gitmodules` STILL has a
+/// `[submodule "<name>"]` section after `git rm -f` (only expected on an
+/// older git that doesn't auto-strip it, or a filesystem condition that made
+/// `git rm`'s own attempt fail partway — see this section's doc comment),
+/// manually strip and re-stage it.
+///
+/// BUG-3 FIX: previously this used `if let Ok(out)` / `let _ = run_git(...)`
+/// for BOTH the strip and the follow-up stage, so either one failing was
+/// silently swallowed and `submodule_remove` reported `ok:true` over a half-
+/// edited, UNSTAGED `.gitmodules` — the gitlink deletion staged, but the
+/// matching `.gitmodules` section still present on disk and not staged
+/// either way. Now: first check via a direct read of `.gitmodules` whether
+/// the section is even STILL there (the overwhelmingly common case on this
+/// codebase's own verified git version is that `git rm -f` already stripped
+/// it — `git config --remove-section` on an ALREADY-absent section is itself
+/// a normal, expected non-zero exit that must NOT be treated as a failure);
+/// only if the section genuinely survives does this attempt to strip it, and
+/// ANY failure from either step (the strip itself, or staging that edit) is
+/// propagated as `Err` with a message naming which of the two steps failed,
+/// rather than swallowed.
+fn ensure_gitmodules_section_removed(path: &str, name: &str) -> Result<(), String> {
+    let gitmodules_path = std::path::Path::new(path).join(".gitmodules");
+    let section_header = format!("[submodule \"{name}\"]");
+    let still_present = fs::read_to_string(&gitmodules_path).map(|s| s.contains(&section_header)).unwrap_or(false);
+    if !still_present {
+        return Ok(());
+    }
+
+    let section = format!("submodule.{name}");
+    match run_git(path, &["config", "-f", ".gitmodules", "--remove-section", &section]) {
+        Ok(out) if out.ok => {}
+        Ok(out) => {
+            return Err(format!(
+                "its [{section}] section could not be stripped from .gitmodules (still present, unstaged): {}",
+                git_error_message(&out)
+            ))
+        }
+        Err(e) => {
+            return Err(format!(
+                "its [{section}] section could not be stripped from .gitmodules (still present, unstaged): {e}"
+            ))
+        }
+    }
+
+    match run_git(path, &["add", "--", ".gitmodules"]) {
+        Ok(out) if out.ok => Ok(()),
+        Ok(out) => Err(format!(
+            "its [{section}] section was stripped from .gitmodules, but staging that edit failed (left unstaged): {}",
+            git_error_message(&out)
+        )),
+        Err(e) => Err(format!(
+            "its [{section}] section was stripped from .gitmodules, but staging that edit failed (left unstaged): {e}"
+        )),
     }
 }

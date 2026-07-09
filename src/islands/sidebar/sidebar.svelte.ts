@@ -38,6 +38,34 @@
 // never touches (it only rewrites `.git/config`), so there is nothing a
 // refresh would show differently, exactly like pushTag's own "nothing local
 // to refresh" precedent below.
+//
+// Submodules (M4 — deinit + remove, on top of M1-M3's status/init/add/sync):
+// deinitSubmodule/removeSubmodule are the per-row destructive actions,
+// routing through the shared armDanger typed-confirm scrim exactly like
+// deleteBranch/deleteTag above. deinitSubmodule is status-gated the same way
+// doDeleteBranch's own "isCurrent" checks are: submoduleNeedsForceConfirm(
+// status) mirrors real git's own precondition (a dirty tree OR a merge-
+// conflicted gitlink both refuse `deinit` without `-f` — see submodule.rs's
+// module doc comment) — everything else (clean/out-of-date/not-initialized)
+// calls straight through with force:false, no scrim at all, matching this
+// app's "never show a needless confirm for a safe operation" rule. Its
+// doDeinitSubmodule private helper has the same two-tier fallback as
+// doDeleteBranch: a plain force:false attempt first, then (only for the
+// stale-status race where a row looked safe but git itself refuses) a
+// window.confirm()-gated retry with force:true. removeSubmodule always
+// shows the scrim regardless of status — it's unambiguously final (also
+// strips .gitmodules and stages an index change) — and always calls
+// submodule_remove with no force parameter (the backend behaves as force
+// internally; see its own doc comment for why a second forced round-trip
+// would be redundant once the confirm has already been shown). Both
+// doDeinitSubmodule/doRemoveSubmodule refresh via refreshSubmodules() on
+// success only, same as every other mutation in this file — a refusal
+// surfaces through bridge.tama.warn, never a silent no-op. Neither ever
+// appends its own backup-location copy to the success toast: submodule.rs's
+// own success `message` already names the backup path inline ("… (backup:
+// gitgui/submodule-backup/…)") exactly when one was written, so passing
+// `res.message` straight through (the existing convention every mutation
+// here already follows) is sufficient.
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
@@ -87,7 +115,7 @@ export type TagMenu = { name: string; x: number; y: number };
 // function rather than inline template logic so it's directly unit-testable
 // without a component-rendering harness (this codebase's tests are all
 // controller/state-level; see sidebar.svelte.test.ts). Mirrors
-// submodule.rs's classify_status 5-way split 1:1:
+// submodule.rs's classify_status 6-way split 1:1:
 //   - "not-initialized" -> "init"    (submodule_update with init:true — clone +
 //     checkout a never-registered submodule in one call)
 //   - "out-of-date"     -> "update"  (submodule_update with init:false — it's
@@ -97,6 +125,12 @@ export type TagMenu = { name: string; x: number; y: number };
 //     the user resolves the submodule's own working tree/index state; NOT the
 //     same as "clean", which shows no button at all)
 //   - "clean" (or anything unrecognized) -> null (nothing to do)
+//   - "removed" -> null (Bug 6 fix: already staged for removal by
+//     submodule_remove, nothing committed yet — there's nothing left for
+//     Init/Update to act on either; the row shows no action buttons AT ALL,
+//     not just this one, so Sidebar.svelte additionally special-cases
+//     s.status === "removed" directly rather than gating on this fn alone —
+//     see its own comment above the Submodules list)
 export type SubmoduleAction = "init" | "update" | "blocked" | null;
 export function submoduleAction(status: string): SubmoduleAction {
   switch (status) {
@@ -107,9 +141,24 @@ export function submoduleAction(status: string): SubmoduleAction {
     case "dirty":
     case "conflicted":
       return "blocked";
+    case "removed":
+      return null;
     default:
       return null;
   }
+}
+// Whether a submodule row's status makes Deinit's typed-confirm scrim
+// necessary — a sibling pure classifier to submoduleAction above, exported
+// the same way for the same reason (directly unit-testable, no component-
+// rendering harness needed). Mirrors submodule.rs's own empirically-verified
+// precondition for `git submodule deinit` refusing without `-f`: a dirty
+// submodule tree OR a merge-conflicted gitlink (see that module's doc
+// comment) — which is exactly submoduleAction's own "blocked" set
+// (dirty/conflicted). Every other status is a no-op as far as force is
+// concerned (git doesn't even require -f there), so Deinit skips the scrim
+// entirely for those and calls straight through with force:false.
+export function submoduleNeedsForceConfirm(status: string): boolean {
+  return status === "dirty" || status === "conflicted";
 }
 // Sentinel busyTarget for the bulk "Update all submodules" action — can never
 // collide with a real submodule path (those come from `.gitmodules` and are
@@ -478,6 +527,154 @@ class SidebarState {
       }
     } catch (e) {
       bridge.tama.warn("Sync failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  // "Deinit" — status-gated confirm (see submoduleNeedsForceConfirm's own
+  // doc comment): a "clean"/"out-of-date"/"not-initialized" row has nothing
+  // at risk, so this calls straight through with force:false, no scrim at
+  // all — matching this app's existing rule of never showing a needless
+  // confirm for a safe operation. A "dirty"/"conflicted" row DOES show the
+  // shared armDanger scrim first, since force:true is what's actually about
+  // to run and that's the one path that can discard uncommitted content
+  // (backed up first — see doDeinitSubmodule/submodule.rs).
+  async deinitSubmodule(path: string, status: string) {
+    if (!submoduleNeedsForceConfirm(status)) {
+      await this.doDeinitSubmodule(path, false);
+      return;
+    }
+    bridge.tama.set("danger");
+    bridge.tama.say("Deinitializing " + path + " — type the path to arm it. I back up its uncommitted changes first.", 6000);
+    bridge.armDanger({
+      title: "Deinit submodule — " + path,
+      steps: false,
+      desc:
+        "This clears the submodule's own checked-out files and unregisters it locally. Its committed history is NOT deleted — it stays in .git/modules and can be restored instantly (no re-clone) with Init + update. Only its UNCOMMITTED changes are at risk.",
+      lose:
+        "<h5>What happens</h5><ul><li>Clears <code>" +
+        esc(path) +
+        "</code>'s working tree</li><li>Unregisters it from this repo's local config</li><li>Its own uncommitted changes are backed up first, under <code>gitgui/submodule-backup/&#8230;</code></li></ul>",
+      note:
+        "🔁 I back up " +
+        esc(path) +
+        "'s own uncommitted changes before clearing it — its committed history is untouched and restorable via Init + update. This is NOT the global Undo (⌘Z) — that only ever rewinds THIS repo's own branches/HEAD.",
+      name: path,
+      confirmLabel: "Deinit submodule",
+      onConfirm: async () => {
+        await this.doDeinitSubmodule(path, true);
+      },
+    });
+  }
+
+  private async doDeinitSubmodule(path: string, force: boolean) {
+    if (!IN_TAURI) {
+      bridge.tama.set("celebrate");
+      bridge.tama.say("Deinitialized " + path + " (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = path;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Deinitializing " + path + "…");
+    try {
+      let res = await commands.submoduleDeinit(bridge.CUR_REPO as unknown as string, path, force);
+      // Stale-status race: the row's last-refreshed status said this was
+      // safe (no scrim shown, force:false), but something changed it since
+      // — git's own dirty/conflicted-gitlink refusal comes back here
+      // instead. Mirrors doDeleteBranch's existing "not fully merged ->
+      // confirm -> retry force" fallback exactly (sidebar.svelte.ts above).
+      if (res && !res.ok && !force && /local modifications/i.test(res.message || "") && /use '-f'/i.test(res.message || "")) {
+        if (confirm(path + " has local modifications. Force-deinit anyway? (its uncommitted changes are backed up first)")) {
+          res = await commands.submoduleDeinit(bridge.CUR_REPO as unknown as string, path, true);
+        } else {
+          bridge.tama.warn("Kept " + path + " — deinit cancelled.");
+          return;
+        }
+      }
+      if (res && res.ok) {
+        await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
+        bridge.tama.set("celebrate");
+        // res.message already names the backup path inline when one was
+        // written ("… (backup: gitgui/submodule-backup/…)") — see
+        // submodule.rs's ok_removal call sites — so no extra copy needed here.
+        bridge.tama.say(res.message || "Deinitialized " + path + ".", 4200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't deinit " + path + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Deinit failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  // "Remove" — always shows the shared armDanger scrim regardless of the
+  // row's status, since it's unambiguously final (unlike Deinit, it also
+  // strips the .gitmodules entry and stages a real, committable index
+  // change). No force parameter to thread through onConfirm ->
+  // doRemoveSubmodule -> submodule_remove: the backend always behaves as
+  // force internally (see submodule_remove's own doc comment) — this
+  // confirm dialog IS the gate, so there's no reason to let a first attempt
+  // refuse pointlessly on a dirty submodule and force a redundant round-trip.
+  removeSubmodule(path: string) {
+    bridge.tama.set("danger");
+    bridge.tama.say("Removing " + path + " — type the path to arm it. I back up any uncommitted changes first.", 6000);
+    bridge.armDanger({
+      title: "Remove submodule — " + path,
+      steps: false,
+      desc:
+        "This removes " +
+        path +
+        " from this repository entirely: its checked-out files, its .gitmodules entry, and its tracked reference. This is staged, not committed — you'll still need to commit it. Its committed history is NOT deleted (it stays in .git/modules), and any of its own uncommitted changes are backed up first.",
+      lose:
+        "<h5>What happens</h5><ul><li>Clears and unregisters <code>" +
+        esc(path) +
+        "</code> (same as Deinit)</li><li>Stages its removal from the index (<code>git rm</code>)</li><li>Removes and stages its <code>[submodule]</code> entry from <code>.gitmodules</code></li><li>Nothing is committed — review and commit when ready</li></ul>",
+      note:
+        "🔁 If " +
+        esc(path) +
+        " had uncommitted changes, they're backed up first. This only STAGES the removal — Undo/discard the staged .gitmodules + " +
+        esc(path) +
+        " changes the normal way if you change your mind before committing.",
+      name: path,
+      confirmLabel: "Remove submodule",
+      onConfirm: async () => {
+        await this.doRemoveSubmodule(path);
+      },
+    });
+  }
+
+  private async doRemoveSubmodule(path: string) {
+    if (!IN_TAURI) {
+      bridge.tama.set("celebrate");
+      bridge.tama.say("Removed " + path + " (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = path;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Removing " + path + "…");
+    try {
+      const res = await commands.submoduleRemove(bridge.CUR_REPO as unknown as string, path);
+      if (res && res.ok) {
+        await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
+        bridge.tama.set("celebrate");
+        // Same "message already names the backup path inline" reasoning as
+        // doDeinitSubmodule above.
+        bridge.tama.say(res.message || "Removed " + path + ".", 4200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't remove " + path + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Remove failed — " + e);
       console.error(e);
     } finally {
       this.busy = false;

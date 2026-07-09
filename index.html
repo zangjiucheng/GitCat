@@ -220,6 +220,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .sub-status[data-status="out-of-date"]{background:color-mix(in srgb,var(--danger) 16%,transparent);color:var(--danger)}
 .sub-status[data-status="conflicted"]{background:color-mix(in srgb,var(--danger) 16%,transparent);color:var(--danger)}
 .sub-status[data-status="not-initialized"]{background:color-mix(in srgb,var(--muted) 16%,transparent);color:var(--muted)}
+/* "removed": already staged for removal by submodule_remove (nothing
+   committed yet) — muted like "not-initialized" (nothing actionable left),
+   but a visually distinct row via the "removed (uncommitted)" label that
+   replaces its action buttons entirely (see Sidebar.svelte). */
+.sub-status[data-status="removed"]{background:color-mix(in srgb,var(--muted) 16%,transparent);color:var(--muted)}
 .sub-item .spinner{flex:none}
 /* Per-row submodule action button ("Init + update" / "Update") — a small
    pill-shaped text button (mirrors the workdir island's `.wd-stash-act
@@ -232,6 +237,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   border:1px solid var(--border);background:var(--elevated);color:var(--text);white-space:nowrap}
 .sub-act:hover:not([disabled]){border-color:var(--accent);color:var(--accent)}
 .sub-act[disabled]{opacity:.45;cursor:not-allowed}
+/* Remove (unregisters + stages an index change — the most final of the four
+   per-row submodule actions) gets the same at-rest red as every other
+   destructive action in the app (mirrors .wd-stash-act button.danger's
+   identical "drop=danger" rule above), rather than only reddening on hover
+   like the plain .sub-act:hover above. */
+.sub-act.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
+.sub-act.danger:hover:not([disabled]){background:color-mix(in srgb,var(--danger) 12%,var(--elevated))}
 /* Bulk "Sync all"/"Update all" row — sits above the per-submodule rows (not
    crammed into the section's <summary>, which toggles open/closed on any
    click inside it) — same left-indent as .sub-item so it reads as part of

@@ -31,6 +31,8 @@ vi.mock("../../ipc/bindings", () => ({
     submoduleUpdate: vi.fn(),
     submoduleAdd: vi.fn(),
     submoduleSync: vi.fn(),
+    submoduleDeinit: vi.fn(),
+    submoduleRemove: vi.fn(),
   },
 }));
 
@@ -44,7 +46,7 @@ vi.mock("../resolver/resolver.svelte.ts", () => ({
 import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
-import { sidebarCtrl, submoduleAction, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
+import { sidebarCtrl, submoduleAction, submoduleNeedsForceConfirm, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
@@ -237,6 +239,227 @@ describe("submoduleAction (row action gate)", () => {
 
   it("clean -> null (no action button at all)", () => {
     expect(submoduleAction("clean")).toBeNull();
+  });
+
+  it("removed -> null (Bug 6 fix: already staged for removal, nothing left to Init/Update)", () => {
+    expect(submoduleAction("removed")).toBeNull();
+  });
+});
+
+describe("submoduleNeedsForceConfirm (Deinit's confirm gate)", () => {
+  it("dirty -> true (a confirm is shown)", () => {
+    expect(submoduleNeedsForceConfirm("dirty")).toBe(true);
+  });
+
+  it("conflicted -> true", () => {
+    expect(submoduleNeedsForceConfirm("conflicted")).toBe(true);
+  });
+
+  it("clean -> false (no confirm — Deinit calls straight through)", () => {
+    expect(submoduleNeedsForceConfirm("clean")).toBe(false);
+  });
+
+  it("out-of-date -> false", () => {
+    expect(submoduleNeedsForceConfirm("out-of-date")).toBe(false);
+  });
+
+  it("removed -> false (nothing left to deinit — the row offers no Deinit button at all)", () => {
+    expect(submoduleNeedsForceConfirm("removed")).toBe(false);
+  });
+
+  it("not-initialized -> false", () => {
+    expect(submoduleNeedsForceConfirm("not-initialized")).toBe(false);
+  });
+});
+
+describe("deinitSubmodule (per-row 'Deinit')", () => {
+  it("clean/out-of-date/not-initialized rows call submodule_deinit(force:false) directly, with no armDanger scrim", async () => {
+    mockInTauri = true;
+    for (const status of ["clean", "out-of-date", "not-initialized"]) {
+      vi.mocked(commands.submoduleDeinit).mockResolvedValueOnce({ ok: true, message: "deinitialized", backupRef: null, backupPatch: null });
+      vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
+      await sidebarCtrl.deinitSubmodule("vendor/a", status);
+    }
+    expect(bridge.armDanger).not.toHaveBeenCalled();
+    expect(commands.submoduleDeinit).toHaveBeenCalledTimes(3);
+    expect(commands.submoduleDeinit).toHaveBeenCalledWith("/repo", "vendor/a", false);
+  });
+
+  it("dirty/conflicted rows arm the shared danger scrim with submodule-specific copy instead of calling straight through", () => {
+    for (const status of ["dirty", "conflicted"]) {
+      vi.clearAllMocks();
+      sidebarCtrl.deinitSubmodule("vendor/a", status);
+      expect(commands.submoduleDeinit).not.toHaveBeenCalled();
+      expect(bridge.armDanger).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "vendor/a",
+          confirmLabel: "Deinit submodule",
+          title: "Deinit submodule — vendor/a",
+          onConfirm: expect.any(Function),
+        }),
+      );
+      const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+      expect(ctx.lose).toContain("vendor/a");
+      expect(ctx.lose).toContain("gitgui/submodule-backup");
+      expect(ctx.desc).toContain(".git/modules");
+    }
+  });
+
+  it("onConfirm (from the dirty/conflicted scrim) calls submodule_deinit with force:true and refreshes on success", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleDeinit).mockResolvedValueOnce({ ok: true, message: "Deinitialized vendor/a (backup: gitgui/submodule-backup/1-2-0-vendor_a).", backupRef: null, backupPatch: "gitgui/submodule-backup/1-2-0-vendor_a" });
+    vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
+    sidebarCtrl.deinitSubmodule("vendor/a", "dirty");
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+    expect(commands.submoduleDeinit).toHaveBeenCalledWith("/repo", "vendor/a", true);
+    expect(commands.submoduleStatus).toHaveBeenCalledWith("/repo");
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("backup: gitgui/submodule-backup"), expect.anything());
+  });
+
+  it("stale-status race: a force:false call refused with git's own 'local modifications ... use -f' message retries with force:true after window.confirm", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleDeinit)
+      .mockResolvedValueOnce({
+        ok: false,
+        message: "fatal: Submodule work tree 'vendor/a' contains local modifications; use '-f' to discard them",
+        backupRef: null,
+        backupPatch: null,
+      })
+      .mockResolvedValueOnce({ ok: true, message: "Deinitialized vendor/a (backup: gitgui/submodule-backup/x).", backupRef: null, backupPatch: "gitgui/submodule-backup/x" });
+    vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
+    vi.spyOn(window, "confirm").mockReturnValueOnce(true);
+    // Row looked "clean" at the time of the click -> straight-through call
+    // (no scrim shown), but git itself still refuses.
+    await sidebarCtrl.deinitSubmodule("vendor/a", "clean");
+    expect(commands.submoduleDeinit).toHaveBeenNthCalledWith(1, "/repo", "vendor/a", false);
+    expect(commands.submoduleDeinit).toHaveBeenNthCalledWith(2, "/repo", "vendor/a", true);
+    expect(commands.submoduleStatus).toHaveBeenCalledWith("/repo");
+  });
+
+  it("stale-status race: declining the window.confirm keeps the submodule and does not retry", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleDeinit).mockResolvedValueOnce({
+      ok: false,
+      message: "fatal: Submodule work tree 'vendor/a' contains local modifications; use '-f' to discard them",
+      backupRef: null,
+      backupPatch: null,
+    });
+    vi.spyOn(window, "confirm").mockReturnValueOnce(false);
+    await sidebarCtrl.deinitSubmodule("vendor/a", "clean");
+    expect(commands.submoduleDeinit).toHaveBeenCalledTimes(1);
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("cancelled"));
+  });
+
+  it("real mode: a refusal surfaces via tama.warn and does not refresh (not a silent no-op)", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleDeinit).mockResolvedValueOnce({ ok: false, message: "Cannot open repository: not found", backupRef: null, backupPatch: null });
+    await sidebarCtrl.deinitSubmodule("vendor/a", "clean");
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("Cannot open repository"));
+    expect(commands.submoduleStatus).not.toHaveBeenCalled();
+  });
+
+  it("is re-entrancy locked while busy (direct, non-scrim path)", async () => {
+    mockInTauri = true;
+    sidebarCtrl.busy = true;
+    await sidebarCtrl.deinitSubmodule("vendor/a", "clean");
+    expect(commands.submoduleDeinit).not.toHaveBeenCalled();
+  });
+
+  it("scopes busy/busyTarget to just the acted-on row while in flight", async () => {
+    mockInTauri = true;
+    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null; backupPatch: string | null }) => void;
+    vi.mocked(commands.submoduleDeinit).mockImplementationOnce(() => new Promise((resolve) => (resolveFn = resolve)));
+    vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
+    const pending = sidebarCtrl.deinitSubmodule("vendor/a", "clean");
+    expect(sidebarCtrl.busy).toBe(true);
+    expect(sidebarCtrl.busyTarget).toBe("vendor/a");
+    resolveFn({ ok: true, message: "deinitialized", backupRef: null, backupPatch: null });
+    await pending;
+    expect(sidebarCtrl.busy).toBe(false);
+    expect(sidebarCtrl.busyTarget).toBeNull();
+  });
+
+  it("design mode is a cosmetic no-op with a toast (direct path)", async () => {
+    mockInTauri = false;
+    await sidebarCtrl.deinitSubmodule("vendor/a", "clean");
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(commands.submoduleDeinit).not.toHaveBeenCalled();
+  });
+});
+
+describe("removeSubmodule (per-row 'Remove', always confirmed)", () => {
+  it("arms the shared danger scrim regardless of status — clean row", () => {
+    sidebarCtrl.removeSubmodule("vendor/a");
+    expect(commands.submoduleRemove).not.toHaveBeenCalled();
+    expect(bridge.armDanger).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "vendor/a", confirmLabel: "Remove submodule", title: "Remove submodule — vendor/a", onConfirm: expect.any(Function) }),
+    );
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    expect(ctx.lose).toContain(".gitmodules");
+    expect(ctx.desc).toContain("staged");
+  });
+
+  it("arms the shared danger scrim regardless of status — dirty row", () => {
+    sidebarCtrl.removeSubmodule("vendor/b");
+    expect(commands.submoduleRemove).not.toHaveBeenCalled();
+    expect(bridge.armDanger).toHaveBeenCalledWith(expect.objectContaining({ name: "vendor/b", confirmLabel: "Remove submodule" }));
+  });
+
+  it("onConfirm calls submodule_remove (no force param) and refreshes on success", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleRemove).mockResolvedValueOnce({ ok: true, message: "Removed vendor/a.", backupRef: null, backupPatch: null });
+    vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
+    sidebarCtrl.removeSubmodule("vendor/a");
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+    expect(commands.submoduleRemove).toHaveBeenCalledWith("/repo", "vendor/a");
+    expect(commands.submoduleStatus).toHaveBeenCalledWith("/repo");
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
+  });
+
+  it("onConfirm surfaces a failure via tama.warn without refreshing", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleRemove).mockResolvedValueOnce({ ok: false, message: "fatal: pathspec did not match any files", backupRef: null, backupPatch: null });
+    sidebarCtrl.removeSubmodule("vendor/a");
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("pathspec did not match"));
+    expect(commands.submoduleStatus).not.toHaveBeenCalled();
+  });
+
+  it("is re-entrancy locked while busy", async () => {
+    mockInTauri = true;
+    sidebarCtrl.busy = true;
+    sidebarCtrl.removeSubmodule("vendor/a");
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+    expect(commands.submoduleRemove).not.toHaveBeenCalled();
+  });
+
+  it("scopes busy/busyTarget to just the acted-on row while in flight", async () => {
+    mockInTauri = true;
+    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null; backupPatch: string | null }) => void;
+    vi.mocked(commands.submoduleRemove).mockImplementationOnce(() => new Promise((resolve) => (resolveFn = resolve)));
+    vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
+    sidebarCtrl.removeSubmodule("vendor/a");
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    const pending = ctx.onConfirm();
+    expect(sidebarCtrl.busy).toBe(true);
+    expect(sidebarCtrl.busyTarget).toBe("vendor/a");
+    resolveFn({ ok: true, message: "removed", backupRef: null, backupPatch: null });
+    await pending;
+    expect(sidebarCtrl.busy).toBe(false);
+    expect(sidebarCtrl.busyTarget).toBeNull();
+  });
+
+  it("design mode is a cosmetic no-op with a toast", async () => {
+    mockInTauri = false;
+    sidebarCtrl.removeSubmodule("vendor/a");
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(commands.submoduleRemove).not.toHaveBeenCalled();
   });
 });
 

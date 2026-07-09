@@ -347,6 +347,15 @@
             <span class="sub-status" data-status={s.status}>{subStatusLabel(s.status)}</span>
             {#if sidebarCtrl.busyTarget === s.path}
               <span class="spinner"></span>
+            {:else if s.status === "removed"}
+              <!-- Bug 6 fix: already staged for removal (submodule_remove
+                   ran; nothing committed yet) — there's nothing left to
+                   Init/Update/Sync/Deinit/Remove, so NONE of those are
+                   offered here (unlike every other status, which always gets
+                   Sync at minimum). A muted label instead of a dead-looking
+                   button row, distinct from "clean" so it's not mistaken for
+                   an ordinary, actionable submodule. -->
+              <span class="rname mut">removed (uncommitted) — commit via Workdir</span>
             {:else}
               <!-- Sync is offered for EVERY row regardless of status (unlike
                    Init/Update below, gated by submoduleAction) — it only
@@ -361,6 +370,15 @@
               {:else if action === "blocked"}
                 <button class="sub-act" disabled title={subBlockedTip(s.status)}>Update</button>
               {/if}
+              <!-- Deinit/Remove — offered unconditionally like Sync (not
+                   status-gated the way Init/Update are): Deinit's own
+                   status-gated confirm decision lives in the controller
+                   (submoduleNeedsForceConfirm), and Remove is always final
+                   regardless of status. Left-to-right ordering is
+                   increasing severity, Remove last (see sidebar.svelte.ts's
+                   own doc comment). -->
+              <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.deinitSubmodule(s.path, s.status)}>Deinit</button>
+              <button class="sub-act danger" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.removeSubmodule(s.path)}>Remove</button>
             {/if}
           </div>
         {/each}

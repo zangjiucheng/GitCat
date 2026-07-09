@@ -16,7 +16,7 @@
 //! config — the default `protocol.file.allow` disallows recursive/submodule
 //! fetches over `file://`).
 //!
-//! The 5-state classification below (conflicted / not-initialized /
+//! The 6-state classification below (conflicted / removed / not-initialized /
 //! out-of-date / dirty / clean) was verified empirically against real `git
 //! submodule status`'s own `-`/`+`/` `/`U` prefix conventions in a throwaway
 //! fixture before writing these tests (see `src/submodule.rs`'s module doc
@@ -26,6 +26,9 @@
 //!     tracked commit differently). Not a `SubmoduleStatus` bit at all —
 //!     detected via `Index::conflicts()` instead (see
 //!     `submodule_gitlink_merge_conflict_is_not_clean`).
+//!   - removed: INDEX_DELETED set — `submodule_remove` already staged this
+//!     submodule's removal (gitlink deleted from the index), nothing
+//!     committed yet (bug-fix regression, see `bug6_submodule_status_reports_removed_not_clean_after_submodule_remove_stages_deletion`).
 //!   - not-initialized ("-" prefix): produced by a fresh `git clone` of the
 //!     superproject with NO `git submodule init`/`update` run afterward, OR a
 //!     submodule directory manually `rm -rf`'d (not `git submodule deinit`'d)
@@ -54,7 +57,10 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::TempRepo;
-use gitcat_lib::submodule::{submodule_add, submodule_init, submodule_status, submodule_sync, submodule_update};
+use gitcat_lib::submodule::{
+    submodule_add, submodule_deinit, submodule_init, submodule_remove, submodule_status, submodule_sync,
+    submodule_update,
+};
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -902,4 +908,837 @@ fn submodule_sync_with_no_path_syncs_every_registered_submodule_in_one_call() {
     let (_, b_after, _) = parent.git(&["config", "--get", "submodule.subB.url"]);
     assert_eq!(a_after, child_a_new.path(), "expected subA's .git/config url to be rewritten");
     assert_eq!(b_after, child_b_new.path(), "expected subB's .git/config url to be rewritten");
+}
+
+// ---------------------------------------------------------------------------
+// M4: submodule_deinit / submodule_remove
+// ---------------------------------------------------------------------------
+//
+// Neither command needs `AllowFileProtocol::scoped()`: `submodule_deinit`
+// never clones/fetches anything, and every `submodule_init`/`submodule_update`
+// call below is restoring an ALREADY-cloned submodule (its objects already
+// sit in `.git/modules/<name>` from the original `add_submodule` helper) —
+// EMPIRICALLY VERIFIED (see submodule.rs's M4 doc comment) that this restore
+// path triggers zero fetch/clone activity, so no protocol restriction is ever
+// hit. This is precisely the offline-recovery property under test.
+
+#[test]
+fn submodule_deinit_clears_workdir_and_survives_in_git_modules() {
+    let child = TempRepo::init("submodule_deinit_clean_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_deinit_clean_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    let result = submodule_deinit(parent.path(), "sub".to_string(), false);
+    assert!(result.ok, "submodule_deinit failed: {}", result.message);
+    assert!(result.backup_ref.is_none(), "submodule_deinit must never snapshot");
+    assert!(result.backup_patch.is_none(), "a clean deinit must never write a backup");
+
+    // Working tree cleared to an empty directory.
+    assert!(
+        std::fs::read_dir(parent.dir.join("sub")).unwrap().next().is_none(),
+        "sub/ should be an empty directory after deinit"
+    );
+
+    // .git/modules/sub survives untouched — the safety property this whole
+    // milestone is built around.
+    let modules_config = parent.dir.join(".git").join("modules").join("sub").join("config");
+    assert!(modules_config.exists(), "expected .git/modules/sub to survive deinit");
+    let config_text = std::fs::read_to_string(&modules_config).unwrap();
+    assert!(config_text.contains("[remote \"origin\"]"), "expected .git/modules/sub/config to still have its remote");
+
+    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, "not-initialized");
+}
+
+#[test]
+fn submodule_deinit_without_force_refuses_on_dirty_submodule_and_keeps_content() {
+    let child = TempRepo::init("submodule_deinit_dirty_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_deinit_dirty_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    std::fs::write(parent.dir.join("sub").join("f.txt"), "dirty edit\n").expect("write dirty edit");
+    std::fs::write(parent.dir.join("sub").join("untracked.txt"), "new file\n").expect("write untracked file");
+
+    let result = submodule_deinit(parent.path(), "sub".to_string(), false);
+    assert!(!result.ok, "expected submodule_deinit to refuse a dirty submodule without force");
+    assert!(
+        result.message.contains("local modifications") && result.message.contains("use '-f'"),
+        "expected git's own local-modifications refusal, got: {:?}",
+        result.message
+    );
+    assert!(result.backup_patch.is_none(), "a refused, never-attempted deinit must not have backed up anything");
+
+    assert_eq!(parent.read("sub/f.txt"), "dirty edit\n", "the dirty edit must survive a refused deinit");
+    assert_eq!(parent.read("sub/untracked.txt"), "new file\n", "the untracked file must survive a refused deinit");
+
+    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    assert_eq!(rows[0].status, "dirty");
+}
+
+#[test]
+fn submodule_deinit_with_force_backs_up_dirty_content_then_clears() {
+    let child = TempRepo::init("submodule_deinit_backup_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+    let _child_c0b = child.commit("g.txt", "g0\n", "c0b");
+
+    let parent = TempRepo::init("submodule_deinit_backup_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    // Staged-but-uncommitted change to f.txt inside sub's own index.
+    std::fs::write(parent.dir.join("sub").join("f.txt"), "staged edit\n").expect("write staged edit");
+    parent.must(&["-C", "sub", "add", "f.txt"]);
+    // Unstaged edit to g.txt (sub's own index still has the committed content).
+    std::fs::write(parent.dir.join("sub").join("g.txt"), "unstaged edit\n").expect("write unstaged edit");
+    // A genuinely untracked file.
+    std::fs::write(parent.dir.join("sub").join("untracked.txt"), "new file\n").expect("write untracked file");
+
+    let result = submodule_deinit(parent.path(), "sub".to_string(), true);
+    assert!(result.ok, "submodule_deinit (force) failed: {}", result.message);
+    let backup_rel = result.backup_patch.clone().expect("expected a backup_patch for a dirty force-deinit");
+    assert!(backup_rel.starts_with("gitgui/submodule-backup/"), "unexpected backup path: {backup_rel:?}");
+
+    let backup_dir = parent.dir.join(".git").join(&backup_rel);
+    assert!(backup_dir.is_dir(), "expected the backup bundle directory to exist: {backup_dir:?}");
+    let staged_patch = backup_dir.join("staged.patch");
+    let unstaged_patch = backup_dir.join("unstaged.patch");
+    let untracked_file = backup_dir.join("untracked").join("untracked.txt");
+    assert!(staged_patch.is_file(), "expected staged.patch to exist");
+    assert!(unstaged_patch.is_file(), "expected unstaged.patch to exist");
+    assert!(untracked_file.is_file(), "expected untracked/untracked.txt to exist");
+    assert_eq!(std::fs::read_to_string(&untracked_file).unwrap(), "new file\n");
+
+    // Working tree genuinely cleared.
+    assert!(
+        std::fs::read_dir(parent.dir.join("sub")).unwrap().next().is_none(),
+        "sub/ should be an empty directory after force deinit"
+    );
+
+    // GENUINE RECOVERY (not just "the file exists"): re-init + update restores
+    // sub to its tracked commit (nothing above was ever committed, so this is
+    // still c0b's content), then applying BOTH backed-up patches must bring
+    // back the exact discarded content, byte for byte.
+    let init_result = submodule_init(parent.path(), "sub".to_string());
+    assert!(init_result.ok, "submodule_init failed: {}", init_result.message);
+    let update_result = submodule_update(parent.path(), Some("sub".to_string()), false, false);
+    assert!(update_result.ok, "submodule_update failed: {}", update_result.message);
+    assert_eq!(parent.read("sub/f.txt"), "hello\n", "restored checkout should be back at HEAD's content");
+    assert_eq!(parent.read("sub/g.txt"), "g0\n", "restored checkout should be back at HEAD's content");
+
+    parent.must(&["-C", "sub", "apply", staged_patch.to_str().unwrap()]);
+    assert_eq!(
+        parent.read("sub/f.txt"),
+        "staged edit\n",
+        "the staged.patch backup must restore the exact discarded staged content"
+    );
+
+    parent.must(&["-C", "sub", "apply", unstaged_patch.to_str().unwrap()]);
+    assert_eq!(
+        parent.read("sub/g.txt"),
+        "unstaged edit\n",
+        "the unstaged.patch backup must restore the exact discarded unstaged content"
+    );
+
+    std::fs::copy(&untracked_file, parent.dir.join("sub").join("untracked.txt")).expect("restore untracked file");
+    assert_eq!(parent.read("sub/untracked.txt"), "new file\n");
+}
+
+#[test]
+fn submodule_deinit_with_force_on_a_clean_submodule_skips_backup() {
+    let child = TempRepo::init("submodule_deinit_force_clean_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_deinit_force_clean_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    let result = submodule_deinit(parent.path(), "sub".to_string(), true);
+    assert!(result.ok, "submodule_deinit (force, clean) failed: {}", result.message);
+    assert!(result.backup_patch.is_none(), "a clean submodule must not get a backup even under force");
+
+    let backup_root = parent.dir.join(".git").join("gitgui").join("submodule-backup");
+    assert!(
+        !backup_root.exists() || std::fs::read_dir(&backup_root).unwrap().next().is_none(),
+        "no submodule-backup directory should have been created for a clean force-deinit"
+    );
+
+    assert!(std::fs::read_dir(parent.dir.join("sub")).unwrap().next().is_none());
+}
+
+#[test]
+fn submodule_deinit_recovers_offline_via_init_and_update() {
+    let child = TempRepo::init("submodule_deinit_offline_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_deinit_offline_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    let result = submodule_deinit(parent.path(), "sub".to_string(), false);
+    assert!(result.ok, "submodule_deinit failed: {}", result.message);
+
+    assert!(
+        parent.dir.join(".git").join("modules").join("sub").join("config").exists(),
+        "expected .git/modules/sub to survive deinit"
+    );
+
+    // Simulate the original source repo becoming permanently unreachable
+    // (moved/deleted) — the offline-recovery property must not depend on it.
+    let moved_away = child.dir.with_file_name("submodule_deinit_offline_child_GONE");
+    std::fs::rename(&child.dir, &moved_away).expect("simulate the origin going away");
+
+    // init re-registers the (now-unreachable) url from .gitmodules — this
+    // never dereferences the url, so it succeeds regardless.
+    let init_result = submodule_init(parent.path(), "sub".to_string());
+    assert!(init_result.ok, "submodule_init failed: {}", init_result.message);
+
+    // update restores the checkout straight from .git/modules/sub — ZERO
+    // network/file access to the (now-gone) original source.
+    let update_result = submodule_update(parent.path(), Some("sub".to_string()), false, false);
+    assert!(update_result.ok, "submodule_update failed (offline recovery): {}", update_result.message);
+
+    assert_eq!(
+        parent.read("sub/f.txt"),
+        "hello\n",
+        "expected the submodule's content to be restored from .git/modules, fully offline"
+    );
+
+    let _ = std::fs::remove_dir_all(&moved_away);
+}
+
+#[test]
+fn submodule_deinit_is_idempotent_on_an_already_deinited_submodule() {
+    let child = TempRepo::init("submodule_deinit_idempotent_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_deinit_idempotent_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    let first = submodule_deinit(parent.path(), "sub".to_string(), false);
+    assert!(first.ok, "first deinit failed: {}", first.message);
+
+    let second = submodule_deinit(parent.path(), "sub".to_string(), false);
+    assert!(second.ok, "second (repeat) deinit must also succeed (idempotent no-op): {}", second.message);
+}
+
+#[test]
+fn submodule_deinit_on_conflicted_gitlink_refuses_without_force_even_with_clean_own_tree() {
+    let child = TempRepo::init("submodule_deinit_conflict_child");
+    let _c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_deinit_conflict_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub"); // locks the tracked gitlink to c0.
+
+    let c1 = child.commit("f.txt", "hello\nmore\n", "c1");
+    let c2 = child.commit("f.txt", "hello\nother\n", "c2");
+
+    parent.must(&["branch", "feature"]);
+    parent.must(&["update-index", "--cacheinfo", &format!("160000,{c1},sub")]);
+    parent.must(&["commit", "-q", "-m", "main -> c1"]);
+
+    parent.must(&["checkout", "-q", "feature"]);
+    parent.must(&["update-index", "--cacheinfo", &format!("160000,{c2},sub")]);
+    parent.must(&["commit", "-q", "-m", "feature -> c2"]);
+
+    parent.must(&["checkout", "-q", "main"]);
+    let (ok, so, _se) = parent.git(&["merge", "-q", "feature"]);
+    assert!(!ok, "expected the submodule gitlink merge to conflict");
+    assert!(so.contains("CONFLICT"), "expected a real submodule conflict, got: {so:?}");
+
+    // sub's OWN working tree is untouched/clean by this merge — the conflict
+    // lives entirely in the superproject's index.
+    let (sub_ok, sub_status, _) = parent.git(&["-C", "sub", "status", "--porcelain"]);
+    assert!(sub_ok && sub_status.is_empty(), "expected the submodule's own tree to be clean: {sub_status:?}");
+
+    let result = submodule_deinit(parent.path(), "sub".to_string(), false);
+    assert!(!result.ok, "expected deinit to refuse on a conflicted gitlink even without force");
+    assert!(
+        result.message.contains("local modifications") && result.message.contains("use '-f'"),
+        "expected git's own local-modifications refusal, got: {:?}",
+        result.message
+    );
+    assert!(result.backup_patch.is_none());
+}
+
+#[test]
+fn submodule_remove_leaves_clean_staged_status_with_no_stray_directory() {
+    let child = TempRepo::init("submodule_remove_clean_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_remove_clean_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    let head_before = parent.rev("HEAD");
+
+    let result = submodule_remove(parent.path(), "sub".to_string());
+    assert!(result.ok, "submodule_remove failed: {}", result.message);
+    assert!(result.backup_patch.is_none(), "a clean submodule must not get a backup on remove");
+    assert!(result.backup_ref.is_none());
+
+    let (ok, status, _) = parent.git(&["status", "--porcelain"]);
+    assert!(ok);
+    let lines: Vec<&str> = status.lines().collect();
+    assert_eq!(lines.len(), 2, "expected exactly 2 status lines, got: {status:?}");
+    assert!(lines.contains(&"M  .gitmodules"), "expected .gitmodules to be staged as modified: {status:?}");
+    assert!(lines.contains(&"D  sub"), "expected sub's gitlink to be staged as deleted: {status:?}");
+
+    assert!(!parent.dir.join("sub").exists(), "expected no stray sub/ directory left on disk");
+    assert!(
+        parent.dir.join(".git").join("modules").join("sub").join("config").exists(),
+        "expected .git/modules/sub to survive remove"
+    );
+
+    assert_eq!(parent.rev("HEAD"), head_before, "submodule_remove must never auto-commit");
+}
+
+#[test]
+fn submodule_remove_backs_up_dirty_content_before_removing() {
+    let child = TempRepo::init("submodule_remove_dirty_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_remove_dirty_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    std::fs::write(parent.dir.join("sub").join("f.txt"), "dirty edit\n").expect("write dirty edit");
+    std::fs::write(parent.dir.join("sub").join("untracked.txt"), "new file\n").expect("write untracked file");
+
+    let result = submodule_remove(parent.path(), "sub".to_string());
+    assert!(result.ok, "submodule_remove (dirty) failed: {}", result.message);
+    let backup_rel = result.backup_patch.clone().expect("expected a backup_patch for a dirty remove");
+
+    let backup_dir = parent.dir.join(".git").join(&backup_rel);
+    assert!(backup_dir.is_dir(), "expected the backup bundle directory to exist: {backup_dir:?}");
+    let unstaged_patch = backup_dir.join("unstaged.patch");
+    let untracked_file = backup_dir.join("untracked").join("untracked.txt");
+    assert!(unstaged_patch.is_file(), "expected unstaged.patch (f.txt's unstaged edit)");
+    assert!(untracked_file.is_file(), "expected untracked/untracked.txt");
+    assert_eq!(std::fs::read_to_string(&untracked_file).unwrap(), "new file\n");
+    let patch_text = std::fs::read_to_string(&unstaged_patch).unwrap();
+    assert!(
+        patch_text.contains("-hello") && patch_text.contains("+dirty edit"),
+        "unexpected patch content: {patch_text:?}"
+    );
+
+    let (ok, status, _) = parent.git(&["status", "--porcelain"]);
+    assert!(ok);
+    assert!(status.lines().any(|l| l == "M  .gitmodules"));
+    assert!(status.lines().any(|l| l == "D  sub"));
+    assert!(!parent.dir.join("sub").exists());
+    assert!(parent.dir.join(".git").join("modules").join("sub").join("config").exists());
+}
+
+#[test]
+fn submodule_remove_strips_only_the_matching_gitmodules_section_with_multiple_submodules() {
+    let child_a = TempRepo::init("submodule_remove_multi_a");
+    let _a0 = child_a.commit("a.txt", "a\n", "a0");
+    let child_b = TempRepo::init("submodule_remove_multi_b");
+    let _b0 = child_b.commit("b.txt", "b\n", "b0");
+
+    let parent = TempRepo::init("submodule_remove_multi_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child_a, "subA");
+    add_submodule(&parent, &child_b, "subB");
+
+    let result = submodule_remove(parent.path(), "subA".to_string());
+    assert!(result.ok, "submodule_remove failed: {}", result.message);
+
+    let gitmodules = parent.read(".gitmodules");
+    assert!(!gitmodules.contains("subA"), "expected subA's section to be gone: {gitmodules:?}");
+    assert!(gitmodules.contains("subB"), "expected subB's section to survive verbatim: {gitmodules:?}");
+
+    // subB untouched: still registered + still checked out.
+    let (_, url, _) = parent.git(&["config", "--get", "submodule.subB.url"]);
+    assert_eq!(url, child_b.path());
+    assert_eq!(parent.read("subB/b.txt"), "b\n");
+}
+
+#[test]
+fn submodule_remove_handles_a_registered_name_different_from_its_path() {
+    let child = TempRepo::init("submodule_remove_name_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_remove_name_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    // submodule_add has no `name` param, so drive the real CLI directly, same
+    // as this file's own precedent for reproducing exact real-world shapes.
+    parent.must(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        "--name",
+        "customname",
+        &child.path(),
+        "sub",
+    ]);
+    parent.must(&["commit", "-q", "-m", "add submodule with custom name"]);
+
+    let gitmodules_before = parent.read(".gitmodules");
+    assert!(gitmodules_before.contains("[submodule \"customname\"]"), "unexpected .gitmodules: {gitmodules_before:?}");
+
+    let result = submodule_remove(parent.path(), "sub".to_string());
+    assert!(result.ok, "submodule_remove failed: {}", result.message);
+
+    let gitmodules_after = parent.read(".gitmodules");
+    assert!(
+        !gitmodules_after.contains("customname"),
+        "expected the custom-named section to be gone: {gitmodules_after:?}"
+    );
+
+    assert!(
+        parent.dir.join(".git").join("modules").join("customname").join("config").exists(),
+        "expected .git/modules/customname (keyed by NAME, not path) to survive remove"
+    );
+}
+
+#[test]
+fn submodule_remove_on_conflicted_gitlink_resolves_that_one_conflict() {
+    let child = TempRepo::init("submodule_remove_conflict_child");
+    let _c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_remove_conflict_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    let c1 = child.commit("f.txt", "hello\nmore\n", "c1");
+    let c2 = child.commit("f.txt", "hello\nother\n", "c2");
+
+    parent.must(&["branch", "feature"]);
+    parent.must(&["update-index", "--cacheinfo", &format!("160000,{c1},sub")]);
+    parent.must(&["commit", "-q", "-m", "main -> c1"]);
+
+    parent.must(&["checkout", "-q", "feature"]);
+    parent.must(&["update-index", "--cacheinfo", &format!("160000,{c2},sub")]);
+    parent.must(&["commit", "-q", "-m", "feature -> c2"]);
+
+    parent.must(&["checkout", "-q", "main"]);
+    let (ok, so, _se) = parent.git(&["merge", "-q", "feature"]);
+    assert!(!ok, "expected the submodule gitlink merge to conflict");
+    assert!(so.contains("CONFLICT"), "expected a real submodule conflict, got: {so:?}");
+    assert!(parent.open().index().unwrap().has_conflicts(), "expected the index to carry the unresolved gitlink");
+
+    let result = submodule_remove(parent.path(), "sub".to_string());
+    assert!(result.ok, "submodule_remove should resolve the conflicted gitlink: {}", result.message);
+
+    assert!(
+        !parent.open().index().unwrap().has_conflicts(),
+        "expected the gitlink conflict to be resolved by the removal"
+    );
+    let (_, unmerged, _) = parent.git(&["ls-files", "-u"]);
+    assert!(unmerged.is_empty(), "expected no unmerged stages left for sub: {unmerged:?}");
+
+    // The superproject is still mid-merge (the merge commit itself hasn't
+    // been made yet) — matches real git's own "All conflicts fixed but you
+    // are still merging" state after the same manual sequence (see this
+    // section's doc comment).
+    assert_eq!(parent.open().state(), git2::RepositoryState::Merge);
+}
+
+#[test]
+fn submodule_remove_never_snapshots() {
+    let child = TempRepo::init("submodule_remove_snapshot_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_remove_snapshot_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    let result = submodule_remove(parent.path(), "sub".to_string());
+    assert!(result.ok, "submodule_remove failed: {}", result.message);
+    assert!(result.backup_ref.is_none(), "submodule_remove must never take a Safety-Manager ref snapshot");
+}
+
+#[test]
+fn submodule_deinit_and_remove_reject_flag_like_or_control_char_paths() {
+    let parent = TempRepo::init("submodule_deinit_remove_validate_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+
+    let deinit_flag = submodule_deinit(parent.path(), "--force".to_string(), false);
+    assert!(!deinit_flag.ok, "expected a flag-like path to be rejected");
+    assert!(deinit_flag.backup_patch.is_none());
+
+    let deinit_control = submodule_deinit(parent.path(), "sub\u{7}".to_string(), true);
+    assert!(!deinit_control.ok, "expected a control-char path to be rejected");
+    assert!(deinit_control.backup_patch.is_none());
+
+    let remove_flag = submodule_remove(parent.path(), "-x".to_string());
+    assert!(!remove_flag.ok, "expected a flag-like path to be rejected");
+    assert!(remove_flag.backup_patch.is_none());
+
+    let remove_control = submodule_remove(parent.path(), "sub\ncontrol".to_string());
+    assert!(!remove_control.ok, "expected a control-char path to be rejected");
+    assert!(remove_control.backup_patch.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests: 6 real bugs found by adversarial review of M4
+// (deinit/remove), fixed in submodule.rs. Each test below reproduces the
+// ORIGINAL bug (verified empirically against the pre-fix code before the fix
+// was written) and would fail without its corresponding fix.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bug1_force_deinit_refuses_when_submodule_repo_unreadable_but_workdir_has_content() {
+    // BUG 1: `open_submodule_repo` returning `None` on ANY error from
+    // `Submodule::open()` (not just "genuinely not checked out") used to be
+    // treated by `backup_submodule_dirty_content` as "nothing to lose",
+    // letting force-deinit/remove proceed straight to wiping real content
+    // with NO backup. EMPIRICALLY VERIFIED (throwaway fixture, during the fix)
+    // that a submodule's own `.git` gitfile pointer being corrupted/unreadable
+    // produces the exact same error SHAPE `Submodule::open()` gives for a
+    // genuinely-never-checked-out submodule — so the fix falls back to a
+    // direct filesystem check instead of trusting the error alone. Reproduces
+    // the dangerous case: corrupt the submodule's own `.git` pointer while
+    // real, uncommitted content still sits in its working tree.
+    let child = TempRepo::init("submodule_bug1_child");
+    let _c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_bug1_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    // Real, uncommitted work sitting in the submodule's own working tree —
+    // this is exactly what must NOT be silently discarded.
+    std::fs::write(parent.dir.join("sub").join("f.txt"), "important uncommitted work\n")
+        .expect("write uncommitted edit");
+
+    // Corrupt the submodule's OWN .git gitfile pointer — EMPIRICALLY VERIFIED
+    // (see submodule.rs's `open_submodule_repo` doc comment) this makes
+    // `Submodule::open()` fail while the real file above remains untouched.
+    std::fs::write(parent.dir.join("sub").join(".git"), "garbage not a gitfile\n")
+        .expect("corrupt the submodule's own .git pointer");
+
+    let result = submodule_deinit(parent.path(), "sub".to_string(), true);
+    assert!(
+        !result.ok,
+        "expected force-deinit to REFUSE when the submodule's own repo can't be opened but its workdir has \
+         real content, got ok: {}",
+        result.message
+    );
+    assert!(result.backup_patch.is_none(), "a refused deinit must never claim to have backed anything up");
+
+    // The uncommitted content must survive untouched — no wipe, no backup.
+    assert_eq!(
+        parent.read("sub/f.txt"),
+        "important uncommitted work\n",
+        "the uncommitted edit must survive when the operation correctly refuses"
+    );
+}
+
+#[test]
+fn bug1_force_deinit_still_proceeds_when_the_unreadable_submodule_dir_is_genuinely_empty() {
+    // Negative control for Bug 1's fix: an empty/nonexistent directory really
+    // is nothing to lose, even if `Submodule::open()` also fails for it (the
+    // ordinary never-checked-out case) — the fallback filesystem check must
+    // not turn EVERY open() failure into a refusal, only ones where real
+    // content is actually at risk.
+    let child = TempRepo::init("submodule_bug1_neg_child");
+    let _c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_bug1_neg_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    let clone = FreshClone::of(&parent, "submodule_bug1_neg");
+    assert!(std::fs::read_dir(PathBuf::from(clone.path()).join("sub")).unwrap().next().is_none());
+
+    let result = submodule_deinit(clone.path(), "sub".to_string(), true);
+    assert!(result.ok, "a genuinely empty/never-checked-out submodule must not be refused: {}", result.message);
+    assert!(result.backup_patch.is_none(), "nothing to back up for a never-checked-out submodule");
+}
+
+#[test]
+fn bug2_force_deinit_refuses_when_a_nested_submodule_of_a_submodule_is_dirty() {
+    // BUG 2: a submodule-of-a-submodule's own dirty content was never even
+    // looked at by `backup_submodule_dirty_content` — only the TARGET
+    // submodule's own top-level tracked/staged/untracked state was inspected,
+    // so a nested submodule registered INSIDE it was treated as an opaque
+    // gitlink and silently wiped by `git submodule deinit -f` (which has NO
+    // `--recursive` flag at all — verified in the design phase). Reproduces:
+    // grandchild <- (submodule "nested" of) <- mid <- (submodule "sub" of) <-
+    // parent, with "sub" itself perfectly clean but its OWN "nested"
+    // submodule dirty.
+    let _allow = AllowFileProtocol::scoped();
+
+    let grandchild = TempRepo::init("submodule_bug2_grandchild");
+    let _gc0 = grandchild.commit("gc.txt", "grandchild\n", "gc0");
+
+    let mid = TempRepo::init("submodule_bug2_mid");
+    let _mid0 = mid.commit("mid.txt", "mid\n", "mid0");
+    add_submodule(&mid, &grandchild, "nested");
+
+    let parent = TempRepo::init("submodule_bug2_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &mid, "sub");
+
+    // "sub" is cloned+checked out by add_submodule, but its OWN "nested"
+    // submodule is NOT (`git submodule add` never recurses) — init+update it
+    // recursively first so there's something real to dirty.
+    let update_result = submodule_update(parent.path(), Some("sub".to_string()), true, true);
+    assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
+    assert_eq!(parent.read("sub/nested/gc.txt"), "grandchild\n");
+
+    // "sub" itself is perfectly clean — only its OWN nested "nested"
+    // submodule carries an uncommitted edit.
+    std::fs::write(parent.dir.join("sub").join("nested").join("gc.txt"), "important nested uncommitted work\n")
+        .expect("write nested submodule's own uncommitted edit");
+
+    let result = submodule_deinit(parent.path(), "sub".to_string(), true);
+    assert!(
+        !result.ok,
+        "expected force-deinit of 'sub' to REFUSE because its OWN nested submodule 'nested' is dirty, got ok: {}",
+        result.message
+    );
+    assert!(
+        result.message.contains("nested"),
+        "expected the refusal to name the dirty nested submodule: {:?}",
+        result.message
+    );
+    assert!(result.backup_patch.is_none());
+
+    // Nothing touched: the nested submodule's content must survive untouched,
+    // and "sub" itself must still be fully checked out (deinit never ran).
+    assert_eq!(parent.read("sub/nested/gc.txt"), "important nested uncommitted work\n");
+    assert!(parent.dir.join("sub").join("mid.txt").exists());
+}
+
+#[test]
+fn bug2_remove_refuses_when_a_nested_submodule_of_a_submodule_is_dirty() {
+    // Same reproduction as above, but through submodule_remove — it calls the
+    // identical `backup_submodule_dirty_content` internally and must get the
+    // same protection.
+    let _allow = AllowFileProtocol::scoped();
+
+    let grandchild = TempRepo::init("submodule_bug2b_grandchild");
+    let _gc0 = grandchild.commit("gc.txt", "grandchild\n", "gc0");
+
+    let mid = TempRepo::init("submodule_bug2b_mid");
+    let _mid0 = mid.commit("mid.txt", "mid\n", "mid0");
+    add_submodule(&mid, &grandchild, "nested");
+
+    let parent = TempRepo::init("submodule_bug2b_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &mid, "sub");
+
+    let update_result = submodule_update(parent.path(), Some("sub".to_string()), true, true);
+    assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
+
+    std::fs::write(parent.dir.join("sub").join("nested").join("gc.txt"), "important nested uncommitted work\n")
+        .expect("write nested submodule's own uncommitted edit");
+
+    // Captured BEFORE the call: dirtying "nested" already makes the
+    // superproject itself see "sub" as modified (its own workdir differs
+    // because of what's nested inside it) — that's pre-existing state, not
+    // something submodule_remove is expected to change either way.
+    let (_, status_before, _) = parent.git(&["status", "--porcelain"]);
+
+    let result = submodule_remove(parent.path(), "sub".to_string());
+    assert!(!result.ok, "expected submodule_remove to REFUSE because sub's own nested submodule is dirty");
+    assert!(result.message.contains("nested"), "expected the refusal to name the dirty nested submodule: {:?}", result.message);
+    assert!(result.backup_patch.is_none());
+
+    // "sub" must still be fully present — remove never even reached deinit/rm.
+    assert!(parent.dir.join("sub").join("mid.txt").exists());
+    let (_, status_after, _) = parent.git(&["status", "--porcelain"]);
+    assert_eq!(
+        status_after, status_before,
+        "a refused remove must leave the superproject's own status exactly as it was: {status_after:?}"
+    );
+    assert!(!status_after.contains("D  sub"), "sub's gitlink must not have been staged for deletion: {status_after:?}");
+}
+
+#[test]
+fn bug3_remove_propagates_a_failed_gitmodules_fallback_instead_of_reporting_ok() {
+    // BUG 3: the `.gitmodules` section-removal fallback (for when `git rm -f`
+    // itself doesn't auto-strip the section) used `if let Ok`/`let _ =` for
+    // BOTH `git config --remove-section` and the follow-up `git add --
+    // .gitmodules`, and `submodule_remove` never checked whether the fallback
+    // actually succeeded before returning ok:true. Reproduces a REAL failure
+    // of the fallback (not hypothetical): chmod the repo ROOT directory
+    // read-only and register the submodule at a NESTED path ("vendor/sub") —
+    // EMPIRICALLY VERIFIED this lets `git rm -f` still succeed at removing
+    // the nested working-tree directory and staging `D vendor/sub` (that only
+    // needs write access to "vendor/", untouched), while its own attempt to
+    // rewrite `.gitmodules` (which lives directly in repo root) fails with
+    // "could not lock config file .gitmodules" — leaving the section behind,
+    // unstaged.
+    let child = TempRepo::init("submodule_bug3_child");
+    let _c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_bug3_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "vendor/sub");
+
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(&parent.dir).unwrap().permissions();
+    perms.set_mode(0o555);
+    std::fs::set_permissions(&parent.dir, perms).expect("chmod repo root read-only");
+
+    let result = submodule_remove(parent.path(), "vendor/sub".to_string());
+
+    // Restore perms UNCONDITIONALLY (before any assertion) so TempRepo's own
+    // Drop cleanup can still remove the dir even if an assertion below panics.
+    let mut perms2 = std::fs::metadata(&parent.dir).unwrap().permissions();
+    perms2.set_mode(0o755);
+    std::fs::set_permissions(&parent.dir, perms2).expect("restore repo root perms");
+
+    assert!(
+        !result.ok,
+        "expected submodule_remove to report failure when it can't strip+stage .gitmodules's section, got ok: {}",
+        result.message
+    );
+
+    let gitmodules = parent.read(".gitmodules");
+    assert!(gitmodules.contains("vendor/sub"), "expected the stale section to still be present: {gitmodules:?}");
+
+    let (_, status, _) = parent.git(&["status", "--porcelain"]);
+    assert!(status.contains("D  vendor/sub"), "expected the gitlink deletion to still be staged: {status:?}");
+    assert!(
+        !status.contains("M  .gitmodules"),
+        ".gitmodules was never actually staged by the failed fallback, so it must not show as modified: {status:?}"
+    );
+}
+
+#[test]
+fn bug4_force_deinit_backs_up_a_dangling_symlinks_target_instead_of_refusing() {
+    // BUG 4: the untracked-file backup loop called `fs::read(&src)`, which
+    // FOLLOWS a symlink and errors on a dangling one — a stray broken symlink
+    // (its target since deleted) shouldn't be able to block an otherwise-safe
+    // force-deinit. Reproduces: an untracked symlink inside the submodule's
+    // own working tree pointing at a target that doesn't exist.
+    let child = TempRepo::init("submodule_bug4_child");
+    let _c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_bug4_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    std::os::unix::fs::symlink("this-target-does-not-exist", parent.dir.join("sub").join("dangling-link"))
+        .expect("create a dangling symlink inside the submodule");
+
+    let result = submodule_deinit(parent.path(), "sub".to_string(), true);
+    assert!(
+        result.ok,
+        "expected a dangling symlink to NOT block an otherwise-safe force-deinit, got: {}",
+        result.message
+    );
+    let backup_rel =
+        result.backup_patch.clone().expect("expected a backup_patch (the dangling link counts as untracked content)");
+
+    let backup_dir = parent.dir.join(".git").join(&backup_rel);
+    let backed_up = backup_dir.join("untracked").join("dangling-link");
+    assert!(backed_up.is_file(), "expected the symlink's TARGET PATH to be recorded as a plain backup file");
+    let recorded_target = std::fs::read_to_string(&backed_up).expect("read the recorded symlink target");
+    assert_eq!(
+        recorded_target, "this-target-does-not-exist",
+        "expected the backup to record where the dangling link pointed"
+    );
+
+    assert!(
+        std::fs::read_dir(parent.dir.join("sub")).unwrap().next().is_none(),
+        "sub/ should be cleared to empty after a successful force-deinit"
+    );
+}
+
+#[test]
+fn bug5_force_deinit_backs_up_gitignored_files_that_deinit_f_actually_wipes() {
+    // BUG 5 (the most serious gap: real data loss with zero trace): the
+    // untracked-file backup scan didn't include ignored files, but `git
+    // submodule deinit -f` clears them too — EMPIRICALLY CONFIRMED separately
+    // that a .gitignore'd file inside a submodule vanishes on `deinit -f` with
+    // NO backup at all before this fix. Reproduces the full round trip:
+    // create a gitignored file with real content inside the submodule,
+    // force-deinit, and confirm BOTH (a) the file is actually gone from the
+    // working tree (proving `deinit -f` really does wipe it, so this isn't a
+    // no-op test) AND (b) its content is fully recoverable from the backup
+    // afterward.
+    let child = TempRepo::init("submodule_bug5_child");
+    let _c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_bug5_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    // A .gitignore'd file INSIDE the submodule (its own .gitignore, not the
+    // superproject's) with real, important content.
+    std::fs::write(parent.dir.join("sub").join(".gitignore"), "ignored-secret.env\n")
+        .expect("write submodule .gitignore");
+    std::fs::write(parent.dir.join("sub").join("ignored-secret.env"), "API_KEY=super-important-value\n")
+        .expect("write the gitignored file");
+
+    // Sanity: confirm it really IS ignored from the submodule's own
+    // perspective before relying on that.
+    let (_, sub_status, _) = parent.git(&["-C", "sub", "status", "--porcelain", "--ignored"]);
+    assert!(sub_status.contains("ignored-secret.env"), "expected the file to show up as ignored: {sub_status:?}");
+
+    let result = submodule_deinit(parent.path(), "sub".to_string(), true);
+    assert!(result.ok, "submodule_deinit (force) failed: {}", result.message);
+    let backup_rel = result
+        .backup_patch
+        .clone()
+        .expect("expected a backup_patch — the ignored file counts as dirty content to preserve");
+
+    // Confirm deinit -f REALLY DID wipe it (not a no-op assertion): the
+    // submodule's working tree is cleared to empty, including .gitignore
+    // itself and the file it ignored.
+    assert!(
+        std::fs::read_dir(parent.dir.join("sub")).unwrap().next().is_none(),
+        "sub/ should be cleared to empty, including its own .gitignore and the file it ignored"
+    );
+
+    // And its content IS recoverable from the backup.
+    let backup_dir = parent.dir.join(".git").join(&backup_rel);
+    let backed_up_file = backup_dir.join("untracked").join("ignored-secret.env");
+    assert!(backed_up_file.is_file(), "expected the gitignored file's content to be backed up");
+    assert_eq!(
+        std::fs::read_to_string(&backed_up_file).unwrap(),
+        "API_KEY=super-important-value\n",
+        "expected the exact gitignored content to be recoverable from the backup"
+    );
+    // The submodule's own .gitignore is itself untracked-but-not-ignored (it's
+    // the file that DOES the ignoring) — also backed up, same as any other
+    // untracked file.
+    let backed_up_gitignore = backup_dir.join("untracked").join(".gitignore");
+    assert!(backed_up_gitignore.is_file(), "expected the submodule's own untracked .gitignore to be backed up too");
+}
+
+#[test]
+fn bug6_submodule_status_reports_removed_not_clean_after_submodule_remove_stages_deletion() {
+    // BUG 6: `classify_status` only checked `SubmoduleStatus`'s WD_* bits,
+    // never INDEX_DELETED — so right after `submodule_remove` STAGES its
+    // removal (nothing committed yet), `submodule_status` kept reporting the
+    // row as an ordinary "clean" one (a ghost row), even though there is
+    // nothing left to act on and re-clicking Deinit/Remove on it would
+    // produce a confusing error.
+    let child = TempRepo::init("submodule_bug6_child");
+    let _c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_bug6_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    let remove_result = submodule_remove(parent.path(), "sub".to_string());
+    assert!(remove_result.ok, "submodule_remove failed: {}", remove_result.message);
+
+    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    assert_eq!(
+        rows.len(),
+        1,
+        "the row should still show up: HEAD's own committed .gitmodules is unchanged (nothing committed yet)"
+    );
+    let row = &rows[0];
+    assert_eq!(row.status, "removed", "expected the new 'removed' classification, not a stale 'clean'");
+    assert_ne!(row.status, "clean", "a staged-for-removal submodule must never read as an ordinary clean row");
 }
