@@ -50,10 +50,11 @@ mod common;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::TempRepo;
-use gitcat_lib::submodule::submodule_status;
+use gitcat_lib::submodule::{submodule_init, submodule_status, submodule_update};
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -104,6 +105,26 @@ impl FreshClone {
 
     fn path(&self) -> String {
         self.dir.to_string_lossy().to_string()
+    }
+
+    /// Run `git -C <dir> <args…>` inside the clone, isolated from the host's
+    /// global/system config the same way `TempRepo::git` is. Only ever used
+    /// here to INSPECT config/refs/status — a `FreshClone` has no configured
+    /// identity, so it must never be used to commit.
+    fn git(&self, args: &[&str]) -> (bool, String, String) {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&self.dir)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .expect("failed to spawn git");
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        )
     }
 }
 
@@ -354,4 +375,303 @@ fn submodule_gitlink_merge_conflict_is_not_clean() {
     assert_eq!(row.head_sha.as_deref(), Some(c1.as_str()));
     assert_eq!(row.workdir_sha.as_deref(), Some(c0.as_str()));
     let _ = c2;
+}
+
+// ---------------------------------------------------------------------------
+// M2: submodule_init / submodule_update
+// ---------------------------------------------------------------------------
+//
+// `submodule_init`/`submodule_update`'s own git-CLI runner (submodule.rs)
+// deliberately does NOT pass `-c protocol.file.allow=always` the way the
+// fixture helpers above do — real submodule URLs are https/ssh, and file://
+// submodule fetches are meant to stay refused by git's own default (see
+// GHSA-8h47-9cfr-w2c3, the CVE this default protects against). So any test
+// below that drives the real command through an actual CLONE (as opposed to
+// just registering a URL, or updating an already-cloned submodule) needs
+// `AllowFileProtocol::scoped()` for the DURATION of that one call — it sets
+// `GIT_ALLOW_PROTOCOL=file` on the current (test) PROCESS, which
+// `std::process::Command` inherits by default into the child `git` process
+// spawned by `submodule::run_git` (that runner does no env isolation of its
+// own, unlike `TempRepo::git`/`FreshClone::git` above).
+//
+// A plain save/restore-on-Drop guard (as `tests/git_revert.rs`'s `RestoreEnv`
+// does for LC_ALL/LANGUAGE) is NOT safe here, and this was caught empirically
+// by a genuinely flaky run, not just reasoned about: `cargo test` runs
+// `#[test]` fns concurrently on separate THREADS within one process, but
+// `std::env::set_var`/`remove_var` mutate that one process's SHARED
+// environment table — there is no per-thread copy. With 3 different tests
+// below all calling `scoped()`, one test's `Drop` restoring/removing the var
+// could fire in the gap between another, still-in-flight test's `set_var`
+// and its OWN later child-process spawn, so that second test's `git` child
+// launches with the var already stripped back out from under it. (Observed
+// directly: `fatal: transport 'file' not allowed` from a test that itself
+// calls `scoped()`, on a run where two of these tests happened to overlap.)
+// A process-wide `Mutex` closes this: `scoped()` blocks until any other
+// in-flight guard has fully set-used-restored and released it, so the
+// set/spawn/restore sequence below can never straddle two callers.
+static ALLOW_FILE_PROTOCOL_LOCK: Mutex<()> = Mutex::new(());
+
+struct AllowFileProtocol {
+    prev: Option<String>,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl AllowFileProtocol {
+    fn scoped() -> Self {
+        let guard = ALLOW_FILE_PROTOCOL_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prev = std::env::var("GIT_ALLOW_PROTOCOL").ok();
+        std::env::set_var("GIT_ALLOW_PROTOCOL", "file");
+        AllowFileProtocol { prev, _guard: guard }
+    }
+}
+
+impl Drop for AllowFileProtocol {
+    fn drop(&mut self) {
+        // Runs BEFORE `_guard` is released (fields drop in declaration order
+        // after a manual `drop()` returns), so the var is fully restored
+        // while still holding the lock — no other caller can observe the
+        // in-between state.
+        match &self.prev {
+            Some(v) => std::env::set_var("GIT_ALLOW_PROTOCOL", v),
+            None => std::env::remove_var("GIT_ALLOW_PROTOCOL"),
+        }
+    }
+}
+
+#[test]
+fn submodule_init_registers_url_without_cloning() {
+    let child = TempRepo::init("submodule_init_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_init_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    // A fresh clone: registered in .gitmodules, but genuinely never init'd.
+    let clone = FreshClone::of(&parent, "submodule_init");
+    let (has_url_before, _, _) = clone.git(&["config", "--get", "submodule.sub.url"]);
+    assert!(!has_url_before, "expected no submodule.sub.url in .git/config before init");
+
+    let rows_before = submodule_status(clone.path()).expect("submodule_status failed");
+    assert_eq!(rows_before.len(), 1);
+    assert_eq!(rows_before[0].status, "not-initialized");
+
+    let result = submodule_init(clone.path(), "sub".to_string());
+    assert!(result.ok, "submodule_init failed: {}", result.message);
+    assert!(result.backup_ref.is_none(), "submodule_init must never snapshot (see module doc comment)");
+
+    // .git/config now has the URL, copied over from .gitmodules...
+    let (has_url_after, url_after, _) = clone.git(&["config", "--get", "submodule.sub.url"]);
+    assert!(has_url_after, "expected submodule.sub.url to be registered after init");
+    assert_eq!(url_after, child.path());
+
+    // ...but the working directory is untouched: init registers, it never clones.
+    assert!(
+        std::fs::read_dir(PathBuf::from(clone.path()).join("sub")).unwrap().next().is_none(),
+        "sub/ should still be an empty directory after init alone"
+    );
+    let rows_after = submodule_status(clone.path()).expect("submodule_status failed");
+    assert_eq!(rows_after.len(), 1);
+    assert_eq!(
+        rows_after[0].status, "not-initialized",
+        "init alone must not change the not-initialized classification"
+    );
+}
+
+#[test]
+fn submodule_update_with_init_clones_and_checks_out_never_initialized_submodule() {
+    let _allow = AllowFileProtocol::scoped();
+
+    let child = TempRepo::init("submodule_updinit_child");
+    let child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_updinit_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    let clone = FreshClone::of(&parent, "submodule_updinit");
+    let rows_before = submodule_status(clone.path()).expect("submodule_status failed");
+    assert_eq!(rows_before[0].status, "not-initialized");
+
+    // init:true folds registration + clone + checkout into this one call —
+    // no prior submodule_init needed.
+    let result = submodule_update(clone.path(), Some("sub".to_string()), false, true);
+    assert!(result.ok, "submodule_update failed: {}", result.message);
+    assert!(result.backup_ref.is_none(), "submodule_update must never snapshot (see module doc comment)");
+
+    let content = std::fs::read_to_string(PathBuf::from(clone.path()).join("sub").join("f.txt"))
+        .expect("read cloned submodule file");
+    assert_eq!(content, "hello\n");
+
+    let rows_after = submodule_status(clone.path()).expect("submodule_status failed");
+    assert_eq!(rows_after.len(), 1);
+    let row = &rows_after[0];
+    assert_eq!(row.status, "clean", "expected a freshly init+updated submodule to read as clean");
+    assert_eq!(row.head_sha.as_deref(), Some(child_c0.as_str()));
+    assert_eq!(row.workdir_sha.as_deref(), Some(child_c0.as_str()));
+}
+
+#[test]
+fn submodule_update_recursive_handles_nested_submodule_of_a_submodule() {
+    let _allow = AllowFileProtocol::scoped();
+
+    // grandchild <- (submodule "nested" of) <- mid <- (submodule "sub" of) <- parent
+    let grandchild = TempRepo::init("submodule_nested_grandchild");
+    let gc0 = grandchild.commit("gc.txt", "grandchild\n", "gc0");
+
+    let mid = TempRepo::init("submodule_nested_mid");
+    let _mid0 = mid.commit("mid.txt", "mid\n", "mid0");
+    add_submodule(&mid, &grandchild, "nested");
+
+    let parent = TempRepo::init("submodule_nested_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &mid, "sub");
+
+    // A fresh clone: NEITHER "sub" nor "sub/nested" is initialized yet.
+    let clone = FreshClone::of(&parent, "submodule_nested");
+    assert!(
+        std::fs::read_dir(PathBuf::from(clone.path()).join("sub")).unwrap().next().is_none(),
+        "sub/ should be empty before update"
+    );
+
+    // recursive:true must init+clone+checkout "sub" AND recurse into "sub" to
+    // do the same for ITS OWN "nested" submodule, in one call.
+    let result = submodule_update(clone.path(), Some("sub".to_string()), true, true);
+    assert!(result.ok, "submodule_update (recursive) failed: {}", result.message);
+
+    let nested_file = PathBuf::from(clone.path()).join("sub").join("nested").join("gc.txt");
+    let content = std::fs::read_to_string(&nested_file).expect("read nested (submodule-of-a-submodule) file");
+    assert_eq!(content, "grandchild\n");
+
+    // submodule_status only walks the TOP-LEVEL .gitmodules, so confirm the
+    // nested checkout directly via git2 instead of expecting it in that list.
+    let nested_repo = git2::Repository::open(PathBuf::from(clone.path()).join("sub").join("nested"))
+        .expect("open nested submodule repo");
+    let nested_head = nested_repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+    assert_eq!(nested_head, gc0, "nested submodule-of-a-submodule must be checked out at its tracked commit");
+}
+
+// Negative control for the test above: proves recursive:true is doing real,
+// necessary work rather than being a silent no-op that happens to pass. Same
+// 3-level fixture, but recursive:false — "sub" itself must still get cloned
+// (init:true covers the one level update() was scoped to), while "sub"'s OWN
+// "nested" submodule must stay uninitialized since recursion into it was
+// never requested.
+#[test]
+fn submodule_update_without_recursive_leaves_the_nested_submodule_uninitialized() {
+    let _allow = AllowFileProtocol::scoped();
+
+    let grandchild = TempRepo::init("submodule_nonrecursive_grandchild");
+    let _gc0 = grandchild.commit("gc.txt", "grandchild\n", "gc0");
+
+    let mid = TempRepo::init("submodule_nonrecursive_mid");
+    let _mid0 = mid.commit("mid.txt", "mid\n", "mid0");
+    add_submodule(&mid, &grandchild, "nested");
+
+    let parent = TempRepo::init("submodule_nonrecursive_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &mid, "sub");
+
+    let clone = FreshClone::of(&parent, "submodule_nonrecursive");
+
+    let result = submodule_update(clone.path(), Some("sub".to_string()), false, true);
+    assert!(result.ok, "submodule_update (non-recursive) failed: {}", result.message);
+
+    // "sub" itself was cloned+checked out...
+    let mid_file = PathBuf::from(clone.path()).join("sub").join("mid.txt");
+    assert_eq!(std::fs::read_to_string(&mid_file).expect("read sub/mid.txt"), "mid\n");
+
+    // ...but its own "nested" submodule was never recursed into, so it's
+    // still a genuinely empty, uninitialized directory.
+    let nested_dir = PathBuf::from(clone.path()).join("sub").join("nested");
+    assert!(
+        std::fs::read_dir(&nested_dir).unwrap().next().is_none(),
+        "sub/nested/ should remain empty without recursive:true"
+    );
+}
+
+#[test]
+fn submodule_update_refuses_over_dirty_submodule_and_keeps_local_changes() {
+    let child = TempRepo::init("submodule_upddirty_child");
+    let child_c0 = child.commit("f.txt", "hello\n", "c0");
+    let child_c1 = child.commit("f.txt", "hello\nmore\n", "c1");
+
+    let parent = TempRepo::init("submodule_upddirty_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    // add_submodule clones the child's CURRENT head (c1) into "sub" and
+    // commits the addition — sub starts out checked out AND tracked at c1.
+    let tracked_at_add = add_submodule(&parent, &child, "sub");
+    assert_eq!(tracked_at_add, child_c1);
+
+    // Bump the superproject's tracked gitlink BACK to c0 WITHOUT touching
+    // sub's own working tree — simulates "you pulled a superproject commit
+    // that moved the submodule pointer, but haven't updated yet" (same
+    // `update-index --cacheinfo` technique this file's own out-of-date
+    // fixture already uses above).
+    parent.must(&["update-index", "--cacheinfo", &format!("160000,{child_c0},sub")]);
+    parent.must(&["commit", "-q", "-m", "bump submodule pointer back to c0"]);
+
+    let (_, sm_status, _) = parent.git(&["submodule", "status"]);
+    assert!(sm_status.starts_with('+'), "expected a '+'-prefixed (out-of-date) submodule status: {sm_status:?}");
+
+    // Dirty the submodule's own working tree, editing the SAME file that
+    // differs between c0 and c1 — a checkout to c0 would clobber this edit.
+    std::fs::write(parent.dir.join("sub").join("f.txt"), "dirty-local-edit\n").expect("write dirty edit");
+    let (_, dirty_status, _) = parent.git(&["status", "--porcelain"]);
+    assert!(dirty_status.contains("M sub"), "expected the superproject to see sub as dirty: {dirty_status:?}");
+
+    // EMPIRICALLY VERIFIED (see submodule.rs's module doc comment): real
+    // git's own default refuses a checkout that would clobber this edit —
+    // submodule_update must surface that refusal, not force past it.
+    let result = submodule_update(parent.path(), Some("sub".to_string()), false, false);
+    assert!(!result.ok, "expected submodule_update to refuse over a dirty submodule, got ok: {}", result.message);
+    assert!(
+        result.message.contains("overwritten") || result.message.contains("local changes"),
+        "expected git's own local-changes refusal message, got: {:?}",
+        result.message
+    );
+    assert!(result.backup_ref.is_none());
+
+    // No data loss: the uncommitted edit is still there, verbatim.
+    let content = parent.read("sub/f.txt");
+    assert_eq!(content, "dirty-local-edit\n", "the dirty submodule edit must survive a refused update");
+
+    // The submodule's own HEAD must not have moved off c1.
+    let (_, sub_head, _) = parent.git(&["-C", "sub", "rev-parse", "HEAD"]);
+    assert_eq!(sub_head, child_c1, "a refused update must not move the submodule's own HEAD");
+}
+
+#[test]
+fn submodule_update_all_updates_multiple_submodules_in_one_call() {
+    let _allow = AllowFileProtocol::scoped();
+
+    let child_a = TempRepo::init("submodule_updall_a");
+    let a0 = child_a.commit("a.txt", "a\n", "a0");
+    let child_b = TempRepo::init("submodule_updall_b");
+    let b0 = child_b.commit("b.txt", "b\n", "b0");
+
+    let parent = TempRepo::init("submodule_updall_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child_a, "subA");
+    add_submodule(&parent, &child_b, "subB");
+
+    let clone = FreshClone::of(&parent, "submodule_updall");
+    let rows_before = submodule_status(clone.path()).expect("submodule_status failed");
+    assert_eq!(rows_before.len(), 2);
+    assert!(rows_before.iter().all(|r| r.status == "not-initialized"));
+
+    // submodule_path: None => update EVERY registered submodule, no path
+    // restriction — the bulk "Update all" action.
+    let result = submodule_update(clone.path(), None, false, true);
+    assert!(result.ok, "submodule_update (all) failed: {}", result.message);
+
+    let rows_after = submodule_status(clone.path()).expect("submodule_status failed");
+    assert_eq!(rows_after.len(), 2);
+    for row in &rows_after {
+        assert_eq!(row.status, "clean", "expected {} to be clean after update-all", row.path);
+    }
+    let a = rows_after.iter().find(|r| r.path == "subA").expect("subA row");
+    let b = rows_after.iter().find(|r| r.path == "subB").expect("subB row");
+    assert_eq!(a.workdir_sha.as_deref(), Some(a0.as_str()));
+    assert_eq!(b.workdir_sha.as_deref(), Some(b0.as_str()));
 }

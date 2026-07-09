@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { sidebarCtrl } from "./sidebar.svelte.ts";
+  import { sidebarCtrl, submoduleAction, SUBMODULES_ALL } from "./sidebar.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import type { SimpleRef, SubmoduleInfo } from "../../ipc/bindings";
 
@@ -83,6 +83,13 @@
     if (s.url) parts.push(s.url);
     parts.push(s.workdirSha ? "@ " + s.workdirSha.slice(0, 7) : "not cloned");
     return parts.join(" — ");
+  }
+
+  // Native `title` on the disabled "blocked" action button (dirty/conflicted
+  // rows — see submoduleAction's own doc comment) explaining why there's
+  // nothing to click, rather than just a dead-looking disabled button.
+  function subBlockedTip(status: string): string {
+    return "This submodule is " + subStatusLabel(status) + " — resolve it before updating.";
   }
 </script>
 
@@ -293,10 +300,38 @@
       {#if !sidebarCtrl.submodules.length}
         <div class="sub-item"><span class="rname mut">no submodules</span></div>
       {:else}
+        <!-- Bulk "Update all" — submodule_path:null in one call, folding
+             init:true (never-cloned ones included) and an optional recursive
+             toggle for submodule-of-a-submodule setups. Lives at the top of
+             the list rather than crammed into <summary> (clicking inside a
+             <summary> toggles the whole details/open state, and no other
+             ref-group section has ever needed an interactive control there). -->
+        <div class="sub-head">
+          <label class="sub-recursive"
+            ><input type="checkbox" bind:checked={sidebarCtrl.submodulesRecursive} disabled={sidebarCtrl.busy} /> recursive</label
+          >
+          <button
+            class="sub-update-all"
+            disabled={sidebarCtrl.busy}
+            onclick={() => sidebarCtrl.updateAllSubmodules(sidebarCtrl.submodulesRecursive)}
+          >
+            {#if sidebarCtrl.busy && sidebarCtrl.busyTarget === SUBMODULES_ALL}<span class="spinner"></span>{:else}Update all{/if}
+          </button>
+        </div>
         {#each sidebarCtrl.submodules as s (s.path)}
+          {@const action = submoduleAction(s.status)}
           <div class="sub-item" data-tip={subTooltip(s)}>
             <span class="rname">{s.path}</span>
             <span class="sub-status" data-status={s.status}>{subStatusLabel(s.status)}</span>
+            {#if sidebarCtrl.busyTarget === s.path}
+              <span class="spinner"></span>
+            {:else if action === "init"}
+              <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.initAndUpdateSubmodule(s.path)}>Init + update</button>
+            {:else if action === "update"}
+              <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.updateSubmodule(s.path)}>Update</button>
+            {:else if action === "blocked"}
+              <button class="sub-act" disabled title={subBlockedTip(s.status)}>Update</button>
+            {/if}
           </div>
         {/each}
       {/if}

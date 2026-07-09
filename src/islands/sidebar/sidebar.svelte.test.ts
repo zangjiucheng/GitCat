@@ -27,6 +27,8 @@ vi.mock("../../ipc/bindings", () => ({
     deleteTag: vi.fn(),
     pushTag: vi.fn(),
     submoduleStatus: vi.fn(),
+    submoduleInit: vi.fn(),
+    submoduleUpdate: vi.fn(),
   },
 }));
 
@@ -40,7 +42,7 @@ vi.mock("../resolver/resolver.svelte.ts", () => ({
 import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
-import { sidebarCtrl } from "./sidebar.svelte.ts";
+import { sidebarCtrl, submoduleAction, SUBMODULES_ALL } from "./sidebar.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
@@ -66,6 +68,7 @@ function resetAll() {
   sidebarCtrl.newTagFrom = "";
   sidebarCtrl.hasRepo = false;
   sidebarCtrl.copiedSnapshotSha = "";
+  sidebarCtrl.submodulesRecursive = false;
   mockInTauri = false;
   vi.clearAllMocks();
   // Default: no submodules, so the many pre-existing "refresh"/checkout/etc.
@@ -206,6 +209,169 @@ describe("submodules", () => {
     );
     await sidebarCtrl.refresh("/repo");
     expect(sidebarCtrl.submodules).toEqual([{ name: "vendor/a", path: "vendor/a", url: null, status: "clean", headSha: "aaa", workdirSha: "aaa" }]);
+  });
+});
+
+describe("submoduleAction (row action gate)", () => {
+  it("not-initialized -> init", () => {
+    expect(submoduleAction("not-initialized")).toBe("init");
+  });
+
+  it("out-of-date -> update", () => {
+    expect(submoduleAction("out-of-date")).toBe("update");
+  });
+
+  it("dirty -> blocked (a disabled button is shown, not absent)", () => {
+    expect(submoduleAction("dirty")).toBe("blocked");
+  });
+
+  it("conflicted -> blocked", () => {
+    expect(submoduleAction("conflicted")).toBe("blocked");
+  });
+
+  it("clean -> null (no action button at all)", () => {
+    expect(submoduleAction("clean")).toBeNull();
+  });
+});
+
+describe("initAndUpdateSubmodule (per-row 'Init + update', not-initialized rows)", () => {
+  it("design mode is a cosmetic no-op with a toast", async () => {
+    mockInTauri = false;
+    await sidebarCtrl.initAndUpdateSubmodule("docs/theme");
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(commands.submoduleUpdate).not.toHaveBeenCalled();
+  });
+
+  it("real mode: calls submodule_update with init:true, recursive:false and refreshes on success", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "initialized", backupRef: null });
+    vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(
+      ok([{ name: "docs/theme", path: "docs/theme", url: "https://example.com/theme.git", status: "clean", headSha: "a", workdirSha: "a" }]),
+    );
+    await sidebarCtrl.initAndUpdateSubmodule("docs/theme");
+    expect(commands.submoduleUpdate).toHaveBeenCalledWith("/repo", "docs/theme", false, true);
+    expect(commands.submoduleStatus).toHaveBeenCalledWith("/repo");
+    expect(sidebarCtrl.submodules[0].status).toBe("clean");
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
+  });
+
+  it("real mode: a refusal surfaces via tama.warn and does not refresh (not a silent no-op)", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: false, message: "submodule has local changes, update refused", backupRef: null });
+    await sidebarCtrl.initAndUpdateSubmodule("docs/theme");
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("update refused"));
+    expect(commands.submoduleStatus).not.toHaveBeenCalled();
+  });
+
+  it("is re-entrancy locked while busy", async () => {
+    mockInTauri = true;
+    sidebarCtrl.busy = true;
+    await sidebarCtrl.initAndUpdateSubmodule("docs/theme");
+    expect(commands.submoduleUpdate).not.toHaveBeenCalled();
+  });
+
+  it("scopes busy/busyTarget to just the acted-on row (not the whole Submodules section) while in flight", async () => {
+    mockInTauri = true;
+    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null }) => void;
+    vi.mocked(commands.submoduleUpdate).mockImplementationOnce(() => new Promise((resolve) => (resolveFn = resolve)));
+    vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
+    const pending = sidebarCtrl.initAndUpdateSubmodule("docs/theme");
+    expect(sidebarCtrl.busy).toBe(true);
+    expect(sidebarCtrl.busyTarget).toBe("docs/theme");
+    resolveFn({ ok: true, message: "initialized", backupRef: null });
+    await pending;
+    expect(sidebarCtrl.busy).toBe(false);
+    expect(sidebarCtrl.busyTarget).toBeNull();
+  });
+});
+
+describe("updateSubmodule (per-row 'Update', out-of-date rows)", () => {
+  it("design mode is a cosmetic no-op with a toast", async () => {
+    mockInTauri = false;
+    await sidebarCtrl.updateSubmodule("third_party/tool");
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(commands.submoduleUpdate).not.toHaveBeenCalled();
+  });
+
+  it("real mode: calls submodule_update with init:false (already registered+cloned) and refreshes on success", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "updated", backupRef: null });
+    vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(
+      ok([{ name: "third_party/tool", path: "third_party/tool", url: null, status: "clean", headSha: "a", workdirSha: "a" }]),
+    );
+    await sidebarCtrl.updateSubmodule("third_party/tool");
+    expect(commands.submoduleUpdate).toHaveBeenCalledWith("/repo", "third_party/tool", false, false);
+    expect(commands.submoduleStatus).toHaveBeenCalledWith("/repo");
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
+  });
+
+  it("real mode: a refusal (dirty submodule) surfaces via tama.warn and does not refresh", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: false, message: "submodule has local changes, update refused", backupRef: null });
+    await sidebarCtrl.updateSubmodule("third_party/tool");
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("update refused"));
+    expect(commands.submoduleStatus).not.toHaveBeenCalled();
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+  });
+
+  it("is re-entrancy locked while busy", async () => {
+    mockInTauri = true;
+    sidebarCtrl.busy = true;
+    await sidebarCtrl.updateSubmodule("third_party/tool");
+    expect(commands.submoduleUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateAllSubmodules (bulk 'Update all')", () => {
+  it("design mode is a cosmetic no-op with a toast", async () => {
+    mockInTauri = false;
+    await sidebarCtrl.updateAllSubmodules(false);
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(commands.submoduleUpdate).not.toHaveBeenCalled();
+  });
+
+  it("real mode: calls submodule_update with submodulePath:null and init:true, passing the recursive flag through", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "updated", backupRef: null });
+    vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
+    await sidebarCtrl.updateAllSubmodules(true);
+    expect(commands.submoduleUpdate).toHaveBeenCalledWith("/repo", null, true, true);
+  });
+
+  it("real mode: recursive:false is passed through unchanged when the toggle is off", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "updated", backupRef: null });
+    vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
+    await sidebarCtrl.updateAllSubmodules(false);
+    expect(commands.submoduleUpdate).toHaveBeenCalledWith("/repo", null, false, true);
+  });
+
+  it("real mode: a refusal surfaces via tama.warn and does not refresh", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: false, message: "submodule has local changes, update refused", backupRef: null });
+    await sidebarCtrl.updateAllSubmodules(false);
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("update refused"));
+    expect(commands.submoduleStatus).not.toHaveBeenCalled();
+  });
+
+  it("is re-entrancy locked while busy", async () => {
+    mockInTauri = true;
+    sidebarCtrl.busy = true;
+    await sidebarCtrl.updateAllSubmodules(true);
+    expect(commands.submoduleUpdate).not.toHaveBeenCalled();
+  });
+
+  it("uses the SUBMODULES_ALL sentinel as busyTarget while in flight (distinct from any row's path)", async () => {
+    mockInTauri = true;
+    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null }) => void;
+    vi.mocked(commands.submoduleUpdate).mockImplementationOnce(() => new Promise((resolve) => (resolveFn = resolve)));
+    vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
+    const pending = sidebarCtrl.updateAllSubmodules(false);
+    expect(sidebarCtrl.busy).toBe(true);
+    expect(sidebarCtrl.busyTarget).toBe(SUBMODULES_ALL);
+    resolveFn({ ok: true, message: "updated", backupRef: null });
+    await pending;
+    expect(sidebarCtrl.busyTarget).toBeNull();
   });
 });
 

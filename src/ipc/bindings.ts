@@ -841,6 +841,55 @@ async submoduleStatus(path: string) : Promise<Result<SubmoduleInfo[], string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Register `submodule_path`'s URL (and branch, if `.gitmodules` sets one)
+ * into the superproject's OWN `.git/config` (`git submodule init -- <path>`)
+ * — does NOT clone. The overwhelmingly common precondition for
+ * `submodule_update` on a submodule that has never been cloned (a fresh
+ * clone of the superproject, or one manually `rm -rf`'d — both read as
+ * "not-initialized" in `submodule_status`); use `submodule_update` with
+ * `init:true` instead to fold both steps into one call.
+ * JS call: `invoke("submodule_init", { path, submodulePath })`.
+ */
+async submoduleInit(path: string, submodulePath: string) : Promise<WriteResult> {
+    return await TAURI_INVOKE("submodule_init", { path, submodulePath });
+},
+/**
+ * Clone/checkout submodule(s) to the commit(s) the superproject's index
+ * tracks (`git submodule update`).
+ * 
+ * - `submodule_path: None` updates EVERY registered submodule in one
+ * invocation (no path restriction at all) — the bulk "Update all" action.
+ * `Some(p)` restricts to just that one path (`-- <p>`).
+ * - `init: true` adds `--init`, folding a never-run `submodule_init` into
+ * this same call (clone-if-never-cloned) — the "Init + Update"
+ * convenience. `init: false` is the plain "Update" action: it requires the
+ * submodule to already be registered+cloned (an update on a
+ * not-initialized submodule with `init:false` is a no-op as far as that
+ * path is concerned — real git silently skips it rather than erroring,
+ * since there is nothing registered yet for it to act on).
+ * - `recursive: true` adds `--recursive`, so a freshly-checked-out
+ * submodule's OWN submodules (a submodule-of-a-submodule) are inited/
+ * updated too, in the same call.
+ * 
+ * Never passes `--force`. See this module's doc comment for the empirically
+ * verified refusal git's own default already gives when an update would
+ * clobber uncommitted changes inside a submodule's working tree — that
+ * refusal surfaces here verbatim as `ok:false`, exactly like `checkout`/
+ * `pull`'s existing "never force" convention.
+ * 
+ * No Safety Manager snapshot: this only ever touches the SUBMODULE's own
+ * separate `.git` (its own HEAD/index/workdir) — never the superproject's
+ * HEAD, a branch, or its working tree — identical reasoning to plain
+ * `push`'s own "nothing local changes" rationale in `git_remote.rs`. And the
+ * one real risk a snapshot might otherwise exist to cover — clobbering
+ * uncommitted submodule changes — is already prevented by git's own refusal
+ * above, not by anything a superproject-level snapshot could restore anyway.
+ * JS call: `invoke("submodule_update", { path, submodulePath?, recursive, init })`.
+ */
+async submoduleUpdate(path: string, submodulePath: string | null, recursive: boolean, init: boolean) : Promise<WriteResult> {
+    return await TAURI_INVOKE("submodule_update", { path, submodulePath, recursive, init });
 }
 }
 

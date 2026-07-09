@@ -220,6 +220,29 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .sub-status[data-status="out-of-date"]{background:color-mix(in srgb,var(--danger) 16%,transparent);color:var(--danger)}
 .sub-status[data-status="conflicted"]{background:color-mix(in srgb,var(--danger) 16%,transparent);color:var(--danger)}
 .sub-status[data-status="not-initialized"]{background:color-mix(in srgb,var(--muted) 16%,transparent);color:var(--muted)}
+.sub-item .spinner{flex:none}
+/* Per-row submodule action button ("Init + update" / "Update") — a small
+   pill-shaped text button (mirrors the workdir island's `.wd-stash-act
+   button` small-action shape) rather than an icon-only affordance like
+   `.ref-menu`, since the label itself ("Init + update" vs "Update") is the
+   whole point of the button — an icon alone couldn't distinguish the two.
+   Disabled (dirty/conflicted rows — see submoduleAction's doc comment in
+   sidebar.svelte.ts) just dims it; its `title` carries the explanation. */
+.sub-act{flex:none;font-size:10px;font-weight:600;padding:2px 8px;border-radius:var(--r-pill);
+  border:1px solid var(--border);background:var(--elevated);color:var(--text);white-space:nowrap}
+.sub-act:hover:not([disabled]){border-color:var(--accent);color:var(--accent)}
+.sub-act[disabled]{opacity:.45;cursor:not-allowed}
+/* Bulk "Update all" row — sits above the per-submodule rows (not crammed
+   into the section's <summary>, which toggles open/closed on any click
+   inside it) — same left-indent as .sub-item so it reads as part of the
+   same list, with the recursive checkbox + button laid out like the
+   workdir island's `.wd-sec-head`/`.wd-stage-all` section-level action. */
+.sub-head{display:flex;align-items:center;gap:8px;padding:2px 8px 6px 24px}
+.sub-recursive{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted);flex:1;min-width:0}
+.sub-update-all{margin-left:auto;flex:none;font-size:11px;font-weight:600;color:var(--accent2);background:transparent;
+  border:1px solid color-mix(in srgb,var(--accent2) 45%,var(--border));border-radius:var(--r-control);padding:3px 9px}
+.sub-update-all:hover:not([disabled]){background:color-mix(in srgb,var(--accent2) 12%,transparent)}
+.sub-update-all[disabled]{opacity:.5;cursor:default}
 /* Sidebar hover tooltip that can NEVER escape its own row — native `title`
    attributes are unstyleable and unclipped, positioned by the browser near
    the cursor with no awareness of the app's own sidebar/graph boundary, so

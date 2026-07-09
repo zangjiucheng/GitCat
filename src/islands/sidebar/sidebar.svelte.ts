@@ -13,6 +13,16 @@
 // Svelte state (`menu`) positioned via inline style, closed via
 // `<svelte:window onpointerdown>` in the view — same visual behavior, no
 // manual DOM node lifecycle.
+//
+// Submodules (M2 — mutations on top of milestone 1's read-only status list):
+// initAndUpdateSubmodule/updateSubmodule are per-row actions gated by
+// submoduleAction(status) (see its own doc comment for the exact status ->
+// action mapping); updateAllSubmodules is the section's bulk action. All
+// three share the same busy/busyTarget re-entrancy lock as every other
+// mutation in this file, and refresh via refreshSubmodules() on success only
+// — a refusal (e.g. git's own "local changes would be overwritten" guard)
+// surfaces through bridge.tama.warn exactly like checkout/delete's existing
+// failure path, never a silent no-op.
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
@@ -58,6 +68,41 @@ export type BranchMenu = { name: string; isCurrent: boolean; x: number; y: numbe
 // a separate, smaller shape rather than reusing BranchMenu with a dummy field.
 export type TagMenu = { name: string; x: number; y: number };
 
+// Which action (if any) a submodule row's status affords — a pure, exported
+// function rather than inline template logic so it's directly unit-testable
+// without a component-rendering harness (this codebase's tests are all
+// controller/state-level; see sidebar.svelte.test.ts). Mirrors
+// submodule.rs's classify_status 5-way split 1:1:
+//   - "not-initialized" -> "init"    (submodule_update with init:true — clone +
+//     checkout a never-registered submodule in one call)
+//   - "out-of-date"     -> "update"  (submodule_update with init:false — it's
+//     already registered+cloned, just needs to move to the tracked commit)
+//   - "dirty"/"conflicted" -> "blocked" (a button IS shown, but disabled with
+//     an explanatory tooltip — there's nothing this app can usefully do until
+//     the user resolves the submodule's own working tree/index state; NOT the
+//     same as "clean", which shows no button at all)
+//   - "clean" (or anything unrecognized) -> null (nothing to do)
+export type SubmoduleAction = "init" | "update" | "blocked" | null;
+export function submoduleAction(status: string): SubmoduleAction {
+  switch (status) {
+    case "not-initialized":
+      return "init";
+    case "out-of-date":
+      return "update";
+    case "dirty":
+    case "conflicted":
+      return "blocked";
+    default:
+      return null;
+  }
+}
+// Sentinel busyTarget for the bulk "Update all submodules" action — can never
+// collide with a real submodule path (those come from `.gitmodules` and are
+// relative repo paths, never wrapped in double underscores), same convention
+// as the workdir island's "__commit__"/"__all__"/"__stash__" section-level
+// sentinels for scoping a spinner to a whole action rather than one row.
+export const SUBMODULES_ALL = "__submodules__";
+
 class SidebarState {
   locals = $state<LocalBranch[]>([]);
   remotes = $state<SimpleRef[]>([]);
@@ -102,6 +147,13 @@ class SidebarState {
   // empty-state branch) that the rest of the file already needed anyway.
   hasRepo = $state(false);
   copiedSnapshotSha = $state("");
+  // "Update all submodules" bulk toggle — deliberately only exposed at the
+  // bulk level, not per-row (see initAndUpdateSubmodule/updateSubmodule
+  // below): a single row's "Init + update"/"Update" button stays simple
+  // (recursive:false, matching this app's existing minimal per-row-action
+  // precedent), while the one place a nested submodule-of-a-submodule is
+  // actually likely to matter is "update everything at once".
+  submodulesRecursive = $state(false);
 
   async refresh(repo: string) {
     if (!IN_TAURI) {
@@ -149,6 +201,113 @@ class SidebarState {
       this.submodules = r.data || [];
     } catch (e) {
       console.error("submodule_status", e);
+    }
+  }
+
+  // "Init + update" — for a "not-initialized" row (submoduleAction(status)
+  // === "init"): registers the URL AND clones/checks it out in one call
+  // (submodule_update with init:true), rather than making the user run a
+  // separate "Init" step first. recursive:false — see submodulesRecursive's
+  // own doc comment for why that toggle lives at the bulk level only.
+  async initAndUpdateSubmodule(path: string) {
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say("Initialized + updated " + path + " (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = path;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Initializing " + path + "…");
+    try {
+      const res = await commands.submoduleUpdate(bridge.CUR_REPO as unknown as string, path, false, true);
+      if (res && res.ok) {
+        await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Initialized " + path + ".", 3200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't initialize " + path + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Init failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  // "Update" — for an "out-of-date" row (submoduleAction(status) ===
+  // "update"): it's already registered+cloned, so init:false — a plain
+  // `git submodule update -- <path>` to move it to the commit the
+  // superproject's index tracks. Never shown for "dirty"/"conflicted" rows
+  // (see submoduleAction's doc comment) — those need the user to resolve the
+  // submodule's own state first, so this app never even offers the button.
+  async updateSubmodule(path: string) {
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say("Updated " + path + " (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = path;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Updating " + path + "…");
+    try {
+      const res = await commands.submoduleUpdate(bridge.CUR_REPO as unknown as string, path, false, false);
+      if (res && res.ok) {
+        await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Updated " + path + ".", 3200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't update " + path + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Update failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  // Bulk "Update all submodules" — submodule_path:null updates every
+  // .gitmodules-registered submodule in one call, regardless of its current
+  // status. Always passes init:true (not just for out-of-date ones): this is
+  // the one bulk convenience action, so a never-initialized submodule sitting
+  // next to an out-of-date one shouldn't need a second, separate click — folds
+  // milestone 1's "Init" step in for free, exactly like a per-row "Init +
+  // update" would, for every row at once. `recursive` is caller-supplied
+  // (from submodulesRecursive's checkbox) rather than read from state
+  // internally, so this stays trivially unit-testable with an explicit flag.
+  async updateAllSubmodules(recursive: boolean) {
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say("Updated all submodules (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = SUBMODULES_ALL;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Updating submodules…");
+    try {
+      const res = await commands.submoduleUpdate(bridge.CUR_REPO as unknown as string, null, recursive, true);
+      if (res && res.ok) {
+        await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Submodules updated.", 3200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't update submodules.");
+      }
+    } catch (e) {
+      bridge.tama.warn("Update failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
     }
   }
 

@@ -1,5 +1,5 @@
-//! Submodule status (M1 of 4 — read-only). init/update/add/sync/deinit/remove/
-//! foreach are separate later milestones; this module only *reports*.
+//! Submodule status (M1 of 4) + init/update (M2 of 4). add/sync/deinit/remove/
+//! foreach are separate later milestones.
 //!
 //! Read-only, git2-based (mirrors `git_write::list_refs`'s read half): iterates
 //! every submodule registered in `.gitmodules` via `Repository::submodules()`
@@ -46,9 +46,72 @@
 //! a distinct "dirty AND out of date" state, so we mirror that and check
 //! conflicted, then not-initialized, then out-of-date, then dirty, in that
 //! order.
+//!
+//! ---------------------------------------------------------------------------
+//! M2: `submodule_init` / `submodule_update` — mutations, CLI-shellout model.
+//! ---------------------------------------------------------------------------
+//!
+//! Same shell-out-to-git-CLI-for-mutations model as `git_write.rs`/
+//! `git_remote.rs` (git2 stays read-only everywhere in this codebase). Reuses
+//! `git_write::WriteResult` verbatim as the return type (rather than adding a
+//! fourth structurally-identical `{ok, message, backup_ref}` copy) but keeps
+//! its own private `run_git`/validation helpers — matching `git_tag.rs`'s
+//! precedent for "reuse the shared RESULT SHAPE, not a shared helper surface"
+//! (see `git_remote.rs`'s own doc comment for why this codebase prefers one
+//! self-contained runner per module over a shared cross-module helper).
+//!
+//! SAFETY MANAGER — neither command takes a snapshot, for two different reasons:
+//!   * [`submodule_init`] only copies a URL (and, if set, a branch) from the
+//!     superproject's committed `.gitmodules` into its OWN `.git/config`. It
+//!     never touches a ref, the index, HEAD, or any working tree — there is
+//!     nothing reachable-or-history-affecting for a snapshot to protect
+//!     (identical reasoning to `git_tag.rs`'s `create_tag`: purely additive
+//!     local bookkeeping, nothing for Undo to guard).
+//!   * [`submodule_update`] moves HEAD and checks out files, but ONLY inside
+//!     the *submodule's own separate `.git`* — never the superproject's HEAD,
+//!     branches, or working tree (the gitlink entry the superproject itself
+//!     tracks for that path is completely unchanged by this command; only
+//!     what happens to be checked out AT that already-recorded commit
+//!     changes). This is exactly `git_remote.rs`'s own "nothing local
+//!     changes" reasoning for why plain `push` takes no snapshot — just one
+//!     level down, inside the submodule's nested repo instead of a remote.
+//!     The one real safety consideration — losing UNCOMMITTED work inside a
+//!     dirty submodule's working tree — is handled a different way, below,
+//!     not by a superproject snapshot (which couldn't protect it anyway: the
+//!     Safety Manager only ever pins the SUPERPROJECT's refs, and a
+//!     submodule's uncommitted-but-unstaged edits were never reachable from
+//!     any ref in the first place, superproject or submodule).
+//!
+//! DIRTY-SUBMODULE SAFETY: never passes `--force`. Real git's OWN default
+//! already refuses to check out over local modifications inside a submodule
+//! ("error: Your local changes to the following files would be overwritten
+//! by checkout ... Aborting" / "fatal: Unable to checkout '<sha>' in
+//! submodule path '<path>'") — exactly this codebase's existing "never
+//! force, surface git's own rejection" convention (`checkout`/`pull`). This
+//! was EMPIRICALLY VERIFIED in a throwaway fixture before trusting it (and is
+//! re-verified in `tests/submodule.rs`): a submodule whose tracked commit was
+//! bumped out from under it (simulating a pulled superproject commit that
+//! advanced the pointer) while its own working tree carried an uncommitted
+//! edit to the very file that differs between the two commits — `git
+//! submodule update` refused cleanly (non-zero exit, the message above), left
+//! the uncommitted edit's content completely intact, and left the
+//! submodule's own checked-out HEAD unmoved. No `--force` flag exists on
+//! either command below to override that refusal.
+//!
+//! `submodule_init` and `submodule_update` are deliberately separate calls
+//! (matching real `git submodule init` / `git submodule update` being
+//! separate subcommands) so the UI can offer both a plain "Update" (assumes
+//! already-registered/cloned; `init:false`) and a combined "Init + Update"
+//! convenience for a never-initialized row (`init:true`, which folds
+//! `submodule_init`'s registration step into the same `git submodule update
+//! --init` invocation rather than requiring two round-trips).
+
+use std::process::Command;
 
 use git2::SubmoduleIgnore;
 use serde::Serialize;
+
+use crate::git_write::WriteResult;
 
 /// One `.gitmodules`-registered submodule row.
 #[derive(Serialize, specta::Type)]
@@ -155,4 +218,157 @@ fn submodule_conflicted(repo: &git2::Repository, sm_path: &str) -> Result<bool, 
         }
     }
     Ok(false)
+}
+
+// ---------------------------------------------------------------------------
+// M2: init / update (own git-CLI runner — see module doc comment for why this
+// isn't shared with git_write.rs/git_remote.rs beyond the WriteResult shape)
+// ---------------------------------------------------------------------------
+
+struct GitOut {
+    ok: bool,
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .output()
+        .map_err(|e| format!("Could not run git: {e}"))?;
+    Ok(GitOut {
+        ok: output.status.success(),
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+    })
+}
+
+fn git_error_message(out: &GitOut) -> String {
+    if !out.stderr.is_empty() {
+        out.stderr.clone()
+    } else if !out.stdout.is_empty() {
+        out.stdout.clone()
+    } else {
+        format!("git exited with status {:?}", out.code)
+    }
+}
+
+/// `WriteResult`'s `ok`/`err` constructors are private to `git_write.rs`, so
+/// this module builds the struct literal directly (all 3 fields are `pub`) —
+/// same pattern as `git_tag.rs`'s own `ok_result`/`err_result` wrappers.
+fn ok_result(message: impl Into<String>, backup_ref: Option<String>) -> WriteResult {
+    WriteResult { ok: true, message: message.into(), backup_ref }
+}
+fn err_result(message: impl Into<String>) -> WriteResult {
+    WriteResult { ok: false, message: message.into(), backup_ref: None }
+}
+
+/// Reject anything that could be read as a flag or carries a control
+/// character. Deliberately looser than `git_write.rs`'s `validate_branch_name`
+/// — a submodule path legitimately contains `/` (nested paths) — this just
+/// catches the obviously-wrong cases with a clear message; the `--` this
+/// module always places before the path is the real defense (everything after
+/// it is a pathspec to git, never an option).
+fn validate_submodule_path(p: &str) -> Result<(), String> {
+    if p.is_empty() {
+        return Err("Submodule path is empty.".into());
+    }
+    if p.starts_with('-') {
+        return Err(format!("Refusing a submodule path that looks like a flag: {p:?}"));
+    }
+    if p.chars().any(|c| c.is_control()) {
+        return Err(format!("Submodule path has a control character: {p:?}"));
+    }
+    Ok(())
+}
+
+/// Register `submodule_path`'s URL (and branch, if `.gitmodules` sets one)
+/// into the superproject's OWN `.git/config` (`git submodule init -- <path>`)
+/// — does NOT clone. The overwhelmingly common precondition for
+/// `submodule_update` on a submodule that has never been cloned (a fresh
+/// clone of the superproject, or one manually `rm -rf`'d — both read as
+/// "not-initialized" in `submodule_status`); use `submodule_update` with
+/// `init:true` instead to fold both steps into one call.
+/// JS call: `invoke("submodule_init", { path, submodulePath })`.
+#[tauri::command]
+#[specta::specta]
+pub fn submodule_init(path: String, submodule_path: String) -> WriteResult {
+    if let Err(e) = validate_submodule_path(&submodule_path) {
+        return err_result(e);
+    }
+    match run_git(&path, &["submodule", "init", "--", &submodule_path]) {
+        Ok(out) if out.ok => ok_result(format!("Initialized submodule {submodule_path}."), None),
+        // e.g. "fatal: no submodule mapping found in .gitmodules for path '<path>'"
+        Ok(out) => err_result(git_error_message(&out)),
+        Err(e) => err_result(e),
+    }
+}
+
+/// Clone/checkout submodule(s) to the commit(s) the superproject's index
+/// tracks (`git submodule update`).
+///
+/// - `submodule_path: None` updates EVERY registered submodule in one
+///   invocation (no path restriction at all) — the bulk "Update all" action.
+///   `Some(p)` restricts to just that one path (`-- <p>`).
+/// - `init: true` adds `--init`, folding a never-run `submodule_init` into
+///   this same call (clone-if-never-cloned) — the "Init + Update"
+///   convenience. `init: false` is the plain "Update" action: it requires the
+///   submodule to already be registered+cloned (an update on a
+///   not-initialized submodule with `init:false` is a no-op as far as that
+///   path is concerned — real git silently skips it rather than erroring,
+///   since there is nothing registered yet for it to act on).
+/// - `recursive: true` adds `--recursive`, so a freshly-checked-out
+///   submodule's OWN submodules (a submodule-of-a-submodule) are inited/
+///   updated too, in the same call.
+///
+/// Never passes `--force`. See this module's doc comment for the empirically
+/// verified refusal git's own default already gives when an update would
+/// clobber uncommitted changes inside a submodule's working tree — that
+/// refusal surfaces here verbatim as `ok:false`, exactly like `checkout`/
+/// `pull`'s existing "never force" convention.
+///
+/// No Safety Manager snapshot: this only ever touches the SUBMODULE's own
+/// separate `.git` (its own HEAD/index/workdir) — never the superproject's
+/// HEAD, a branch, or its working tree — identical reasoning to plain
+/// `push`'s own "nothing local changes" rationale in `git_remote.rs`. And the
+/// one real risk a snapshot might otherwise exist to cover — clobbering
+/// uncommitted submodule changes — is already prevented by git's own refusal
+/// above, not by anything a superproject-level snapshot could restore anyway.
+/// JS call: `invoke("submodule_update", { path, submodulePath?, recursive, init })`.
+#[tauri::command]
+#[specta::specta]
+pub fn submodule_update(path: String, submodule_path: Option<String>, recursive: bool, init: bool) -> WriteResult {
+    if let Some(p) = &submodule_path {
+        if let Err(e) = validate_submodule_path(p) {
+            return err_result(e);
+        }
+    }
+    let mut args: Vec<&str> = vec!["submodule", "update"];
+    if init {
+        args.push("--init");
+    }
+    if recursive {
+        args.push("--recursive");
+    }
+    if let Some(p) = &submodule_path {
+        args.push("--");
+        args.push(p.as_str());
+    }
+    match run_git(&path, &args) {
+        Ok(out) if out.ok => ok_result(
+            match &submodule_path {
+                Some(p) => format!("Updated submodule {p}."),
+                None => "Updated all submodules.".to_string(),
+            },
+            None,
+        ),
+        // e.g. "error: Your local changes to the following files would be
+        // overwritten by checkout ... Aborting" — never forced, surfaced verbatim.
+        Ok(out) => err_result(git_error_message(&out)),
+        Err(e) => err_result(e),
+    }
 }
