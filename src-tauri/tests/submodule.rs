@@ -383,6 +383,172 @@ fn submodule_gitlink_merge_conflict_is_not_clean() {
     let _ = c2;
 }
 
+// `absolute_path`: the field that lets the frontend `invoke("load_graph", {
+// path: row.absolutePath })` (etc.) to open a submodule and manage it exactly
+// like the root repo — the whole point of this field. MUST be
+// `Path::join`-computed (never string concatenation, which would produce a
+// wrong or wrongly-separated path on Windows), so both tests below verify the
+// actual on-disk path via `std::fs::canonicalize`, not just string equality.
+#[test]
+fn submodule_status_reports_correct_absolute_path_for_a_normal_submodule() {
+    let child = TempRepo::init("submodule_abspath_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_abspath_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+
+    // Must be a real, well-formed absolute path — not empty, not relative.
+    assert!(!row.absolute_path.is_empty(), "absolute_path must not be empty");
+    assert!(
+        std::path::Path::new(&row.absolute_path).is_absolute(),
+        "absolute_path must be absolute, got {:?}",
+        row.absolute_path
+    );
+
+    // The REAL, empirical check: this must be the exact on-disk path of the
+    // submodule's own working directory — `parent`'s workdir joined with
+    // `sub`, via `Path::join`, not a hand-rolled string concatenation.
+    // Canonicalize both sides (rather than a raw string comparison) since the
+    // OS temp dir itself can be a symlink (e.g. macOS's `/tmp` ->
+    // `/private/tmp`) — canonicalize resolves that on both sides identically,
+    // so this is purely testing the join logic, not host-specific symlink
+    // trivia.
+    let expected = std::fs::canonicalize(parent.dir.join("sub")).expect("canonicalize expected sub dir");
+    let actual = std::fs::canonicalize(&row.absolute_path).expect("canonicalize row.absolute_path");
+    assert_eq!(actual, expected, "absolute_path must equal parent workdir joined with the submodule's relative path");
+}
+
+// A submodule-of-a-submodule, empirically verified from the MID-level repo's
+// own point of view (not the top-level superproject's): `submodule_status`
+// only ever walks whatever repo path it is CALLED against (never recurses),
+// so calling it on "sub" (itself a checked-out submodule of "parent", and
+// itself a superproject of its own "nested" submodule) must compute
+// `absolute_path` relative to "sub"'s OWN workdir — NOT "parent"'s. A buggy
+// implementation that accidentally anchored every `absolute_path` at some
+// fixed/outer workdir (e.g. always the process's cwd, or always the
+// outermost repo ever opened) would still produce a plausible-looking
+// string here; only comparing against the real on-disk canonical path (as
+// below) catches that.
+#[test]
+fn submodule_status_on_a_mid_level_repo_computes_absolute_path_relative_to_its_own_workdir() {
+    // grandchild <- (submodule "nested" of) <- mid <- (submodule "sub" of) <- parent
+    let grandchild = TempRepo::init("submodule_abspath_nested_grandchild");
+    let _gc0 = grandchild.commit("gc.txt", "grandchild\n", "gc0");
+
+    let mid = TempRepo::init("submodule_abspath_nested_mid");
+    let _mid0 = mid.commit("mid.txt", "mid\n", "mid0");
+    add_submodule(&mid, &grandchild, "nested");
+
+    let parent = TempRepo::init("submodule_abspath_nested_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &mid, "sub");
+
+    // Sanity: from the TOP-level repo, submodule_status only sees "sub" (its
+    // own direct submodule) — "nested" is one level deeper and is not a
+    // top-level entry of `parent`'s own .gitmodules at all.
+    let top_rows = submodule_status(parent.path()).expect("submodule_status (top) failed");
+    assert_eq!(top_rows.len(), 1);
+    assert_eq!(top_rows[0].path, "sub");
+    let expected_sub = std::fs::canonicalize(parent.dir.join("sub")).expect("canonicalize sub dir");
+    let actual_sub = std::fs::canonicalize(&top_rows[0].absolute_path).expect("canonicalize top row absolute_path");
+    assert_eq!(actual_sub, expected_sub, "top-level row's absolute_path must be parent's workdir + \"sub\"");
+
+    // Now call submodule_status on "sub" ITSELF (the mid-level repo — a
+    // checked-out submodule of `parent` that is, simultaneously, its own
+    // fully-fledged repo with its own "nested" submodule registered). This is
+    // exactly what the frontend does after "opening" a submodule: it treats
+    // `sub`'s own absolute_path as a brand-new active repo root.
+    let sub_path = parent.dir.join("sub").to_string_lossy().to_string();
+    let mid_rows = submodule_status(sub_path).expect("submodule_status (mid-level) failed");
+    assert_eq!(mid_rows.len(), 1, "sub's own .gitmodules registers exactly one submodule: nested");
+    let nested_row = &mid_rows[0];
+    assert_eq!(nested_row.path, "nested");
+
+    // The crux of this test: "nested"'s absolute_path must be relative to
+    // "sub"'s OWN workdir (parent/sub/nested), not the top-level parent's
+    // workdir (which would wrongly compute to parent/nested).
+    let expected_nested = std::fs::canonicalize(parent.dir.join("sub").join("nested"))
+        .expect("canonicalize sub/nested dir (should exist, even if not yet checked out)");
+    let actual_nested =
+        std::fs::canonicalize(&nested_row.absolute_path).expect("canonicalize nested row absolute_path");
+    assert_eq!(
+        actual_nested, expected_nested,
+        "nested submodule's absolute_path must be sub's own workdir + \"nested\", not parent's"
+    );
+
+    // Negative control: prove this genuinely differs from (rather than
+    // coincidentally equaling) what a top-level-anchored bug would produce.
+    let wrongly_anchored_at_parent = std::fs::canonicalize(parent.dir.join("nested"));
+    assert!(
+        wrongly_anchored_at_parent.is_err() || wrongly_anchored_at_parent.unwrap() != expected_nested,
+        "parent/nested must not exist / must not coincide with the correct sub/nested path"
+    );
+}
+
+// Both tests above only ever register a submodule at a SINGLE-component path
+// ("sub", "nested") — `sm.path()` (what `absolute_path` is joined against
+// `repo.workdir()` with) never itself contains a `/`, so a bug that joins
+// `wd.join(&sm_path)` in ONE call (fine on Unix, where `/` already IS the
+// native separator, but on Windows leaves any separator embedded INSIDE a
+// multi-component `sm_path` un-renormalized — see `join_native_relative`'s
+// doc comment in src/submodule.rs) can't be told apart from the fix by these
+// alone. This one registers a submodule two directories deep
+// ("vendor/lib-a" — "vendor" a plain, non-submodule directory that git
+// itself creates on `submodule add`, "lib-a" the actual submodule)
+// specifically so `sm_path` is multi-component. On THIS host (Unix), both
+// the buggy single-join and the fixed per-component-join code paths produce
+// byte-identical results — `/` is the native separator either way, so this
+// can only exercise the SPLIT/JOIN logic's correctness, not the Windows-only
+// mixed-separator symptom itself (there is no way to observe that without an
+// actual Windows build — see this repo's task notes). It still locks in the
+// on-disk path is correct for a nested path and guards against a future
+// regression that mishandles multi-component paths in some OTHER way (e.g.
+// truncating to just the last component).
+#[test]
+fn submodule_status_reports_correct_absolute_path_for_a_multi_component_nested_path() {
+    let child = TempRepo::init("submodule_abspath_multi_component_child");
+    let _child_c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_abspath_multi_component_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    // "vendor" is NOT itself a submodule boundary — just a plain directory
+    // `git submodule add` creates on the fly to hold "lib-a" — so `sm.path()`
+    // for this row comes back as the literal 2-component string "vendor/lib-a".
+    add_submodule(&parent, &child, "vendor/lib-a");
+
+    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.path, "vendor/lib-a");
+
+    assert!(!row.absolute_path.is_empty(), "absolute_path must not be empty");
+    assert!(
+        std::path::Path::new(&row.absolute_path).is_absolute(),
+        "absolute_path must be absolute, got {:?}",
+        row.absolute_path
+    );
+
+    let expected = std::fs::canonicalize(parent.dir.join("vendor").join("lib-a"))
+        .expect("canonicalize expected vendor/lib-a dir");
+    let actual = std::fs::canonicalize(&row.absolute_path).expect("canonicalize row.absolute_path");
+    assert_eq!(
+        actual, expected,
+        "absolute_path must equal parent workdir joined with EVERY component of the submodule's relative path"
+    );
+
+    // Extra, string-level check (not just canonicalize-based) that every
+    // separator in the result is native — meaningless as a Windows-mixed-
+    // separator regression check on this Unix host (where `/` already IS
+    // `std::path::MAIN_SEPARATOR`), but does confirm `absolute_path` wasn't
+    // truncated or reordered relative to the two components.
+    assert!(row.absolute_path.ends_with(&format!("vendor{}lib-a", std::path::MAIN_SEPARATOR)));
+}
+
 // ---------------------------------------------------------------------------
 // M2: submodule_init / submodule_update
 // ---------------------------------------------------------------------------

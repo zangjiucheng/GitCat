@@ -119,11 +119,11 @@ const DEMO_TAGS: SimpleRef[] = [
 // src-tauri/src/submodule.rs) so the browser design-mode preview actually
 // shows every status chip color, not just "clean".
 const DEMO_SUBMODULES: SubmoduleInfo[] = [
-  { name: "vendor/lib-a", path: "vendor/lib-a", url: "https://github.com/example/lib-a.git", status: "clean", headSha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", workdirSha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
-  { name: "vendor/lib-b", path: "vendor/lib-b", url: "https://github.com/example/lib-b.git", status: "dirty", headSha: "b2c3d4e5f60718293a4b5c6d7e8f9012345678a1", workdirSha: "b2c3d4e5f60718293a4b5c6d7e8f9012345678a1" },
-  { name: "third_party/tool", path: "third_party/tool", url: "https://github.com/example/tool.git", status: "out-of-date", headSha: "c3d4e5f60718293a4b5c6d7e8f9012345678a1b2", workdirSha: "d4e5f60718293a4b5c6d7e8f9012345678a1b2c3" },
-  { name: "docs/theme", path: "docs/theme", url: null, status: "not-initialized", headSha: "e5f60718293a4b5c6d7e8f9012345678a1b2c3d4", workdirSha: null },
-  { name: "shared/proto", path: "shared/proto", url: "https://github.com/example/proto.git", status: "conflicted", headSha: "f60718a293a4b5c6d7e8f9012345678a1b2c3d4e", workdirSha: "0718a293a4b5c6d7e8f9012345678a1b2c3d4e5f" },
+  { name: "vendor/lib-a", path: "vendor/lib-a", absolutePath: "/demo/gitcat/vendor/lib-a", url: "https://github.com/example/lib-a.git", status: "clean", headSha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", workdirSha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+  { name: "vendor/lib-b", path: "vendor/lib-b", absolutePath: "/demo/gitcat/vendor/lib-b", url: "https://github.com/example/lib-b.git", status: "dirty", headSha: "b2c3d4e5f60718293a4b5c6d7e8f9012345678a1", workdirSha: "b2c3d4e5f60718293a4b5c6d7e8f9012345678a1" },
+  { name: "third_party/tool", path: "third_party/tool", absolutePath: "/demo/gitcat/third_party/tool", url: "https://github.com/example/tool.git", status: "out-of-date", headSha: "c3d4e5f60718293a4b5c6d7e8f9012345678a1b2", workdirSha: "d4e5f60718293a4b5c6d7e8f9012345678a1b2c3" },
+  { name: "docs/theme", path: "docs/theme", absolutePath: "/demo/gitcat/docs/theme", url: null, status: "not-initialized", headSha: "e5f60718293a4b5c6d7e8f9012345678a1b2c3d4", workdirSha: null },
+  { name: "shared/proto", path: "shared/proto", absolutePath: "/demo/gitcat/shared/proto", url: "https://github.com/example/proto.git", status: "conflicted", headSha: "f60718a293a4b5c6d7e8f9012345678a1b2c3d4e", workdirSha: "0718a293a4b5c6d7e8f9012345678a1b2c3d4e5f" },
 ];
 
 export type BranchMenu = { name: string; isCurrent: boolean; x: number; y: number };
@@ -189,6 +189,32 @@ export function submoduleAction(status: string): SubmoduleAction {
 // entirely for those and calls straight through with force:false.
 export function submoduleNeedsForceConfirm(status: string): boolean {
   return status === "dirty" || status === "conflicted";
+}
+// Whether a submodule row's status has an actual working directory on disk
+// for the per-row "Open" action (bridge.enterSubmodule) to enter — a sibling
+// pure classifier to submoduleAction/submoduleNeedsForceConfirm above,
+// exported the same way for the same reason (directly unit-testable, no
+// component-rendering harness needed). "clean"/"dirty"/"out-of-date"/
+// "conflicted" all have SOMETHING checked out (submoduleAction's own
+// "blocked" set — dirty/conflicted — still has a real working tree, just one
+// this app won't Update/Deinit without the user resolving it first; that
+// restriction is orthogonal to whether there's a directory to open at all).
+// "not-initialized" (never cloned), "removed" (already cleared by
+// submodule_remove), and "unreadable" (CRASH FIX — this submodule's own
+// nested-submodule subtree was found cyclic/unresolvable, so submodule_status
+// never even ran for it) all have nothing safe/meaningful to open, matching
+// submoduleAction's own "removed"/"unreadable" -> null treatment and
+// Sidebar.svelte's existing special-casing of those two statuses.
+export function submoduleCanOpen(status: string): boolean {
+  switch (status) {
+    case "clean":
+    case "dirty":
+    case "out-of-date":
+    case "conflicted":
+      return true;
+    default:
+      return false;
+  }
 }
 // Sentinel busyTarget for the bulk "Update all submodules" action — can never
 // collide with a real submodule path (those come from `.gitmodules` and are
@@ -332,6 +358,29 @@ class SidebarState {
     } catch (e) {
       console.error("submodule_status", e);
     }
+  }
+
+  // "Open" — re-points the WHOLE APP at this submodule's own absolute path
+  // (bridge.enterSubmodule: pushes CUR_REPO onto legacy/main.ts's navigation
+  // stack, then calls its openRepo(absolutePath)) so the submodule becomes
+  // the fully active repo — its own commit graph, working-directory panel,
+  // branches/tags, bisect, rebase, even its own nested Submodules section —
+  // with zero duplicated UI. Gated by submoduleCanOpen(status) in
+  // Sidebar.svelte (see that function's own doc comment); this method itself
+  // doesn't re-check status; it's a thin, directly-testable wrapper so
+  // "clicking Open calls bridge.enterSubmodule with the right path" doesn't
+  // need a component-rendering harness (see sidebar.svelte.test.ts). Deliberately
+  // never touches busy/busyTarget — unlike every mutation above, this isn't a
+  // submodule_* IPC round-trip against the CURRENT repo, it's an entirely
+  // different repo being loaded; openRepo has its own re-entrancy guard
+  // (openRepoBusy) for that, same as pickRepo/the setup wizard.
+  openSubmodule(absolutePath: string) {
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say("Opened " + absolutePath + " (demo).");
+      return;
+    }
+    bridge.enterSubmodule(absolutePath);
   }
 
   // "Init + update" — for a "not-initialized" row (submoduleAction(status)

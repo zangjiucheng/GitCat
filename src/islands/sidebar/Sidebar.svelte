@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { sidebarCtrl, submoduleAction, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
+  import { sidebarCtrl, submoduleAction, submoduleCanOpen, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import type { SimpleRef, SubmoduleInfo } from "../../ipc/bindings";
 
@@ -453,6 +453,19 @@
                    submodule. -->
               <span class="rname mut">unreadable — possible cyclic submodule reference</span>
             {:else}
+              <!-- "Open" — re-points the whole app at this submodule's own
+                   absolute path (sidebarCtrl.openSubmodule -> bridge.
+                   enterSubmodule) so it becomes the fully active repo: same
+                   graph/workdir/branches/bisect/rebase/nested-Submodules UI,
+                   zero duplicated UI. Gated by submoduleCanOpen(status) — only
+                   clean/dirty/out-of-date/conflicted rows actually have a
+                   working directory to enter (see that function's own doc
+                   comment); not-initialized falls through to the {:else if
+                   action === "init"} branch below instead, same as it always
+                   has. -->
+              {#if submoduleCanOpen(s.status)}
+                <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.openSubmodule(s.absolutePath)}>Open</button>
+              {/if}
               <!-- Sync is offered for EVERY row regardless of status (unlike
                    Init/Update below, gated by submoduleAction) — it only
                    rewrites .git/config's url, never the submodule's own

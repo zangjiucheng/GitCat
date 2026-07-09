@@ -952,6 +952,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
       </g>
     </svg>GitCat</div>
     <button class="repo-pick"><span>gitcat</span><span class="chev">&#9662;</span></button>
+    <!-- "Back to <parent repo>" — only shown once the user has navigated INTO
+         a submodule (legacy/main.ts's NAV_STACK is non-empty); hidden by
+         default here, toggled by updateBackToParentBtn() alongside every
+         push/pop of that stack (enterSubmodule/goBackToParent/pickRepo). The
+         name comes from repoBasename(), the SAME folder-name logic
+         ".repo-pick"'s own span above uses for the current repo. -->
+    <button class="tb-btn" id="backToParentBtn" style="display:none" title="Go back to the repository you navigated into this submodule from">&#8592; Back to <span id="backToParentName"></span></button>
     <div class="branch-pill"><span class="ic">&#9282;</span><span id="pillBranch">main</span><span class="ab" id="pillAb"><b>&#8593;2</b>&#183;<b>&#8595;0</b></span></div>
     <div class="sync-actions">
       <button class="tb-btn" id="fetchBtn" title="Fetch — update remote-tracking refs">&#8635; Fetch</button>

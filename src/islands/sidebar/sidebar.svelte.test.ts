@@ -8,6 +8,7 @@ vi.mock("../../legacy/bridge", () => ({
   armDanger: vi.fn(),
   updateBranchPill: vi.fn(),
   relTime: (t: number) => t + "s ago",
+  enterSubmodule: vi.fn(),
 }));
 
 let mockInTauri = false;
@@ -49,7 +50,7 @@ import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
 import type { SubmoduleForeachEntry } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
-import { sidebarCtrl, submoduleAction, submoduleNeedsForceConfirm, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
+import { sidebarCtrl, submoduleAction, submoduleNeedsForceConfirm, submoduleCanOpen, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
@@ -162,26 +163,26 @@ describe("submodules", () => {
     vi.mocked(commands.listRefs).mockResolvedValueOnce(ok({ head: "main", locals: [], remotes: [], tags: [] }));
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(
       ok([
-        { name: "vendor/a", path: "vendor/a", url: "https://example.com/a.git", status: "clean", headSha: "aaa1111", workdirSha: "aaa1111" },
-        { name: "vendor/b", path: "vendor/b", url: "https://example.com/b.git", status: "dirty", headSha: "bbb2222", workdirSha: "bbb2222" },
+        { name: "vendor/a", path: "vendor/a", absolutePath: "/repo/vendor/a", url: "https://example.com/a.git", status: "clean", headSha: "aaa1111", workdirSha: "aaa1111" },
+        { name: "vendor/b", path: "vendor/b", absolutePath: "/repo/vendor/b", url: "https://example.com/b.git", status: "dirty", headSha: "bbb2222", workdirSha: "bbb2222" },
       ]),
     );
     await sidebarCtrl.refresh("/repo");
     expect(commands.submoduleStatus).toHaveBeenCalledWith("/repo");
     expect(sidebarCtrl.submodules).toEqual([
-      { name: "vendor/a", path: "vendor/a", url: "https://example.com/a.git", status: "clean", headSha: "aaa1111", workdirSha: "aaa1111" },
-      { name: "vendor/b", path: "vendor/b", url: "https://example.com/b.git", status: "dirty", headSha: "bbb2222", workdirSha: "bbb2222" },
+      { name: "vendor/a", path: "vendor/a", absolutePath: "/repo/vendor/a", url: "https://example.com/a.git", status: "clean", headSha: "aaa1111", workdirSha: "aaa1111" },
+      { name: "vendor/b", path: "vendor/b", absolutePath: "/repo/vendor/b", url: "https://example.com/b.git", status: "dirty", headSha: "bbb2222", workdirSha: "bbb2222" },
     ]);
   });
 
   it("real mode: each of the 5 backend statuses passes through to state unchanged (the view keys its status chip color off this exact string)", async () => {
     mockInTauri = true;
     const fixture = [
-      { name: "a", path: "a", url: null, status: "not-initialized", headSha: "sha1", workdirSha: null },
-      { name: "b", path: "b", url: null, status: "out-of-date", headSha: "sha2", workdirSha: "sha3" },
-      { name: "c", path: "c", url: null, status: "dirty", headSha: "sha4", workdirSha: "sha4" },
-      { name: "d", path: "d", url: null, status: "clean", headSha: "sha5", workdirSha: "sha5" },
-      { name: "e", path: "e", url: null, status: "conflicted", headSha: "sha6", workdirSha: "sha7" },
+      { name: "a", path: "a", absolutePath: "/repo/a", url: null, status: "not-initialized", headSha: "sha1", workdirSha: null },
+      { name: "b", path: "b", absolutePath: "/repo/b", url: null, status: "out-of-date", headSha: "sha2", workdirSha: "sha3" },
+      { name: "c", path: "c", absolutePath: "/repo/c", url: null, status: "dirty", headSha: "sha4", workdirSha: "sha4" },
+      { name: "d", path: "d", absolutePath: "/repo/d", url: null, status: "clean", headSha: "sha5", workdirSha: "sha5" },
+      { name: "e", path: "e", absolutePath: "/repo/e", url: null, status: "conflicted", headSha: "sha6", workdirSha: "sha7" },
     ];
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok(fixture));
     await sidebarCtrl.refresh("/repo");
@@ -191,26 +192,26 @@ describe("submodules", () => {
   it("real mode: a conflicted submodule (Bug 3 — merge-conflicted gitlink) reports differing head/workdir shas, never 'clean'", async () => {
     mockInTauri = true;
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(
-      ok([{ name: "sub", path: "sub", url: null, status: "conflicted", headSha: "c1c1c1c", workdirSha: "c0c0c0c" }]),
+      ok([{ name: "sub", path: "sub", absolutePath: "/repo/sub", url: null, status: "conflicted", headSha: "c1c1c1c", workdirSha: "c0c0c0c" }]),
     );
     await sidebarCtrl.refresh("/repo");
-    expect(sidebarCtrl.submodules).toEqual([{ name: "sub", path: "sub", url: null, status: "conflicted", headSha: "c1c1c1c", workdirSha: "c0c0c0c" }]);
+    expect(sidebarCtrl.submodules).toEqual([{ name: "sub", path: "sub", absolutePath: "/repo/sub", url: null, status: "conflicted", headSha: "c1c1c1c", workdirSha: "c0c0c0c" }]);
     expect(sidebarCtrl.submodules[0].status).not.toBe("clean");
   });
 
   it("real mode: an unreadable submodule (CRASH FIX — cyclic nested-submodule reference) passes through unchanged, never 'clean'", async () => {
     mockInTauri = true;
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(
-      ok([{ name: "sub", path: "sub", url: null, status: "unreadable", headSha: "c1c1c1c", workdirSha: "c0c0c0c" }]),
+      ok([{ name: "sub", path: "sub", absolutePath: "/repo/sub", url: null, status: "unreadable", headSha: "c1c1c1c", workdirSha: "c0c0c0c" }]),
     );
     await sidebarCtrl.refresh("/repo");
-    expect(sidebarCtrl.submodules).toEqual([{ name: "sub", path: "sub", url: null, status: "unreadable", headSha: "c1c1c1c", workdirSha: "c0c0c0c" }]);
+    expect(sidebarCtrl.submodules).toEqual([{ name: "sub", path: "sub", absolutePath: "/repo/sub", url: null, status: "unreadable", headSha: "c1c1c1c", workdirSha: "c0c0c0c" }]);
     expect(sidebarCtrl.submodules[0].status).not.toBe("clean");
   });
 
   it("real mode: empty list clears submodules", async () => {
     mockInTauri = true;
-    sidebarCtrl.submodules = [{ name: "old", path: "old", url: null, status: "clean", headSha: "x", workdirSha: "x" }];
+    sidebarCtrl.submodules = [{ name: "old", path: "old", absolutePath: "/repo/old", url: null, status: "clean", headSha: "x", workdirSha: "x" }];
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
     await sidebarCtrl.refresh("/repo");
     expect(sidebarCtrl.submodules).toEqual([]);
@@ -218,7 +219,7 @@ describe("submodules", () => {
 
   it("real mode: logs and leaves submodule state untouched on error", async () => {
     mockInTauri = true;
-    const prior = [{ name: "old", path: "old", url: null, status: "clean", headSha: "x", workdirSha: "x" }];
+    const prior = [{ name: "old", path: "old", absolutePath: "/repo/old", url: null, status: "clean", headSha: "x", workdirSha: "x" }];
     sidebarCtrl.submodules = prior;
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(err("not a repo"));
     await sidebarCtrl.refresh("/repo");
@@ -229,10 +230,10 @@ describe("submodules", () => {
     mockInTauri = true;
     vi.mocked(commands.listRefs).mockResolvedValueOnce(err("repo not found"));
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(
-      ok([{ name: "vendor/a", path: "vendor/a", url: null, status: "clean", headSha: "aaa", workdirSha: "aaa" }]),
+      ok([{ name: "vendor/a", path: "vendor/a", absolutePath: "/repo/vendor/a", url: null, status: "clean", headSha: "aaa", workdirSha: "aaa" }]),
     );
     await sidebarCtrl.refresh("/repo");
-    expect(sidebarCtrl.submodules).toEqual([{ name: "vendor/a", path: "vendor/a", url: null, status: "clean", headSha: "aaa", workdirSha: "aaa" }]);
+    expect(sidebarCtrl.submodules).toEqual([{ name: "vendor/a", path: "vendor/a", absolutePath: "/repo/vendor/a", url: null, status: "clean", headSha: "aaa", workdirSha: "aaa" }]);
   });
 });
 
@@ -293,6 +294,58 @@ describe("submoduleNeedsForceConfirm (Deinit's confirm gate)", () => {
 
   it("unreadable -> false (nothing left to deinit — the row offers no Deinit button at all)", () => {
     expect(submoduleNeedsForceConfirm("unreadable")).toBe(false);
+  });
+});
+
+describe("submoduleCanOpen (Open row-action gate)", () => {
+  it("clean -> true", () => {
+    expect(submoduleCanOpen("clean")).toBe(true);
+  });
+
+  it("dirty -> true (a working tree exists, even though Update is separately blocked)", () => {
+    expect(submoduleCanOpen("dirty")).toBe(true);
+  });
+
+  it("out-of-date -> true", () => {
+    expect(submoduleCanOpen("out-of-date")).toBe(true);
+  });
+
+  it("conflicted -> true", () => {
+    expect(submoduleCanOpen("conflicted")).toBe(true);
+  });
+
+  it("not-initialized -> false (never cloned — nothing on disk to open)", () => {
+    expect(submoduleCanOpen("not-initialized")).toBe(false);
+  });
+
+  it("removed -> false (Bug 6 fix: already staged for removal, nothing left to open)", () => {
+    expect(submoduleCanOpen("removed")).toBe(false);
+  });
+
+  it("unreadable -> false (CRASH FIX: cyclic/unreadable submodule, nothing safe to open)", () => {
+    expect(submoduleCanOpen("unreadable")).toBe(false);
+  });
+});
+
+describe("openSubmodule (per-row 'Open')", () => {
+  it("design mode is a cosmetic no-op with a toast — never touches bridge.enterSubmodule", () => {
+    mockInTauri = false;
+    sidebarCtrl.openSubmodule("/repo/vendor/lib-a");
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(bridge.enterSubmodule).not.toHaveBeenCalled();
+  });
+
+  it("real mode: calls bridge.enterSubmodule with the submodule's own absolute path", () => {
+    mockInTauri = true;
+    sidebarCtrl.openSubmodule("/repo/vendor/lib-a");
+    expect(bridge.enterSubmodule).toHaveBeenCalledWith("/repo/vendor/lib-a");
+  });
+
+  it("never touches busy/busyTarget — unlike every submodule_* mutation, this isn't an IPC round-trip against the current repo", () => {
+    mockInTauri = true;
+    sidebarCtrl.openSubmodule("/repo/vendor/lib-a");
+    expect(sidebarCtrl.busy).toBe(false);
+    expect(sidebarCtrl.busyTarget).toBeNull();
   });
 });
 
@@ -499,7 +552,7 @@ describe("initAndUpdateSubmodule (per-row 'Init + update', not-initialized rows)
     mockInTauri = true;
     vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "initialized", backupRef: null });
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(
-      ok([{ name: "docs/theme", path: "docs/theme", url: "https://example.com/theme.git", status: "clean", headSha: "a", workdirSha: "a" }]),
+      ok([{ name: "docs/theme", path: "docs/theme", absolutePath: "/repo/docs/theme", url: "https://example.com/theme.git", status: "clean", headSha: "a", workdirSha: "a" }]),
     );
     await sidebarCtrl.initAndUpdateSubmodule("docs/theme");
     expect(commands.submoduleUpdate).toHaveBeenCalledWith("/repo", "docs/theme", false, true);
@@ -550,7 +603,7 @@ describe("updateSubmodule (per-row 'Update', out-of-date rows)", () => {
     mockInTauri = true;
     vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "updated", backupRef: null });
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(
-      ok([{ name: "third_party/tool", path: "third_party/tool", url: null, status: "clean", headSha: "a", workdirSha: "a" }]),
+      ok([{ name: "third_party/tool", path: "third_party/tool", absolutePath: "/repo/third_party/tool", url: null, status: "clean", headSha: "a", workdirSha: "a" }]),
     );
     await sidebarCtrl.updateSubmodule("third_party/tool");
     expect(commands.submoduleUpdate).toHaveBeenCalledWith("/repo", "third_party/tool", false, false);
@@ -1213,7 +1266,7 @@ describe("setSnapshots / reset", () => {
     sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
     sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
     sidebarCtrl.hasRepo = true;
-    sidebarCtrl.submodules = [{ name: "vendor/a", path: "vendor/a", url: null, status: "clean", headSha: "x", workdirSha: "x" }];
+    sidebarCtrl.submodules = [{ name: "vendor/a", path: "vendor/a", absolutePath: "/repo/vendor/a", url: null, status: "clean", headSha: "x", workdirSha: "x" }];
     sidebarCtrl.reset();
     expect(sidebarCtrl.locals).toEqual([]);
     expect(sidebarCtrl.head).toBeNull();

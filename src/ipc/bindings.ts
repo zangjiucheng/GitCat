@@ -1399,7 +1399,31 @@ stderr: string }
 /**
  * One `.gitmodules`-registered submodule row.
  */
-export type SubmoduleInfo = { name: string; path: string; url: string | null; 
+export type SubmoduleInfo = { name: string; path: string; 
+/**
+ * The submodule's own working directory, as an absolute path on disk:
+ * this repo's OWN `repo.workdir()` (the repo `submodule_status` was
+ * called against — NOT necessarily the top-level superproject; calling
+ * `submodule_status` on a MID-level repo, in a submodule-of-a-submodule
+ * chain, yields paths relative to THAT repo's own workdir, one level
+ * down) joined with `path` via `join_native_relative` (per-component
+ * `Path::join`, see that function's own doc comment) — never string
+ * concatenation nor a single `Path::join` on the whole (possibly multi-
+ * component) relative path, either of which could produce a wrong or
+ * wrongly/mixed-separator path on Windows (`\` vs `/`). This is exactly
+ * the path the frontend passes back into
+ * `load_graph`/`workdir_status`/etc. to treat the submodule as its own
+ * fully-fledged active repo (own graph, own stage/commit, own
+ * branches/tags, own bisect/rebase, even its own nested Submodules
+ * section) — the whole point of this field.
+ * 
+ * Still populated (a well-formed, valid absolute path string — never
+ * empty/null) even for a "not-initialized"/"removed"/"unreadable" row
+ * where nothing actually exists on disk at this path yet: the frontend
+ * itself decides whether to offer an "Open" action for those statuses,
+ * not this field.
+ */
+absolutePath: string; url: string | null; 
 /**
  * "conflicted" | "removed" | "not-initialized" | "out-of-date" | "dirty" | "clean" | "unreadable"
  * 

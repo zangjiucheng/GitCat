@@ -1004,6 +1004,12 @@ function loadGraph(N){
 /* ============================================================
    12) REAL REPOSITORY (Tauri): open a repo -> Rust load_graph
    ============================================================ */
+// Last path segment of an absolute repo path, for display only (e.g. the
+// ".repo-pick" folder-name label, and the "← Back to <parent repo name>"
+// affordance below) — the ONE place this trimming/splitting happens, reused
+// everywhere a repo path needs to become a short display name rather than
+// re-deriving it ad hoc at each call site.
+function repoBasename(path){ return path.replace(/[\/\\]+$/,"").split(/[\/\\]/).pop() || path; }
 // Returns true when the repo actually loaded, false when load_graph (or any
 // step) failed. Never throws — callers that don't care (pickRepo) can ignore
 // the result, while the setup wizard uses it to keep its done-step overlay up
@@ -1025,8 +1031,13 @@ async function openRepo(path){
   // sidebarCtrl.cancelIfRunning's own doc comment.
   await sidebarCtrl.cancelIfRunning();
   const pickBtn=$(".repo-pick");
+  const backBtn=$("#backToParentBtn");
   let pickSpinner=null;
   if(pickBtn){ pickBtn.disabled=true; pickSpinner=document.createElement("span"); pickSpinner.className="spinner"; pickBtn.insertBefore(pickSpinner,pickBtn.firstChild); }
+  // Also disable the "← Back to …" affordance (if shown) for the same
+  // re-entrancy reason as pickBtn above — it triggers openRepo() too (via
+  // goBackToParent), just from a different button.
+  if(backBtn) backBtn.disabled=true;
   Tama.set("thinking");
   try{
     const g = await tinvoke("load_graph", { path });
@@ -1040,8 +1051,7 @@ async function openRepo(path){
     // the wrong repo+file combination. deselect() mirrors bootEmpty()'s own
     // reset sequence; a later selectWorkdir() reopens it against the new repo.
     workdirCtrl.deselect();
-    const name = path.replace(/[\/\\]+$/,"").split(/[\/\\]/).pop() || path;
-    $(".repo-pick span").textContent = name;
+    $(".repo-pick span").textContent = repoBasename(path);
     loadGraph(g.n);
     await sidebarCtrl.refresh(CUR_REPO);
     await Safety.refresh();
@@ -1060,7 +1070,80 @@ async function openRepo(path){
     await bisectCtrl.probeOnOpen(path);
     return true;
   }catch(e){ Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); return false; }
-  finally{ openRepoBusy=false; if(pickBtn){ pickBtn.disabled=false; if(pickSpinner) pickSpinner.remove(); } }
+  finally{ openRepoBusy=false; if(pickBtn){ pickBtn.disabled=false; if(pickSpinner) pickSpinner.remove(); } if(backBtn) backBtn.disabled=false; }
+}
+/* ------------------------------------------------------------
+   12a) SUBMODULE NAVIGATION STACK — "enter" a submodule (become its own
+   fully active repo, reusing openRepo above verbatim) and "go back" out.
+   ------------------------------------------------------------
+   Tracks the absolute path of every ancestor repo the user has navigated
+   INTO a submodule from. A plain array, exported (live binding, same as
+   CUR_REPO above — see bridge.ts's own file header) and always mutated IN
+   PLACE (push/pop/length=0), never reassigned: the SAME array object is
+   shared with every importer, so there's nothing that could go stale.
+   Arbitrary nesting depth is just arbitrary stack depth — entering a
+   submodule-of-a-submodule pushes twice, going back twice returns to the
+   original top-level repo.
+   openRepo() itself deliberately never touches this stack — it's used both
+   for "open a fresh repo via the picker" (which must NOT push) and
+   internally by both functions below (which push/pop it themselves around
+   their own call to openRepo). pickRepo() (below) clears it outright: once
+   the user's deliberately left the chain to open something unrelated, going
+   back no longer makes sense. */
+export let NAV_STACK=[];
+// Pushes CUR_REPO (the repo being left) onto NAV_STACK, then opens
+// `absolutePath` — straight from SubmoduleInfo.absolutePath (see its own doc
+// comment in src/ipc/bindings.ts), never string-concatenated by this file —
+// via the SAME openRepo() every "open a repository" path already uses: real
+// graph, real workdir panel, real branches/tags/bisect/rebase, even its own
+// nested Submodules section. Zero duplicated UI — this repo simply IS the
+// submodule now. Only pushes once openRepo() actually reports success (the
+// same "don't touch persistent state until the load succeeded" discipline
+// openRepo itself uses for CUR_REPO/BACKEND above) so a failed load — bad
+// path, the submodule vanished on disk, etc. — doesn't leave a stale,
+// unbalanced stack entry that a later goBackToParent() would pop into
+// nothing useful.
+async function enterSubmodule(absolutePath){
+  const parent=CUR_REPO; // capture BEFORE openRepo() reassigns it below
+  const ok=await openRepo(absolutePath);
+  if(ok){ NAV_STACK.push(parent); updateBackToParentBtn(); }
+  return ok;
+}
+// Pops the most recently pushed ancestor and opens it via openRepo — pushes
+// nothing itself (going backward), symmetric with enterSubmodule above. PEEKS
+// at the top of NAV_STACK first (does NOT pop yet), and only actually pops +
+// updates the button once openRepo reports success — the exact same "don't
+// touch persistent state until the load succeeded" discipline enterSubmodule
+// uses above. If the parent repo fails to load (transiently locked,
+// permission-denied, or actually moved/deleted since it was left), popping
+// FIRST would silently drop the stack entry forever: the next Back click
+// would skip straight past that level (or, if this was the last entry, the
+// Back button would vanish outright) with no way to retry short of the
+// folder picker. Leaving NAV_STACK untouched on failure means the user can
+// simply click Back again once the transient condition clears.
+async function goBackToParent(){
+  if(!NAV_STACK.length) return false;
+  const parent=NAV_STACK[NAV_STACK.length-1]; // peek — do NOT pop yet
+  const ok=await openRepo(parent);
+  if(ok){ NAV_STACK.pop(); updateBackToParentBtn(); }
+  return ok;
+}
+// Shows/hides the topbar "← Back to <parent repo name>" affordance and, when
+// shown, fills in the name — derived from NAV_STACK's top entry via
+// repoBasename() above, the EXACT same name-deriving logic ".repo-pick"'s
+// own span already uses for the CURRENT repo, reused rather than
+// reinvented. Called at every point NAV_STACK's length can change
+// (enterSubmodule/goBackToParent above, pickRepo below) — never on a timer
+// or a redraw, so it can never show a stale name.
+function updateBackToParentBtn(){
+  const btn=$("#backToParentBtn");
+  if(!btn) return;
+  if(NAV_STACK.length){
+    $("#backToParentName").textContent = repoBasename(NAV_STACK[NAV_STACK.length-1]);
+    btn.style.display = "";
+  } else {
+    btn.style.display = "none";
+  }
 }
 // Called from ~10 different sites (every real mutation across every island)
 // with no shared lock of its own before this guard — two callers firing back
@@ -1112,7 +1195,19 @@ async function pickRepo(){
     dir = (d&&d.open) ? await d.open({directory:true,title:"Open a Git repository"})
                       : await window.__TAURI__.core.invoke("plugin:dialog|open",{options:{directory:true,title:"Open a Git repository"}});
   }catch(e){ console.error(e); Tama.say("Dialog error — "+e); return; }
-  if(dir) await openRepo(typeof dir==="string"?dir:(dir.path||String(dir)));
+  if(dir){
+    // Picking a brand-new repo via the normal picker deliberately leaves any
+    // submodule-navigation chain behind — going back no longer makes sense
+    // once the user's chosen something unrelated to what they navigated
+    // into. But that's only committed AFTER openRepo() actually reports
+    // success (same discipline as enterSubmodule/goBackToParent above):
+    // clearing NAV_STACK/hiding the Back button BEFORE awaiting openRepo
+    // would, on a failed pick (not a git repo, permission error, transiently
+    // locked, etc.), leave the user still mid-chain with the stack already
+    // wiped and no way back short of re-navigating the whole chain by hand.
+    const ok=await openRepo(typeof dir==="string"?dir:(dir.path||String(dir)));
+    if(ok){ NAV_STACK.length=0; updateBackToParentBtn(); }
+  }
 }
 function bootEmpty(){
   BACKEND=null;
@@ -1129,6 +1224,7 @@ function bootEmpty(){
   dirty=true;
 }
 $(".repo-pick").addEventListener("click", pickRepo);
+$("#backToParentBtn").addEventListener("click", goBackToParent);
 
 applyTheme("dark"); // cozy dark base by default; ◐ toggles back to light
 $("#sprite").innerHTML=TAMA_SVG;
@@ -1149,4 +1245,11 @@ function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, pickRepo, ensureDrawerOpen, armDanger, updateBranchPill,
-  openRepo, doFetch, doPull, doPush, bandH };
+  openRepo, doFetch, doPull, doPush, bandH,
+  // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
+  // above for the full design) — enterSubmodule/goBackToParent are hoisted
+  // `function` declarations, so no TDZ risk (same reasoning as
+  // select/openRepo above). NAV_STACK itself is already exported directly at
+  // its declaration above (`export let NAV_STACK`), same as CUR_REPO — not
+  // re-listed here, that would be a duplicate export.
+  enterSubmodule, goBackToParent };

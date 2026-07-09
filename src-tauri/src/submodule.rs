@@ -229,6 +229,28 @@ use crate::git_write::WriteResult;
 pub struct SubmoduleInfo {
     pub name: String,
     pub path: String,
+    /// The submodule's own working directory, as an absolute path on disk:
+    /// this repo's OWN `repo.workdir()` (the repo `submodule_status` was
+    /// called against — NOT necessarily the top-level superproject; calling
+    /// `submodule_status` on a MID-level repo, in a submodule-of-a-submodule
+    /// chain, yields paths relative to THAT repo's own workdir, one level
+    /// down) joined with `path` via `join_native_relative` (per-component
+    /// `Path::join`, see that function's own doc comment) — never string
+    /// concatenation nor a single `Path::join` on the whole (possibly multi-
+    /// component) relative path, either of which could produce a wrong or
+    /// wrongly/mixed-separator path on Windows (`\` vs `/`). This is exactly
+    /// the path the frontend passes back into
+    /// `load_graph`/`workdir_status`/etc. to treat the submodule as its own
+    /// fully-fledged active repo (own graph, own stage/commit, own
+    /// branches/tags, own bisect/rebase, even its own nested Submodules
+    /// section) — the whole point of this field.
+    ///
+    /// Still populated (a well-formed, valid absolute path string — never
+    /// empty/null) even for a "not-initialized"/"removed"/"unreadable" row
+    /// where nothing actually exists on disk at this path yet: the frontend
+    /// itself decides whether to offer an "Open" action for those statuses,
+    /// not this field.
+    pub absolute_path: String,
     pub url: Option<String>,
     /// "conflicted" | "removed" | "not-initialized" | "out-of-date" | "dirty" | "clean" | "unreadable"
     ///
@@ -276,6 +298,22 @@ fn submodule_status_inner(path: &str) -> Result<Vec<SubmoduleInfo>, git2::Error>
     for sm in repo.submodules()? {
         let name = sm.name().unwrap_or_default().to_string();
         let sm_path = sm.path().to_string_lossy().to_string();
+        // `join_native_relative` (per-COMPONENT `Path::join`), NEVER a single
+        // `wd.join(&sm_path)` or string concatenation — see that helper's own
+        // doc comment for why a single join isn't enough for a multi-
+        // component submodule path (e.g. "vendor/lib-a") on Windows. Falls
+        // back to the bare relative path (still a well-formed, non-empty
+        // string, just not actually absolute) in the practically-unreachable
+        // case of a BARE superproject repo (`workdir()` is `None`) — a
+        // superproject that can register `.gitmodules` entries but has no
+        // working tree for any of them to ever be checked out into, so there
+        // is no real absolute path to compute in the first place.
+        let absolute_path = repo
+            .workdir()
+            .map(|wd| join_native_relative(wd, &sm_path))
+            .unwrap_or_else(|| std::path::PathBuf::from(&sm_path))
+            .to_string_lossy()
+            .to_string();
         let url = sm.url().map(|s| s.to_string());
         // `head_id()`/`workdir_id()` are plain OID reads (the gitlink entry's
         // recorded commit, and the submodule's own checked-out HEAD,
@@ -313,11 +351,40 @@ fn submodule_status_inner(path: &str) -> Result<Vec<SubmoduleInfo>, git2::Error>
             }
         };
 
-        out.push(SubmoduleInfo { name, path: sm_path, url, status, head_sha, workdir_sha });
+        out.push(SubmoduleInfo { name, path: sm_path, absolute_path, url, status, head_sha, workdir_sha });
     }
 
     out.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(out)
+}
+
+/// Join `base` (an already fully native-separated absolute path — this repo's
+/// own `workdir()`) with `relative`, a git-internal relative path that is
+/// ALWAYS forward-slash-separated regardless of platform — confirmed against
+/// git2/libgit2 source: `Submodule::path()` returns whatever byte string is
+/// recorded in `.gitmodules`/the index gitlink entry, which git itself always
+/// writes and reads with `/` (never the platform separator) so the same
+/// `.gitmodules` file is portable across OSes; git2's own `bytes2path` (what
+/// actually produces that `Path`/`&str` on the Windows build of libgit2) does
+/// no separator translation, it just wraps the raw bytes.
+///
+/// A single `base.join(relative)` gets the OUTERMOST separator right (`Path::
+/// join` inserts one native separator between `base` and the whole `relative`
+/// string) but does NOT walk into and renormalize any `/` already embedded
+/// INSIDE `relative` for a multi-component path (e.g. "vendor/lib-a" — a
+/// submodule registered a directory or more below the repo root). On Windows
+/// that would produce a mixed-separator result like `C:\Users\dev\repo\
+/// vendor/lib-a` — every intermediate separator still `/`, only the join
+/// point itself native.
+///
+/// Fixed by splitting `relative` on `/` (safe unconditionally: git never uses
+/// it as anything but a path separator in a stored path, and `/` is not a
+/// legal character within a single path COMPONENT on any platform this app
+/// supports) and folding `Path::join` over each component individually, so
+/// `Path::join`'s own native-separator insertion happens at EVERY component
+/// boundary, not just the outermost one.
+fn join_native_relative(base: &std::path::Path, relative: &str) -> std::path::PathBuf {
+    relative.split('/').fold(base.to_path_buf(), |acc, component| acc.join(component))
 }
 
 /// Map a `SubmoduleStatus` bitset to one of the 5 bit-derived UI-facing

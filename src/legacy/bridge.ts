@@ -70,6 +70,18 @@ export {
   doFetch,
   doPull,
   doPush,
+  // Submodule navigation stack: enterSubmodule(absolutePath) pushes the
+  // current repo then opens the submodule via openRepo above;
+  // goBackToParent() pops and reopens the popped path. NAV_STACK is the
+  // stack itself (a live binding, same rationale as CUR_REPO above — read it
+  // at call time, e.g. `bridge.NAV_STACK.length`, never destructure it into
+  // a local const). Sidebar.svelte's per-row "Open" action calls
+  // enterSubmodule directly; the topbar "← Back to <parent repo name>"
+  // affordance is legacy-owned chrome (see legacy/main.ts's own
+  // updateBackToParentBtn), so it doesn't need a bridge re-export of its own.
+  enterSubmodule,
+  goBackToParent,
+  NAV_STACK,
 } from "./main";
 
 // bisect canvas bridge: bisectCtrl (the real modal, src/islands/bisect) syncs
