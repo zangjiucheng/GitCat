@@ -1,5 +1,5 @@
 // Tests for the sidebar (refs tree + branch context menu) controller.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../legacy/bridge", () => ({
   CUR_REPO: "/repo",
@@ -33,6 +33,8 @@ vi.mock("../../ipc/bindings", () => ({
     submoduleSync: vi.fn(),
     submoduleDeinit: vi.fn(),
     submoduleRemove: vi.fn(),
+    submoduleForeachStart: vi.fn(),
+    submoduleForeachCancel: vi.fn(),
   },
 }));
 
@@ -45,6 +47,7 @@ vi.mock("../resolver/resolver.svelte.ts", () => ({
 
 import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
+import type { SubmoduleForeachEntry } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { sidebarCtrl, submoduleAction, submoduleNeedsForceConfirm, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
 
@@ -77,6 +80,9 @@ function resetAll() {
   sidebarCtrl.newSubmoduleUrl = "";
   sidebarCtrl.newSubmodulePath = "";
   sidebarCtrl.newSubmoduleBranch = "";
+  sidebarCtrl.foreachCommand = "";
+  sidebarCtrl.foreachRunning = false;
+  sidebarCtrl.foreachResults = [];
   mockInTauri = false;
   vi.clearAllMocks();
   // Default: no submodules, so the many pre-existing "refresh"/checkout/etc.
@@ -695,6 +701,162 @@ describe("syncAllSubmodules (bulk 'Sync all')", () => {
     resolveFn({ ok: true, message: "synced", backupRef: null });
     await pending;
     expect(sidebarCtrl.busyTarget).toBeNull();
+  });
+});
+
+// Deferred helper: lets a test hold `submoduleForeachStart`'s promise open so
+// it can fire simulated "submodule-foreach-progress" events (via the
+// captured listener handler) while the awaited call is still pending, exactly
+// like the real long-lived backend sweep. Mirrors bisect.svelte.test.ts's own
+// identical helper for bisectRunStart.
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+type TauriWindow = Window & { __TAURI__?: { event: { listen: ReturnType<typeof vi.fn> } } };
+
+function entry(partial: Partial<SubmoduleForeachEntry>): SubmoduleForeachEntry {
+  return { path: "vendor/a", status: "ok", exitCode: 0, stdout: "", stderr: "", ...partial };
+}
+
+describe("startForeach / cancelForeach", () => {
+  let mockUnlisten: ReturnType<typeof vi.fn>;
+  let mockListen: ReturnType<typeof vi.fn>;
+  let capturedHandler: ((e: { payload: SubmoduleForeachEntry }) => void) | null;
+
+  beforeEach(() => {
+    mockInTauri = true;
+    mockUnlisten = vi.fn();
+    capturedHandler = null;
+    // Not `async` — captures the handler SYNCHRONOUSLY (before the returned
+    // promise even needs a microtask to resolve), so tests can assert on the
+    // subscribe-before-blocking-call ordering deterministically. Same
+    // pattern as bisect.svelte.test.ts's own mockListen.
+    mockListen = vi.fn((_event: string, handler: (e: { payload: SubmoduleForeachEntry }) => void) => {
+      capturedHandler = handler;
+      return Promise.resolve(mockUnlisten);
+    });
+    (window as unknown as TauriWindow).__TAURI__ = { event: { listen: mockListen } };
+  });
+
+  afterEach(() => {
+    delete (window as unknown as TauriWindow).__TAURI__;
+  });
+
+  it("subscribes to submodule-foreach-progress BEFORE the blocking call, toggles foreachRunning, and calls submoduleForeachStart with repo+command+recursive", async () => {
+    const { promise, resolve } = deferred<{ status: "ok"; data: SubmoduleForeachEntry[] }>();
+    vi.mocked(commands.submoduleForeachStart).mockReturnValueOnce(promise as ReturnType<typeof commands.submoduleForeachStart>);
+
+    const runP = sidebarCtrl.startForeach("/repo", "  npm test  ", true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockListen).toHaveBeenCalledWith("submodule-foreach-progress", expect.any(Function));
+    expect(commands.submoduleForeachStart).toHaveBeenCalledWith("/repo", "npm test", true);
+    expect(sidebarCtrl.foreachRunning).toBe(true);
+
+    resolve(ok([entry({ path: "vendor/a", status: "ok", exitCode: 0 })]));
+    await runP;
+
+    expect(sidebarCtrl.foreachRunning).toBe(false);
+  });
+
+  it("progress events append live to foreachResults as they arrive, and the listener is unsubscribed once the sweep completes", async () => {
+    const { promise, resolve } = deferred<{ status: "ok"; data: SubmoduleForeachEntry[] }>();
+    vi.mocked(commands.submoduleForeachStart).mockReturnValueOnce(promise as ReturnType<typeof commands.submoduleForeachStart>);
+
+    const runP = sidebarCtrl.startForeach("/repo", "npm test", false);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(capturedHandler).toBeTypeOf("function");
+    const e1 = entry({ path: "vendor/a", status: "ok", exitCode: 0 });
+    const e2 = entry({ path: "vendor/b", status: "failed", exitCode: 1, stderr: "boom" });
+    capturedHandler!({ payload: e1 });
+    expect(sidebarCtrl.foreachResults).toEqual([e1]);
+    capturedHandler!({ payload: e2 });
+    expect(sidebarCtrl.foreachResults).toEqual([e1, e2]);
+    expect(mockUnlisten).not.toHaveBeenCalled();
+
+    resolve(ok([e1, e2]));
+    await runP;
+
+    expect(mockUnlisten).toHaveBeenCalledTimes(1);
+    // final list is authoritative even though it matches what streamed in
+    expect(sidebarCtrl.foreachResults).toEqual([e1, e2]);
+  });
+
+  it("a failed entry in the final result surfaces a warning instead of the success celebration", async () => {
+    vi.mocked(commands.submoduleForeachStart).mockResolvedValueOnce(
+      ok([entry({ path: "vendor/a", status: "ok" }), entry({ path: "vendor/b", status: "failed", exitCode: 1, stderr: "boom" })]),
+    );
+
+    await sidebarCtrl.startForeach("/repo", "npm test", false);
+
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("1 of 2"));
+  });
+
+  it("cancelForeach calls submoduleForeachCancel", async () => {
+    vi.mocked(commands.submoduleForeachCancel).mockResolvedValueOnce(ok(null));
+
+    await sidebarCtrl.cancelForeach();
+
+    expect(commands.submoduleForeachCancel).toHaveBeenCalled();
+  });
+
+  it("refuses to start without a command", async () => {
+    await sidebarCtrl.startForeach("/repo", "   ", false);
+
+    expect(commands.submoduleForeachStart).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalled();
+    expect(sidebarCtrl.foreachRunning).toBe(false);
+  });
+
+  it("no-ops without a repo", async () => {
+    await sidebarCtrl.startForeach("", "npm test", false);
+    expect(commands.submoduleForeachStart).not.toHaveBeenCalled();
+  });
+
+  it("is re-entrancy locked while busy", async () => {
+    sidebarCtrl.busy = true;
+    await sidebarCtrl.startForeach("/repo", "npm test", false);
+    expect(commands.submoduleForeachStart).not.toHaveBeenCalled();
+  });
+
+  it("is re-entrancy locked while already running", async () => {
+    sidebarCtrl.foreachRunning = true;
+    await sidebarCtrl.startForeach("/repo", "npm test", false);
+    expect(commands.submoduleForeachStart).not.toHaveBeenCalled();
+  });
+
+  it("design mode is a cosmetic no-op with a toast", async () => {
+    mockInTauri = false;
+    await sidebarCtrl.startForeach("/repo", "npm test", false);
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(commands.submoduleForeachStart).not.toHaveBeenCalled();
+  });
+
+  describe("cancelIfRunning", () => {
+    it("requests cancellation when a foreach sweep is active", async () => {
+      vi.mocked(commands.submoduleForeachCancel).mockResolvedValueOnce(ok(null));
+      sidebarCtrl.foreachRunning = true;
+
+      await sidebarCtrl.cancelIfRunning();
+
+      expect(commands.submoduleForeachCancel).toHaveBeenCalled();
+    });
+
+    it("is a no-op when no sweep is active", async () => {
+      sidebarCtrl.foreachRunning = false;
+
+      await sidebarCtrl.cancelIfRunning();
+
+      expect(commands.submoduleForeachCancel).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -52,14 +52,14 @@ mod common;
 
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use common::TempRepo;
 use gitcat_lib::submodule::{
-    submodule_add, submodule_deinit, submodule_init, submodule_remove, submodule_status, submodule_sync,
-    submodule_update,
+    submodule_add, submodule_deinit, submodule_foreach_run, submodule_init, submodule_remove, submodule_status,
+    submodule_sync, submodule_update, try_run_submodule_foreach, SubmoduleForeachState,
 };
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -1741,4 +1741,498 @@ fn bug6_submodule_status_reports_removed_not_clean_after_submodule_remove_stages
     let row = &rows[0];
     assert_eq!(row.status, "removed", "expected the new 'removed' classification, not a stale 'clean'");
     assert_ne!(row.status, "clean", "a staged-for-removal submodule must never read as an ordinary clean row");
+}
+
+// ---------------------------------------------------------------------------
+// M5 (final): submodule_foreach — run an arbitrary shell command in every
+// initialized submodule's own working directory.
+//
+// Drives `submodule_foreach_run`/`try_run_submodule_foreach` directly (the
+// plain functions the `#[tauri::command]`s split their logic into) rather
+// than the commands themselves, exactly like this file's own M2/M3/M4 tests
+// drive `submodule_init`/etc directly — but the cancel/concurrency tests
+// below specifically mirror `tests/bisect.rs`'s own
+// `bisect_run_cancel_stops_the_loop_before_convergence` /
+// `bisect_run_start_refuses_a_second_concurrent_call_while_one_is_in_flight`
+// technique: a marker-file side channel coordinated between a spawned worker
+// thread and the main test thread, since a plain integration test has no
+// real AppHandle/State to hand a `#[tauri::command]`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn submodule_foreach_reports_ok_for_every_submodule_when_command_succeeds() {
+    let child_a = TempRepo::init("submodule_foreach_ok_a");
+    let _a0 = child_a.commit("a.txt", "a\n", "a0");
+    let child_b = TempRepo::init("submodule_foreach_ok_b");
+    let _b0 = child_b.commit("b.txt", "b\n", "b0");
+
+    let parent = TempRepo::init("submodule_foreach_ok_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child_a, "subA");
+    add_submodule(&parent, &child_b, "subB");
+
+    let mut progress: Vec<String> = Vec::new();
+    let result = submodule_foreach_run(&parent.path(), "exit 0", false, || false, |entry| {
+        progress.push(entry.path.clone());
+    });
+    let entries = result.expect("submodule_foreach_run failed");
+    assert_eq!(entries.len(), 2);
+    for entry in &entries {
+        assert_eq!(entry.status, "ok", "expected {} to succeed: stderr={:?}", entry.path, entry.stderr);
+        assert_eq!(entry.exit_code, Some(0));
+    }
+    assert_eq!(
+        progress,
+        vec!["subA".to_string(), "subB".to_string()],
+        "expected progress emitted once per submodule, in path order"
+    );
+}
+
+#[test]
+fn submodule_foreach_one_failure_does_not_abort_the_sweep() {
+    let child_a = TempRepo::init("submodule_foreach_fail_a");
+    let _a0 = child_a.commit("a.txt", "a\n", "a0");
+    let child_b = TempRepo::init("submodule_foreach_fail_b");
+    let _b0 = child_b.commit("b.txt", "b\n", "b0");
+    let child_c = TempRepo::init("submodule_foreach_fail_c");
+    let _c0 = child_c.commit("c.txt", "c\n", "c0");
+
+    let parent = TempRepo::init("submodule_foreach_fail_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child_a, "subA");
+    add_submodule(&parent, &child_b, "subB");
+    add_submodule(&parent, &child_c, "subC");
+
+    // Fails (exit 7) only inside "subB"; succeeds everywhere else.
+    // EMPIRICALLY VERIFIED (git 2.53, a throwaway 3-submodule fixture) before
+    // relying on it: real `git submodule foreach` with no extra flags keeps
+    // going past a failing submodule and still runs the command in every
+    // remaining one, only reporting failure for the overall sweep at the end
+    // — never aborting outright. This asserts the same continue-past-failure
+    // semantics.
+    let command = r#"if [ "$(basename "$(pwd)")" = "subB" ]; then exit 7; else exit 0; fi"#;
+
+    let result = submodule_foreach_run(&parent.path(), command, false, || false, |_| {});
+    let entries = result.expect("submodule_foreach_run failed");
+    assert_eq!(entries.len(), 3, "all 3 submodules must still get an entry despite subB's failure");
+
+    let a = entries.iter().find(|e| e.path == "subA").expect("subA entry");
+    let b = entries.iter().find(|e| e.path == "subB").expect("subB entry");
+    let c = entries.iter().find(|e| e.path == "subC").expect("subC entry");
+    assert_eq!(a.status, "ok");
+    assert_eq!(a.exit_code, Some(0));
+    assert_eq!(b.status, "failed", "expected subB's non-zero exit to be reported as failed, not aborting anything");
+    assert_eq!(b.exit_code, Some(7));
+    assert_eq!(c.status, "ok", "subC must still have run after subB failed — one failure must not abort the sweep");
+    assert_eq!(c.exit_code, Some(0));
+}
+
+#[test]
+fn submodule_foreach_skips_not_initialized_and_removed_submodules_without_running_command() {
+    let child_a = TempRepo::init("submodule_foreach_skip_a");
+    let _a0 = child_a.commit("a.txt", "a\n", "a0");
+    let child_b = TempRepo::init("submodule_foreach_skip_b");
+    let _b0 = child_b.commit("b.txt", "b\n", "b0");
+    let child_c = TempRepo::init("submodule_foreach_skip_c");
+    let _c0 = child_c.commit("c.txt", "c\n", "c0");
+
+    let parent = TempRepo::init("submodule_foreach_skip_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child_a, "subA");
+    add_submodule(&parent, &child_b, "subB");
+    add_submodule(&parent, &child_c, "subC");
+
+    // subB -> not-initialized (a clean deinit, no force needed).
+    let deinit_result = submodule_deinit(parent.path(), "subB".to_string(), false);
+    assert!(deinit_result.ok, "submodule_deinit failed: {}", deinit_result.message);
+    // subC -> removed (staged for deletion; nothing committed yet, and the
+    // working-tree directory is gone entirely — see submodule_remove's own
+    // doc comment. If the skip check below were broken and foreach tried to
+    // run a command there anyway, spawning it would fail outright since the
+    // cwd no longer exists, which the assertions below would also catch.
+    let remove_result = submodule_remove(parent.path(), "subC".to_string());
+    assert!(remove_result.ok, "submodule_remove failed: {}", remove_result.message);
+
+    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    assert_eq!(rows.iter().find(|r| r.path == "subA").unwrap().status, "clean");
+    assert_eq!(rows.iter().find(|r| r.path == "subB").unwrap().status, "not-initialized");
+    assert_eq!(rows.iter().find(|r| r.path == "subC").unwrap().status, "removed");
+
+    let result = submodule_foreach_run(&parent.path(), "exit 0", false, || false, |_| {});
+    let entries = result.expect("submodule_foreach_run failed");
+    assert_eq!(entries.len(), 3);
+
+    let a = entries.iter().find(|e| e.path == "subA").expect("subA entry");
+    let b = entries.iter().find(|e| e.path == "subB").expect("subB entry");
+    let c = entries.iter().find(|e| e.path == "subC").expect("subC entry");
+    assert_eq!(a.status, "ok", "expected the still-initialized submodule to actually run the command");
+    assert_eq!(a.exit_code, Some(0));
+    assert_eq!(b.status, "skipped", "a not-initialized submodule must be skipped, not errored");
+    assert!(b.exit_code.is_none(), "a skipped submodule must never have had a command run");
+    assert_eq!(c.status, "skipped", "a removed submodule must be skipped, not errored");
+    assert!(c.exit_code.is_none(), "a skipped submodule must never have had a command run");
+}
+
+#[test]
+fn submodule_foreach_recursive_reaches_nested_submodule_of_a_submodule() {
+    let _allow = AllowFileProtocol::scoped();
+
+    // grandchild <- (submodule "nested" of) <- mid <- (submodule "sub" of) <- parent
+    let grandchild = TempRepo::init("submodule_foreach_nested_grandchild");
+    let _gc0 = grandchild.commit("gc.txt", "grandchild\n", "gc0");
+
+    let mid = TempRepo::init("submodule_foreach_nested_mid");
+    let _mid0 = mid.commit("mid.txt", "mid\n", "mid0");
+    add_submodule(&mid, &grandchild, "nested");
+
+    let parent = TempRepo::init("submodule_foreach_nested_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &mid, "sub");
+
+    // add_submodule leaves "sub" itself cloned+checked out, but its OWN
+    // "nested" submodule is NOT (`git submodule add` never recurses) — init +
+    // update it recursively first so there is something real to reach.
+    let update_result = submodule_update(parent.path(), Some("sub".to_string()), true, true);
+    assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
+    assert_eq!(parent.read("sub/nested/gc.txt"), "grandchild\n");
+
+    let result = submodule_foreach_run(&parent.path(), "touch marker.txt", true, || false, |_| {});
+    let entries = result.expect("submodule_foreach_run (recursive) failed");
+
+    let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+    assert!(paths.contains(&"sub"), "expected the top-level submodule in the sweep: {paths:?}");
+    assert!(paths.contains(&"sub/nested"), "expected the nested submodule-of-a-submodule in the sweep: {paths:?}");
+
+    let sub_entry = entries.iter().find(|e| e.path == "sub").unwrap();
+    let nested_entry = entries.iter().find(|e| e.path == "sub/nested").unwrap();
+    assert_eq!(sub_entry.status, "ok", "stderr={:?}", sub_entry.stderr);
+    assert_eq!(nested_entry.status, "ok", "stderr={:?}", nested_entry.stderr);
+
+    assert!(parent.dir.join("sub").join("marker.txt").exists(), "expected the command to have run inside sub/");
+    assert!(
+        parent.dir.join("sub").join("nested").join("marker.txt").exists(),
+        "expected the command to have run inside sub/nested/ too"
+    );
+}
+
+// Negative control for the test above: proves recursive:true is doing real,
+// necessary work rather than being a silent no-op that happens to pass —
+// mirrors `submodule_update_without_recursive_leaves_the_nested_submodule_uninitialized`'s
+// own negative-control precedent (M2).
+#[test]
+fn submodule_foreach_without_recursive_does_not_reach_the_nested_submodule() {
+    let _allow = AllowFileProtocol::scoped();
+
+    let grandchild = TempRepo::init("submodule_foreach_nonrecursive_grandchild");
+    let _gc0 = grandchild.commit("gc.txt", "grandchild\n", "gc0");
+
+    let mid = TempRepo::init("submodule_foreach_nonrecursive_mid");
+    let _mid0 = mid.commit("mid.txt", "mid\n", "mid0");
+    add_submodule(&mid, &grandchild, "nested");
+
+    let parent = TempRepo::init("submodule_foreach_nonrecursive_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &mid, "sub");
+
+    let update_result = submodule_update(parent.path(), Some("sub".to_string()), true, true);
+    assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
+
+    let result = submodule_foreach_run(&parent.path(), "touch marker.txt", false, || false, |_| {});
+    let entries = result.expect("submodule_foreach_run failed");
+
+    let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+    assert_eq!(entries.len(), 1, "recursive:false must only reach the top-level submodule: {paths:?}");
+    assert_eq!(entries[0].path, "sub");
+    assert!(!parent.dir.join("sub").join("nested").join("marker.txt").exists(), "recursive:false must not reach sub/nested");
+}
+
+#[test]
+fn submodule_foreach_cancel_stops_the_loop_before_processing_every_submodule() {
+    let child_a = TempRepo::init("submodule_foreach_cancel_a");
+    let _a0 = child_a.commit("a.txt", "a\n", "a0");
+    let child_b = TempRepo::init("submodule_foreach_cancel_b");
+    let _b0 = child_b.commit("b.txt", "b\n", "b0");
+    let child_c = TempRepo::init("submodule_foreach_cancel_c");
+    let _c0 = child_c.commit("c.txt", "c\n", "c0");
+
+    let parent = TempRepo::init("submodule_foreach_cancel_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child_a, "subA");
+    add_submodule(&parent, &child_b, "subB");
+    add_submodule(&parent, &child_c, "subC");
+
+    // On its FIRST invocation only (subA, since targets are processed in
+    // sorted path order — see submodule_status_inner), the command touches a
+    // marker file (the side channel the main test thread polls below) and
+    // then sleeps well past the time it takes the polling thread to notice
+    // and request cancellation — so cancellation is observed at the very next
+    // between-submodules check (ahead of subB), before a second submodule's
+    // command ever runs. The marker lives at an ABSOLUTE path (not relative)
+    // since each submodule's command runs with a DIFFERENT cwd.
+    let marker = parent.dir.join(".gitcat-foreach-inflight");
+    let marker_str = marker.to_string_lossy().to_string();
+    let command = format!("if [ ! -f '{marker_str}' ]; then touch '{marker_str}'; sleep 0.5; fi; exit 0");
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_for_run = cancel.clone();
+    let path_for_run = parent.path();
+    let command_for_run = command.clone();
+    let handle = std::thread::spawn(move || {
+        submodule_foreach_run(&path_for_run, &command_for_run, false, move || cancel_for_run.load(Ordering::SeqCst), |_| {})
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !marker.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(marker.exists(), "the first submodule's command should have started running before the timeout");
+    cancel.store(true, Ordering::SeqCst);
+
+    let result = handle.join().expect("submodule_foreach_run thread panicked");
+    let entries = result.expect("submodule_foreach_run failed");
+
+    assert_eq!(entries.len(), 3, "every submodule should still get an entry, cancelled or not");
+    assert_eq!(entries[0].path, "subA");
+    assert_eq!(entries[0].status, "ok", "the in-flight submodule's command should have finished normally");
+    assert_eq!(entries[1].path, "subB");
+    assert_eq!(entries[1].status, "cancelled", "cancellation should stop the loop before subB's turn");
+    assert_eq!(entries[2].path, "subC");
+    assert_eq!(entries[2].status, "cancelled", "cancellation should stop the loop before subC's turn too");
+}
+
+// ---------------------------------------------------------------------------
+// Concurrency guard: `SubmoduleForeachState`'s "already running" mutual-
+// exclusion lock must be a REAL, structurally-enforced guard, built in from
+// the start (see submodule.rs's M5 section doc comment) — a second
+// `submodule_foreach_start` while one is already in flight must refuse
+// cleanly (no second sweep ever runs), rather than two sweeps interleaving
+// arbitrary shell commands against the same submodules concurrently. Drives
+// `try_run_submodule_foreach` directly (the testable wrapper
+// `submodule_foreach_start` itself calls), mirroring
+// `bisect_run_start_refuses_a_second_concurrent_call_while_one_is_in_flight`
+// exactly, including its marker-file coordination technique.
+// ---------------------------------------------------------------------------
+#[test]
+fn submodule_foreach_start_refuses_a_second_concurrent_call_while_one_is_in_flight() {
+    let child = TempRepo::init("submodule_foreach_mutex_child");
+    let _c0 = child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_foreach_mutex_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+
+    let state = Arc::new(SubmoduleForeachState::default());
+
+    // First call: touches a marker file on its first (only) invocation, then
+    // sleeps well past the time it takes the main thread to notice and
+    // attempt a concurrent second call — so the second call is guaranteed to
+    // race against a genuinely in-flight first sweep, not an already-finished
+    // one.
+    let marker = parent.dir.join(".gitcat-foreach-mutex-inflight");
+    let marker_str = marker.to_string_lossy().to_string();
+    let command = format!("if [ ! -f '{marker_str}' ]; then touch '{marker_str}'; sleep 0.5; fi; exit 0");
+
+    let state1 = state.clone();
+    let path1 = parent.path();
+    let command1 = command.clone();
+    let handle =
+        std::thread::spawn(move || try_run_submodule_foreach(&state1, &path1, &command1, false, || false, |_| {}));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !marker.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(marker.exists(), "the first sweep should have started running before the timeout");
+
+    // The concurrent second call must refuse cleanly — None, with on_progress
+    // never firing at all — rather than running a second sweep against the
+    // same submodule while the first one is still mid-command.
+    let second = try_run_submodule_foreach(&state, &parent.path(), "true", false, || false, |_| {
+        panic!("on_progress must not fire — a concurrent second sweep must never execute at all")
+    });
+    assert!(
+        second.is_none(),
+        "a second submodule_foreach_start while one is already in flight must refuse cleanly, not run a second \
+         concurrent sweep"
+    );
+
+    let first_result = handle
+        .join()
+        .expect("first sweep thread panicked")
+        .expect("the first call should have been allowed to claim the guard and actually run");
+    assert!(first_result.is_ok(), "first sweep should have completed normally: {:?}", first_result.err());
+
+    // The guard must be released once the first sweep finishes — a later,
+    // now-non-concurrent call must be allowed through normally, not
+    // permanently locked out by a guard that leaked from the first sweep.
+    let third = try_run_submodule_foreach(&state, &parent.path(), "true", false, || false, |_| {});
+    let third_result = third.expect("the guard must be released after the first sweep finishes, allowing a later call through");
+    assert!(third_result.is_ok(), "the released-guard sweep should complete normally: {:?}", third_result.err());
+}
+
+// ---------------------------------------------------------------------------
+// CRASH FIX regression: `discover_nested_targets` previously recursed into
+// nested submodules with NO visited-set and NO depth limit. A malformed or
+// maliciously crafted nested-submodule `.git` gitfile pointer that redirects
+// back at an ancestor (its own containing repo, or any repo already being
+// walked) caused UNBOUNDED RECURSION and a real, reproduced stack overflow
+// (`thread 'main' has overflowed its stack, fatal runtime error: stack
+// overflow, aborting`, process exit 134), triggerable via
+// `submodule_foreach_start` on any third-party repo containing such a
+// submodule — no need to go through this app's own `submodule_add`/
+// `submodule_update` at all.
+//
+// EMPIRICALLY CONFIRMED while building this exact fixture, before writing the
+// fix (see `src/submodule.rs`'s own `discover_nested_targets`/
+// `check_safe_to_recurse` doc comments for the full trail): the crash lives
+// INSIDE libgit2's own `Repository::submodule_status()` when it is asked
+// about a submodule whose resolved repository is cyclic — and, more
+// surprisingly, calling `submodule_status()` for any ANCESTOR of the cyclic
+// node crashes too (an ancestor's own dirty-status computation transitively
+// walks its entire reachable subtree). `Submodule::open()` alone was verified
+// safe even on the exact same cyclic fixture, which is why the real fix
+// canonicalizes and cycle-checks each submodule's own resolved git directory
+// BEFORE ever calling `submodule_status` on it, and does so for every
+// ancestor up to the top, not only the offending node itself.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cyclic_nested_submodule_reference_terminates_cleanly_instead_of_crashing() {
+    let _allow = AllowFileProtocol::scoped();
+
+    // grandchild <- (submodule "nested" of) <- mid <- (submodule "sub" of) <- parent
+    let grandchild = TempRepo::init("submodule_cycle_grandchild");
+    let _gc0 = grandchild.commit("gc.txt", "grandchild\n", "gc0");
+
+    let mid = TempRepo::init("submodule_cycle_mid");
+    let _mid0 = mid.commit("mid.txt", "mid\n", "mid0");
+    add_submodule(&mid, &grandchild, "nested");
+
+    let parent = TempRepo::init("submodule_cycle_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &mid, "sub");
+
+    // `add_submodule` leaves "sub" itself cloned+checked out, but its OWN
+    // "nested" submodule is NOT (`git submodule add` never recurses) — init +
+    // update it recursively first so there is a real, normal nested-submodule
+    // checkout to corrupt (mirrors this file's own
+    // `submodule_foreach_recursive_reaches_nested_submodule_of_a_submodule`
+    // setup).
+    let update_result = submodule_update(parent.path(), Some("sub".to_string()), true, true);
+    assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
+    assert_eq!(parent.read("sub/nested/gc.txt"), "grandchild\n");
+
+    // THE MALFORMED FIXTURE: hand-corrupt "sub/nested"'s own `.git` gitfile
+    // pointer so it redirects back at "sub"'s OWN designated git directory
+    // (its containing repo) — `.git/modules/sub` — instead of its real,
+    // distinct one at `.git/modules/sub/modules/nested`. A real `git clone`/
+    // `submodule update` never produces this shape on its own; this
+    // simulates a malformed or maliciously crafted nested-submodule repo,
+    // exactly the threat model `discover_nested_targets`'s own doc comment
+    // describes. An absolute path is used (rather than a relative
+    // `gitdir: ../../...`) so this fixture isn't sensitive to exactly how
+    // many directory levels separate `nested` from `sub` — libgit2 accepts
+    // either form.
+    let nested_git_file = parent.dir.join("sub").join("nested").join(".git");
+    let original = std::fs::read_to_string(&nested_git_file).expect("read nested's original .git gitfile");
+    assert!(
+        original.trim_start().starts_with("gitdir:"),
+        "expected a real gitfile pointer (not a nested .git directory) at sub/nested/.git: {original:?}"
+    );
+    let sub_own_git_dir = parent.dir.join(".git").join("modules").join("sub");
+    assert!(sub_own_git_dir.is_dir(), "expected sub's own storage under .git/modules/sub: {sub_own_git_dir:?}");
+    std::fs::write(&nested_git_file, format!("gitdir: {}\n", sub_own_git_dir.display()))
+        .expect("corrupt nested's .git gitfile to redirect back at its own containing repo (sub)");
+
+    // THE ACTUAL REGRESSION CHECK: this must terminate cleanly — no crash (no
+    // stack overflow/process abort) and no infinite loop — rather than
+    // reproducing the confirmed unbounded-recursion crash the unfixed
+    // `discover_nested_targets` had. If this test itself aborts the test
+    // process (signal, not a normal pass/fail), the fix has regressed.
+    let result = submodule_foreach_run(&parent.path(), "true", true, || false, |_| {});
+    let entries = result.expect("submodule_foreach_run must terminate cleanly (Ok), not hang or crash, on a cyclic submodule");
+
+    // "sub/nested": the actual offending path — reported as a distinct
+    // "skipped" entry with a clear cyclic-reference message, never run, and
+    // (this is the crash fix itself) never recursed into further, which
+    // would otherwise have looped forever re-reading the exact same
+    // `.gitmodules`/index.
+    let nested_entry = entries.iter().find(|e| e.path == "sub/nested").expect("expected a 'sub/nested' entry");
+    assert_eq!(nested_entry.status, "skipped", "the cyclic submodule must be reported skipped, not run or silently dropped");
+    assert!(nested_entry.exit_code.is_none(), "a skipped entry must never have had a command run");
+    assert!(
+        nested_entry.stderr.to_lowercase().contains("cyclic"),
+        "expected a clear cyclic-reference message for sub/nested, got: {:?}",
+        nested_entry.stderr
+    );
+
+    // "sub" itself: EMPIRICALLY CONFIRMED (see this section's own doc
+    // comment) that asking libgit2 for "sub"'s own status crashes too once
+    // its nested "nested" submodule is cyclic — not only a direct query
+    // about "nested" — so "sub" must ALSO come back as a distinct "skipped"
+    // entry naming the deeper cyclic path, never a guessed "clean"/"ok" for
+    // something this code could not safely verify.
+    let sub_entry = entries.iter().find(|e| e.path == "sub").expect("expected a 'sub' entry");
+    assert_eq!(sub_entry.status, "skipped", "sub's own status could not safely be computed once its nested submodule is cyclic");
+    assert!(sub_entry.exit_code.is_none(), "a skipped entry must never have had a command run");
+    assert!(
+        sub_entry.stderr.to_lowercase().contains("cyclic") || sub_entry.stderr.to_lowercase().contains("nested"),
+        "expected a message pointing at the deeper cyclic reference for sub, got: {:?}",
+        sub_entry.stderr
+    );
+
+    // No runaway/duplicated entries: exactly "sub" and "sub/nested", nothing
+    // like "sub/nested/nested" or deeper that an unbounded walk would
+    // otherwise have kept generating forever.
+    let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+    assert_eq!(entries.len(), 2, "expected exactly 'sub' and 'sub/nested', no runaway deeper entries: {paths:?}");
+}
+
+#[test]
+fn cyclic_nested_submodule_reference_terminates_cleanly_even_without_recursive_flag() {
+    let _allow = AllowFileProtocol::scoped();
+
+    // Same malformed fixture as
+    // `cyclic_nested_submodule_reference_terminates_cleanly_instead_of_crashing`,
+    // but asserts the crash is avoided even with `recursive: false` —
+    // EMPIRICALLY CONFIRMED (see `discover_nested_targets`'s own doc comment)
+    // that the underlying libgit2 crash is triggered by computing the
+    // TOP-LEVEL submodule's own status, not by this code choosing to recurse
+    // further — so a caller who never asked for recursion must be protected
+    // too, not just a `recursive: true` sweep.
+    let grandchild = TempRepo::init("submodule_cycle_norec_grandchild");
+    let _gc0 = grandchild.commit("gc.txt", "grandchild\n", "gc0");
+
+    let mid = TempRepo::init("submodule_cycle_norec_mid");
+    let _mid0 = mid.commit("mid.txt", "mid\n", "mid0");
+    add_submodule(&mid, &grandchild, "nested");
+
+    let parent = TempRepo::init("submodule_cycle_norec_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &mid, "sub");
+
+    let update_result = submodule_update(parent.path(), Some("sub".to_string()), true, true);
+    assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
+
+    let nested_git_file = parent.dir.join("sub").join("nested").join(".git");
+    let sub_own_git_dir = parent.dir.join(".git").join("modules").join("sub");
+    assert!(sub_own_git_dir.is_dir());
+    std::fs::write(&nested_git_file, format!("gitdir: {}\n", sub_own_git_dir.display()))
+        .expect("corrupt nested's .git gitfile to redirect back at its own containing repo (sub)");
+
+    let result = submodule_foreach_run(&parent.path(), "true", false, || false, |_| {});
+    let entries = result.expect("submodule_foreach_run must terminate cleanly even with recursive:false");
+
+    // recursive:false must still only reach the top-level "sub" — but it
+    // must be reported "skipped" (cyclic-tainted), not crash and not a
+    // guessed "clean"/"ok".
+    assert_eq!(entries.len(), 1, "recursive:false must only reach the top-level submodule: {:?}", entries.iter().map(|e| &e.path).collect::<Vec<_>>());
+    assert_eq!(entries[0].path, "sub");
+    assert_eq!(entries[0].status, "skipped");
+    assert!(entries[0].exit_code.is_none());
+    assert!(
+        entries[0].stderr.to_lowercase().contains("cyclic") || entries[0].stderr.to_lowercase().contains("nested"),
+        "expected a cyclic-reference message, got: {:?}",
+        entries[0].stderr
+    );
 }

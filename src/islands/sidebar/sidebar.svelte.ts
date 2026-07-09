@@ -66,13 +66,34 @@
 // gitgui/submodule-backup/…)") exactly when one was written, so passing
 // `res.message` straight through (the existing convention every mutation
 // here already follows) is sufficient.
+//
+// Submodules (M5 — foreach, on top of M1-M4's status/init/add/sync/deinit/
+// remove): startForeach/cancelForeach run a caller's own shell command in
+// every initialized submodule (submodule_foreach_start/-cancel), streaming
+// results in as each submodule finishes. Unlike every mutation ABOVE (a
+// quick one-shot IPC round-trip guarded by this file's usual busy/busyTarget
+// lock and reading bridge.CUR_REPO internally), submodule_foreach_start is a
+// real, long-lived BLOCKING call — the same shape as bisect.svelte.ts's
+// bisectCtrl.startRun/cancelRun/cancelIfRunning (bisect_run_start) — so
+// startForeach takes `repo` as an explicit parameter exactly like startRun
+// does, subscribes to "submodule-foreach-progress" BEFORE the blocking
+// await (armed early so no early submodule's result is missed), and
+// unsubscribes in a try/finally regardless of outcome. `foreachRunning` is
+// its own flag (distinct from `busy`, which still guards this file's other,
+// short-lived mutations) and reuses `submodulesRecursive` — the same
+// bulk-only toggle Update all/Sync all already share — rather than a third,
+// parallel recursive flag. `cancelIfRunning` is wired into legacy/main.ts's
+// openRepo() alongside bisectCtrl.cancelIfRunning's own existing call, for
+// the identical reason: switching repos out from under a real, long-lived
+// blocking sweep would leave it running headlessly against a repo the UI
+// can no longer see or stop.
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { rebasePlanCtrl } from "../rebaseplan/rebaseplan.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
-import type { LocalBranch, SimpleRef, Snapshot, SubmoduleInfo } from "../../ipc/bindings";
+import type { LocalBranch, SimpleRef, Snapshot, SubmoduleForeachEntry, SubmoduleInfo } from "../../ipc/bindings";
 
 // Demo data (design-mode only) — mirrors the static markup this replaces, so
 // the browser preview still shows a populated sidebar without a real repo.
@@ -235,6 +256,25 @@ class SidebarState {
   // cloned submodule instead, same "empty means the simpler default"
   // minimalism as newBranchFrom/newTagMessage above.
   newSubmoduleBranch = $state("");
+
+  // "Run command in every submodule…" — the command-input's bound value.
+  // `foreachRunning` is deliberately its own flag, distinct from `busy`
+  // (guards this file's other short one-shot IPC round-trips): it reflects
+  // the entire lifetime of a backend sweep blocking on
+  // `submoduleForeachStart` for as long as it takes to run the command in
+  // every submodule/converge/cancel — same distinction bisect.svelte.ts's
+  // own `autoRunning` draws against `busy` there.
+  foreachCommand = $state("");
+  foreachRunning = $state(false);
+  // Streamed in live from "submodule-foreach-progress" as each submodule
+  // finishes, one entry appended per event; overwritten wholesale with the
+  // final, authoritative list once submoduleForeachStart's own promise
+  // resolves (mirrors bisect.svelte.ts's startRun applying its own final
+  // status after the fact, in case an event ever raced it).
+  foreachResults = $state<SubmoduleForeachEntry[]>([]);
+  // Unlisten fn for the "submodule-foreach-progress" subscription, live only
+  // while a sweep is in flight — see startForeach().
+  private foreachUnlisten: (() => void) | null = null;
 
   async refresh(repo: string) {
     if (!IN_TAURI) {
@@ -534,6 +574,105 @@ class SidebarState {
     }
   }
 
+  // "Run command in every submodule…" (bulk, alongside Sync all/Update all)
+  // — submodule_foreach_start runs `command` via a shell once in every
+  // initialized submodule's own working directory (recursive:true also
+  // descends into a submodule-of-a-submodule), emitting one
+  // "submodule-foreach-progress" event per submodule as it finishes. This is
+  // a real, long-lived BLOCKING Tauri call — the exact same shape as
+  // bisect.svelte.ts's bisectCtrl.startRun (bisect_run_start) — so it's
+  // mirrored almost exactly: `repo` is an explicit parameter (whatever was
+  // current when Run was clicked) rather than read from bridge.CUR_REPO
+  // internally the way every OTHER method in this file does; the listener is
+  // armed BEFORE the blocking await so no early submodule's result is
+  // missed; and it's torn down in a try/finally regardless of outcome.
+  // Re-entrancy is guarded synchronously (busy/foreachRunning/repo, all
+  // checked before any await), same discipline as every mutation here.
+  async startForeach(repo: string, command: string, recursive: boolean) {
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say('Ran "' + command.trim() + '" in each submodule (demo).');
+      return;
+    }
+    if (this.busy || this.foreachRunning || !repo) return;
+    const cmd = command.trim();
+    if (!cmd) {
+      bridge.tama.warn("Enter a command to run in each submodule first.");
+      return;
+    }
+    this.foreachRunning = true;
+    this.foreachResults = [];
+    bridge.tama.set("thinking");
+    bridge.tama.say('Running "' + cmd + '" in each submodule…');
+    try {
+      // No typed/generated event helper exists in this codebase — every
+      // other listener (see bisect.svelte.ts's startRun, and src/main.ts's
+      // "repo-changed") goes through the raw `window.__TAURI__.event.listen`,
+      // so this mirrors that exactly rather than inventing a second
+      // subscription mechanism.
+      const w = window as unknown as { __TAURI__?: any };
+      this.foreachUnlisten =
+        (await w.__TAURI__?.event.listen(
+          "submodule-foreach-progress",
+          (e: { payload: SubmoduleForeachEntry }) => {
+            this.foreachResults = [...this.foreachResults, e.payload];
+          },
+        )) ?? null;
+      const res = await commands.submoduleForeachStart(repo, cmd, recursive); // blocks until the sweep finishes/cancels
+      if (res.status === "ok") {
+        this.foreachResults = res.data; // final list is authoritative even if an event raced it
+        const failed = res.data.filter((e) => e.status === "failed").length;
+        if (failed > 0) {
+          bridge.tama.warn(failed + " of " + res.data.length + " submodule" + (res.data.length === 1 ? "" : "s") + " failed — see results below.");
+        } else {
+          bridge.tama.set("celebrate");
+          bridge.tama.say('Ran "' + cmd + '" in every submodule.', 3200);
+        }
+      } else {
+        bridge.tama.warn("Couldn't run in submodules — " + res.error);
+      }
+    } catch (e) {
+      bridge.tama.warn("Foreach run failed — " + e);
+      console.error(e);
+    } finally {
+      this.stopForeachListening();
+      this.foreachRunning = false;
+    }
+  }
+
+  // Always callable — mirrors bisect_run_cancel/submodule_foreach_cancel's
+  // own "must always be able to run" escape-hatch spirit on the Rust side.
+  // Only requests the stop; the sweep notices before its NEXT submodule
+  // (same documented TOCTOU limitation as bisect's run_bisect), so
+  // `foreachRunning` flips back to false via startForeach's own finally once
+  // the in-flight call actually settles.
+  async cancelForeach() {
+    try {
+      await commands.submoduleForeachCancel();
+    } catch (e) {
+      bridge.tama.warn("Couldn't cancel the run — " + e);
+    }
+  }
+
+  // Best-effort guard wired into legacy/main.ts's openRepo() alongside
+  // bisectCtrl.cancelIfRunning's own existing call — see this section's doc
+  // comment above for the full rationale (submodule_foreach_start is a real,
+  // long-lived blocking Tauri call actually executing the user's command
+  // against every submodule's working tree; switching repos out from under
+  // it would leave it running headlessly against a repo the UI can no
+  // longer see or stop, with "submodule-foreach-progress" events silently
+  // misapplied once the current repo/view has moved on). Only requests the
+  // stop (see cancelForeach's own TOCTOU note above); does not wait for the
+  // backend sweep to actually finish.
+  async cancelIfRunning() {
+    if (this.foreachRunning) await this.cancelForeach();
+  }
+
+  private stopForeachListening() {
+    this.foreachUnlisten?.();
+    this.foreachUnlisten = null;
+  }
+
   // "Deinit" — status-gated confirm (see submoduleNeedsForceConfirm's own
   // doc comment): a "clean"/"out-of-date"/"not-initialized" row has nothing
   // at risk, so this calls straight through with force:false, no scrim at
@@ -704,6 +843,8 @@ class SidebarState {
     this.menu = null;
     this.tagMenu = null;
     this.hasRepo = false;
+    this.foreachResults = [];
+    this.foreachCommand = "";
   }
 
   async checkout(name: string) {

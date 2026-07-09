@@ -105,6 +105,26 @@
   function subBlockedTip(status: string): string {
     return "This submodule is " + subStatusLabel(status) + " — resolve it before updating.";
   }
+
+  // Foreach-sweep result chip label ("ok"/"failed"/"skipped"/"cancelled" —
+  // see SubmoduleForeachEntry's own doc comment in bindings.ts) — a small
+  // hand-maintained map rather than subStatusLabel's generic hyphen-to-space
+  // rule above, since these four are a distinct, closed vocabulary from the
+  // per-submodule status chip's own 6-way set.
+  function subfStatusLabel(status: string): string {
+    switch (status) {
+      case "ok":
+        return "OK";
+      case "failed":
+        return "Failed";
+      case "skipped":
+        return "Skipped";
+      case "cancelled":
+        return "Cancelled";
+      default:
+        return status;
+    }
+  }
 </script>
 
 <svelte:window onpointerdown={onWindowPointerdown} />
@@ -339,6 +359,70 @@
           >
             {#if sidebarCtrl.busy && sidebarCtrl.busyTarget === SUBMODULES_ALL}<span class="spinner"></span>{:else}Update all{/if}
           </button>
+        </div>
+        <!-- Bulk "Run command in every submodule…" (submodule_foreach_start/
+             -cancel) — a real, long-lived BLOCKING sweep (same shape as
+             Bisect.svelte's "Automate with a command" row), not a quick
+             one-shot mutation like Sync all/Update all above, so it gets its
+             own Run/Cancel affordance plus a live, streamed-in results list
+             instead of folding into sub-head's shared busy spinner. Reuses
+             submodulesRecursive (the SAME checkbox/state Sync all/Update all
+             above already share) rather than a third, parallel recursive
+             toggle — see sidebar.svelte.ts's own doc comment. -->
+        <div class="sub-foreach">
+          {#if sidebarCtrl.foreachRunning}
+            <div class="sub-foreach-row">
+              <span class="sub-foreach-status"><span class="spinner"></span> Running in each submodule&#8230;</span>
+              <button class="btn ghost sub-foreach-cancel" onclick={() => sidebarCtrl.cancelForeach()}>&#9632; Cancel</button>
+            </div>
+          {:else}
+            <div class="sub-foreach-row">
+              <input
+                class="sub-foreach-input mono"
+                type="text"
+                placeholder="Run command in every submodule&#8230;"
+                spellcheck="false"
+                autocomplete="off"
+                disabled={sidebarCtrl.busy}
+                bind:value={sidebarCtrl.foreachCommand}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") sidebarCtrl.startForeach(bridge.CUR_REPO as unknown as string, sidebarCtrl.foreachCommand, sidebarCtrl.submodulesRecursive);
+                }}
+              />
+              <label class="sub-recursive"
+                ><input type="checkbox" bind:checked={sidebarCtrl.submodulesRecursive} disabled={sidebarCtrl.busy} /> recursive</label
+              >
+              <button
+                class="sub-update-all"
+                disabled={sidebarCtrl.busy || !sidebarCtrl.foreachCommand.trim()}
+                onclick={() => sidebarCtrl.startForeach(bridge.CUR_REPO as unknown as string, sidebarCtrl.foreachCommand, sidebarCtrl.submodulesRecursive)}
+                >Run</button
+              >
+            </div>
+          {/if}
+          {#if sidebarCtrl.foreachResults.length}
+            <!-- Streamed-in live as "submodule-foreach-progress" events
+                 arrive (see startForeach) — capped/scrollable per-entry
+                 stderr (never dumped unbounded into the DOM: submodule.rs's
+                 own cap_output already caps it server-side at 20,000 chars,
+                 and .sub-foreach-stderr below bounds its rendered height and
+                 scrolls internally on top of that). -->
+            <div class="sub-foreach-results">
+              {#each sidebarCtrl.foreachResults as r (r.path)}
+                <div class="sub-foreach-item">
+                  <div class="sub-foreach-item-row">
+                    <span class="rname">{r.path}</span>
+                    <span class="sub-foreach-chip" data-status={r.status}
+                      >{subfStatusLabel(r.status)}{r.exitCode != null ? " · exit " + r.exitCode : ""}</span
+                    >
+                  </div>
+                  {#if r.status === "failed" && r.stderr}
+                    <pre class="sub-foreach-stderr mono">{r.stderr}</pre>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
         </div>
         {#each sidebarCtrl.submodules as s (s.path)}
           {@const action = submoduleAction(s.status)}

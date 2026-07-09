@@ -19,7 +19,7 @@ pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
-pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 deinit/remove; foreach is a later milestone
+pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 deinit/remove + M5 foreach
 pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious ownership"
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
 
@@ -132,6 +132,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // survives) / remove (deinit + git rm, stages .gitmodules cleanup too)
         submodule::submodule_deinit,
         submodule::submodule_remove,
+        // Submodules (M5, final): foreach — run a shell command in every
+        // initialized submodule's own working directory, with live progress
+        // and cancellation
+        submodule::submodule_foreach_start,
+        submodule::submodule_foreach_cancel,
     ])
 }
 
@@ -153,6 +158,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(watch::WatchState::default())
         .manage(git_bisect::BisectRunState::default())
+        .manage(submodule::SubmoduleForeachState::default())
         // invoke_handler is the tauri-specta equivalent of generate_handler! —
         // command runtime behavior (Ok resolves / Err rejects) is unchanged.
         .invoke_handler(builder.invoke_handler())

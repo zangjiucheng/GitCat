@@ -1020,6 +1020,10 @@ async function openRepo(path){
   // below — so request cancellation first (best-effort, see
   // bisectCtrl.cancelIfRunning's own documented TOCTOU note).
   await bisectCtrl.cancelIfRunning();
+  // Same rationale, same shape, for a submodule "Run command in every
+  // submodule…" sweep (submodule_foreach_start) — see
+  // sidebarCtrl.cancelIfRunning's own doc comment.
+  await sidebarCtrl.cancelIfRunning();
   const pickBtn=$(".repo-pick");
   let pickSpinner=null;
   if(pickBtn){ pickBtn.disabled=true; pickSpinner=document.createElement("span"); pickSpinner.className="spinner"; pickBtn.insertBefore(pickSpinner,pickBtn.firstChild); }
