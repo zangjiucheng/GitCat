@@ -13,12 +13,13 @@ pub mod git_rebase; // M6 (stage 2): linear rebase onto a target + continue / sk
 pub mod git_revert; // M6 (stage 3): revert a single commit onto HEAD + continue / abort
 pub mod identity; // Setup wizard: repo-local git identity (user.name/user.email) check + fix
 pub mod layout;
-pub mod menu; // native app menu (File/Edit/View/Window/Help) + About panel
+pub mod menu; // native app menu (File/Edit/View/Window/Help)
 pub mod model;
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
+pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious ownership"
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
 
 use tauri_specta::{collect_commands, Builder};
@@ -30,6 +31,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::load_graph,
         commands::commit_detail,
+        commands::get_app_info,
         // Safety Manager (snapshot / list / global undo)
         safety::create_snapshot,
         safety::list_snapshots,

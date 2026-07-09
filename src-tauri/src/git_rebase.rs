@@ -625,7 +625,7 @@ pub fn rebase_start(path: String, onto: String) -> RebaseResult {
     if let Err(e) = validate_rev(&onto) {
         return RebaseResult::error(e);
     }
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
     };
@@ -674,7 +674,7 @@ pub fn rebase_start(path: String, onto: String) -> RebaseResult {
 #[tauri::command]
 #[specta::specta]
 pub fn rebase_continue(path: String) -> RebaseResult {
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
     };
@@ -718,7 +718,7 @@ pub fn rebase_continue(path: String) -> RebaseResult {
 #[tauri::command]
 #[specta::specta]
 pub fn rebase_skip(path: String) -> RebaseResult {
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
     };
@@ -762,7 +762,7 @@ pub fn rebase_skip(path: String) -> RebaseResult {
 #[tauri::command]
 #[specta::specta]
 pub fn rebase_abort(path: String) -> RebaseResult {
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
     };

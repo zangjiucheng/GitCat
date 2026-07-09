@@ -96,7 +96,7 @@ fn short_backup(r: &str) -> String {
 }
 
 fn open_repo(path: &str) -> Result<Repository, RemoteResult> {
-    Repository::open(path).map_err(|e| RemoteResult::err(format!("Cannot open repository: {}", e.message())))
+    crate::trust::open_repo(path).map_err(|e| RemoteResult::err(format!("Cannot open repository: {}", e.message())))
 }
 
 fn take_snapshot(repo: &Repository) -> Result<String, String> {

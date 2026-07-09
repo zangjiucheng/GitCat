@@ -24,7 +24,7 @@ pub struct RepoRead {
 
 /// Walk up to `limit` commits reachable from all branches + HEAD, most-recent first.
 pub fn read_repo(path: &str, limit: usize) -> Result<RepoRead, git2::Error> {
-    let repo = Repository::open(path)?;
+    let repo = crate::trust::open_repo(path)?;
 
     // --- ref chips: map each commit oid to the refs pointing at it ---
     let refs = collect_refs(&repo);

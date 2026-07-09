@@ -92,7 +92,7 @@ fn git_msg(o: &Out) -> String {
 }
 
 fn open(path: &str) -> Result<Repository, String> {
-    Repository::open(path).map_err(|e| format!("cannot open repository: {}", e.message()))
+    crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))
 }
 
 /// The full symbolic HEAD ("refs/heads/…") when on a branch, else "" (detached).

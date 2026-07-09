@@ -17,6 +17,9 @@ import SetupWizard from "./islands/setupwizard/SetupWizard.svelte";
 import { setupWizardCtrl } from "./islands/setupwizard/setupwizard.svelte.ts";
 import Cmdk from "./islands/cmdk/Cmdk.svelte";
 import { cmdkCtrl } from "./islands/cmdk/cmdk.svelte.ts";
+import VimNav from "./islands/vimnav/VimNav.svelte";
+import About from "./islands/about/About.svelte";
+import { aboutCtrl } from "./islands/about/about.svelte.ts";
 import Detail from "./islands/detail/Detail.svelte";
 import { workdirCtrl } from "./islands/workdir/workdir.svelte.ts";
 import BisectDrawer from "./islands/bisectdrawer/BisectDrawer.svelte";
@@ -47,6 +50,8 @@ if (IN_TAURI) {
 }
 
 mount(Cmdk, { target: document.body });
+mount(VimNav, { target: document.body });
+mount(About, { target: document.body });
 // Workdir is NOT mounted as its own top-level tree here even though the
 // design spec's own §4 "Wiring" prose describes a second `mount(Workdir, …)`
 // alongside Detail's — that would double-render the panel: Detail.svelte
@@ -110,6 +115,9 @@ if (IN_TAURI) {
         break;
       case "push":
         bridge.doPush();
+        break;
+      case "about":
+        aboutCtrl.show();
         break;
     }
   });

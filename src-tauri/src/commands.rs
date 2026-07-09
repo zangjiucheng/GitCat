@@ -2,13 +2,44 @@
 
 use std::time::Instant;
 
-use git2::{Delta, DiffFindOptions, DiffOptions, Patch, Repository};
+use git2::{Delta, DiffFindOptions, DiffOptions, Patch};
+use serde::Serialize;
 
 use crate::git_read::read_repo;
 use crate::layout::{layout, NCOL};
 use crate::model::{
     CommitDetail, CommitMeta, DiffHunkRow, DiffLineRow, FileChange, GraphData, Person,
 };
+
+/// Static app metadata for the custom About panel — the same `PackageInfo`
+/// fields `menu.rs`'s native-About builder reads, just reshaped as a plain
+/// serializable struct instead of Tauri's menu-only `AboutMetadata` type.
+#[derive(Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfo {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub authors: Vec<String>,
+    pub copyright: String,
+    pub website: String,
+}
+
+/// JS: `commands.getAppInfo()`. No repo/path needed — this is pure static
+/// build-time metadata (Cargo.toml's `[package]` table), never `Err`.
+#[tauri::command]
+#[specta::specta]
+pub fn get_app_info(app: tauri::AppHandle<tauri::Wry>) -> AppInfo {
+    let pkg = app.package_info();
+    AppInfo {
+        name: pkg.name.clone(),
+        version: pkg.version.to_string(),
+        description: pkg.description.to_string(),
+        authors: pkg.authors.split(':').map(|s| s.trim().to_string()).collect(),
+        copyright: "\u{a9} Jiucheng Zang".to_string(),
+        website: "https://github.com/zangjiucheng/GitCat".to_string(),
+    }
+}
 
 /// Caps so a monster commit (vendored dir, generated lockfile) can't stall the
 /// UI or blow up the payload. Beyond these we flag truncation and stop.
@@ -82,7 +113,7 @@ pub fn commit_detail(path: String, sha: String) -> Result<CommitDetail, String> 
 }
 
 fn commit_detail_inner(path: &str, sha: &str) -> Result<CommitDetail, git2::Error> {
-    let repo = Repository::open(path)?;
+    let repo = crate::trust::open_repo(path)?;
     // `sha` may be a 7-char abbreviation (the graph rows carry short shas) or a
     // full 40-char oid; find_commit_by_prefix resolves either.
     let commit = repo.find_commit_by_prefix(sha)?;

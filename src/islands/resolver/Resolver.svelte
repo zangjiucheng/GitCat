@@ -55,7 +55,7 @@
         </div>
       {:else}
         <div class="cf-layout">
-          <div class="cf-files">
+          <div class="cf-files" data-vimnav-list>
             {#each resolver.files as f (f.path)}
               {@const resolved = !resolver.remaining.has(f.path)}
               <div
