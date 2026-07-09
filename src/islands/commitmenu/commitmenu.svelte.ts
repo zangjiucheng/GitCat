@@ -69,12 +69,24 @@ class CommitMenuState {
   tagName = $state("");
   tagMessage = $state("");
 
-  // Re-entrancy guard for confirmBranch/confirmTag's real (IN_TAURI) IPC
-  // round-trip — mirrors resolver.busy/sidebarCtrl.busy. CommitMenu.svelte
-  // also reads this to block outside-click-to-close while a request is in
-  // flight, same as Sidebar.svelte's onWindowPointerdown does for the New
-  // Branch/New Tag forms.
+  // Re-entrancy guard for the real (IN_TAURI) IPC round-trip of EVERY
+  // mutating action here (cherryPick/merge/revert/confirmBranch/confirmTag)
+  // — mirrors resolver.busy/sidebarCtrl.busy. CommitMenu.svelte also reads
+  // this to block outside-click-to-close while a request is in flight, same
+  // as Sidebar.svelte's onWindowPointerdown does for the New Branch/New Tag
+  // forms.
   busy = $state(false);
+  // Status text shown next to the spinner while `busy` is true for
+  // cherryPick/merge/revert specifically (confirmBranch/confirmTag show
+  // their own "Creating…" via Tama instead — see those methods). Loading-
+  // indicator audit fix: these three used to call close() BEFORE awaiting
+  // the real operation, so the popover vanished instantly with zero visual
+  // feedback for the whole round-trip — the only cue was Tama's easy-to-miss
+  // corner animation (see commit 5d0ab24's own framing of that exact gap for
+  // every OTHER surface in the app). Now they stay open, busy, spinnered —
+  // same as confirmBranch/confirmTag already correctly do — and close only
+  // once the operation actually resolves.
+  pendingLabel = $state("");
 
   // Opens the menu for one right-clicked commit — the canvas's contextmenu
   // handler (legacy/main.ts) is the only real caller. `sha` is always resolved
@@ -111,6 +123,7 @@ class CommitMenuState {
     this.tagName = "";
     this.tagMessage = "";
     this.busy = false;
+    this.pendingLabel = "";
     this.open = true;
   }
 
@@ -126,6 +139,7 @@ class CommitMenuState {
     this.tagName = "";
     this.tagMessage = "";
     this.busy = false;
+    this.pendingLabel = "";
   }
 
   // ── mutating actions (menu view) ────────────────────────────────────────
@@ -138,27 +152,40 @@ class CommitMenuState {
   // guard was bypassed; this is the belt-and-braces backstop, same shape as
   // detailCtrl.revertCommit()'s `if (!c || c.merge) return;`.
   async cherryPick() {
-    if (this.isMerge) return;
+    if (this.isMerge || this.busy) return;
     const repo = this.repo, sha = this.sha;
-    this.close();
     if (!IN_TAURI) {
+      this.close();
       resolver.openDemo(sha); // ---- design-mode demo ----
       return;
     }
-    await resolver.startPick(repo, sha, false); // ---- real pick onto HEAD (Svelte island) ----
+    this.busy = true;
+    this.pendingLabel = "Cherry-picking…";
+    try {
+      await resolver.startPick(repo, sha, false); // ---- real pick onto HEAD (Svelte island) ----
+    } finally {
+      this.close(); // done (clean/conflict-opened-Resolver/error-toasted) — nothing left for this popover to show
+    }
   }
 
   // Merge the right-clicked commit/branch tip into HEAD. Deliberately NO
   // isMerge guard — merging a merge commit's tip is legal (mirrors
   // legacyMerge's own legalMerge, and git_merge.rs's documented reasoning).
   async merge() {
+    if (this.busy) return;
     const repo = this.repo, sha = this.sha;
-    this.close();
     if (!IN_TAURI) {
+      this.close();
       resolver.openDemo(sha, "merge"); // ---- design-mode demo ----
       return;
     }
-    await resolver.startMerge(repo, sha); // ---- real merge into HEAD (Svelte island) ----
+    this.busy = true;
+    this.pendingLabel = "Merging…";
+    try {
+      await resolver.startMerge(repo, sha); // ---- real merge into HEAD (Svelte island) ----
+    } finally {
+      this.close();
+    }
   }
 
   // Revert the right-clicked commit onto HEAD. Guarded on isMerge for the
@@ -166,14 +193,20 @@ class CommitMenuState {
   // doesn't support `-m`/`--mainline`, so a merge commit would otherwise take
   // a real safety snapshot before failing on git's raw stderr.
   async revert() {
-    if (this.isMerge) return;
+    if (this.isMerge || this.busy) return;
     const repo = this.repo, sha = this.sha;
-    this.close();
     if (!IN_TAURI) {
+      this.close();
       resolver.openDemo(sha, "revert"); // ---- design-mode demo ----
       return;
     }
-    await resolver.startRevert(repo, sha); // ---- real revert onto HEAD (Svelte island) ----
+    this.busy = true;
+    this.pendingLabel = "Reverting…";
+    try {
+      await resolver.startRevert(repo, sha); // ---- real revert onto HEAD (Svelte island) ----
+    } finally {
+      this.close();
+    }
   }
 
   // ── copy actions (menu view) — clipboard-only, no IN_TAURI gate needed:
@@ -184,16 +217,19 @@ class CommitMenuState {
   // sidebarCtrl.copySnapshotSha's inline sha chip has, since the whole
   // popover is about to go away anyway). ────────────────────────────────────
   copyShortSha() {
+    if (this.busy) return;
     navigator.clipboard?.writeText(this.shortSha);
     this.close();
   }
 
   copyFullSha() {
+    if (this.busy) return;
     navigator.clipboard?.writeText(this.sha);
     this.close();
   }
 
   copyMessage() {
+    if (this.busy) return;
     navigator.clipboard?.writeText(this.subject);
     this.close();
   }
@@ -201,6 +237,7 @@ class CommitMenuState {
   // ── "Create branch here…" sub-view ──────────────────────────────────────
 
   startBranchHere() {
+    if (this.busy) return;
     this.branchName = "";
     this.view = "branch";
   }
@@ -260,6 +297,7 @@ class CommitMenuState {
   // ── "Create tag here…" sub-view ─────────────────────────────────────────
 
   startTagHere() {
+    if (this.busy) return;
     this.tagName = "";
     this.tagMessage = "";
     this.view = "tag";

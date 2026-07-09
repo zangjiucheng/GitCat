@@ -330,6 +330,12 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cm-head{padding:4px 10px 7px;margin-bottom:2px;border-bottom:1px solid var(--border);font-size:11px;line-height:1.35}
 .cm-head .sha{color:var(--text)}
 .cm-head .subject{display:block;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* cherryPick/merge/revert's loading row — .nb-row's own flex/gap styling is
+   scoped to `.nb-form .nb-row` (it always sits under an input in the New
+   Branch/Tag forms); this one sits directly in the popover with no input
+   above it, so it needs its own minimal layout rule rather than silently
+   rendering unstyled. */
+.cm-pending{display:flex;align-items:center;gap:8px;padding:6px 10px}
 
 /* ---------- Tama's lamp-nook (pinned bottom of sidebar) ---------- */
 .nook{height:var(--nook-h);flex:none;position:relative;overflow:hidden;border-top:1px solid var(--border);

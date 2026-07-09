@@ -63,6 +63,7 @@ function resetMenu() {
   commitMenuCtrl.tagName = "";
   commitMenuCtrl.tagMessage = "";
   commitMenuCtrl.busy = false;
+  commitMenuCtrl.pendingLabel = "";
 }
 
 beforeEach(() => {
@@ -164,6 +165,47 @@ describe("cherryPick", () => {
     expect(resolver.openDemo).not.toHaveBeenCalled();
     expect(commitMenuCtrl.open).toBe(false);
   });
+
+  // Loading-indicator regression: this action used to call close() BEFORE
+  // awaiting resolver.startPick, so the popover vanished instantly with no
+  // visible feedback for the whole real IPC round-trip (see
+  // commitmenu.svelte.ts's pendingLabel doc comment for the full "why" —
+  // matches the audit that added a spinner convention across every OTHER
+  // mutating surface in this app, commit 5d0ab24). Assert the popover stays
+  // open, busy, with a pending label WHILE the call is in flight, and only
+  // closes once it resolves.
+  it("real mode: stays open with a spinner/pendingLabel while startPick is in flight, closes once it resolves", async () => {
+    mockInTauri = true;
+    let resolveStartPick!: () => void;
+    (resolver.startPick as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveStartPick = resolve; })
+    );
+    commitMenuCtrl.openAt("/repo", "aaa1111", "one", false, 0, 0);
+    const p = commitMenuCtrl.cherryPick();
+    await Promise.resolve(); // let the async fn run up to the await
+    expect(commitMenuCtrl.open).toBe(true); // still open — NOT closed immediately
+    expect(commitMenuCtrl.busy).toBe(true);
+    expect(commitMenuCtrl.pendingLabel).toBe("Cherry-picking…");
+    resolveStartPick();
+    await p;
+    expect(commitMenuCtrl.open).toBe(false);
+    expect(commitMenuCtrl.busy).toBe(false);
+  });
+
+  it("real mode: a second cherryPick/merge/revert call while one is already in flight is a no-op", async () => {
+    mockInTauri = true;
+    let resolveStartPick!: () => void;
+    (resolver.startPick as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveStartPick = resolve; })
+    );
+    commitMenuCtrl.openAt("/repo", "aaa1111", "one", false, 0, 0);
+    const p = commitMenuCtrl.cherryPick();
+    await Promise.resolve();
+    await commitMenuCtrl.merge(); // busy===true — must no-op, not fire a second mutating action
+    expect(resolver.startMerge).not.toHaveBeenCalled();
+    resolveStartPick();
+    await p;
+  });
 });
 
 describe("merge", () => {
@@ -188,6 +230,23 @@ describe("merge", () => {
     commitMenuCtrl.openAt("/repo", "aaa1111", "one", false, 0, 0);
     await commitMenuCtrl.merge();
     expect(resolver.startMerge).toHaveBeenCalledWith("/repo", "aaa1111");
+    expect(commitMenuCtrl.open).toBe(false);
+  });
+
+  it("real mode: stays open with a spinner/pendingLabel while startMerge is in flight, closes once it resolves", async () => {
+    mockInTauri = true;
+    let resolveStartMerge!: () => void;
+    (resolver.startMerge as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveStartMerge = resolve; })
+    );
+    commitMenuCtrl.openAt("/repo", "aaa1111", "one", false, 0, 0);
+    const p = commitMenuCtrl.merge();
+    await Promise.resolve();
+    expect(commitMenuCtrl.open).toBe(true);
+    expect(commitMenuCtrl.busy).toBe(true);
+    expect(commitMenuCtrl.pendingLabel).toBe("Merging…");
+    resolveStartMerge();
+    await p;
     expect(commitMenuCtrl.open).toBe(false);
   });
 });
@@ -215,6 +274,23 @@ describe("revert", () => {
     commitMenuCtrl.openAt("/repo", "aaa1111", "one", false, 0, 0);
     await commitMenuCtrl.revert();
     expect(resolver.startRevert).toHaveBeenCalledWith("/repo", "aaa1111");
+    expect(commitMenuCtrl.open).toBe(false);
+  });
+
+  it("real mode: stays open with a spinner/pendingLabel while startRevert is in flight, closes once it resolves", async () => {
+    mockInTauri = true;
+    let resolveStartRevert!: () => void;
+    (resolver.startRevert as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveStartRevert = resolve; })
+    );
+    commitMenuCtrl.openAt("/repo", "aaa1111", "one", false, 0, 0);
+    const p = commitMenuCtrl.revert();
+    await Promise.resolve();
+    expect(commitMenuCtrl.open).toBe(true);
+    expect(commitMenuCtrl.busy).toBe(true);
+    expect(commitMenuCtrl.pendingLabel).toBe("Reverting…");
+    resolveStartRevert();
+    await p;
     expect(commitMenuCtrl.open).toBe(false);
   });
 });

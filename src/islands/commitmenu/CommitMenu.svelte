@@ -54,22 +54,36 @@
       <span class="subject">{commitMenuCtrl.subject}</span>
     </div>
     {#if commitMenuCtrl.view === "menu"}
-      <button
-        disabled={commitMenuCtrl.isMerge}
-        title={commitMenuCtrl.isMerge ? "Can't cherry-pick a merge commit" : undefined}
-        onclick={() => commitMenuCtrl.cherryPick()}>Cherry-pick onto HEAD</button
-      >
-      <button onclick={() => commitMenuCtrl.merge()}>Merge into HEAD</button>
-      <button
-        disabled={commitMenuCtrl.isMerge}
-        title={commitMenuCtrl.isMerge ? "Can't revert a merge commit (needs --mainline, which isn't supported)" : undefined}
-        onclick={() => commitMenuCtrl.revert()}>Revert commit</button
-      >
-      <button onclick={() => commitMenuCtrl.startBranchHere()}>Create branch here&#8230;</button>
-      <button onclick={() => commitMenuCtrl.startTagHere()}>Create tag here&#8230;</button>
-      <button onclick={() => commitMenuCtrl.copyShortSha()}>Copy SHA (short)</button>
-      <button onclick={() => commitMenuCtrl.copyFullSha()}>Copy full SHA</button>
-      <button onclick={() => commitMenuCtrl.copyMessage()}>Copy commit message</button>
+      {#if commitMenuCtrl.busy}
+        <!-- cherryPick/merge/revert loading state: the popover used to close
+             the instant one of these was clicked, so the whole real IPC
+             round-trip (checkout, sequencer, snapshot) had ZERO visible
+             feedback beyond Tama's easy-to-miss corner animation — see
+             commitmenu.svelte.ts's pendingLabel doc comment. Stays open,
+             spinnered, same convention every other mutating surface in this
+             app already uses (branch/tag rows, the New Branch/Tag forms
+             below). -->
+        <div class="cm-pending">
+          <span class="spinner"></span><span class="mut">{commitMenuCtrl.pendingLabel}</span>
+        </div>
+      {:else}
+        <button
+          disabled={commitMenuCtrl.isMerge}
+          title={commitMenuCtrl.isMerge ? "Can't cherry-pick a merge commit" : undefined}
+          onclick={() => commitMenuCtrl.cherryPick()}>Cherry-pick onto HEAD</button
+        >
+        <button onclick={() => commitMenuCtrl.merge()}>Merge into HEAD</button>
+        <button
+          disabled={commitMenuCtrl.isMerge}
+          title={commitMenuCtrl.isMerge ? "Can't revert a merge commit (needs --mainline, which isn't supported)" : undefined}
+          onclick={() => commitMenuCtrl.revert()}>Revert commit</button
+        >
+        <button onclick={() => commitMenuCtrl.startBranchHere()}>Create branch here&#8230;</button>
+        <button onclick={() => commitMenuCtrl.startTagHere()}>Create tag here&#8230;</button>
+        <button onclick={() => commitMenuCtrl.copyShortSha()}>Copy SHA (short)</button>
+        <button onclick={() => commitMenuCtrl.copyFullSha()}>Copy full SHA</button>
+        <button onclick={() => commitMenuCtrl.copyMessage()}>Copy commit message</button>
+      {/if}
     {:else if commitMenuCtrl.view === "branch"}
       <div class="nb-form" class:busy={commitMenuCtrl.busy}>
         <input
