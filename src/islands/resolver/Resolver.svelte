@@ -22,8 +22,12 @@
   // Continue button copy — every other op's continue step creates a commit;
   // finishing a stash conflict doesn't (apply leaves the entry as-is, a
   // resolved pop only drops it — see stash_conflict_continue's doc comment),
-  // so "& commit" would be misleading there.
-  function continueLabel(op: string): string {
+  // so "& commit" would be misleading there. An interactive-rebase "editing"
+  // pause is its own third case: Continue just advances the sequencer (any
+  // commit already happened via the Workdir panel's amend, or nothing changed
+  // at all), so neither "& commit" nor plain "Continue" reads quite right.
+  function continueLabel(op: string, editing: boolean): string {
+    if (editing) return "Continue rebase";
     return op === "stash" ? "Continue" : "Continue & commit";
   }
 
@@ -44,76 +48,103 @@
       <div><h3>{resolver.title}</h3><p>{resolver.sub}</p></div>
     </div>
     <div class="modal-body">
-      <div class="cf-layout">
-        <div class="cf-files">
-          {#each resolver.files as f (f.path)}
-            {@const resolved = !resolver.remaining.has(f.path)}
-            <div
-              class="cf-file"
-              class:sel={f.path === resolver.selected}
-              class:done={resolved}
-              role="button"
-              tabindex="0"
-              onclick={() => resolver.select(f.path)}
-              onkeydown={(e) => (e.key === "Enter" || e.key === " ") && resolver.select(f.path)}
-            >
-              <span class="cf-mk">{resolved ? "✓" : "●"}</span><span class="cf-name">{f.path}</span>
-            </div>
-          {/each}
+      {#if resolver.editing}
+        <div class="rb-edit-banner">
+          <p>{resolver.sub}</p>
+          <button class="btn" onclick={() => resolver.openWorkdirToAmend()}>Open Workdir to amend&#8230;</button>
         </div>
-        <div class="cf-main">
-          <div class="cf-actions">
-            <span class="cf-cur">{resolver.current?.path ?? ""}</span>
-            <span class="cf-take">
-              <button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("ours")}
-                >{#if resolver.activeAction === "ours"}<span class="spinner"></span> Taking…{:else}Take ours{/if}</button
-              ><button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("theirs")}
-                >{#if resolver.activeAction === "theirs"}<span class="spinner"></span> Taking…{:else}Take theirs{/if}</button
+      {:else}
+        <div class="cf-layout">
+          <div class="cf-files">
+            {#each resolver.files as f (f.path)}
+              {@const resolved = !resolver.remaining.has(f.path)}
+              <div
+                class="cf-file"
+                class:sel={f.path === resolver.selected}
+                class:done={resolved}
+                role="button"
+                tabindex="0"
+                onclick={() => resolver.select(f.path)}
+                onkeydown={(e) => (e.key === "Enter" || e.key === " ") && resolver.select(f.path)}
               >
-            </span>
-          </div>
-          <div class="three-way" id="cfThree">
-            {#if resolver.current}
-              {@const lang = langFor(resolver.current.path)}
-              {@render col("ours", "Ours (HEAD)", resolver.current.ours, lang)}
-              {@render col("", "Base", resolver.current.base, lang)}
-              {@render col("theirs", "Theirs (picked)", resolver.current.theirs, lang)}
-            {:else}
-              <div class="tw-col" style="grid-column:1/4;padding:14px">
-                <span class="mut">All files resolved — press Continue &amp; commit.</span>
+                <span class="cf-mk">{resolved ? "✓" : "●"}</span><span class="cf-name">{f.path}</span>
               </div>
-            {/if}
+            {/each}
+          </div>
+          <div class="cf-main">
+            <div class="cf-actions">
+              <span class="cf-cur">{resolver.current?.path ?? ""}</span>
+              <span class="cf-take">
+                <button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("ours")}
+                  >{#if resolver.activeAction === "ours"}<span class="spinner"></span> Taking…{:else}Take ours{/if}</button
+                ><button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("theirs")}
+                  >{#if resolver.activeAction === "theirs"}<span class="spinner"></span> Taking…{:else}Take theirs{/if}</button
+                >
+              </span>
+            </div>
+            <div class="three-way" id="cfThree">
+              {#if resolver.current}
+                {@const lang = langFor(resolver.current.path)}
+                {@render col("ours", "Ours (HEAD)", resolver.current.ours, lang)}
+                {@render col("", "Base", resolver.current.base, lang)}
+                {@render col("theirs", "Theirs (picked)", resolver.current.theirs, lang)}
+              {:else}
+                <div class="tw-col" style="grid-column:1/4;padding:14px">
+                  <span class="mut">All files resolved — press Continue &amp; commit.</span>
+                </div>
+              {/if}
+            </div>
           </div>
         </div>
-      </div>
+      {/if}
       <div class="backup-note" style="margin-top:12px">
-        &#128257; Snapshot before {resolver.op}: <code>{resolver.backupRef}</code> &#183; rerere may auto-apply a recorded resolution.
+        &#128257; Snapshot before {resolver.op}: <code>{resolver.backupRef}</code>{#if !resolver.editing} &#183; rerere may auto-apply a recorded resolution.{/if}
       </div>
     </div>
     <div class="modal-foot">
       <button class="btn ghost" id="conflictAbort" disabled={resolver.busy} onclick={() => resolver.abort()}
         >{#if resolver.activeAction === "abort"}<span class="spinner"></span> Aborting…{:else}{abortLabel(resolver.op)}{/if}</button
       >
-      {#if resolver.op === "rebase"}
+      {#if resolver.op === "rebase" && !resolver.editing}
         <button class="btn ghost" id="conflictSkip" disabled={resolver.busy} onclick={() => resolver.skip()}
           >{#if resolver.activeAction === "skip"}<span class="spinner"></span> Skipping…{:else}Skip this commit{/if}</button
         >
       {/if}
-      <span class="cf-remain mut"
-        >{resolver.remainingCount
-          ? resolver.remainingCount + " file" + (resolver.remainingCount === 1 ? "" : "s") + " left"
-          : "all resolved"}</span
-      >
+      {#if !resolver.editing}
+        <span class="cf-remain mut"
+          >{resolver.remainingCount
+            ? resolver.remainingCount + " file" + (resolver.remainingCount === 1 ? "" : "s") + " left"
+            : "all resolved"}</span
+        >
+      {/if}
       <button
         class="btn"
         style="background:var(--accent2);border-color:var(--accent2)"
         disabled={resolver.remainingCount > 0 || resolver.busy}
         onclick={() => resolver.continue()}
-        >{#if resolver.activeAction === "continue"}<span class="spinner"></span> Committing…{:else}{continueLabel(resolver.op)}{/if}</button
+        >{#if resolver.activeAction === "continue"}<span class="spinner"></span> Committing…{:else}{continueLabel(resolver.op, resolver.editing)}{/if}</button
       >
     </div>
   </div>
 </div>
+
+{#if resolver.editing && !resolver.open}
+  <div class="rb-pause-pill" role="status">
+    <span class="rb-pause-ic">&#9208;</span>
+    <span class="rb-pause-txt">Rebase paused{resolver.sha ? " — editing " + resolver.sha : ""}</span>
+    <button class="btn ghost" style="padding:4px 10px" onclick={() => resolver.reopen()}>Details</button>
+    <button class="btn ghost" style="padding:4px 10px" disabled={resolver.busy} onclick={() => resolver.abort()}
+      >{#if resolver.activeAction === "abort"}<span class="spinner"></span>{:else}Abort{/if}</button
+    >
+    <button
+      class="btn"
+      style="padding:4px 10px;background:var(--accent2);border-color:var(--accent2)"
+      disabled={resolver.busy}
+      onclick={() => resolver.continue()}
+      >{#if resolver.activeAction === "continue"}<span class="spinner"></span>{:else}Continue rebase{/if}</button
+    >
+  </div>
+{/if}
 
 {#snippet col(cls: string, title: string, txt: string, lang: string)}
   <div class="tw-col {cls}">

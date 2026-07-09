@@ -20,6 +20,7 @@ vi.mock("../../legacy/bridge", () => ({
   demoBisectStatus: vi.fn(),
   demoBisectMark: vi.fn(),
   renderBisect: vi.fn(),
+  selectWorkdir: vi.fn(),
 }));
 
 vi.mock("../../ipc/bindings", () => ({
@@ -810,5 +811,212 @@ describe("openStashConflict (stash-apply/pop conflict, #7)", () => {
     await resolver.take("theirs");
 
     expect(resolver.op).toBe("stash");
+  });
+});
+
+// Interactive-rebase "editing" state (a `git rebase -i` paused cleanly at an
+// `edit` todo line — see git_rebase.rs's classify() and this module's own
+// "interactive-rebase editing state" doc note). Distinct from a genuine
+// conflict: no file list, no conflict_status round trip, and a different
+// affordance (background the modal, hand off to Workdir).
+describe("interactive-rebase 'editing' state", () => {
+  it("startRebase's applyOutcome routes an 'editing' result into the no-file-list mode, without a conflict_status round trip", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(
+      rebaseResult({
+        ok: false,
+        state: "editing",
+        message: "Paused to edit 1111111 — amend it, then Continue.",
+        backupRef: "refs/gitgui/backup/e1",
+      }),
+    );
+
+    await resolver.startRebase("repo1", "main");
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.op).toBe("rebase");
+    expect(resolver.editing).toBe(true);
+    expect(resolver.files).toHaveLength(0);
+    expect(resolver.sub).toBe("Paused to edit 1111111 — amend it, then Continue.");
+    expect(resolver.backupRef).toBe("refs/gitgui/backup/e1");
+    expect(commands.conflictStatus).not.toHaveBeenCalled();
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+  });
+
+  it("title reads distinctly from a genuine conflict while editing", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(rebaseResult({ ok: false, state: "editing" }));
+    await resolver.startRebase("repo1", "main");
+    expect(resolver.title).toBe("Rebase paused to edit a commit");
+  });
+
+  it("openFromResult (the planner's hand-off entry point) routes 'editing' identically to startRebase", async () => {
+    const res = rebaseResult({ ok: false, state: "editing", message: "Paused to edit abc1234." });
+
+    await resolver.openFromResult("repo1", res, "main");
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.op).toBe("rebase");
+    expect(resolver.editing).toBe(true);
+    expect(resolver.files).toHaveLength(0);
+    expect(resolver.sub).toBe("Paused to edit abc1234.");
+    expect(commands.conflictStatus).not.toHaveBeenCalled();
+  });
+
+  it("openFromResult also routes a 'conflict' result into the normal file-list mode (planner and linear rebase share ONE conflict UI)", async () => {
+    const res = rebaseResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] });
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "rebase")));
+
+    await resolver.openFromResult("repo1", res, "main");
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.editing).toBe(false);
+    expect(resolver.files).toEqual([FILE_A]);
+  });
+
+  it("openWorkdirToAmend backgrounds the modal (keeps .editing true) and hands off to the Workdir panel", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(rebaseResult({ ok: false, state: "editing" }));
+    await resolver.startRebase("repo1", "main");
+    expect(resolver.open).toBe(true);
+
+    resolver.openWorkdirToAmend();
+
+    expect(resolver.open).toBe(false);
+    expect(resolver.editing).toBe(true);
+    expect(bridge.selectWorkdir).toHaveBeenCalled();
+  });
+
+  it("openWorkdirToAmend is a no-op when not editing (e.g. a genuine conflict)", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "rebase")));
+    await resolver.startRebase("repo1", "main");
+
+    resolver.openWorkdirToAmend();
+
+    expect(resolver.open).toBe(true); // unchanged — the guard refused
+    expect(bridge.selectWorkdir).not.toHaveBeenCalled();
+  });
+
+  it("reopen() brings the modal back to the foreground without losing .editing", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(rebaseResult({ ok: false, state: "editing" }));
+    await resolver.startRebase("repo1", "main");
+    resolver.openWorkdirToAmend();
+    expect(resolver.open).toBe(false);
+
+    resolver.reopen();
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.editing).toBe(true);
+  });
+
+  it("reopen() is a no-op when not editing", () => {
+    resolver.open = false;
+    resolver.editing = false;
+
+    resolver.reopen();
+
+    expect(resolver.open).toBe(false);
+  });
+
+  it("skip() is a no-op while editing — no rebaseSkip call, modal stays open", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(rebaseResult({ ok: false, state: "editing" }));
+    await resolver.startRebase("repo1", "main");
+
+    await resolver.skip();
+
+    expect(commands.rebaseSkip).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(true);
+  });
+
+  it("continue() from an editing pause dispatches rebaseContinue — the SAME OPS entry a genuine conflict uses, no special-casing", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(rebaseResult({ ok: false, state: "editing" }));
+    await resolver.startRebase("repo1", "main");
+
+    vi.mocked(commands.rebaseContinue).mockResolvedValueOnce(rebaseResult({ state: "clean", message: "Rebased." }));
+
+    await resolver.continue();
+
+    expect(commands.rebaseContinue).toHaveBeenCalledWith("repo1");
+    expect(resolver.open).toBe(false);
+    expect(resolver.editing).toBe(false); // close() -> reset() clears it
+  });
+
+  it("continuing from one edit-pause into ANOTHER falls back into the editing mode again automatically", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "editing", message: "Paused to edit 1111111." }),
+    );
+    await resolver.startRebase("repo1", "main");
+
+    vi.mocked(commands.rebaseContinue).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "editing", message: "Paused to edit 2222222." }),
+    );
+
+    await resolver.continue();
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.editing).toBe(true);
+    expect(resolver.sub).toBe("Paused to edit 2222222.");
+    expect(commands.conflictStatus).not.toHaveBeenCalled();
+  });
+
+  // Regression guard (bug fix): continue()'s "still conflicted" branch used to
+  // ONLY call refresh() and never reset `.editing` back to false. Scenario:
+  // plan is [pick A, edit B, pick C] where C conflicts. Paused at edit B
+  // (.editing=true), the user amends via Workdir and clicks Continue;
+  // rebaseContinue lands on C's real conflict (state:'conflict'). Since
+  // Resolver.svelte gates its ENTIRE file-list/three-way-diff UI on
+  // `{#if resolver.editing}` (showing the edit banner instead), a stuck
+  // `.editing` flag stranded the user on "Rebase paused to edit a commit" /
+  // "Open Workdir to amend…" even though `conflictedFiles` was already
+  // correctly populated below — only Abort worked. `.editing` must flip back
+  // to false so Resolver.svelte's gate actually switches to the real
+  // conflict-resolution UI.
+  it("continue() from an editing pause landing on a REAL conflict clears .editing so the conflict UI (not the edit banner) can render", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "editing", message: "Paused to edit 1111111." }),
+    );
+    await resolver.startRebase("repo1", "main");
+    expect(resolver.editing).toBe(true);
+
+    vi.mocked(commands.rebaseContinue).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "conflict", conflictedFiles: ["c.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "rebase")));
+
+    await resolver.continue();
+
+    // This IS Resolver.svelte's gating condition (`{#if resolver.editing}` /
+    // `{:else}` renders the file-list/three-way-diff) — false here is exactly
+    // what makes the modal switch off the edit banner.
+    expect(resolver.editing).toBe(false);
+    expect(resolver.open).toBe(true);
+    expect(resolver.files.map((f) => f.path)).toEqual(["a.ts"]);
+    expect(bridge.tama.warn).toHaveBeenCalled();
+  });
+
+  it("abort() from an editing pause dispatches rebaseAbort — the SAME OPS entry a genuine conflict uses", async () => {
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(rebaseResult({ ok: false, state: "editing" }));
+    await resolver.startRebase("repo1", "main");
+
+    vi.mocked(commands.rebaseAbort).mockResolvedValueOnce(rebaseResult({ state: "clean", message: "Rebase aborted." }));
+
+    await resolver.abort();
+
+    expect(commands.rebaseAbort).toHaveBeenCalledWith("repo1");
+    expect(resolver.open).toBe(false);
+    expect(resolver.editing).toBe(false);
+  });
+
+  it("a genuine conflict's openConflict always clears a stale .editing flag (belt-and-suspenders)", async () => {
+    resolver.editing = true; // simulate a stale flag left over from a prior editing pause
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "rebase")));
+
+    await resolver.startRebase("repo1", "main");
+
+    expect(resolver.editing).toBe(false);
+    expect(resolver.files).toEqual([FILE_A]);
   });
 });

@@ -540,6 +540,60 @@ async rebaseAbort(path: string) : Promise<RebaseResult> {
     return await TAURI_INVOKE("rebase_abort", { path });
 },
 /**
+ * List the commits an interactive-rebase planner can show/edit: every
+ * non-merge commit reachable from HEAD but not from `onto`, oldest-first
+ * (see [`commit_range`]'s doc for why merges are excluded). Pure READ — no
+ * mutation, no snapshot, returns a plain `Result` like `git_read.rs`'s reads
+ * rather than a `RebaseResult` (there is nothing to classify: this never
+ * touches the sequencer).
+ * 
+ * JS: `invoke("rebase_interactive_plan", { path, onto })`.
+ */
+async rebaseInteractivePlan(path: string, onto: string) : Promise<Result<PlanCommit[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rebase_interactive_plan", { path, onto }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Run a planned interactive rebase: reorder/pick/squash/fixup/drop/edit,
+ * exactly as chosen in the planner (`todo`, oldest-first — this IS the
+ * replay/todo order).
+ * 
+ * Re-derives the AUTHORITATIVE commit range itself (the exact same
+ * [`commit_range`] walk [`rebase_interactive_plan`] used) and validates the
+ * caller's `todo` against it BEFORE writing anything or snapshotting —
+ * mirrors the Resolver's own "never trust in-memory state, re-derive from
+ * the live backend" discipline, applied server-side: a stale frontend (one
+ * that hasn't refreshed after an external change) is refused with
+ * `state:"error"` and NO mutation, rather than silently rebasing the wrong
+ * set of commits. Also refused before any mutation: an unknown/malformed
+ * action, and a first row whose action is `squash`/`fixup` (nothing
+ * precedes it to combine into — git would itself error with "cannot
+ * 'squash' without a previous commit", but a clean pre-check gives a better
+ * message, matching this app's "clean message before hitting git's own"
+ * style used throughout).
+ * 
+ * Once validated: snapshots (Safety Manager, exactly like `rebase_start`),
+ * builds the todo text (see [`build_todo_text`] — the trailing per-line
+ * subject is ALWAYS re-read server-side from `commit.summary()`, never the
+ * caller's copy), writes it to a sidecar file (see [`write_precomputed_todo`]
+ * / [`todo_dir`]), points `GIT_SEQUENCE_EDITOR` at a `cp` of that file (see
+ * [`shell_single_quote`] and this module's doc comment for the full
+ * empirical trail on why this exact mechanism is safe), runs
+ * `git rebase -i --end-of-options <onto>` with the same non-interactive
+ * `GIT_EDITOR=true` convention as every other op, deletes the sidecar file
+ * (best-effort, always), and classifies the result through the SAME
+ * [`classify`] linear rebase uses (now including the "editing" branch).
+ * 
+ * JS: `invoke("rebase_interactive_start", { path, onto, todo })`.
+ */
+async rebaseInteractiveStart(path: string, onto: string, todo: TodoItem[]) : Promise<RebaseResult> {
+    return await TAURI_INVOKE("rebase_interactive_start", { path, onto, todo });
+},
+/**
  * Revert `sha` onto the current branch (HEAD). Snapshots FIRST, then runs
  * `git revert [-s] --no-edit --end-of-options <sha>`. `signoff` (the `-s`
  * toggle) appends a "Signed-off-by" trailer to the revert commit's message.
@@ -928,6 +982,18 @@ conflictedFiles: string[]; message: string;
  */
 backupRef: string | null }
 /**
+ * One row the interactive-rebase planner shows: a plannable (non-merge)
+ * commit between `onto` and HEAD, oldest-first (this IS the replay/todo
+ * order — see [`commit_range`]). `sha` is the full 40-hex id so a
+ * [`TodoItem`] built from it round-trips exactly; `subject` is
+ * `commit.summary()` (guaranteed single-line by libgit2 — truncates at the
+ * first blank line) and is ALWAYS what gets written into the precomputed
+ * todo file's trailing text — never a caller-supplied string (see
+ * [`rebase_interactive_start`]'s doc comment for why that matters).
+ * Serializes camelCase: `shortSha`.
+ */
+export type PlanCommit = { sha: string; shortSha: string; subject: string }
+/**
  * Whatever `revparse_single` resolved `rev` to. Internally tagged on `kind`
  * (verified empirically against specta 2.0.0-rc.22 — this generates a clean
  * discriminated TS union, each variant's fields flattened alongside the
@@ -944,7 +1010,7 @@ export type PlumbingPerson = { name: string; email: string; time: number }
  */
 export type RebaseResult = { ok: boolean; 
 /**
- * "clean" | "conflict" | "empty" | "error"
+ * "clean" | "conflict" | "editing" | "empty" | "error"
  */
 state: string; 
 /**
@@ -1080,6 +1146,13 @@ export type StashResolveResult = { ok: boolean;
  */
 state: string; conflictedFiles: string[]; message: string; backupRef: string | null }
 export type TagObject = { sha: string; name: string; tagger: PlumbingPerson | null; message: string; targetOid: string; targetKind: string }
+/**
+ * One planner row's chosen action, as sent back to [`rebase_interactive_start`].
+ * `sha` is validated against a FRESHLY recomputed commit range before
+ * anything is written or mutated — see that command's doc comment.
+ * `action` is one of `"pick" | "squash" | "fixup" | "drop" | "edit"`.
+ */
+export type TodoItem = { sha: string; action: string }
 /**
  * One entry inside a tree listing.
  */

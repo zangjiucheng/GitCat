@@ -38,6 +38,49 @@
 // correctly before any `conflict_status` round-trip has happened); the first
 // `refresh()` inside `openConflict` immediately overwrites it with the
 // authoritative value.
+//
+// ── interactive-rebase "editing" state ──────────────────────────────────────
+// `RebaseResult.state` can now also be `"editing"` (a `git rebase -i` paused
+// cleanly at an `edit` todo line — see git_rebase.rs's module doc): nothing is
+// conflicted, there is no file list, and `conflict_status`'s shape (`op` +
+// `files`) genuinely CANNOT distinguish this from the pre-existing hook/
+// gpgsign fallback (both report `in_progress:true, op:"rebase", files:[]`) —
+// only the direct `RebaseResult` from start/continue/skip carries the
+// distinguishing signal. So `.editing` is NOT re-derived by `refresh()`
+// (unlike `.op`) — it is set directly from whichever `RebaseResult` we just
+// received (`openEditing`, mirroring how `.op` is set "optimistically" by
+// startRebase before any round trip), and cleared by `reset()` (called by
+// every OTHER open*/close path, including a genuine conflict's `openConflict`
+// — a real conflict always wins over a stale `.editing` flag). `continue()`/
+// `abort()` need ZERO special-casing for this: `OPS[this.op]` already points
+// at `rebaseContinue`/`rebaseAbort` regardless of `.editing`, and continuing
+// from one edit-pause into ANOTHER falls through `applyOutcome` into
+// `openEditing` again automatically.
+//
+// CRITICAL: `continue()`/`skip()`'s "still conflicted" branch (the caller's
+// result is `state:'conflict'`, i.e. the SAME commit is still unresolved, or —
+// for `continue()` specifically — resolving/amending landed on the NEXT
+// conflicting commit in the sequence) must ALSO clear `.editing` back to
+// false. Without this, continuing past an edit-pause straight into a REAL
+// conflict on the next commit would leave `.editing` stuck true — the modal
+// gates its entire file-list/three-way-diff UI on `!resolver.editing` (see
+// Resolver.svelte), so a stuck flag stranded the user on the "paused to
+// edit"/"Open Workdir to amend…" banner even though `conflictedFiles` was
+// already correctly populated, with no in-app way to resolve the new conflict
+// (only Abort). `skip()` can never actually be called while `.editing` is
+// true (guarded below, and the button is hidden by Resolver.svelte too) — the
+// same `this.editing = false` is set there anyway, defensively, so a future
+// change to that guard can't silently reopen this gap.
+//
+// The Resolver view reuses the SAME modal shell for `.editing` (no separate
+// component) but hides the three-way-diff file list and shows a banner + an
+// affordance (`openWorkdirToAmend`) that BACKGROUNDS the scrim (`.open =
+// false`, `.editing` stays true) and hands off to the already-built Workdir
+// panel (`bridge.selectWorkdir()`) so the user can amend the paused commit
+// with the SAME stage/amend-commit UI that panel already owns — no second
+// amend UI implemented here. A small persistent pill (rendered whenever
+// `.editing && !.open`) keeps Continue/Abort reachable while the user works in
+// Workdir; `reopen()` brings the modal back to the foreground.
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
@@ -195,6 +238,13 @@ class ResolverState {
   // openDemo; re-derived authoritatively from conflict_status().op on every
   // refresh() — see the module doc's "op-dispatch design" note above.
   op = $state<ResolverOp>("cherry-pick");
+  // True while paused at an interactive-rebase `edit` todo line — see the
+  // module doc's "interactive-rebase editing state" note above. Only ever
+  // true when `.op === "rebase"`. NOT re-derived by refresh() (conflict_status
+  // can't tell this apart from a real in-progress rebase with no files yet);
+  // set directly from a fresh RebaseResult by `openEditing`, cleared by
+  // `reset()`.
+  editing = $state(false);
 
   sha = "";
   repo = "";
@@ -209,8 +259,10 @@ class ResolverState {
   get remainingCount(): number {
     return this.remaining.size;
   }
-  // Modal title — "Cherry-pick hit a conflict" | "Merge hit a conflict".
+  // Modal title — "Cherry-pick hit a conflict" | "Merge hit a conflict", or
+  // (interactive rebase only) "Rebase paused to edit a commit" while `.editing`.
   get title(): string {
+    if (this.editing) return "Rebase paused to edit a commit";
     return MSG[this.op].title;
   }
 
@@ -222,6 +274,7 @@ class ResolverState {
     this.files = [];
     this.selected = null;
     this.remaining = new Set();
+    this.editing = false;
   }
   close() {
     this.open = false;
@@ -345,10 +398,30 @@ class ResolverState {
       case "conflict":
         await this.openConflict(res, sha);
         break;
+      case "editing":
+        // Interactive-rebase-only (see the module doc's "editing state" note)
+        // — a RebaseResult, but applyOutcome is shared across every op's
+        // result type, hence the cast rather than a narrower parameter type.
+        this.openEditing(res as RebaseResult, sha);
+        break;
       default: // "error"
         bridge.tama.warn(res.message || msg.verb + " could not start.");
         break;
     }
+  }
+
+  // Public entry point for a caller that already ran its OWN "start" command
+  // (e.g. rebasePlanCtrl.start() after `rebase_interactive_start`) and just
+  // wants the result routed through the SAME clean/empty/conflict/editing/
+  // error handling every startPick/startMerge/startRebase/startRevert uses —
+  // so there is exactly one conflict/editing-resolution UI no matter which of
+  // the two rebase entry points (linear vs. planner) produced it. `op`
+  // defaults to "rebase" (the only real caller today).
+  async openFromResult(repo: string, res: OpResult, sha: string, op: ResolverOp = "rebase") {
+    this.demo = false;
+    this.op = op;
+    this.repo = repo;
+    await this.applyOutcome(res, sha);
   }
 
   // Takes a minimal structural slice (not the full `OpResult`/`WorkdirResult`
@@ -365,6 +438,41 @@ class ResolverState {
     if (res.backupRef) this.backupRef = res.backupRef;
     await this.refresh();
     this.open = true;
+  }
+
+  // "editing" state (interactive-rebase only — see the module doc's note):
+  // the sequencer stopped cleanly at an `edit` todo line. No conflict_status
+  // round trip and no file list — there is nothing it could tell us that the
+  // RebaseResult itself doesn't already carry (files are always empty here;
+  // see git_rebase.rs's `classify`). `sha`/`res.message` come straight from
+  // the backend, matching every other open* method's "never invent copy the
+  // backend already wrote" convention.
+  private openEditing(res: RebaseResult, sha: string) {
+    this.sha = sha || "";
+    this.reset();
+    this.editing = true;
+    this.tamaImg = bridge.TAMA_IMG.alarm;
+    this.sub = res.message || "Rebase paused to edit a commit — amend it, then Continue.";
+    if (res.backupRef) this.backupRef = res.backupRef;
+    this.open = true;
+  }
+
+  // "editing"-only affordance: background the modal (keep `.editing`/`.sub`/
+  // `.backupRef` alive) and hand off to the already-built Workdir panel so the
+  // user can inspect/amend the paused commit with ITS existing stage/amend-
+  // commit UI, rather than a second amend UI implemented here (see the module
+  // doc). The persistent pill (Resolver.svelte, shown whenever
+  // `.editing && !.open`) keeps Continue/Abort reachable in the meantime.
+  openWorkdirToAmend() {
+    if (!this.editing) return;
+    this.open = false;
+    bridge.selectWorkdir();
+  }
+
+  // Bring the modal back to the foreground without losing `.editing` state —
+  // the persistent pill's own "Details" affordance.
+  reopen() {
+    if (this.editing) this.open = true;
   }
 
   // Public entry for a stash-apply/pop conflict (workdir.svelte.ts's
@@ -446,7 +554,12 @@ class ResolverState {
   // "conflict" again if skipping landed on the NEXT conflicting commit, or the
   // final outcome otherwise.
   async skip() {
-    if (this.op !== "rebase") return;
+    // No skip concept for cherry-pick/merge/revert/stash, AND deliberately not
+    // offered while paused for an interactive-rebase "edit" — semantically
+    // ambiguous for a pause the user explicitly asked for (see the module
+    // doc); Resolver.svelte's own guard (`!resolver.editing`) hides the button,
+    // this mirrors it defensively at the call site.
+    if (this.op !== "rebase" || this.editing) return;
     if (this.demo) {
       this.close();
       bridge.tama.set("hint");
@@ -459,6 +572,12 @@ class ResolverState {
     try {
       const r = await commands.rebaseSkip(this.repo);
       if (r.state === "conflict") {
+        // See the module doc's "CRITICAL" note above: a transition INTO
+        // "conflict" must always clear a stale `.editing` flag, even though
+        // skip() can't actually be reached while editing is true today (the
+        // guard above returns early) — defensive, so a future change to that
+        // guard can't silently reopen the stuck-on-the-edit-banner bug.
+        this.editing = false;
         await this.refresh();
         bridge.tama.warn(r.message || "Still conflicted — resolve the remaining files.");
       } else {
@@ -514,6 +633,14 @@ class ResolverState {
     try {
       const r = await OPS[this.op].continueOp(this.repo);
       if (r.state === "conflict") {
+        // See the module doc's "CRITICAL" note above (the fix for the
+        // "stuck on the edit banner" bug): landing on a real conflict —
+        // whether it's the SAME commit still unresolved, or continuing past
+        // an edit-pause straight into the NEXT commit's conflict — must
+        // clear `.editing`, or the modal keeps showing the edit banner
+        // instead of the file-list/three-way-diff UI even though
+        // `conflictedFiles` was just correctly populated below.
+        this.editing = false;
         await this.refresh();
         bridge.tama.warn(r.message || "Still conflicted — resolve the remaining files.");
       } else {

@@ -81,6 +81,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_rebase::rebase_continue,
         git_rebase::rebase_skip,
         git_rebase::rebase_abort,
+        // Interactive rebase: plan (reorder/pick/squash/fixup/drop/edit) + run
+        git_rebase::rebase_interactive_plan,
+        git_rebase::rebase_interactive_start,
         // Revert (M6 stage 3): revert a single commit onto HEAD + continue / abort
         git_revert::revert_start,
         git_revert::revert_continue,

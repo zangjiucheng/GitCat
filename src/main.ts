@@ -12,6 +12,7 @@ import Rerere from "./islands/rerere/Rerere.svelte";
 import { rerereCtrl } from "./islands/rerere/rerere.svelte.ts";
 import Plumbing from "./islands/plumbing/Plumbing.svelte";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
+import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import SetupWizard from "./islands/setupwizard/SetupWizard.svelte";
 import { setupWizardCtrl } from "./islands/setupwizard/setupwizard.svelte.ts";
 import Cmdk from "./islands/cmdk/Cmdk.svelte";
@@ -27,6 +28,7 @@ import * as bridge from "./legacy/bridge";
 mount(Resolver, { target: document.body });
 mount(Bisect, { target: document.body });
 mount(FilterRepo, { target: document.body });
+mount(RebasePlan, { target: document.body });
 mount(SetupWizard, { target: document.body });
 
 // Setup wizard: auto-opens at boot, ON TOP of the untouched bootEmpty() hero

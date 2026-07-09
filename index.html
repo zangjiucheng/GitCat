@@ -674,6 +674,20 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 #cfThree{max-height:360px;overflow:auto}
 .tw-col .ln code{white-space:pre-wrap;word-break:break-word}
 .cp-x{display:inline-flex;align-items:center;gap:4px;color:var(--muted);font-size:11px;cursor:pointer}
+/* Interactive-rebase "editing" pause (see Resolver.svelte's doc comment) —
+   reuses the resolver modal shell but swaps the file-list/three-way-diff body
+   for a plain call-to-action banner while paused at an `edit` todo line. */
+.rb-edit-banner{border:1.5px dashed color-mix(in srgb,var(--warning) 45%,var(--border));border-radius:var(--r-panel);padding:26px 18px;text-align:center;display:flex;flex-direction:column;gap:14px;align-items:center}
+.rb-edit-banner p{margin:0;font-size:13px;color:var(--text);max-width:420px;line-height:1.5}
+/* Persistent pill — stays on-screen whenever the resolver modal is
+   backgrounded (`.editing && !.open`, via openWorkdirToAmend) so Continue/
+   Abort remain reachable while the user amends via the Workdir panel. */
+.rb-pause-pill{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:301;
+  display:flex;align-items:center;gap:10px;padding:8px 12px;
+  background:var(--panel);border:1px solid color-mix(in srgb,var(--warning) 45%,var(--border));
+  border-radius:var(--r-pill);box-shadow:var(--shadow);font-size:12px}
+.rb-pause-ic{color:var(--warning)}
+.rb-pause-txt{color:var(--text);white-space:nowrap}
 /* ---------- M3 bisect modal (mirrors the .resolver template) ---------- */
 .modal.bisecter{width:min(560px,96vw)}
 .bisecter .modal-head{background:color-mix(in srgb,var(--accent) 10%,var(--panel))}
@@ -742,6 +756,61 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cmdk-foot{display:flex;align-items:center;gap:14px;padding:8px 14px;background:var(--elevated);border-top:1px solid var(--border);color:var(--muted);font-size:11px}
 .cmdk-foot kbd{font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:4px;background:var(--bg);border:1px solid var(--border);margin-right:2px}
 .cmdk-foot .sp{margin-left:auto}
+
+/* ============================== INTERACTIVE REBASE PLANNER (M6) ==============================
+   RebasePlan.svelte's drag-to-reorder todo-list editor for `git rebase -i`.
+   Reuses the shared .scrim/.modal/.modal-head/.modal-body/.modal-foot/.btn/
+   .spinner/.mono/.mut chrome verbatim (see index.html's MODALS section above);
+   only the row list below is new. Not tinted like the resolver (active
+   conflict) or the destructive-default danger modal head — this is a
+   plan-before-you-commit surface, same "nothing has happened yet" family as
+   the bisect modal, so it borrows that one's --accent tint instead of
+   reading as alarming (cf. the .setupwizard override right above, fixing the
+   same class of mistake for a different modal). */
+.modal.rebaseplan{width:min(640px,96vw)}
+.rebaseplan .modal-head{background:color-mix(in srgb,var(--accent) 10%,var(--panel))}
+/* The scrollable well of draggable rows — var(--bg) recessed against the
+   var(--panel) modal, the same elevation step as .cf-files/.pl-tree above;
+   each row then sits one step back up on var(--elevated), matching this
+   app's usual panel -> well -> card layering. */
+.rbp-list{display:flex;flex-direction:column;gap:4px;max-height:400px;overflow:auto;
+  padding:5px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-panel)}
+.rbp-list.busy{opacity:.6;pointer-events:none}
+.rbp-empty{padding:24px 14px;text-align:center;font-size:12.5px;line-height:1.6}
+.rbp-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:grab;
+  background:var(--elevated);border:1px solid var(--border);font-size:12px;
+  transition:border-color .12s,background-color .12s,opacity .12s}
+.rbp-row:hover{border-color:var(--muted)}
+/* Row currently picked up — fades in place like a native drag ghost; the row
+   under the cursor gets the same accent2 "active drop target" highlight this
+   app already uses for a real OS file drag (see .modal-drop.dragover). */
+.rbp-row.dragging{opacity:.4;cursor:grabbing}
+.rbp-row.drop-target{border-color:var(--accent2);background:color-mix(in srgb,var(--accent2) 14%,var(--elevated))}
+/* A "drop" row is leaving history — read it struck-through and muted, the
+   same treatment as an already-handled entry in the filter-repo backup list
+   (.cf-file.done .cf-name) rather than inventing a new pattern. */
+.rbp-row.dropped{opacity:.6}
+.rbp-row.dropped .rbp-subject{color:var(--muted);text-decoration:line-through}
+.rbp-handle{flex:none;width:14px;text-align:center;color:var(--muted);font-size:12px;line-height:1;user-select:none}
+/* Per-action glyph colour, so the plan reads at a glance without opening
+   every row's select: pick=kept (success); edit=pauses the rebase (warning,
+   matching .rb-edit-banner's tint for that same paused state); squash/fixup
+   fold into the previous commit (this app's "combine" colour — see
+   .cp-ghost.merge — for accent2), but fixup also discards its own message so
+   it's dialled back to muted rather than sharing squash's full accent2;
+   drop=danger, same red as every other destructive action in the app. */
+.rbp-mk{flex:none;width:16px;text-align:center;font-size:12px;line-height:1;color:var(--muted)}
+.rbp-mk[data-action="pick"]{color:var(--success)}
+.rbp-mk[data-action="edit"]{color:var(--warning)}
+.rbp-mk[data-action="squash"]{color:var(--accent2)}
+.rbp-mk[data-action="fixup"]{color:var(--muted)}
+.rbp-mk[data-action="drop"]{color:var(--danger)}
+.rbp-sha{flex:none;min-width:58px;font-size:11px;color:var(--muted)}
+.rbp-subject{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text)}
+.rbp-action{flex:none;font:inherit;font-size:11.5px;font-weight:600;color:var(--text);cursor:pointer;
+  background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:3px 6px}
+.rbp-action:focus{outline:none;border-color:var(--accent)}
+.rbp-action:disabled{opacity:.5;cursor:not-allowed}
 </style>
 
 <div class="app" id="app">

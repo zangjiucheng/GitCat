@@ -17,6 +17,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
+import { rebasePlanCtrl } from "../rebaseplan/rebaseplan.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import type { LocalBranch, SimpleRef, Snapshot } from "../../ipc/bindings";
 
@@ -501,6 +502,14 @@ class SidebarState {
       return;
     }
     await resolver.startRebase(bridge.CUR_REPO as unknown as string, name); // ---- real rebase (Svelte island) ----
+  }
+
+  // Interactive rebase: opens the todo-list planner instead of rebasing
+  // one-shot. rebasePlanCtrl.openFor() handles its own IN_TAURI/demo-mode
+  // branching internally (unlike rebaseOnto/resolver.startRebase above), so
+  // there's no design-mode branch to duplicate here.
+  async interactiveRebaseOnto(name: string) {
+    await rebasePlanCtrl.openFor(bridge.CUR_REPO as unknown as string, name);
   }
 }
 
