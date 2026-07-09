@@ -828,6 +828,19 @@ async watchRepo(path: string) : Promise<Result<null, string>> {
 },
 async unwatchRepo() : Promise<void> {
     await TAURI_INVOKE("unwatch_repo");
+},
+/**
+ * Tauri command: list every `.gitmodules`-registered submodule with a status
+ * classification. Read-only (git2) — never mutates.
+ * JS call: `invoke("submodule_status", { path })`.
+ */
+async submoduleStatus(path: string) : Promise<Result<SubmoduleInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("submodule_status", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1158,6 +1171,23 @@ export type StashResolveResult = { ok: boolean;
  * conflict is never a no-op).
  */
 state: string; conflictedFiles: string[]; message: string; backupRef: string | null }
+/**
+ * One `.gitmodules`-registered submodule row.
+ */
+export type SubmoduleInfo = { name: string; path: string; url: string | null; 
+/**
+ * "conflicted" | "not-initialized" | "out-of-date" | "dirty" | "clean"
+ */
+status: string; 
+/**
+ * Commit the superproject's index/HEAD tracks for this submodule.
+ */
+headSha: string | null; 
+/**
+ * Commit actually checked out in the submodule's working tree, or `None`
+ * when it has never been cloned (not-initialized).
+ */
+workdirSha: string | null }
 export type TagObject = { sha: string; name: string; tagger: PlumbingPerson | null; message: string; targetOid: string; targetKind: string }
 /**
  * One planner row's chosen action, as sent back to [`rebase_interactive_start`].

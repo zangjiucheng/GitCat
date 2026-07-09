@@ -193,6 +193,33 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .snap-meta{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted)}
 .snap-sha{font:inherit;font-family:var(--mono);color:var(--muted);background:transparent;border:none;padding:0;cursor:copy}
 .snap-sha:hover{color:var(--accent)}
+/* Submodules — read-only status rows (no checkout/menu affordance, unlike
+   .ref-item, which implies "click to act on this ref"), so its own class
+   mirrors .snap-item's shape (no cursor:pointer, same left-indent/padding)
+   instead of reusing .ref-item. The status chip reuses .rr-badge's exact
+   pill shape (color-mix(...16%,transparent) background + solid-color text)
+   and the same --success/--warning/--danger severity language already used
+   per-letter for git file statuses (.wd-file/.tree .st: "A"=success,
+   "M"=warning, "D"=danger) — clean=success (nothing to do), dirty=warning
+   (uncommitted edits in the submodule's own worktree, same meaning as a
+   modified file), out-of-date=danger (checked-out commit no longer matches
+   what the superproject's index tracks — needs `git submodule update`),
+   not-initialized=muted (never cloned at all — an inactive/absent state,
+   same muted language as e.g. bisect's culled cells, not an "error" color),
+   conflicted=danger too — same severity color as out-of-date (both need
+   direct user intervention before the submodule can be trusted again), but a
+   distinct, more urgent case: the superproject's own index has an unresolved
+   merge conflict AT this submodule's gitlink path (two branches pointed it at
+   different commits), not just a stale-but-otherwise-fine checkout. */
+.sub-item{display:flex;align-items:center;gap:8px;padding:5px 8px 5px 24px;border-radius:6px}
+.sub-item:hover{background:var(--elevated)}
+.sub-item .rname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sub-status{font-size:10px;font-weight:600;padding:1px 7px;border-radius:var(--r-pill);flex:none;white-space:nowrap}
+.sub-status[data-status="clean"]{background:color-mix(in srgb,var(--success) 16%,transparent);color:var(--success)}
+.sub-status[data-status="dirty"]{background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning)}
+.sub-status[data-status="out-of-date"]{background:color-mix(in srgb,var(--danger) 16%,transparent);color:var(--danger)}
+.sub-status[data-status="conflicted"]{background:color-mix(in srgb,var(--danger) 16%,transparent);color:var(--danger)}
+.sub-status[data-status="not-initialized"]{background:color-mix(in srgb,var(--muted) 16%,transparent);color:var(--muted)}
 /* Sidebar hover tooltip that can NEVER escape its own row — native `title`
    attributes are unstyleable and unclipped, positioned by the browser near
    the cursor with no awareness of the app's own sidebar/graph boundary, so

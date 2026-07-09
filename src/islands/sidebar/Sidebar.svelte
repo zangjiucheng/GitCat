@@ -1,7 +1,7 @@
 <script lang="ts">
   import { sidebarCtrl } from "./sidebar.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import type { SimpleRef } from "../../ipc/bindings";
+  import type { SimpleRef, SubmoduleInfo } from "../../ipc/bindings";
 
   let menuEl: HTMLDivElement | undefined = $state();
   let newBranchEl: HTMLInputElement | undefined = $state();
@@ -63,6 +63,26 @@
       else out.push({ head, items: [r] });
     }
     return out;
+  }
+
+  // "not-initialized" -> "not initialized" — display the raw backend status
+  // string (also used verbatim as the CSS [data-status] selector below) with
+  // its hyphens turned into spaces, rather than a separate hand-maintained
+  // label map that could drift out of sync with submodule.rs's classify_status.
+  function subStatusLabel(status: string): string {
+    return status.replace(/-/g, " ");
+  }
+
+  // Sidebar hover tooltip content (see index.html's [data-tip] rule) — the
+  // git-config submodule name when it differs from the on-disk path, the
+  // remote URL if known, and the checked-out sha (or "not cloned" for
+  // not-initialized, whose workdirSha is always null).
+  function subTooltip(s: SubmoduleInfo): string {
+    const parts: string[] = [];
+    if (s.name !== s.path) parts.push(s.name);
+    if (s.url) parts.push(s.url);
+    parts.push(s.workdirSha ? "@ " + s.workdirSha.slice(0, 7) : "not cloned");
+    return parts.join(" — ");
   }
 </script>
 
@@ -264,6 +284,21 @@
         <div class="ref-item new-branch" role="button" tabindex="0" onclick={() => sidebarCtrl.startNewTag()} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.startNewTag()}>
           <span class="rname nb">&#65291; New tag&#8230;</span>
         </div>
+      {/if}
+    </div>
+  </details>
+  <details class="ref-group">
+    <summary><span class="tw">&#9656;</span>Submodules<span class="count" id="cntSubmodules">{sidebarCtrl.submodules.length || "—"}</span></summary>
+    <div class="ref-list" id="refSubmodules">
+      {#if !sidebarCtrl.submodules.length}
+        <div class="sub-item"><span class="rname mut">no submodules</span></div>
+      {:else}
+        {#each sidebarCtrl.submodules as s (s.path)}
+          <div class="sub-item" data-tip={subTooltip(s)}>
+            <span class="rname">{s.path}</span>
+            <span class="sub-status" data-status={s.status}>{subStatusLabel(s.status)}</span>
+          </div>
+        {/each}
       {/if}
     </div>
   </details>

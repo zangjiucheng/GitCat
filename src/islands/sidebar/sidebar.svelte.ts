@@ -19,7 +19,7 @@ import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { rebasePlanCtrl } from "../rebaseplan/rebaseplan.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
-import type { LocalBranch, SimpleRef, Snapshot } from "../../ipc/bindings";
+import type { LocalBranch, SimpleRef, Snapshot, SubmoduleInfo } from "../../ipc/bindings";
 
 // Demo data (design-mode only) — mirrors the static markup this replaces, so
 // the browser preview still shows a populated sidebar without a real repo.
@@ -41,6 +41,16 @@ const DEMO_TAGS: SimpleRef[] = [
   { name: "v0.2.0", sha: "718a9bc" },
   { name: "nightly-2026-07-05", sha: "18a9bcd" },
 ];
+// Deliberately one of each of the 5 classify_status outcomes (see
+// src-tauri/src/submodule.rs) so the browser design-mode preview actually
+// shows every status chip color, not just "clean".
+const DEMO_SUBMODULES: SubmoduleInfo[] = [
+  { name: "vendor/lib-a", path: "vendor/lib-a", url: "https://github.com/example/lib-a.git", status: "clean", headSha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", workdirSha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+  { name: "vendor/lib-b", path: "vendor/lib-b", url: "https://github.com/example/lib-b.git", status: "dirty", headSha: "b2c3d4e5f60718293a4b5c6d7e8f9012345678a1", workdirSha: "b2c3d4e5f60718293a4b5c6d7e8f9012345678a1" },
+  { name: "third_party/tool", path: "third_party/tool", url: "https://github.com/example/tool.git", status: "out-of-date", headSha: "c3d4e5f60718293a4b5c6d7e8f9012345678a1b2", workdirSha: "d4e5f60718293a4b5c6d7e8f9012345678a1b2c3" },
+  { name: "docs/theme", path: "docs/theme", url: null, status: "not-initialized", headSha: "e5f60718293a4b5c6d7e8f9012345678a1b2c3d4", workdirSha: null },
+  { name: "shared/proto", path: "shared/proto", url: "https://github.com/example/proto.git", status: "conflicted", headSha: "f60718a293a4b5c6d7e8f9012345678a1b2c3d4e", workdirSha: "0718a293a4b5c6d7e8f9012345678a1b2c3d4e5f" },
+];
 
 export type BranchMenu = { name: string; isCurrent: boolean; x: number; y: number };
 // Tags never have an "isCurrent" concept (you don't "check out" a tag in this
@@ -52,6 +62,7 @@ class SidebarState {
   locals = $state<LocalBranch[]>([]);
   remotes = $state<SimpleRef[]>([]);
   tags = $state<SimpleRef[]>([]);
+  submodules = $state<SubmoduleInfo[]>([]);
   head = $state<string | null>(null);
   snapshots = $state<Snapshot[]>([]);
   filter = $state("");
@@ -97,6 +108,7 @@ class SidebarState {
       this.locals = DEMO_LOCALS;
       this.remotes = DEMO_REMOTES;
       this.tags = DEMO_TAGS;
+      this.submodules = DEMO_SUBMODULES;
       this.head = "main";
       this.hasRepo = true;
       bridge.updateBranchPill(this.head, this.locals);
@@ -104,6 +116,13 @@ class SidebarState {
     }
     if (!repo) return;
     this.hasRepo = true;
+    // Two independent reads, fired concurrently rather than one awaiting the
+    // other — a submodule_status failure/slowdown shouldn't hold up refs (or
+    // vice versa), and there's nothing one needs from the other's result.
+    await Promise.all([this.refreshRefs(repo), this.refreshSubmodules(repo)]);
+  }
+
+  private async refreshRefs(repo: string) {
     try {
       const r = await commands.listRefs(repo);
       if (r.status !== "ok") {
@@ -117,6 +136,19 @@ class SidebarState {
       bridge.updateBranchPill(this.head, this.locals);
     } catch (e) {
       console.error("list_refs", e);
+    }
+  }
+
+  private async refreshSubmodules(repo: string) {
+    try {
+      const r = await commands.submoduleStatus(repo);
+      if (r.status !== "ok") {
+        console.error("submodule_status", r.error);
+        return;
+      }
+      this.submodules = r.data || [];
+    } catch (e) {
+      console.error("submodule_status", e);
     }
   }
 
@@ -136,6 +168,7 @@ class SidebarState {
     this.locals = [];
     this.remotes = [];
     this.tags = [];
+    this.submodules = [];
     this.head = null;
     this.snapshots = [];
     this.menu = null;
