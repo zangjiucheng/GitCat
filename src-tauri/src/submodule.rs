@@ -11,7 +11,38 @@
 //! Classification (empirically verified against real `git submodule status` in
 //! a throwaway nested-submodule fixture — see the doc comment on
 //! `classify_status` for the exact bit patterns observed for each of the 6
-//! states, and how they line up with git's own `-`/`+`/` `/`U` prefixes):
+//! bit/index-derived states, and how they line up with git's own `-`/`+`/`
+//! `/`U` prefixes; there is a 7th, `submodule_status`-specific state,
+//! "unreadable", layered on top of all of them — see its own bullet below):
+//!   - "unreadable": CRASH FIX, added after `submodule_foreach`'s own
+//!     unbounded-recursion stack-overflow crash (see this file's M5 section,
+//!     `discover_nested_targets`'s doc comment for the full empirically
+//!     confirmed mechanism) turned out to be independently reachable through
+//!     THIS function too — `submodule_status_inner` also unconditionally
+//!     called `repo.submodule_status(name, ..)` for every top-level
+//!     submodule, with no cycle check at all. That call itself is what
+//!     stack-overflows (crashing the ENTIRE application process) when asked
+//!     about a submodule whose own resolved git directory, or ANYTHING
+//!     reachable in its nested-submodule subtree at any depth, is cyclic
+//!     (a malformed or maliciously crafted `.git` gitfile pointer) — and,
+//!     more surprisingly, the identical crash fires for any ANCESTOR of the
+//!     cyclic node too, not just the offending submodule itself. This is a
+//!     materially bigger blast radius than the foreach crash: `submodule_status`
+//!     runs AUTOMATICALLY every time a repo is opened (the sidebar's own
+//!     `refreshSubmodules()`), so an unguarded call here crashed the whole app
+//!     just from OPENING a third-party/untrusted repo containing such a
+//!     submodule — no foreach sweep, no opt-in action, needed. Fixed by
+//!     `check_submodule_safe_for_status`, which verifies (reusing the exact
+//!     canonicalize-and-track-visited-paths mechanism `check_safe_to_recurse`/
+//!     `discover_nested_targets` already established for the foreach fix)
+//!     that a top-level submodule's ENTIRE reachable subtree is confirmed
+//!     cycle-free BEFORE `submodule_status_inner` ever calls
+//!     `repo.submodule_status()` on it. When it is not, "unreadable" is
+//!     reported directly and `submodule_status` is never called for that row
+//!     at all — this takes priority over every classification below (none of
+//!     them can be safely computed once this is true; see
+//!     `submodule_status_inner`). The frontend never offers Init/Update/Sync/
+//!     Deinit/Remove for this status — see `submoduleAction`/Sidebar.svelte.
 //!   - "conflicted": the superproject's OWN index has an unresolved merge
 //!     conflict at this submodule's gitlink path (two branches pointed the
 //!     submodule at different commits, now conflicted). This is NOT one of
@@ -57,7 +88,10 @@
 //! empirically too: `git submodule status` still only ever reports `+`, never
 //! a distinct "dirty AND out of date" state, so we mirror that and check
 //! conflicted, then not-initialized, then out-of-date, then dirty, in that
-//! order.
+//! order. "unreadable" (see its own bullet above) is checked before ANY of
+//! this — before `submodule_status`/`submodule_conflicted` are even called —
+//! since none of these bit-derived classifications can be safely computed at
+//! all once a submodule's own reachable subtree is confirmed cyclic.
 //!
 //! ---------------------------------------------------------------------------
 //! M2: `submodule_init` / `submodule_update` — mutations, CLI-shellout model.
@@ -196,7 +230,13 @@ pub struct SubmoduleInfo {
     pub name: String,
     pub path: String,
     pub url: Option<String>,
-    /// "conflicted" | "removed" | "not-initialized" | "out-of-date" | "dirty" | "clean"
+    /// "conflicted" | "removed" | "not-initialized" | "out-of-date" | "dirty" | "clean" | "unreadable"
+    ///
+    /// "unreadable": CRASH FIX — this submodule's own resolved git directory,
+    /// or something reachable in its nested-submodule subtree at any depth,
+    /// was found cyclic (or unresolvable, or past a hard recursion-depth
+    /// cap) — see `check_submodule_safe_for_status`'s doc comment for why
+    /// `submodule_status` is never even called for a row in this state.
     pub status: String,
     /// Commit the superproject's index/HEAD tracks for this submodule.
     pub head_sha: Option<String>,
@@ -217,26 +257,60 @@ pub fn submodule_status(path: String) -> Result<Vec<SubmoduleInfo>, String> {
 fn submodule_status_inner(path: &str) -> Result<Vec<SubmoduleInfo>, git2::Error> {
     let repo = crate::trust::open_repo(path)?;
 
+    // CRASH FIX: seed the exact same cycle-detection `visited` set
+    // `submodule_foreach_run` seeds (the outermost repo's own canonical git
+    // directory) BEFORE ever asking libgit2 for any top-level submodule's own
+    // status — closes the case where a top-level submodule's gitfile points
+    // straight back at ITS OWN containing (this very) repo. Threaded through
+    // every `check_submodule_safe_for_status` call below (one shared set for
+    // the whole listing, not a fresh one per submodule), mirroring
+    // `submodule_foreach_run`'s own single-seed-per-sweep discipline. See
+    // `check_submodule_safe_for_status`'s doc comment for the full,
+    // empirically-confirmed crash this guards against.
+    let mut visited: HashSet<std::path::PathBuf> = HashSet::new();
+    if let Ok(canon) = fs::canonicalize(repo.path()) {
+        visited.insert(canon);
+    }
+
     let mut out = Vec::new();
     for sm in repo.submodules()? {
         let name = sm.name().unwrap_or_default().to_string();
         let sm_path = sm.path().to_string_lossy().to_string();
         let url = sm.url().map(|s| s.to_string());
+        // `head_id()`/`workdir_id()` are plain OID reads (the gitlink entry's
+        // recorded commit, and the submodule's own checked-out HEAD,
+        // respectively) — NEITHER calls `Repository::submodule_status()`
+        // internally, so both stay safe (and populated) even for a submodule
+        // this function is about to classify "unreadable" below.
         let head_sha = sm.head_id().map(|oid| oid.to_string());
         let workdir_sha = sm.workdir_id().map(|oid| oid.to_string());
 
-        // submodule_status() wants the registered name, not the path (they're
-        // usually equal, but name is the documented lookup key).
-        let bits = repo.submodule_status(&name, SubmoduleIgnore::None)?;
-        // Checked BEFORE the bit-derived classification: a merge-conflicted
-        // gitlink entry doesn't reliably set any `SubmoduleStatus` bit (see
-        // the module doc comment), so every bit-derived arm would otherwise
-        // fall through to "clean" despite the repo genuinely being mid-conflict
-        // at this exact path.
-        let status = if submodule_conflicted(&repo, &sm_path)? {
-            "conflicted".to_string()
-        } else {
-            classify_status(bits)
+        // CRASH FIX: verify this submodule's ENTIRE reachable subtree is
+        // confirmed cycle-free BEFORE ever calling `repo.submodule_status()`
+        // on it — that call itself is what stack-overflows (crashing the
+        // whole process) on a cyclic submodule, or on any ANCESTOR of one.
+        // See `check_submodule_safe_for_status`'s own doc comment for the
+        // full mechanism this mirrors from the M5 foreach fix. Takes priority
+        // over every other classification below: none of them can be safely
+        // computed once this is true.
+        let status = match check_submodule_safe_for_status(&sm, &sm_path, &mut visited) {
+            Err(_reason) => "unreadable".to_string(),
+            Ok(()) => {
+                // submodule_status() wants the registered name, not the path
+                // (they're usually equal, but name is the documented lookup
+                // key).
+                let bits = repo.submodule_status(&name, SubmoduleIgnore::None)?;
+                // Checked BEFORE the bit-derived classification: a merge-conflicted
+                // gitlink entry doesn't reliably set any `SubmoduleStatus` bit (see
+                // the module doc comment), so every bit-derived arm would otherwise
+                // fall through to "clean" despite the repo genuinely being mid-conflict
+                // at this exact path.
+                if submodule_conflicted(&repo, &sm_path)? {
+                    "conflicted".to_string()
+                } else {
+                    classify_status(bits)
+                }
+            }
         };
 
         out.push(SubmoduleInfo { name, path: sm_path, url, status, head_sha, workdir_sha });
@@ -314,6 +388,76 @@ fn submodule_conflicted(repo: &git2::Repository, sm_path: &str) -> Result<bool, 
         }
     }
     Ok(false)
+}
+
+/// CRASH FIX (M1): answers the one question `submodule_status_inner` needs
+/// before it may safely call `repo.submodule_status(name, ..)` for a given
+/// TOP-LEVEL submodule `sm` — is `sm`'s entire reachable subtree, at any
+/// depth, confirmed cycle-free? EMPIRICALLY CONFIRMED (the exact same
+/// investigation that produced `submodule_foreach`'s own crash fix — see
+/// `discover_nested_targets`'s doc comment in the M5 section below for the
+/// full trail): `Repository::submodule_status()` itself stack-overflows
+/// (crashing the whole process, not just returning an `Err`) when asked about
+/// a submodule whose own resolved git directory — or ANYTHING reachable in
+/// its own nested-submodule subtree, at any depth — is cyclic (a malformed or
+/// maliciously crafted `.git` gitfile pointer that redirects back at an
+/// ancestor already being walked). And, more surprisingly, the identical
+/// crash fires when asking about any ANCESTOR of the cyclic node too, not
+/// only the offending submodule itself (an ancestor's own dirty-status
+/// computation transitively walks its whole reachable workdir).
+///
+/// This is independently reachable from `submodule_status_inner` alone — it
+/// never needed the foreach feature at all: `submodule_status` runs
+/// AUTOMATICALLY on every repo-open (the sidebar's own `refreshSubmodules()`),
+/// so an unguarded `repo.submodule_status()` call here crashed the entire
+/// application just from OPENING a repository containing such a submodule.
+///
+/// Reuses, rather than re-derives, the exact cycle-detection primitives the
+/// M5 foreach fix already established:
+///   - `sm.open()` failing just means this submodule was never checked out —
+///     nothing reachable underneath it, and `Submodule::open()` alone was
+///     verified safe even on the cyclic fixture (the crash lives inside
+///     `submodule_status()` specifically) — so `Ok(())` (safe) immediately,
+///     no further check needed, mirroring `discover_nested_targets`'s own
+///     handling of the same case.
+///   - Otherwise, `check_safe_to_recurse` decides whether `sm`'s OWN resolved
+///     git directory is itself cyclic (already in `visited`) or unresolvable
+///     — if so, `sm` itself is the offending node: `Err` immediately, without
+///     ever calling `discover_nested_targets` (which would itself try to open
+///     `.gitmodules` inside the very directory just found suspect).
+///   - Otherwise, `sm`'s own directory is confirmed unique so far, but (per
+///     the "ancestor crashes too" surprise above) that alone does not make
+///     querying `sm`'s status safe: something DEEPER in its own subtree might
+///     still be cyclic. `discover_nested_targets` is called one level down
+///     (`depth: 1`, matching the depth `submodule_foreach_run`'s own
+///     outermost call passes to ITS top-level submodules) purely for its
+///     `tainted` return value — its actual `Vec<ForeachTarget>` is discarded;
+///     `submodule_status_inner` only ever reports TOP-LEVEL rows and has no
+///     use for deeper entries, unlike foreach's own `recursive: true` sweep.
+///
+/// `visited` is threaded through by the caller (`submodule_status_inner`) as
+/// ONE shared set for the whole top-level listing, seeded with the outermost
+/// repo's own canonical git directory before the first call — identical
+/// discipline to `submodule_foreach_run`'s own single-seed-per-sweep pattern,
+/// which is what closes the "a top-level submodule points straight back at
+/// its own containing repo" case.
+fn check_submodule_safe_for_status(
+    sm: &git2::Submodule,
+    full_path: &str,
+    visited: &mut HashSet<std::path::PathBuf>,
+) -> Result<(), String> {
+    let Ok(sub_repo) = sm.open() else {
+        return Ok(()); // never checked out -> nothing reachable underneath to be cyclic
+    };
+    check_safe_to_recurse(&sub_repo, full_path, visited)?;
+    let (_ignored_entries, tainted) = discover_nested_targets(&sub_repo, full_path, visited, 1, false);
+    if tainted {
+        return Err(format!(
+            "{full_path} contains a cyclic (or too-deep) nested submodule reference somewhere in its own subtree \
+             — refusing to compute its status"
+        ));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1361,6 +1505,20 @@ fn ensure_gitmodules_section_removed(path: &str, name: &str) -> Result<(), Strin
 // recurse — reused/mirrored here rather than writing a third copy of that
 // exact walk, just collecting full (path, status) entries instead of a
 // single dirty boolean.
+//
+// UPDATE (M1 crash fix, added later): the dependency now also runs the OTHER
+// way — M1's `submodule_status_inner` was found to be independently
+// vulnerable to this exact crash (see its own `check_submodule_safe_for_status`
+// doc comment above M2) and now calls straight into `discover_nested_targets`/
+// `check_safe_to_recurse` itself, for the identical reason this section
+// stopped calling M1's wrapper: computing even one top-level submodule's
+// status is unsafe unless its whole reachable subtree is confirmed
+// cycle-free first. This is NOT a reintroduction of the old M1<->M5 coupling
+// this section's own fix removed — `submodule_status_inner` never calls back
+// into `submodule_foreach_run`/`discover_nested_targets`'s TOP-LEVEL entry
+// point, it only reuses the safe, side-effect-free cycle-detection PRIMITIVES
+// one level down, exactly the way `check_submodule_safe_for_status` is
+// documented to.
 //
 // No Safety-Manager snapshot: `submodule_foreach_start` only ever spawns an
 // arbitrary command inside each submodule's OWN already-checked-out working

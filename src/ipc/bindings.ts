@@ -1401,7 +1401,13 @@ stderr: string }
  */
 export type SubmoduleInfo = { name: string; path: string; url: string | null; 
 /**
- * "conflicted" | "removed" | "not-initialized" | "out-of-date" | "dirty" | "clean"
+ * "conflicted" | "removed" | "not-initialized" | "out-of-date" | "dirty" | "clean" | "unreadable"
+ * 
+ * "unreadable": CRASH FIX — this submodule's own resolved git directory,
+ * or something reachable in its nested-submodule subtree at any depth,
+ * was found cyclic (or unresolvable, or past a hard recursion-depth
+ * cap) — see `check_submodule_safe_for_status`'s doc comment for why
+ * `submodule_status` is never even called for a row in this state.
  */
 status: string; 
 /**

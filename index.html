@@ -225,6 +225,18 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    but a visually distinct row via the "removed (uncommitted)" label that
    replaces its action buttons entirely (see Sidebar.svelte). */
 .sub-status[data-status="removed"]{background:color-mix(in srgb,var(--muted) 16%,transparent);color:var(--muted)}
+/* "unreadable": CRASH FIX — this submodule's own resolved git directory, or
+   something reachable in its nested-submodule subtree at any depth, was
+   found cyclic (a malformed/maliciously crafted `.git` gitfile pointer) or
+   unresolvable, so the backend refused to even call submodule_status for it
+   (see check_submodule_safe_for_status in submodule.rs) rather than risk the
+   stack-overflow crash that call is otherwise confirmed to produce.
+   Deliberately warning-colored, NOT muted like "not-initialized"/"removed"
+   above (this needs the user's attention — it may be a hostile/corrupted
+   submodule, not merely an inactive/absent one) and NOT success/clean —
+   its own action buttons are hidden entirely (see Sidebar.svelte), same as
+   "removed". */
+.sub-status[data-status="unreadable"]{background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning)}
 .sub-item .spinner{flex:none}
 /* Per-row submodule action button ("Init + update" / "Update") — a small
    pill-shaped text button (mirrors the workdir island's `.wd-stash-act

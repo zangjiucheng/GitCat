@@ -2236,3 +2236,110 @@ fn cyclic_nested_submodule_reference_terminates_cleanly_even_without_recursive_f
         entries[0].stderr
     );
 }
+
+// ---------------------------------------------------------------------------
+// CRASH FIX regression, M1 (`submodule_status` itself — NOT just foreach):
+// `submodule_status_inner` independently called `repo.submodule_status(name,
+// ..)` unconditionally for every top-level submodule, with no cycle check of
+// its own — the exact same libgit2 call confirmed (see the foreach regression
+// tests directly above) to stack-overflow the whole process when asked about
+// a submodule whose reachable subtree is cyclic. This is a materially bigger
+// blast radius than the foreach crash: `submodule_status` runs automatically
+// on every repo-open (the sidebar's own `refreshSubmodules()`), so simply
+// OPENING a repository containing a malformed/hostile submodule crashed the
+// entire app — no foreach sweep, no opt-in action, required. Fixed by
+// `check_submodule_safe_for_status` (src/submodule.rs), which reuses the same
+// canonicalize-and-track-visited-paths mechanism the foreach fix already
+// established (`check_safe_to_recurse`/`discover_nested_targets`) to verify a
+// submodule's entire reachable subtree is cycle-free BEFORE ever calling
+// `submodule_status` on it, reporting a new "unreadable" classification
+// instead of crashing (and instead of ever guessing "clean").
+// ---------------------------------------------------------------------------
+
+#[test]
+fn submodule_status_on_cyclic_nested_submodule_terminates_cleanly_instead_of_crashing() {
+    let _allow = AllowFileProtocol::scoped();
+
+    // Identical malformed fixture to
+    // `cyclic_nested_submodule_reference_terminates_cleanly_instead_of_crashing`
+    // above (grandchild <- (submodule "nested" of) <- mid <- (submodule "sub"
+    // of) <- parent, "sub/nested"'s own `.git` gitfile hand-corrupted to
+    // redirect back at "sub"'s own containing git directory) — but this test
+    // drives `submodule_status` DIRECTLY, never `submodule_foreach_run`, to
+    // confirm the crash is independently fixed on this call path too, not
+    // merely inherited from the foreach fix.
+    let grandchild = TempRepo::init("submodule_status_cycle_grandchild");
+    let _gc0 = grandchild.commit("gc.txt", "grandchild\n", "gc0");
+
+    let mid = TempRepo::init("submodule_status_cycle_mid");
+    let _mid0 = mid.commit("mid.txt", "mid\n", "mid0");
+    add_submodule(&mid, &grandchild, "nested");
+
+    let parent = TempRepo::init("submodule_status_cycle_parent");
+    let _p0 = parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &mid, "sub");
+
+    // A second, entirely UNRELATED and ordinary top-level submodule in the
+    // same superproject — proves the cyclic "sub" being unreadable doesn't
+    // take the whole listing down with it (no early return / no aborted
+    // Vec), and that a normal submodule right next to a corrupted one still
+    // classifies correctly.
+    let other_child = TempRepo::init("submodule_status_cycle_other_child");
+    let other_c0 = other_child.commit("o.txt", "other\n", "o0");
+    add_submodule(&parent, &other_child, "sub2");
+
+    // `add_submodule` leaves "sub" itself cloned+checked out, but its OWN
+    // "nested" submodule is NOT (`git submodule add` never recurses) — init +
+    // update it recursively first so there is a real, normal nested-submodule
+    // checkout to corrupt.
+    let update_result = submodule_update(parent.path(), Some("sub".to_string()), true, true);
+    assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
+    assert_eq!(parent.read("sub/nested/gc.txt"), "grandchild\n");
+
+    let nested_git_file = parent.dir.join("sub").join("nested").join(".git");
+    let original = std::fs::read_to_string(&nested_git_file).expect("read nested's original .git gitfile");
+    assert!(
+        original.trim_start().starts_with("gitdir:"),
+        "expected a real gitfile pointer (not a nested .git directory) at sub/nested/.git: {original:?}"
+    );
+    let sub_own_git_dir = parent.dir.join(".git").join("modules").join("sub");
+    assert!(sub_own_git_dir.is_dir(), "expected sub's own storage under .git/modules/sub: {sub_own_git_dir:?}");
+    std::fs::write(&nested_git_file, format!("gitdir: {}\n", sub_own_git_dir.display()))
+        .expect("corrupt nested's .git gitfile to redirect back at its own containing repo (sub)");
+
+    // THE ACTUAL REGRESSION CHECK: `submodule_status` — not
+    // `submodule_foreach_run` — called directly on a repo containing the
+    // cyclic submodule. Must terminate cleanly (no crash, no hang) and return
+    // a full, sorted Vec covering BOTH submodules.
+    let rows = submodule_status(parent.path())
+        .expect("submodule_status must terminate cleanly (Ok), not hang or crash, on a cyclic nested submodule");
+    assert_eq!(
+        rows.len(),
+        2,
+        "expected exactly 'sub' and 'sub2' (submodule_status only ever reports TOP-LEVEL rows), got: {:?}",
+        rows.iter().map(|r| &r.path).collect::<Vec<_>>()
+    );
+
+    // "sub": the top-level submodule whose OWN reachable subtree is cyclic.
+    // Must be reported as the new, distinct "unreadable" classification —
+    // never "clean" (which would silently hide a submodule this code could
+    // not safely inspect), and never any of the other 6 ordinary statuses
+    // either, since none of them could be safely computed.
+    let sub_row = rows.iter().find(|r| r.path == "sub").expect("expected a 'sub' row");
+    assert_eq!(sub_row.status, "unreadable", "a cyclic submodule's own status must never be guessed, and must not silently read as clean");
+    assert_ne!(sub_row.status, "clean");
+    // head_sha/workdir_sha are plain OID reads (the gitlink's recorded commit,
+    // and the submodule's own checked-out HEAD) — neither calls
+    // `submodule_status()` internally, so both stay populated even though the
+    // status classification itself had to be skipped.
+    assert!(sub_row.head_sha.is_some(), "head_sha should still be readable even when status is unreadable");
+    assert!(sub_row.workdir_sha.is_some(), "workdir_sha should still be readable even when status is unreadable");
+
+    // "sub2": a completely unrelated, ordinary submodule in the SAME
+    // repository — must classify normally, proving the cyclic "sub" entry
+    // doesn't take the rest of the listing down with it.
+    let sub2_row = rows.iter().find(|r| r.path == "sub2").expect("expected a 'sub2' row");
+    assert_eq!(sub2_row.status, "clean", "an unrelated, freshly-added submodule must classify normally");
+    assert_eq!(sub2_row.head_sha.as_deref(), Some(other_c0.as_str()));
+    assert_eq!(sub2_row.workdir_sha.as_deref(), Some(other_c0.as_str()));
+}

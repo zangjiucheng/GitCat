@@ -198,6 +198,16 @@ describe("submodules", () => {
     expect(sidebarCtrl.submodules[0].status).not.toBe("clean");
   });
 
+  it("real mode: an unreadable submodule (CRASH FIX — cyclic nested-submodule reference) passes through unchanged, never 'clean'", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(
+      ok([{ name: "sub", path: "sub", url: null, status: "unreadable", headSha: "c1c1c1c", workdirSha: "c0c0c0c" }]),
+    );
+    await sidebarCtrl.refresh("/repo");
+    expect(sidebarCtrl.submodules).toEqual([{ name: "sub", path: "sub", url: null, status: "unreadable", headSha: "c1c1c1c", workdirSha: "c0c0c0c" }]);
+    expect(sidebarCtrl.submodules[0].status).not.toBe("clean");
+  });
+
   it("real mode: empty list clears submodules", async () => {
     mockInTauri = true;
     sidebarCtrl.submodules = [{ name: "old", path: "old", url: null, status: "clean", headSha: "x", workdirSha: "x" }];
@@ -250,6 +260,10 @@ describe("submoduleAction (row action gate)", () => {
   it("removed -> null (Bug 6 fix: already staged for removal, nothing left to Init/Update)", () => {
     expect(submoduleAction("removed")).toBeNull();
   });
+
+  it("unreadable -> null (CRASH FIX: cyclic/unreadable submodule, nothing left to Init/Update)", () => {
+    expect(submoduleAction("unreadable")).toBeNull();
+  });
 });
 
 describe("submoduleNeedsForceConfirm (Deinit's confirm gate)", () => {
@@ -275,6 +289,10 @@ describe("submoduleNeedsForceConfirm (Deinit's confirm gate)", () => {
 
   it("not-initialized -> false", () => {
     expect(submoduleNeedsForceConfirm("not-initialized")).toBe(false);
+  });
+
+  it("unreadable -> false (nothing left to deinit — the row offers no Deinit button at all)", () => {
+    expect(submoduleNeedsForceConfirm("unreadable")).toBe(false);
   });
 });
 

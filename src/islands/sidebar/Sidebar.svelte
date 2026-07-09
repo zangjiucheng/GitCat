@@ -440,6 +440,18 @@
                    button row, distinct from "clean" so it's not mistaken for
                    an ordinary, actionable submodule. -->
               <span class="rname mut">removed (uncommitted) — commit via Workdir</span>
+            {:else if s.status === "unreadable"}
+              <!-- CRASH FIX (M1): this submodule's own reachable
+                   nested-submodule subtree was found cyclic/unresolvable, so
+                   the backend never even called submodule_status for it (see
+                   check_submodule_safe_for_status in submodule.rs) — there is
+                   nothing safe left to Init/Update/Sync/Deinit/Remove, so
+                   NONE of those are offered here, same as "removed" above. A
+                   clear, muted-but-attention-worthy label instead of a
+                   dead-looking button row, and distinct enough from "clean"
+                   that it can never be mistaken for an ordinary, actionable
+                   submodule. -->
+              <span class="rname mut">unreadable — possible cyclic submodule reference</span>
             {:else}
               <!-- Sync is offered for EVERY row regardless of status (unlike
                    Init/Update below, gated by submoduleAction) — it only

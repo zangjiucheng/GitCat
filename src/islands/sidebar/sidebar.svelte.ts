@@ -136,7 +136,8 @@ export type TagMenu = { name: string; x: number; y: number };
 // function rather than inline template logic so it's directly unit-testable
 // without a component-rendering harness (this codebase's tests are all
 // controller/state-level; see sidebar.svelte.test.ts). Mirrors
-// submodule.rs's classify_status 6-way split 1:1:
+// submodule.rs's classify_status 6-way split 1:1 (plus the "unreadable" 7th
+// state, added by the cyclic-submodule crash fix — see below):
 //   - "not-initialized" -> "init"    (submodule_update with init:true — clone +
 //     checkout a never-registered submodule in one call)
 //   - "out-of-date"     -> "update"  (submodule_update with init:false — it's
@@ -152,6 +153,13 @@ export type TagMenu = { name: string; x: number; y: number };
 //     not just this one, so Sidebar.svelte additionally special-cases
 //     s.status === "removed" directly rather than gating on this fn alone —
 //     see its own comment above the Submodules list)
+//   - "unreadable" -> null (CRASH FIX: this submodule's own reachable
+//     nested-submodule subtree was found cyclic/unresolvable, so the backend
+//     never even called submodule_status for it — there is nothing safe for
+//     Init/Update/Sync/Deinit/Remove to act on, so like "removed" above,
+//     Sidebar.svelte special-cases s.status === "unreadable" directly and
+//     shows NO action buttons at all, not just this one — see its own
+//     comment above the Submodules list)
 export type SubmoduleAction = "init" | "update" | "blocked" | null;
 export function submoduleAction(status: string): SubmoduleAction {
   switch (status) {
@@ -163,6 +171,7 @@ export function submoduleAction(status: string): SubmoduleAction {
     case "conflicted":
       return "blocked";
     case "removed":
+    case "unreadable":
       return null;
     default:
       return null;
