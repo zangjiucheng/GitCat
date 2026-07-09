@@ -1120,6 +1120,43 @@ describe("openTagMenu / closeTagMenu", () => {
     sidebarCtrl.openTagMenu("v1.0.0", anchor);
     expect(sidebarCtrl.menu).toBeNull();
   });
+
+  it("opening the tag menu closes an open submodule menu", () => {
+    sidebarCtrl.submoduleMenu = { path: "sub", status: "clean", absolutePath: "/repo/sub", x: 0, y: 0 };
+    const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
+    sidebarCtrl.openTagMenu("v1.0.0", anchor);
+    expect(sidebarCtrl.submoduleMenu).toBeNull();
+  });
+});
+
+describe("openSubmoduleMenu / closeSubmoduleMenu", () => {
+  it("positions the submodule menu clamped to the viewport width, from the anchor's rect, capturing status/absolutePath", () => {
+    const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
+    sidebarCtrl.openSubmoduleMenu("vendor/lib", "dirty", "/repo/vendor/lib", anchor);
+    expect(sidebarCtrl.submoduleMenu).toEqual({ path: "vendor/lib", status: "dirty", absolutePath: "/repo/vendor/lib", x: 10, y: 44 });
+  });
+
+  it("closeSubmoduleMenu clears it", () => {
+    sidebarCtrl.submoduleMenu = { path: "sub", status: "clean", absolutePath: "/repo/sub", x: 0, y: 0 };
+    sidebarCtrl.closeSubmoduleMenu();
+    expect(sidebarCtrl.submoduleMenu).toBeNull();
+  });
+
+  it("opening the submodule menu closes an open branch menu and an open tag menu", () => {
+    sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
+    sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
+    const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
+    sidebarCtrl.openSubmoduleMenu("sub", "clean", "/repo/sub", anchor);
+    expect(sidebarCtrl.menu).toBeNull();
+    expect(sidebarCtrl.tagMenu).toBeNull();
+  });
+
+  it("opening the branch menu closes an open submodule menu", () => {
+    sidebarCtrl.submoduleMenu = { path: "sub", status: "clean", absolutePath: "/repo/sub", x: 0, y: 0 };
+    const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
+    sidebarCtrl.openMenu("feature", false, anchor);
+    expect(sidebarCtrl.submoduleMenu).toBeNull();
+  });
 });
 
 describe("newTag", () => {
@@ -1260,11 +1297,12 @@ describe("setSnapshots / reset", () => {
     expect(sidebarCtrl.snapshots).not.toBe(snaps);
   });
 
-  it("reset clears everything including an open menu, tag menu, hasRepo, and submodules", () => {
+  it("reset clears everything including an open menu, tag menu, submodule menu, hasRepo, and submodules", () => {
     sidebarCtrl.locals = [{ name: "main", sha: "x", ahead: null, behind: null }];
     sidebarCtrl.head = "main";
     sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
     sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
+    sidebarCtrl.submoduleMenu = { path: "sub", status: "clean", absolutePath: "/repo/sub", x: 0, y: 0 };
     sidebarCtrl.hasRepo = true;
     sidebarCtrl.submodules = [{ name: "vendor/a", path: "vendor/a", absolutePath: "/repo/vendor/a", url: null, status: "clean", headSha: "x", workdirSha: "x" }];
     sidebarCtrl.reset();
@@ -1272,6 +1310,7 @@ describe("setSnapshots / reset", () => {
     expect(sidebarCtrl.head).toBeNull();
     expect(sidebarCtrl.menu).toBeNull();
     expect(sidebarCtrl.tagMenu).toBeNull();
+    expect(sidebarCtrl.submoduleMenu).toBeNull();
     expect(sidebarCtrl.hasRepo).toBe(false);
     expect(sidebarCtrl.submodules).toEqual([]);
   });

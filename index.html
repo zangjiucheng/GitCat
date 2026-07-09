@@ -211,9 +211,17 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    distinct, more urgent case: the superproject's own index has an unresolved
    merge conflict AT this submodule's gitlink path (two branches pointed it at
    different commits), not just a stale-but-otherwise-fine checkout. */
-.sub-item{display:flex;align-items:center;gap:8px;padding:5px 8px 5px 24px;border-radius:6px}
+.sub-item{display:flex;align-items:center;gap:8px;padding:5px 8px 5px 24px;border-radius:6px;cursor:pointer}
 .sub-item:hover{background:var(--elevated)}
+.sub-item.busy{opacity:.5;pointer-events:none}
 .sub-item .rname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The row's own "⋮" popover trigger — .ref-menu is otherwise only scoped to
+   `.ref-item .ref-menu` (branches/tags, which share that class); submodule
+   rows use a different class, so this mirrors that rule verbatim rather than
+   rendering with no fade/hover styling at all. */
+.sub-item .ref-menu{margin-left:auto;opacity:0;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;border-radius:4px;flex:none}
+.sub-item:hover .ref-menu{opacity:1}
+.sub-item .ref-menu:hover{background:var(--elevated);color:var(--text)}
 .sub-status{font-size:10px;font-weight:600;padding:1px 7px;border-radius:var(--r-pill);flex:none;white-space:nowrap}
 .sub-status[data-status="clean"]{background:color-mix(in srgb,var(--success) 16%,transparent);color:var(--success)}
 .sub-status[data-status="dirty"]{background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning)}
@@ -238,24 +246,6 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    "removed". */
 .sub-status[data-status="unreadable"]{background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning)}
 .sub-item .spinner{flex:none}
-/* Per-row submodule action button ("Init + update" / "Update") — a small
-   pill-shaped text button (mirrors the workdir island's `.wd-stash-act
-   button` small-action shape) rather than an icon-only affordance like
-   `.ref-menu`, since the label itself ("Init + update" vs "Update") is the
-   whole point of the button — an icon alone couldn't distinguish the two.
-   Disabled (dirty/conflicted rows — see submoduleAction's doc comment in
-   sidebar.svelte.ts) just dims it; its `title` carries the explanation. */
-.sub-act{flex:none;font-size:10px;font-weight:600;padding:2px 8px;border-radius:var(--r-pill);
-  border:1px solid var(--border);background:var(--elevated);color:var(--text);white-space:nowrap}
-.sub-act:hover:not([disabled]){border-color:var(--accent);color:var(--accent)}
-.sub-act[disabled]{opacity:.45;cursor:not-allowed}
-/* Remove (unregisters + stages an index change — the most final of the four
-   per-row submodule actions) gets the same at-rest red as every other
-   destructive action in the app (mirrors .wd-stash-act button.danger's
-   identical "drop=danger" rule above), rather than only reddening on hover
-   like the plain .sub-act:hover above. */
-.sub-act.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
-.sub-act.danger:hover:not([disabled]){background:color-mix(in srgb,var(--danger) 12%,var(--elevated))}
 /* Bulk "Sync all"/"Update all" row — sits above the per-submodule rows (not
    crammed into the section's <summary>, which toggles open/closed on any
    click inside it) — same left-indent as .sub-item so it reads as part of

@@ -131,6 +131,17 @@ export type BranchMenu = { name: string; isCurrent: boolean; x: number; y: numbe
 // app — see sidebarCtrl.deleteTag's own doc comment), so this is intentionally
 // a separate, smaller shape rather than reusing BranchMenu with a dummy field.
 export type TagMenu = { name: string; x: number; y: number };
+// A submodule row used to render up to 5 always-visible inline buttons
+// (Open/Sync/Init+update-or-Update/Deinit/Remove) plus its status chip and
+// path — at the sidebar's normal width these simply don't fit and got
+// silently clipped (found via visual inspection, not a report). Fixed by
+// collapsing everything but the row itself (click = Open, mirroring how a
+// branch row's own click already means "checkout") into a "⋮" popover,
+// exactly like BranchMenu/TagMenu above. Captures status/absolutePath at
+// open-time (like BranchMenu captures isCurrent) rather than re-deriving
+// them from `path` inside the popover, so the popover's own buttons never
+// need a second lookup into `submodules`.
+export type SubmoduleMenu = { path: string; status: string; absolutePath: string; x: number; y: number };
 
 // Which action (if any) a submodule row's status affords — a pure, exported
 // function rather than inline template logic so it's directly unit-testable
@@ -254,6 +265,10 @@ class SidebarState {
   // `menu`/`tagMenu` is ever non-null at a time — opening either closes the
   // other (see openMenu/openTagMenu).
   tagMenu = $state<TagMenu | null>(null);
+  // Submodule row "⋮" popover — same "only one of menu/tagMenu/submoduleMenu
+  // is ever non-null at a time" rule as tagMenu above (see openMenu/
+  // openTagMenu/openSubmoduleMenu, which each null the other two).
+  submoduleMenu = $state<SubmoduleMenu | null>(null);
   newTagOpen = $state(false);
   newTagName = $state("");
   // "" means lightweight (no -a/-m); non-empty means annotated with this
@@ -900,6 +915,7 @@ class SidebarState {
     this.snapshots = [];
     this.menu = null;
     this.tagMenu = null;
+    this.submoduleMenu = null;
     this.hasRepo = false;
     this.foreachResults = [];
     this.foreachCommand = "";
@@ -1099,6 +1115,7 @@ class SidebarState {
 
   openMenu(name: string, isCurrent: boolean, anchor: HTMLElement) {
     this.tagMenu = null; // only one popover open at a time
+    this.submoduleMenu = null;
     const r = anchor.getBoundingClientRect();
     this.menu = { name, isCurrent, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
@@ -1250,12 +1267,24 @@ class SidebarState {
 
   openTagMenu(name: string, anchor: HTMLElement) {
     this.menu = null; // only one popover open at a time
+    this.submoduleMenu = null;
     const r = anchor.getBoundingClientRect();
     this.tagMenu = { name, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
 
   closeTagMenu() {
     this.tagMenu = null;
+  }
+
+  openSubmoduleMenu(path: string, status: string, absolutePath: string, anchor: HTMLElement) {
+    this.menu = null; // only one popover open at a time
+    this.tagMenu = null;
+    const r = anchor.getBoundingClientRect();
+    this.submoduleMenu = { path, status, absolutePath, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
+  }
+
+  closeSubmoduleMenu() {
+    this.submoduleMenu = null;
   }
 
   async rebaseOnto(name: string) {

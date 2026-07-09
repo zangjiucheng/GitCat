@@ -11,6 +11,7 @@
   let newTagFormEl: HTMLDivElement | undefined = $state();
   let newSubmoduleEl: HTMLInputElement | undefined = $state();
   let newSubmoduleFormEl: HTMLDivElement | undefined = $state();
+  let submoduleMenuEl: HTMLDivElement | undefined = $state();
 
   function onWindowPointerdown(e: PointerEvent) {
     if (sidebarCtrl.menu && menuEl && !menuEl.contains(e.target as Node)) sidebarCtrl.closeMenu();
@@ -25,6 +26,7 @@
     // Outside-click cancels the Add Submodule form — same busy-blocked
     // rationale as the New Branch/New Tag forms above.
     if (sidebarCtrl.newSubmoduleOpen && !sidebarCtrl.busy && newSubmoduleFormEl && !newSubmoduleFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewSubmodule();
+    if (sidebarCtrl.submoduleMenu && submoduleMenuEl && !submoduleMenuEl.contains(e.target as Node)) sidebarCtrl.closeSubmoduleMenu();
   }
 
   $effect(() => {
@@ -425,8 +427,28 @@
           {/if}
         </div>
         {#each sidebarCtrl.submodules as s (s.path)}
-          {@const action = submoduleAction(s.status)}
-          <div class="sub-item" data-tip={subTooltip(s)}>
+          {@const canOpen = submoduleCanOpen(s.status)}
+          <!-- Collapsed into a single "⋮" popover (see SubmoduleMenu's own
+               doc comment in sidebar.svelte.ts for why): up to 5 always-
+               visible inline buttons (Open/Sync/Init+update-or-Update/
+               Deinit/Remove) plus the status chip and path simply don't fit
+               the sidebar's width and were silently getting clipped. Mirrors
+               the branch row's own "click the row = primary action, ⋮ =
+               everything else" convention exactly — clicking anywhere on an
+               openable row (canOpen) calls Open, same as clicking a branch
+               row checks it out. -->
+          <div
+            class="sub-item"
+            class:busy={sidebarCtrl.busy}
+            data-tip={subTooltip(s)}
+            role="button"
+            tabindex="0"
+            onclick={(e) => {
+              if ((e.target as HTMLElement).closest(".ref-menu") || !canOpen || sidebarCtrl.busy) return;
+              sidebarCtrl.openSubmodule(s.absolutePath);
+            }}
+            onkeydown={(e) => (e.key === "Enter" || e.key === " ") && canOpen && !sidebarCtrl.busy && sidebarCtrl.openSubmodule(s.absolutePath)}
+          >
             <span class="rname">{s.path}</span>
             <span class="sub-status" data-status={s.status}>{subStatusLabel(s.status)}</span>
             {#if sidebarCtrl.busyTarget === s.path}
@@ -437,8 +459,8 @@
                    Init/Update/Sync/Deinit/Remove, so NONE of those are
                    offered here (unlike every other status, which always gets
                    Sync at minimum). A muted label instead of a dead-looking
-                   button row, distinct from "clean" so it's not mistaken for
-                   an ordinary, actionable submodule. -->
+                   menu, distinct from "clean" so it's not mistaken for an
+                   ordinary, actionable submodule. -->
               <span class="rname mut">removed (uncommitted) — commit via Workdir</span>
             {:else if s.status === "unreadable"}
               <!-- CRASH FIX (M1): this submodule's own reachable
@@ -448,46 +470,21 @@
                    nothing safe left to Init/Update/Sync/Deinit/Remove, so
                    NONE of those are offered here, same as "removed" above. A
                    clear, muted-but-attention-worthy label instead of a
-                   dead-looking button row, and distinct enough from "clean"
-                   that it can never be mistaken for an ordinary, actionable
+                   dead-looking menu, and distinct enough from "clean" that it
+                   can never be mistaken for an ordinary, actionable
                    submodule. -->
               <span class="rname mut">unreadable — possible cyclic submodule reference</span>
             {:else}
-              <!-- "Open" — re-points the whole app at this submodule's own
-                   absolute path (sidebarCtrl.openSubmodule -> bridge.
-                   enterSubmodule) so it becomes the fully active repo: same
-                   graph/workdir/branches/bisect/rebase/nested-Submodules UI,
-                   zero duplicated UI. Gated by submoduleCanOpen(status) — only
-                   clean/dirty/out-of-date/conflicted rows actually have a
-                   working directory to enter (see that function's own doc
-                   comment); not-initialized falls through to the {:else if
-                   action === "init"} branch below instead, same as it always
-                   has. -->
-              {#if submoduleCanOpen(s.status)}
-                <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.openSubmodule(s.absolutePath)}>Open</button>
-              {/if}
-              <!-- Sync is offered for EVERY row regardless of status (unlike
-                   Init/Update below, gated by submoduleAction) — it only
-                   rewrites .git/config's url, never the submodule's own
-                   working tree/index, so there's nothing for
-                   "dirty"/"conflicted" to block. -->
-              <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.syncSubmodule(s.path)}>Sync</button>
-              {#if action === "init"}
-                <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.initAndUpdateSubmodule(s.path)}>Init + update</button>
-              {:else if action === "update"}
-                <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.updateSubmodule(s.path)}>Update</button>
-              {:else if action === "blocked"}
-                <button class="sub-act" disabled title={subBlockedTip(s.status)}>Update</button>
-              {/if}
-              <!-- Deinit/Remove — offered unconditionally like Sync (not
-                   status-gated the way Init/Update are): Deinit's own
-                   status-gated confirm decision lives in the controller
-                   (submoduleNeedsForceConfirm), and Remove is always final
-                   regardless of status. Left-to-right ordering is
-                   increasing severity, Remove last (see sidebar.svelte.ts's
-                   own doc comment). -->
-              <button class="sub-act" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.deinitSubmodule(s.path, s.status)}>Deinit</button>
-              <button class="sub-act danger" disabled={sidebarCtrl.busy} onclick={() => sidebarCtrl.removeSubmodule(s.path)}>Remove</button>
+              <button
+                class="ref-menu"
+                title="Submodule actions"
+                aria-label="Submodule actions"
+                disabled={sidebarCtrl.busy}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  sidebarCtrl.openSubmoduleMenu(s.path, s.status, s.absolutePath, e.currentTarget as HTMLElement);
+                }}>&#8942;</button
+              >
             {/if}
           </div>
         {/each}
@@ -585,5 +582,37 @@
     <!-- Same capture-before-close rationale as the branch menu above. -->
     <button onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.pushTag(name); }}>Push to origin</button>
     <button class="danger" onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.deleteTag(name); }}>Delete&#8230;</button>
+  </div>
+{/if}
+
+{#if sidebarCtrl.submoduleMenu}
+  {@const sm = sidebarCtrl.submoduleMenu}
+  {@const smAction = submoduleAction(sm.status)}
+  <div class="ref-pop" bind:this={submoduleMenuEl} style="left:{sm.x}px;top:{sm.y}px">
+    <!-- Same capture-before-close rationale as the branch/tag menus above —
+         path/status/absolutePath are captured into locals (sm.*, smAction)
+         from the snapshot the popover opened with, matching what the row
+         itself showed. -->
+    {#if submoduleCanOpen(sm.status)}
+      <button onclick={() => { const p = sm.absolutePath; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.openSubmodule(p); }}>Open</button>
+    {/if}
+    <!-- Sync is offered regardless of status (unlike Init/Update below) — it
+         only rewrites .git/config's url, never the submodule's own working
+         tree/index, so there's nothing for "dirty"/"conflicted" to block. -->
+    <button onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.syncSubmodule(p); }}>Sync</button>
+    {#if smAction === "init"}
+      <button onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.initAndUpdateSubmodule(p); }}>Init + update</button>
+    {:else if smAction === "update"}
+      <button onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.updateSubmodule(p); }}>Update</button>
+    {:else if smAction === "blocked"}
+      <button disabled title={subBlockedTip(sm.status)}>Update</button>
+    {/if}
+    <!-- Deinit/Remove — offered unconditionally like Sync (not status-gated
+         the way Init/Update are): Deinit's own status-gated confirm
+         decision lives in the controller (submoduleNeedsForceConfirm), and
+         Remove is always final regardless of status. Ordering is
+         increasing severity, Remove last. -->
+    <button onclick={() => { const p = sm.path, st = sm.status; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.deinitSubmodule(p, st); }}>Deinit</button>
+    <button class="danger" onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.removeSubmodule(p); }}>Remove&#8230;</button>
   </div>
 {/if}
