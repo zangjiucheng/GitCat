@@ -569,8 +569,14 @@ class TamaMascot{
     if(cfg.sticky)this.sticky=s;
     if(!cfg.sticky&&cfg.dwell)this.dwellT=setTimeout(()=>this.set(this.sticky||"idle"),cfg.dwell);
     if(!cfg.sticky&&!cfg.dwell)this.sticky=null;}
+  // ms is a FLOOR, not the actual dwell — every caller below passes a fixed
+  // guess (3200 default, up to 6000 for the danger copy), but the message
+  // text itself was never a factor, so a long message could get yanked away
+  // before it's even read. 50ms/char (~20 chars/sec) covers that on top of
+  // whatever floor the caller asked for, and leaves short toasts unchanged.
   say(t,ms=3200){if(!t){this.line.classList.remove("show");return;}this.line.textContent=t;this.line.classList.add("show");
-    clearTimeout(this.toastT);this.toastT=setTimeout(()=>this.line.classList.remove("show"),ms);}
+    const dwell=Math.max(ms,1200+t.length*50);
+    clearTimeout(this.toastT);this.toastT=setTimeout(()=>this.line.classList.remove("show"),dwell);}
   warn(t,ms=5000){this.set("warn");this.say(t,ms);}
   wag(){if(this.reduced)return;this.sprite.classList.remove("wag");void this.sprite.offsetWidth;this.sprite.classList.add("wag");}
   setInteracting(on){this.nook.classList.toggle("is-interacting",on);}

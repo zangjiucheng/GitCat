@@ -354,7 +354,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .talk{flex:1;min-width:0}
 .toast-line{font-family:var(--display);font-weight:600;font-size:12.5px;line-height:1.32;color:var(--sa);min-height:16px;
   opacity:0;transform:translateY(3px);transition:opacity .22s,transform .22s;overflow:hidden;
-  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+  /* Was clamped to 3 lines (49.5px) — shorter than the nook's own built-in
+     "mutation.destructive" safety copy already needs (66px/4 lines), so the
+     end of that warning ("...type the ref name to go on.") was silently cut
+     off with no ellipsis. 5 lines (82.5px) covers every message this file
+     sends today with margin, and still fits: .talk's telemetry row + margin
+     is a fixed ~35px, leaving 132px(nook) - 35px = 97px of headroom. */
+  display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical}
 .toast-line.show{opacity:1;transform:none}
 .telemetry{display:flex;align-items:center;gap:6px;margin-top:6px;font-family:var(--mono);font-size:10px;color:var(--muted)}
 .telemetry .pip{width:6px;height:6px;border-radius:50%;background:var(--success);flex:none;animation:pip 2.6s ease-out infinite}
