@@ -489,7 +489,12 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .perf .sep{width:1px;height:14px;background:var(--border)}
 .perf-dev{display:flex;align-items:center;gap:8px}
 .hint{position:absolute;left:14px;bottom:10px;z-index:6;color:var(--muted);font-size:11px;pointer-events:none;font-family:var(--mono);
-  background:color-mix(in srgb,var(--panel) 70%,transparent);padding:3px 8px;border-radius:6px}
+  /* Was 70% opaque — a real commit row scrolled to the very bottom of the
+     canvas (where this legend sits) showed through it, its text/lane lines
+     visually blending with the hint's own text. Matches .delta-readout's own
+     92% just above, the established opacity for a fixed overlay chip that
+     must stay legible against arbitrary canvas content behind it. */
+  background:color-mix(in srgb,var(--panel) 92%,transparent);padding:3px 8px;border-radius:6px}
 .delta-readout{position:absolute;top:44px;right:14px;z-index:6;font-family:var(--mono);font-size:11px;color:var(--text);
   background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid color-mix(in srgb,var(--accent) 45%,var(--border));
   border-radius:var(--r-control);padding:4px 9px;opacity:0;transition:opacity .18s;pointer-events:none}
