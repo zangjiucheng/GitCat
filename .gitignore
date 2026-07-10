@@ -17,6 +17,10 @@ dist-ssr
 /playwright-report
 /blob-report
 
+# VitePress docs site (built by .github/workflows/docs.yml, not committed)
+docs/.vitepress/dist
+docs/.vitepress/cache
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

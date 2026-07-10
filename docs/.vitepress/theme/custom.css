@@ -1,0 +1,33 @@
+/* Lamplight / Cozy Terminal palette — matches the app's own dark theme and
+ * icon gradient (design/assets/app-icon.svg), not VitePress's default blue.
+ * Deliberately a light reskin of the default theme (brand colors + a warmer
+ * dark background), not a full custom theme — see this project's own
+ * precedent for reusing an off-the-shelf tool with CSS-var overrides rather
+ * than hand-rolling everything (index.html's own --l0.."l6" lane palette is
+ * the one thing here it's NOT reusing, on purpose: those are tuned for graph
+ * lanes on a canvas, not prose/button contrast on a docs page).
+ */
+:root {
+  --vp-c-brand-1: #c88a3e;
+  --vp-c-brand-2: #e7b36a;
+  --vp-c-brand-3: #e7b36a;
+  --vp-c-brand-soft: rgba(231, 179, 106, 0.16);
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, #c88a3e, #e7b36a 60%, #f5d9a8);
+}
+
+.dark {
+  --vp-c-bg: #14100a;
+  --vp-c-bg-alt: #100c07;
+  --vp-c-bg-soft: #221b12;
+  --vp-c-bg-elv: #221b12;
+  --vp-c-border: #3a2f20;
+  --vp-c-divider: #2c2415;
+  --vp-c-text-1: #f2e9da;
+  --vp-c-text-2: #c9bba4;
+}
+
+.VPHero .clip {
+  font-weight: 700;
+}

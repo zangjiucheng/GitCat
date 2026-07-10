@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E7B36A"/>
+      <stop offset="100%" stop-color="#C88A3E"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Full-bleed rounded-square background — OS icon masks (macOS squircle,
+       Windows/Linux their own) re-clip this anyway, so the corner radius here
+       is just a sane fallback for contexts that render the raw PNG unmasked. -->
+  <rect x="0" y="0" width="1024" height="1024" rx="220" ry="220" fill="url(#bg)"/>
+
+  <!-- Paw print — Tama's own necklace charm motif, simplified to a bold mark
+       that stays legible at 16x16 (unlike the full illustrated portraits). -->
+  <g fill="#F5E9D3" stroke="#6A4E2D" stroke-width="14" stroke-linejoin="round">
+    <ellipse cx="512" cy="640" rx="205" ry="172"/>
+    <ellipse cx="291" cy="447" rx="98" ry="119" transform="rotate(-18 291 447)"/>
+    <ellipse cx="435" cy="330" rx="103" ry="128"/>
+    <ellipse cx="589" cy="330" rx="103" ry="128"/>
+    <ellipse cx="733" cy="447" rx="98" ry="119" transform="rotate(18 733 447)"/>
+  </g>
+</svg>

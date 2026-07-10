@@ -7,8 +7,11 @@
 Tauri 2 + Rust + Svelte 5, with a warm "Lamplight / Cozy Terminal" identity — and Tama, a cat mascot who reacts to what's actually happening and keeps a snapshot under you before every mutation.
 
 [![CI](https://github.com/zangjiucheng/GitCat/actions/workflows/ci.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/ci.yml)
+[![Docs](https://github.com/zangjiucheng/GitCat/actions/workflows/docs.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/docs.yml)
 [![Release](https://github.com/zangjiucheng/GitCat/actions/workflows/release.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/release.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+
+**[Website & docs](https://zangjiucheng.github.io/GitCat/)**
 
 ![GitCat screenshot](docs/screenshot.png)
 
@@ -76,6 +79,7 @@ Other useful commands:
 pnpm check          # svelte-check (type-check the frontend)
 pnpm build          # build the frontend
 pnpm test           # vitest (frontend unit tests)
+pnpm docs:dev       # run the docs site (docs/) locally at localhost:5173
 
 cd src-tauri
 cargo build         # build the Rust core
@@ -86,7 +90,7 @@ cargo test          # run the Rust test suite
 
 - **Rust core** (`src-tauri/`) — [git2](https://github.com/rust-lang/git2-rs) for reads, the `git` CLI for writes (every mutation snapshots first), [tauri-specta](https://github.com/specta-rs/tauri-specta) for a fully typed IPC boundary auto-generated into `src/ipc/bindings.ts`
 - **Frontend** — Svelte 5 "islands" (one per feature: resolver, bisect, reflog, rerere, plumbing, filter-repo, setup wizard, sidebar, ⌘K, commit detail) layered over a hand-tuned vanilla canvas for the commit graph itself
-- **CI/CD** — GitHub Actions: `cargo test` + `pnpm test` on every push/PR, and a 6-platform release matrix (macOS/Linux/Windows × arm64/x86_64) on tagged releases
+- **CI/CD** — GitHub Actions: `cargo test` + `pnpm test` on every push/PR, a 6-platform release matrix (macOS/Linux/Windows × arm64/x86_64) on tagged releases, and a [VitePress](https://vitepress.dev) docs site (`docs/`) auto-deployed to [GitHub Pages](https://zangjiucheng.github.io/GitCat/) on every change
 
 ## License
 
