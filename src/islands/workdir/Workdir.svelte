@@ -157,22 +157,80 @@
   </section>
 
   {#if workdirCtrl.selectedDiffFile}
+    {@const file = workdirCtrl.selectedDiffFile}
     <section>
-      <h4 class="d-lab">Diff</h4>
+      <div class="wd-sec-head">
+        <h4 class="d-lab" style="margin:0">Diff</h4>
+        {#if workdirCtrl.selectedLinesCount}
+          <div class="wd-lines-bar">
+            <span class="mut" style="font-size:11.5px">{workdirCtrl.selectedLinesCount} line{workdirCtrl.selectedLinesCount === 1 ? "" : "s"} selected</span>
+            {#if workdirCtrl.busy && workdirCtrl.busyTarget === file}
+              <span class="spinner"></span>
+            {:else if !workdirCtrl.selectedDiffStaged}
+              <button disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageLines(repo(), file, workdirCtrl.buildSelectedHunks())}>Stage selected</button>
+              <button class="danger" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.confirmDiscardLines(file, workdirCtrl.buildSelectedHunks())}>Discard selected</button>
+            {:else}
+              <button disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageLines(repo(), file, workdirCtrl.buildSelectedHunks())}>Unstage selected</button>
+            {/if}
+          </div>
+        {/if}
+      </div>
       <div class="diffview">
         {#if workdirCtrl.diffLoading}
           <div class="diff-file-h mut"><span class="spinner"></span> loading diff&#8230;</div>
-        {:else}
+        {:else if workdirCtrl.diffError}
           <div class="diff-file-h">{workdirCtrl.diffHeader}</div>
-          {#each workdirCtrl.diffRows as row}
-            {#if row.kind === "hunk"}
-              <div class="diff-line hunk"><span class="ln"></span><span class="mk"></span><code>{row.text}</code></div>
-            {:else if row.kind === "note"}
-              <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{row.text}</code></div>
-            {:else}
-              <div class="diff-line {row.cls}"><span class="ln">{row.ln}</span><span class="mk">{row.mk}</span><code>{@html row.html}</code></div>
+          <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{workdirCtrl.diffError}</code></div>
+        {:else if workdirCtrl.diffFile}
+          <div class="diff-file-h">{workdirCtrl.diffHeader}</div>
+          {#if workdirCtrl.diffFile.binary}
+            <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">binary file — not shown</code></div>
+          {:else if !workdirCtrl.diffHunks.length}
+            <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">no textual diff</code></div>
+          {:else}
+            {#each workdirCtrl.diffHunks as hunk (hunk.header)}
+              <div class="diff-line hunk">
+                <span class="ln"></span><span class="sel"></span><span class="mk"></span><code>{hunk.header}</code>
+                <span class="wd-hunk-act">
+                  {#if workdirCtrl.busy && workdirCtrl.busyTarget === file}
+                    <span class="spinner"></span>
+                  {:else if !workdirCtrl.selectedDiffStaged}
+                    <button disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageLines(repo(), file, [workdirCtrl.hunkSelectionFor(hunk)])}>Stage hunk</button>
+                    <button class="danger" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.confirmDiscardLines(file, [workdirCtrl.hunkSelectionFor(hunk)])}>Discard hunk</button>
+                  {:else}
+                    <button disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageLines(repo(), file, [workdirCtrl.hunkSelectionFor(hunk)])}>Unstage hunk</button>
+                  {/if}
+                </span>
+              </div>
+              {#each hunk.lines as line, idx (line.kind + ":" + line.oldNo + ":" + line.newNo)}
+                <div
+                  class="diff-line {line.kind === '+' ? 'add' : line.kind === '-' ? 'del' : ''}"
+                  class:selected={workdirCtrl.isLineSelected(hunk.header, line)}
+                >
+                  <span class="ln">{line.kind === "+" ? line.newNo : line.kind === "-" ? line.oldNo : (line.newNo ?? line.oldNo)}</span>
+                  <span class="sel">
+                    {#if line.kind === "+" || line.kind === "-"}
+                      <input
+                        type="checkbox"
+                        checked={workdirCtrl.isLineSelected(hunk.header, line)}
+                        disabled={workdirCtrl.busy}
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          workdirCtrl.toggleLine(hunk.header, hunk.lines, idx, e.shiftKey);
+                        }}
+                        aria-label="select {line.kind === '+' ? 'added' : 'removed'} line {line.kind === '+' ? line.newNo : line.oldNo}"
+                      />
+                    {/if}
+                  </span>
+                  <span class="mk">{line.kind === "+" || line.kind === "-" ? line.kind : ""}</span>
+                  <code>{@html line.html}</code>
+                </div>
+              {/each}
+            {/each}
+            {#if workdirCtrl.diffFile.truncated}
+              <div class="diff-line"><span class="ln"></span><span class="sel"></span><span class="mk"></span><code class="mut">&#8230; diff truncated (file capped)</code></div>
             {/if}
-          {/each}
+          {/if}
         {/if}
       </div>
     </section>

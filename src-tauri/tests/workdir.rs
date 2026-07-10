@@ -7,11 +7,13 @@ mod common;
 use common::TempRepo;
 use git2::RepositoryState;
 use gitcat_lib::conflict::{conflict_status, resolve_conflict_file};
+use gitcat_lib::model::DiffHunkRow;
 use gitcat_lib::safety::{list_snapshots, undo};
 use gitcat_lib::workdir::{
-    commit, discard_file, stage_all, stage_file, stash_apply, stash_conflict_abort,
-    stash_conflict_continue, stash_drop, stash_list, stash_pop, stash_save, stash_undo_apply,
-    unstage_file, workdir_file_diff, workdir_status,
+    commit, discard_file, discard_lines, stage_all, stage_file, stage_lines, stash_apply,
+    stash_conflict_abort, stash_conflict_continue, stash_drop, stash_list, stash_pop, stash_save,
+    stash_undo_apply, unstage_file, unstage_lines, workdir_file_diff, workdir_status, HunkSelection,
+    SelectedLine,
 };
 
 #[test]
@@ -713,4 +715,448 @@ fn stage_file_accepts_a_tab_containing_filename() {
 
     let status = workdir_status(path).unwrap();
     assert!(status.staged.iter().any(|e| e.path == name), "the tab-named file should be staged");
+}
+
+// ---------------------------------------------------------------------------
+// Hunk/line-level staging: stage_lines / unstage_lines / discard_lines.
+// `apply_selected_lines`/`build_sub_patch` (workdir.rs) reconstruct a
+// sub-patch covering only the caller-selected `+`/`-` rows and apply it with
+// `git apply`; these tests drive that end to end (never construct a patch by
+// hand — exactly like the real frontend, a `HunkSelection` is built from
+// whatever `workdir_file_diff` just returned).
+// ---------------------------------------------------------------------------
+
+/// Build a `HunkSelection` for `hunk`, keeping only the `+`/`-` lines that
+/// satisfy `pred(old_no, new_no)` — mirrors the frontend's
+/// `buildSelectedHunks()` (workdir.svelte.ts): a flat predicate over the
+/// hunk's own lines, grouped back into one `HunkSelection`.
+fn select_lines(hunk: &DiffHunkRow, pred: impl Fn(Option<u32>, Option<u32>) -> bool) -> HunkSelection {
+    HunkSelection {
+        header: hunk.header.clone(),
+        lines: hunk
+            .lines
+            .iter()
+            .filter(|l| (l.kind == "+" || l.kind == "-") && pred(l.old_no, l.new_no))
+            .map(|l| SelectedLine { kind: l.kind.clone(), old_no: l.old_no, new_no: l.new_no })
+            .collect(),
+    }
+}
+
+/// Ten-line baseline used by several tests below: `a1`..`a10`, one per line.
+fn ten_lines() -> Vec<String> {
+    (1..=10).map(|i| format!("a{i}\n")).collect()
+}
+
+#[test]
+fn stage_lines_stages_only_the_selected_line_pair_leaving_the_other_modification_unstaged() {
+    let repo = TempRepo::init("workdir_stage_lines_partial");
+    let orig = ten_lines();
+    let _c0 = repo.commit("f.txt", &orig.concat(), "c0");
+    let path = repo.path();
+
+    // Two separate one-line modifications, close enough together that
+    // context_lines(3) merges them into a SINGLE hunk — this is what makes
+    // selecting only one of the two pairs a genuine LINE-level (not just
+    // hunk-level) test.
+    let mut modified = orig.clone();
+    modified[1] = "b2\n".to_string(); // line 2
+    modified[3] = "b4\n".to_string(); // line 4
+    std::fs::write(repo.dir.join("f.txt"), modified.concat()).unwrap();
+
+    let diff = workdir_file_diff(path.clone(), "f.txt".into(), false).expect("workdir_file_diff failed");
+    assert_eq!(diff.hunks.len(), 1, "the two nearby edits should merge into one hunk");
+    let sel = select_lines(&diff.hunks[0], |old_no, new_no| old_no == Some(2) || new_no == Some(2));
+    assert_eq!(sel.lines.len(), 2, "expected exactly the '-'/'+' pair for line 2");
+
+    let res = stage_lines(path.clone(), "f.txt".into(), vec![sel]);
+    assert!(res.ok, "stage_lines failed: {}", res.message);
+    assert!(res.backup_ref.is_none(), "stage_lines is index-only, no snapshot");
+
+    let indexed = repo.must(&["show", ":f.txt"]);
+    assert!(indexed.contains("b2"), "index should carry the staged line-2 change:\n{indexed}");
+    assert!(!indexed.contains("b4"), "index must NOT carry line-4's still-unstaged change:\n{indexed}");
+    assert!(indexed.contains("a4"), "line-4's original content should remain in the index:\n{indexed}");
+
+    // Staging never touches the working tree.
+    assert!(repo.read("f.txt").contains("b2"));
+    assert!(repo.read("f.txt").contains("b4"));
+
+    let status = workdir_status(path).unwrap();
+    assert_eq!(status.staged.len(), 1, "line 2's change should be staged");
+    assert_eq!(status.staged[0].path, "f.txt");
+    assert_eq!(status.staged[0].status, "M");
+    assert_eq!(status.unstaged.len(), 1, "line 4's change should still be unstaged");
+    assert_eq!(status.unstaged[0].path, "f.txt");
+}
+
+#[test]
+fn unstage_lines_unstages_only_the_selected_line_pair_leaving_the_other_staged() {
+    let repo = TempRepo::init("workdir_unstage_lines_partial");
+    let orig = ten_lines();
+    let _c0 = repo.commit("f.txt", &orig.concat(), "c0");
+    let path = repo.path();
+
+    let mut modified = orig.clone();
+    modified[1] = "b2\n".to_string();
+    modified[3] = "b4\n".to_string();
+    std::fs::write(repo.dir.join("f.txt"), modified.concat()).unwrap();
+    repo.must(&["add", "-A"]); // both changes fully staged
+
+    let diff = workdir_file_diff(path.clone(), "f.txt".into(), true).expect("workdir_file_diff (staged) failed");
+    assert_eq!(diff.hunks.len(), 1);
+    let sel = select_lines(&diff.hunks[0], |old_no, new_no| old_no == Some(2) || new_no == Some(2));
+
+    let res = unstage_lines(path.clone(), "f.txt".into(), vec![sel]);
+    assert!(res.ok, "unstage_lines failed: {}", res.message);
+    assert!(res.backup_ref.is_none(), "unstage_lines is index-only, no snapshot");
+
+    let indexed = repo.must(&["show", ":f.txt"]);
+    assert!(indexed.contains("a2"), "line 2 should be back to its ORIGINAL content in the index:\n{indexed}");
+    assert!(indexed.contains("b4"), "line 4's change should remain staged:\n{indexed}");
+
+    // Unstaging never touches the working tree.
+    assert!(repo.read("f.txt").contains("b2"));
+    assert!(repo.read("f.txt").contains("b4"));
+
+    let status = workdir_status(path).unwrap();
+    assert_eq!(status.staged.len(), 1, "line 4's change should still be staged");
+    assert_eq!(status.staged[0].path, "f.txt");
+    assert_eq!(status.unstaged.len(), 1, "line 2's change should be unstaged again");
+    assert_eq!(status.unstaged[0].path, "f.txt");
+}
+
+#[test]
+fn discard_lines_discards_only_the_selected_line_pair_and_backs_up_the_whole_file_first() {
+    let repo = TempRepo::init("workdir_discard_lines_partial");
+    let orig = ten_lines();
+    let _c0 = repo.commit("f.txt", &orig.concat(), "c0");
+    let path = repo.path();
+
+    let mut modified = orig.clone();
+    modified[1] = "b2\n".to_string();
+    modified[3] = "b4\n".to_string();
+    std::fs::write(repo.dir.join("f.txt"), modified.concat()).unwrap();
+
+    let diff = workdir_file_diff(path.clone(), "f.txt".into(), false).expect("workdir_file_diff failed");
+    let sel = select_lines(&diff.hunks[0], |old_no, new_no| old_no == Some(2) || new_no == Some(2));
+
+    let res = discard_lines(path.clone(), "f.txt".into(), vec![sel]);
+    assert!(res.ok, "discard_lines failed: {}", res.message);
+
+    let content = repo.read("f.txt");
+    assert!(content.contains("a2"), "line 2 should be discarded back to its original content:\n{content}");
+    assert!(!content.contains("b2"), "line 2's edit must be gone from the working tree:\n{content}");
+    assert!(content.contains("b4"), "line 4's edit should survive (not selected for discard):\n{content}");
+
+    // Index is untouched by a discard.
+    let indexed = repo.must(&["show", ":f.txt"]);
+    assert!(indexed.contains("a2") && indexed.contains("a4"), "index should be untouched: {indexed}");
+
+    let status = workdir_status(path).unwrap();
+    assert!(status.staged.is_empty());
+    assert_eq!(status.unstaged.len(), 1, "line 4's surviving edit should still show as unstaged");
+    assert_eq!(status.unstaged[0].path, "f.txt");
+
+    // A whole-file backup was written first (superset of what was discarded).
+    let backup_rel = res.backup_patch.expect("expected a backup_patch path");
+    let full_path = repo.open().path().join(&backup_rel);
+    let patch_contents = std::fs::read_to_string(&full_path).unwrap();
+    assert!(patch_contents.contains("+b2") && patch_contents.contains("+b4"), "backup must cover BOTH edits, not just the discarded one: {patch_contents}");
+}
+
+#[test]
+fn stage_lines_on_a_brand_new_untracked_file_stages_only_the_selected_added_lines() {
+    let repo = TempRepo::init("workdir_stage_lines_new_file");
+    let _c0 = repo.commit("keep.txt", "0\n", "c0");
+    let path = repo.path();
+
+    std::fs::write(repo.dir.join("new.txt"), "one\ntwo\nthree\nfour\n").unwrap();
+
+    let diff = workdir_file_diff(path.clone(), "new.txt".into(), false).expect("workdir_file_diff failed");
+    assert_eq!(diff.status, "A");
+    assert_eq!(diff.hunks.len(), 1);
+    let sel = select_lines(&diff.hunks[0], |_old_no, new_no| matches!(new_no, Some(1) | Some(2)));
+    assert_eq!(sel.lines.len(), 2);
+
+    let res = stage_lines(path.clone(), "new.txt".into(), vec![sel]);
+    assert!(res.ok, "stage_lines on a new file failed: {}", res.message);
+
+    let indexed = repo.must(&["show", ":new.txt"]);
+    assert_eq!(indexed, "one\ntwo", "index should hold only the two selected added lines");
+
+    // The working tree copy is untouched — all four lines still present.
+    assert_eq!(repo.read("new.txt"), "one\ntwo\nthree\nfour\n");
+
+    let status = workdir_status(path).unwrap();
+    assert_eq!(status.staged.len(), 1);
+    assert_eq!(status.staged[0].path, "new.txt");
+    assert_eq!(status.staged[0].status, "A", "the file is new to HEAD, so it's still an ADD even though only partially staged");
+    assert_eq!(status.unstaged.len(), 1, "the two un-staged trailing lines should show as a pending modification");
+    assert_eq!(status.unstaged[0].path, "new.txt");
+    assert_eq!(status.unstaged[0].status, "M", "no longer '?': the file is now known to the index");
+}
+
+#[test]
+fn stage_lines_on_a_brand_new_untracked_file_with_every_line_selected_stages_the_whole_file_as_added() {
+    let repo = TempRepo::init("workdir_stage_lines_new_file_full");
+    let _c0 = repo.commit("keep.txt", "0\n", "c0");
+    let path = repo.path();
+
+    std::fs::write(repo.dir.join("new.txt"), "one\ntwo\n").unwrap();
+
+    let diff = workdir_file_diff(path.clone(), "new.txt".into(), false).expect("workdir_file_diff failed");
+    let sel = select_lines(&diff.hunks[0], |_old_no, _new_no| true); // every added line
+
+    let res = stage_lines(path.clone(), "new.txt".into(), vec![sel]);
+    assert!(res.ok, "stage_lines (full new file) failed: {}", res.message);
+
+    let indexed = repo.must(&["show", ":new.txt"]);
+    assert_eq!(indexed, "one\ntwo");
+
+    let status = workdir_status(path).unwrap();
+    assert_eq!(status.staged.len(), 1);
+    assert_eq!(status.staged[0].path, "new.txt");
+    assert_eq!(status.staged[0].status, "A");
+    assert!(status.unstaged.is_empty(), "nothing left unstaged once every added line is staged");
+}
+
+#[test]
+fn stage_lines_on_a_fully_deleted_tracked_file_can_partially_restage_as_a_modification() {
+    let repo = TempRepo::init("workdir_stage_lines_partial_delete");
+    let orig = ten_lines();
+    let _c0 = repo.commit("d.txt", &orig.concat(), "c0");
+    let path = repo.path();
+
+    std::fs::remove_file(repo.dir.join("d.txt")).unwrap();
+    let diff = workdir_file_diff(path.clone(), "d.txt".into(), false).expect("workdir_file_diff failed");
+    assert_eq!(diff.status, "D");
+    assert_eq!(diff.hunks.len(), 1);
+
+    // Select only the first TWO removed lines — a partial delete.
+    let sel = select_lines(&diff.hunks[0], |old_no, _new_no| matches!(old_no, Some(1) | Some(2)));
+    assert_eq!(sel.lines.len(), 2);
+
+    let res = stage_lines(path.clone(), "d.txt".into(), vec![sel]);
+    assert!(res.ok, "stage_lines (partial delete) failed: {}", res.message);
+
+    let indexed = repo.must(&["show", ":d.txt"]);
+    assert_eq!(indexed, orig[2..].concat().trim_end(), "index should keep lines 3..10, only 1-2 removed");
+
+    let status = workdir_status(path).unwrap();
+    assert_eq!(status.staged.len(), 1);
+    assert_eq!(status.staged[0].path, "d.txt");
+    assert_eq!(status.staged[0].status, "M", "a PARTIAL delete leaves the file present -> modification, not D");
+    assert_eq!(status.unstaged.len(), 1, "the working tree still has no file at all, vs the now-shorter index");
+    assert_eq!(status.unstaged[0].path, "d.txt");
+    assert_eq!(status.unstaged[0].status, "D");
+}
+
+#[test]
+fn stage_lines_refuses_the_whole_request_when_a_hunk_header_no_longer_matches() {
+    let repo = TempRepo::init("workdir_stage_lines_stale");
+    let orig = ten_lines();
+    let _c0 = repo.commit("f.txt", &orig.concat(), "c0");
+    let path = repo.path();
+    let mut modified = orig.clone();
+    modified[1] = "b2\n".to_string();
+    std::fs::write(repo.dir.join("f.txt"), modified.concat()).unwrap();
+
+    let stale = HunkSelection {
+        header: "@@ -999,1 +999,1 @@".to_string(), // does not match the real (current) hunk header
+        lines: vec![SelectedLine { kind: "+".to_string(), old_no: None, new_no: Some(2) }],
+    };
+    let res = stage_lines(path.clone(), "f.txt".into(), vec![stale]);
+    assert!(!res.ok, "a stale/mismatched hunk header must be refused, not silently reinterpreted");
+    assert!(
+        res.message.contains("changed since you last looked"),
+        "expected the staleness message, got: {}",
+        res.message
+    );
+
+    // Nothing should have been staged.
+    let status = workdir_status(path).unwrap();
+    assert!(status.staged.is_empty(), "a refused request must not partially apply");
+}
+
+#[test]
+fn stage_lines_refuses_on_a_binary_file() {
+    let repo = TempRepo::init("workdir_stage_lines_binary");
+    std::fs::write(repo.dir.join("bin.dat"), [0u8, 1, 2, 3, 0, 4]).unwrap();
+    repo.must(&["add", "-A"]);
+    repo.must(&["commit", "-q", "--no-verify", "-m", "c0"]);
+    let path = repo.path();
+    std::fs::write(repo.dir.join("bin.dat"), [0u8, 9, 9, 9, 0, 4, 5]).unwrap();
+
+    // `workdir_file_diff` returns no hunks at all for a binary file, so a
+    // caller has nothing real to build a `HunkSelection` from — any non-empty
+    // one targeting the file's path must still be refused with the binary
+    // message (this check must run before header validation, since there is
+    // no valid header to check against).
+    let diff = workdir_file_diff(path.clone(), "bin.dat".into(), false).expect("workdir_file_diff failed");
+    assert!(diff.binary);
+    assert!(diff.hunks.is_empty());
+
+    let bogus = HunkSelection {
+        header: "@@ -1,1 +1,1 @@".to_string(),
+        lines: vec![SelectedLine { kind: "+".to_string(), old_no: None, new_no: Some(1) }],
+    };
+    let res = stage_lines(path.clone(), "bin.dat".into(), vec![bogus]);
+    assert!(!res.ok, "line-level staging on a binary file must be refused");
+    assert!(res.message.contains("binary file"), "expected a binary-file message, got: {}", res.message);
+}
+
+#[test]
+fn stage_lines_preserves_a_final_line_with_no_trailing_newline() {
+    let repo = TempRepo::init("workdir_stage_lines_no_eof_newline");
+    std::fs::write(repo.dir.join("f.txt"), "a1\na2\na3").unwrap(); // no trailing newline
+    repo.must(&["add", "-A"]);
+    repo.must(&["commit", "-q", "--no-verify", "-m", "c0"]);
+    let path = repo.path();
+
+    std::fs::write(repo.dir.join("f.txt"), "a1\na2\na3-changed").unwrap(); // still no trailing newline
+
+    let diff = workdir_file_diff(path.clone(), "f.txt".into(), false).expect("workdir_file_diff failed");
+    assert_eq!(diff.hunks.len(), 1);
+    let sel = select_lines(&diff.hunks[0], |_old_no, _new_no| true); // the whole (only) hunk
+
+    let res = stage_lines(path.clone(), "f.txt".into(), vec![sel]);
+    assert!(res.ok, "stage_lines failed on a no-trailing-newline file: {}", res.message);
+
+    let indexed = repo.must(&["show", ":f.txt"]);
+    assert_eq!(indexed, "a1\na2\na3-changed", "content (and lack of trailing newline) must round-trip exactly");
+}
+
+/// Regression test: a PARTIAL selection touching a no-trailing-newline hunk
+/// used to be genuinely dangerous, not just rejected — EMPIRICALLY VERIFIED
+/// by hand against a real `git apply` outside this test suite: keeping the
+/// demoted line's own marker produces a patch git accepts but silently
+/// concatenates two lines with no separator ("a3" + "a3-changed" ->
+/// "a3a3-changed", no error at all); dropping the marker instead produces a
+/// patch git cleanly refuses. Neither is safe for a partial selection, so
+/// `build_sub_patch` now refuses the whole request up front instead — this
+/// test is what actually caught that corruption during review and must keep
+/// failing loudly if the guard is ever removed.
+#[test]
+fn stage_lines_refuses_a_partial_selection_of_a_final_no_trailing_newline_line() {
+    let repo = TempRepo::init("workdir_stage_lines_no_eof_newline_partial");
+    std::fs::write(repo.dir.join("f.txt"), "a1\na2\na3").unwrap(); // no trailing newline
+    repo.must(&["add", "-A"]);
+    repo.must(&["commit", "-q", "--no-verify", "-m", "c0"]);
+    let path = repo.path();
+
+    std::fs::write(repo.dir.join("f.txt"), "a1\na2\na3-changed").unwrap(); // still no trailing newline
+
+    let diff = workdir_file_diff(path.clone(), "f.txt".into(), false).expect("workdir_file_diff failed");
+    assert_eq!(diff.hunks.len(), 1);
+    // Only the "+" half of the modified last line — NOT the whole hunk.
+    let sel = select_lines(&diff.hunks[0], |_old_no, new_no| new_no == Some(3));
+    assert_eq!(sel.lines.len(), 1, "expected exactly the '+' line for the new final line");
+
+    let res = stage_lines(path.clone(), "f.txt".into(), vec![sel]);
+    assert!(!res.ok, "a partial selection touching a no-trailing-newline boundary must be refused, not silently applied");
+    assert!(
+        res.message.contains("newline"),
+        "refusal message should explain why (mentions newline): {}",
+        res.message
+    );
+
+    // Nothing was touched — no corruption, no partial stage.
+    assert_eq!(repo.read("f.txt"), "a1\na2\na3-changed");
+    let status = workdir_status(path).unwrap();
+    assert!(status.staged.is_empty(), "refused request must not have staged anything");
+}
+
+/// Regression test for the `covers_full_add` fix: `unstage_lines` on a
+/// brand-new file that was staged IN FULL (so it's `Delta::Added` against
+/// HEAD, not `Delta::Untracked`), unstaging only SOME of its lines.
+/// EMPIRICALLY VERIFIED this used to fail with git's own "depends on old
+/// contents" error before `covers_full_add` existed, because the header
+/// unconditionally claimed the whole file was being un-added even though
+/// only part of it was.
+#[test]
+fn unstage_lines_can_partially_unstage_a_fully_staged_new_file() {
+    let repo = TempRepo::init("workdir_unstage_lines_added_partial");
+    let _c0 = repo.commit("keep.txt", "0\n", "c0");
+    let path = repo.path();
+
+    // A brand-new file, staged in full — Delta::Added vs HEAD, not Untracked.
+    std::fs::write(repo.dir.join("new.txt"), "n1\nn2\nn3\nn4\n").unwrap();
+    repo.must(&["add", "--", "new.txt"]);
+
+    let diff = workdir_file_diff(path.clone(), "new.txt".into(), true).expect("workdir_file_diff failed (staged side)");
+    assert_eq!(diff.hunks.len(), 1);
+    // Unstage only n2/n4, leaving n1/n3 staged.
+    let sel = select_lines(&diff.hunks[0], |_old_no, new_no| new_no == Some(2) || new_no == Some(4));
+    assert_eq!(sel.lines.len(), 2);
+
+    let res = unstage_lines(path.clone(), "new.txt".into(), vec![sel]);
+    assert!(res.ok, "unstage_lines failed on a partial selection of a fully-staged new file: {}", res.message);
+    assert!(res.backup_ref.is_none(), "unstage_lines is index-only, no snapshot");
+
+    let indexed = repo.must(&["show", ":new.txt"]);
+    assert_eq!(indexed, "n1\nn3", "index should keep only the still-staged lines"); // repo.must() trims trailing whitespace
+
+    // The working tree is untouched by unstage — all four lines remain.
+    assert_eq!(repo.read("new.txt"), "n1\nn2\nn3\nn4\n");
+
+    let status = workdir_status(path).unwrap();
+    assert_eq!(status.staged.len(), 1, "n1/n3 should still be staged as (a smaller) new file");
+    assert_eq!(status.staged[0].path, "new.txt");
+    assert_eq!(status.unstaged.len(), 1, "n2/n4 should now show as unstaged additions");
+    assert_eq!(status.unstaged[0].path, "new.txt");
+}
+
+/// Regression test for the `covers_full_rename` fix: `unstage_lines` on a
+/// renamed-AND-modified file that's staged in full, unstaging only SOME of
+/// its content lines. EMPIRICALLY VERIFIED this used to silently revert the
+/// WHOLE rename in the index (git ls-files showing old.txt again, not just
+/// new.txt with fewer staged edits) even though only two content lines were
+/// requested — the rename header must be dropped for a partial selection,
+/// exactly like the `covers_full_add`/`covers_full_delete` fixes one level up.
+#[test]
+fn unstage_lines_on_a_renamed_and_modified_file_preserves_the_rename() {
+    let repo = TempRepo::init("workdir_unstage_lines_rename_partial");
+    let orig = ten_lines();
+    let _c0 = repo.commit("old.txt", &orig.concat(), "c0");
+    let path = repo.path();
+
+    repo.must(&["mv", "old.txt", "new.txt"]);
+    let mut modified = orig.clone();
+    modified[1] = "b2\n".to_string(); // line 2
+    modified[3] = "b4\n".to_string(); // line 4
+    std::fs::write(repo.dir.join("new.txt"), modified.concat()).unwrap();
+    repo.must(&["add", "-A"]);
+
+    // Confirm the setup is really a detected rename before testing anything.
+    let pre_status = workdir_status(path.clone()).unwrap();
+    assert_eq!(pre_status.staged.len(), 1);
+    assert_eq!(pre_status.staged[0].path, "new.txt");
+    assert_eq!(pre_status.staged[0].status, "R");
+    assert_eq!(pre_status.staged[0].old_path.as_deref(), Some("old.txt"));
+
+    let diff = workdir_file_diff(path.clone(), "new.txt".into(), true).expect("workdir_file_diff failed (staged side)");
+    assert_eq!(diff.hunks.len(), 1, "the two nearby edits should merge into one hunk");
+    // Unstage only line 2's pair, leaving line 4's edit staged.
+    let sel = select_lines(&diff.hunks[0], |old_no, new_no| old_no == Some(2) || new_no == Some(2));
+    assert_eq!(sel.lines.len(), 2);
+
+    let res = unstage_lines(path.clone(), "new.txt".into(), vec![sel]);
+    assert!(res.ok, "unstage_lines failed on a partial selection of a renamed+modified file: {}", res.message);
+
+    // The rename must survive — this is the actual regression check.
+    let tracked_paths = repo.must(&["ls-files"]);
+    assert!(tracked_paths.contains("new.txt"), "the file must still be at its renamed path:\n{tracked_paths}");
+    assert!(!tracked_paths.contains("old.txt"), "the rename must not have been silently reverted:\n{tracked_paths}");
+
+    let indexed = repo.must(&["show", ":new.txt"]);
+    assert!(indexed.contains("a2"), "line 2's edit should now be unstaged (back to a2 in the index):\n{indexed}");
+    assert!(indexed.contains("b4"), "line 4's edit should remain staged:\n{indexed}");
+
+    let status = workdir_status(path).unwrap();
+    assert_eq!(status.staged.len(), 1, "the (still-renamed) file should still show one staged entry");
+    assert_eq!(status.staged[0].path, "new.txt");
+    assert_eq!(status.staged[0].status, "R", "git's own similarity detection should still call this a rename");
+    assert_eq!(status.staged[0].old_path.as_deref(), Some("old.txt"));
+    assert_eq!(status.unstaged.len(), 1, "line 2's now-unstaged edit should show up separately");
+    assert_eq!(status.unstaged[0].path, "new.txt");
 }

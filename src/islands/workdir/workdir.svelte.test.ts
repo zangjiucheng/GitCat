@@ -28,6 +28,9 @@ vi.mock("../../ipc/bindings", () => ({
     unstageFile: vi.fn(),
     stageAll: vi.fn(),
     discardFile: vi.fn(),
+    stageLines: vi.fn(),
+    unstageLines: vi.fn(),
+    discardLines: vi.fn(),
     commit: vi.fn(),
     stashList: vi.fn(),
     stashSave: vi.fn(),
@@ -49,7 +52,7 @@ import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { workdirCtrl } from "./workdir.svelte.ts";
-import type { FileChange, StashEntry, WorkdirResult, WorkdirStatus } from "../../ipc/bindings";
+import type { FileChange, HunkSelection, StashEntry, WorkdirResult, WorkdirStatus } from "../../ipc/bindings";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
@@ -85,8 +88,11 @@ function resetCtrl() {
   workdirCtrl.selectedDiffFile = null;
   workdirCtrl.selectedDiffStaged = false;
   workdirCtrl.diffHeader = "";
-  workdirCtrl.diffRows = [];
+  workdirCtrl.diffFile = null;
+  workdirCtrl.diffHunks = [];
+  workdirCtrl.diffError = null;
   workdirCtrl.diffLoading = false;
+  workdirCtrl.selectedLines = [];
   workdirCtrl.stashes = [];
   workdirCtrl.stashOpen = false;
   workdirCtrl.stashMessage = "";
@@ -189,16 +195,37 @@ describe("refreshStatus", () => {
     mockInTauri = true;
     workdirCtrl.selectedDiffFile = "gone.ts";
     workdirCtrl.selectedDiffStaged = false;
-    workdirCtrl.diffRows = [{ kind: "note", text: "x" }];
+    workdirCtrl.diffHunks = [{ header: "@@ -1,1 +1,1 @@", lines: [] }];
     vi.mocked(commands.workdirStatus).mockResolvedValueOnce(ok(STATUS_DIRTY)); // "gone.ts" isn't in unstaged
     await workdirCtrl.refreshStatus("/repo");
     expect(workdirCtrl.selectedDiffFile).toBeNull();
-    expect(workdirCtrl.diffRows).toEqual([]);
+    expect(workdirCtrl.diffHunks).toEqual([]);
   });
 });
 
+const FC_MULTI_LINE: FileChange = {
+  path: "b.ts",
+  oldPath: null,
+  status: "M",
+  additions: 1,
+  deletions: 1,
+  binary: false,
+  truncated: false,
+  lang: "ts",
+  hunks: [
+    {
+      header: "@@ -1,3 +1,3 @@",
+      lines: [
+        { kind: " ", oldNo: 1, newNo: 1, text: "keep" },
+        { kind: "-", oldNo: 2, newNo: null, text: "old line" },
+        { kind: "+", oldNo: null, newNo: 2, text: "new line" },
+      ],
+    },
+  ],
+};
+
 describe("selectDiffFile", () => {
-  it("real mode: fetches the diff via workdir_file_diff and converts it to DiffRows", async () => {
+  it("real mode: fetches the diff via workdir_file_diff and keeps real oldNo/newNo per line (not a recomputed counter)", async () => {
     mockInTauri = true;
     vi.mocked(commands.workdirStatus).mockResolvedValue(ok(STATUS_CLEAN));
     vi.mocked(commands.stashList).mockResolvedValue(ok([]));
@@ -217,17 +244,106 @@ describe("selectDiffFile", () => {
     vi.mocked(commands.workdirFileDiff).mockResolvedValueOnce(ok(fc));
     await workdirCtrl.selectDiffFile("b.ts", false);
     expect(commands.workdirFileDiff).toHaveBeenCalledWith("/repo", "b.ts", false);
-    expect(workdirCtrl.diffRows.some((r) => r.kind === "hunk")).toBe(true);
+    expect(workdirCtrl.diffFile).toEqual(fc);
+    expect(workdirCtrl.diffHunks).toEqual([{ header: "@@ -1,1 +1,2 @@", lines: [{ kind: "+", oldNo: null, newNo: 1, text: "x", html: "x" }] }]);
   });
 
-  it("surfaces a read error as a note row instead of throwing", async () => {
+  it("surfaces a read error via diffError instead of throwing", async () => {
     mockInTauri = true;
     vi.mocked(commands.workdirStatus).mockResolvedValue(ok(STATUS_CLEAN));
     vi.mocked(commands.stashList).mockResolvedValue(ok([]));
     workdirCtrl.select("/repo");
     vi.mocked(commands.workdirFileDiff).mockResolvedValueOnce(err("no such file"));
     await workdirCtrl.selectDiffFile("b.ts", false);
-    expect(workdirCtrl.diffRows).toEqual([{ kind: "note", text: "diff unavailable — no such file" }]);
+    expect(workdirCtrl.diffError).toBe("diff unavailable — no such file");
+    expect(workdirCtrl.diffHunks).toEqual([]);
+  });
+
+  it("clears any prior line selection when a new diff is selected", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.workdirStatus).mockResolvedValue(ok(STATUS_CLEAN));
+    vi.mocked(commands.stashList).mockResolvedValue(ok([]));
+    workdirCtrl.select("/repo");
+    vi.mocked(commands.workdirFileDiff).mockResolvedValue(ok(FC_MULTI_LINE));
+    await workdirCtrl.selectDiffFile("b.ts", false);
+    workdirCtrl.toggleLine("@@ -1,3 +1,3 @@", FC_MULTI_LINE.hunks[0].lines, 1, false);
+    expect(workdirCtrl.selectedLinesCount).toBe(1);
+
+    await workdirCtrl.selectDiffFile("b.ts", false);
+    expect(workdirCtrl.selectedLinesCount).toBe(0);
+  });
+});
+
+describe("hunk/line selection", () => {
+  beforeEach(async () => {
+    mockInTauri = true;
+    vi.mocked(commands.workdirStatus).mockResolvedValue(ok(STATUS_CLEAN));
+    vi.mocked(commands.stashList).mockResolvedValue(ok([]));
+    workdirCtrl.select("/repo");
+    vi.mocked(commands.workdirFileDiff).mockResolvedValue(ok(FC_MULTI_LINE));
+    await workdirCtrl.selectDiffFile("b.ts", false);
+  });
+
+  it("isLineSelected is false for every row until toggled", () => {
+    const [ctx, del, add] = FC_MULTI_LINE.hunks[0].lines;
+    expect(workdirCtrl.isLineSelected("@@ -1,3 +1,3 @@", ctx)).toBe(false);
+    expect(workdirCtrl.isLineSelected("@@ -1,3 +1,3 @@", del)).toBe(false);
+    expect(workdirCtrl.isLineSelected("@@ -1,3 +1,3 @@", add)).toBe(false);
+  });
+
+  it("toggleLine never selects a context (' ') row", () => {
+    const lines = FC_MULTI_LINE.hunks[0].lines;
+    workdirCtrl.toggleLine("@@ -1,3 +1,3 @@", lines, 0, false); // the context row, idx 0
+    expect(workdirCtrl.selectedLinesCount).toBe(0);
+  });
+
+  it("toggleLine checks then unchecks a single '-' or '+' row", () => {
+    const lines = FC_MULTI_LINE.hunks[0].lines;
+    workdirCtrl.toggleLine("@@ -1,3 +1,3 @@", lines, 1, false); // the '-' row
+    expect(workdirCtrl.isLineSelected("@@ -1,3 +1,3 @@", lines[1])).toBe(true);
+    expect(workdirCtrl.selectedLinesCount).toBe(1);
+    workdirCtrl.toggleLine("@@ -1,3 +1,3 @@", lines, 1, false); // click again -> unchecks
+    expect(workdirCtrl.isLineSelected("@@ -1,3 +1,3 @@", lines[1])).toBe(false);
+    expect(workdirCtrl.selectedLinesCount).toBe(0);
+  });
+
+  it("shift-click extends a contiguous range within the same hunk, skipping context rows", () => {
+    const lines = FC_MULTI_LINE.hunks[0].lines;
+    workdirCtrl.toggleLine("@@ -1,3 +1,3 @@", lines, 1, false); // '-' row
+    workdirCtrl.toggleLine("@@ -1,3 +1,3 @@", lines, 2, true); // shift-click '+' row -> range [1,2]
+    expect(workdirCtrl.selectedLinesCount).toBe(2);
+    expect(workdirCtrl.isLineSelected("@@ -1,3 +1,3 @@", lines[1])).toBe(true);
+    expect(workdirCtrl.isLineSelected("@@ -1,3 +1,3 @@", lines[2])).toBe(true);
+  });
+
+  it("a shift-click against a different hunk starts an independent range instead of spanning hunks", () => {
+    const lines = FC_MULTI_LINE.hunks[0].lines;
+    workdirCtrl.toggleLine("@@ -1,3 +1,3 @@", lines, 1, false);
+    workdirCtrl.toggleLine("@@ some-other-hunk@@", lines, 2, true); // different header -> not a range extension
+    // Only the single explicit toggle for the "other hunk" line landed (as a plain toggle, not a range).
+    expect(workdirCtrl.selectedLinesCount).toBe(2);
+    expect(workdirCtrl.isLineSelected("@@ some-other-hunk@@", lines[2])).toBe(true);
+  });
+
+  it("hunkSelectionFor collects every +/- line of a hunk regardless of checked state", () => {
+    const hunk = workdirCtrl.diffHunks[0];
+    const sel = workdirCtrl.hunkSelectionFor(hunk);
+    expect(sel.header).toBe("@@ -1,3 +1,3 @@");
+    expect(sel.lines).toEqual([
+      { kind: "-", oldNo: 2, newNo: null },
+      { kind: "+", oldNo: null, newNo: 2 },
+    ]);
+  });
+
+  it("buildSelectedHunks groups only the checked lines, one HunkSelection per hunk with >=1 checked line", () => {
+    const lines = FC_MULTI_LINE.hunks[0].lines;
+    workdirCtrl.toggleLine("@@ -1,3 +1,3 @@", lines, 1, false); // just the '-' row
+    const hunks = workdirCtrl.buildSelectedHunks();
+    expect(hunks).toEqual([{ header: "@@ -1,3 +1,3 @@", lines: [{ kind: "-", oldNo: 2, newNo: null }] }]);
+  });
+
+  it("buildSelectedHunks is empty when nothing is checked", () => {
+    expect(workdirCtrl.buildSelectedHunks()).toEqual([]);
   });
 });
 
@@ -330,6 +446,161 @@ describe("discard", () => {
   it("a cancelled dialog never calls discardFile", () => {
     workdirCtrl.confirmDiscard("b.ts", true);
     expect(commands.discardFile).not.toHaveBeenCalled();
+  });
+});
+
+const HUNKS_ONE: HunkSelection[] = [{ header: "@@ -1,3 +1,3 @@", lines: [{ kind: "-", oldNo: 2, newNo: null }] }];
+
+describe("stageLines / unstageLines / discardLines", () => {
+  it("stageLines: calls stage_lines, cheers, clears the selection, and re-fetches status + the open diff", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.workdirStatus).mockResolvedValue(ok(STATUS_CLEAN));
+    vi.mocked(commands.stashList).mockResolvedValue(ok([]));
+    workdirCtrl.select("/repo");
+    vi.mocked(commands.workdirFileDiff).mockResolvedValue(ok(FC_MULTI_LINE));
+    await workdirCtrl.selectDiffFile("b.ts", false);
+    workdirCtrl.toggleLine("@@ -1,3 +1,3 @@", FC_MULTI_LINE.hunks[0].lines, 1, false);
+    expect(workdirCtrl.selectedLinesCount).toBe(1);
+
+    vi.mocked(commands.stageLines).mockResolvedValueOnce(wres({ ok: true, message: "Staged selected lines." }));
+    await workdirCtrl.stageLines("/repo", "b.ts", HUNKS_ONE);
+
+    expect(commands.stageLines).toHaveBeenCalledWith("/repo", "b.ts", HUNKS_ONE);
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
+    expect(workdirCtrl.selectedLinesCount).toBe(0); // cleared on success
+    expect(commands.workdirStatus).toHaveBeenCalledWith("/repo");
+    expect(commands.workdirFileDiff).toHaveBeenCalledWith("/repo", "b.ts", false); // re-derives the still-open diff
+    expect(workdirCtrl.busy).toBe(false);
+  });
+
+  it("stageLines: does nothing with an empty hunk list", async () => {
+    mockInTauri = true;
+    await workdirCtrl.stageLines("/repo", "b.ts", []);
+    expect(commands.stageLines).not.toHaveBeenCalled();
+  });
+
+  it("stageLines: sets busy/busyTarget to the file for the duration of the call", async () => {
+    mockInTauri = true;
+    let resolveStage: (v: WorkdirResult) => void = () => {};
+    vi.mocked(commands.stageLines).mockImplementationOnce(() => new Promise((res) => (resolveStage = res)));
+    const p = workdirCtrl.stageLines("/repo", "b.ts", HUNKS_ONE);
+    expect(workdirCtrl.busy).toBe(true);
+    expect(workdirCtrl.busyTarget).toBe("b.ts");
+    resolveStage(wres({ ok: true }));
+    await p;
+    expect(workdirCtrl.busy).toBe(false);
+  });
+
+  it("stageLines: warns via Tama and does not re-fetch status on a stale-selection refusal", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.stageLines).mockResolvedValueOnce(wres({ ok: false, message: "This file's diff has changed since you last looked — refresh and try again." }));
+    await workdirCtrl.stageLines("/repo", "b.ts", HUNKS_ONE);
+    expect(bridge.tama.warn).toHaveBeenCalledWith("This file's diff has changed since you last looked — refresh and try again.");
+    expect(commands.workdirStatus).not.toHaveBeenCalled();
+  });
+
+  it("stageLines: re-entrancy locked while busy", async () => {
+    mockInTauri = true;
+    workdirCtrl.busy = true;
+    await workdirCtrl.stageLines("/repo", "b.ts", HUNKS_ONE);
+    expect(commands.stageLines).not.toHaveBeenCalled();
+  });
+
+  it("unstageLines: calls unstage_lines and re-fetches status + the open (staged) diff on success", async () => {
+    mockInTauri = true;
+    // "a.ts" still has SOME staged lines left after the partial unstage, so it
+    // stays in the staged list and `dropStaleSelectedDiff` does not clear it.
+    const STATUS_STILL_STAGED: WorkdirStatus = { ...STATUS_CLEAN, staged: [{ path: "a.ts", oldPath: null, status: "M" }] };
+    vi.mocked(commands.workdirStatus).mockResolvedValue(ok(STATUS_STILL_STAGED));
+    vi.mocked(commands.stashList).mockResolvedValue(ok([]));
+    workdirCtrl.select("/repo");
+    vi.mocked(commands.workdirFileDiff).mockResolvedValue(ok(FC_MULTI_LINE));
+    await workdirCtrl.selectDiffFile("a.ts", true); // staged side
+
+    vi.mocked(commands.unstageLines).mockResolvedValueOnce(wres({ ok: true, message: "Unstaged selected lines." }));
+    await workdirCtrl.unstageLines("/repo", "a.ts", HUNKS_ONE);
+
+    expect(commands.unstageLines).toHaveBeenCalledWith("/repo", "a.ts", HUNKS_ONE);
+    expect(commands.workdirFileDiff).toHaveBeenCalledWith("/repo", "a.ts", true); // still the STAGED side
+    expect(commands.workdirFileDiff).toHaveBeenCalledTimes(2); // once on select, once re-derived post-mutation
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
+  });
+
+  it("unstageLines: does not re-open the diff if the file dropped off this side after refreshStatus", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.stashList).mockResolvedValue(ok([]));
+    vi.mocked(commands.workdirStatus).mockResolvedValueOnce(ok(STATUS_CLEAN)); // populates status for select()
+    workdirCtrl.select("/repo");
+    await Promise.resolve();
+    vi.mocked(commands.workdirFileDiff).mockResolvedValue(ok(FC_MULTI_LINE));
+    await workdirCtrl.selectDiffFile("a.ts", true);
+
+    vi.mocked(commands.unstageLines).mockResolvedValueOnce(wres({ ok: true }));
+    // After this unstage, "a.ts" no longer appears in the staged list -> dropStaleSelectedDiff clears selectedDiffFile.
+    vi.mocked(commands.workdirStatus).mockResolvedValueOnce(ok(STATUS_CLEAN));
+    await workdirCtrl.unstageLines("/repo", "a.ts", HUNKS_ONE);
+
+    expect(workdirCtrl.selectedDiffFile).toBeNull();
+    // Only the ONE fetch from selectDiffFile() above happened — none after the mutation.
+    expect(commands.workdirFileDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirmDiscardLines arms the shared danger scrim naming the file and line count, and does NOT call discard_lines directly", () => {
+    workdirCtrl.confirmDiscardLines("b.ts", HUNKS_ONE);
+    expect(bridge.armDanger).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "b.ts", title: expect.stringContaining("b.ts"), onConfirm: expect.any(Function) }),
+    );
+    expect(commands.discardLines).not.toHaveBeenCalled();
+  });
+
+  it("confirmDiscardLines does nothing with an empty hunk list (never arms the scrim)", () => {
+    workdirCtrl.confirmDiscardLines("b.ts", []);
+    expect(bridge.armDanger).not.toHaveBeenCalled();
+  });
+
+  it("only the dialog's onConfirm invokes discard_lines, and re-fetches status + diff after", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.workdirStatus).mockResolvedValue(ok(STATUS_CLEAN));
+    vi.mocked(commands.stashList).mockResolvedValue(ok([]));
+    workdirCtrl.select("/repo");
+    vi.mocked(commands.workdirFileDiff).mockResolvedValue(ok(FC_MULTI_LINE));
+    await workdirCtrl.selectDiffFile("b.ts", false);
+    vi.mocked(commands.discardLines).mockResolvedValueOnce(wres({ ok: true, message: "Discarded selected lines.", backupPatch: "diff --git a/b.ts b/b.ts\n..." }));
+
+    workdirCtrl.confirmDiscardLines("b.ts", HUNKS_ONE);
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+
+    expect(commands.discardLines).toHaveBeenCalledWith("/repo", "b.ts", HUNKS_ONE);
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
+    expect(commands.workdirStatus).toHaveBeenCalledWith("/repo");
+  });
+
+  it("discardLines failure warns via Tama and does not re-fetch status", async () => {
+    mockInTauri = true;
+    workdirCtrl.select("/repo");
+    vi.mocked(commands.discardLines).mockResolvedValueOnce(wres({ ok: false, message: "b.ts is a binary file — line-level staging isn't supported." }));
+    vi.mocked(commands.workdirStatus).mockClear();
+
+    workdirCtrl.confirmDiscardLines("b.ts", HUNKS_ONE);
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+
+    expect(bridge.tama.warn).toHaveBeenCalledWith("b.ts is a binary file — line-level staging isn't supported.");
+  });
+
+  it("design mode: stageLines/unstageLines/discardLines are cosmetic no-ops with a toast", async () => {
+    mockInTauri = false;
+    await workdirCtrl.stageLines("", "b.ts", HUNKS_ONE);
+    await workdirCtrl.unstageLines("", "a.ts", HUNKS_ONE);
+    workdirCtrl.confirmDiscardLines("b.ts", HUNKS_ONE);
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+
+    expect(commands.stageLines).not.toHaveBeenCalled();
+    expect(commands.unstageLines).not.toHaveBeenCalled();
+    expect(commands.discardLines).not.toHaveBeenCalled();
+    expect(bridge.tama.say).toHaveBeenCalled();
   });
 });
 
@@ -728,5 +999,39 @@ describe("demo mode", () => {
 
     expect(bindingsDemo.commands.discardFile).not.toHaveBeenCalled();
     expect(bridgeDemo.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+  });
+
+  it("selectDiffFile seeds real per-hunk demo FileChange data (not a synthetic DiffRow[]) with zero IPC calls", async () => {
+    vi.resetModules();
+    vi.doMock("../../ipc/env", () => ({ IN_TAURI: false }));
+    const bindingsDemo = await import("../../ipc/bindings");
+    const { workdirCtrl: demoCtrl } = await import("./workdir.svelte.ts");
+
+    await demoCtrl.selectDiffFile("src/auth/session.ts", false);
+
+    expect(demoCtrl.diffFile?.path).toBe("src/auth/session.ts");
+    expect(demoCtrl.diffHunks.length).toBeGreaterThan(0);
+    expect(demoCtrl.diffHunks[0].lines.some((l) => l.kind === "-" && l.oldNo === 19)).toBe(true);
+    expect(bindingsDemo.commands.workdirFileDiff).not.toHaveBeenCalled();
+  });
+
+  it("hunk/line staging methods are cosmetic no-ops with a toast in demo mode", async () => {
+    vi.resetModules();
+    vi.doMock("../../ipc/env", () => ({ IN_TAURI: false }));
+    const bridgeDemo = await import("../../legacy/bridge");
+    const bindingsDemo = await import("../../ipc/bindings");
+    const { workdirCtrl: demoCtrl } = await import("./workdir.svelte.ts");
+
+    const hunks = [{ header: "@@ -1,1 +1,1 @@", lines: [{ kind: "-" as const, oldNo: 1, newNo: null }] }];
+    await demoCtrl.stageLines("", "b.ts", hunks);
+    await demoCtrl.unstageLines("", "a.ts", hunks);
+    demoCtrl.confirmDiscardLines("b.ts", hunks);
+    const ctx = vi.mocked(bridgeDemo.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+
+    expect(bindingsDemo.commands.stageLines).not.toHaveBeenCalled();
+    expect(bindingsDemo.commands.unstageLines).not.toHaveBeenCalled();
+    expect(bindingsDemo.commands.discardLines).not.toHaveBeenCalled();
+    expect(bridgeDemo.tama.say).toHaveBeenCalled();
   });
 });

@@ -62,12 +62,19 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
-import type { DiffRow } from "../detail/detail.svelte.ts";
-import type { FileChange, StashEntry, WorkdirStatus } from "../../ipc/bindings";
+import type { DiffLineRow, FileChange, HunkSelection, SelectedLine, StashEntry, WorkdirStatus } from "../../ipc/bindings";
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
 }
+
+// One checked "+"/"-" row, keyed by the SAME anchor (hunk header + kind/
+// oldNo/newNo) the backend's `apply_selected_lines` re-verifies against a
+// fresh diff before trusting anything — see workdir.rs's `SelectedLine`/
+// `HunkSelection` doc comments. `header` rides along here (not part of
+// `SelectedLine` itself) purely so this controller can group a flat
+// selection back into one `HunkSelection` per hunk in `buildSelectedHunks()`.
+type CheckedLine = { header: string; kind: string; oldNo: number | null; newNo: number | null };
 
 // Demo data (design-mode only) — a small canned changeset + one stash, same
 // spirit as every other island's DEMO constants, so the browser preview still
@@ -85,45 +92,84 @@ const DEMO_STATUS: WorkdirStatus = {
 const DEMO_STASHES: StashEntry[] = [
   { index: 0, sha: "e5f6071", branch: "feature/login", message: "WIP on feature/login: e5f6071 Wire login form to API" },
 ];
-const DEMO_DIFFS: Record<string, DiffRow[]> = {
-  "src/ui/LoginForm.tsx": [
-    { kind: "hunk", text: "@@ -0,0 +1,5 @@" },
-    { kind: "line", ln: 1, mk: "+", cls: "add", html: "export function LoginForm() {" },
-    { kind: "line", ln: 2, mk: "+", cls: "add", html: "&nbsp;&nbsp;const [err, setErr] = useState(null);" },
-    { kind: "line", ln: 3, mk: "+", cls: "add", html: "&nbsp;&nbsp;return submit(err);" },
-    { kind: "line", ln: 4, mk: "+", cls: "add", html: "}" },
-  ],
-  "src/auth/session.ts": [
-    { kind: "hunk", text: "@@ -18,6 +18,9 @@ export function createSession(user) {" },
-    { kind: "line", ln: "", mk: "", cls: "", html: "&nbsp;&nbsp;const store = new TokenStore();" },
-    { kind: "line", ln: 18, mk: "-", cls: "del", html: "&nbsp;&nbsp;const ttl = 900;" },
-    { kind: "line", ln: 18, mk: "+", cls: "add", html: "&nbsp;&nbsp;const ttl = 3600; // extended, see #482" },
-  ],
-  "notes.txt": [{ kind: "note", text: "no textual diff" }],
+// Demo diffs are now real (shaped) `FileChange` payloads — see this file's
+// header note on why Workdir.svelte renders straight off `FileChange.hunks`
+// (real `oldNo`/`newNo` per line) instead of the shared, index-recomputing
+// `DiffRow[]` flattening `Detail.svelte` uses for its read-only viewer.
+const DEMO_DIFF_FILES: Record<string, FileChange> = {
+  "src/ui/LoginForm.tsx": {
+    path: "src/ui/LoginForm.tsx",
+    oldPath: null,
+    status: "A",
+    additions: 4,
+    deletions: 0,
+    binary: false,
+    truncated: false,
+    lang: "ts",
+    hunks: [
+      {
+        header: "@@ -0,0 +1,5 @@",
+        lines: [
+          { kind: "+", oldNo: null, newNo: 1, text: "export function LoginForm() {" },
+          { kind: "+", oldNo: null, newNo: 2, text: "  const [err, setErr] = useState(null);" },
+          { kind: "+", oldNo: null, newNo: 3, text: "  return submit(err);" },
+          { kind: "+", oldNo: null, newNo: 4, text: "}" },
+        ],
+      },
+    ],
+  },
+  "src/auth/session.ts": {
+    path: "src/auth/session.ts",
+    oldPath: null,
+    status: "M",
+    additions: 1,
+    deletions: 1,
+    binary: false,
+    truncated: false,
+    lang: "ts",
+    hunks: [
+      {
+        header: "@@ -18,6 +18,9 @@ export function createSession(user) {",
+        lines: [
+          { kind: " ", oldNo: 18, newNo: 18, text: "  const store = new TokenStore();" },
+          { kind: "-", oldNo: 19, newNo: null, text: "  const ttl = 900;" },
+          { kind: "+", oldNo: null, newNo: 19, text: "  const ttl = 3600; // extended, see #482" },
+        ],
+      },
+    ],
+  },
+  "notes.txt": {
+    path: "notes.txt",
+    oldPath: null,
+    status: "?",
+    additions: 0,
+    deletions: 0,
+    binary: true,
+    truncated: false,
+    lang: "",
+    hunks: [],
+  },
 };
 
-// Convert a real `FileChange` (workdir_file_diff's payload) into the shared
-// `DiffRow[]` shape `Detail.svelte`'s diff viewer already renders — same
-// per-line transform as detail.svelte.ts's `selectFile()`, kept as a private
-// copy here (a plain function, not a method) since it has no other state to
-// close over.
-function rowsFromFileChange(fc: FileChange): DiffRow[] {
-  if (fc.binary) return [{ kind: "note", text: "binary file — not shown" }];
-  let n1 = 0;
-  let n2 = 0;
-  const rows: DiffRow[] = [];
-  (fc.hunks || []).forEach((h) => {
-    rows.push({ kind: "hunk", text: h.header });
-    (h.lines || []).forEach((l) => {
-      const mk = l.kind === "+" || l.kind === "-" ? l.kind : "";
-      const cls = mk === "+" ? "add" : mk === "-" ? "del" : "";
-      const ln = mk === "+" ? n2++ : mk === "-" ? n1++ : (n1++, n2++);
-      rows.push({ kind: "line", ln, mk, cls, html: bridge.highlight(l.text, fc.lang) });
-    });
-  });
-  if (!rows.length) rows.push({ kind: "note", text: "no textual diff" });
-  if (fc.truncated) rows.push({ kind: "note", text: "… diff truncated (file capped)" });
-  return rows;
+// A `DiffLineRow` plus its pre-highlighted HTML — the per-hunk render shape
+// Workdir.svelte iterates directly (real `oldNo`/`newNo`/`kind` kept intact,
+// unlike the shared `DiffRow[]` flattening `Detail.svelte`'s read-only viewer
+// uses), so a checkbox/toggle can build an exact `SelectedLine` anchor for
+// any `+`/`-` row without recomputing anything.
+export type DiffLineDisplay = DiffLineRow & { html: string };
+export type DiffHunkDisplay = { header: string; lines: DiffLineDisplay[] };
+
+// Convert a real `FileChange` (workdir_file_diff's payload) into the above
+// per-hunk display shape — still calls `bridge.highlight()` per line exactly
+// like the old shared-flattening path did, just without discarding oldNo/
+// newNo along the way. Binary files naturally fall out with `hunks: []`
+// (nothing to walk); Workdir.svelte checks `fc.binary`/`fc.truncated`
+// directly rather than this function injecting synthetic "note" rows.
+function hunksFromFileChange(fc: FileChange): DiffHunkDisplay[] {
+  return (fc.hunks || []).map((h) => ({
+    header: h.header,
+    lines: (h.lines || []).map((l) => ({ ...l, html: bridge.highlight(l.text, fc.lang) })),
+  }));
 }
 
 class WorkdirState {
@@ -148,8 +194,28 @@ class WorkdirState {
   // spec list, but required to disambiguate that case.
   selectedDiffStaged = $state(false);
   diffHeader = $state("");
-  diffRows = $state<DiffRow[]>([]);
+  // The fetched file itself (status/binary/truncated/lang flags) plus its
+  // hunks pre-shaped for direct rendering — see `DiffHunkDisplay` above.
+  // `diffError` is a plain message string for "couldn't fetch" (read failure),
+  // kept separate from `diffFile` rather than folded into a synthetic hunk row.
+  diffFile = $state<FileChange | null>(null);
+  diffHunks = $state<DiffHunkDisplay[]>([]);
+  diffError = $state<string | null>(null);
   diffLoading = $state(false);
+
+  // Hunk/line-level staging selection — which `+`/`-` rows of the CURRENTLY
+  // open diff are checked, as a flat list of anchors (header + kind/oldNo/
+  // newNo, the exact shape `apply_selected_lines` re-verifies against a fresh
+  // diff — see workdir.rs). Ephemeral: cleared on every `selectDiffFile()`
+  // call and after every successful stageLines/unstageLines/discardLines,
+  // since the acted-on lines no longer exist in the fresh diff by definition
+  // (see this file's header + the design's §4 "never trust stale state").
+  selectedLines = $state<CheckedLine[]>([]);
+  // Anchor for shift-click range extension — the last line clicked (plain,
+  // ephemeral bookkeeping, not read by any template so it needs no rune).
+  // A range never spans a hunk boundary (`lastClickedHeader` must match).
+  private lastClickedHeader: string | null = null;
+  private lastClickedIdx: number | null = null;
 
   stashes = $state<StashEntry[]>([]);
   stashOpen = $state(false); // the inline "+ Stash changes…" form, mirrors sidebar's newBranchOpen
@@ -176,7 +242,10 @@ class WorkdirState {
     this.amend = false;
     this.selectedDiffFile = null;
     this.diffHeader = "";
-    this.diffRows = [];
+    this.diffFile = null;
+    this.diffHunks = [];
+    this.diffError = null;
+    this.clearLineSelection();
     this.refreshStatus(this.repo);
     this.refreshStashes(this.repo);
   }
@@ -249,7 +318,10 @@ class WorkdirState {
     if (!list.some((e) => e.path === this.selectedDiffFile)) {
       this.selectedDiffFile = null;
       this.diffHeader = "";
-      this.diffRows = [];
+      this.diffFile = null;
+      this.diffHunks = [];
+      this.diffError = null;
+      this.clearLineSelection();
     }
   }
 
@@ -293,28 +365,106 @@ class WorkdirState {
     this.selectedDiffFile = path;
     this.selectedDiffStaged = staged;
     this.diffHeader = path;
+    this.clearLineSelection(); // a fresh diff view invalidates any prior checkmarks
     const myReq = ++this.diffSeq;
     if (!IN_TAURI) {
-      this.diffRows = DEMO_DIFFS[path] || [{ kind: "note", text: "no textual diff" }];
+      const fc = DEMO_DIFF_FILES[path] || null;
+      this.diffFile = fc;
+      this.diffHunks = fc ? hunksFromFileChange(fc) : [];
+      this.diffError = fc ? null : "no textual diff";
       return;
     }
     if (!this.repo) return;
     this.diffLoading = true;
-    this.diffRows = [];
+    this.diffFile = null;
+    this.diffHunks = [];
+    this.diffError = null;
     try {
       const r = await commands.workdirFileDiff(this.repo, path, staged);
       if (myReq !== this.diffSeq) return; // a newer file selection superseded this one
       if (r.status === "ok") {
-        this.diffRows = rowsFromFileChange(r.data);
+        this.diffFile = r.data;
+        this.diffHunks = hunksFromFileChange(r.data);
       } else {
-        this.diffRows = [{ kind: "note", text: "diff unavailable — " + r.error }];
+        this.diffError = "diff unavailable — " + r.error;
       }
     } catch (e) {
       if (myReq !== this.diffSeq) return;
-      this.diffRows = [{ kind: "note", text: "diff unavailable — " + e }];
+      this.diffError = "diff unavailable — " + e;
     } finally {
       if (myReq === this.diffSeq) this.diffLoading = false;
     }
+  }
+
+  // ── hunk/line selection (local, ephemeral — see field doc comments) ──────
+  private clearLineSelection() {
+    this.selectedLines = [];
+    this.lastClickedHeader = null;
+    this.lastClickedIdx = null;
+  }
+
+  private static lineMatches(a: CheckedLine, header: string, kind: string, oldNo: number | null, newNo: number | null): boolean {
+    return a.header === header && a.kind === kind && a.oldNo === oldNo && a.newNo === newNo;
+  }
+
+  isLineSelected(header: string, l: DiffLineRow): boolean {
+    return this.selectedLines.some((a) => WorkdirState.lineMatches(a, header, l.kind, l.oldNo, l.newNo));
+  }
+
+  get selectedLinesCount(): number {
+    return this.selectedLines.length;
+  }
+
+  // Toggle one `+`/`-` row (context rows are never selectable — they're
+  // always included for free, see workdir.rs's reconstruction rule).
+  // `shiftKey` extends a contiguous range from the last-clicked row WITHIN
+  // THE SAME HUNK only — clicking in a different hunk starts an independent
+  // range there, since a selection never spans a hunk boundary (each hunk
+  // becomes its own reconstructed sub-hunk on the backend).
+  toggleLine(header: string, lines: DiffLineRow[], idx: number, shiftKey: boolean) {
+    const l = lines[idx];
+    if (l.kind !== "+" && l.kind !== "-") return;
+    if (shiftKey && this.lastClickedHeader === header && this.lastClickedIdx !== null) {
+      const lo = Math.min(this.lastClickedIdx, idx);
+      const hi = Math.max(this.lastClickedIdx, idx);
+      for (let i = lo; i <= hi; i++) {
+        const li = lines[i];
+        if ((li.kind === "+" || li.kind === "-") && !this.isLineSelected(header, li)) {
+          this.selectedLines.push({ header, kind: li.kind, oldNo: li.oldNo, newNo: li.newNo });
+        }
+      }
+    } else {
+      const i = this.selectedLines.findIndex((a) => WorkdirState.lineMatches(a, header, l.kind, l.oldNo, l.newNo));
+      if (i >= 0) this.selectedLines.splice(i, 1);
+      else this.selectedLines.push({ header, kind: l.kind, oldNo: l.oldNo, newNo: l.newNo });
+    }
+    this.lastClickedHeader = header;
+    this.lastClickedIdx = idx;
+  }
+
+  // Every `+`/`-` row of one hunk as a single `HunkSelection` — the MVP
+  // "Stage/Unstage/Discard hunk" buttons use this (whole-hunk is just the
+  // line-level backend call with every eligible line included, see design §4).
+  hunkSelectionFor(hunk: DiffHunkDisplay): HunkSelection {
+    return {
+      header: hunk.header,
+      lines: hunk.lines.filter((l) => l.kind === "+" || l.kind === "-").map((l) => ({ kind: l.kind, oldNo: l.oldNo, newNo: l.newNo })),
+    };
+  }
+
+  // The checked lines anywhere in the open diff, grouped back into one
+  // `HunkSelection` per hunk with >=1 checked line — order follows
+  // `diffHunks`' own top-to-bottom order (cosmetic here; the backend
+  // re-derives its own authoritative order regardless, see workdir.rs).
+  buildSelectedHunks(): HunkSelection[] {
+    const out: HunkSelection[] = [];
+    for (const hunk of this.diffHunks) {
+      const lines: SelectedLine[] = this.selectedLines
+        .filter((a) => a.header === hunk.header)
+        .map((a) => ({ kind: a.kind, oldNo: a.oldNo, newNo: a.newNo }));
+      if (lines.length) out.push({ header: hunk.header, lines });
+    }
+    return out;
   }
 
   // ── stage / unstage / stage all (index-only — no snapshot on the backend,
@@ -452,6 +602,134 @@ class WorkdirState {
         await this.refreshStatus(repo);
       } else {
         bridge.tama.warn(res.message || "Couldn't discard " + file + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Discard failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  // ── stage / unstage SELECTED LINES (index-only — no snapshot, same rule as
+  //    stageFile/unstageFile above; see workdir.rs's doc comment) ──────────
+  // After success: re-fetch status AND (if this file's diff is still open,
+  // i.e. `dropStaleSelectedDiff` didn't just clear it out from under us)
+  // re-run `selectDiffFile` to get the fresh post-mutation hunks — never
+  // splice/patch the view in place, since hunks can merge/split/renumber
+  // once some lines move to the other side (design §4's "never trust stale
+  // state", the frontend analogue of the backend's own freshness check).
+  async stageLines(repo: string, file: string, hunks: HunkSelection[]) {
+    if (this.busy || !hunks.length) return;
+    this.pendingStashUndo = false; // this controller has moved on — see doc comment above
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say("Staged selected lines in " + file + " (demo).");
+      return;
+    }
+    this.busy = true;
+    this.busyTarget = file;
+    bridge.tama.set("thinking");
+    try {
+      const res = await commands.stageLines(repo, file, hunks);
+      if (res.ok) {
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Staged selected lines.", 1800);
+        this.clearLineSelection();
+        const staged = this.selectedDiffStaged;
+        await this.refreshStatus(repo);
+        if (this.selectedDiffFile === file) await this.selectDiffFile(file, staged);
+      } else {
+        bridge.tama.warn(res.message || "Couldn't stage those lines — " + file + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Stage failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  async unstageLines(repo: string, file: string, hunks: HunkSelection[]) {
+    if (this.busy || !hunks.length) return;
+    this.pendingStashUndo = false; // this controller has moved on — see doc comment above
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say("Unstaged selected lines in " + file + " (demo).");
+      return;
+    }
+    this.busy = true;
+    this.busyTarget = file;
+    bridge.tama.set("thinking");
+    try {
+      const res = await commands.unstageLines(repo, file, hunks);
+      if (res.ok) {
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Unstaged selected lines.", 1800);
+        this.clearLineSelection();
+        const staged = this.selectedDiffStaged;
+        await this.refreshStatus(repo);
+        if (this.selectedDiffFile === file) await this.selectDiffFile(file, staged);
+      } else {
+        bridge.tama.warn(res.message || "Couldn't unstage those lines — " + file + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Unstage failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  // ── discard SELECTED LINES (destructive — backend backs up the whole
+  //    file's patch first, exactly like discardFile; routes through the SAME
+  //    typed-confirm scrim) ─────────────────────────────────────────────────
+  confirmDiscardLines(file: string, hunks: HunkSelection[]) {
+    if (!hunks.length) return;
+    const repo = this.repo;
+    const n = hunks.reduce((sum, h) => sum + h.lines.length, 0);
+    const label = n + " line" + (n === 1 ? "" : "s");
+    bridge.tama.set("danger");
+    bridge.tama.say("Discarding " + label + " in " + file + " — type the file name to arm it. I keep a backup copy first.", 6000);
+    bridge.armDanger({
+      title: "Discard " + label + " — " + file,
+      steps: false,
+      desc: "This reverts the selected " + label + " in " + file + " to what's in the index/HEAD, discarding just those unstaged edits. The exact diff is backed up first.",
+      lose: "<h5>What happens</h5><ul><li>Reverts " + label + " in <code>" + esc(file) + "</code> to their last staged/committed content</li></ul>",
+      note: "🔁 I back up the file's exact diff before discarding — ask if you need it back.",
+      name: file,
+      confirmLabel: "Discard lines",
+      onConfirm: async () => {
+        await this.doDiscardLines(repo, file, hunks);
+      },
+    });
+  }
+
+  private async doDiscardLines(repo: string, file: string, hunks: HunkSelection[]) {
+    if (!IN_TAURI) {
+      bridge.tama.set("celebrate");
+      bridge.tama.say("Discarded selected lines in " + file + " (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.pendingStashUndo = false; // this controller has moved on — see doc comment above
+    this.busy = true;
+    this.busyTarget = file;
+    bridge.tama.set("thinking");
+    try {
+      const res = await commands.discardLines(repo, file, hunks);
+      if (res.ok) {
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Discarded selected lines.", 4200);
+        this.clearLineSelection();
+        const staged = this.selectedDiffStaged;
+        await this.refreshStatus(repo);
+        if (this.selectedDiffFile === file) await this.selectDiffFile(file, staged);
+      } else {
+        bridge.tama.warn(res.message || "Couldn't discard those lines — " + file + ".");
       }
     } catch (e) {
       bridge.tama.warn("Discard failed — " + e);

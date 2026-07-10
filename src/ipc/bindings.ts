@@ -230,6 +230,30 @@ async discardFile(path: string, file: string, untracked: boolean) : Promise<Work
     return await TAURI_INVOKE("discard_file", { path, file, untracked });
 },
 /**
+ * Stage only the selected `+`/`-` lines (whole hunks or a subset) out of a
+ * file's CURRENT unstaged diff. JS: `invoke("stage_lines", { path, file, hunks })`.
+ */
+async stageLines(path: string, file: string, hunks: HunkSelection[]) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("stage_lines", { path, file, hunks });
+},
+/**
+ * Unstage only the selected `+`/`-` lines out of a file's CURRENT staged
+ * diff (HEAD vs index). JS: `invoke("unstage_lines", { path, file, hunks })`.
+ */
+async unstageLines(path: string, file: string, hunks: HunkSelection[]) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("unstage_lines", { path, file, hunks });
+},
+/**
+ * Discard (from the working tree) only the selected `+`/`-` lines out of a
+ * file's CURRENT unstaged diff. Destructive — always backs up first, same
+ * discipline as `discard_file`. The caller (frontend controller) is
+ * responsible for a typed-confirm gate before this is ever invoked, exactly
+ * like `discard_file`. JS: `invoke("discard_lines", { path, file, hunks })`.
+ */
+async discardLines(path: string, file: string, hunks: HunkSelection[]) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("discard_lines", { path, file, hunks });
+},
+/**
  * Create a commit from the current index, or amend the previous one.
  * Snapshots FIRST (amend rewrites the previous commit's sha — history-
  * mutating). `!amend && message` empty/whitespace-only -> refused before any
@@ -1148,6 +1172,17 @@ configured: boolean }
  */
 export type GraphData = { n: number; lane: number[]; color: number[]; merge: number[]; gapStart: number[]; gapTop: number[]; gapBot: number[]; gapColor: number[]; rows: CommitMeta[]; ncol: number; laneCount: number; layoutMs: number; readMs: number }
 /**
+ * One hunk's selection. `header` is `DiffHunkRow::header` byte-for-byte, as
+ * last fetched by `workdir_file_diff` — the anchor this module re-verifies
+ * against a FRESH read before trusting anything else in this struct.
+ * `Vec<HunkSelection>` (not a single hunk) so one call covers a multi-hunk
+ * selection — this is what makes hunk-level ("all lines of this hunk") and
+ * line-level ("these three lines across two different hunks") the SAME
+ * backend call shape, differing only in how many `SelectedLine`s the
+ * frontend puts in each `HunkSelection`.
+ */
+export type HunkSelection = { header: string; lines: SelectedLine[] }
+/**
  * A local branch row for the data-driven sidebar. `ahead`/`behind` are relative
  * to the branch's configured upstream, or `None` when it has no upstream.
  */
@@ -1330,6 +1365,12 @@ conflictedFiles: string[]; message: string;
  * so the UI can name the snapshot the user can Undo to.
  */
 backupRef: string | null }
+/**
+ * One selected "+"/"-" row, identified the SAME way `DiffLineRow` already
+ * describes it to the frontend (`model.rs`) — `kind`/`old_no`/`new_no`. A
+ * context (`" "`) row is never sent here: context is always implicitly kept.
+ */
+export type SelectedLine = { kind: string; oldNo: number | null; newNo: number | null }
 /**
  * A remote-tracking branch or a tag: just a name and the commit it resolves to.
  */

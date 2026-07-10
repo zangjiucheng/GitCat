@@ -654,6 +654,27 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .wd-stash-form .wd-amend{flex:1}
 .wd-stash-form.busy input{opacity:.6}
 
+/* Hunk/line-level staging (git add -p equivalent) — extends .diffview/
+   .diff-line above with a per-line checkbox gutter and per-hunk/selected-
+   lines mini toolbars. `.sel` sits between `.ln` and `.mk`, same narrow
+   fixed-width-column convention as those two. */
+.diff-line .sel{flex:none;width:16px;display:flex;align-items:center;justify-content:center}
+.diff-line .sel input[type="checkbox"]{width:11px;height:11px;margin:0;cursor:pointer}
+.diff-line.selected{box-shadow:inset 2px 0 0 var(--accent)}
+.wd-hunk-act{margin-left:auto;display:flex;gap:4px;flex:none}
+.wd-hunk-act button{font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;border:1px solid var(--border);
+  background:var(--elevated);color:var(--text)}
+.wd-hunk-act button:hover:not([disabled]){border-color:var(--muted)}
+.wd-hunk-act button.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
+.wd-hunk-act button[disabled]{opacity:.45;cursor:not-allowed}
+.wd-hunk-act .spinner{flex:none}
+.wd-lines-bar{margin-left:auto;display:flex;align-items:center;gap:6px}
+.wd-lines-bar button{font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;border:1px solid var(--border);
+  background:var(--elevated);color:var(--text)}
+.wd-lines-bar button:hover:not([disabled]){border-color:var(--muted)}
+.wd-lines-bar button.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
+.wd-lines-bar button[disabled]{opacity:.45;cursor:not-allowed}
+
 /* ============================== BISECT / REFLOG / RERERE / PLUMBING content
    ============================================================================
    These used to render inside a persistent bottom drawer (4 tabs, always

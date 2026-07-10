@@ -89,12 +89,14 @@
 //! magic (`git add -- 'test[1].txt'` silently stages an unrelated `test1.txt`
 //! if it exists), only git's own `:(literal)` magic word does.
 
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::process::Command;
+use std::io::Write as _;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use git2::{Delta, DiffFindOptions, DiffOptions, Patch, Repository, Status, StatusOptions};
+use git2::{Delta, DiffFindOptions, DiffOptions, FileMode, Patch, Repository, Status, StatusOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{DiffHunkRow, DiffLineRow, FileChange};
@@ -338,7 +340,14 @@ fn open_repo(path: &str) -> Result<Repository, WorkdirResult> {
 
 fn status_char(status: Delta) -> &'static str {
     match status {
-        Delta::Added => "A",
+        // `Untracked` is what an index-vs-workdir diff widened with
+        // `include_untracked` (`workdir_file_diff_inner`'s unstaged branch,
+        // `fresh_diff_for_lines`) reports for a brand-new file — distinct
+        // from `Added` (which only ever appears in a HEAD-vs-index/tree-vs-
+        // tree diff), but the same "A" from this DTO's point of view (see
+        // `FileChange.status`'s doc comment: "A" | "D" | ... — no separate
+        // untracked code).
+        Delta::Added | Delta::Untracked => "A",
         Delta::Deleted => "D",
         Delta::Renamed => "R",
         Delta::Copied => "C",
@@ -501,6 +510,21 @@ fn workdir_file_diff_inner(path: &str, file: &str, staged: bool) -> Result<FileC
     // understand.
     let mut opts = DiffOptions::new();
     opts.context_lines(3).include_typechange(true).id_abbrev(7);
+
+    if !staged {
+        // Widen to untracked files — WITHOUT this, an untracked ("?") file
+        // never appears as a delta at all and this function falls straight
+        // through to the "No unstaged changes found" error below, even
+        // though `workdir_status`'s own `unstaged` list (and the frontend's
+        // "Unstaged" section, which renders "?" entries inline and wires
+        // every row to this same call) both treat it as a normal, selectable
+        // unstaged entry. Same three options `fresh_diff_for_lines` uses for
+        // its own untracked-widened read (see that function's doc comment
+        // for why all three, together, are required) — kept in lockstep so
+        // this read-only view shows EXACTLY the hunks
+        // `stage_lines`/`discard_lines` will later re-verify against.
+        opts.include_untracked(true).recurse_untracked_dirs(true).show_untracked_content(true);
+    }
 
     let mut diff = if staged {
         // Unborn HEAD (no commits yet) -> None tree (the empty tree), so a
@@ -736,7 +760,15 @@ fn discard_backup_stem(file: &str) -> String {
 /// already uses (`diff_index_to_workdir` -> `Patch` -> `to_buf`) — a read, so
 /// it stays on the git2 side of the read/CLI split. Returns the backup's
 /// git-dir-relative path (e.g. `gitgui/discard-backup/....patch`).
-fn backup_tracked_patch(repo: &Repository, file: &str) -> Result<String, String> {
+///
+/// `include_untracked`: `discard_file`'s existing call site passes `false`,
+/// preserving that command's exact prior behavior/tests byte-for-byte (an
+/// untracked file was always `discard_file`'s OTHER branch,
+/// `backup_untracked_bytes`, never this one). [`discard_lines`] passes `true`
+/// — it must also be able to back up a partial-discard of a brand-new
+/// untracked file (see this module's `apply_selected_lines`/`fresh_diff_for_lines`,
+/// which widen the READ side the same way for `stage_lines`/`discard_lines`).
+fn backup_tracked_patch(repo: &Repository, file: &str, include_untracked: bool) -> Result<String, String> {
     // NO `DiffOptions::pathspec` — see `workdir_file_diff_inner`'s doc comment:
     // libgit2's pathspec matcher has no `:(literal)` magic, so a raw filename
     // with glob metacharacters would be (mis)interpreted as a glob. Diff the
@@ -745,6 +777,12 @@ fn backup_tracked_patch(repo: &Repository, file: &str) -> Result<String, String>
     // contains.
     let mut opts = DiffOptions::new();
     opts.context_lines(3);
+    if include_untracked {
+        // See `fresh_diff_for_lines`'s doc comment: `show_untracked_content`
+        // is required (not just `include_untracked`) for an untracked
+        // delta's `Patch` to actually carry any hunks.
+        opts.include_untracked(true).recurse_untracked_dirs(true).show_untracked_content(true);
+    }
     let diff = repo
         .diff_index_to_workdir(None, Some(&mut opts))
         .map_err(|e| e.message().to_string())?;
@@ -972,7 +1010,7 @@ pub fn discard_file(path: String, file: String, untracked: bool) -> WorkdirResul
     let backup_patch = if untracked {
         backup_untracked_bytes(&repo, &path, &file)
     } else {
-        backup_tracked_patch(&repo, &file)
+        backup_tracked_patch(&repo, &file, false)
     };
     let backup_patch = match backup_patch {
         Ok(p) => p,
@@ -1023,6 +1061,710 @@ pub fn discard_file(path: String, file: String, untracked: bool) -> WorkdirResul
             backup_patch: Some(backup_patch),
             dropped_stash_ref: None,
         },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Writes: hunk/line-level staging (stage_lines / unstage_lines / discard_lines)
+//
+// Same "re-derive fresh, validate, refuse-wholesale-on-mismatch" discipline as
+// `git_rebase::rebase_interactive_start` (see that function's doc comment):
+// the frontend never sends a constructed patch, only POSITIONS (a hunk
+// `header` + per-line `kind`/`old_no`/`new_no`) copied verbatim from what
+// `workdir_file_diff` last returned. Before doing anything, this re-reads the
+// relevant diff (index<->workdir for stage/discard, HEAD<->index for
+// unstage) and requires an EXACT match for every requested hunk header and
+// every requested line — any mismatch (the diff changed since the caller
+// looked) refuses the ENTIRE request, never partially applies. Snapshot
+// policy: `stage_lines`/`unstage_lines` are index-only, same as
+// `stage_file`/`unstage_file` — no snapshot (see module doc comment).
+// `discard_lines` is destructive on the working tree, same as `discard_file`
+// — it always calls `backup_tracked_patch` first, same ordering discipline.
+// ---------------------------------------------------------------------------
+
+/// One selected "+"/"-" row, identified the SAME way `DiffLineRow` already
+/// describes it to the frontend (`model.rs`) — `kind`/`old_no`/`new_no`. A
+/// context (`" "`) row is never sent here: context is always implicitly kept.
+#[derive(Deserialize, specta::Type, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectedLine {
+    pub kind: String,        // "+" | "-" — never " "
+    pub old_no: Option<u32>, // Some for "-", None for "+"
+    pub new_no: Option<u32>, // Some for "+", None for "-"
+}
+
+/// One hunk's selection. `header` is `DiffHunkRow::header` byte-for-byte, as
+/// last fetched by `workdir_file_diff` — the anchor this module re-verifies
+/// against a FRESH read before trusting anything else in this struct.
+/// `Vec<HunkSelection>` (not a single hunk) so one call covers a multi-hunk
+/// selection — this is what makes hunk-level ("all lines of this hunk") and
+/// line-level ("these three lines across two different hunks") the SAME
+/// backend call shape, differing only in how many `SelectedLine`s the
+/// frontend puts in each `HunkSelection`.
+#[derive(Deserialize, specta::Type, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct HunkSelection {
+    pub header: String,
+    pub lines: Vec<SelectedLine>,
+}
+
+/// Which of the three ops [`apply_selected_lines`] is performing — see
+/// `fresh_diff_for_lines`/the match in `apply_selected_lines` for how each
+/// picks its source diff and `git apply` invocation.
+enum LineOpDirection {
+    Stage,
+    Unstage,
+    Discard,
+}
+
+/// Stage only the selected `+`/`-` lines (whole hunks or a subset) out of a
+/// file's CURRENT unstaged diff. JS: `invoke("stage_lines", { path, file, hunks })`.
+#[tauri::command]
+#[specta::specta]
+pub fn stage_lines(path: String, file: String, hunks: Vec<HunkSelection>) -> WorkdirResult {
+    apply_selected_lines(&path, &file, &hunks, LineOpDirection::Stage)
+}
+
+/// Unstage only the selected `+`/`-` lines out of a file's CURRENT staged
+/// diff (HEAD vs index). JS: `invoke("unstage_lines", { path, file, hunks })`.
+#[tauri::command]
+#[specta::specta]
+pub fn unstage_lines(path: String, file: String, hunks: Vec<HunkSelection>) -> WorkdirResult {
+    apply_selected_lines(&path, &file, &hunks, LineOpDirection::Unstage)
+}
+
+/// Discard (from the working tree) only the selected `+`/`-` lines out of a
+/// file's CURRENT unstaged diff. Destructive — always backs up first, same
+/// discipline as `discard_file`. The caller (frontend controller) is
+/// responsible for a typed-confirm gate before this is ever invoked, exactly
+/// like `discard_file`. JS: `invoke("discard_lines", { path, file, hunks })`.
+#[tauri::command]
+#[specta::specta]
+pub fn discard_lines(path: String, file: String, hunks: Vec<HunkSelection>) -> WorkdirResult {
+    apply_selected_lines(&path, &file, &hunks, LineOpDirection::Discard)
+}
+
+/// One line inside a hunk, as read straight off the fresh `git2::Patch` — the
+/// RAW walk, not `workdir_file_diff_inner`'s DTO-building loop (that loop's
+/// `match line.origin() { '+'|'-'|' ' => ..., _ => continue }` silently drops
+/// the `'='`/`'>'`/`'<'` "no newline at end of file" marker lines; this
+/// reconstruction path must not lose that). `eof_marker`, if set, is the raw
+/// text of the marker line immediately following this one in the hunk (always
+/// the final unit of a hunk, and only ever in a file's last hunk).
+struct RawUnit {
+    origin: char, // ' ' | '+' | '-'
+    old_no: Option<u32>,
+    new_no: Option<u32>,
+    text: String, // as returned by DiffLine::content(), trailing '\n' kept as-is
+    eof_marker: Option<String>,
+}
+
+fn collect_raw_units(patch: &Patch, h: usize) -> Result<Vec<RawUnit>, String> {
+    let n = patch.num_lines_in_hunk(h).map_err(|e| e.message().to_string())?;
+    let mut units: Vec<RawUnit> = Vec::with_capacity(n);
+    for l in 0..n {
+        let line = patch.line_in_hunk(h, l).map_err(|e| e.message().to_string())?;
+        let text = String::from_utf8_lossy(line.content()).into_owned();
+        match line.origin() {
+            '+' | '-' | ' ' => units.push(RawUnit {
+                origin: line.origin(),
+                old_no: line.old_lineno(),
+                new_no: line.new_lineno(),
+                text,
+                eof_marker: None,
+            }),
+            // "No newline at end of file" markers: always immediately follow
+            // the content line they annotate (see struct doc comment) — fold
+            // it into that unit rather than emitting it as its own row.
+            //
+            // EMPIRICALLY VERIFIED: libgit2's `DiffLine::content()` for one of
+            // these synthetic marker lines is prefixed with a LEADING '\n' —
+            // representing the previous content line's own (now-absent)
+            // newline terminator, not part of the "\ No newline..." text
+            // itself. Left in, that leading '\n' reconstructs as a spurious
+            // blank line between the content line and its annotation, which
+            // `git apply` then rejects outright ("patch does not apply").
+            '=' | '>' | '<' => {
+                if let Some(last) = units.last_mut() {
+                    last.eof_marker = Some(text.trim_start_matches(['\n', '\r']).to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(units)
+}
+
+/// One fresh hunk: its verbatim (trimmed) header text — the anchor the caller's
+/// `HunkSelection.header` must match byte-for-byte — plus its start lines
+/// (copied verbatim into the reconstructed header, never recomputed — see
+/// `build_sub_patch`'s doc comment on `--recount`) and raw line units.
+struct FreshHunk {
+    header: String,
+    old_start: u32,
+    new_start: u32,
+    units: Vec<RawUnit>,
+}
+
+/// The FRESH diff `apply_selected_lines` re-derives and validates every
+/// request against, before trusting anything in it. `staged`: HEAD-vs-index
+/// (for `unstage_lines`) or index-vs-workdir (`stage_lines`/`discard_lines`).
+/// `include_untracked`: widen the index-vs-workdir read so a brand-new file's
+/// lines are selectable at all (`workdir_file_diff_inner`'s own plain
+/// unstaged-diff READ deliberately does not widen this way — a separate,
+/// existing choice for that read-only view — but the selection/mutation path
+/// here needs to see exactly the hunks the untracked-widened view would show).
+/// Folds in the SAME rename-detection options as `workdir_file_diff_inner`
+/// (`renames(true).copies(true).rename_limit(1000)`) — otherwise this fresh
+/// read could fold/not-fold a rename differently than the read the frontend's
+/// hunk headers came from, and every header would mismatch spuriously.
+fn fresh_diff_for_lines(
+    repo: &Repository,
+    staged: bool,
+    include_untracked: bool,
+) -> Result<git2::Diff<'_>, String> {
+    let mut opts = DiffOptions::new();
+    opts.context_lines(3).include_typechange(true).id_abbrev(7);
+    if include_untracked {
+        // `include_untracked` alone only lists an untracked file as a delta —
+        // EMPIRICALLY VERIFIED it does NOT populate that delta's patch with
+        // any hunks (`Patch::from_diff` succeeds but `num_hunks() == 0`)
+        // unless `show_untracked_content` is ALSO set; `recurse_untracked_dirs`
+        // is separately needed so untracked directories are walked at all
+        // (both are needed together, per git2's own doc comment on
+        // `show_untracked_content`: it "does not turn on
+        // recurse_untracked_dirs").
+        opts.include_untracked(true).recurse_untracked_dirs(true).show_untracked_content(true);
+    }
+    let mut diff = if staged {
+        let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+        repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))
+            .map_err(|e| e.message().to_string())?
+    } else {
+        repo.diff_index_to_workdir(None, Some(&mut opts)).map_err(|e| e.message().to_string())?
+    };
+    let mut find = DiffFindOptions::new();
+    find.renames(true).copies(true).rename_limit(1000);
+    let _ = diff.find_similar(Some(&mut find));
+    Ok(diff)
+}
+
+/// `100644` / `100755` / `120000` / `160000` / `040000` for a `new file
+/// mode`/`deleted file mode` header line. Anything else (`Unreadable` — should
+/// not occur on a real delta) falls back to the ordinary blob mode.
+fn mode_string(mode: FileMode) -> &'static str {
+    match mode {
+        FileMode::Link => "120000",
+        FileMode::Commit => "160000",
+        FileMode::BlobExecutable => "100755",
+        FileMode::Tree => "040000",
+        _ => "100644",
+    }
+}
+
+/// The reconstructed sub-patch text plus a human count of lines actually
+/// selected (for the success message only — never load-bearing).
+struct BuiltPatch {
+    text: String,
+    line_count: usize,
+}
+
+/// Locate `file`'s delta in the fresh `diff` (exact new-path string match,
+/// same convention as `workdir_file_diff_inner`/`backup_tracked_patch` — see
+/// their doc comments for why libgit2's own pathspec matcher can't be trusted
+/// here), validate every requested hunk/line against it EXACTLY, and — only
+/// once everything checks out — reconstruct one sub-patch covering just the
+/// selected lines, per this feature's design doc §2.1/§2.5.
+///
+/// Header line counts: uses `--recount`-friendly best-effort counts (the
+/// actual `git apply --recount` invocation in `apply_selected_lines`
+/// recomputes them from the body regardless — see that function's doc
+/// comment — so these are read-back convenience only, never load-bearing).
+/// `old_start`/`new_start` ARE load-bearing (they say WHERE to apply) and are
+/// copied verbatim from the fresh hunk, never recomputed.
+///
+/// `reverse`: true for `unstage_lines`/`discard_lines`, both of which apply
+/// the reconstructed sub-patch via `git apply -R`. This flips WHICH side of
+/// an unselected modification pair (`-old` / `+new`) must be demoted to
+/// context rather than dropped: a forward `git apply` matches the patch's OLD
+/// side against the current base (index for stage), so an unselected `-`
+/// (still genuinely present, unchanged, in that base) demotes to context and
+/// an unselected `+` is simply dropped. `git apply -R` instead matches the
+/// patch's NEW side against the current base (index for unstage, workdir for
+/// discard) — EMPIRICALLY VERIFIED: demoting the unselected `-` there (as the
+/// forward rule would) fabricates a context line that does NOT match what's
+/// actually in that base (it's already reflecting the unselected NEW-side
+/// content), so the reverse apply fails with "patch does not apply". The fix
+/// is the mirror image: for `reverse`, an unselected `+` demotes to context
+/// (it genuinely IS what the matched base currently holds) and an unselected
+/// `-` is dropped (its old content was never really part of the matched
+/// side).
+fn build_sub_patch(
+    diff: &git2::Diff,
+    file: &str,
+    hunks: &[HunkSelection],
+    reverse: bool,
+) -> Result<BuiltPatch, String> {
+    const STALE_MSG: &str =
+        "This file's diff has changed since you last looked — refresh and try again.";
+
+    let num_deltas = diff.deltas().len();
+    let mut found: Option<usize> = None;
+    for i in 0..num_deltas {
+        let Some(delta) = diff.get_delta(i) else { continue };
+        let new_path = path_of(delta.new_file().path()).filter(|p| !p.is_empty());
+        if new_path.as_deref() == Some(file) {
+            found = Some(i);
+            break;
+        }
+        // A full delete has no new-side path at all — match on the old path
+        // instead (a rename still identifies itself by its NEW path only,
+        // same convention `discard_file`'s unstaged-rename case already uses).
+        if matches!(delta.status(), Delta::Deleted) {
+            let old_path = path_of(delta.old_file().path()).filter(|p| !p.is_empty());
+            if old_path.as_deref() == Some(file) {
+                found = Some(i);
+                break;
+            }
+        }
+    }
+    let Some(idx) = found else {
+        return Err(STALE_MSG.into());
+    };
+    let delta = diff.get_delta(idx).expect("idx was just found in this same diff");
+
+    if matches!(delta.status(), Delta::Typechange) {
+        return Err(format!(
+            "{file} changed type (file <-> symlink, etc.) — line-level staging isn't supported; stage/discard the whole file instead."
+        ));
+    }
+
+    // Building the `Patch` FIRST, then checking `is_binary`, exactly matches
+    // `workdir_file_diff_inner`'s own order — EMPIRICALLY VERIFIED that
+    // `delta.new_file().is_binary()`/`old_file().is_binary()` are NOT yet
+    // populated on a delta fresh off `get_delta()`; libgit2 only fills them in
+    // once the actual patch/content diffing has run (i.e. inside
+    // `Patch::from_diff`). Checking them beforehand would silently treat
+    // every binary file as non-binary.
+    let patch = match Patch::from_diff(diff, idx) {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return Err(format!(
+                "{file} is a binary file — line-level staging isn't supported; stage/discard the whole file instead."
+            ))
+        }
+        Err(e) => return Err(e.message().to_string()),
+    };
+    let delta = diff.get_delta(idx).expect("idx was just found in this same diff");
+    if delta.new_file().is_binary() || delta.old_file().is_binary() {
+        return Err(format!(
+            "{file} is a binary file — line-level staging isn't supported; stage/discard the whole file instead."
+        ));
+    }
+
+    let num_hunks = patch.num_hunks();
+    let mut fresh: Vec<FreshHunk> = Vec::with_capacity(num_hunks);
+    for h in 0..num_hunks {
+        let (hunk, _n) = patch.hunk(h).map_err(|e| e.message().to_string())?;
+        let header = String::from_utf8_lossy(hunk.header()).trim_end_matches(['\n', '\r']).to_string();
+        let units = collect_raw_units(&patch, h)?;
+        fresh.push(FreshHunk { header, old_start: hunk.old_start(), new_start: hunk.new_start(), units });
+    }
+
+    // Validate every requested hunk header + every requested line against the
+    // fresh read, EXACTLY — any miss refuses the WHOLE request (see this
+    // module's doc comment banner above `stage_lines`/etc).
+    let mut selected: HashMap<usize, HashSet<(String, Option<u32>, Option<u32>)>> = HashMap::new();
+    for req in hunks {
+        let Some(fresh_idx) = fresh.iter().position(|f| f.header == req.header) else {
+            return Err(STALE_MSG.into());
+        };
+        for line in &req.lines {
+            if line.kind != "+" && line.kind != "-" {
+                return Err(format!(
+                    "Invalid selected line kind {:?} — only \"+\"/\"-\" rows can be selected.",
+                    line.kind
+                ));
+            }
+            let exists = fresh[fresh_idx]
+                .units
+                .iter()
+                .any(|u| u.origin.to_string() == line.kind && u.old_no == line.old_no && u.new_no == line.new_no);
+            if !exists {
+                return Err(STALE_MSG.into());
+            }
+        }
+        let entry = selected.entry(fresh_idx).or_default();
+        for line in &req.lines {
+            entry.insert((line.kind.clone(), line.old_no, line.new_no));
+        }
+    }
+    if selected.is_empty() || selected.values().all(|s| s.is_empty()) {
+        return Err("No lines selected.".into());
+    }
+
+    // A hunk containing an `eof_marker`-bearing unit is, by definition, a
+    // file's LAST hunk where at least one side (old, new, or both) has no
+    // trailing newline (collect_raw_units's doc comment: the marker only
+    // ever appears there). EMPIRICALLY VERIFIED with real `git apply`: for
+    // such a hunk, only the ORIGINAL, unmodified adjacency of a "no-newline"
+    // `-`/`+` pair (both sides selected together, exactly as git's own diff
+    // output shows them: `-old`, its marker, `+new`, its marker, back to
+    // back) is a valid, safe reconstruction. Any PARTIAL selection touching
+    // that hunk is unsafe in BOTH directions: carrying a demoted unit's own
+    // marker forward produces a patch `git apply` accepts but silently
+    // concatenates two lines with no separator (verified: "a3" + "a3-changed"
+    // → literal "a3a3-changed", no error); dropping that marker instead
+    // produces a patch `git apply` cleanly REFUSES outright, since the
+    // now-marker-less context line no longer matches the real file's actual
+    // (newline-less) bytes. There is no reconstruction that is both accepted
+    // by git AND correct for a partial selection here — so refuse the whole
+    // request up front instead of ever constructing one, matching this
+    // module's "fail closed, never guess" convention elsewhere (checkout on a
+    // dirty tree, pull on divergence). The user can still select the WHOLE
+    // hunk (equivalent to "stage/unstage/discard this hunk"), or fully
+    // stage/unstage/discard the file — only cherry-picking individual lines
+    // *within* a no-trailing-newline boundary hunk is unsupported.
+    for (h, fh) in fresh.iter().enumerate() {
+        let Some(sel) = selected.get(&h) else { continue };
+        let has_eof_marker = fh.units.iter().any(|u| u.eof_marker.is_some());
+        if !has_eof_marker {
+            continue;
+        }
+        let fully_selected = fh
+            .units
+            .iter()
+            .filter(|u| u.origin == '+' || u.origin == '-')
+            .all(|u| sel.contains(&(u.origin.to_string(), u.old_no, u.new_no)));
+        if !fully_selected {
+            return Err(format!(
+                "{file}'s last line doesn't end with a newline on at least one side of this change — \
+                 partial line selection isn't supported there. Select the whole hunk (or the whole file) instead."
+            ));
+        }
+    }
+
+    // Reconstruct, in the fresh patch's OWN top-to-bottom hunk order (never
+    // the request array's order — `git apply` requires ascending position
+    // order within one file).
+    let is_delete_delta = matches!(delta.status(), Delta::Deleted);
+    let mut covers_full_delete = is_delete_delta;
+    // `Untracked` (a brand-new file, seen only via the untracked-widened
+    // reads this module uses — see `status_char`'s doc comment) counts as an
+    // "add" here exactly like `Delta::Added` does; the header match below
+    // treats the two identically.
+    let is_added_delta = matches!(delta.status(), Delta::Added | Delta::Untracked);
+    let mut covers_full_add = is_added_delta;
+    // Same idea again for `Delta::Renamed`: EMPIRICALLY VERIFIED (real `git
+    // apply --cached -R`, not just reasoning) that a PARTIAL content
+    // selection must NOT emit the rename header at all — `rename from/to`
+    // plus a two-path `--- a/{old} +++ b/{new}` header applied to only some
+    // of the content lines silently reverts the ENTIRE rename in the index
+    // (git happily "un-renames" the path back to old_path even though only
+    // some lines were meant to change), while the plain single-path
+    // modification header (matching the generic `_ =>` branch below) leaves
+    // the rename alone and only touches the selected content — confirmed
+    // by checking `git ls-files -s`/`git status --porcelain=2` after
+    // applying: the path stays at new_path, and git's OWN similarity
+    // detection still reports it as a rename against HEAD regardless,
+    // since renames are computed at diff-time from tree content, never
+    // stored as a flag the sub-patch needs to assert.
+    let mut covers_full_rename = matches!(delta.status(), Delta::Renamed);
+    let mut body = String::new();
+    let mut hunk_count = 0usize;
+    let mut selected_line_count = 0usize;
+
+    for (h, fh) in fresh.iter().enumerate() {
+        let Some(sel) = selected.get(&h) else { continue };
+        let mut out_lines: Vec<String> = Vec::new();
+        let mut old_count = 0u32;
+        let mut new_count = 0u32;
+        for unit in &fh.units {
+            let key = (unit.origin.to_string(), unit.old_no, unit.new_no);
+            match unit.origin {
+                ' ' => {
+                    out_lines.push(format!(" {}", unit.text));
+                    old_count += 1;
+                    new_count += 1;
+                    if let Some(m) = &unit.eof_marker {
+                        out_lines.push(m.clone());
+                    }
+                }
+                '+' => {
+                    if sel.contains(&key) {
+                        out_lines.push(format!("+{}", unit.text));
+                        new_count += 1;
+                        selected_line_count += 1;
+                        if let Some(m) = &unit.eof_marker {
+                            out_lines.push(m.clone());
+                        }
+                    } else if reverse {
+                        // See this function's doc comment: for a REVERSE
+                        // apply, the matched base already genuinely has this
+                        // content — demote to context instead of dropping.
+                        out_lines.push(format!(" {}", unit.text));
+                        old_count += 1;
+                        new_count += 1;
+                        if let Some(m) = &unit.eof_marker {
+                            out_lines.push(m.clone());
+                        }
+                        covers_full_add = false;
+                        covers_full_rename = false;
+                    } else {
+                        // Forward, unselected: drop entirely — no pre-image
+                        // to demote it into. Still a partial selection.
+                        covers_full_rename = false;
+                    }
+                }
+                '-' => {
+                    if sel.contains(&key) {
+                        out_lines.push(format!("-{}", unit.text));
+                        old_count += 1;
+                        selected_line_count += 1;
+                        if let Some(m) = &unit.eof_marker {
+                            out_lines.push(m.clone());
+                        }
+                    } else if reverse {
+                        // See this function's doc comment: for a REVERSE
+                        // apply, this old content was never really part of
+                        // the matched (new-side) base — drop entirely.
+                        covers_full_delete = false;
+                        covers_full_rename = false;
+                    } else {
+                        // Demote to context: the old content persists
+                        // unchanged as far as THIS sub-patch is concerned.
+                        out_lines.push(format!(" {}", unit.text));
+                        old_count += 1;
+                        new_count += 1;
+                        if let Some(m) = &unit.eof_marker {
+                            out_lines.push(m.clone());
+                        }
+                        covers_full_delete = false;
+                        covers_full_rename = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if out_lines.is_empty() {
+            continue;
+        }
+        hunk_count += 1;
+        body.push_str(&format!("@@ -{},{} +{},{} @@\n", fh.old_start, old_count, fh.new_start, new_count));
+        for l in &out_lines {
+            body.push_str(l);
+            if !l.ends_with('\n') {
+                body.push('\n');
+            }
+        }
+    }
+
+    if hunk_count == 0 {
+        return Err("No lines selected.".into());
+    }
+
+    // File-level header — see design §2.5 for why new/deleted/renamed each
+    // need the full git extended header while a plain modification doesn't.
+    let new_path = path_of(delta.new_file().path()).filter(|p| !p.is_empty());
+    let old_path = path_of(delta.old_file().path()).filter(|p| !p.is_empty());
+    let mut header_text = String::new();
+    match delta.status() {
+        // `Untracked` is folded in with `Added` throughout (see
+        // `is_added_delta`'s doc comment above) — a brand-new untracked
+        // file's fully-selected diff needs the SAME "new file mode" +
+        // `/dev/null` header a HEAD-vs-index `Added` delta would get; `git
+        // apply --cached` has no index-side blob to match against otherwise.
+        Delta::Added | Delta::Untracked if covers_full_add => {
+            let p = new_path.clone().unwrap_or_else(|| file.to_string());
+            header_text.push_str(&format!("diff --git a/{p} b/{p}\n"));
+            header_text.push_str(&format!("new file mode {}\n", mode_string(delta.new_file().mode())));
+            header_text.push_str("--- /dev/null\n");
+            header_text.push_str(&format!("+++ b/{p}\n"));
+        }
+        Delta::Added | Delta::Untracked => {
+            // Partial un-add: the file survives as a shorter MODIFIED entry
+            // (mirrors the `Delta::Deleted` partial-delete case below).
+            let p = new_path.clone().unwrap_or_else(|| file.to_string());
+            header_text.push_str(&format!("--- a/{p}\n"));
+            header_text.push_str(&format!("+++ b/{p}\n"));
+        }
+        Delta::Deleted if covers_full_delete => {
+            let p = old_path.clone().unwrap_or_else(|| file.to_string());
+            header_text.push_str(&format!("diff --git a/{p} b/{p}\n"));
+            header_text.push_str(&format!("deleted file mode {}\n", mode_string(delta.old_file().mode())));
+            header_text.push_str(&format!("--- a/{p}\n"));
+            header_text.push_str("+++ /dev/null\n");
+        }
+        Delta::Deleted => {
+            // Partial delete: the file survives as a shorter MODIFIED entry.
+            let p = old_path.clone().unwrap_or_else(|| file.to_string());
+            header_text.push_str(&format!("--- a/{p}\n"));
+            header_text.push_str(&format!("+++ b/{p}\n"));
+        }
+        Delta::Renamed if covers_full_rename => {
+            let op = old_path.clone().unwrap_or_else(|| file.to_string());
+            let np = new_path.clone().unwrap_or_else(|| file.to_string());
+            header_text.push_str(&format!("diff --git a/{op} b/{np}\n"));
+            header_text.push_str(&format!("rename from {op}\n"));
+            header_text.push_str(&format!("rename to {np}\n"));
+            header_text.push_str(&format!("--- a/{op}\n"));
+            header_text.push_str(&format!("+++ b/{np}\n"));
+        }
+        Delta::Renamed => {
+            // Partial: leave the rename (the file's path/identity in the
+            // index) alone, touch only the selected content at its CURRENT
+            // path — see this function's covers_full_rename doc comment for
+            // why asserting the rename here would silently undo it instead.
+            let p = new_path.clone().unwrap_or_else(|| file.to_string());
+            header_text.push_str(&format!("--- a/{p}\n"));
+            header_text.push_str(&format!("+++ b/{p}\n"));
+        }
+        _ => {
+            let p = new_path.clone().or_else(|| old_path.clone()).unwrap_or_else(|| file.to_string());
+            header_text.push_str(&format!("--- a/{p}\n"));
+            header_text.push_str(&format!("+++ b/{p}\n"));
+        }
+    }
+
+    Ok(BuiltPatch { text: format!("{header_text}{body}"), line_count: selected_line_count })
+}
+
+/// Like `git()`, but pipes `patch` to the child's stdin instead of relying on
+/// filesystem paths — needed because the sub-patch built by [`build_sub_patch`]
+/// is dynamically constructed text, never written to disk. Same `Out`
+/// contract as every other mutation in this module.
+fn git_apply_stdin(path: &str, args: &[&str], patch: &str) -> Result<Out, String> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(path).args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("Could not run git: {e}"))?;
+    child
+        .stdin
+        .take()
+        .expect("stdin was requested as piped")
+        .write_all(patch.as_bytes())
+        .map_err(|e| format!("Could not write the patch to git apply's stdin: {e}"))?;
+    let o = child.wait_with_output().map_err(|e| format!("Could not run git: {e}"))?;
+    Ok(Out {
+        ok: o.status.success(),
+        code: o.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        stderr: String::from_utf8_lossy(&o.stderr).trim().to_string(),
+    })
+}
+
+/// Shared body for `stage_lines`/`unstage_lines`/`discard_lines`: pick the
+/// fresh source diff for `dir` (see [`fresh_diff_for_lines`]), validate +
+/// reconstruct the sub-patch for exactly the requested lines (see
+/// [`build_sub_patch`]), then apply it with the ONE `git apply` invocation
+/// that differs per direction (design §2.3):
+///   * Stage:   `git apply --cached --recount -`      (forward, index-only)
+///   * Unstage: `git apply --cached --recount -R -`   (reverse, index-only —
+///     the sub-patch is built from HEAD->index, so reversing walks the index
+///     back toward HEAD for just the selected lines)
+///   * Discard: `git apply --recount -R -`             (reverse, working tree
+///     only — backs up first, same ordering discipline as `discard_file`)
+fn apply_selected_lines(path: &str, file: &str, hunks: &[HunkSelection], dir: LineOpDirection) -> WorkdirResult {
+    if let Err(e) = validate_pathspec(file) {
+        return WorkdirResult::err(e);
+    }
+    if hunks.is_empty() || hunks.iter().all(|h| h.lines.is_empty()) {
+        return WorkdirResult::err("No lines selected.");
+    }
+    let repo = match open_repo(path) {
+        Ok(r) => r,
+        Err(w) => return w,
+    };
+
+    // unstage_lines reads HEAD-vs-index (already fully represents a new
+    // staged file, no widening needed); stage_lines/discard_lines read
+    // index-vs-workdir, widened with include_untracked so a brand-new file's
+    // lines are selectable at all (design §5, item 2).
+    let staged_side = matches!(dir, LineOpDirection::Unstage);
+    let include_untracked = !staged_side;
+
+    let diff = match fresh_diff_for_lines(&repo, staged_side, include_untracked) {
+        Ok(d) => d,
+        Err(e) => return WorkdirResult::err(e),
+    };
+    // `unstage_lines`/`discard_lines` both apply the sub-patch via `git apply
+    // -R` — see `build_sub_patch`'s doc comment for why that flips which side
+    // of an unselected modification pair gets demoted to context.
+    let reverse = matches!(dir, LineOpDirection::Unstage | LineOpDirection::Discard);
+    let built = match build_sub_patch(&diff, file, hunks, reverse) {
+        Ok(b) => b,
+        Err(e) => return WorkdirResult::err(e),
+    };
+    let plural = if built.line_count == 1 { "" } else { "s" };
+
+    match dir {
+        LineOpDirection::Stage => {
+            match git_apply_stdin(path, &["apply", "--cached", "--recount", "-"], &built.text) {
+                Ok(out) if out.ok => WorkdirResult::ok(
+                    format!("Staged {} selected line{plural} in {file}.", built.line_count),
+                    None,
+                ),
+                Ok(out) => WorkdirResult::err(git_msg(&out)),
+                Err(e) => WorkdirResult::err(e),
+            }
+        }
+        LineOpDirection::Unstage => {
+            match git_apply_stdin(path, &["apply", "--cached", "--recount", "-R", "-"], &built.text) {
+                Ok(out) if out.ok => WorkdirResult::ok(
+                    format!("Unstaged {} selected line{plural} in {file}.", built.line_count),
+                    None,
+                ),
+                Ok(out) => WorkdirResult::err(git_msg(&out)),
+                Err(e) => WorkdirResult::err(e),
+            }
+        }
+        LineOpDirection::Discard => {
+            // Destructive — ALWAYS back up first, same ordering discipline as
+            // `discard_file` (see module doc comment). Whole-file backup is
+            // sufficient (and simpler/safer than a selection-only backup —
+            // see design §3): it's a strict superset of what's being
+            // discarded, so replaying it trivially reproduces the exact
+            // pre-discard state.
+            let backup_patch = match backup_tracked_patch(&repo, file, true) {
+                Ok(p) => p,
+                Err(e) => {
+                    return WorkdirResult::err(format!(
+                        "Could not back up {file} before discarding, refusing: {e}"
+                    ))
+                }
+            };
+            match git_apply_stdin(path, &["apply", "--recount", "-R", "-"], &built.text) {
+                Ok(out) if out.ok => WorkdirResult {
+                    ok: true,
+                    message: format!(
+                        "Discarded {} selected line{plural} in {file} (backup: {backup_patch}).",
+                        built.line_count
+                    ),
+                    conflicted_files: Vec::new(),
+                    backup_ref: None,
+                    backup_patch: Some(backup_patch),
+                    dropped_stash_ref: None,
+                },
+                // The backup was already written even though the mutation
+                // itself failed — keep pointing at it, same convention as
+                // `discard_file`'s own failure arms.
+                Ok(out) => WorkdirResult {
+                    ok: false,
+                    message: git_msg(&out),
+                    conflicted_files: Vec::new(),
+                    backup_ref: None,
+                    backup_patch: Some(backup_patch),
+                    dropped_stash_ref: None,
+                },
+                Err(e) => WorkdirResult {
+                    ok: false,
+                    message: e,
+                    conflicted_files: Vec::new(),
+                    backup_ref: None,
+                    backup_patch: Some(backup_patch),
+                    dropped_stash_ref: None,
+                },
+            }
+        }
     }
 }
 
