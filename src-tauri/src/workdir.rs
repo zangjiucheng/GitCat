@@ -765,16 +765,69 @@ fn backup_tracked_patch(repo: &Repository, file: &str) -> Result<String, String>
     Ok(format!("gitgui/discard-backup/{name}"))
 }
 
-/// Back up an UNTRACKED file's raw bytes (nothing to diff against).
+/// Back up an UNTRACKED path's raw bytes (nothing to diff against). Usually a
+/// single file, but NOT always: `git status` reports a directory containing
+/// its own nested `.git` (a git repository — e.g. an orphaned submodule
+/// checkout left behind after a revert/reset removed its gitlink but, same as
+/// real git, couldn't rmdir its populated working tree) as ONE untracked
+/// entry rather than recursing into it, regardless of `recurse_untracked_dirs`
+/// — that boundary is intentional (git/libgit2 never treat another repo's
+/// internals as this one's untracked content). A plain untracked directory
+/// can reach here too. Either way, `fs::read` on a directory path fails with
+/// "Is a directory" — dispatch on the path's actual type instead of assuming
+/// it's always a file.
 fn backup_untracked_bytes(repo: &Repository, workdir_path: &str, file: &str) -> Result<String, String> {
     let src = std::path::Path::new(workdir_path).join(file);
-    let bytes = fs::read(&src).map_err(|e| format!("could not read {file}: {e}"))?;
-
     let dir = discard_backup_dir(repo);
     fs::create_dir_all(&dir).map_err(|e| format!("could not create backup dir: {e}"))?;
-    let name = format!("{}.orig", discard_backup_stem(file));
+    let stem = discard_backup_stem(file);
+
+    // symlink_metadata (NOT metadata, which follows the link) — same
+    // reasoning as backup_submodule_dirty_content's own dangling-symlink fix
+    // in submodule.rs: a broken symlink has no bytes of its own to read, but
+    // recording where it pointed is still a real backup.
+    let meta = fs::symlink_metadata(&src).map_err(|e| format!("could not read {file}: {e}"))?;
+    if meta.file_type().is_symlink() {
+        let target = fs::read_link(&src).map_err(|e| format!("could not read symlink target for {file}: {e}"))?;
+        let name = format!("{stem}.link");
+        fs::write(dir.join(&name), target.to_string_lossy().as_bytes()).map_err(|e| format!("could not write backup: {e}"))?;
+        return Ok(format!("gitgui/discard-backup/{name}"));
+    }
+    if meta.is_dir() {
+        backup_dir_recursive(&src, &dir.join(&stem))?;
+        return Ok(format!("gitgui/discard-backup/{stem}/"));
+    }
+
+    let bytes = fs::read(&src).map_err(|e| format!("could not read {file}: {e}"))?;
+    let name = format!("{stem}.orig");
     fs::write(dir.join(&name), &bytes).map_err(|e| format!("could not write backup: {e}"))?;
     Ok(format!("gitgui/discard-backup/{name}"))
+}
+
+/// Recursively copy `src` (a directory) into `dest` (created if needed),
+/// preserving structure — `backup_untracked_bytes`'s directory case above.
+/// Dangling symlinks are backed up as their target path text, same
+/// convention (and same reason) as that function's own top-level case.
+fn backup_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+    fs::create_dir_all(dest).map_err(|e| format!("could not create {}: {e}", dest.display()))?;
+    for entry in fs::read_dir(src).map_err(|e| format!("could not read {}: {e}", src.display()))? {
+        let entry = entry.map_err(|e| format!("could not read a directory entry under {}: {e}", src.display()))?;
+        let child_src = entry.path();
+        let child_dest = dest.join(entry.file_name());
+        let meta = fs::symlink_metadata(&child_src).map_err(|e| format!("could not read {}: {e}", child_src.display()))?;
+        if meta.file_type().is_symlink() {
+            let target = fs::read_link(&child_src)
+                .map_err(|e| format!("could not read symlink target for {}: {e}", child_src.display()))?;
+            fs::write(&child_dest, target.to_string_lossy().as_bytes())
+                .map_err(|e| format!("could not back up {}: {e}", child_src.display()))?;
+        } else if meta.is_dir() {
+            backup_dir_recursive(&child_src, &child_dest)?;
+        } else {
+            let bytes = fs::read(&child_src).map_err(|e| format!("could not read {}: {e}", child_src.display()))?;
+            fs::write(&child_dest, &bytes).map_err(|e| format!("could not back up {}: {e}", child_src.display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// If `file` is CURRENTLY an unstaged rename (some `old_path` renamed on disk
@@ -927,13 +980,23 @@ pub fn discard_file(path: String, file: String, untracked: bool) -> WorkdirResul
     };
 
     let spec = literal_pathspec(&file);
-    let args: [&str; 4] = if untracked {
-        ["clean", "-f", "--", &spec]
+    // `-d` matters now that the backup above can cover a directory: `git
+    // clean -f` alone silently leaves untracked DIRECTORIES in place (`-d` is
+    // what tells it to remove those, not just untracked files). A SECOND `-f`
+    // matters too, specifically for a directory containing its own nested
+    // `.git` (an orphaned submodule checkout is exactly this shape) — git
+    // silently refuses to remove one of those unless force is given TWICE,
+    // an extra, distinct safety gate on top of `-d` (EMPIRICALLY VERIFIED:
+    // `-f -d` alone leaves it in place with no error, no output). Safe to
+    // pass unconditionally: it's already been backed up above, and `-f -f`
+    // is a no-op for a plain file or an ordinary untracked directory.
+    let result = if untracked {
+        git(&path, &["clean", "-f", "-f", "-d", "--", &spec], false)
     } else {
-        ["restore", "--worktree", "--", &spec]
+        git(&path, &["restore", "--worktree", "--", &spec], false)
     };
 
-    match git(&path, &args, false) {
+    match result {
         Ok(out) if out.ok => WorkdirResult {
             ok: true,
             message: format!("Discarded changes to {file} (backup: {backup_patch})."),

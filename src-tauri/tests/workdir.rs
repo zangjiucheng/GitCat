@@ -148,6 +148,42 @@ fn discard_file_untracked_removes_the_file_and_backs_up_its_bytes() {
 }
 
 #[test]
+fn discard_file_untracked_directory_backs_up_the_tree_and_removes_it() {
+    // Same shape as an orphaned submodule checkout left behind after a
+    // revert/reset removes its gitlink but (same as real git) can't rmdir a
+    // populated nested-.git working tree: `git status` reports the whole
+    // directory as ONE untracked entry (never recursed into — that boundary
+    // is intentional, see backup_untracked_bytes's doc comment), so
+    // discard_file must be able to back up and remove a DIRECTORY, not just
+    // a single file.
+    let repo = TempRepo::init("workdir_discard_untracked_dir");
+    let _c0 = repo.commit("keep.txt", "0\n", "c0");
+    let path = repo.path();
+
+    let nested = repo.dir.join("nested-repo");
+    std::fs::create_dir_all(nested.join("sub")).unwrap();
+    std::process::Command::new("git").args(["init", "-q"]).current_dir(&nested).status().unwrap();
+    std::fs::write(nested.join("file.txt"), "top-level content\n").unwrap();
+    std::fs::write(nested.join("sub/nested.txt"), "nested content\n").unwrap();
+
+    let status = workdir_status(path.clone()).unwrap();
+    assert_eq!(status.unstaged.len(), 1, "the nested repo should show as ONE untracked entry");
+    let entry_path = status.unstaged[0].path.clone();
+    assert_eq!(status.unstaged[0].status, "?");
+
+    let res = discard_file(path.clone(), entry_path, true);
+    assert!(res.ok, "discard_file(untracked dir) failed: {}", res.message);
+    let backup_rel = res.backup_patch.clone().expect("expected a backup_patch path");
+    assert!(backup_rel.ends_with('/'), "a directory backup should itself be a directory: {backup_rel}");
+
+    assert!(!nested.exists(), "the untracked directory should be removed (needs clean -fd, not just -f)");
+
+    let full_backup = repo.open().path().join(backup_rel.trim_end_matches('/'));
+    assert_eq!(std::fs::read_to_string(full_backup.join("file.txt")).unwrap(), "top-level content\n");
+    assert_eq!(std::fs::read_to_string(full_backup.join("sub/nested.txt")).unwrap(), "nested content\n");
+}
+
+#[test]
 fn commit_creates_a_real_commit_and_snapshots_first() {
     let repo = TempRepo::init("workdir_commit");
     let c0 = repo.commit("f.txt", "0\n", "c0");
