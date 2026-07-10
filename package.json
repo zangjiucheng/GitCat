@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "demo": "bash scripts/make-demo-repo.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
