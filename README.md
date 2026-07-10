@@ -68,7 +68,7 @@ pnpm install
 pnpm tauri dev      # launch the app in dev mode
 ```
 
-Want a repo to poke at instead of pointing GitCat at something real? `pnpm demo` builds one at `~/gitcat-demo/repo` with branches, tags, a submodule, stashes, a diverged remote, an unmerged branch that conflicts with `main` on purpose, and a bisectable bug — see `scripts/make-demo-repo.sh` for the full rundown.
+Want a repo to poke at instead of pointing GitCat at something real? `pnpm demo` builds one at `~/gitcat-demo` with branches, tags, a submodule, stashes, a diverged remote, an unmerged branch that conflicts with `main` on purpose, and a bisectable bug — see `scripts/make-demo-repo.sh` for the full rundown.
 
 Other useful commands:
 

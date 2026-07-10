@@ -4,10 +4,11 @@
 # and src-tauri/tests/common, are disposable, and get torn down after each
 # test). This one is meant to sit on disk and be poked at by hand.
 #
-# Layout under the target dir (default: ~/gitcat-demo):
-#   repo/            the actual repo to open in GitCat
+# target-dir itself (default: ~/gitcat-demo) IS the repo — open exactly that
+# folder in GitCat. A sibling target-dir-support/ holds the scaffolding that
+# isn't meant to be opened directly:
 #   origin.git/       a bare remote — makes Fetch/Pull/Push do real work
-#   widget-lib/       a small standalone repo, added into repo/ as a submodule
+#   widget-lib/       a small standalone repo, added into the repo as a submodule
 #
 # Covers: multiple branches, a --no-ff merge, an unmerged branch that WILL
 # conflict with main (drag it onto HEAD in-app to try the conflict resolver),
@@ -23,10 +24,11 @@ usage() {
   cat <<'EOF'
 Usage: scripts/make-demo-repo.sh [target-dir] [--force]
 
-  target-dir   Where to build the demo (default: ~/gitcat-demo)
+  target-dir   Where to build the demo repo itself (default: ~/gitcat-demo)
   --force      Delete an existing target-dir first instead of erroring out
 
-Open target-dir/repo in GitCat when it's done.
+Open target-dir in GitCat when it's done — it IS the repo, not a folder
+containing one.
 EOF
 }
 
@@ -40,20 +42,21 @@ for arg in "$@"; do
   esac
 done
 BASE="${BASE:-$HOME/gitcat-demo}"
+SUPPORT="${BASE}-support"
 
 if [ -e "$BASE" ]; then
   if [ "$FORCE" = 1 ]; then
-    rm -rf "$BASE"
+    rm -rf "$BASE" "$SUPPORT"
   else
     echo "error: $BASE already exists — rerun with --force to rebuild it" >&2
     exit 1
   fi
 fi
-mkdir -p "$BASE"
+mkdir -p "$BASE" "$SUPPORT"
 
-REPO="$BASE/repo"
-ORIGIN="$BASE/origin.git"
-SUBLIB="$BASE/widget-lib"
+REPO="$BASE"
+ORIGIN="$SUPPORT/origin.git"
+SUBLIB="$SUPPORT/widget-lib"
 
 git_id() {
   git -C "$1" config user.name "GitCat Demo"
@@ -263,8 +266,7 @@ echo "scratch" > "$REPO/scratch.txt"
 cat <<EOF
 
 Demo repo ready at: $REPO
-  origin remote:     $ORIGIN
-  submodule source:  $SUBLIB
+  (support files — not a repo to open — live in: $SUPPORT)
 
 Open $REPO in GitCat (File > Open Repo) to explore:
   - branches: main, feature/dark-mode (merged), conflict/rename-roadmap (unmerged — try merging it)
