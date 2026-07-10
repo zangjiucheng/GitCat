@@ -4,7 +4,7 @@ pub mod conflict;
 pub mod filter_repo; // M5c: filter-repo wizard (backup / preview / run / restore)
 pub mod git_pick;
 pub mod git_read;
-pub mod git_remote; // fetch / pull (ff-only) / push / push_tag
+pub mod git_remote; // fetch / pull (ff-only) / push / force_push / push_tag
 pub mod git_remote_manage; // Remote CONFIG CRUD: add/rename/set-url/remove/list (fetch/pull/push/push_tag stay in git_remote.rs — see both modules' own doc comments for why they're split)
 pub mod git_tag; // Tags: create / delete (push_tag lives in git_remote.rs — see its doc comment)
 pub mod git_write;
@@ -80,6 +80,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_remote::pull,
         git_remote::current_upstream,
         git_remote::push,
+        // The one sanctioned "push never forces" exception — see
+        // git_remote.rs's module doc + force_push's own doc comment. The two
+        // Tools-menu/⌘K entries "Force Push (Safe)" / "Force Push (Override
+        // Remote)" call this with lease:true/false respectively; the topbar
+        // Push button/doPush() never does.
+        git_remote::force_push,
         // Remote CONFIG CRUD (add/rename/set-url/remove/list) — a distinct,
         // local-only concern from the network sync above; see
         // git_remote_manage.rs's own doc comment for why it's a separate module.

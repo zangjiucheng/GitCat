@@ -431,6 +431,68 @@ async push(path: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("push", { path });
 },
 /**
+ * The ONE sanctioned exception to this module's "never force" rule (see
+ * module doc above) — added so a branch that's been rebased/amended AFTER
+ * already being pushed has a way to publish the rewritten history at all;
+ * plain `push` is completely unchanged and still never forces anything.
+ * 
+ * Same current-branch resolution as `push` (`repo.head()` -> `is_branch()`
+ * -> `shorthand()`) and the SAME `has_upstream` lookup `push` already does —
+ * but here it's a hard precondition, not a branch point: force-pushing only
+ * makes sense when there's already something on the remote to force over,
+ * so a branch with no configured upstream refuses outright instead of
+ * attempting anything (unlike plain `push`, which happily auto-publishes a
+ * brand-new branch via `--set-upstream`).
+ * 
+ * `lease` selects the flag:
+ * - `true` -> `git push --force-with-lease`: refuses (git's own rejection,
+ * surfaced verbatim, never retried/escalated here) if the remote moved
+ * since this repo last learned about it. The frontend's safer of the two
+ * ("Force Push (Safe)").
+ * - `false` -> `git push --force`: unconditional — whatever is on the
+ * remote is overwritten regardless of whether this repo has ever seen it.
+ * The frontend's "Force Push (Override Remote)", gated behind its OWN,
+ * separately-armed, more severely worded confirmation.
+ * 
+ * Never falls back from lease to raw force on its own: a `--force-with-
+ * lease` rejection is returned to the caller exactly like any other git
+ * refusal; only a genuinely separate call with `lease:false` performs the
+ * raw force — mirroring this module's "never force silently" stance for
+ * plain `push`.
+ * 
+ * No Safety Manager snapshot, for the same reason plain `push` takes none:
+ * this touches only the REMOTE ref, never local HEAD/branch/working-tree
+ * state, so there is nothing local for Undo to protect.
+ * 
+ * Passes an EXPLICIT `<remote> <branch>` (never zero positionals) — an
+ * adversarial review caught that zero positionals lets the user's own
+ * `push.default` config decide what gets pushed. `push.default=matching`
+ * (still a fully legal, non-error config some long-lived `.gitconfig`s
+ * carry) makes a bare `git push --force-with-lease`/`--force` force-push
+ * EVERY local branch that has a same-named remote counterpart, not just
+ * the one this function resolved and the confirm dialog showed — silently
+ * clobbering an unrelated branch's history, or (for the `lease` case)
+ * reporting this call as a failure merely because some OTHER branch's own
+ * push was rejected in the same combined invocation, even when the
+ * intended branch's own push succeeded. Empirically verified (git 2.50.1):
+ * `git push --force-with-lease origin main` correctly confines the
+ * operation to just `main` even under `push.default=matching`. The remote
+ * name is looked up via `branch_upstream_remote` (the real
+ * `branch.<name>.remote` config value) rather than assumed to be "origin",
+ * since a branch can legitimately track any remote.
+ * 
+ * A single bare positional would be misparsed: `git push --force-with-lease
+ * main` (branch name, no remote) fails with "fatal: 'main' does not appear
+ * to be a git repository" — git reads a lone positional as the
+ * `<repository>` destination, not a refspec. `--end-of-options` guards both
+ * positionals from being misread as flags, mirroring `push_tag`'s own
+ * `<remote> <refspec>` shape below.
+ * JS call: `invoke("force_push", { path, lease })`.
+ */
+async forcePush(path: string, lease: boolean) : Promise<RemoteResult> {
+    return await TAURI_INVOKE("force_push", { path, lease });
+},
+/**
  * List every configured remote (name + fetch url + distinct push url, if
  * any). Read-only (git2), mirrors list_refs/submodule_status's own
  * git2-for-reads + `Result<T, String>` convention.

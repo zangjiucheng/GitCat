@@ -116,6 +116,13 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // from the dialog-openers above them.
         let pull_merge = MenuItemBuilder::with_id("pull-merge", "Pull (Merge)").build(app)?;
         let pull_rebase = MenuItemBuilder::with_id("pull-rebase", "Pull (Rebase)").build(app)?;
+        // Force push: TWO separate items (never one item + a checkbox) so a
+        // user can never reach the destructive raw-force action by
+        // fat-fingering the safer lease flow — see git_remote.rs's
+        // `force_push` doc comment and forcepush.svelte.ts.
+        let force_push_lease = MenuItemBuilder::with_id("force-push-lease", "Force Push (Safe)").build(app)?;
+        let force_push_override =
+            MenuItemBuilder::with_id("force-push-override", "Force Push (Override Remote)").build(app)?;
         SubmenuBuilder::new(app, "Tools")
             .item(&bisect)
             .item(&reflog)
@@ -125,6 +132,9 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .separator()
             .item(&pull_merge)
             .item(&pull_rebase)
+            .separator()
+            .item(&force_push_lease)
+            .item(&force_push_override)
             .build()?
     };
 
@@ -167,7 +177,8 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // action — forward the id as a JS event rather than duplicating that
         // logic in Rust.
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
-        | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "pull-merge" | "pull-rebase") => {
+        | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "pull-merge" | "pull-rebase" | "force-push-lease"
+        | "force-push-override") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

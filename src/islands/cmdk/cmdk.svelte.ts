@@ -20,6 +20,7 @@ import { rerereCtrl } from "../rerere/rerere.svelte.ts";
 import { plumbing } from "../plumbing/plumbing.svelte.ts";
 import { remotesCtrl } from "../remotes/remotes.svelte.ts";
 import { resolver } from "../resolver/resolver.svelte.ts";
+import { forcePushCtrl } from "../forcepush/forcepush.svelte.ts";
 import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
 
 export const CMD_CAP = 50;
@@ -71,6 +72,20 @@ const ACTIONS: ActionItem[] = [
     label: "Pull (Rebase)",
     hint: "Fetch, then rebase the current branch onto its upstream",
     run: () => resolver.pullRebase(bridge.CUR_REPO as unknown as string),
+  },
+  {
+    type: "action",
+    id: "force-push-lease",
+    label: "Force Push (Safe)",
+    hint: "--force-with-lease: refuses if the remote moved since the last fetch",
+    run: () => forcePushCtrl.forcePushLease(bridge.CUR_REPO as unknown as string),
+  },
+  {
+    type: "action",
+    id: "force-push-override",
+    label: "Force Push (Override Remote)",
+    hint: "Raw --force: unconditionally overwrites the remote branch",
+    run: () => forcePushCtrl.forcePushOverride(bridge.CUR_REPO as unknown as string),
   },
 ];
 

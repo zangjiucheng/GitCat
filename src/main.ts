@@ -16,6 +16,7 @@ import { plumbing } from "./islands/plumbing/plumbing.svelte.ts";
 import Remotes from "./islands/remotes/Remotes.svelte";
 import { remotesCtrl } from "./islands/remotes/remotes.svelte.ts";
 import { resolver } from "./islands/resolver/resolver.svelte.ts";
+import { forcePushCtrl } from "./islands/forcepush/forcepush.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import Blame from "./islands/blame/Blame.svelte";
@@ -159,6 +160,12 @@ if (IN_TAURI) {
         break;
       case "pull-rebase":
         resolver.pullRebase(bridge.CUR_REPO as unknown as string);
+        break;
+      case "force-push-lease":
+        forcePushCtrl.forcePushLease(bridge.CUR_REPO as unknown as string);
+        break;
+      case "force-push-override":
+        forcePushCtrl.forcePushOverride(bridge.CUR_REPO as unknown as string);
         break;
     }
   });
