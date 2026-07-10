@@ -162,6 +162,15 @@
           detailCtrl.blameFile(f);
         }}>&#128065;</button
       >
+      <button
+        class="wd-act"
+        title="History"
+        aria-label="History {f.p}"
+        onclick={(e) => {
+          e.stopPropagation();
+          detailCtrl.historyFile(f);
+        }}>&#128336;</button
+      >
     </div>
   {/each}
 {/snippet}

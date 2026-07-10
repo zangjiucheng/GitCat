@@ -17,6 +17,7 @@ import * as bridge from "../../legacy/bridge";
 import type { CommitDetail } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { blameCtrl } from "../blame/blame.svelte.ts";
+import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 
 function esc(s: unknown): string {
@@ -365,6 +366,37 @@ class DetailState {
         blameCtrl.openFor(repo, r.data.sha, f.p, f.oldPath);
       } else {
         bridge.tama.warn("Couldn't resolve the parent commit to blame a deleted file.");
+      }
+    } catch (e) {
+      bridge.tama.warn("Couldn't resolve the parent commit — " + e);
+    }
+  }
+
+  // "History" button in the file tree row — sibling of blameFile() above,
+  // resolving the identical (commit, file) pair via the identical
+  // deleted-file `<sha>^` special case (see blameFile's own comment for the
+  // full "which commit's tree do we resolve this path against" reasoning;
+  // not repeated here since it's exactly the same need).
+  async historyFile(f: { p: string; st: string; oldPath: string | null }) {
+    const c = this.commit;
+    if (!c) return;
+    const repo = bridge.CUR_REPO as unknown as string;
+    if (f.st !== "D") {
+      fileHistoryCtrl.openFor(repo, c.sha, f.p, f.oldPath);
+      return;
+    }
+    if (!IN_TAURI) {
+      // design-mode preview: no real parent to resolve — best-effort, same
+      // (commit, file) pair as any other status, just for the canned demo.
+      fileHistoryCtrl.openFor(repo, c.sha, f.p, f.oldPath);
+      return;
+    }
+    try {
+      const r = await commands.plumbingInspect(repo, c.sha + "^");
+      if (r.status === "ok" && r.data.kind === "commit") {
+        fileHistoryCtrl.openFor(repo, r.data.sha, f.p, f.oldPath);
+      } else {
+        bridge.tama.warn("Couldn't resolve the parent commit to show history for a deleted file.");
       }
     } catch (e) {
       bridge.tama.warn("Couldn't resolve the parent commit — " + e);

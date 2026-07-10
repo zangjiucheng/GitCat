@@ -20,6 +20,7 @@ import { forcePushCtrl } from "./islands/forcepush/forcepush.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import Blame from "./islands/blame/Blame.svelte";
+import FileHistory from "./islands/filehistory/FileHistory.svelte";
 import SetupWizard from "./islands/setupwizard/SetupWizard.svelte";
 import { setupWizardCtrl } from "./islands/setupwizard/setupwizard.svelte.ts";
 import Cmdk from "./islands/cmdk/Cmdk.svelte";
@@ -48,6 +49,12 @@ mount(RebasePlan, { target: document.body });
 // directly), so there's no menu entry to wire in src/main.ts's "menu-action"
 // listener below. See blame.svelte.ts's own header doc.
 mount(Blame, { target: document.body });
+// File History (per-file, rename-following commit list) — same direct-call,
+// not-in-the-Tools-menu/⌘K reasoning as Blame immediately above (see
+// filehistory.svelte.ts's own header doc): Detail.svelte's file tree /
+// Workdir.svelte's staged+unstaged rows call fileHistoryCtrl.openFor()
+// directly from a sibling "History" icon button next to each row's Blame one.
+mount(FileHistory, { target: document.body });
 mount(SetupWizard, { target: document.body });
 
 // Setup wizard: auto-opens at boot, ON TOP of the untouched bootEmpty() hero

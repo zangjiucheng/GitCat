@@ -930,6 +930,22 @@ async blameFile(path: string, file: string, atCommit: string | null, ignoreWhite
 }
 },
 /**
+ * Every commit that touched `file` across its lifetime, as of `at_commit`
+ * (HEAD if `None`), continuing through renames (`git log --follow`) rather
+ * than stopping at the file's current name. Read-only. Refuses cleanly for
+ * a path absent from the target commit's tree or a directory-shaped path.
+ * 
+ * JS: `commands.fileHistory(path, file, atCommit)`.
+ */
+async fileHistory(path: string, file: string, atCommit: string | null) : Promise<Result<FileHistory, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("file_history", { path, file, atCommit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Read-only preview shown before the user commits to running filter-repo.
  */
 async filterRepoPreview(path: string, paths: string[], invert: boolean) : Promise<Result<FilterRepoPreview, string>> {
@@ -1293,6 +1309,25 @@ export type FileBlame = { path: string; atSha: string; lang: string; totalLines:
  * (`truncated == true`). `old_path` is set only for renames/copies.
  */
 export type FileChange = { path: string; oldPath: string | null; status: string; additions: number; deletions: number; binary: boolean; truncated: boolean; lang: string; hunks: DiffHunkRow[] }
+/**
+ * Mirrors `FileBlame`'s field-naming style (`path`, `at_sha`, `truncated`).
+ */
+export type FileHistory = { file: string; atSha: string; entries: FileHistoryEntry[]; truncated: boolean }
+/**
+ * One commit in a file's history. Mirrors `CommitMeta`'s abbreviated
+ * per-row field naming (`an`, `sha`+short) rather than `BlameHunkRow`'s
+ * more verbose `author`/`orig_path` — a `FileHistoryEntry` is conceptually
+ * "one row of a small per-commit list", the same shape `CommitMeta` is,
+ * not a per-hunk line annotation.
+ */
+export type FileHistoryEntry = { sha: string; shortSha: string; subject: string; an: Person; path: string; 
+/**
+ * Some(old_path) ONLY on the commit where `--follow` detected this
+ * path was renamed from `old_path` to `path` (an `R###` name-status
+ * line) — None on every other entry, including pre-rename ones (their
+ * `path` is already the old name; there's nothing to annotate there).
+ */
+renamedFrom: string | null }
 /**
  * One backup entry as shown in a "restore from a previous backup" list.
  */

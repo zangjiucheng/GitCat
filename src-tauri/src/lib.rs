@@ -1,6 +1,7 @@
 pub mod blame; // read-only line-annotation (git blame) view
 pub mod commands;
 pub mod conflict;
+pub mod file_history; // read-only per-file commit history, following renames (git log --follow)
 pub mod filter_repo; // M5c: filter-repo wizard (backup / preview / run / restore)
 pub mod git_pick;
 pub mod git_read;
@@ -135,6 +136,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
         plumbing::plumbing_inspect,
         // Blame: read-only line-annotation view of a file at a commit (or HEAD)
         blame::blame_file,
+        // File history: read-only per-file commit list, following renames (git log --follow)
+        file_history::file_history,
         // Filter-repo wizard (M5c): backup+preview / run / restore / list backups
         filter_repo::filter_repo_preview,
         filter_repo::filter_repo_run,

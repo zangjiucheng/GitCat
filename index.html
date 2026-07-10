@@ -1066,6 +1066,33 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:3px 6px}
 .rbp-action:focus{outline:none;border-color:var(--accent)}
 .rbp-action:disabled{opacity:.5;cursor:not-allowed}
+
+/* ============================== FILE HISTORY (rename-following) modal ==============================
+   FileHistory.svelte — opened from a per-row "History" icon button in
+   Detail.svelte's file tree / Workdir.svelte's staged+unstaged rows, as a
+   SIBLING of the existing "Blame" button (see those files' own `.wd-act`
+   markup) — same "never wired through Tools menu/⌘K" reasoning as Blame's own
+   header doc. Just a plain scrollable list (one row per touching commit,
+   newest first), so — like Reflog/Rerere/Plumbing/Manage-Remotes above, not
+   Blame's own wide two-column grid — it needs no wider-than-default modal,
+   only a capped-height scrolling body. `.fh-*` is its own small near-identical
+   list-row copy rather than reusing `.rbp-*`/`.wd-stash-item` verbatim —
+   same per-owning-island CSS-copy convention the Manage Remotes block above
+   already documents (and git_remote_manage.rs's own doc comment describes on
+   the Rust side). */
+.modal.filehistory .modal-body{max-height:60vh;overflow:auto}
+.fh-head-main{min-width:0;flex:1}
+.fh-head-main h3{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fh-list{display:flex;flex-direction:column;gap:1px}
+.fh-row{width:100%;display:flex;align-items:flex-start;gap:10px;padding:6px 8px;border-radius:6px;
+  background:transparent;border:0;cursor:pointer;text-align:left;font:inherit;color:inherit}
+.fh-row:hover{background:var(--elevated)}
+.fh-sha{flex:none;min-width:58px;color:var(--accent);font-size:11px;padding-top:1px}
+.fh-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.fh-subject{font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fh-meta{font-size:10.5px}
+.fh-rename{font-size:10px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fh-caveat{font-size:10px;cursor:help}
 </style>
 
 <div class="app" id="app">
