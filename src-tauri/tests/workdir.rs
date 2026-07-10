@@ -7,6 +7,7 @@ mod common;
 use common::TempRepo;
 use git2::RepositoryState;
 use gitcat_lib::conflict::{conflict_status, resolve_conflict_file};
+use gitcat_lib::git_write::checkout;
 use gitcat_lib::model::DiffHunkRow;
 use gitcat_lib::safety::{list_snapshots, undo};
 use gitcat_lib::workdir::{
@@ -1159,4 +1160,128 @@ fn unstage_lines_on_a_renamed_and_modified_file_preserves_the_rename() {
     assert_eq!(status.staged[0].old_path.as_deref(), Some("old.txt"));
     assert_eq!(status.unstaged.len(), 1, "line 2's now-unstaged edit should show up separately");
     assert_eq!(status.unstaged[0].path, "new.txt");
+}
+
+// ---------------------------------------------------------------------------
+// Backlog #34 (checkout dirty-tree resolution modes): the untracked-restore/
+// auto-drop gap. Mode 1 ("stash, switch, reapply") systematically triggers a
+// shape where an untracked stash entry collides with a path the target
+// branch's checkout makes TRACKED — `git stash pop` then fails with its own
+// stable "could not restore untracked files from stash" and (empirically
+// verified) leaves the stash entry fully intact. When this coincides with a
+// REAL index conflict in some OTHER file, `stash_conflict_continue` must NOT
+// auto-drop the stash once that index conflict is resolved — the untracked
+// content is the ONLY remaining copy, and dropping it would destroy it.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stash_conflict_continue_keeps_the_stash_when_an_untracked_restore_also_failed() {
+    let repo = TempRepo::init("workdir_stash_untracked_restore_gap");
+    let _c0 = repo.commit("a.txt", "base\n", "c0");
+    let _c1 = repo.commit("x.txt", "base\n", "c1: add x.txt");
+    let path = repo.path();
+
+    // feature: changes BOTH a.txt and x.txt (x.txt stays tracked there).
+    repo.must(&["switch", "-q", "-c", "feature"]);
+    repo.commit("a.txt", "feature line\n", "feature changes a.txt");
+    repo.commit("x.txt", "feature x content\n", "feature changes x.txt");
+    repo.must(&["switch", "-q", "main"]);
+
+    // main: x.txt is removed from TRACKING (so it's tracked on feature but not
+    // main), then a DIFFERENT untracked x.txt appears at that same path — the
+    // exact shape that makes a later `stash pop` onto feature unable to
+    // restore it (feature's checkout already put a tracked x.txt there).
+    repo.must(&["rm", "-q", "x.txt"]);
+    repo.must(&["commit", "-q", "-m", "main removes x.txt from tracking"]);
+    std::fs::write(
+        repo.dir.join("x.txt"),
+        "untracked content for x on main, differs from feature\n",
+    )
+    .unwrap();
+    // Also dirty a.txt (unstaged), so popping onto feature ALSO hits a real
+    // index conflict there, independent of x.txt's untracked-restore failure.
+    std::fs::write(repo.dir.join("a.txt"), "base\nmain-side change to a\n").unwrap();
+    assert!(!repo.is_clean());
+
+    let saved = stash_save(path.clone(), Some("pre-switch".into()), Some(true));
+    assert!(saved.ok, "stash_save (with untracked) failed: {}", saved.message);
+    assert!(repo.is_clean());
+
+    let co = checkout(path.clone(), "feature".into());
+    assert!(co.ok, "checkout to feature failed: {}", co.message);
+
+    let popped = stash_pop(path.clone(), 0, None);
+    assert!(!popped.ok, "expected the pop to hit a real index conflict on a.txt");
+    assert_eq!(popped.conflicted_files, vec!["a.txt".to_string()]);
+    // git's own behavior on ANY failed pop: the stash entry is kept.
+    let list = stash_list(path.clone()).expect("stash_list failed");
+    assert_eq!(list.len(), 1, "a failed pop must never drop the stash entry");
+
+    // Resolve the a.txt conflict and stage it.
+    std::fs::write(repo.dir.join("a.txt"), "resolved\n").unwrap();
+    let staged = stage_file(path.clone(), "a.txt".into());
+    assert!(staged.ok, "stage_file failed: {}", staged.message);
+
+    let cont = stash_conflict_continue(path.clone());
+    assert!(cont.ok, "stash_conflict_continue failed: {}", cont.message);
+    assert_eq!(cont.state, "clean");
+    assert!(
+        cont.message.to_lowercase().contains("kept") && cont.message.to_lowercase().contains("not dropped"),
+        "expected the message to explain the stash was deliberately kept, not dropped: {}",
+        cont.message
+    );
+
+    // THE regression check: the stash must NOT have been auto-dropped, since
+    // part of it (the untracked x.txt) could never be restored and would
+    // otherwise be permanently lost by the normal pop-success auto-drop.
+    let list_after = stash_list(path.clone()).expect("stash_list failed");
+    assert_eq!(
+        list_after.len(),
+        1,
+        "the stash entry must be KEPT, not auto-dropped, when an untracked restore also failed"
+    );
+}
+
+/// Sanity companion: WITHOUT any coinciding index conflict, an
+/// untracked-restore failure alone is deliberately left as a standalone,
+/// less-guided-but-safe degrade (see `apply_or_pop`'s own doc comment on
+/// this scope decision) — `stash_pop` surfaces `ok:false` with
+/// `conflicted_files` empty (not the Resolver-shaped conflict path), and the
+/// stash entry is still kept by git itself.
+#[test]
+fn stash_pop_untracked_restore_failure_alone_is_a_plain_error_with_stash_kept() {
+    let repo = TempRepo::init("workdir_stash_untracked_restore_standalone");
+    let _c0 = repo.commit("a.txt", "base\n", "c0");
+    let _c1 = repo.commit("x.txt", "base\n", "c1: add x.txt");
+    let path = repo.path();
+
+    repo.must(&["switch", "-q", "-c", "feature"]);
+    repo.commit("x.txt", "feature x content\n", "feature changes x.txt");
+    repo.must(&["switch", "-q", "main"]);
+
+    repo.must(&["rm", "-q", "x.txt"]);
+    repo.must(&["commit", "-q", "-m", "main removes x.txt from tracking"]);
+    std::fs::write(repo.dir.join("x.txt"), "untracked content on main\n").unwrap();
+
+    let saved = stash_save(path.clone(), Some("pre-switch".into()), Some(true));
+    assert!(saved.ok, "stash_save (with untracked) failed: {}", saved.message);
+    assert!(repo.is_clean());
+
+    let co = checkout(path.clone(), "feature".into());
+    assert!(co.ok, "checkout to feature failed: {}", co.message);
+
+    let popped = stash_pop(path.clone(), 0, None);
+    assert!(!popped.ok, "expected the pop to fail (untracked restore collision)");
+    assert!(
+        popped.conflicted_files.is_empty(),
+        "no index conflict here — must not be routed through the Resolver's conflict path"
+    );
+    assert!(
+        popped.message.to_lowercase().contains("could not restore untracked files from stash"),
+        "expected git's own stable message forwarded verbatim: {}",
+        popped.message
+    );
+
+    let list = stash_list(path.clone()).expect("stash_list failed");
+    assert_eq!(list.len(), 1, "git itself keeps the stash entry when it can't restore untracked files");
 }

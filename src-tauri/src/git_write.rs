@@ -13,7 +13,14 @@
 //! Failure model: write commands return a plain [`WriteResult`] (never a Rust
 //! `Err`), so the JS promise always resolves. A non-zero git exit maps to
 //! `ok:false` with git's trimmed stderr — e.g. a checkout onto a dirty tree
-//! surfaces git's "local changes would be overwritten" verbatim; we never force.
+//! surfaces git's "local changes would be overwritten" verbatim; `checkout`/
+//! `create_branch` never force on their own. When that specific refusal is a
+//! dirty-tree collision, `WriteResult.conflicting_files` is also populated
+//! (parsed from git's own stable prose — see `checkout_collision_files`), so
+//! the frontend can offer backlog #34's dirty-tree resolution chooser instead
+//! of a plain toast; `checkout_discard` is the one command in this module
+//! that DOES force (`git switch --force`), and only when the user explicitly
+//! picks that chooser's most destructive option.
 
 use std::process::Command;
 
@@ -34,14 +41,31 @@ pub struct WriteResult {
     /// Backup ref sealed before the mutation (present on success), so the UI can
     /// name the snapshot the user can Undo to. `None` when we never got to snapshot.
     pub backup_ref: Option<String>,
+    /// Repo-relative paths that made `checkout`/`create_branch(checkout:true)`
+    /// refuse SPECIFICALLY because the dirty working tree/index would be
+    /// overwritten by the switch — see `checkout_collision_files`. Kept
+    /// semantically distinct from `WorkdirResult::conflicted_files` (which
+    /// means "unresolved merge/rebase/stash index conflict"; this means "path
+    /// currently in the way of a checkout, never attempted at all"). Empty on
+    /// success AND on every other kind of refusal (bad ref, name collision,
+    /// detached HEAD edge case, …), so the frontend can tell "show the
+    /// dirty-tree resolution chooser" apart from "just show the plain error
+    /// toast" without doing any prose-matching of its own.
+    pub conflicting_files: Vec<String>,
 }
 
 impl WriteResult {
     fn ok(message: impl Into<String>, backup_ref: Option<String>) -> Self {
-        Self { ok: true, message: message.into(), backup_ref }
+        Self { ok: true, message: message.into(), backup_ref, conflicting_files: Vec::new() }
     }
     fn err(message: impl Into<String>) -> Self {
-        Self { ok: false, message: message.into(), backup_ref: None }
+        Self { ok: false, message: message.into(), backup_ref: None, conflicting_files: Vec::new() }
+    }
+    /// `backup_ref` stays `None` like every other failure in this module
+    /// (convention: an atomic git command either fully succeeds or fully
+    /// no-ops, so a refused one has nothing new for Undo to point at).
+    fn dirty_collision(message: impl Into<String>, files: Vec<String>) -> Self {
+        Self { ok: false, message: message.into(), backup_ref: None, conflicting_files: files }
     }
 }
 
@@ -101,11 +125,20 @@ struct GitOut {
 
 /// Run `git -C <path> <args...>` in the repo workdir, capturing stdout/stderr/exit.
 /// Returns `Err` only when the process could not be spawned at all.
+///
+/// `LC_ALL=C`/`LANGUAGE=""` (mirrors `git_bisect.rs`/`git_revert.rs`'s own
+/// exact precedent): needed so `checkout_collision_files`'s stderr
+/// substring-classification below is reliable regardless of the OS locale —
+/// a side effect is that `create_branch`/`delete_branch`/`rename_branch`'s
+/// forwarded stderr also becomes locale-stable, a deliberate strengthening.
 fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(path)
         .args(args)
+        .env("LC_ALL", "C")
+        .env("LANGUAGE", "")
+        .env("GIT_PAGER", "cat")
         .output()
         .map_err(|e| format!("Could not run git: {e}"))?;
     Ok(GitOut {
@@ -124,6 +157,58 @@ fn git_error_message(out: &GitOut) -> String {
         out.stdout.clone()
     } else {
         format!("git exited with status {:?}", out.code)
+    }
+}
+
+/// Extract the paths that made a `git switch`/`git switch -c` refuse because
+/// the dirty working tree/index would be overwritten. Empty when `stderr`
+/// doesn't match that shape at all (some OTHER refusal — bad ref, name
+/// collision, detached-HEAD edge case, …).
+///
+/// EMPIRICALLY VERIFIED (git 2.x, `LC_ALL=C`): git prints one-or-more
+/// repeated blocks on this refusal, each a header line ending in the
+/// identical literal phrase "would be overwritten by checkout:" followed by
+/// one-or-more TAB-indented path lines, e.g.:
+/// ```text
+/// error: Your local changes to the following files would be overwritten by checkout:
+/// \ta.txt
+/// \tc.txt
+/// Please commit your changes or stash them before you switch branches.
+/// error: The following untracked working tree files would be overwritten by checkout:
+/// \td.txt
+/// Please move or remove them before you switch branches.
+/// Aborting
+/// ```
+/// Both possible headers (tracked-changes vs. untracked-collision) end in
+/// that same suffix, so one substring check catches every block, and since we
+/// only need the UNION of colliding paths (not which block a path came from),
+/// collecting every tab-indented line across the whole stderr is sufficient.
+/// `create_branch`'s `checkout:true` path funnels through the identical
+/// unpack-trees safety check and produces byte-identical wording, so this is
+/// shared by both.
+fn checkout_collision_files(stderr: &str) -> Vec<String> {
+    if !stderr.contains("would be overwritten by checkout") {
+        return Vec::new();
+    }
+    stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix('\t'))
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Shared failure classifier for `checkout` and `create_branch`'s
+/// `checkout:true` path: both run `git switch` (or `git switch -c`) and can
+/// hit the identical dirty-tree collision check, so both need the identical
+/// re-classification of a non-zero exit into either a plain error or a
+/// `dirty_collision` (with the colliding file list attached).
+fn classify_switch_failure(out: &GitOut) -> WriteResult {
+    let files = checkout_collision_files(&out.stderr);
+    if files.is_empty() {
+        WriteResult::err(git_error_message(out))
+    } else {
+        WriteResult::dirty_collision(git_error_message(out), files)
     }
 }
 
@@ -323,7 +408,12 @@ pub fn create_branch(
             ),
             Some(backup),
         ),
-        Ok(out) => WriteResult::err(git_error_message(&out)),
+        // When `switch` is true this can hit the same dirty-tree collision
+        // `checkout` can (byte-identical wording, verified); when `switch` is
+        // false this is a plain `git branch` and can never match the
+        // substring, so classifying unconditionally is safe and simpler than
+        // branching on `switch` here too.
+        Ok(out) => classify_switch_failure(&out),
         Err(e) => WriteResult::err(e),
     }
 }
@@ -354,6 +444,101 @@ pub fn checkout(path: String, name: String) -> WriteResult {
             Some(backup),
         ),
         // dirty-tree: "Your local changes ... would be overwritten by checkout"
+        // (or the untracked-collision sibling) -> classify so the frontend
+        // can offer the dirty-tree resolution chooser instead of a plain
+        // toast; every OTHER refusal still comes back as a plain error.
+        Ok(out) => classify_switch_failure(&out),
+        Err(e) => WriteResult::err(e),
+    }
+}
+
+/// Force-switch to `name` (optionally creating it from `start_point`,
+/// mirroring `create_branch`'s own shape — needed for the sidebar's
+/// `checkoutRemote`'s "new local branch tracking a remote" path), discarding
+/// every local modification/untracked file in the way. This is the "Force
+/// switch, discarding my changes" mode of backlog #34's dirty-tree
+/// resolution chooser — the frontend must only ever call this AFTER a plain
+/// `checkout`/`create_branch` attempt came back with `conflicting_files`
+/// non-empty, and after showing the user that exact colliding-file list (this
+/// command does not repeat it — see below).
+///
+/// `git switch --force` (`-f`) is the flag used, NOT `--discard-changes`:
+/// EMPIRICALLY VERIFIED (see design notes) that `--discard-changes` discards
+/// dirty *tracked* files fine but refuses OUTRIGHT the instant ANY untracked
+/// file collides ("error: Untracked working tree file '<path>' would be
+/// overwritten by merge.", exit 128, nothing touched) — so it cannot back
+/// this mode's promise for the (very common) untracked-collision shape.
+///
+/// BLAST RADIUS — CORRECTED after an adversarial review found the first
+/// draft of this comment wrong: `--force` discards every collision shape
+/// (modified-tracked, staged, deleted+recreated, untracked), but for
+/// TRACKED/staged content it is NOT scoped to the colliding paths alone —
+/// empirically re-verified TWICE (isolated repro + a combined-dirty-shapes
+/// repro) that it reverts EVERY uncommitted tracked/staged change anywhere
+/// in the working tree to the target commit, including files that had
+/// nothing to do with the original checkout refusal (a freshly `git add`-ed
+/// file with no prior history is deleted outright). `--discard-changes` has
+/// the identical scope, so this is a real property of `git switch`'s force
+/// semantics, not a wrong-flag pick — there is no `git switch` mode that
+/// discards only the colliding paths. Only UNTRACKED files are scoped (a
+/// non-colliding untracked file survives untouched, verified) — tracked
+/// content is not. This means the frontend's confirmation copy MUST warn
+/// about the user's ENTIRE current uncommitted tracked/staged state, never
+/// just the originally-colliding file list this command doesn't repeat.
+/// `--force` does all of this completely SILENTLY (exit 0,
+/// `Switched to branch 'x'`, no listing of what was clobbered).
+///
+/// Genuinely irreversible: this discards UNCOMMITTED content with no ref the
+/// Safety Manager could ever pin it under (mirrors `discard_file`'s own
+/// reasoning) — and, unlike the "stash, switch, (re)leave stashed" modes
+/// (both stash-backed and fully recoverable), this deliberately writes no
+/// backup of its own for the discarded content either: giving it one would
+/// blur the three-tier distinction between "recoverable" and "genuinely
+/// final" this feature is built around (mirrors Force Push's "override"
+/// variant's own no-net-cast philosophy).
+///
+/// Still snapshots HEAD first, like every command in this module — NOT to
+/// protect the discarded content (it can't), but for the same reason plain
+/// `checkout` does: so Undo can put HEAD back on the PREVIOUS branch.
+/// JS: `invoke("checkout_discard", { path, name, startPoint })`.
+#[tauri::command]
+#[specta::specta]
+pub fn checkout_discard(path: String, name: String, start_point: Option<String>) -> WriteResult {
+    if let Err(e) = validate_branch_name(&name) {
+        return WriteResult::err(e);
+    }
+    if let Some(sp) = &start_point {
+        if let Err(e) = validate_revision(sp) {
+            return WriteResult::err(e);
+        }
+    }
+    let repo = match open_repo(&path) {
+        Ok(r) => r,
+        Err(w) => return w,
+    };
+    let backup = match take_snapshot(&repo) {
+        Ok(b) => b,
+        Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+    };
+
+    // -c takes <name> as its value; --end-of-options AFTER it still guards <start>.
+    let mut args: Vec<&str> = if start_point.is_some() {
+        vec!["switch", "--force", "-c", &name, "--end-of-options"]
+    } else {
+        vec!["switch", "--force", "--end-of-options", &name]
+    };
+    if let Some(sp) = &start_point {
+        args.push(sp.as_str());
+    }
+
+    match run_git(&path, &args) {
+        Ok(out) if out.ok => WriteResult::ok(
+            format!(
+                "Force-switched to {name}, discarding local changes (snapshot {}).",
+                short_backup(&backup)
+            ),
+            Some(backup),
+        ),
         Ok(out) => WriteResult::err(git_error_message(&out)),
         Err(e) => WriteResult::err(e),
     }

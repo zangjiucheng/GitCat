@@ -91,6 +91,60 @@ async checkout(path: string, name: string) : Promise<WriteResult> {
     return await TAURI_INVOKE("checkout", { path, name });
 },
 /**
+ * Force-switch to `name` (optionally creating it from `start_point`,
+ * mirroring `create_branch`'s own shape — needed for the sidebar's
+ * `checkoutRemote`'s "new local branch tracking a remote" path), discarding
+ * every local modification/untracked file in the way. This is the "Force
+ * switch, discarding my changes" mode of backlog #34's dirty-tree
+ * resolution chooser — the frontend must only ever call this AFTER a plain
+ * `checkout`/`create_branch` attempt came back with `conflicting_files`
+ * non-empty, and after showing the user that exact colliding-file list (this
+ * command does not repeat it — see below).
+ * 
+ * `git switch --force` (`-f`) is the flag used, NOT `--discard-changes`:
+ * EMPIRICALLY VERIFIED (see design notes) that `--discard-changes` discards
+ * dirty *tracked* files fine but refuses OUTRIGHT the instant ANY untracked
+ * file collides ("error: Untracked working tree file '<path>' would be
+ * overwritten by merge.", exit 128, nothing touched) — so it cannot back
+ * this mode's promise for the (very common) untracked-collision shape.
+ * 
+ * BLAST RADIUS — CORRECTED after an adversarial review found the first
+ * draft of this comment wrong: `--force` discards every collision shape
+ * (modified-tracked, staged, deleted+recreated, untracked), but for
+ * TRACKED/staged content it is NOT scoped to the colliding paths alone —
+ * empirically re-verified TWICE (isolated repro + a combined-dirty-shapes
+ * repro) that it reverts EVERY uncommitted tracked/staged change anywhere
+ * in the working tree to the target commit, including files that had
+ * nothing to do with the original checkout refusal (a freshly `git add`-ed
+ * file with no prior history is deleted outright). `--discard-changes` has
+ * the identical scope, so this is a real property of `git switch`'s force
+ * semantics, not a wrong-flag pick — there is no `git switch` mode that
+ * discards only the colliding paths. Only UNTRACKED files are scoped (a
+ * non-colliding untracked file survives untouched, verified) — tracked
+ * content is not. This means the frontend's confirmation copy MUST warn
+ * about the user's ENTIRE current uncommitted tracked/staged state, never
+ * just the originally-colliding file list this command doesn't repeat.
+ * `--force` does all of this completely SILENTLY (exit 0,
+ * `Switched to branch 'x'`, no listing of what was clobbered).
+ * 
+ * Genuinely irreversible: this discards UNCOMMITTED content with no ref the
+ * Safety Manager could ever pin it under (mirrors `discard_file`'s own
+ * reasoning) — and, unlike the "stash, switch, (re)leave stashed" modes
+ * (both stash-backed and fully recoverable), this deliberately writes no
+ * backup of its own for the discarded content either: giving it one would
+ * blur the three-tier distinction between "recoverable" and "genuinely
+ * final" this feature is built around (mirrors Force Push's "override"
+ * variant's own no-net-cast philosophy).
+ * 
+ * Still snapshots HEAD first, like every command in this module — NOT to
+ * protect the discarded content (it can't), but for the same reason plain
+ * `checkout` does: so Undo can put HEAD back on the PREVIOUS branch.
+ * JS: `invoke("checkout_discard", { path, name, startPoint })`.
+ */
+async checkoutDiscard(path: string, name: string, startPoint: string | null) : Promise<WriteResult> {
+    return await TAURI_INVOKE("checkout_discard", { path, name, startPoint });
+},
+/**
  * Delete a branch. Refuses the current branch. `force=false` uses `git branch
  * -d` (refuses an unmerged branch -> surfaced as `ok:false`); `force=true` uses
  * `-D`. The deleted tip sha is included in the success message since M2a Undo
@@ -1869,7 +1923,20 @@ export type WriteResult = { ok: boolean; message: string;
  * Backup ref sealed before the mutation (present on success), so the UI can
  * name the snapshot the user can Undo to. `None` when we never got to snapshot.
  */
-backupRef: string | null }
+backupRef: string | null; 
+/**
+ * Repo-relative paths that made `checkout`/`create_branch(checkout:true)`
+ * refuse SPECIFICALLY because the dirty working tree/index would be
+ * overwritten by the switch — see `checkout_collision_files`. Kept
+ * semantically distinct from `WorkdirResult::conflicted_files` (which
+ * means "unresolved merge/rebase/stash index conflict"; this means "path
+ * currently in the way of a checkout, never attempted at all"). Empty on
+ * success AND on every other kind of refusal (bad ref, name collision,
+ * detached HEAD edge case, …), so the frontend can tell "show the
+ * dirty-tree resolution chooser" apart from "just show the plain error
+ * toast" without doing any prose-matching of its own.
+ */
+conflictingFiles: string[] }
 
 /** tauri-specta globals **/
 

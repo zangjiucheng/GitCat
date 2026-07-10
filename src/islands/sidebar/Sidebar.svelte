@@ -14,6 +14,7 @@
   let newSubmoduleFormEl: HTMLDivElement | undefined = $state();
   let submoduleMenuEl: HTMLDivElement | undefined = $state();
   let mergeMenuEl: HTMLDivElement | undefined = $state();
+  let dirtyCheckoutMenuEl: HTMLDivElement | undefined = $state();
 
   function onWindowPointerdown(e: PointerEvent) {
     if (sidebarCtrl.menu && menuEl && !menuEl.contains(e.target as Node)) sidebarCtrl.closeMenu();
@@ -30,6 +31,7 @@
     if (sidebarCtrl.newSubmoduleOpen && !sidebarCtrl.busy && newSubmoduleFormEl && !newSubmoduleFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewSubmodule();
     if (sidebarCtrl.submoduleMenu && submoduleMenuEl && !submoduleMenuEl.contains(e.target as Node)) sidebarCtrl.closeSubmoduleMenu();
     if (sidebarCtrl.mergeMenu && mergeMenuEl && !mergeMenuEl.contains(e.target as Node)) sidebarCtrl.closeMergeMenu();
+    if (sidebarCtrl.dirtyCheckoutMenu && dirtyCheckoutMenuEl && !dirtyCheckoutMenuEl.contains(e.target as Node)) sidebarCtrl.closeDirtyCheckoutMenu();
   }
 
   $effect(() => {
@@ -161,9 +163,14 @@
           tabindex="0"
           onclick={(e) => {
             if ((e.target as HTMLElement).closest(".ref-menu") || isCur || sidebarCtrl.busy) return;
-            sidebarCtrl.checkout(b.name);
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            sidebarCtrl.checkout(b.name, { x: r.left, y: r.bottom + 4 });
           }}
-          onkeydown={(e) => (e.key === "Enter" || e.key === " ") && !isCur && !sidebarCtrl.busy && sidebarCtrl.checkout(b.name)}
+          onkeydown={(e) => {
+            if ((e.key !== "Enter" && e.key !== " ") || isCur || sidebarCtrl.busy) return;
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            sidebarCtrl.checkout(b.name, { x: r.left, y: r.bottom + 4 });
+          }}
           oncontextmenu={(e) => {
             e.preventDefault();
             if (!sidebarCtrl.busy) sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement);
@@ -253,8 +260,16 @@
             role="button"
             tabindex="0"
             data-tip={r.name}
-            onclick={() => !sidebarCtrl.busy && sidebarCtrl.checkoutRemote(r.name)}
-            onkeydown={(e) => (e.key === "Enter" || e.key === " ") && !sidebarCtrl.busy && sidebarCtrl.checkoutRemote(r.name)}
+            onclick={(e) => {
+              if (sidebarCtrl.busy) return;
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              sidebarCtrl.checkoutRemote(r.name, { x: rect.left, y: rect.bottom + 4 });
+            }}
+            onkeydown={(e) => {
+              if ((e.key !== "Enter" && e.key !== " ") || sidebarCtrl.busy) return;
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              sidebarCtrl.checkoutRemote(r.name, { x: rect.left, y: rect.bottom + 4 });
+            }}
           >
             <span class="dot" style="background:var(--l{gi % 7})"></span><span class="rname">{r.name}</span>
             {#if sidebarCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
@@ -581,7 +596,7 @@
          one of these three actions since the very first version of this
          island: `menu` above isn't a frozen snapshot, it re-derives from the
          live sidebarCtrl.menu state on each read. -->
-    <button disabled={menu.isCurrent} onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.checkout(name); }}>Checkout</button>
+    <button disabled={menu.isCurrent} onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.checkout(name, { x, y }); }}>Checkout</button>
     {#if !menu.isCurrent}
       <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.openMergeMenu(name, x, y); }}>Merge into current&#8230;</button>
       <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.rebaseOnto(name); }}>Rebase current branch onto here</button>
@@ -601,6 +616,49 @@
     <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.mergeInto(name, "no-ff"); }}>Always create a merge commit</button>
     <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.mergeInto(name, "ff-only"); }}>Fast-forward only</button>
     <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.squashInto(name); }}>Squash (no commit)</button>
+  </div>
+{/if}
+
+<!-- Backlog #34: dirty-tree resolution chooser — opened by checkout/
+     checkoutRemote the instant either hits git's dirty-tree collision,
+     instead of the plain toast every OTHER checkout refusal still gets.
+     Reuses `.ref-pop.cm-pop`/`.cm-head` verbatim (CommitMenu.svelte's own
+     "small non-interactive header line" pattern) rather than inventing new
+     CSS. Ordered by increasing risk, most-destructive last, matching the
+     branch/submodule popovers' own Delete/Remove-last convention. -->
+{#if sidebarCtrl.dirtyCheckoutMenu}
+  {@const dcm = sidebarCtrl.dirtyCheckoutMenu}
+  <div class="ref-pop cm-pop" bind:this={dirtyCheckoutMenuEl} style="left:{dcm.x}px;top:{dcm.y}px">
+    <div class="cm-head">
+      <span>{dcm.files.length} file{dcm.files.length === 1 ? "" : "s"} would be overwritten switching to <b>{dcm.name}</b>:</span>
+      <span class="subject" title={dcm.files.join(", ")}>{dcm.files.slice(0, 6).join(", ")}{dcm.files.length > 6 ? "…" : ""}</span>
+    </div>
+    <!-- Capture dcm.name/startPoint/files.length into locals BEFORE
+         closeDirtyCheckoutMenu() nulls sidebarCtrl.dirtyCheckoutMenu — same
+         rationale as every other popover's own capture-before-close comment
+         above. -->
+    <button
+      onclick={() => {
+        const name = dcm.name, sp = dcm.startPoint;
+        sidebarCtrl.closeDirtyCheckoutMenu();
+        sidebarCtrl.stashSwitchReapply(name, sp);
+      }}>Stash, switch, then reapply</button
+    >
+    <button
+      onclick={() => {
+        const name = dcm.name, sp = dcm.startPoint;
+        sidebarCtrl.closeDirtyCheckoutMenu();
+        sidebarCtrl.stashSwitchLeaveStashed(name, sp);
+      }}>Stash, switch, leave stashed</button
+    >
+    <button
+      class="danger"
+      onclick={() => {
+        const name = dcm.name, sp = dcm.startPoint, n = dcm.files.length;
+        sidebarCtrl.closeDirtyCheckoutMenu();
+        sidebarCtrl.forceDiscardCheckout(name, sp, n);
+      }}>Force switch, discarding my changes&#8230;</button
+    >
   </div>
 {/if}
 

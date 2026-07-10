@@ -203,7 +203,7 @@ fn run_lines(path: &str, args: &[&str]) -> Vec<String> {
 #[specta::specta]
 pub fn rerere_set_enabled(path: String, enabled: bool) -> WriteResult {
     if let Err(e) = crate::trust::open_repo(&path) {
-        return WriteResult { ok: false, message: format!("Cannot open repository: {}", e.message()), backup_ref: None };
+        return WriteResult { ok: false, message: format!("Cannot open repository: {}", e.message()), backup_ref: None, conflicting_files: Vec::new() };
     }
     let value = if enabled { "true" } else { "false" };
     match safety::run_git(&path, &["config", "rerere.enabled", value]) {
@@ -211,9 +211,10 @@ pub fn rerere_set_enabled(path: String, enabled: bool) -> WriteResult {
             ok: true,
             message: format!("rerere {} for this repository.", if enabled { "enabled" } else { "disabled" }),
             backup_ref: None,
+            conflicting_files: Vec::new(),
         },
-        Ok(out) => WriteResult { ok: false, message: err_msg(&out), backup_ref: None },
-        Err(e) => WriteResult { ok: false, message: e, backup_ref: None },
+        Ok(out) => WriteResult { ok: false, message: err_msg(&out), backup_ref: None, conflicting_files: Vec::new() },
+        Err(e) => WriteResult { ok: false, message: e, backup_ref: None, conflicting_files: Vec::new() },
     }
 }
 

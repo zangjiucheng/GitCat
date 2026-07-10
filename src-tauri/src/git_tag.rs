@@ -87,11 +87,11 @@ static TAG_SEQ: AtomicU64 = AtomicU64::new(0);
 // ---------------------------------------------------------------------------
 
 fn ok_result(message: impl Into<String>, backup_ref: Option<String>) -> WriteResult {
-    WriteResult { ok: true, message: message.into(), backup_ref }
+    WriteResult { ok: true, message: message.into(), backup_ref, conflicting_files: Vec::new() }
 }
 
 fn err_result(message: impl Into<String>) -> WriteResult {
-    WriteResult { ok: false, message: message.into(), backup_ref: None }
+    WriteResult { ok: false, message: message.into(), backup_ref: None, conflicting_files: Vec::new() }
 }
 
 // ---------------------------------------------------------------------------

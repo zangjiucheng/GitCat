@@ -565,13 +565,13 @@ fn git_error_message(out: &GitOut) -> String {
 }
 
 /// `WriteResult`'s `ok`/`err` constructors are private to `git_write.rs`, so
-/// this module builds the struct literal directly (all 3 fields are `pub`) —
+/// this module builds the struct literal directly (all fields are `pub`) —
 /// same pattern as `git_tag.rs`'s own `ok_result`/`err_result` wrappers.
 fn ok_result(message: impl Into<String>, backup_ref: Option<String>) -> WriteResult {
-    WriteResult { ok: true, message: message.into(), backup_ref }
+    WriteResult { ok: true, message: message.into(), backup_ref, conflicting_files: Vec::new() }
 }
 fn err_result(message: impl Into<String>) -> WriteResult {
-    WriteResult { ok: false, message: message.into(), backup_ref: None }
+    WriteResult { ok: false, message: message.into(), backup_ref: None, conflicting_files: Vec::new() }
 }
 
 /// Reject anything that could be read as a flag or carries a control

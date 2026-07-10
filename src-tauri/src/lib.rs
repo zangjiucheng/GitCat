@@ -44,6 +44,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_write::list_refs,
         git_write::create_branch,
         git_write::checkout,
+        git_write::checkout_discard,
         git_write::delete_branch,
         git_write::rename_branch,
         // Tags: create/delete/push

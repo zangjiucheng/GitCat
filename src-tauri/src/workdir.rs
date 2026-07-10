@@ -1918,6 +1918,23 @@ struct StashConflictState {
     pop: bool,          // true = this was stash_pop (Continue must drop on success)
     index: usize,       // stash@{index} at the moment of the attempt
     stash_sha: String,  // that stash's full sha then, so Continue can re-verify identity
+    /// True when the SAME failed apply/pop ALSO printed git's own stable
+    /// "could not restore untracked files from stash" (an untracked stash
+    /// entry collided with something already at that path — e.g. backlog
+    /// #34's checkout "stash, switch, reapply" mode just checked out a
+    /// branch that made that path TRACKED). EMPIRICALLY VERIFIED: git leaves
+    /// the stash entry fully intact when this happens (the untracked content
+    /// was never written anywhere else), and this is independent of
+    /// `conflicted_files` (nothing about it touches the index, so
+    /// `unmerged_files()` alone can never see it — it can coexist with a
+    /// REAL index conflict in the same failed pop, or occur completely
+    /// alone). `#[serde(default)]` so an OLDER sidecar already on disk (from
+    /// a build before this field existed) still deserializes, defaulting to
+    /// `false` (today's exact pre-existing behavior). `stash_conflict_continue`'s
+    /// pop-branch reads this and refuses to auto-drop when true — dropping
+    /// would permanently destroy the only remaining copy of that content.
+    #[serde(default)]
+    untracked_restore_failed: bool,
 }
 
 fn stash_conflict_state_path(repo: &Repository) -> std::path::PathBuf {
@@ -2015,11 +2032,19 @@ fn apply_or_pop(path: &str, index: usize, pop: bool, expected_sha: Option<String
 
     let conflicts = unmerged_files(path);
     if !conflicts.is_empty() {
+        // See `StashConflictState.untracked_restore_failed`'s own doc comment:
+        // this is independent of `conflicts` (an index-conflict signal) and
+        // can coexist with it in the same failed apply/pop. Reuses the exact
+        // `format!("{} {}", out.stdout, out.stderr)` blob-combining idiom
+        // `stash_save` already uses for its own "no local changes to save"
+        // check.
+        let blob = format!("{} {}", out.stdout, out.stderr);
+        let untracked_restore_failed = blob.contains("could not restore untracked files from stash");
         // Persist what Abort/Continue need — see this module's doc comment on
         // why (RepositoryState stays Clean; there is no git-native marker).
         write_stash_conflict_state(
             &repo,
-            &StashConflictState { backup_ref: backup.clone(), pop, index, stash_sha },
+            &StashConflictState { backup_ref: backup.clone(), pop, index, stash_sha, untracked_restore_failed },
         );
         let n = conflicts.len();
         let verb_label = if pop { "Pop of" } else { "Apply of" };
@@ -2285,6 +2310,25 @@ pub fn stash_conflict_continue(path: String) -> StashResolveResult {
                 conflicted_files: Vec::new(),
                 message: format!(
                     "Conflict resolved. NOTE: stash@{{{}}} no longer matches the popped entry (the stash list changed during the conflict), so it was left AS-IS rather than risk dropping the wrong one — check the stash list.",
+                    state.index
+                ),
+                backup_ref: None,
+            };
+        }
+        // See `StashConflictState.untracked_restore_failed`'s own doc
+        // comment: when the SAME failed pop also couldn't restore an
+        // untracked file (git's own "kept in case you need it again"), the
+        // stash is the ONLY remaining copy of that content — auto-dropping
+        // it here (the normal pop-success behavior) would permanently lose
+        // it, so refuse to drop and say exactly why.
+        if state.untracked_restore_failed {
+            clear_stash_conflict_state(&repo);
+            return StashResolveResult {
+                ok: true,
+                state: "clean".into(),
+                conflicted_files: Vec::new(),
+                message: format!(
+                    "Conflict resolved. NOTE: part of stash@{{{}}} could not be restored earlier (an untracked file collided with something already there) — the stash entry was deliberately KEPT, not dropped, so that content isn't lost. Check the stash list.",
                     state.index
                 ),
                 backup_ref: None,

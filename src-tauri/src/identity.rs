@@ -64,6 +64,7 @@ pub fn set_git_identity(path: String, name: String, email: String) -> WriteResul
             ok: false,
             message: format!("Cannot open repository: {}", e.message()),
             backup_ref: None,
+            conflicting_files: Vec::new(),
         };
     }
     let name = name.trim();
@@ -73,18 +74,20 @@ pub fn set_git_identity(path: String, name: String, email: String) -> WriteResul
             ok: false,
             message: "Name and email must not be empty.".to_string(),
             backup_ref: None,
+            conflicting_files: Vec::new(),
         };
     }
     if let Err(msg) = write_local(&path, "user.name", name) {
-        return WriteResult { ok: false, message: msg, backup_ref: None };
+        return WriteResult { ok: false, message: msg, backup_ref: None, conflicting_files: Vec::new() };
     }
     if let Err(msg) = write_local(&path, "user.email", email) {
-        return WriteResult { ok: false, message: msg, backup_ref: None };
+        return WriteResult { ok: false, message: msg, backup_ref: None, conflicting_files: Vec::new() };
     }
     WriteResult {
         ok: true,
         message: format!("Set identity for this repository: {name} <{email}>."),
         backup_ref: None,
+        conflicting_files: Vec::new(),
     }
 }
 

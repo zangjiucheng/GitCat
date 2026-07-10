@@ -88,6 +88,24 @@
 // blocking sweep would leave it running headlessly against a repo the UI
 // can no longer see or stop.
 
+// Checkout dirty-tree resolution modes (backlog #34, on top of the plain
+// checkout/checkoutRemote that already existed): a dirty-tree collision on
+// `checkout`/`checkoutRemote`'s underlying `create_branch(checkout:true)` now
+// opens `dirtyCheckoutMenu` (see DirtyCheckoutMenu's own doc comment) instead
+// of just toasting git's plain error — 3 explicit, differently-labeled modes,
+// in increasing order of risk: `stashSwitchReapply`/`stashSwitchLeaveStashed`
+// (both pure orchestration of the pre-existing `stash_save`/`checkout`/
+// `create_branch`/`stash_apply`/`stash_pop` — a reapply conflict opens the
+// SAME shared Resolver a stash-pop conflict from the Workdir panel already
+// does, via `resolver.openStashConflict`, no new conflict machinery at all)
+// and `forceDiscardCheckout` (the one genuinely destructive mode, gated
+// behind `armDanger` exactly like Force Push's "override" variant). Matches
+// this codebase's "never silently stash/discard anything" philosophy — every
+// use of the stash mechanism here is an explicit, user-visible choice, and
+// checkout itself never auto-stashes. The plain non-dirty checkout path
+// (still the overwhelming majority) is completely unchanged: one round trip,
+// no extra branching, exactly like before this feature existed.
+
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
@@ -147,6 +165,20 @@ export type SubmoduleMenu = { path: string; status: string; absolutePath: string
 // TagMenu above (no extra per-row info to capture beyond the branch name and
 // where to draw the popover).
 export type MergeMenu = { name: string; x: number; y: number };
+// Backlog #34's dirty-tree resolution chooser — opened when `checkout`/
+// `checkoutRemote` hits git_write.rs's `checkout`/`create_branch` dirty-tree
+// collision (`WriteResult.conflictingFiles` non-empty) instead of just
+// toasting the plain error like every OTHER checkout refusal (bad ref name,
+// detached HEAD edge case, …) still does. `startPoint` mirrors the two shapes
+// `checkout`/`checkoutRemote` can hit this from: `null` for an existing local
+// branch (plain `checkout`), or the remote ref (e.g. "origin/feature-x") for
+// `checkoutRemote`'s "no matching local branch yet" path, which needs
+// `create_branch(..., checkout:true)`/`checkout_discard(..., startPoint)`
+// instead of plain `checkout`/`checkout_discard(..., null)` — see
+// stashSwitchThen/forceDiscardCheckout below, which both branch on this the
+// same way. `files` is `WriteResult.conflictingFiles` verbatim, for the
+// popover's own "N files would be overwritten: …" copy.
+export type DirtyCheckoutMenu = { name: string; startPoint: string | null; files: string[]; x: number; y: number };
 
 // Which action (if any) a submodule row's status affords — a pure, exported
 // function rather than inline template logic so it's directly unit-testable
@@ -281,6 +313,11 @@ class SidebarState {
   // (see `openMergeMenu`), and opening any of THOSE nulls this one back out
   // (see their own bodies below).
   mergeMenu = $state<MergeMenu | null>(null);
+  // Backlog #34's dirty-tree resolution chooser — same "only one popover open
+  // at a time" invariant as menu/tagMenu/submoduleMenu/mergeMenu above (see
+  // openDirtyCheckoutMenu, and every other open* method's own null-out of
+  // this one).
+  dirtyCheckoutMenu = $state<DirtyCheckoutMenu | null>(null);
   newTagOpen = $state(false);
   newTagName = $state("");
   // "" means lightweight (no -a/-m); non-empty means annotated with this
@@ -929,12 +966,24 @@ class SidebarState {
     this.tagMenu = null;
     this.submoduleMenu = null;
     this.mergeMenu = null;
+    this.dirtyCheckoutMenu = null;
     this.hasRepo = false;
     this.foreachResults = [];
     this.foreachCommand = "";
   }
 
-  async checkout(name: string) {
+  // `pos`: the (x, y) to open backlog #34's dirty-tree resolution chooser at,
+  // IF this hits a dirty-tree collision — the row click / "⋮" menu's
+  // Checkout button both already have a position in hand at the moment they
+  // call this (see Sidebar.svelte), so there's no need to re-measure an
+  // anchor element after the fact. Optional (defaults to a fixed fallback
+  // position) so every pre-existing call site/test that doesn't pass one
+  // keeps working unchanged. The plain non-dirty path below (the
+  // overwhelmingly common case) is BYTE-IDENTICAL to before this feature —
+  // one round trip, no extra branching — the new `else if` only ever fires
+  // instead of the pre-existing generic `else` toast, and only for THIS one
+  // specific, previously-unrecoverable refusal.
+  async checkout(name: string, pos?: { x: number; y: number }) {
     if (!IN_TAURI) {
       bridge.tama.set("hint");
       bridge.tama.say("Checked out " + name + " (demo).");
@@ -951,6 +1000,13 @@ class SidebarState {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
         bridge.tama.say("On " + name + " now. にゃ〜", 3200);
+      } else if (res && res.conflictingFiles && res.conflictingFiles.length) {
+        // Dirty-tree collision (git_write.rs's `checkout` classified it via
+        // `classify_switch_failure`) — offer the resolution chooser instead
+        // of just toasting the plain error, like every OTHER refusal still
+        // does below.
+        const p = pos ?? { x: 24, y: 80 };
+        this.openDirtyCheckoutMenu(name, null, res.conflictingFiles, p.x, p.y);
       } else {
         bridge.tama.warn((res && res.message) || "Couldn't check out " + name + " — you may have uncommitted changes.");
       }
@@ -971,12 +1027,17 @@ class SidebarState {
   // via create_branch's existing start_point param — git's default
   // branch.autoSetupMerge sets up tracking automatically since the start
   // point is a remote-tracking ref, no extra plumbing needed here.
-  async checkoutRemote(remoteRef: string) {
+  // `pos`: same rationale as `checkout`'s own doc comment — forwarded
+  // straight through to the `checkout(shortName, pos)` delegate below when a
+  // local branch already exists, and used directly to open the chooser on
+  // this method's OWN dirty-tree collision (the "new local branch tracking a
+  // remote" `create_branch` path) otherwise.
+  async checkoutRemote(remoteRef: string, pos?: { x: number; y: number }) {
     if (this.busy) return;
     const slash = remoteRef.indexOf("/");
     const shortName = slash >= 0 ? remoteRef.slice(slash + 1) : remoteRef;
     if (this.locals.some((b) => b.name === shortName)) {
-      await this.checkout(shortName);
+      await this.checkout(shortName, pos);
       return;
     }
     if (!IN_TAURI) {
@@ -994,8 +1055,190 @@ class SidebarState {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
         bridge.tama.say("On " + shortName + " now, tracking " + remoteRef + ". にゃ〜", 3200);
+      } else if (res && res.conflictingFiles && res.conflictingFiles.length) {
+        // Dirty-tree collision on `create_branch(checkout:true)` — classified
+        // identically to plain `checkout`'s own (see git_write.rs's shared
+        // `classify_switch_failure`). `startPoint: remoteRef` so the chooser's
+        // 3 modes all know to re-create-and-checkout from the remote ref
+        // rather than switch to an already-existing local branch.
+        const p = pos ?? { x: 24, y: 80 };
+        this.openDirtyCheckoutMenu(shortName, remoteRef, res.conflictingFiles, p.x, p.y);
       } else {
         bridge.tama.warn((res && res.message) || "Couldn't check out " + remoteRef + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Checkout failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  // ── Backlog #34: dirty-tree resolution chooser's 3 modes ────────────────
+  // All three are pure ORCHESTRATION of existing commands (`stash_save`,
+  // `checkout`/`create_branch`, `stash_apply`/`stash_pop`, `checkout_discard`)
+  // — no new backend surface needed for modes 1/2 at all (see the design
+  // notes this backlog item shipped with). `startPoint` (`null` for an
+  // existing local branch, a remote ref for `checkoutRemote`'s "new branch"
+  // path) is threaded straight through from `DirtyCheckoutMenu` — see its own
+  // doc comment.
+
+  // Mode 1: "Stash, switch, then reapply". Stashes EVERYTHING (including
+  // untracked — `includeUntracked:true`, so the switch is guaranteed
+  // unblocked no matter which collision shape made it dirty in the first
+  // place), switches, then immediately pops the SAME stash back on top of the
+  // new branch. A reapply conflict is NOT a new conflict kind — it lands in
+  // the exact existing stash-conflict Resolver flow via
+  // `resolver.openStashConflict` (the SAME path workdir.svelte.ts's own
+  // stash-pop button already uses), never any bespoke handling here.
+  async stashSwitchReapply(name: string, startPoint: string | null) {
+    await this.stashThenSwitch(name, startPoint, true);
+  }
+
+  // Mode 2: "Stash, switch, leave stashed" — identical to mode 1 up through
+  // the switch, but deliberately does NOT reapply: the user's changes sit
+  // safely in the stash list (recoverable any time via Manage Stash) instead
+  // of being discarded. This is the SAFE, fully-recoverable analogue of
+  // "discard" — matching this codebase's "never destroy without a net" ethos.
+  async stashSwitchLeaveStashed(name: string, startPoint: string | null) {
+    await this.stashThenSwitch(name, startPoint, false);
+  }
+
+  private async stashThenSwitch(name: string, startPoint: string | null, reapply: boolean) {
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say((reapply ? "Stashed, switched to, and reapplied onto " : "Stashed and switched to ") + name + " (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = name;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Stashing your changes…");
+    try {
+      const repo = bridge.CUR_REPO as unknown as string;
+      // Stash EVERYTHING (tracked + untracked) so the switch below is
+      // guaranteed unblocked regardless of which collision shape (modified,
+      // staged, untracked) made the tree dirty in the first place.
+      const stashRes = await commands.stashSave(repo, "Auto-stash before switching to " + name, true);
+      if (!stashRes.ok) {
+        bridge.tama.warn(stashRes.message || "Couldn't stash your changes — nothing was switched.");
+        return;
+      }
+      bridge.tama.say("Switching to " + name + "…");
+      const switchRes = startPoint
+        ? await commands.createBranch(repo, name, startPoint, true)
+        : await commands.checkout(repo, name);
+      if (!switchRes.ok) {
+        // Genuinely unusual (we just cleared the dirty tree ourselves) — some
+        // OTHER refusal (bad ref, name collision, …). The stash is untouched
+        // and still recoverable via Manage Stash, so say so rather than
+        // implying the changes are gone.
+        bridge.tama.warn((switchRes.message || "Couldn't switch to " + name + ".") + " Your changes are safely stashed — see Manage Stash.");
+        return;
+      }
+      await bridge.reloadGraph(true);
+      if (!reapply) {
+        bridge.tama.set("celebrate");
+        bridge.tama.say("On " + name + " now — your changes are stashed. にゃ〜", 3200);
+        return;
+      }
+      bridge.tama.say("Reapplying your changes…");
+      // Fetch the just-created stash's own sha so stash_pop's optional
+      // identity check (see stash_apply/stash_pop's own doc comment) can
+      // catch a race if something else touched the stash list in between —
+      // it's always stash@{0} here since nothing else has stashed since.
+      let expectedSha: string | null = null;
+      const listRes = await commands.stashList(repo);
+      if (listRes.status === "ok" && listRes.data[0]) expectedSha = listRes.data[0].sha;
+      const popRes = await commands.stashPop(repo, 0, expectedSha);
+      if (popRes.ok) {
+        bridge.tama.set("celebrate");
+        bridge.tama.say("On " + name + " now. にゃ〜", 3200);
+      } else if (popRes.conflictedFiles && popRes.conflictedFiles.length) {
+        // Same shared Resolver merge/pick/rebase/stash conflict already use —
+        // see resolver.svelte.ts's "stash" op entry and workdir.svelte.ts's
+        // applyOrPopStash, which this mirrors exactly.
+        await resolver.openStashConflict(repo, popRes);
+      } else {
+        bridge.tama.warn(popRes.message || "Couldn't reapply your stashed changes — they're kept in the stash list.");
+      }
+    } catch (e) {
+      bridge.tama.warn("Checkout failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  // Mode 3: "Force switch, discarding my changes" — the one genuinely
+  // destructive mode, gated behind the shared armDanger typed-confirm exactly
+  // like Force Push's "override" variant (see forcepush.svelte.ts), with
+  // equally unambiguous, scary copy: unlike modes 1/2 (both stash-backed and
+  // fully recoverable), this is real, permanent data loss with NO recovery
+  // path — `checkout_discard` deliberately writes no backup of the discarded
+  // content (see its own doc comment).
+  // `fileCount` is only the count of files that made the ORIGINAL plain
+  // checkout refuse — NOT the true scope of what this mode discards. An
+  // adversarial review found `git switch --force`'s real blast radius is
+  // every uncommitted tracked/staged change anywhere in the working tree,
+  // not just these `fileCount` colliding paths (see checkout_discard's own
+  // doc comment in git_write.rs for the empirical verification) — so the
+  // copy below deliberately does NOT imply the damage is scoped to
+  // `fileCount` files; it names them for context, then separately and
+  // unconditionally warns about the whole tree.
+  forceDiscardCheckout(name: string, startPoint: string | null, fileCount: number) {
+    const n = fileCount + " file" + (fileCount === 1 ? "" : "s");
+    bridge.tama.set("danger");
+    bridge.tama.say("Switching to " + name + " will DISCARD ALL your uncommitted changes, not just the " + n + " blocking this switch — type the branch name to arm it.", 6000);
+    bridge.armDanger({
+      title: "Force switch — discard changes — " + name,
+      steps: false,
+      desc:
+        "This discards ALL of your uncommitted tracked changes — not just the " +
+        n +
+        " blocking this switch, but anywhere else in the working tree too — and switches to " +
+        name +
+        ", no matter what. Prefer Stash, switch, then reapply (or leave stashed) unless you're certain you don't need any of these changes.",
+      lose:
+        "<h5>What happens</h5><ul><li>Permanently discards ALL of your uncommitted tracked/staged changes across the whole working tree — not just the " +
+        n +
+        " that blocked this switch</li><li>Switches to <code>" +
+        esc(name) +
+        "</code></li></ul>",
+      note:
+        "⚠️ This is NOT recoverable, and it is NOT limited to the " +
+        n +
+        " named above — every uncommitted tracked/staged change in the repository is gone the instant you confirm. Safety Manager/Undo only ever protects committed history, never uncommitted content.",
+      name,
+      confirmLabel: "Discard & switch",
+      onConfirm: async () => {
+        await this.doForceDiscardCheckout(name, startPoint);
+      },
+    });
+  }
+
+  private async doForceDiscardCheckout(name: string, startPoint: string | null) {
+    if (!IN_TAURI) {
+      bridge.tama.set("celebrate");
+      bridge.tama.say("Force-switched to " + name + " (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = name;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Force-switching to " + name + "…");
+    try {
+      const res = await commands.checkoutDiscard(bridge.CUR_REPO as unknown as string, name, startPoint);
+      if (res && res.ok) {
+        await bridge.reloadGraph(true);
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "On " + name + " now.", 3200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't switch to " + name + ".");
       }
     } catch (e) {
       bridge.tama.warn("Checkout failed — " + e);
@@ -1130,6 +1373,7 @@ class SidebarState {
     this.tagMenu = null; // only one popover open at a time
     this.submoduleMenu = null;
     this.mergeMenu = null;
+    this.dirtyCheckoutMenu = null;
     const r = anchor.getBoundingClientRect();
     this.menu = { name, isCurrent, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
@@ -1147,11 +1391,32 @@ class SidebarState {
     this.menu = null; // only one popover open at a time
     this.tagMenu = null;
     this.submoduleMenu = null;
+    this.dirtyCheckoutMenu = null;
     this.mergeMenu = { name, x: Math.min(x, window.innerWidth - 220), y };
   }
 
   closeMergeMenu() {
     this.mergeMenu = null;
+  }
+
+  // Backlog #34's dirty-tree resolution chooser — opened from `checkout`/
+  // `checkoutRemote` the instant either hits a dirty-tree collision (see
+  // DirtyCheckoutMenu's own doc comment), reusing whatever (x, y) the
+  // triggering row/menu-button already had (mirrors openMergeMenu's own
+  // "reuse the caller's already-computed position" shape — there's no
+  // separate anchor element to re-measure here either, since this opens
+  // asynchronously after an IPC round-trip, by which point the originating
+  // click's own popover/row may already be gone).
+  openDirtyCheckoutMenu(name: string, startPoint: string | null, files: string[], x: number, y: number) {
+    this.menu = null; // only one popover open at a time
+    this.tagMenu = null;
+    this.submoduleMenu = null;
+    this.mergeMenu = null;
+    this.dirtyCheckoutMenu = { name, startPoint, files, x: Math.min(x, window.innerWidth - 260), y };
+  }
+
+  closeDirtyCheckoutMenu() {
+    this.dirtyCheckoutMenu = null;
   }
 
   // Auto / always-create-a-merge-commit / fast-forward-only — all three
@@ -1326,6 +1591,7 @@ class SidebarState {
     this.menu = null; // only one popover open at a time
     this.submoduleMenu = null;
     this.mergeMenu = null;
+    this.dirtyCheckoutMenu = null;
     const r = anchor.getBoundingClientRect();
     this.tagMenu = { name, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
@@ -1338,6 +1604,7 @@ class SidebarState {
     this.menu = null; // only one popover open at a time
     this.tagMenu = null;
     this.mergeMenu = null;
+    this.dirtyCheckoutMenu = null;
     const r = anchor.getBoundingClientRect();
     this.submoduleMenu = { path, status, absolutePath, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
