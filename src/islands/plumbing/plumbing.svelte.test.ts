@@ -179,6 +179,41 @@ describe("inspect — real (IN_TAURI) mode", () => {
   });
 });
 
+describe("show / close (Tools menu / ⌘K entry point)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.doMock("../../ipc/env", () => ({ IN_TAURI: true }));
+  });
+
+  it("show() opens the panel without clearing a previous result", async () => {
+    vi.mocked(commands.plumbingInspect).mockResolvedValueOnce(ok(COMMIT));
+    const { plumbing } = await import("./plumbing.svelte.ts");
+    await plumbing.inspect("repo1", "HEAD");
+
+    plumbing.open = false;
+    plumbing.show();
+
+    expect(plumbing.open).toBe(true);
+    expect(plumbing.result).toEqual(COMMIT); // unlike reflog/rerere, nothing to go stale — no re-fetch
+  });
+
+  it("close() is blocked while an inspect is in flight", async () => {
+    const { plumbing } = await import("./plumbing.svelte.ts");
+    plumbing.open = true;
+    plumbing.busy = true;
+    plumbing.close();
+    expect(plumbing.open).toBe(true);
+  });
+
+  it("close() otherwise closes it", async () => {
+    const { plumbing } = await import("./plumbing.svelte.ts");
+    plumbing.open = true;
+    plumbing.close();
+    expect(plumbing.open).toBe(false);
+  });
+});
+
 describe("inspect — demo (!IN_TAURI) mode", () => {
   beforeEach(() => {
     vi.resetModules();

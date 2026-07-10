@@ -96,7 +96,7 @@
         id="cmdkInput"
         bind:this={inputEl}
         type="text"
-        placeholder="Search commits, refs&#8230;"
+        placeholder="Search commits, refs, actions&#8230;"
         spellcheck="false"
         autocomplete="off"
         autocorrect="off"
@@ -121,14 +121,20 @@
       onmousemove={onListMousemove}
     >
       {#if !cmdkCtrl.results.length}
-        <div class="cmdk-empty">{cmdkCtrl.hasData ? "No matching commits or refs" : "No commits loaded — open a repository"}</div>
+        <div class="cmdk-empty">{cmdkCtrl.hasData ? "No matching commits, refs, or actions" : "No commits loaded — open a repository"}</div>
       {:else}
-        {#each cmdkCtrl.results as it, i (it.type + ":" + it.row + ":" + (it.type === "ref" ? it.name : ""))}
+        {#each cmdkCtrl.results as it, i (it.type + ":" + (it.type === "ref" ? it.name : it.type === "action" ? it.id : it.row))}
           <div class="cmdk-row" class:on={i === cmdkCtrl.sel} data-i={i} role="option" aria-selected={i === cmdkCtrl.sel}>
             {#if it.type === "ref"}
               <span class="kind {it.kind}">{it.kind === "head" ? "branch" : it.kind}</span>
               <div class="main"><div class="ttl">{@html cmdkCtrl.hl(it.name)}</div></div>
               <span class="sha">{shortSha(it.sha)}</span>
+            {:else if it.type === "action"}
+              <span class="kind action">action</span>
+              <div class="main">
+                <div class="ttl">{@html cmdkCtrl.hl(it.label)}</div>
+                <div class="sub">{it.hint}</div>
+              </div>
             {:else}
               <span class="kind">commit</span>
               <div class="main">

@@ -1,11 +1,13 @@
 // Plumbing playground (M5b) — controller (Svelte 5 runes singleton).
 //
-// Unlike reflog/rerere, this island is PURE ON-DEMAND: there is nothing to
-// proactively load when the drawer tab opens (no repo-wide state to poll), so
-// there is deliberately NO `refresh(repo)` method here and the drawer-tab-open
-// hook the synthesis step wires for reflog/rerere should NOT be wired for this
-// pane. `inspect(repo, rev)` is the whole surface: it resolves `rev` (a sha,
-// short sha, branch, tag, or any ordinary git rev expression) against the
+// A real .scrim/.modal now, opened on demand (Tools menu / ⌘K — see menu.rs
+// / cmdk.svelte.ts) — it used to render inside an always-visible drawer
+// pane; that drawer is gone (see index.html's own doc comment on the old
+// DRAWER section). Unlike reflog/rerere, `show()` needs no repo argument and
+// there is still no `refresh(repo)`: there's nothing repo-wide to
+// proactively load, only whatever the user types and inspects.
+// `inspect(repo, rev)` is the whole surface: it resolves `rev` (a sha, short
+// sha, branch, tag, or any ordinary git rev expression) against the
 // backend's `plumbing_inspect` command and stores whatever it got back (or an
 // error) for the view to render.
 //
@@ -30,11 +32,25 @@ const DEMO_OBJECT: PlumbingObject = {
 };
 
 class PlumbingState {
+  open = $state(false);
   rev = $state("");
   busy = $state(false);
   demo = $state(false);
   result = $state<PlumbingObject | null>(null);
   error = $state("");
+
+  // Entry point (Tools menu / ⌘K) — deliberately does NOT clear a previous
+  // result/rev: unlike reflog/rerere there's no repo-wide state to go stale,
+  // so reopening on the same commit you just inspected should show it again,
+  // not blank the form.
+  show(): void {
+    this.open = true;
+  }
+
+  close(): void {
+    if (this.busy) return;
+    this.open = false;
+  }
 
   // ── the whole surface: resolve `rev` and store the result (or error) ─────
   async inspect(repo: string | null, rev: string): Promise<void> {

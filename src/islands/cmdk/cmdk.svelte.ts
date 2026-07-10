@@ -6,8 +6,19 @@
 // fetched elsewhere. Jumping to a result reaches directly into the canvas's
 // scroll/select state through the bridge, the same "island pokes the shared
 // canvas state" shape bisect/resolver already use.
+//
+// ACTIONS below are a second, much smaller result kind: the 4 tools that used
+// to live in a permanent bottom drawer (Bisect/Reflog/Rerere/Plumbing — see
+// index.html's own doc comment on the removed DRAWER section) and are now
+// also reachable from here, same peer-island-import precedent
+// bisectdrawer.svelte.ts already established (see that file's own doc
+// comment) rather than routing through legacy/bridge.ts.
 
 import * as bridge from "../../legacy/bridge";
+import { reflogCtrl } from "../reflog/reflog.svelte.ts";
+import { rerereCtrl } from "../rerere/rerere.svelte.ts";
+import { plumbing } from "../plumbing/plumbing.svelte.ts";
+import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
 
 export const CMD_CAP = 50;
 const CMD_BUF = 250;
@@ -15,7 +26,30 @@ const REF_DEFAULT = 12;
 
 type CmdItem = { type: "commit"; row: number; subject: string; sha: string; author: string; hay: string };
 type RefItem = { type: "ref"; name: string; kind: string; row: number; sha: string };
-export type CmdkResult = CmdItem | RefItem;
+type ActionItem = { type: "action"; id: string; label: string; hint: string; run: () => void };
+export type CmdkResult = CmdItem | RefItem | ActionItem;
+
+// Small and fixed — every entry always shown when the query is empty, or
+// matched by label+hint the same way refs/commits are matched by their own
+// text (see matchToks below).
+const ACTIONS: ActionItem[] = [
+  { type: "action", id: "bisect", label: "Bisect", hint: "Find the first bad commit", run: () => openBisectEntry() },
+  {
+    type: "action",
+    id: "reflog",
+    label: "Reflog",
+    hint: "Browse and restore a historical HEAD",
+    run: () => reflogCtrl.show(bridge.CUR_REPO as unknown as string),
+  },
+  {
+    type: "action",
+    id: "rerere",
+    label: "Rerere",
+    hint: "Recorded conflict-resolution status",
+    run: () => rerereCtrl.show(bridge.CUR_REPO as unknown as string),
+  },
+  { type: "action", id: "plumbing", label: "Plumbing", hint: "Inspect a raw commit, tree, blob, or tag", run: () => plumbing.show() },
+];
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
@@ -130,6 +164,9 @@ class CmdkState {
     const toks = trimmed ? trimmed.split(/\s+/) : [];
     this.toks = toks;
     const res: CmdkResult[] = [];
+    for (const a of ACTIONS) {
+      if (!toks.length || matchToks((a.label + " " + a.hint).toLowerCase(), toks)) res.push(a);
+    }
     if (!toks.length) {
       for (let i = 0; i < this.refs.length && res.length < REF_DEFAULT; i++) res.push(this.refs[i]);
     } else {
@@ -173,6 +210,11 @@ class CmdkState {
 
   jump(it: CmdkResult | undefined) {
     if (!it) return;
+    if (it.type === "action") {
+      this.close();
+      it.run();
+      return;
+    }
     const row = it.row;
     this.close();
     const G: any = bridge.G;

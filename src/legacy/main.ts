@@ -1,8 +1,6 @@
 // @ts-nocheck
 import { resolver } from "../islands/resolver/resolver.svelte.ts";
 import { bisectCtrl } from "../islands/bisect/bisect.svelte.ts";
-import { reflogCtrl } from "../islands/reflog/reflog.svelte.ts";
-import { rerereCtrl } from "../islands/rerere/rerere.svelte.ts";
 import { filterRepoCtrl } from "../islands/filterrepo/filterrepo.svelte.ts";
 import { cmdkCtrl } from "../islands/cmdk/cmdk.svelte.ts";
 import { detailCtrl } from "../islands/detail/detail.svelte.ts";
@@ -666,21 +664,8 @@ function highlight(src,lang){const rules=GRAMMARS[lang]||GRAMMARS.generic;let i=
 
 
 /* ============================================================
-   9) TOP BAR + DRAWER + RIBBON + MODALS wiring
+   9) TOP BAR + RIBBON + MODALS wiring
    ============================================================ */
-function ensureDrawerOpen(pane){ app.classList.add("drawer-open");
-  if(pane){ $$(".drawer-tabs .dt").forEach(x=>x.setAttribute("aria-selected",x.dataset.pane===pane));
-    $$(".pane").forEach(p=>p.classList.remove("on")); $("#pane-"+pane).classList.add("on");
-    // Per-pane live refresh on tab select (idempotent, safe to call repeatedly
-    // — see each controller's own refresh() doc). "plumbing" is deliberately
-    // excluded: it is pure on-demand (see plumbing.svelte.ts), nothing to
-    // proactively load when its tab opens.
-    if(pane==="reflog") reflogCtrl.refresh(CUR_REPO);
-    else if(pane==="rerere") rerereCtrl.refresh(CUR_REPO);
-  }
-  requestAnimationFrame(()=>{resize();}); }
-$$(".drawer-tabs .dt").forEach(t=>t.addEventListener("click",()=>ensureDrawerOpen(t.dataset.pane)));
-$("#drawerToggle").addEventListener("click",()=>{ app.classList.toggle("drawer-open"); requestAnimationFrame(()=>resize()); });
 
 // sidebar/detail drag-to-resize — live-updates the .app grid's --sidebar-w/
 // --detail-w custom properties (see the .app rule); the canvas's own
@@ -884,9 +869,6 @@ $("#filterRepoBtn").addEventListener("click",()=>{
 function openScrim(sel){$(sel).classList.add("on");}
 function closeScrim(sel){$(sel).classList.remove("on");}
 document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ disarmDanger(); } });
-// reflog restore is now handled live by the Reflog Svelte island
-// (reflogCtrl.restore(), see src/islands/reflog) — the static demo .log-row
-// markup this used to wire is gone (#pane-reflog is now an island mount point).
 // perf controls
 $("#rowsSel").addEventListener("change",e=>loadGraph(+e.target.value));
 $("#zoomIn").addEventListener("click",()=>zoomAt(view.cssH/2,140));
@@ -1304,7 +1286,7 @@ const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>c
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, hhex, msgOf, AUTHORS,
-  fakeAgo, relTime, pickRepo, closeRepo, ensureDrawerOpen, armDanger, updateBranchPill,
+  fakeAgo, relTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
   // above for the full design) — enterSubmodule/goBackToParent are hoisted

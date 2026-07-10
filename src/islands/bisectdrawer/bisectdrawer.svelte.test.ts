@@ -1,7 +1,8 @@
-// Tests for the bisect DRAWER controller — distinct from bisect.svelte.test.ts,
-// which covers the real in-progress MODAL. This one covers the always-visible
-// drawer's own pre-start row-model (arming good/bad/skip before a real bisect
-// exists) and its sync-from-bisectCtrl bridge functions.
+// Tests for the bisect pre-start floating-panel controller — distinct from
+// bisect.svelte.test.ts, which covers the real in-progress MODAL. This one
+// covers this panel's own pre-start row-model (arming good/bad/skip before a
+// real bisect exists), its open/close/openBisectEntry lifecycle, and its
+// sync-from-bisectCtrl bridge functions.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../legacy/bridge", () => ({
@@ -14,7 +15,6 @@ vi.mock("../../legacy/bridge", () => ({
   clampScroll: (v: number) => (v < 0 ? 0 : v),
   select: vi.fn(),
   requestRedraw: vi.fn(),
-  ensureDrawerOpen: vi.fn(),
   tama: { set: vi.fn(), say: vi.fn(), warn: vi.fn(), event: vi.fn() },
   hhex: (r: number) => "hex" + r,
   msgOf: (r: number) => "msg" + r,
@@ -39,13 +39,22 @@ vi.mock("../bisect/bisect.svelte.ts", () => ({
 
 import * as bridge from "../../legacy/bridge";
 import { bisectCtrl } from "../bisect/bisect.svelte.ts";
-import { bisectDrawerCtrl, syncBisectMarks, focusBisectCurrent, clearBisectMarks, demoBisectStatus, demoBisectMark } from "./bisectdrawer.svelte.ts";
+import {
+  bisectDrawerCtrl,
+  syncBisectMarks,
+  focusBisectCurrent,
+  clearBisectMarks,
+  demoBisectStatus,
+  demoBisectMark,
+  openBisectEntry,
+} from "./bisectdrawer.svelte.ts";
 
 function resetAll() {
   bisectDrawerCtrl.good = null;
   bisectDrawerCtrl.bad = null;
   bisectDrawerCtrl.cur = null;
   bisectDrawerCtrl.skips = new Set();
+  bisectDrawerCtrl.open = false;
   (bisectCtrl as any).running = false;
   (bridge as any).state.selectedRow = -1;
   (bridge as any).BACKEND = null;
@@ -134,13 +143,13 @@ describe("mark", () => {
     expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("Pick a commit"));
   });
 
-  it("marks the selected row good, clearing it from bad if present", () => {
+  it("marks the selected row good, clearing it from bad if present, and opens the panel", () => {
     (bridge as any).state.selectedRow = 4;
     bisectDrawerCtrl.bad = 4;
     bisectDrawerCtrl.mark("good");
     expect(bisectDrawerCtrl.good).toBe(4);
     expect(bisectDrawerCtrl.bad).toBeNull();
-    expect(bridge.ensureDrawerOpen).toHaveBeenCalledWith("bisect");
+    expect(bisectDrawerCtrl.open).toBe(true);
   });
 
   it("marks the selected row bad, clearing it from good if present", () => {
@@ -216,6 +225,52 @@ describe("start", () => {
     bisectDrawerCtrl.good = 3;
     await bisectDrawerCtrl.start();
     expect(bisectCtrl.start).toHaveBeenCalledWith("/repo", "hex0", "hex3");
+  });
+
+  it("closes this floating panel once handing off to the real modal", async () => {
+    mockInTauri = true;
+    bisectDrawerCtrl.open = true;
+    bisectDrawerCtrl.good = 0;
+    bisectDrawerCtrl.bad = 5;
+    await bisectDrawerCtrl.start();
+    expect(bisectDrawerCtrl.open).toBe(false);
+  });
+
+  it("closes this floating panel handing off to the demo modal too", async () => {
+    mockInTauri = false;
+    bisectDrawerCtrl.open = true;
+    bisectDrawerCtrl.good = 0;
+    bisectDrawerCtrl.bad = 10;
+    await bisectDrawerCtrl.start();
+    expect(bisectDrawerCtrl.open).toBe(false);
+  });
+});
+
+describe("show / close", () => {
+  it("show() opens the panel", () => {
+    bisectDrawerCtrl.show();
+    expect(bisectDrawerCtrl.open).toBe(true);
+  });
+
+  it("close() closes it", () => {
+    bisectDrawerCtrl.open = true;
+    bisectDrawerCtrl.close();
+    expect(bisectDrawerCtrl.open).toBe(false);
+  });
+});
+
+describe("openBisectEntry (Tools menu / ⌘K entry point)", () => {
+  it("reopens the real modal when a bisect is already running", () => {
+    (bisectCtrl as any).running = true;
+    openBisectEntry();
+    expect(bisectCtrl.reopen).toHaveBeenCalled();
+    expect(bisectDrawerCtrl.open).toBe(false);
+  });
+
+  it("opens the pre-start panel otherwise", () => {
+    openBisectEntry();
+    expect(bisectCtrl.reopen).not.toHaveBeenCalled();
+    expect(bisectDrawerCtrl.open).toBe(true);
   });
 });
 

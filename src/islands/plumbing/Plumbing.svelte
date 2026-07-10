@@ -40,10 +40,25 @@
     if (k === "tag") return "T";
     return "F";
   }
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && plumbing.open) plumbing.close();
+  }
 </script>
 
-<div class="pl-wrap">
-  <form class="pl-bar" onsubmit={onSubmit}>
+<svelte:window on:keydown={onKeydown} />
+
+<div class="scrim" class:on={plumbing.open}>
+  <div class="modal plumbing">
+    <div class="modal-head">
+      <div>
+        <h3>Plumbing &#8212; inspect a raw object</h3>
+        <p>Type a rev, sha, branch, or tag to see the raw commit, tree, blob, or tag object it resolves to.</p>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="pl-wrap">
+        <form class="pl-bar" onsubmit={onSubmit}>
     <input
       class="pl-input mono"
       type="text"
@@ -149,4 +164,10 @@
       resolves to.
     </div>
   {/if}
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick={() => plumbing.close()}>Close</button>
+    </div>
+  </div>
 </div>

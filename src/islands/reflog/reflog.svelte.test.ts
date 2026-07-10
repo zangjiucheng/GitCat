@@ -53,6 +53,7 @@ function undoResult(partial: Partial<UndoResult>): UndoResult {
 }
 
 function resetCtrl() {
+  reflogCtrl.open = false;
   reflogCtrl.entries = [];
   reflogCtrl.busy = false;
   reflogCtrl.error = "";
@@ -156,6 +157,29 @@ describe("restore — real mode", () => {
     expect(bridge.tama.warn).toHaveBeenCalled();
     expect(bridge.reloadGraph).not.toHaveBeenCalled();
     expect(reflogCtrl.busy).toBe(false);
+  });
+});
+
+describe("show / close (Tools menu / ⌘K entry point)", () => {
+  it("show() opens the panel and re-fetches", async () => {
+    vi.mocked(commands.reflog).mockResolvedValueOnce(ok([E0]));
+    reflogCtrl.show("repo1");
+    expect(reflogCtrl.open).toBe(true);
+    await Promise.resolve(); // let the fire-and-forget refresh() settle
+    expect(commands.reflog).toHaveBeenCalledWith("repo1");
+  });
+
+  it("close() is blocked while a restore is in flight", () => {
+    reflogCtrl.open = true;
+    reflogCtrl.busy = true;
+    reflogCtrl.close();
+    expect(reflogCtrl.open).toBe(true);
+  });
+
+  it("close() otherwise closes it", () => {
+    reflogCtrl.open = true;
+    reflogCtrl.close();
+    expect(reflogCtrl.open).toBe(false);
   });
 });
 

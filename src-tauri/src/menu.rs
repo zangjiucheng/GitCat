@@ -6,12 +6,13 @@
 //    OS/webview, no event ever reaches Rust. These aren't just decorative —
 //    without an Edit menu wiring Cut/Copy/Paste/Select All, those shortcuts
 //    don't work at all in a Tauri webview's text inputs.
-//  - custom (Open Repository…, New Branch…, Fetch/Pull/Push, Toggle Theme,
-//    Command Palette, About, the two Help links): fire a MenuEvent caught in
-//    handle_event() below. The two Help links (GitHub / Report an Issue) are
-//    handled entirely in Rust via the opener plugin; the rest need the
-//    frontend (they're Svelte controller / legacy chrome calls), so they're
-//    forwarded as a "menu-action" JS event — see the listener in src/main.ts.
+//  - custom (Open/Close Repository…, New Branch…, Fetch/Pull/Push, Toggle
+//    Theme, Command Palette, Bisect/Reflog/Rerere/Plumbing, About, the two
+//    Help links): fire a MenuEvent caught in handle_event() below. The two
+//    Help links (GitHub / Report an Issue) are handled entirely in Rust via
+//    the opener plugin; the rest need the frontend (they're Svelte
+//    controller / legacy chrome calls), so they're forwarded as a
+//    "menu-action" JS event — see the listener in src/main.ts.
 //
 // About is deliberately a CUSTOM item, not the native `.about()` menu-builder
 // panel: the OS-rendered About dialog can't be animated or restyled at all,
@@ -98,6 +99,20 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         SubmenuBuilder::new(app, "View").item(&toggle_theme).item(&cmdk).build()?
     };
 
+    let tools_menu = {
+        // No accelerators — same reasoning as Repository's Fetch/Pull/Push and
+        // View's Toggle Theme/Command Palette above. These 4 used to live in
+        // a permanent bottom drawer (4 tabs, always taking up a grid row);
+        // now they're on-demand, opened from here or matched in ⌘K (see
+        // cmdk.svelte.ts) — each forwards through the same menu-action path
+        // as everything else in this file.
+        let bisect = MenuItemBuilder::with_id("bisect", "Bisect\u{2026}").build(app)?;
+        let reflog = MenuItemBuilder::with_id("reflog", "Reflog\u{2026}").build(app)?;
+        let rerere = MenuItemBuilder::with_id("rerere", "Rerere\u{2026}").build(app)?;
+        let plumbing = MenuItemBuilder::with_id("plumbing", "Plumbing\u{2026}").build(app)?;
+        SubmenuBuilder::new(app, "Tools").item(&bisect).item(&reflog).item(&rerere).item(&plumbing).build()?
+    };
+
     let window_menu = SubmenuBuilder::new(app, "Window").minimize().build()?;
 
     let help_menu = {
@@ -119,6 +134,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         .item(&repo_menu)
         .item(&edit_menu)
         .item(&view_menu)
+        .item(&tools_menu)
         .item(&window_menu)
         .item(&help_menu)
         .build()
@@ -135,7 +151,8 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // Everything else is a frontend (Svelte controller / legacy chrome)
         // action — forward the id as a JS event rather than duplicating that
         // logic in Rust.
-        id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about") => {
+        id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
+        | "bisect" | "reflog" | "rerere" | "plumbing") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

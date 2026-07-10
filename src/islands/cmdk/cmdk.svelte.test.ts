@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../legacy/bridge", () => ({
   G: null,
   BACKEND: null,
+  CUR_REPO: null,
   state: { scrollTarget: 0, maxScroll: 1000 },
   layout: { rowH: 22 },
   view: { cssH: 400 },
@@ -24,6 +25,7 @@ vi.mock("../../legacy/bridge", () => ({
 
 import * as bridge from "../../legacy/bridge";
 import { cmdkCtrl } from "./cmdk.svelte.ts";
+import { plumbing } from "../plumbing/plumbing.svelte.ts";
 
 function setBackendGraph(rows: any[]) {
   (bridge as any).G = { N: rows.length };
@@ -75,11 +77,29 @@ describe("show/close/toggle", () => {
 });
 
 describe("filter", () => {
-  it("with no query, falls through to listing loaded commits (no refs in this fixture)", () => {
+  it("with no query, always includes the 4 static tool actions plus loaded commits (no refs in this fixture)", () => {
     setBackendGraph([{ sha: "aaa1111", subject: "Add feature", an: { n: "Dev" }, refs: [] }]);
     cmdkCtrl.show();
+    const kinds = cmdkCtrl.results.map((r: any) => r.type);
+    expect(kinds.filter((t) => t === "action").length).toBe(4);
+    expect(kinds.filter((t) => t === "commit").length).toBe(1);
+  });
+
+  it("matches an action by label", () => {
+    setBackendGraph([{ sha: "aaa1111", subject: "Add feature", an: { n: "Dev" }, refs: [] }]);
+    cmdkCtrl.show();
+    cmdkCtrl.filter("bisect");
     expect(cmdkCtrl.results.length).toBe(1);
-    expect((cmdkCtrl.results[0] as any).type).toBe("commit");
+    expect((cmdkCtrl.results[0] as any).type).toBe("action");
+    expect((cmdkCtrl.results[0] as any).id).toBe("bisect");
+  });
+
+  it("matches an action by hint text too", () => {
+    setBackendGraph([]);
+    cmdkCtrl.show();
+    cmdkCtrl.filter("conflict-resolution");
+    expect(cmdkCtrl.results.length).toBe(1);
+    expect((cmdkCtrl.results[0] as any).id).toBe("rerere");
   });
 
   it("matches a commit by subject token", () => {
@@ -144,9 +164,11 @@ describe("setSel", () => {
     expect(cmdkCtrl.sel).toBe(cmdkCtrl.results.length - 1);
   });
 
-  it("is a no-op (sel stays 0) when there are no results", () => {
+  it("is a no-op (sel stays 0) when there are truly no results (the 4 static actions don't match either)", () => {
     setBackendGraph([]);
     cmdkCtrl.show();
+    cmdkCtrl.filter("zzz-nothing-matches-this-xyz");
+    expect(cmdkCtrl.results.length).toBe(0);
     cmdkCtrl.setSel(3);
     expect(cmdkCtrl.sel).toBe(0);
   });
@@ -164,6 +186,14 @@ describe("jump", () => {
 
   it("does nothing for an undefined item", () => {
     cmdkCtrl.jump(undefined);
+    expect(bridge.select).not.toHaveBeenCalled();
+  });
+
+  it("runs an action item's run() and closes, without touching row-based select/scroll", () => {
+    plumbing.open = false;
+    cmdkCtrl.jump({ type: "action", id: "plumbing", label: "Plumbing", hint: "", run: () => plumbing.show() });
+    expect(cmdkCtrl.open).toBe(false);
+    expect(plumbing.open).toBe(true);
     expect(bridge.select).not.toHaveBeenCalled();
   });
 

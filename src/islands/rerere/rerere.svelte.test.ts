@@ -66,6 +66,7 @@ function writeResult(partial: Partial<WriteResult>): WriteResult {
 }
 
 function resetCtrl() {
+  rerereCtrl.open = false;
   rerereCtrl.vm = null;
   rerereCtrl.busy = false;
   rerereCtrl.demo = false;
@@ -214,6 +215,30 @@ describe("setEnabled", () => {
 
     expect(bridge.tama.warn).toHaveBeenCalledWith("nope");
     expect(commands.rerereStatus).toHaveBeenCalled();
+  });
+});
+
+describe("show / close (Tools menu / ⌘K entry point)", () => {
+  it("show() opens the panel and re-fetches", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.rerereStatus).mockResolvedValueOnce(ok(status({ enabled: true })));
+    rerereCtrl.show("/repo");
+    expect(rerereCtrl.open).toBe(true);
+    await Promise.resolve();
+    expect(commands.rerereStatus).toHaveBeenCalledWith("/repo");
+  });
+
+  it("close() is blocked while busy", () => {
+    rerereCtrl.open = true;
+    rerereCtrl.busy = true;
+    rerereCtrl.close();
+    expect(rerereCtrl.open).toBe(true);
+  });
+
+  it("close() otherwise closes it", () => {
+    rerereCtrl.open = true;
+    rerereCtrl.close();
+    expect(rerereCtrl.open).toBe(false);
   });
 });
 

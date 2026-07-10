@@ -1,7 +1,7 @@
 // Frontend entry. Boot the legacy vanilla app (side-effect import: it builds the
-// canvas, sidebar, drawer, mascot and starts the RAF loop), then mount the
-// Svelte islands over the DOM. Islands render their own scrim markup into
-// <body>, so the old #conflictScrim / #bisectScrim blocks are gone from the HTML.
+// canvas, sidebar, mascot and starts the RAF loop), then mount the Svelte
+// islands over the DOM. Islands render their own scrim markup into <body>,
+// so the old #conflictScrim / #bisectScrim blocks are gone from the HTML.
 import "./legacy/main.ts";
 import { mount } from "svelte";
 import Resolver from "./islands/resolver/Resolver.svelte";
@@ -12,6 +12,7 @@ import { reflogCtrl } from "./islands/reflog/reflog.svelte.ts";
 import Rerere from "./islands/rerere/Rerere.svelte";
 import { rerereCtrl } from "./islands/rerere/rerere.svelte.ts";
 import Plumbing from "./islands/plumbing/Plumbing.svelte";
+import { plumbing } from "./islands/plumbing/plumbing.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import SetupWizard from "./islands/setupwizard/SetupWizard.svelte";
@@ -24,6 +25,7 @@ import { aboutCtrl } from "./islands/about/about.svelte.ts";
 import Detail from "./islands/detail/Detail.svelte";
 import { workdirCtrl } from "./islands/workdir/workdir.svelte.ts";
 import BisectDrawer from "./islands/bisectdrawer/BisectDrawer.svelte";
+import { openBisectEntry } from "./islands/bisectdrawer/bisectdrawer.svelte.ts";
 import Sidebar from "./islands/sidebar/Sidebar.svelte";
 import { sidebarCtrl } from "./islands/sidebar/sidebar.svelte.ts";
 import { IN_TAURI } from "./ipc/env";
@@ -64,27 +66,25 @@ mount(About, { target: document.body });
 // `#detail` node would render the staging panel twice whenever
 // `workdirCtrl.selected` is true. One mount point, one source of truth.
 mount(Detail, { target: document.getElementById("detail")! });
-mount(BisectDrawer, { target: document.getElementById("pane-bisect")! });
+// Bisect's pre-start floating panel — see index.html's own doc comment on
+// the removed DRAWER section for why this (and Reflog/Rerere/Plumbing
+// below) are no longer mounted into a permanent drawer pane. MUST mount
+// inside #canvasWrap, not document.body: its position:absolute floats
+// relative to that element, same as #deltaReadout/.hint.
+mount(BisectDrawer, { target: document.getElementById("bisectPanelMount")! });
 
 mount(Sidebar, { target: document.getElementById("sidebarRefs")! });
 sidebarCtrl.refresh(bridge.CUR_REPO as unknown as string);
 
-// Drawer-PANE islands (not modals): mounted straight into their own pane so
-// the existing .pane/.pane.on show/hide + drawer-tabs wiring in legacy/main.ts
-// governs visibility. The initial refresh() calls below cover the case where
-// a repo is already open by the time these mount (or, in browser design mode,
-// seed each pane's demo data immediately); ensureDrawerOpen's per-tab hook
-// (see legacy/main.ts) keeps reflog/rerere live afterward on every tab click.
-mount(Reflog, { target: document.getElementById("pane-reflog")! });
-reflogCtrl.refresh(bridge.CUR_REPO);
-
-mount(Rerere, { target: document.getElementById("pane-rerere")! });
-rerereCtrl.refresh(bridge.CUR_REPO);
-
-// Plumbing is pure on-demand (no refresh() method exists — see
-// plumbing.svelte.ts) so it only needs a mount, never an initial data call.
-const plumbingPane = document.getElementById("pane-plumbing");
-if (plumbingPane) mount(Plumbing, { target: plumbingPane });
+// Reflog/Rerere/Plumbing: on-demand modals now (Tools menu / ⌘K — see
+// menu.rs / cmdk.svelte.ts), each opened via its own controller's show()
+// rather than mounted into a drawer pane that was always present. No initial
+// refresh() call needed here either — show() always re-fetches fresh (see
+// each controller's own doc comment), so there's nothing useful to preload
+// before the user actually opens one.
+mount(Reflog, { target: document.body });
+mount(Rerere, { target: document.body });
+mount(Plumbing, { target: document.body });
 
 // Native app menu -> frontend action bridge (see src-tauri/src/menu.rs).
 // Only the items whose action lives in Svelte-controller land forward here —
@@ -123,6 +123,18 @@ if (IN_TAURI) {
         break;
       case "about":
         aboutCtrl.show();
+        break;
+      case "bisect":
+        openBisectEntry();
+        break;
+      case "reflog":
+        reflogCtrl.show(bridge.CUR_REPO as unknown as string);
+        break;
+      case "rerere":
+        rerereCtrl.show(bridge.CUR_REPO as unknown as string);
+        break;
+      case "plumbing":
+        plumbing.show();
         break;
     }
   });

@@ -1,23 +1,31 @@
-// Bisect drawer chrome — controller (Svelte 5 runes singleton).
+// Bisect pre-start floating panel — controller (Svelte 5 runes singleton).
 //
 // This is DIFFERENT from bisectCtrl (src/islands/bisect/bisect.svelte.ts),
 // which owns the real in-progress MODAL (good/bad/skip talking to the
-// backend). This controller owns the always-visible DRAWER pane's own
-// pre-start state: letting the user "arm" candidate good/bad rows and see
-// the narrowing range directly on the canvas BEFORE a real bisect exists.
-// `bisectCtrl` only syncs INTO this local row-model (via syncBisectMarks/
-// focusBisectCurrent/clearBisectMarks/demoBisectStatus/demoBisectMark, all
-// re-pointed here from legacy/bridge.ts) once a real bisect is running or in
-// demo mode — this is a peer import (bisectCtrl calls through bridge.*,
-// legacy/main.ts imports bisectDrawerCtrl directly), the first instance of
-// one island importing another, same shape as legacy's existing direct-
-// singleton-import convention.
+// backend). This controller owns the pre-start state: letting the user
+// "arm" candidate good/bad rows and see the narrowing range directly on the
+// canvas BEFORE a real bisect exists. `bisectCtrl` only syncs INTO this local
+// row-model (via syncBisectMarks/focusBisectCurrent/clearBisectMarks/
+// demoBisectStatus/demoBisectMark, all re-pointed here from legacy/bridge.ts)
+// once a real bisect is running or in demo mode — this is a peer import
+// (bisectCtrl calls through bridge.*, legacy/main.ts imports bisectDrawerCtrl
+// directly), the first instance of one island importing another, same shape
+// as legacy's existing direct-singleton-import convention.
+//
+// Used to render inside an always-visible drawer pane; that drawer is gone
+// (see index.html's own doc comment on the old DRAWER section) in favor of
+// `open` below — a small floating panel over the canvas (Tools menu / ⌘K,
+// via the exported openBisectEntry()), deliberately NOT a .scrim modal: a
+// full-screen scrim would block the very canvas clicks this step exists to
+// collect.
 //
 // The canvas RAF loop (legacy/main.ts's draw()) reads active()/skips/cur
 // directly, every frame, to recolor the candidate range and current-test dot
 // — that read happens outside Svelte's reactivity (draw() isn't a component),
 // but $state fields are plain reactive values, readable synchronously from
-// anywhere, so a plain property/getter read works exactly like before.
+// anywhere, so a plain property/getter read works exactly like before. That
+// part is UNCHANGED by open/show/close below: the canvas cues work purely
+// off good/bad/cur/skips and don't care whether the panel is visible.
 
 import * as bridge from "../../legacy/bridge";
 import { bisectCtrl } from "../bisect/bisect.svelte.ts";
@@ -34,10 +42,23 @@ export type BisectTerm = "good" | "bad" | "skip";
 const DEFAULT_HINT = 'Select a commit in the graph, then mark it <b>good</b> or <b>bad</b> to narrow the range on the canvas.';
 
 class BisectDrawerState {
+  open = $state(false);
   good = $state<number | null>(null);
   bad = $state<number | null>(null);
   cur = $state<number | null>(null);
   skips = $state<Set<number>>(new Set());
+
+  // Opens the floating panel — called directly (mark/start below already
+  // wanted "ensure this is visible" for the same reasons) and from
+  // openBisectEntry() at the bottom of this file (the Tools menu / ⌘K entry
+  // point).
+  show(): void {
+    this.open = true;
+  }
+
+  close(): void {
+    this.open = false;
+  }
 
   active(): Range | null {
     if (this.good == null || this.bad == null) return null;
@@ -122,7 +143,7 @@ class BisectDrawerState {
     } else {
       this.skips = new Set(this.skips).add(r);
     }
-    bridge.ensureDrawerOpen("bisect");
+    this.show();
     bridge.requestRedraw();
     bridge.tama.set("hint");
     bridge.tama.say("Marked " + bridge.hhex(r) + " " + term + ".");
@@ -147,7 +168,7 @@ class BisectDrawerState {
     let badR = this.bad;
     if (badR == null) badR = 0; // convenience: known-bad defaults to HEAD (row 0)
     if (goodR == null) {
-      bridge.ensureDrawerOpen("bisect");
+      this.show();
       bridge.tama.set("hint");
       bridge.tama.say("Select a known-good commit and press Mark good, then Start bisect.");
       return;
@@ -155,6 +176,9 @@ class BisectDrawerState {
     const BACKEND: any = bridge.BACKEND;
     const goodSha = BACKEND && BACKEND.rows[goodR] ? BACKEND.rows[goodR].sha : bridge.hhex(goodR);
     const badSha = BACKEND && BACKEND.rows[badR] ? BACKEND.rows[badR].sha : bridge.hhex(badR);
+    // The real/demo bisectCtrl modal takes over from here — close this
+    // floating panel so it isn't left sitting behind that full scrim.
+    this.close();
     if (!IN_TAURI) {
       // ---- design-mode demo -> bisectCtrl's modal ----
       this.good = goodR;
@@ -287,4 +311,16 @@ export function demoBisectStatus() {
 }
 export function demoBisectMark(term: BisectTerm) {
   return bisectDrawerCtrl.demoBisectMark(term);
+}
+
+// Tools menu / ⌘K entry point (src/main.ts, cmdk.svelte.ts): reopen the real
+// bisectCtrl modal if one's already running (same dispatch start() above
+// already does when clicked mid-bisect), otherwise open this panel so the
+// user can arm good/bad by clicking the canvas.
+export function openBisectEntry(): void {
+  if (bisectCtrl.running) {
+    bisectCtrl.reopen();
+    return;
+  }
+  bisectDrawerCtrl.show();
 }

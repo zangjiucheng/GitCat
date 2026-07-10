@@ -68,10 +68,8 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 /* ============================== APP GRID ============================== */
 .app{height:100vh;display:grid;
   grid-template-columns:var(--sidebar-w) minmax(0,1fr) var(--detail-w);
-  grid-template-rows:var(--topbar-h) minmax(0,1fr) var(--drawer-h,40px);
-  grid-template-areas:"topbar topbar topbar" "sidebar graph detail" "drawer drawer drawer";
-  transition:grid-template-rows .28s cubic-bezier(.2,.7,.2,1)}
-.app.drawer-open{--drawer-h:300px}
+  grid-template-rows:var(--topbar-h) minmax(0,1fr);
+  grid-template-areas:"topbar topbar topbar" "sidebar graph detail"}
 /* graceful degradation for narrower windows so the graph keeps room */
 @media (max-width:1180px){:root{--sidebar-w:224px;--detail-w:300px}}
 @media (max-width:980px){:root{--sidebar-w:200px;--detail-w:264px}}
@@ -656,16 +654,18 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .wd-stash-form .wd-amend{flex:1}
 .wd-stash-form.busy input{opacity:.6}
 
-/* ============================== DRAWER ============================== */
-.drawer{grid-area:drawer;min-height:0;background:var(--panel);border-top:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
-.drawer-tabs{display:flex;align-items:center;gap:2px;padding:6px 10px;border-bottom:1px solid var(--border);flex:none}
-.drawer-tabs .dt{padding:5px 12px;border-radius:var(--r-control);color:var(--muted);font-weight:600;border:1px solid transparent;background:transparent}
-.drawer-tabs .dt[aria-selected="true"]{background:var(--elevated);border-color:var(--border);color:var(--text)}
-.drawer-tabs .x{width:26px;height:26px;display:grid;place-items:center;border-radius:6px;border:1px solid var(--border);background:var(--elevated);color:var(--muted)}
-.drawer-tabs .x .cev{transition:transform .2s}
-.app.drawer-open .drawer-tabs .x .cev{transform:rotate(180deg)}
-.drawer-body{flex:1;min-height:0;overflow:auto;padding:12px 14px}
-.pane{display:none} .pane.on{display:block}
+/* ============================== BISECT / REFLOG / RERERE / PLUMBING content
+   ============================================================================
+   These used to render inside a persistent bottom drawer (4 tabs, always
+   taking up a grid row) — removed in favor of the Tools menu + ⌘K (see
+   menu.rs / cmdk.svelte.ts): Reflog/Rerere/Plumbing are now on-demand modals
+   (.scrim/.modal, exactly like every other one-shot dialog in this file —
+   see e.g. RebasePlan's own doc comment), and Bisect's pre-start "arm good/
+   bad by clicking the canvas" step is now a floating, non-blocking panel
+   (.bisect-panel below) instead — a real modal scrim would block exactly the
+   canvas clicks that step needs. Only the CHASSIS (the tab bar, the
+   show/hide-by-class-toggle pane wrapper) is gone; every rule below this
+   point still styles the same content, just inside a different container. */
 .bisect-ctl{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
 .bx{padding:6px 12px;border-radius:var(--r-control);border:1px solid var(--border);background:var(--elevated);font-weight:600}
 .bx.good{color:var(--success);border-color:color-mix(in srgb,var(--success) 45%,transparent)}
@@ -707,6 +707,36 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .pl-msg{font-family:var(--mono);font-size:12px;line-height:1.55;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-panel);padding:10px 12px;white-space:pre-wrap;word-break:break-word;margin-top:4px;max-height:280px;overflow:auto}
 .pl-tree{max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:var(--r-panel);background:var(--bg);padding:4px}
 .who-split.single{grid-template-columns:1fr}
+
+/* ============================== REFLOG / RERERE / PLUMBING modals ==============================
+   Each just wraps that island's existing content (unchanged from its old
+   drawer-pane markup) in the shared .scrim/.modal chrome — a plain list or
+   form, same "open it, do a thing, close it" shape as e.g. RebasePlan, so
+   none of them need a wider-than-default modal. */
+.modal.reflog .modal-body,.modal.rerere .modal-body{max-height:60vh;overflow:auto}
+.modal.plumbing{width:min(640px,96vw)}
+
+/* ============================== BISECT floating panel ==============================
+   The pre-start "arm good/bad by clicking a commit on the canvas" step —
+   opened via the Tools menu / ⌘K (bisectDrawerCtrl.show()), closed once a
+   real bisect starts (bisectCtrl's own full .scrim modal takes over) or via
+   the × below. Deliberately NOT a .scrim modal: that would block the very
+   canvas clicks this step exists to collect. Floats over the canvas exactly
+   like .hint/.delta-readout already do (position:absolute inside
+   .canvas-wrap, not position:fixed) — bottom-right, the one corner neither
+   of those two already occupies. 92% opaque background, NOT the 70% this
+   file used to use for .hint before a real commit row scrolling underneath
+   it turned out to bleed through — see that fix's own commit for why 92% is
+   this app's established floor for a fixed-position chip over arbitrary
+   canvas content. */
+.bisect-panel{position:absolute;right:14px;bottom:10px;z-index:7;width:min(320px,calc(100% - 28px));
+  background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--border);
+  border-radius:var(--r-panel);box-shadow:var(--shadow);padding:12px 14px;display:none}
+.bisect-panel.on{display:block}
+.bisect-panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-weight:600}
+.bisect-panel-head .x{width:22px;height:22px;display:grid;place-items:center;border-radius:6px;
+  border:1px solid var(--border);background:var(--elevated);color:var(--muted)}
+.bisect-panel-head .x:hover{border-color:var(--muted);color:var(--text)}
 
 /* ============================== MODALS ============================== */
 .scrim{position:fixed;inset:0;z-index:300;background:rgba(18,20,28,.62);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;padding:24px}
@@ -881,6 +911,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   color:var(--muted);border:1px solid var(--border);border-radius:var(--r-chip);padding:2px 0}
 .cmdk-row .kind.head{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 50%,var(--border))}
 .cmdk-row .kind.tag{color:var(--accent2);border-color:color-mix(in srgb,var(--accent2) 50%,var(--border))}
+.cmdk-row .kind.action{color:var(--warning);border-color:color-mix(in srgb,var(--warning) 50%,var(--border))}
 .cmdk-row .main{flex:1;min-width:0}
 .cmdk-row .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cmdk-row .sub{margin-top:1px;font-size:11px;color:var(--muted);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1022,28 +1053,17 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
       </div>
       <div class="delta-readout" id="deltaReadout"></div>
       <div class="hint">wheel scroll &#183; &#8984;/ctrl+wheel zoom &#183; click select &#183; drag a dot to cherry-pick &#183; shift+drag to merge &#183; &#8984;Z undo &#183; scroll the ribbon to zoom the snapshot timeline</div>
+      <!-- filled by the BisectDrawer Svelte island (src/islands/bisectdrawer) —
+           a floating panel, MUST be a child of #canvasWrap (not document.body):
+           its position:absolute is relative to this element, same as
+           #deltaReadout/.hint just above. -->
+      <div id="bisectPanelMount"></div>
     </div>
   </main>
 
   <!-- ============================ DETAIL PANEL ============================ -->
   <section class="detail" id="detail"><div class="resize-handle detail-handle" id="resizeDetail" title="Drag to resize"></div><!-- filled by the Detail Svelte island (src/islands/detail) --></section>
 
-  <!-- ============================ BOTTOM DRAWER ============================ -->
-  <div class="drawer">
-    <div class="drawer-tabs" role="tablist">
-      <button class="dt" role="tab" aria-selected="true" data-pane="bisect">Bisect</button>
-      <button class="dt" role="tab" aria-selected="false" data-pane="reflog">Reflog</button>
-      <button class="dt" role="tab" aria-selected="false" data-pane="rerere">Rerere</button>
-      <button class="dt" role="tab" aria-selected="false" data-pane="plumbing">Plumbing</button>
-      <button class="x" id="drawerToggle" title="Expand / collapse drawer"><span class="cev">&#9650;</span></button>
-    </div>
-    <div class="drawer-body">
-      <div class="pane on" id="pane-bisect"><!-- filled by the BisectDrawer Svelte island (src/islands/bisectdrawer) --></div>
-      <div class="pane" id="pane-reflog"><!-- filled by the Reflog Svelte island (src/islands/reflog) --></div>
-      <div class="pane" id="pane-rerere"><!-- filled by the Rerere Svelte island (src/islands/rerere) --></div>
-      <div class="pane" id="pane-plumbing"><!-- filled by the Plumbing Svelte island (src/islands/plumbing) --></div>
-    </div>
-  </div>
 </div>
 
 <!-- ============================ DANGER MODAL (filter-repo) ============================ -->

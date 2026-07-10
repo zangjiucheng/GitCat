@@ -1,10 +1,11 @@
 // Rerere panel — controller (Svelte 5 runes singleton).
 //
-// Unlike resolver/bisect (full-screen modals opened on a user gesture), this
-// island renders INSIDE the always-visible drawer pane (#pane-rerere), so it
-// has no open/close lifecycle of its own — just data to keep fresh. `refresh`
-// is the public, idempotent hook the drawer tab-click wiring (and the initial
-// boot) calls; see the file-level doc in the Svelte view for the exact markup.
+// A real .scrim/.modal now, opened on demand (Tools menu / ⌘K — see menu.rs
+// / cmdk.svelte.ts), same as resolver/bisect — it used to render INSIDE an
+// always-visible drawer pane with no open/close lifecycle of its own; that
+// drawer is gone (see index.html's own doc comment on the old DRAWER
+// section). `refresh` is the public, idempotent hook `show()` calls so the
+// status is always current rather than however stale it was last time.
 //
 // Read/write split mirrors the backend: `rerereStatus` is a read (Result<T,E>
 // via the generated client), `rerereSetEnabled` is a plain WriteResult (never
@@ -44,11 +45,23 @@ function shortId(id: string): string {
 }
 
 class RerereState {
+  open = $state(false);
   vm = $state<RerereStatus | null>(null);
   busy = $state(false);
   demo = $state(false);
 
   repo = "";
+
+  // Entry point (Tools menu / ⌘K).
+  show(repo: string | null): void {
+    this.open = true;
+    void this.refresh(repo);
+  }
+
+  close(): void {
+    if (this.busy) return;
+    this.open = false;
+  }
 
   get rows(): RerereRow[] {
     if (!this.vm) return [];

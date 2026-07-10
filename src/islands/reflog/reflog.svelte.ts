@@ -1,10 +1,11 @@
 // Reflog rescue — controller (Svelte 5 runes singleton).
 //
-// Renders INSIDE the existing bottom-drawer pane (#pane-reflog), not a
-// full-screen modal — unlike resolver/bisect. Owns the entry list + the
-// restore flow. `refresh` is the public, idempotent, safely-repeatable hook
-// the drawer-tab click (`ensureDrawerOpen("reflog")`) calls so the list is
-// live rather than loaded once at boot (before a repo may even be open).
+// A real .scrim/.modal, opened on demand (Tools menu / ⌘K — see menu.rs /
+// cmdk.svelte.ts) — it used to render permanently inside a bottom-drawer
+// pane, but that drawer is gone (see index.html's own doc comment on the
+// old DRAWER section). Owns the entry list + the restore flow. `refresh` is
+// the public, idempotent, safely-repeatable hook `show()` calls so the list
+// is always live rather than however stale it was the last time this was open.
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
@@ -37,6 +38,7 @@ const DEMO: ReflogEntry[] = [
 ];
 
 class ReflogState {
+  open = $state(false);
   entries = $state<ReflogEntry[]>([]);
   busy = $state(false); // re-entrancy lock while a restore is in flight
   loading = $state(false); // refresh() in flight — separate from `busy` (restore)
@@ -52,6 +54,20 @@ class ReflogState {
 
   label(e: ReflogEntry): string {
     return "HEAD@{" + e.index + "}: " + e.message;
+  }
+
+  // Entry point (Tools menu / ⌘K). Always re-fetches — see refresh()'s own
+  // "never stale" doc above — so reopening always reflects whatever the
+  // repo's reflog looks like right now, not whatever it looked like the last
+  // time this was open.
+  show(repo: string | null): void {
+    this.open = true;
+    void this.refresh(repo);
+  }
+
+  close(): void {
+    if (this.busy) return; // mid-restore — same guard as every other modal's Escape handler
+    this.open = false;
   }
 
   // ── public refresh hook — called on boot AND every time the Reflog drawer
