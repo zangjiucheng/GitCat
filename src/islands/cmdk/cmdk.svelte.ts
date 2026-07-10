@@ -18,6 +18,7 @@ import * as bridge from "../../legacy/bridge";
 import { reflogCtrl } from "../reflog/reflog.svelte.ts";
 import { rerereCtrl } from "../rerere/rerere.svelte.ts";
 import { plumbing } from "../plumbing/plumbing.svelte.ts";
+import { remotesCtrl } from "../remotes/remotes.svelte.ts";
 import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
 
 export const CMD_CAP = 50;
@@ -49,6 +50,13 @@ const ACTIONS: ActionItem[] = [
     run: () => rerereCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   { type: "action", id: "plumbing", label: "Plumbing", hint: "Inspect a raw commit, tree, blob, or tag", run: () => plumbing.show() },
+  {
+    type: "action",
+    id: "remotes",
+    label: "Manage Remotes",
+    hint: "Add, rename, edit the URL, or remove a configured remote",
+    run: () => remotesCtrl.show(bridge.CUR_REPO as unknown as string),
+  },
 ];
 
 function esc(s: unknown): string {

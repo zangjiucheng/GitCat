@@ -13,6 +13,8 @@ import Rerere from "./islands/rerere/Rerere.svelte";
 import { rerereCtrl } from "./islands/rerere/rerere.svelte.ts";
 import Plumbing from "./islands/plumbing/Plumbing.svelte";
 import { plumbing } from "./islands/plumbing/plumbing.svelte.ts";
+import Remotes from "./islands/remotes/Remotes.svelte";
+import { remotesCtrl } from "./islands/remotes/remotes.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import Blame from "./islands/blame/Blame.svelte";
@@ -93,6 +95,10 @@ sidebarCtrl.refresh(bridge.CUR_REPO as unknown as string);
 mount(Reflog, { target: document.body });
 mount(Rerere, { target: document.body });
 mount(Plumbing, { target: document.body });
+// Manage Remotes: repo-global (not tied to any file/commit — the OPPOSITE
+// case from Blame above), so it gets the same Tools-menu/⌘K/on-demand-modal
+// treatment as Reflog/Rerere/Plumbing rather than Blame's direct-call one.
+mount(Remotes, { target: document.body });
 
 // Native app menu -> frontend action bridge (see src-tauri/src/menu.rs).
 // Only the items whose action lives in Svelte-controller land forward here —
@@ -143,6 +149,9 @@ if (IN_TAURI) {
         break;
       case "plumbing":
         plumbing.show();
+        break;
+      case "remotes":
+        remotesCtrl.show(bridge.CUR_REPO as unknown as string);
         break;
     }
   });

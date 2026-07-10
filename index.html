@@ -144,6 +144,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-group>summary .tw{transition:transform .15s;color:var(--muted)}
 .ref-group[open]>summary .tw{transform:rotate(90deg)}
 .ref-group>summary .count{margin-left:auto;font-family:var(--mono);font-size:10px;background:var(--elevated);padding:0 6px;border-radius:var(--r-pill)}
+/* "Manage remotes…" entry point in the Remote group's own header, next to
+   its count badge — reuses .ref-item .ref-menu's exact look (same "⋮ opens a
+   menu/dialog" glyph+size), just always visible (not hover-revealed) since
+   it's a persistent header affordance, not a per-row action. */
+.ref-group>summary .manage-btn{margin-left:4px;border:none;background:transparent;color:var(--muted);
+  cursor:pointer;font-size:13px;line-height:1;padding:2px 4px;border-radius:4px;flex:none}
+.ref-group>summary .manage-btn:hover{background:var(--panel);color:var(--text)}
 .ref-item{display:flex;align-items:center;gap:8px;padding:5px 8px 5px 24px;border-radius:6px;cursor:pointer;position:relative}
 .ref-item:hover{background:var(--elevated)}
 .ref-item.current{background:color-mix(in srgb,var(--accent) 14%,transparent)}
@@ -736,6 +743,40 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    none of them need a wider-than-default modal. */
 .modal.reflog .modal-body,.modal.rerere .modal-body{max-height:60vh;overflow:auto}
 .modal.plumbing{width:min(640px,96vw)}
+
+/* ============================== MANAGE REMOTES modal ==============================
+   Same .scrim/.modal/.modal-head/.modal-body/.modal-foot/.btn/.btn.ghost/
+   .btn.danger/.nb-row/.mono/.mut/.spinner/.row-chip chrome as every other
+   one-shot dialog above — only the list-row layout itself (name + URL + a
+   small button cluster, or an inline form/confirm replacing the row) is new,
+   and even that shape isn't: it's the exact same one Workdir's stash list
+   already uses (.wd-stash-item/-main/-act/-form). New `.rm-` prefix rather
+   than reusing `.wd-*` verbatim only because this codebase scopes small
+   per-list CSS by owning island (.wd-*/.pl-*/.rr-*/.cf-*/.sub-* each keep
+   their own near-identical copy rather than sharing one generic name — the
+   same per-module-copy convention git_remote_manage.rs's own doc comment
+   describes on the Rust side). */
+.modal.remotes{width:min(640px,96vw)}
+.rm-list{display:flex;flex-direction:column;gap:2px}
+.rm-item{display:flex;align-items:center;gap:8px;padding:6px 5px;border-radius:6px}
+.rm-item:hover{background:var(--elevated)}
+.rm-main{min-width:0;flex:1;display:flex;align-items:baseline;gap:8px;overflow:hidden}
+.rm-name{font-weight:700;flex:none}
+.rm-url{font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rm-act{display:flex;gap:4px;flex:none}
+.rm-act button{font-size:11px;font-weight:600;padding:3px 8px;border-radius:6px;border:1px solid var(--border);
+  background:var(--elevated);color:var(--text)}
+.rm-act button:hover:not([disabled]){border-color:var(--muted)}
+.rm-act button.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
+.rm-act button[disabled]{opacity:.45;cursor:not-allowed}
+.rm-form{display:flex;flex-direction:column;gap:6px;padding:6px 5px}
+.rm-form input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);
+  color:var(--text);font:inherit;font-size:12px;padding:6px 8px;outline:none}
+.rm-form input:focus{border-color:var(--accent)}
+.rm-form.busy input{opacity:.6}
+.rm-form .nb-row{display:flex;align-items:center;gap:8px}
+.rm-add{border-top:1px solid var(--border);margin-top:8px;padding-top:10px}
+.rm-confirm .msg{color:var(--danger)}
 
 /* ============================== BISECT floating panel ==============================
    The pre-start "arm good/bad by clicking a commit on the canvas" step —

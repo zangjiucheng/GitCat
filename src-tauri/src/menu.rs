@@ -110,7 +110,14 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         let reflog = MenuItemBuilder::with_id("reflog", "Reflog\u{2026}").build(app)?;
         let rerere = MenuItemBuilder::with_id("rerere", "Rerere\u{2026}").build(app)?;
         let plumbing = MenuItemBuilder::with_id("plumbing", "Plumbing\u{2026}").build(app)?;
-        SubmenuBuilder::new(app, "Tools").item(&bisect).item(&reflog).item(&rerere).item(&plumbing).build()?
+        let remotes = MenuItemBuilder::with_id("remotes", "Manage Remotes\u{2026}").build(app)?;
+        SubmenuBuilder::new(app, "Tools")
+            .item(&bisect)
+            .item(&reflog)
+            .item(&rerere)
+            .item(&plumbing)
+            .item(&remotes)
+            .build()?
     };
 
     let window_menu = SubmenuBuilder::new(app, "Window").minimize().build()?;
@@ -152,7 +159,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // action — forward the id as a JS event rather than duplicating that
         // logic in Rust.
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
-        | "bisect" | "reflog" | "rerere" | "plumbing") => {
+        | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

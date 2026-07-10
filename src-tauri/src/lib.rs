@@ -5,6 +5,7 @@ pub mod filter_repo; // M5c: filter-repo wizard (backup / preview / run / restor
 pub mod git_pick;
 pub mod git_read;
 pub mod git_remote; // fetch / pull (ff-only) / push / push_tag
+pub mod git_remote_manage; // Remote CONFIG CRUD: add/rename/set-url/remove/list (fetch/pull/push/push_tag stay in git_remote.rs — see both modules' own doc comments for why they're split)
 pub mod git_tag; // Tags: create / delete (push_tag lives in git_remote.rs — see its doc comment)
 pub mod git_write;
 pub mod workdir; // working-tree status + stage/unstage/discard/commit + stash
@@ -74,6 +75,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_remote::fetch,
         git_remote::pull,
         git_remote::push,
+        // Remote CONFIG CRUD (add/rename/set-url/remove/list) — a distinct,
+        // local-only concern from the network sync above; see
+        // git_remote_manage.rs's own doc comment for why it's a separate module.
+        git_remote_manage::list_remotes,
+        git_remote_manage::add_remote,
+        git_remote_manage::rename_remote,
+        git_remote_manage::set_remote_url,
+        git_remote_manage::remove_remote,
         // Conflict resolver (M2b): inspect stages + per-file ours/theirs
         conflict::conflict_status,
         conflict::resolve_conflict_file,

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { sidebarCtrl, submoduleAction, submoduleCanOpen, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
+  import { remotesCtrl } from "../remotes/remotes.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import type { SimpleRef, SubmoduleInfo } from "../../ipc/bindings";
 
@@ -228,7 +229,18 @@
     </div>
   </details>
   <details class="ref-group" open>
-    <summary><span class="tw">&#9656;</span>Remote<span class="count" id="cntRemote">{sidebarCtrl.remotes.length}</span></summary>
+    <summary
+      ><span class="tw">&#9656;</span>Remote<span class="count" id="cntRemote">{sidebarCtrl.remotes.length}</span><button
+        class="manage-btn"
+        title="Manage remotes&#8230;"
+        aria-label="Manage remotes"
+        onclick={(e) => {
+          e.preventDefault(); // don't also toggle this <details> open/closed
+          e.stopPropagation();
+          remotesCtrl.show(bridge.CUR_REPO as unknown as string);
+        }}>&#8942;</button
+      ></summary
+    >
     <div class="ref-list" id="refRemote">
       {#each remoteGroups(sidebarCtrl.remotes.filter((r) => matches(r.name))) as g, gi (g.head + gi)}
         <div class="remote-head">&#9729; {g.head}</div>

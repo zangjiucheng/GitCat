@@ -412,6 +412,57 @@ async push(path: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("push", { path });
 },
 /**
+ * List every configured remote (name + fetch url + distinct push url, if
+ * any). Read-only (git2), mirrors list_refs/submodule_status's own
+ * git2-for-reads + `Result<T, String>` convention.
+ * JS call: `invoke("list_remotes", { path })`.
+ */
+async listRemotes(path: string) : Promise<Result<RemoteEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_remotes", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Add a new remote (`git remote add`). Refuses a duplicate name via git's
+ * own error rather than a pre-check (see module doc comment for why).
+ * JS call: `invoke("add_remote", { path, name, url })`.
+ */
+async addRemote(path: string, name: string, url: string) : Promise<RemoteResult> {
+    return await TAURI_INVOKE("add_remote", { path, name, url });
+},
+/**
+ * Rename a remote (`git remote rename`). Validates BOTH names. Real git
+ * behavior: also renames every refs/remotes/<old>/* tracking ref to
+ * refs/remotes/<new>/* — nothing extra needed here for that.
+ * JS call: `invoke("rename_remote", { path, oldName, newName })`.
+ */
+async renameRemote(path: string, oldName: string, newName: string) : Promise<RemoteResult> {
+    return await TAURI_INVOKE("rename_remote", { path, oldName, newName });
+},
+/**
+ * Change a remote's fetch URL (`git remote set-url`) — the "edit" half of
+ * add/edit/rename/remove; there is no separate edit_remote command since
+ * editing IS changing the URL (or renaming, via rename_remote above).
+ * JS call: `invoke("set_remote_url", { path, name, url })`.
+ */
+async setRemoteUrl(path: string, name: string, url: string) : Promise<RemoteResult> {
+    return await TAURI_INVOKE("set_remote_url", { path, name, url });
+},
+/**
+ * Remove a remote entirely (`git remote remove`) — deletes its config
+ * entry AND every refs/remotes/<name>/* tracking ref (real git behavior,
+ * not a bug to work around). No snapshot/pin: see module doc comment for
+ * why there is deliberately no undo net here — the frontend MUST confirm
+ * before calling this.
+ * JS call: `invoke("remove_remote", { path, name })`.
+ */
+async removeRemote(path: string, name: string) : Promise<RemoteResult> {
+    return await TAURI_INVOKE("remove_remote", { path, name });
+},
+/**
  * Report the in-progress operation and the conflicted files (with all three
  * merge stages). Read-only. JS: `invoke("conflict_status", { path })`.
  */
@@ -1322,6 +1373,15 @@ export type RefList = { head: string | null; locals: LocalBranch[]; remotes: Sim
  * guarantee every git reflog message shape is recognized.
  */
 export type ReflogEntry = { index: number; sha: string; message: string; kind: string; committerName: string; committerEmail: string; ts: number }
+export type RemoteEntry = { name: string; url: string; 
+/**
+ * `Some` only when `remote.<name>.pushurl` is configured AND differs
+ * from `url` — git allows setting pushurl equal to the fetch url,
+ * which isn't meaningfully "distinct" and would just be a confusing
+ * second identical-looking row in the UI, so that case collapses to
+ * `None`, same as "no pushurl configured at all".
+ */
+pushUrl: string | null }
 export type RemoteResult = { ok: boolean; message: string; 
 /**
  * Pre-op safety snapshot ref — only ever `Some` for `pull` (see module doc).
