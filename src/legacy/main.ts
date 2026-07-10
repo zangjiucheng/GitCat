@@ -1070,7 +1070,14 @@ async function openRepo(path){
     // the wrong repo+file combination. deselect() mirrors bootEmpty()'s own
     // reset sequence; a later selectWorkdir() reopens it against the new repo.
     workdirCtrl.deselect();
-    $(".repo-pick span").textContent = repoBasename(path);
+    // .repo-name, NOT a bare "span" — this button's loading spinner (just
+    // above) is ALSO inserted as its first-child span while this exact
+    // openRepo() call is in flight, so a bare ".repo-pick span" selector
+    // would match the SPINNER first (document order), silently writing the
+    // repo name onto a node `finally` below is about to delete instead of
+    // the one actually visible on screen. Empirically confirmed: this was
+    // the reason the topbar chip never updated after opening a repo.
+    $(".repo-pick .repo-name").textContent = repoBasename(path);
     // Undoes bootEmpty()'s own hide — a no-op unless the repo being opened
     // right now was reached via closeRepo() first.
     const bp=$(".branch-pill"); if(bp) bp.style.display="";
@@ -1248,7 +1255,7 @@ function bootEmpty(){
   // from their static HTML placeholders. Now that closeRepo() (below) can
   // call it AFTER a repo was open, leaving these alone would keep showing the
   // just-closed repo's name and branch as if it were still open.
-  const pick=$(".repo-pick span"); if(pick) pick.textContent="Open a repository…";
+  const pick=$(".repo-pick .repo-name"); if(pick) pick.textContent="Open a repository…";
   const bp=$(".branch-pill"); if(bp) bp.style.display="none";
   dirty=true;
 }

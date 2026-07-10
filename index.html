@@ -998,7 +998,12 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
         <ellipse cx="733" cy="447" rx="98" ry="119" transform="rotate(18 733 447)"/>
       </g>
     </svg>GitCat</div>
-    <button class="repo-pick"><span>gitcat</span><span class="chev">&#9662;</span></button>
+    <!-- .repo-name is load-bearing, not decorative: openRepo()'s loading
+         spinner (legacy/main.ts) gets inserted as this button's FIRST child
+         while a repo is loading, so a bare "span" selector for the name text
+         would grab the spinner instead — see openRepo()'s own comment on
+         that exact line for the bug this class fixes. -->
+    <button class="repo-pick"><span class="repo-name">gitcat</span><span class="chev">&#9662;</span></button>
     <!-- "Back to <parent repo>" — only shown once the user has navigated INTO
          a submodule (legacy/main.ts's NAV_STACK is non-empty); hidden by
          default here, toggled by updateBackToParentBtn() alongside every
