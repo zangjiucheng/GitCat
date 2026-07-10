@@ -15,6 +15,7 @@ import Plumbing from "./islands/plumbing/Plumbing.svelte";
 import { plumbing } from "./islands/plumbing/plumbing.svelte.ts";
 import Remotes from "./islands/remotes/Remotes.svelte";
 import { remotesCtrl } from "./islands/remotes/remotes.svelte.ts";
+import { resolver } from "./islands/resolver/resolver.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import Blame from "./islands/blame/Blame.svelte";
@@ -152,6 +153,12 @@ if (IN_TAURI) {
         break;
       case "remotes":
         remotesCtrl.show(bridge.CUR_REPO as unknown as string);
+        break;
+      case "pull-merge":
+        resolver.pullMerge(bridge.CUR_REPO as unknown as string);
+        break;
+      case "pull-rebase":
+        resolver.pullRebase(bridge.CUR_REPO as unknown as string);
         break;
     }
   });

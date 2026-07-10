@@ -18,6 +18,15 @@
 //! cleanly or fails cleanly with git's own message — it never leaves the
 //! working tree mid-conflict.
 //!
+//! That "real, separate work" now exists, layered ON TOP of this module
+//! rather than inside `pull` itself: `current_upstream` (below) plus the
+//! existing `fetch`, orchestrated from the frontend with git_merge.rs's
+//! `merge_start` / git_rebase.rs's `rebase_start` — see resolver.svelte.ts's
+//! `pullMerge`/`pullRebase`. `pull` itself is UNCHANGED: still the one-click
+//! ff-only operation wired to the topbar's Pull button; the strategy-
+//! choosing entry points live only in the Tools menu / ⌘K (menu.rs /
+//! cmdk.svelte.ts), never touching `pull`'s signature or callers.
+//!
 //! `push` never force-pushes; a rejected (non-fast-forward) push surfaces
 //! git's own rejection message rather than silently forcing. A branch with no
 //! configured upstream is published to "origin" (`--set-upstream`) — the
@@ -215,6 +224,33 @@ pub fn pull(path: String) -> RemoteResult {
         Ok(out) => RemoteResult::err(git_error_message(&out)),
         Err(e) => RemoteResult::err(e),
     }
+}
+
+/// The current branch's configured upstream, as a shorthand remote-tracking
+/// name (e.g. "origin/main") — exactly what a pull-with-merge/rebase-strategy
+/// flow needs to hand to `merge_start`/`rebase_start` (see git_merge.rs /
+/// git_rebase.rs). `None` when HEAD isn't on a branch, or that branch has no
+/// upstream configured — the frontend surfaces that as "this branch has no
+/// upstream to pull from" and stops before calling anything else (fetch
+/// included). Pure read (git2 only): no mutation, no snapshot — nothing here
+/// can leave the repo in a different state.
+/// JS call: `invoke("current_upstream", { path })`.
+#[tauri::command]
+#[specta::specta]
+pub fn current_upstream(path: String) -> Result<Option<String>, String> {
+    let repo = crate::trust::open_repo(&path).map_err(|e| format!("Cannot open repository: {}", e.message()))?;
+    let branch_name = match repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string())) {
+        Some(b) => b,
+        None => return Ok(None),
+    };
+    // Same has-upstream lookup `push` already does below; here we also keep
+    // the shorthand name instead of just a bool.
+    let upstream_name = repo
+        .find_branch(&branch_name, BranchType::Local)
+        .ok()
+        .and_then(|b| b.upstream().ok())
+        .and_then(|up| up.name().ok().flatten().map(|s| s.to_string()));
+    Ok(upstream_name)
 }
 
 /// Push the current branch. Publishes to "origin" with `--set-upstream` when

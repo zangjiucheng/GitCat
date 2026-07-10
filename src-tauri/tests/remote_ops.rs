@@ -6,7 +6,7 @@
 mod common;
 
 use common::TempRepo;
-use gitcat_lib::git_remote::{fetch, pull, push};
+use gitcat_lib::git_remote::{current_upstream, fetch, pull, push};
 
 /// A bare "origin" + a local clone of it (remote already configured, one
 /// commit already pushed) — the shared starting point for every test here.
@@ -121,4 +121,36 @@ fn push_rejects_a_non_fast_forward_without_forcing() {
     let res = push(local.path());
     assert!(!res.ok, "a non-fast-forward push must be rejected");
     assert_eq!(origin.rev("main"), Some(their_tip), "a rejected push must never overwrite origin");
+}
+
+#[test]
+fn current_upstream_reports_the_configured_shorthand() {
+    // origin_and_clone already leaves `local`'s main tracking origin/main
+    // (via `push -u`), so this is the "has an upstream" case for free.
+    let (_origin, local) = origin_and_clone("current_upstream_configured");
+    let up = current_upstream(local.path()).expect("current_upstream should not error");
+    assert_eq!(up.as_deref(), Some("origin/main"), "expected the shorthand tracking-ref name");
+}
+
+#[test]
+fn current_upstream_is_none_when_branch_has_no_upstream() {
+    let origin = TempRepo::init_bare("current_upstream_none-origin");
+    let local = TempRepo::init("current_upstream_none-local");
+    local.commit("f.txt", "0\n", "c0");
+    local.must(&["remote", "add", "origin", &origin.path()]);
+    // Deliberately never pushed / never `--set-upstream`'d.
+
+    let up = current_upstream(local.path()).expect("current_upstream should not error");
+    assert_eq!(up, None, "a branch with no configured upstream must report None, not an error");
+}
+
+#[test]
+fn current_upstream_is_none_on_detached_head() {
+    let (_origin, local) = origin_and_clone("current_upstream_detached");
+    let head_sha = local.rev("HEAD").expect("HEAD should resolve");
+    local.must(&["checkout", "-q", &head_sha]);
+    assert_eq!(local.current_branch(), "", "sanity: HEAD should now be detached");
+
+    let up = current_upstream(local.path()).expect("current_upstream should not error");
+    assert_eq!(up, None, "a detached HEAD has no branch, so no upstream, either");
 }

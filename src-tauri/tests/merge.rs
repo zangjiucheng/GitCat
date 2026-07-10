@@ -120,6 +120,41 @@ fn merge_fast_forward_is_clean_and_moves_head() {
     assert_eq!(repo.read("f.txt"), "feature line\n");
 }
 
+/// Regression test for a real bug an adversarial review caught: with an
+/// ambient `merge.autoStash=true` (a real, non-default git convenience
+/// setting), a dirty tree colliding with the incoming merge used to be
+/// silently autostashed rather than refused — and if the autostash reapply
+/// itself then conflicted, `merge_continue`/`merge_abort` would either error
+/// ("no merge in progress") or `abort` would falsely report "clean" while
+/// leaving real conflict markers behind. Fixed by always passing
+/// `--no-autostash` (see merge_start's own comment). This test proves the
+/// CLI flag wins over the config, not just that the default (unconfigured)
+/// case was already safe.
+#[test]
+fn merge_refuses_a_dirty_conflicting_tree_even_when_autostash_is_configured() {
+    let (repo, _main_head, feature_tip) = build_conflicting_repo("merge_autostash_guard");
+    let path = repo.path();
+
+    // Simulate the ambient convenience setting (repo-local is enough to prove
+    // the CLI flag beats config; a user's real ~/.gitconfig works the same way).
+    repo.must(&["config", "merge.autoStash", "true"]);
+
+    // Uncommitted edit to the exact file the incoming merge touches.
+    std::fs::write(std::path::Path::new(&path).join("shared.txt"), "dirty uncommitted edit\n")
+        .expect("write dirty file");
+
+    let merged = merge_start(path.clone(), feature_tip.clone());
+    assert_eq!(merged.state, "error", "expected an upfront refusal, got state {:?}: {}", merged.state, merged.message);
+    assert!(!merged.ok);
+    assert_eq!(repo.open().state(), RepositoryState::Clean, "no merge should have started");
+    assert_eq!(
+        repo.read("shared.txt"),
+        "dirty uncommitted edit\n",
+        "the user's uncommitted edit must be left exactly as-is, not autostashed away"
+    );
+    assert!(repo.must(&["stash", "list"]).is_empty(), "no autostash entry should have been created");
+}
+
 #[test]
 fn merge_already_up_to_date_is_empty_not_clean() {
     let repo = TempRepo::init("merge_noop");

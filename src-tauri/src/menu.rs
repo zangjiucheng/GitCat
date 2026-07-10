@@ -111,12 +111,20 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         let rerere = MenuItemBuilder::with_id("rerere", "Rerere\u{2026}").build(app)?;
         let plumbing = MenuItemBuilder::with_id("plumbing", "Plumbing\u{2026}").build(app)?;
         let remotes = MenuItemBuilder::with_id("remotes", "Manage Remotes\u{2026}").build(app)?;
+        // Immediate-action items (no dialog, no ellipsis) — same convention
+        // as Repository's Fetch/Pull/Push above. A separator sets them apart
+        // from the dialog-openers above them.
+        let pull_merge = MenuItemBuilder::with_id("pull-merge", "Pull (Merge)").build(app)?;
+        let pull_rebase = MenuItemBuilder::with_id("pull-rebase", "Pull (Rebase)").build(app)?;
         SubmenuBuilder::new(app, "Tools")
             .item(&bisect)
             .item(&reflog)
             .item(&rerere)
             .item(&plumbing)
             .item(&remotes)
+            .separator()
+            .item(&pull_merge)
+            .item(&pull_rebase)
             .build()?
     };
 
@@ -159,7 +167,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // action — forward the id as a JS event rather than duplicating that
         // logic in Rust.
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
-        | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes") => {
+        | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "pull-merge" | "pull-rebase") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

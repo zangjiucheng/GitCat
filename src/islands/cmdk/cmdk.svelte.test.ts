@@ -77,11 +77,11 @@ describe("show/close/toggle", () => {
 });
 
 describe("filter", () => {
-  it("with no query, always includes the 5 static tool actions plus loaded commits (no refs in this fixture)", () => {
+  it("with no query, always includes the 7 static tool actions plus loaded commits (no refs in this fixture)", () => {
     setBackendGraph([{ sha: "aaa1111", subject: "Add feature", an: { n: "Dev" }, refs: [] }]);
     cmdkCtrl.show();
     const kinds = cmdkCtrl.results.map((r: any) => r.type);
-    expect(kinds.filter((t) => t === "action").length).toBe(5);
+    expect(kinds.filter((t) => t === "action").length).toBe(7);
     expect(kinds.filter((t) => t === "commit").length).toBe(1);
   });
 
@@ -164,7 +164,7 @@ describe("setSel", () => {
     expect(cmdkCtrl.sel).toBe(cmdkCtrl.results.length - 1);
   });
 
-  it("is a no-op (sel stays 0) when there are truly no results (the 4 static actions don't match either)", () => {
+  it("is a no-op (sel stays 0) when there are truly no results (the 7 static actions don't match either)", () => {
     setBackendGraph([]);
     cmdkCtrl.show();
     cmdkCtrl.filter("zzz-nothing-matches-this-xyz");

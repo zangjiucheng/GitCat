@@ -209,6 +209,47 @@ fn rebase_already_up_to_date_is_empty_not_clean() {
     assert_eq!(repo.open().state(), RepositoryState::Clean);
 }
 
+/// Regression test for a real bug an adversarial review caught: with an
+/// ambient `rebase.autoStash=true` (a real, non-default git convenience
+/// setting), a dirty tree used to be silently autostashed rather than
+/// refused up front — and if the autostash reapply itself then conflicted,
+/// `rebase_continue`/`rebase_skip` would error ("no rebase in progress") and
+/// `rebase_abort` would falsely report "clean" while leaving real conflict
+/// markers behind. Fixed by always passing `--no-autostash` (see
+/// rebase_start's own comment). This proves the CLI flag wins over the
+/// config, not just that the default (unconfigured) case was already safe.
+#[test]
+fn rebase_refuses_a_dirty_tree_even_when_autostash_is_configured() {
+    let repo = TempRepo::init("rebase_autostash_guard");
+    let _base = repo.commit("f.txt", "base\n", "base");
+    repo.must(&["branch", "feature"]);
+    repo.must(&["checkout", "-q", "feature"]);
+    repo.commit("g.txt", "feature file\n", "add g.txt on feature");
+    repo.must(&["checkout", "-q", "main"]);
+    repo.commit("h.txt", "main file\n", "add h.txt on main");
+    repo.must(&["checkout", "-q", "feature"]);
+    let path = repo.path();
+
+    // Simulate the ambient convenience setting (repo-local is enough to prove
+    // the CLI flag beats config; a user's real ~/.gitconfig works the same way).
+    repo.must(&["config", "rebase.autoStash", "true"]);
+
+    // Uncommitted edit to a tracked file — enough for plain git to refuse a
+    // rebase outright unless autostash silently intervenes.
+    std::fs::write(std::path::Path::new(&path).join("g.txt"), "dirty local edit\n").expect("write dirty file");
+
+    let out = rebase_start(path.clone(), "main".into());
+    assert_eq!(out.state, "error", "expected an upfront refusal, got state {:?}: {}", out.state, out.message);
+    assert!(!out.ok);
+    assert_eq!(repo.open().state(), RepositoryState::Clean, "no rebase should have started");
+    assert_eq!(
+        repo.read("g.txt"),
+        "dirty local edit\n",
+        "the user's uncommitted edit must be left exactly as-is, not autostashed away"
+    );
+    assert!(repo.must(&["stash", "list"]).is_empty(), "no autostash entry should have been created");
+}
+
 #[test]
 fn rebase_one_conflict_resolve_theirs_then_continue() {
     let (repo, main_head, _feature_tip) = build_one_conflict_repo("rebase_one_conflict");

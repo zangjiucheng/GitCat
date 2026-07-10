@@ -641,8 +641,25 @@ pub fn rebase_start(path: String, onto: String) -> RebaseResult {
         Err(e) => return RebaseResult::error(format!("Safety snapshot failed, aborting: {e}")),
     };
 
-    // git rebase --end-of-options <onto>
-    let args: Vec<&str> = vec!["rebase", "--end-of-options", &onto];
+    // git rebase --no-autostash --end-of-options <onto>
+    //
+    // --no-autostash is explicit, not incidental: with an ambient
+    // `rebase.autoStash=true` in the user's global gitconfig, a dirty tree
+    // that collides with the rebase doesn't refuse up front — git silently
+    // stashes it, rebases, and re-applies the stash. If THAT reapply itself
+    // conflicts, git still exits 0 (the rebase's own sequencer state is
+    // gone), so `classify()` below (which checks unmerged_files
+    // unconditionally, not gated on in_progress) reports a normal
+    // "conflict" and opens the Resolver — but `rebase_continue`/
+    // `rebase_skip`/`rebase_abort` all gate on `in_progress()` first and
+    // find the rebase already concluded: continue/skip then error ("no
+    // rebase in progress") and abort falsely reports "clean", silently
+    // leaving real conflict markers in the working tree with the user's
+    // original edit stranded in `stash@{0}`. Passing --no-autostash makes
+    // the dirty-tree case refuse up front instead, matching this module's
+    // own "never leave the tree in a misleading state" contract —
+    // independent of what the user's global gitconfig happens to set.
+    let args: Vec<&str> = vec!["rebase", "--no-autostash", "--end-of-options", &onto];
 
     let out = match git(&path, &args, true) {
         Ok(o) => o,

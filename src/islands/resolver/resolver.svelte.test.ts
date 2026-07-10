@@ -42,6 +42,8 @@ vi.mock("../../ipc/bindings", () => ({
     stashConflictContinue: vi.fn(),
     conflictStatus: vi.fn(),
     resolveConflictFile: vi.fn(),
+    currentUpstream: vi.fn(),
+    fetch: vi.fn(),
   },
 }));
 
@@ -62,6 +64,14 @@ import { resolver } from "./resolver.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
+}
+
+function err(error: string): { status: "error"; error: string } {
+  return { status: "error", error };
+}
+
+function remoteResult(partial: { ok: boolean; message?: string; backupRef?: string | null }) {
+  return { message: "", backupRef: null, ...partial };
 }
 
 const FILE_A: ConflictFile = { path: "a.ts", ours: "o", base: "b", theirs: "t" };
@@ -273,6 +283,163 @@ describe("startRebase", () => {
     expect(bridge.tama.warn).toHaveBeenCalled();
     expect(commands.rebaseStart).not.toHaveBeenCalled();
     expect(resolver.open).toBe(false);
+  });
+});
+
+// Pull-with-strategy: fetch + upstream lookup orchestrated in front of
+// startMerge/startRebase (see the module doc's "pullMerge"/"pullRebase" note
+// and resolver.svelte.ts's pullWithStrategy). Backend calls mocked below are
+// currentUpstream (Result<string|null,string>) and fetch (RemoteResult) —
+// mergeStart/rebaseStart are the SAME mocks startMerge/startRebase already
+// exercise above, so a "clean"/"conflict" outcome here reuses those code
+// paths verbatim.
+describe("pullMerge", () => {
+  it("happy path: upstream found, fetch succeeds, mergeStart clean -> graph reload, modal stays closed", async () => {
+    vi.mocked(commands.currentUpstream).mockResolvedValueOnce(ok("origin/main"));
+    vi.mocked(commands.fetch).mockResolvedValueOnce(remoteResult({ ok: true, message: "Fetched origin." }));
+    vi.mocked(commands.mergeStart).mockResolvedValueOnce(mergeResult({ state: "clean", message: "Merged." }));
+
+    await resolver.pullMerge("repo1");
+
+    expect(commands.currentUpstream).toHaveBeenCalledWith("repo1");
+    expect(commands.fetch).toHaveBeenCalledWith("repo1", null);
+    expect(commands.mergeStart).toHaveBeenCalledWith("repo1", "origin/main");
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(resolver.open).toBe(false);
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("conflict result: opens the Resolver with op set to merge, populated from conflict_status", async () => {
+    vi.mocked(commands.currentUpstream).mockResolvedValueOnce(ok("origin/main"));
+    vi.mocked(commands.fetch).mockResolvedValueOnce(remoteResult({ ok: true }));
+    vi.mocked(commands.mergeStart).mockResolvedValueOnce(
+      mergeResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts", "b.ts"], backupRef: "refs/gitgui/backup/pm1" }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A, FILE_B], true, "merge")));
+
+    await resolver.pullMerge("repo1");
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.busy).toBe(false);
+    expect(resolver.op).toBe("merge");
+    expect(resolver.files).toEqual([FILE_A, FILE_B]);
+    expect(resolver.backupRef).toBe("refs/gitgui/backup/pm1");
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+  });
+
+  it("fetch failure aborts before merge is attempted", async () => {
+    vi.mocked(commands.currentUpstream).mockResolvedValueOnce(ok("origin/main"));
+    vi.mocked(commands.fetch).mockResolvedValueOnce(remoteResult({ ok: false, message: "Could not resolve host." }));
+
+    await resolver.pullMerge("repo1");
+
+    expect(commands.fetch).toHaveBeenCalledWith("repo1", null);
+    expect(commands.mergeStart).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalledWith("Could not resolve host.");
+    expect(resolver.open).toBe(false);
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("no upstream configured: warns and never calls fetch or mergeStart", async () => {
+    vi.mocked(commands.currentUpstream).mockResolvedValueOnce(ok(null));
+
+    await resolver.pullMerge("repo1");
+
+    expect(commands.currentUpstream).toHaveBeenCalledWith("repo1");
+    expect(commands.fetch).not.toHaveBeenCalled();
+    expect(commands.mergeStart).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalledWith("This branch has no upstream to pull from.");
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("currentUpstream itself erroring warns and never calls fetch or mergeStart", async () => {
+    vi.mocked(commands.currentUpstream).mockResolvedValueOnce(err("Cannot open repository: not found"));
+
+    await resolver.pullMerge("repo1");
+
+    expect(commands.fetch).not.toHaveBeenCalled();
+    expect(commands.mergeStart).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalledWith("Cannot open repository: not found");
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("warns via Tama instead of doing anything without a repo", async () => {
+    await resolver.pullMerge("");
+    expect(bridge.tama.warn).toHaveBeenCalled();
+    expect(commands.currentUpstream).not.toHaveBeenCalled();
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("re-entrancy: a call while already busy is a no-op", async () => {
+    resolver.busy = true;
+    await resolver.pullMerge("repo1");
+    expect(commands.currentUpstream).not.toHaveBeenCalled();
+  });
+});
+
+describe("pullRebase", () => {
+  it("happy path: upstream found, fetch succeeds, rebaseStart clean -> graph reload, modal stays closed", async () => {
+    vi.mocked(commands.currentUpstream).mockResolvedValueOnce(ok("origin/main"));
+    vi.mocked(commands.fetch).mockResolvedValueOnce(remoteResult({ ok: true, message: "Fetched origin." }));
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(rebaseResult({ state: "clean", message: "Rebased." }));
+
+    await resolver.pullRebase("repo1");
+
+    expect(commands.currentUpstream).toHaveBeenCalledWith("repo1");
+    expect(commands.fetch).toHaveBeenCalledWith("repo1", null);
+    expect(commands.rebaseStart).toHaveBeenCalledWith("repo1", "origin/main");
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(resolver.open).toBe(false);
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("conflict result: opens the Resolver with op set to rebase, populated from conflict_status", async () => {
+    vi.mocked(commands.currentUpstream).mockResolvedValueOnce(ok("origin/main"));
+    vi.mocked(commands.fetch).mockResolvedValueOnce(remoteResult({ ok: true }));
+    vi.mocked(commands.rebaseStart).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"], backupRef: "refs/gitgui/backup/pr1" }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "rebase")));
+
+    await resolver.pullRebase("repo1");
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.busy).toBe(false);
+    expect(resolver.op).toBe("rebase");
+    expect(resolver.files).toEqual([FILE_A]);
+    expect(resolver.backupRef).toBe("refs/gitgui/backup/pr1");
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+  });
+
+  it("fetch failure aborts before rebase is attempted", async () => {
+    vi.mocked(commands.currentUpstream).mockResolvedValueOnce(ok("origin/main"));
+    vi.mocked(commands.fetch).mockResolvedValueOnce(remoteResult({ ok: false, message: "Connection timed out." }));
+
+    await resolver.pullRebase("repo1");
+
+    expect(commands.fetch).toHaveBeenCalledWith("repo1", null);
+    expect(commands.rebaseStart).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalledWith("Connection timed out.");
+    expect(resolver.open).toBe(false);
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("no upstream configured: warns and never calls fetch or rebaseStart", async () => {
+    vi.mocked(commands.currentUpstream).mockResolvedValueOnce(ok(null));
+
+    await resolver.pullRebase("repo1");
+
+    expect(commands.fetch).not.toHaveBeenCalled();
+    expect(commands.rebaseStart).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalledWith("This branch has no upstream to pull from.");
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("warns via Tama instead of doing anything without a repo", async () => {
+    await resolver.pullRebase("");
+    expect(bridge.tama.warn).toHaveBeenCalled();
+    expect(commands.currentUpstream).not.toHaveBeenCalled();
+    expect(resolver.busy).toBe(false);
   });
 });
 

@@ -71,9 +71,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
         workdir::stash_conflict_abort,
         workdir::stash_conflict_continue,
         // Remote sync: fetch / pull (ff-only) / push (push_tag is registered
-        // above, in the Tags block, even though it's implemented here)
+        // above, in the Tags block, even though it's implemented here).
+        // current_upstream is a pure read added for the Tools-menu/⌘K "Pull
+        // (Merge)"/"Pull (Rebase)" actions (resolver.svelte.ts's pullMerge/
+        // pullRebase) — the topbar Pull button (doPull(), unchanged) never
+        // calls it.
         git_remote::fetch,
         git_remote::pull,
+        git_remote::current_upstream,
         git_remote::push,
         // Remote CONFIG CRUD (add/rename/set-url/remove/list) — a distinct,
         // local-only concern from the network sync above; see

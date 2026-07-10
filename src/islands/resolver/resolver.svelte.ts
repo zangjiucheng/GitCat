@@ -20,6 +20,13 @@
 // modal state (`.open`, `.files`, `.selected`, …), so there is exactly one
 // conflict-resolution UI.
 //
+// `pullMerge`/`pullRebase` are NOT a fifth op — they're a thin orchestration
+// layer in front of `startMerge`/`startRebase`: look up the current branch's
+// upstream (`current_upstream`), fetch it fresh, then hand off to the SAME
+// `startMerge`/`startRebase` used by the canvas drag gesture / branch menu.
+// See `pullWithStrategy` below and git_remote.rs's module doc for why plain
+// `pull` (the topbar button) stays untouched and ff-only.
+//
 // Rebase is also the ONE op where a mid-sequence SKIP is meaningful — it drops
 // the commit currently being replayed entirely, distinct from Abort (undo
 // everything) and Continue (keep going after a resolved conflict). `skip()`
@@ -347,6 +354,73 @@ class ResolverState {
     } finally {
       this.busy = false;
     }
+  }
+
+  // Pull-with-strategy: fetch, then merge/rebase the current branch onto its
+  // configured upstream. The two new Tools-menu/⌘K entries "Pull (Merge)" /
+  // "Pull (Rebase)" (see main.ts's menu-action switch and cmdk.svelte.ts's
+  // ACTIONS) call these. Deliberately NOT wired into the existing topbar
+  // Pull button/doPull() — see git_remote.rs's module doc: that stays the
+  // one-click ff-only op, completely unchanged. This reuses startMerge's /
+  // startRebase's ENTIRE clean/empty/conflict/error handling verbatim — the
+  // upstream lookup + fetch below are just two new steps gating those two
+  // ALREADY-EXISTING entry points, not a new outcome-handling path.
+  async pullMerge(repo: string) {
+    await this.pullWithStrategy(repo, "merge");
+  }
+
+  async pullRebase(repo: string) {
+    await this.pullWithStrategy(repo, "rebase");
+  }
+
+  private async pullWithStrategy(repo: string, op: "merge" | "rebase") {
+    if (this.busy) return;
+    if (!repo) {
+      bridge.tama.warn("Open a repository first.");
+      return;
+    }
+    this.busy = true;
+    let upstream: string | null;
+    try {
+      const r = await commands.currentUpstream(repo);
+      if (r.status !== "ok") {
+        bridge.tama.warn(r.error || "Could not read the current branch's upstream.");
+        this.busy = false;
+        return;
+      }
+      upstream = r.data;
+    } catch (e) {
+      bridge.tama.warn("Could not read the current branch's upstream — " + e);
+      this.busy = false;
+      return;
+    }
+    if (!upstream) {
+      bridge.tama.warn("This branch has no upstream to pull from.");
+      this.busy = false;
+      return;
+    }
+    bridge.tama.set("thinking");
+    bridge.tama.say("Fetching…");
+    try {
+      const f = await commands.fetch(repo, null);
+      if (!f.ok) {
+        bridge.tama.warn(f.message || "Fetch failed — pull aborted.");
+        this.busy = false;
+        return;
+      }
+    } catch (e) {
+      bridge.tama.warn("Fetch failed — pull aborted. " + e);
+      this.busy = false;
+      return;
+    }
+    // Hand off to startMerge/startRebase for the actual merge/rebase — each
+    // manages `.busy`/`.op`/`.repo` itself from a clean slate (see their own
+    // bodies above), so release the lock here rather than double-guarding;
+    // neither can re-enter early since this function's own re-entrancy check
+    // already ran above.
+    this.busy = false;
+    if (op === "merge") await this.startMerge(repo, upstream);
+    else await this.startRebase(repo, upstream);
   }
 
   // Revert `sha` onto HEAD (mirrors startPick/startMerge). The detail panel's

@@ -300,8 +300,24 @@ pub fn merge_start(path: String, sha: String) -> MergeResult {
         Err(e) => return MergeResult::error(format!("Safety snapshot failed, aborting: {e}")),
     };
 
-    // git merge --no-edit --end-of-options <sha>
-    let args: Vec<&str> = vec!["merge", "--no-edit", "--end-of-options", &sha];
+    // git merge --no-edit --no-autostash --end-of-options <sha>
+    //
+    // --no-autostash is explicit, not incidental: with an ambient
+    // `merge.autoStash=true` in the user's global gitconfig, a dirty tree
+    // that collides with the merge doesn't refuse up front — git silently
+    // stashes it, merges, and re-applies the stash. If THAT reapply itself
+    // conflicts, git still exits 0 (MERGE_HEAD gone), so `classify()` below
+    // (which checks unmerged_files unconditionally, not gated on
+    // in_progress) reports a normal "conflict" and opens the Resolver — but
+    // `merge_continue`/`merge_abort` both gate on `in_progress()` first and
+    // find the merge already concluded: continue/abort then either error
+    // ("no merge in progress") or, worse, `abort` falsely reports "clean",
+    // silently leaving real conflict markers in the working tree with the
+    // user's original edit stranded in `stash@{0}`. Passing --no-autostash
+    // makes the dirty-tree case refuse up front instead, matching this
+    // module's own "never leave the tree in a misleading state" contract —
+    // independent of what the user's global gitconfig happens to set.
+    let args: Vec<&str> = vec!["merge", "--no-edit", "--no-autostash", "--end-of-options", &sha];
 
     let out = match git(&path, &args, true) {
         Ok(o) => o,

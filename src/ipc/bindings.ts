@@ -403,6 +403,25 @@ async pull(path: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("pull", { path });
 },
 /**
+ * The current branch's configured upstream, as a shorthand remote-tracking
+ * name (e.g. "origin/main") — exactly what a pull-with-merge/rebase-strategy
+ * flow needs to hand to `merge_start`/`rebase_start` (see git_merge.rs /
+ * git_rebase.rs). `None` when HEAD isn't on a branch, or that branch has no
+ * upstream configured — the frontend surfaces that as "this branch has no
+ * upstream to pull from" and stops before calling anything else (fetch
+ * included). Pure read (git2 only): no mutation, no snapshot — nothing here
+ * can leave the repo in a different state.
+ * JS call: `invoke("current_upstream", { path })`.
+ */
+async currentUpstream(path: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("current_upstream", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Push the current branch. Publishes to "origin" with `--set-upstream` when
  * it has no configured upstream yet; otherwise a plain `git push`. Never
  * force-pushes — a non-fast-forward rejection surfaces git's own message.
