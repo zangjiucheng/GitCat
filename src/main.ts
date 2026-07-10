@@ -100,6 +100,9 @@ if (IN_TAURI) {
       case "open-repo":
         bridge.pickRepo();
         break;
+      case "close-repo":
+        bridge.closeRepo();
+        break;
       case "new-branch":
         sidebarCtrl.startNewBranch();
         break;

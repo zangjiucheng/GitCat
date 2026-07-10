@@ -52,10 +52,21 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         let open_repo = MenuItemBuilder::with_id("open-repo", "Open Repository\u{2026}")
             .accelerator("CmdOrCtrl+O")
             .build(app)?;
+        // No accelerator: unlike Open (⌘O, a near-universal convention),
+        // there's no equally obvious binding for "go back to no repo open" —
+        // and it's mouse/menu-discoverable already, same reasoning as
+        // Repository's Fetch/Pull/Push and View's Toggle Theme below.
+        let close_repo = MenuItemBuilder::with_id("close-repo", "Close Repository").build(app)?;
         let new_branch = MenuItemBuilder::with_id("new-branch", "New Branch\u{2026}")
             .accelerator("CmdOrCtrl+Shift+N")
             .build(app)?;
-        let b = SubmenuBuilder::new(app, "File").item(&open_repo).item(&new_branch).separator().close_window();
+        let b = SubmenuBuilder::new(app, "File")
+            .item(&open_repo)
+            .item(&close_repo)
+            .separator()
+            .item(&new_branch)
+            .separator()
+            .close_window();
         // Quit lives in the macOS app menu only — Windows/Linux have no app
         // menu, so File is where users expect to find it there.
         #[cfg(not(target_os = "macos"))]
@@ -124,7 +135,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // Everything else is a frontend (Svelte controller / legacy chrome)
         // action — forward the id as a JS event rather than duplicating that
         // logic in Rust.
-        id @ ("open-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about") => {
+        id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

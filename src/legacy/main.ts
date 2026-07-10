@@ -1089,6 +1089,9 @@ async function openRepo(path){
     // reset sequence; a later selectWorkdir() reopens it against the new repo.
     workdirCtrl.deselect();
     $(".repo-pick span").textContent = repoBasename(path);
+    // Undoes bootEmpty()'s own hide — a no-op unless the repo being opened
+    // right now was reached via closeRepo() first.
+    const bp=$(".branch-pill"); if(bp) bp.style.display="";
     loadGraph(g.n);
     await sidebarCtrl.refresh(CUR_REPO);
     await Safety.refresh();
@@ -1258,7 +1261,27 @@ function bootEmpty(){
   workdirCtrl.deselect(); // no repo open -> the pinned row can't be selected either
   recomputeLayout(); positionTicks();
   detailCtrl.showEmpty();
+  // Was never touched here, only correct by accident: this function used to
+  // run exactly once, at cold boot, before openRepo() had ever set these away
+  // from their static HTML placeholders. Now that closeRepo() (below) can
+  // call it AFTER a repo was open, leaving these alone would keep showing the
+  // just-closed repo's name and branch as if it were still open.
+  const pick=$(".repo-pick span"); if(pick) pick.textContent="Open a repository…";
+  const bp=$(".branch-pill"); if(bp) bp.style.display="none";
   dirty=true;
+}
+// "Close Repository" (File menu) — without this, the ONLY way back to the
+// empty/default state was quitting the app outright; bootEmpty() existed
+// but nothing after cold boot ever called it again. Cancels the same
+// long-running, repo-tied ops openRepo() cancels before switching away, and
+// clears NAV_STACK/hides "← Back to …" exactly like pickRepo() does when it
+// opens something unrelated to whatever submodule chain the user was in.
+async function closeRepo(){
+  if(!IN_TAURI||!CUR_REPO) return;
+  await bisectCtrl.cancelIfRunning();
+  await sidebarCtrl.cancelIfRunning();
+  bootEmpty();
+  NAV_STACK.length=0; updateBackToParentBtn();
 }
 $(".repo-pick").addEventListener("click", pickRepo);
 $("#backToParentBtn").addEventListener("click", goBackToParent);
@@ -1281,7 +1304,7 @@ const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>c
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, hhex, msgOf, AUTHORS,
-  fakeAgo, relTime, pickRepo, ensureDrawerOpen, armDanger, updateBranchPill,
+  fakeAgo, relTime, pickRepo, closeRepo, ensureDrawerOpen, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
   // above for the full design) — enterSubmodule/goBackToParent are hoisted

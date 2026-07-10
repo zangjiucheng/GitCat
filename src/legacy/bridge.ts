@@ -51,6 +51,9 @@ export {
   relTime,
   // native folder-picker flow (the empty-state hero's "Open a repository…" button)
   pickRepo,
+  // "Close Repository" (File menu, see src/main.ts's "menu-action" listener)
+  // — the only in-app way back to the empty/default state without quitting.
+  closeRepo,
   // drawer-wide tab-switching chrome (stateless, shared by all 4 drawer tabs)
   ensureDrawerOpen,
   // shared single-step destructive-confirm scrim (delete-branch reuses this;
