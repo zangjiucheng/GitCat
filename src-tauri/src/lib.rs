@@ -106,6 +106,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_merge::merge_start,
         git_merge::merge_continue,
         git_merge::merge_abort,
+        // Squash-merge (backlog #7): stage a branch/commit's diff into the
+        // index without committing, plus its own conflict abort/continue (no
+        // MERGE_HEAD — see git_merge.rs's module doc / conflict.rs's detect_op)
+        git_merge::merge_squash,
+        git_merge::merge_squash_abort,
+        git_merge::merge_squash_continue,
         // Rebase (M6 stage 2): linear rebase onto a target + continue / skip / abort
         git_rebase::rebase_start,
         git_rebase::rebase_continue,

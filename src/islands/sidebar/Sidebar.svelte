@@ -13,6 +13,7 @@
   let newSubmoduleEl: HTMLInputElement | undefined = $state();
   let newSubmoduleFormEl: HTMLDivElement | undefined = $state();
   let submoduleMenuEl: HTMLDivElement | undefined = $state();
+  let mergeMenuEl: HTMLDivElement | undefined = $state();
 
   function onWindowPointerdown(e: PointerEvent) {
     if (sidebarCtrl.menu && menuEl && !menuEl.contains(e.target as Node)) sidebarCtrl.closeMenu();
@@ -28,6 +29,7 @@
     // rationale as the New Branch/New Tag forms above.
     if (sidebarCtrl.newSubmoduleOpen && !sidebarCtrl.busy && newSubmoduleFormEl && !newSubmoduleFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewSubmodule();
     if (sidebarCtrl.submoduleMenu && submoduleMenuEl && !submoduleMenuEl.contains(e.target as Node)) sidebarCtrl.closeSubmoduleMenu();
+    if (sidebarCtrl.mergeMenu && mergeMenuEl && !mergeMenuEl.contains(e.target as Node)) sidebarCtrl.closeMergeMenu();
   }
 
   $effect(() => {
@@ -581,10 +583,24 @@
          live sidebarCtrl.menu state on each read. -->
     <button disabled={menu.isCurrent} onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.checkout(name); }}>Checkout</button>
     {#if !menu.isCurrent}
+      <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.openMergeMenu(name, x, y); }}>Merge into current&#8230;</button>
       <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.rebaseOnto(name); }}>Rebase current branch onto here</button>
       <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.interactiveRebaseOnto(name); }}>Interactive rebase onto here&#8230;</button>
     {/if}
     <button class="danger" disabled={menu.isCurrent} onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.deleteBranch(name); }}>Delete&#8230;</button>
+  </div>
+{/if}
+
+{#if sidebarCtrl.mergeMenu}
+  {@const mm = sidebarCtrl.mergeMenu}
+  <div class="ref-pop" bind:this={mergeMenuEl} style="left:{mm.x}px;top:{mm.y}px">
+    <!-- Same capture-before-close rationale as the branch/tag/submodule menus
+         above — mm.name is read into a local BEFORE closeMergeMenu() nulls
+         sidebarCtrl.mergeMenu. -->
+    <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.mergeInto(name, "auto"); }}>Auto (fast-forward if possible)</button>
+    <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.mergeInto(name, "no-ff"); }}>Always create a merge commit</button>
+    <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.mergeInto(name, "ff-only"); }}>Fast-forward only</button>
+    <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.squashInto(name); }}>Squash (no commit)</button>
   </div>
 {/if}
 

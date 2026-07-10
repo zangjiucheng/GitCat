@@ -1941,7 +1941,11 @@ fn read_stash_conflict_state(repo: &Repository) -> Option<StashConflictState> {
     serde_json::from_str(&data).ok()
 }
 
-fn clear_stash_conflict_state(repo: &Repository) {
+/// `pub(crate)`: also called from `git_merge::merge_squash` to clear a stale
+/// leftover of THIS sidecar before it starts (see that function's own
+/// comment, and `conflict.rs::detect_op`'s doc comment on the misattribution
+/// bug this closes).
+pub(crate) fn clear_stash_conflict_state(repo: &Repository) {
     let _ = fs::remove_file(stash_conflict_state_path(repo));
 }
 
@@ -1971,6 +1975,14 @@ fn apply_or_pop(path: &str, index: usize, pop: bool, expected_sha: Option<String
             "There are unresolved conflicts from a previous stash apply/pop — resolve or abort them first.",
         );
     }
+    // See git_merge::merge_squash's identical cleanup for the full
+    // rationale: unmerged_files() being empty here proves any PRIOR
+    // conflict (of either kind) is genuinely concluded, so any sidecar still
+    // on disk at this point must be stale (left behind by an out-of-band
+    // resolution) — clearing both here closes an adversarially-found
+    // misattribution bug in conflict.rs::detect_op.
+    clear_stash_conflict_state(&repo);
+    crate::git_merge::clear_merge_squash_conflict_state(&repo);
     if let Err(e) = check_stash_identity(path, index, &expected_sha) {
         return WorkdirResult::err(e);
     }

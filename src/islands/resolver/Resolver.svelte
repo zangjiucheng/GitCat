@@ -10,25 +10,29 @@
   }
   const lines = (txt: string) => (txt || "").split("\n");
 
-  // Abort button copy — op-flavored ("Abort merge"/"Abort pick"/"Abort rebase"/"Abort revert"/"Abort stash").
+  // Abort button copy — op-flavored ("Abort merge"/"Abort pick"/"Abort rebase"/"Abort revert"/"Abort stash"/"Abort squash").
   function abortLabel(op: string): string {
     if (op === "merge") return "Abort merge";
     if (op === "rebase") return "Abort rebase";
     if (op === "revert") return "Abort revert";
     if (op === "stash") return "Abort stash";
+    if (op === "merge-squash") return "Abort squash";
     return "Abort pick";
   }
 
   // Continue button copy — every other op's continue step creates a commit;
   // finishing a stash conflict doesn't (apply leaves the entry as-is, a
   // resolved pop only drops it — see stash_conflict_continue's doc comment),
-  // so "& commit" would be misleading there. An interactive-rebase "editing"
-  // pause is its own third case: Continue just advances the sequencer (any
-  // commit already happened via the Workdir panel's amend, or nothing changed
-  // at all), so neither "& commit" nor plain "Continue" reads quite right.
+  // so "& commit" would be misleading there. Finishing a merge-squash
+  // conflict doesn't commit either — it only finishes STAGING (see
+  // merge_squash_continue's doc comment); the actual commit is the Workdir
+  // hand-off that follows. An interactive-rebase "editing" pause is its own
+  // third case: Continue just advances the sequencer (any commit already
+  // happened via the Workdir panel's amend, or nothing changed at all), so
+  // neither "& commit" nor plain "Continue" reads quite right.
   function continueLabel(op: string, editing: boolean): string {
     if (editing) return "Continue rebase";
-    return op === "stash" ? "Continue" : "Continue & commit";
+    return op === "stash" || op === "merge-squash" ? "Continue" : "Continue & commit";
   }
 
   // Escape closes only a design-mode (browser) resolver — never a live real pick.

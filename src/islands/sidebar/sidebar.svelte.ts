@@ -142,6 +142,11 @@ export type TagMenu = { name: string; x: number; y: number };
 // them from `path` inside the popover, so the popover's own buttons never
 // need a second lookup into `submodules`.
 export type SubmoduleMenu = { path: string; status: string; absolutePath: string; x: number; y: number };
+// Backlog #7's strategy chooser, opened from the branch popover's "Merge
+// into current…" button (see `openMergeMenu`) — same shape/rationale as
+// TagMenu above (no extra per-row info to capture beyond the branch name and
+// where to draw the popover).
+export type MergeMenu = { name: string; x: number; y: number };
 
 // Which action (if any) a submodule row's status affords — a pure, exported
 // function rather than inline template logic so it's directly unit-testable
@@ -269,6 +274,13 @@ class SidebarState {
   // is ever non-null at a time" rule as tagMenu above (see openMenu/
   // openTagMenu/openSubmoduleMenu, which each null the other two).
   submoduleMenu = $state<SubmoduleMenu | null>(null);
+  // Backlog #7's merge-strategy chooser, opened FROM inside the branch
+  // popover (`menu`'s own "Merge into current…" button) rather than from a
+  // row's "⋮" directly — same "only one popover open at a time" invariant as
+  // the other three, so opening this nulls menu/tagMenu/submoduleMenu too
+  // (see `openMergeMenu`), and opening any of THOSE nulls this one back out
+  // (see their own bodies below).
+  mergeMenu = $state<MergeMenu | null>(null);
   newTagOpen = $state(false);
   newTagName = $state("");
   // "" means lightweight (no -a/-m); non-empty means annotated with this
@@ -916,6 +928,7 @@ class SidebarState {
     this.menu = null;
     this.tagMenu = null;
     this.submoduleMenu = null;
+    this.mergeMenu = null;
     this.hasRepo = false;
     this.foreachResults = [];
     this.foreachCommand = "";
@@ -1116,12 +1129,56 @@ class SidebarState {
   openMenu(name: string, isCurrent: boolean, anchor: HTMLElement) {
     this.tagMenu = null; // only one popover open at a time
     this.submoduleMenu = null;
+    this.mergeMenu = null;
     const r = anchor.getBoundingClientRect();
     this.menu = { name, isCurrent, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
 
   closeMenu() {
     this.menu = null;
+  }
+
+  // Backlog #7's strategy chooser — a SECOND-level popover opened from
+  // inside the branch popover's own "Merge into current…" button, reusing
+  // that button's already-computed (x, y) rather than re-measuring an
+  // anchor element (the branch popover that button lives in is about to be
+  // closed in the same click handler — see Sidebar.svelte).
+  openMergeMenu(name: string, x: number, y: number) {
+    this.menu = null; // only one popover open at a time
+    this.tagMenu = null;
+    this.submoduleMenu = null;
+    this.mergeMenu = { name, x: Math.min(x, window.innerWidth - 220), y };
+  }
+
+  closeMergeMenu() {
+    this.mergeMenu = null;
+  }
+
+  // Auto / always-create-a-merge-commit / fast-forward-only — all three
+  // funnel through resolver.startMerge's now-optional `strategy` param (see
+  // its own doc comment); the drag-gesture merge and commit-menu's "Merge"
+  // action are UNCHANGED and never call this. Design-mode demo reuses the
+  // existing "merge" conflict demo verbatim (ignoring which strategy was
+  // picked) — same "demo doesn't need every real nuance" convention
+  // rebaseOnto's own demo branch already uses.
+  async mergeInto(name: string, strategy: "auto" | "no-ff" | "ff-only") {
+    if (!IN_TAURI) {
+      resolver.openDemo(name, "merge"); // ---- design-mode demo ----
+      return;
+    }
+    await resolver.startMerge(bridge.CUR_REPO as unknown as string, name, strategy); // ---- real merge (Svelte island) ----
+  }
+
+  // Squash `name`'s entire diff into the index (no commit) — see
+  // resolver.svelte.ts's `startMergeSquash` for the clean/conflict split
+  // (clean hands off to the Workdir commit UI; conflict opens this same
+  // shared Resolver with the "merge-squash" op).
+  async squashInto(name: string) {
+    if (!IN_TAURI) {
+      resolver.openDemo(name, "merge-squash"); // ---- design-mode demo ----
+      return;
+    }
+    await resolver.startMergeSquash(bridge.CUR_REPO as unknown as string, name); // ---- real squash (Svelte island) ----
   }
 
   // "+ New tag…" inline form — same window.prompt()-doesn't-exist-in-
@@ -1268,6 +1325,7 @@ class SidebarState {
   openTagMenu(name: string, anchor: HTMLElement) {
     this.menu = null; // only one popover open at a time
     this.submoduleMenu = null;
+    this.mergeMenu = null;
     const r = anchor.getBoundingClientRect();
     this.tagMenu = { name, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
@@ -1279,6 +1337,7 @@ class SidebarState {
   openSubmoduleMenu(path: string, status: string, absolutePath: string, anchor: HTMLElement) {
     this.menu = null; // only one popover open at a time
     this.tagMenu = null;
+    this.mergeMenu = null;
     const r = anchor.getBoundingClientRect();
     this.submoduleMenu = { path, status, absolutePath, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }

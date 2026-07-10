@@ -11,14 +11,19 @@
 // legacy `bridge`.
 //
 // ── op-dispatch design ──────────────────────────────────────────────────────
-// One resolver instance serves cherry-pick, merge, rebase, AND revert
-// conflicts. There are four entry points — `startPick` (used by the existing
-// cherry-pick drag handler, unchanged signature), `startMerge`, `startRebase`,
-// and `startRevert` — because each op's *start* command takes different args
-// (cherry-pick's `recordOrigin`, rebase's `onto`, revert's `signoff`, have no
-// equivalent on the others). All funnel into the SAME shared `applyOutcome` +
-// modal state (`.open`, `.files`, `.selected`, …), so there is exactly one
-// conflict-resolution UI.
+// One resolver instance serves cherry-pick, merge, rebase, revert, AND
+// merge-squash conflicts. There are five entry points — `startPick` (used by
+// the existing cherry-pick drag handler, unchanged signature), `startMerge`,
+// `startRebase`, `startRevert`, and `startMergeSquash` — because each op's
+// *start* command takes different args (cherry-pick's `recordOrigin`,
+// rebase's `onto`, revert's `signoff`, merge's `strategy`, have no equivalent
+// on the others). All funnel into the SAME shared `applyOutcome` + modal
+// state (`.open`, `.files`, `.selected`, …), so there is exactly one
+// conflict-resolution UI. `startMergeSquash`'s SUCCESS path is the one
+// exception to "funnel into the same outcome" — see its own "staged" case in
+// `applyOutcome` and `openSquashStaged` below: unlike every other op, a
+// successful squash still owes a real commit, so it hands off to the
+// Workdir commit UI instead of closing the modal and cheering.
 //
 // `pullMerge`/`pullRebase` are NOT a fifth op — they're a thin orchestration
 // layer in front of `startMerge`/`startRebase`: look up the current branch's
@@ -91,7 +96,8 @@
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
-import type { ConflictFile, MergeResult, PickResult, RebaseResult, RevertResult, StashResolveResult, WorkdirResult } from "../../ipc/bindings";
+import { workdirCtrl } from "../workdir/workdir.svelte.ts";
+import type { ConflictFile, MergeResult, MergeSquashResult, PickResult, RebaseResult, RevertResult, StashResolveResult, WorkdirResult } from "../../ipc/bindings";
 
 // specta generates `side: string`; keep the precise union at the call boundary.
 type ConflictSide = "ours" | "theirs";
@@ -102,10 +108,14 @@ type ConflictSide = "ours" | "theirs";
 // below (see `openStashConflict()`) because the "start" command (stash_apply/
 // stash_pop) is already owned by workdirCtrl, which needs the result for its
 // OWN non-conflict success/failure toasts too — see workdir.svelte.ts's
-// `applyOrPopStash`.
-type ResolverOp = "cherry-pick" | "merge" | "rebase" | "revert" | "stash";
+// `applyOrPopStash`. "merge-squash" (backlog #7) DOES have its own start entry
+// (`startMergeSquash`, mirroring startMerge) since nothing else owns
+// `merge_squash`'s result — but its SUCCESS state ("staged", not "clean")
+// hands off to workdirCtrl's commit UI instead of closing+cheering — see
+// `openSquashStaged` below.
+type ResolverOp = "cherry-pick" | "merge" | "rebase" | "revert" | "stash" | "merge-squash";
 
-type OpResult = PickResult | MergeResult | RebaseResult | RevertResult | StashResolveResult;
+type OpResult = PickResult | MergeResult | RebaseResult | RevertResult | StashResolveResult | MergeSquashResult;
 
 const FAKE = [
   {
@@ -126,6 +136,7 @@ const OPS: Record<ResolverOp, {
   rebase: { abort: commands.rebaseAbort, continueOp: commands.rebaseContinue },
   revert: { abort: commands.revertAbort, continueOp: commands.revertContinue },
   stash: { abort: commands.stashConflictAbort, continueOp: commands.stashConflictContinue },
+  "merge-squash": { abort: commands.mergeSquashAbort, continueOp: commands.mergeSquashContinue },
 };
 
 // Op-flavored copy (modal title, banners, fallback messages). Keeping these
@@ -223,6 +234,26 @@ const MSG: Record<ResolverOp, {
     continueSay: "Conflict resolved — stash finished.",
     continueCheer: 'Conflict resolved — stash finished. <span class="jp">よし!</span>',
   },
+  // `clean`/`empty` are near-dead fallbacks here too (same rationale as
+  // stash's own comment above): a successful squash — from `merge_squash`
+  // OR from resolving this op's own conflict — reports "staged", never
+  // "clean" (see MergeSquashResult's own doc: squash never commits), which
+  // `applyOutcome` routes to `openSquashStaged` instead of this table at all.
+  "merge-squash": {
+    title: "Squash-merge hit a conflict",
+    verb: "Squash",
+    clean: (sha) => "Squashed " + (sha || "") + " into the index.",
+    empty: "Already up to date — nothing to squash.",
+    conflictBanner: (sha, n) =>
+      n
+        ? "Squashing " + (sha || "the commit") + " conflicts in " + n + " file" + (n === 1 ? "" : "s") +
+          ". Pick a side per file, then Continue — or Abort."
+        : "Squashing " + (sha || "the commit") + " needs review — resolve, then Continue, or Abort.",
+    cheer: 'Squash staged. <span class="jp">よし!</span>',
+    abortMsg: "Squash-merge conflict aborted — back to the pre-squash state.",
+    continueSay: "Conflict resolved — squash staged, write a commit message to finish.",
+    continueCheer: 'Conflict resolved — squash staged. <span class="jp">よし!</span>',
+  },
 };
 
 class ResolverState {
@@ -311,7 +342,16 @@ class ResolverState {
   }
 
   // Drag-a-commit/branch-tip-onto-HEAD merge entry (mirrors startPick).
-  async startMerge(repo: string, sha: string) {
+  // `strategy` (backlog #7) is optional and defaults to "auto" (today's exact
+  // behavior — no extra flag) precisely so the THREE existing callers (the
+  // canvas drag gesture, the commit-menu's "Merge" action, and
+  // `pullWithStrategy`'s merge path, all of which call this with no third
+  // arg) never need to change. Only the Sidebar's new branch-row "Merge into
+  // current…" strategy chooser (see sidebar.svelte.ts's `mergeInto`) ever
+  // passes an explicit non-default value. `commands.mergeStart` itself takes
+  // a required `string | null` (specta has no optional-param concept), so
+  // `?? null` is the boundary translation.
+  async startMerge(repo: string, sha: string, strategy?: string | null) {
     if (this.busy) return;
     if (!repo) {
       bridge.tama.warn("Open a repository first.");
@@ -323,10 +363,39 @@ class ResolverState {
     this.busy = true;
     bridge.tama.event("mutation.caution", { count: 1 });
     try {
-      const res = await commands.mergeStart(repo, sha);
+      const res = await commands.mergeStart(repo, sha, strategy ?? null);
       await this.applyOutcome(res, sha);
     } catch (e) {
       bridge.tama.warn("Merge failed — " + e);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  // Squash `sha`'s entire diff into the index (no commit) — the Sidebar's new
+  // branch-row "Merge into current… > Squash" action (see sidebar.svelte.ts's
+  // `squashInto`). Mirrors startMerge/startPick's shape exactly; the only
+  // difference is downstream, in `applyOutcome`'s "staged" case below (a
+  // successful squash still owes a real commit, unlike every other op here).
+  // Demo mode never reaches this method — see openDemo's "merge-squash" kind
+  // and the callers' own `!IN_TAURI` branch, same convention as
+  // startMerge/startRebase/startRevert.
+  async startMergeSquash(repo: string, sha: string) {
+    if (this.busy) return;
+    if (!repo) {
+      bridge.tama.warn("Open a repository first.");
+      return;
+    }
+    this.demo = false;
+    this.op = "merge-squash";
+    this.repo = repo;
+    this.busy = true;
+    bridge.tama.event("mutation.caution", { count: 1 });
+    try {
+      const res = await commands.mergeSquash(repo, sha);
+      await this.applyOutcome(res, sha);
+    } catch (e) {
+      bridge.tama.warn("Squash failed — " + e);
     } finally {
       this.busy = false;
     }
@@ -472,6 +541,14 @@ class ResolverState {
       case "conflict":
         await this.openConflict(res, sha);
         break;
+      case "staged":
+        // merge-squash-only (see MergeSquashResult's own doc comment): a
+        // successful squash — from a clean-on-first-try `startMergeSquash`
+        // OR from resolving this op's own conflict via `continue()` below —
+        // still owes a real commit, unlike every other op's "clean". Hand
+        // off to the Workdir commit UI instead of closing+cheering.
+        this.openSquashStaged(res as MergeSquashResult);
+        break;
       case "editing":
         // Interactive-rebase-only (see the module doc's "editing state" note)
         // — a RebaseResult, but applyOutcome is shared across every op's
@@ -549,6 +626,23 @@ class ResolverState {
     if (this.editing) this.open = true;
   }
 
+  // merge-squash-only success handoff (see MergeSquashResult's own doc
+  // comment + this file's "staged" case above): closes the resolver (a no-op
+  // if it was never opened — the clean-on-first-try path), then hands off to
+  // the ALREADY-BUILT Workdir commit-message UI with `.git/SQUASH_MSG`'s
+  // captured content prefilled, exactly like `openWorkdirToAmend` hands an
+  // interactive-rebase edit-pause off to the SAME panel rather than
+  // inventing a second commit UI. `bridge.selectWorkdir()` (via
+  // `workdirCtrl.select`) resets `.message` to "" as a side effect, so the
+  // prefill MUST happen after it, not before.
+  private openSquashStaged(res: MergeSquashResult) {
+    this.close();
+    bridge.selectWorkdir();
+    workdirCtrl.message = res.suggestedMessage || "";
+    bridge.tama.set("hint");
+    bridge.tama.say(res.message || "Squashed — write a commit message to finish.", 4200);
+  }
+
   // Public entry for a stash-apply/pop conflict (workdir.svelte.ts's
   // `applyOrPopStash`). Unlike startPick/startMerge/startRebase, this does
   // NOT call a backend "start" command itself — stash_apply/stash_pop is
@@ -581,7 +675,8 @@ class ResolverState {
           r.data.op === "merge" ||
           r.data.op === "rebase" ||
           r.data.op === "revert" ||
-          r.data.op === "stash"
+          r.data.op === "stash" ||
+          r.data.op === "merge-squash"
         )
           this.op = r.data.op;
       } else console.error("conflict_status", r.error);
@@ -738,11 +833,13 @@ class ResolverState {
     this.sub =
       kind === "merge"
         ? "Merging " + sha + " into HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed."
-        : kind === "rebase"
-          ? "Rebasing onto " + sha + " conflicts in src/auth/token.ts. Snapshot …demo sealed."
-          : kind === "revert"
-            ? "Reverting " + sha + " conflicts in src/auth/token.ts. Snapshot …demo sealed."
-            : "Picking " + sha + " onto HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed.";
+        : kind === "merge-squash"
+          ? "Squashing " + sha + " into the index conflicts in src/auth/token.ts. Snapshot …demo sealed."
+          : kind === "rebase"
+            ? "Rebasing onto " + sha + " conflicts in src/auth/token.ts. Snapshot …demo sealed."
+            : kind === "revert"
+              ? "Reverting " + sha + " conflicts in src/auth/token.ts. Snapshot …demo sealed."
+              : "Picking " + sha + " onto HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed.";
     this.files = FAKE.map((f) => ({ ...f }));
     this.selected = FAKE[0].path;
     this.remaining = new Set([FAKE[0].path]);

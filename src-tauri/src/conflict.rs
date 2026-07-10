@@ -47,9 +47,10 @@ pub struct ConflictFile {
 }
 
 /// Result of [`conflict_status`]. `op` is one of
-/// `"cherry-pick" | "merge" | "rebase" | "revert" | "stash" | "none"` — see
-/// [`detect_op`] for why `"stash"` exists (a `git stash apply`/`pop` conflict
-/// leaves `RepositoryState` at `Clean`, unlike every other op here).
+/// `"cherry-pick" | "merge" | "rebase" | "revert" | "stash" | "merge-squash" |
+/// "none"` — see [`detect_op`] for why `"stash"` and `"merge-squash"` exist (a
+/// `git stash apply`/`pop` conflict AND a `git merge --squash` conflict both
+/// leave `RepositoryState` at `Clean`, unlike every other op here).
 /// `in_progress` is true whenever a sequencer op is underway **or** there are
 /// unmerged files — so once every file is resolved (`files` empty) but the
 /// cherry-pick has not been continued yet, `in_progress` stays true and the
@@ -90,8 +91,8 @@ pub fn conflict_status(path: String) -> Result<ConflictStatus, String> {
 }
 
 /// Map libgit2's repository state to the resolver's op label. Pure function
-/// of `RepositoryState` alone — see [`detect_op`] for the one case
-/// (`"stash"`) this can never report on its own.
+/// of `RepositoryState` alone — see [`detect_op`] for the two cases
+/// (`"stash"`, `"merge-squash"`) this can never report on its own.
 fn op_name(state: RepositoryState) -> &'static str {
     match state {
         RepositoryState::CherryPick | RepositoryState::CherryPickSequence => "cherry-pick",
@@ -107,19 +108,59 @@ fn op_name(state: RepositoryState) -> &'static str {
 }
 
 /// The resolver's op label for the repo's CURRENT state — extends
-/// `op_name`'s pure `RepositoryState` mapping with ONE more case: `git stash
-/// apply`/`stash pop` leaves `RepositoryState` at `Clean` even mid-conflict
-/// (empirically verified: neither sets `MERGE_HEAD` or any sequencer file the
-/// way merge/rebase/cherry-pick do), so a Clean state that STILL has unmerged
-/// INDEX entries (checked via `git2::Index::has_conflicts`, cheap and
-/// side-effect-free) is recognized as `"stash"` rather than `"none"`. Kept as
-/// ONE shared function (rather than duplicating this check) because both
-/// `conflict_status` (read) and `resolve_conflict_file`'s allowlist (write
-/// guard) must agree on it — a split here would let one recognize a stash
+/// `op_name`'s pure `RepositoryState` mapping with TWO more cases, both only
+/// reachable when `RepositoryState` is `Clean` AND the index has conflicts:
+/// `"merge-squash"` (a `git merge --squash` conflict — see git_merge.rs's
+/// module doc) and `"stash"` (a `git stash apply`/`pop` conflict). Neither
+/// sets any git-native marker (empirically verified: neither sets
+/// `MERGE_HEAD` or any sequencer file the way merge/rebase/cherry-pick do),
+/// so each writes its OWN sidecar (`git_merge::has_merge_squash_conflict` /
+/// workdir's `stash-conflict.json`) — checked here in a fixed order: squash
+/// first, stash as the fallback.
+///
+/// Squash is checked FIRST (not because it's "more correct", but because it's
+/// the more specific of the two signals — this function only needs ONE
+/// direct check, not two, since "not squash" already means "stash" by
+/// elimination in today's two-op universe; see the "stash" branch below,
+/// which is unconditional once squash is ruled out, preserving this
+/// function's exact pre-existing default for any Clean+conflicted state with
+/// no identifiable source).
+///
+/// INVARIANT that keeps the ordering from ever actually mattering: both
+/// `git_merge::merge_squash` and `workdir::apply_or_pop` refuse to even START
+/// while `unmerged_files()` is non-empty OR any sequencer op is in progress
+/// — so under normal in-app use, AT MOST ONE of these two sidecars can exist
+/// alongside a genuinely conflicted index at any given time.
+///
+/// A STALE sidecar (left behind by a conflict concluded out-of-band — e.g. a
+/// plain `git commit` from a terminal instead of this app's own Continue) is
+/// NOT just a labeling nuisance: an adversarial review found that `git_merge
+/// ::merge_squash_abort`/`_continue` and `workdir::stash_conflict_abort`/
+/// `_continue` each blindly trust THEIR OWN sidecar's content once dispatched
+/// to — so a stale squash sidecar surviving until a LATER, unrelated stash
+/// conflict would make this function mislabel it `"merge-squash"`, and a
+/// user's Abort click would then hard-reset HEAD to the stale sidecar's
+/// long-outdated `backup_ref`, silently discarding any real commits made
+/// since. Fixed at the SOURCE, not here: both `merge_squash` and
+/// `apply_or_pop` now clear BOTH sidecars the moment they confirm
+/// `unmerged_files()` is empty at their own start (see each function's own
+/// comment) — that emptiness proves any prior conflict is genuinely
+/// concluded, so anything left on disk at that point is provably stale. This
+/// function's ordering (squash-first) is therefore a tie-breaker for the
+/// narrow out-of-band-concurrent-conflict case only (e.g. `git stash pop`
+/// run from a terminal while GitCat already has a squash conflict open),
+/// never a defense against staleness — that defense lives upstream.
+///
+/// Kept as ONE shared function (rather than duplicating this check) because
+/// both `conflict_status` (read) and `resolve_conflict_file`'s allowlist
+/// (write guard) must agree on it — a split here would let one recognize a
 /// conflict while the other refuses to act on it.
 fn detect_op(repo: &Repository) -> Result<&'static str, git2::Error> {
     let op = op_name(repo.state());
     if op == "none" && repo.index()?.has_conflicts() {
+        if crate::git_merge::has_merge_squash_conflict(repo) {
+            return Ok("merge-squash");
+        }
         return Ok("stash");
     }
     Ok(op)
@@ -218,12 +259,14 @@ pub fn resolve_conflict_file(path: String, file: String, side: String) -> Resolv
 
     // Guard: only resolve inside an op GitCat snapshots AND can Abort/Continue
     // from the app — cherry-pick (git_pick), merge (git_merge), rebase
-    // (git_rebase), revert (git_revert), and stash
-    // (workdir::stash_conflict_abort/_continue). Their *_abort/*_continue
+    // (git_rebase), revert (git_revert), stash
+    // (workdir::stash_conflict_abort/_continue), and merge-squash
+    // (git_merge::merge_squash_abort/_continue). Their *_abort/*_continue
     // commands are gated on CHERRY_PICK_HEAD/MERGE_HEAD/the rebase-merge
-    // sequencer dir/REVERT_HEAD/the stash-conflict sidecar file respectively,
-    // so any OTHER op could be neither backed out nor advanced from the app —
-    // never mutate inside one.
+    // sequencer dir/REVERT_HEAD/the stash-conflict sidecar file/the
+    // merge-squash-conflict sidecar file respectively, so any OTHER op could
+    // be neither backed out nor advanced from the app — never mutate inside
+    // one.
     //
     // NOTE: this is intentionally an allowlist, not a denylist, so an op that
     // doesn't (yet) have app-level continue/abort support fails closed.
@@ -233,9 +276,9 @@ pub fn resolve_conflict_file(path: String, file: String, side: String) -> Resolv
                 Ok(o) => o,
                 Err(e) => return ResolveResult::err(format!("cannot inspect repository state: {}", e.message())),
             };
-            if op != "cherry-pick" && op != "merge" && op != "rebase" && op != "revert" && op != "stash" {
+            if op != "cherry-pick" && op != "merge" && op != "rebase" && op != "revert" && op != "stash" && op != "merge-squash" {
                 return ResolveResult::err(format!(
-                    "Not inside a cherry-pick, merge, rebase, revert, or stash conflict (repository state: {op}). \
+                    "Not inside a cherry-pick, merge, rebase, revert, stash, or squash-merge conflict (repository state: {op}). \
                      Resolve {op} conflicts with git on the command line."
                 ));
             }

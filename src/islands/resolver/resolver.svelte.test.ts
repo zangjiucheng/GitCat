@@ -40,6 +40,9 @@ vi.mock("../../ipc/bindings", () => ({
     revertAbort: vi.fn(),
     stashConflictAbort: vi.fn(),
     stashConflictContinue: vi.fn(),
+    mergeSquash: vi.fn(),
+    mergeSquashAbort: vi.fn(),
+    mergeSquashContinue: vi.fn(),
     conflictStatus: vi.fn(),
     resolveConflictFile: vi.fn(),
     currentUpstream: vi.fn(),
@@ -53,6 +56,7 @@ import type {
   ConflictFile,
   ConflictStatus,
   MergeResult,
+  MergeSquashResult,
   PickResult,
   RebaseResult,
   ResolveResult,
@@ -61,6 +65,12 @@ import type {
   WorkdirResult,
 } from "../../ipc/bindings";
 import { resolver } from "./resolver.svelte.ts";
+// Real (unmocked) module — resolver.svelte.ts imports the real `workdirCtrl`
+// singleton to hand a resolved/clean squash off to (see `openSquashStaged`);
+// asserting against it directly here (rather than mocking it) verifies the
+// actual wiring, same rationale as this file exercising `resolver` itself
+// unmocked.
+import { workdirCtrl } from "../workdir/workdir.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
@@ -97,6 +107,10 @@ function stashResolveResult(partial: Partial<StashResolveResult>): StashResolveR
   return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
 }
 
+function mergeSquashResult(partial: Partial<MergeSquashResult>): MergeSquashResult {
+  return { ok: true, state: "staged", conflictedFiles: [], message: "", backupRef: null, suggestedMessage: null, ...partial };
+}
+
 function workdirResult(partial: Partial<WorkdirResult>): WorkdirResult {
   return { ok: false, message: "", conflictedFiles: [], backupRef: null, backupPatch: null, droppedStashRef: null, ...partial };
 }
@@ -123,6 +137,7 @@ function resetResolver() {
 beforeEach(() => {
   vi.clearAllMocks();
   resetResolver();
+  workdirCtrl.message = ""; // real (unmocked) singleton — reset between tests, see the import's own comment
 });
 
 describe("isolation", () => {
@@ -200,7 +215,12 @@ describe("startMerge", () => {
 
     await resolver.startMerge("repo1", "sha1");
 
-    expect(commands.mergeStart).toHaveBeenCalledWith("repo1", "sha1");
+    // Regression check (backlog #7): startMerge's own default `strategy`
+    // arg forwards `null` (== "auto", today's exact pre-#7 behavior) to
+    // commands.mergeStart when the caller passes none — every existing
+    // caller (drag gesture, commit-menu Merge, pullMerge) calls startMerge
+    // with exactly these two args, unchanged.
+    expect(commands.mergeStart).toHaveBeenCalledWith("repo1", "sha1", null);
     expect(commands.cherryPick).not.toHaveBeenCalled();
     expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
     expect(resolver.open).toBe(false);
@@ -236,6 +256,147 @@ describe("startMerge", () => {
     expect(bridge.tama.warn).toHaveBeenCalled();
     expect(commands.mergeStart).not.toHaveBeenCalled();
     expect(resolver.open).toBe(false);
+  });
+
+  // Backlog #7: the Sidebar's new "Merge into current…" strategy chooser is
+  // the ONLY caller that ever passes an explicit non-default strategy — see
+  // sidebar.svelte.ts's `mergeInto`.
+  it("forwards an explicit strategy straight through to commands.mergeStart", async () => {
+    vi.mocked(commands.mergeStart).mockResolvedValueOnce(mergeResult({ state: "clean", message: "Merged." }));
+    await resolver.startMerge("repo1", "feature", "no-ff");
+    expect(commands.mergeStart).toHaveBeenCalledWith("repo1", "feature", "no-ff");
+  });
+
+  it("forwards \"ff-only\" straight through to commands.mergeStart", async () => {
+    vi.mocked(commands.mergeStart).mockResolvedValueOnce(mergeResult({ state: "clean", message: "Merged." }));
+    await resolver.startMerge("repo1", "feature", "ff-only");
+    expect(commands.mergeStart).toHaveBeenCalledWith("repo1", "feature", "ff-only");
+  });
+});
+
+// Backlog #7's squash-merge entry point. Unlike every other op's "clean",
+// merge_squash's success is "staged" (see MergeSquashResult's own doc
+// comment) — it hands off to the ALREADY-BUILT Workdir commit UI with
+// `.git/SQUASH_MSG`'s captured content prefilled, instead of closing+cheering.
+describe("startMergeSquash (squash-merge, #7)", () => {
+  it("staged (clean) result: closes the modal, hands off to Workdir with the suggested message prefilled", async () => {
+    vi.mocked(commands.mergeSquash).mockResolvedValueOnce(
+      mergeSquashResult({ state: "staged", message: "Squashed feature into the index.", suggestedMessage: "Squash commit 'feature'" }),
+    );
+
+    await resolver.startMergeSquash("repo1", "feature");
+
+    expect(commands.mergeSquash).toHaveBeenCalledWith("repo1", "feature");
+    expect(resolver.open).toBe(false);
+    expect(resolver.busy).toBe(false);
+    expect(bridge.selectWorkdir).toHaveBeenCalled();
+    expect(workdirCtrl.message).toBe("Squash commit 'feature'");
+    // Squash never commits/moves a ref, so it must never reach the
+    // "clean"-only reloadGraph/cheer path every other op's success takes.
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+    expect(bridge.cheer).not.toHaveBeenCalled();
+  });
+
+  it("staged result with no suggested message: hands off with an empty prefill, not \"undefined\"/null", async () => {
+    vi.mocked(commands.mergeSquash).mockResolvedValueOnce(
+      mergeSquashResult({ state: "staged", suggestedMessage: null }),
+    );
+
+    await resolver.startMergeSquash("repo1", "feature");
+
+    expect(workdirCtrl.message).toBe("");
+  });
+
+  it("conflict result: opens the modal, sets op to merge-squash, and populates files from conflict_status", async () => {
+    vi.mocked(commands.mergeSquash).mockResolvedValueOnce(
+      mergeSquashResult({
+        ok: false,
+        state: "conflict",
+        conflictedFiles: ["a.ts", "b.ts"],
+        backupRef: "refs/gitgui/backup/sq1",
+      }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(
+      ok(conflictStatus([FILE_A, FILE_B], true, "merge-squash")),
+    );
+
+    await resolver.startMergeSquash("repo1", "feature");
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.busy).toBe(false);
+    expect(resolver.op).toBe("merge-squash");
+    expect(resolver.files).toEqual([FILE_A, FILE_B]);
+    expect(resolver.remaining.size).toBe(2);
+    expect(resolver.backupRef).toBe("refs/gitgui/backup/sq1");
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+    expect(bridge.selectWorkdir).not.toHaveBeenCalled();
+  });
+
+  it("warns via Tama instead of opening the modal without a repo", async () => {
+    await resolver.startMergeSquash("", "sha");
+    expect(bridge.tama.warn).toHaveBeenCalled();
+    expect(commands.mergeSquash).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+
+  it("a merge-squash conflict's abort calls mergeSquashAbort, never mergeAbort/stashConflictAbort", async () => {
+    vi.mocked(commands.mergeSquash).mockResolvedValueOnce(
+      mergeSquashResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "merge-squash")));
+    await resolver.startMergeSquash("repo1", "feature");
+    expect(resolver.op).toBe("merge-squash");
+
+    vi.mocked(commands.mergeSquashAbort).mockResolvedValueOnce(
+      mergeSquashResult({ state: "clean", message: "Squash-merge conflict aborted." }),
+    );
+
+    await resolver.abort();
+
+    expect(commands.mergeSquashAbort).toHaveBeenCalledWith("repo1");
+    expect(commands.mergeAbort).not.toHaveBeenCalled();
+    expect(commands.stashConflictAbort).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+
+  it("a merge-squash conflict's continue calls mergeSquashContinue and, once resolved, hands off to Workdir (not close+cheer)", async () => {
+    vi.mocked(commands.mergeSquash).mockResolvedValueOnce(
+      mergeSquashResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "merge-squash")));
+    await resolver.startMergeSquash("repo1", "feature");
+
+    vi.mocked(commands.mergeSquashContinue).mockResolvedValueOnce(
+      mergeSquashResult({ state: "staged", message: "Squash-merge conflict resolved.", suggestedMessage: "resolved squash msg" }),
+    );
+
+    await resolver.continue();
+
+    expect(commands.mergeSquashContinue).toHaveBeenCalledWith("repo1");
+    expect(commands.mergeContinue).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+    expect(bridge.selectWorkdir).toHaveBeenCalled();
+    expect(workdirCtrl.message).toBe("resolved squash msg");
+    expect(bridge.cheer).not.toHaveBeenCalled();
+  });
+
+  it("still conflicted continue: stays open, does not hand off to Workdir", async () => {
+    vi.mocked(commands.mergeSquash).mockResolvedValueOnce(
+      mergeSquashResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts", "b.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A, FILE_B], true, "merge-squash")));
+    await resolver.startMergeSquash("repo1", "feature");
+
+    vi.mocked(commands.mergeSquashContinue).mockResolvedValueOnce(
+      mergeSquashResult({ ok: false, state: "conflict", conflictedFiles: ["b.ts"], message: "Still conflicted in 1 file." }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_B], true, "merge-squash")));
+
+    await resolver.continue();
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.files).toEqual([FILE_B]);
+    expect(bridge.selectWorkdir).not.toHaveBeenCalled();
   });
 });
 
@@ -303,7 +464,10 @@ describe("pullMerge", () => {
 
     expect(commands.currentUpstream).toHaveBeenCalledWith("repo1");
     expect(commands.fetch).toHaveBeenCalledWith("repo1", null);
-    expect(commands.mergeStart).toHaveBeenCalledWith("repo1", "origin/main");
+    // Regression check (backlog #7): pullMerge -> pullWithStrategy ->
+    // startMerge still never passes a strategy of its own — see the note on
+    // the "startMerge" describe block above.
+    expect(commands.mergeStart).toHaveBeenCalledWith("repo1", "origin/main", null);
     expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
     expect(resolver.open).toBe(false);
     expect(resolver.busy).toBe(false);

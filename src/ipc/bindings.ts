@@ -610,15 +610,27 @@ async cherryPickAbort(path: string) : Promise<PickResult> {
  * Merge `sha` into the current branch (HEAD). Snapshots FIRST, then runs
  * `git merge --no-edit --end-of-options <sha>`.
  * 
+ * `strategy` picks the ff/no-ff behavior: `None`/`Some("")`/`Some("auto")`
+ * (today's exact default — no extra flag, fast-forward when possible, a real
+ * merge commit otherwise), `Some("no-ff")` (`--no-ff`: always create a real
+ * merge commit, even when a fast-forward is possible), or `Some("ff-only")`
+ * (`--ff-only`: refuse — cleanly, `state:"error"`, nothing mutated — unless a
+ * fast-forward is possible). Any other value is rejected up front (mirrors
+ * `resolve_conflict_file`'s `side` validation) rather than silently falling
+ * back to "auto". Every EXISTING caller (the drag-onto-HEAD gesture, the
+ * commit-menu's "Merge" action, and `pullWithStrategy`'s merge path) omits
+ * this parameter and must keep behaving exactly as before — see this
+ * module's doc comment.
+ * 
  * A dirty working tree makes git refuse the merge — that surfaces as
  * `state:"error"` with git's own message; we never force. On a conflict this
  * resolves to `state:"conflict"` (repo left mid-merge for the resolver), NOT
  * a failure.
  * 
- * JS: `invoke("merge_start", { path, sha })`.
+ * JS: `invoke("merge_start", { path, sha, strategy })`.
  */
-async mergeStart(path: string, sha: string) : Promise<MergeResult> {
-    return await TAURI_INVOKE("merge_start", { path, sha });
+async mergeStart(path: string, sha: string, strategy: string | null) : Promise<MergeResult> {
+    return await TAURI_INVOKE("merge_start", { path, sha, strategy });
 },
 /**
  * Continue an in-progress merge after the user resolved the conflict (files
@@ -643,6 +655,44 @@ async mergeContinue(path: string) : Promise<MergeResult> {
  */
 async mergeAbort(path: string) : Promise<MergeResult> {
     return await TAURI_INVOKE("merge_abort", { path });
+},
+/**
+ * Squash `sha`'s entire diff into the index WITHOUT creating a commit.
+ * Snapshots FIRST. Refuses up front if another sequencer op is in progress
+ * OR the index already has unmerged entries from ANY source (stash, a
+ * previous unresolved squash, …) — see `other_op_in_progress`'s doc comment.
+ * 
+ * JS: `invoke("merge_squash", { path, sha })`.
+ */
+async mergeSquash(path: string, sha: string) : Promise<MergeSquashResult> {
+    return await TAURI_INVOKE("merge_squash", { path, sha });
+},
+/**
+ * Abort a squash-merge conflict left by `merge_squash` — mirrors
+ * `workdir::stash_conflict_abort`'s exact mechanism (`git reset --hard` to
+ * the sealed backup ref, then clear the sidecar); `--squash` has no native
+ * `--abort` of its own.
+ * 
+ * JS: `invoke("merge_squash_abort", { path })`.
+ */
+async mergeSquashAbort(path: string) : Promise<MergeSquashResult> {
+    return await TAURI_INVOKE("merge_squash_abort", { path });
+},
+/**
+ * Finish a squash-merge conflict after every file is resolved+staged (via
+ * `resolve_conflict_file`, allowlisted for "merge-squash" — see
+ * conflict.rs). Success is STILL "staged", never "clean" — see
+ * [`MergeSquashResult`]'s doc. No git subprocess is run here at all (unlike
+ * merge/rebase's own `--continue`): once the index has zero unmerged
+ * entries, squash's own job is already done — the only thing left is the
+ * commit itself, which is the EXISTING Workdir commit flow's job (mirrors
+ * `stash_conflict_continue`'s "apply" case, which likewise runs no git
+ * mutation).
+ * 
+ * JS: `invoke("merge_squash_continue", { path })`.
+ */
+async mergeSquashContinue(path: string) : Promise<MergeSquashResult> {
+    return await TAURI_INVOKE("merge_squash_continue", { path });
 },
 /**
  * Rebase the current branch onto `onto`. Snapshots FIRST, then runs
@@ -1276,9 +1326,10 @@ export type CommitObject = { sha: string; shortSha: string; author: PlumbingPers
 export type ConflictFile = { path: string; ours: string; base: string; theirs: string }
 /**
  * Result of [`conflict_status`]. `op` is one of
- * `"cherry-pick" | "merge" | "rebase" | "revert" | "stash" | "none"` — see
- * [`detect_op`] for why `"stash"` exists (a `git stash apply`/`pop` conflict
- * leaves `RepositoryState` at `Clean`, unlike every other op here).
+ * `"cherry-pick" | "merge" | "rebase" | "revert" | "stash" | "merge-squash" |
+ * "none"` — see [`detect_op`] for why `"stash"` and `"merge-squash"` exist (a
+ * `git stash apply`/`pop` conflict AND a `git merge --squash` conflict both
+ * leave `RepositoryState` at `Clean`, unlike every other op here).
  * `in_progress` is true whenever a sequencer op is underway **or** there are
  * unmerged files — so once every file is resolved (`files` empty) but the
  * cherry-pick has not been continued yet, `in_progress` stays true and the
@@ -1408,6 +1459,31 @@ conflictedFiles: string[]; message: string;
  * so the UI can name the snapshot the user can Undo to.
  */
 backupRef: string | null }
+/**
+ * Result of `merge_squash` / `merge_squash_abort` / `merge_squash_continue` —
+ * ONE shared type across all three (mirrors `MergeResult`'s own start/
+ * continue/abort sharing), since none of the three needs to match any
+ * pre-existing toast-consumer shape the way stash's `apply_or_pop` had to
+ * preserve `WorkdirResult` for.
+ */
+export type MergeSquashResult = { ok: boolean; 
+/**
+ * "staged" (merge_squash/merge_squash_continue success) | "conflict" |
+ * "empty" (merge_squash only) | "clean" (merge_squash_abort only) |
+ * "error".
+ * 
+ * Deliberately NEVER "clean" from a successful squash itself: `--squash`
+ * commits nothing and moves no ref (EMPIRICALLY VERIFIED — see module
+ * doc), so unlike every other op's "clean" (= fully done), the user still
+ * owes a real commit. "staged" is that honest, distinct state; the
+ * frontend hands off to the Workdir commit UI on it instead of
+ * closing+cheering the way "clean" does everywhere else.
+ */
+state: string; conflictedFiles: string[]; message: string; backupRef: string | null; 
+/**
+ * `.git/SQUASH_MSG`'s content — populated only when state == "staged".
+ */
+suggestedMessage: string | null }
 /**
  * One author/committer identity. `t` is a unix timestamp; the frontend formats it.
  */

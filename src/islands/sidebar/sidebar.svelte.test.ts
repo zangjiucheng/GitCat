@@ -43,6 +43,8 @@ vi.mock("../resolver/resolver.svelte.ts", () => ({
   resolver: {
     openDemo: vi.fn(),
     startRebase: vi.fn(async () => {}),
+    startMerge: vi.fn(async () => {}),
+    startMergeSquash: vi.fn(async () => {}),
   },
 }));
 
@@ -70,6 +72,7 @@ function resetAll() {
   sidebarCtrl.busy = false;
   sidebarCtrl.menu = null;
   sidebarCtrl.tagMenu = null;
+  sidebarCtrl.mergeMenu = null;
   sidebarCtrl.newTagOpen = false;
   sidebarCtrl.newTagName = "";
   sidebarCtrl.newTagMessage = "";
@@ -1099,6 +1102,13 @@ describe("openMenu / closeMenu", () => {
     sidebarCtrl.openMenu("feature", false, anchor);
     expect(sidebarCtrl.tagMenu).toBeNull();
   });
+
+  it("opening the branch menu closes an open merge-strategy menu", () => {
+    sidebarCtrl.mergeMenu = { name: "feature", x: 0, y: 0 };
+    const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
+    sidebarCtrl.openMenu("main", true, anchor);
+    expect(sidebarCtrl.mergeMenu).toBeNull();
+  });
 });
 
 describe("openTagMenu / closeTagMenu", () => {
@@ -1156,6 +1166,91 @@ describe("openSubmoduleMenu / closeSubmoduleMenu", () => {
     const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
     sidebarCtrl.openMenu("feature", false, anchor);
     expect(sidebarCtrl.submoduleMenu).toBeNull();
+  });
+});
+
+// Backlog #7: the "Merge into current…" strategy chooser, a SECOND-level
+// popover opened from inside the branch popover's own button (reusing its
+// already-computed x/y — see sidebarCtrl.openMergeMenu's own doc comment).
+describe("openMergeMenu / closeMergeMenu (#7)", () => {
+  it("positions the merge menu clamped to the viewport width, from the passed-in coordinates", () => {
+    sidebarCtrl.openMergeMenu("feature", 10, 44);
+    expect(sidebarCtrl.mergeMenu).toEqual({ name: "feature", x: 10, y: 44 });
+  });
+
+  it("closeMergeMenu clears it", () => {
+    sidebarCtrl.mergeMenu = { name: "feature", x: 0, y: 0 };
+    sidebarCtrl.closeMergeMenu();
+    expect(sidebarCtrl.mergeMenu).toBeNull();
+  });
+
+  it("opening the merge menu closes an open branch menu, tag menu, and submodule menu", () => {
+    sidebarCtrl.menu = { name: "feature", isCurrent: false, x: 0, y: 0 };
+    sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
+    sidebarCtrl.submoduleMenu = { path: "sub", status: "clean", absolutePath: "/repo/sub", x: 0, y: 0 };
+    sidebarCtrl.openMergeMenu("feature", 10, 44);
+    expect(sidebarCtrl.menu).toBeNull();
+    expect(sidebarCtrl.tagMenu).toBeNull();
+    expect(sidebarCtrl.submoduleMenu).toBeNull();
+  });
+
+  it("opening the branch/tag/submodule menu each close an open merge menu", () => {
+    const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
+
+    sidebarCtrl.mergeMenu = { name: "feature", x: 0, y: 0 };
+    sidebarCtrl.openTagMenu("v1.0.0", anchor);
+    expect(sidebarCtrl.mergeMenu).toBeNull();
+
+    sidebarCtrl.mergeMenu = { name: "feature", x: 0, y: 0 };
+    sidebarCtrl.openSubmoduleMenu("sub", "clean", "/repo/sub", anchor);
+    expect(sidebarCtrl.mergeMenu).toBeNull();
+  });
+});
+
+// Backlog #7: the three ff/no-ff choices funnel through resolver.startMerge's
+// now-optional `strategy` param; Squash goes through the NEW startMergeSquash
+// entry point instead (see resolver.svelte.test.ts for its clean/conflict
+// handling — this file only checks that sidebarCtrl calls the right resolver
+// method with the right args).
+describe("mergeInto (#7)", () => {
+  it("design mode opens the resolver's merge demo (strategy-agnostic, same convention as rebaseOnto's demo)", async () => {
+    mockInTauri = false;
+    await sidebarCtrl.mergeInto("feature", "no-ff");
+    expect(resolver.openDemo).toHaveBeenCalledWith("feature", "merge");
+    expect(resolver.startMerge).not.toHaveBeenCalled();
+  });
+
+  it("real mode: \"auto\" forwards straight through to resolver.startMerge", async () => {
+    mockInTauri = true;
+    await sidebarCtrl.mergeInto("feature", "auto");
+    expect(resolver.startMerge).toHaveBeenCalledWith("/repo", "feature", "auto");
+  });
+
+  it("real mode: \"no-ff\" forwards straight through to resolver.startMerge", async () => {
+    mockInTauri = true;
+    await sidebarCtrl.mergeInto("feature", "no-ff");
+    expect(resolver.startMerge).toHaveBeenCalledWith("/repo", "feature", "no-ff");
+  });
+
+  it("real mode: \"ff-only\" forwards straight through to resolver.startMerge", async () => {
+    mockInTauri = true;
+    await sidebarCtrl.mergeInto("feature", "ff-only");
+    expect(resolver.startMerge).toHaveBeenCalledWith("/repo", "feature", "ff-only");
+  });
+});
+
+describe("squashInto (#7)", () => {
+  it("design mode opens the resolver's merge-squash demo", async () => {
+    mockInTauri = false;
+    await sidebarCtrl.squashInto("feature");
+    expect(resolver.openDemo).toHaveBeenCalledWith("feature", "merge-squash");
+    expect(resolver.startMergeSquash).not.toHaveBeenCalled();
+  });
+
+  it("real mode calls resolver.startMergeSquash with the repo + target branch", async () => {
+    mockInTauri = true;
+    await sidebarCtrl.squashInto("feature");
+    expect(resolver.startMergeSquash).toHaveBeenCalledWith("/repo", "feature");
   });
 });
 
@@ -1297,12 +1392,13 @@ describe("setSnapshots / reset", () => {
     expect(sidebarCtrl.snapshots).not.toBe(snaps);
   });
 
-  it("reset clears everything including an open menu, tag menu, submodule menu, hasRepo, and submodules", () => {
+  it("reset clears everything including an open menu, tag menu, submodule menu, merge menu, hasRepo, and submodules", () => {
     sidebarCtrl.locals = [{ name: "main", sha: "x", ahead: null, behind: null }];
     sidebarCtrl.head = "main";
     sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
     sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
     sidebarCtrl.submoduleMenu = { path: "sub", status: "clean", absolutePath: "/repo/sub", x: 0, y: 0 };
+    sidebarCtrl.mergeMenu = { name: "feature", x: 0, y: 0 };
     sidebarCtrl.hasRepo = true;
     sidebarCtrl.submodules = [{ name: "vendor/a", path: "vendor/a", absolutePath: "/repo/vendor/a", url: null, status: "clean", headSha: "x", workdirSha: "x" }];
     sidebarCtrl.reset();
@@ -1311,6 +1407,7 @@ describe("setSnapshots / reset", () => {
     expect(sidebarCtrl.menu).toBeNull();
     expect(sidebarCtrl.tagMenu).toBeNull();
     expect(sidebarCtrl.submoduleMenu).toBeNull();
+    expect(sidebarCtrl.mergeMenu).toBeNull();
     expect(sidebarCtrl.hasRepo).toBe(false);
     expect(sidebarCtrl.submodules).toEqual([]);
   });
