@@ -16,6 +16,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { CommitDetail } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
+import { blameCtrl } from "../blame/blame.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 
 function esc(s: unknown): string {
@@ -43,7 +44,7 @@ type CommitVM = {
   merge: boolean;
 };
 
-type FileEntry = { p: string; st: string; add: number; del: number };
+type FileEntry = { p: string; st: string; add: number; del: number; oldPath: string | null };
 type TreeFile = FileEntry & { name: string; i: number };
 export type TreeDir = { dirs: Record<string, TreeDir>; files: TreeFile[] };
 type DiffFile = { lang: string; lines: [string, string][]; truncated: boolean; binary: boolean };
@@ -59,9 +60,9 @@ type Hero = { kind: "loaded"; n: number; ms: number } | { kind: "empty" };
 // other islands' DEMO constants so the browser preview still shows a full
 // detail panel without a real backend.
 const DEMO_CHANGED: FileEntry[] = [
-  { p: "src/auth/session.ts", st: "M", add: 22, del: 5 },
-  { p: "src/auth/token.ts", st: "M", add: 11, del: 7 },
-  { p: "src/ui/LoginForm.tsx", st: "A", add: 5, del: 0 },
+  { p: "src/auth/session.ts", st: "M", add: 22, del: 5, oldPath: null },
+  { p: "src/auth/token.ts", st: "M", add: 11, del: 7, oldPath: null },
+  { p: "src/ui/LoginForm.tsx", st: "A", add: 5, del: 0, oldPath: null },
 ];
 const DEMO_DIFFS: Record<string, DiffFile> = {
   "src/auth/session.ts": {
@@ -267,7 +268,7 @@ class DetailState {
       if (r.status !== "ok") throw new Error(r.error);
       const d: CommitDetail = r.data;
       const files = Array.isArray(d.fileTree) ? d.fileTree : [];
-      this.curChanged = files.map((f) => ({ p: f.path, st: f.status, add: f.additions | 0, del: f.deletions | 0 }));
+      this.curChanged = files.map((f) => ({ p: f.path, st: f.status, add: f.additions | 0, del: f.deletions | 0, oldPath: f.oldPath ?? null }));
       this.curDiffs = {};
       files.forEach((f) => {
         const lines: [string, string][] = [];
@@ -331,6 +332,43 @@ class DetailState {
     });
     if (d.truncated) rows.push({ kind: "note", text: "… diff truncated (file capped)" });
     this.diffRows = rows;
+  }
+
+  // "Blame" button in the file tree row — resolves the right (commit, file)
+  // pair per the row's own status (see the design's "deleted/renamed-away
+  // files" note): the tree only ever shows ONE row per changed file, at its
+  // path IN THIS COMMIT — for A/M/T and for R/C (the row's `f.p` is the
+  // rename's NEW path, which does exist in this commit's own tree) that's
+  // simply `(commit.sha, f.p)`. A `D` (deleted) row has nothing at `f.p` in
+  // THIS commit's tree — only its PARENT's tree still has it — so it needs
+  // the first-parent sha instead ("blame the file as it last existed"),
+  // resolved via the same `<sha>^` revspec `plumbing_inspect` already
+  // supports (ordinary git rev syntax for "first parent"), rather than
+  // adding new backend plumbing just for this one case.
+  async blameFile(f: { p: string; st: string; oldPath: string | null }) {
+    const c = this.commit;
+    if (!c) return;
+    const repo = bridge.CUR_REPO as unknown as string;
+    if (f.st !== "D") {
+      blameCtrl.openFor(repo, c.sha, f.p, f.oldPath);
+      return;
+    }
+    if (!IN_TAURI) {
+      // design-mode preview: no real parent to resolve — best-effort, same
+      // (commit, file) pair as any other status, just for the canned demo.
+      blameCtrl.openFor(repo, c.sha, f.p, f.oldPath);
+      return;
+    }
+    try {
+      const r = await commands.plumbingInspect(repo, c.sha + "^");
+      if (r.status === "ok" && r.data.kind === "commit") {
+        blameCtrl.openFor(repo, r.data.sha, f.p, f.oldPath);
+      } else {
+        bridge.tama.warn("Couldn't resolve the parent commit to blame a deleted file.");
+      }
+    } catch (e) {
+      bridge.tama.warn("Couldn't resolve the parent commit — " + e);
+    }
   }
 
   copySha() {

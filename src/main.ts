@@ -15,6 +15,7 @@ import Plumbing from "./islands/plumbing/Plumbing.svelte";
 import { plumbing } from "./islands/plumbing/plumbing.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
+import Blame from "./islands/blame/Blame.svelte";
 import SetupWizard from "./islands/setupwizard/SetupWizard.svelte";
 import { setupWizardCtrl } from "./islands/setupwizard/setupwizard.svelte.ts";
 import Cmdk from "./islands/cmdk/Cmdk.svelte";
@@ -36,6 +37,13 @@ mount(CommitMenu, { target: document.body });
 mount(Bisect, { target: document.body });
 mount(FilterRepo, { target: document.body });
 mount(RebasePlan, { target: document.body });
+// Blame (line-annotation view) — unlike Reflog/Rerere/Plumbing below, this is
+// NOT reachable from the Tools menu or ⌘K: it inherently needs a (commit,
+// file) target that only exists in file-tree context (Detail.svelte's file
+// tree / Workdir.svelte's staged+unstaged rows each call blameCtrl.openFor()
+// directly), so there's no menu entry to wire in src/main.ts's "menu-action"
+// listener below. See blame.svelte.ts's own header doc.
+mount(Blame, { target: document.body });
 mount(SetupWizard, { target: document.body });
 
 // Setup wizard: auto-opens at boot, ON TOP of the untouched bootEmpty() hero

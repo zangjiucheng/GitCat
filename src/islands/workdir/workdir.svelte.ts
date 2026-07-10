@@ -62,10 +62,33 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
-import type { DiffLineRow, FileChange, HunkSelection, SelectedLine, StashEntry, WorkdirStatus } from "../../ipc/bindings";
+import type { DiffLineRow, FileChange, HunkSelection, SelectedLine, StashEntry, WorkdirEntry, WorkdirStatus } from "../../ipc/bindings";
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
+}
+
+// Blame (Workdir.svelte's per-row "Blame" button) is only meaningful for a
+// path HEAD's own committed tree actually has — and Workdir.svelte's Blame
+// button always blames HEAD (`atCommit: null`, see blameCtrl.openFor's own
+// contract). A rename — staged ("R" in the index-vs-HEAD diff) OR unstaged
+// ("R" in the workdir-vs-index diff) — hasn't touched HEAD's tree yet, so
+// `f.path` (the NEW name the row displays) isn't there; only `f.oldPath` is,
+// so blame THAT identity instead (`blame_file`'s tree lookup would otherwise
+// fail with "does not exist" — see blame.rs's module doc: it always reads
+// `at_commit`'s own committed tree, never the index/workdir; verified against
+// the backend's own
+// `blame_at_head_fails_for_a_renames_new_path_when_the_rename_is_only_staged`
+// test). A staged-new file ("A" — only ever appears in the STAGED list, see
+// workdir.rs's `status_char`/head_to_index mapping) has no history at all
+// yet — same "nothing to blame" case as an untracked ("?") row, just staged
+// instead — so it's disabled alongside "?" rather than trying (and failing)
+// to blame it.
+export function canBlameWorkdirFile(f: Pick<WorkdirEntry, "status">): boolean {
+  return f.status !== "?" && f.status !== "A";
+}
+export function blameTargetForWorkdirFile(f: Pick<WorkdirEntry, "path" | "status" | "oldPath">): string {
+  return f.status === "R" ? (f.oldPath ?? f.path) : f.path;
 }
 
 // One checked "+"/"-" row, keyed by the SAME anchor (hunk header + kind/

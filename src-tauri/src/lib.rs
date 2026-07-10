@@ -1,3 +1,4 @@
+pub mod blame; // read-only line-annotation (git blame) view
 pub mod commands;
 pub mod conflict;
 pub mod filter_repo; // M5c: filter-repo wizard (backup / preview / run / restore)
@@ -112,6 +113,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
         rerere::rerere_set_enabled,
         // Plumbing playground (M5b): inspect any rev's raw object (read-only)
         plumbing::plumbing_inspect,
+        // Blame: read-only line-annotation view of a file at a commit (or HEAD)
+        blame::blame_file,
         // Filter-repo wizard (M5c): backup+preview / run / restore / list backups
         filter_repo::filter_repo_preview,
         filter_repo::filter_repo_run,

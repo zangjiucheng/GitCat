@@ -153,6 +153,15 @@
       <span class="st {f.st === 'A' ? 'A' : f.st === 'D' ? 'D' : 'M'}">{f.st}</span>
       <span>{f.name}</span>
       <span class="badge"><span class="add">+{f.add}</span> <span class="del">&minus;{f.del}</span></span>
+      <button
+        class="wd-act"
+        title="Blame"
+        aria-label="Blame {f.p}"
+        onclick={(e) => {
+          e.stopPropagation();
+          detailCtrl.blameFile(f);
+        }}>&#128065;</button
+      >
     </div>
   {/each}
 {/snippet}

@@ -51,7 +51,7 @@ vi.mock("../resolver/resolver.svelte.ts", () => ({
 import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
-import { workdirCtrl } from "./workdir.svelte.ts";
+import { workdirCtrl, canBlameWorkdirFile, blameTargetForWorkdirFile } from "./workdir.svelte.ts";
 import type { FileChange, HunkSelection, StashEntry, WorkdirResult, WorkdirStatus } from "../../ipc/bindings";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
@@ -1033,5 +1033,44 @@ describe("demo mode", () => {
     expect(bindingsDemo.commands.unstageLines).not.toHaveBeenCalled();
     expect(bindingsDemo.commands.discardLines).not.toHaveBeenCalled();
     expect(bridgeDemo.tama.say).toHaveBeenCalled();
+  });
+});
+
+// The Blame button's per-row target-path resolution (Workdir.svelte's
+// "Blame" icon calls these directly, always with `atCommit: null` = "HEAD").
+// Regression coverage for the bug these two helpers fix: blaming a rename's
+// NEW path or a staged-new file's path "at HEAD" always fails on the backend
+// (HEAD's own committed tree has neither yet — see blame.rs's
+// `blame_at_head_fails_for_a_renames_new_path_when_the_rename_is_only_staged`
+// / `blame_at_head_fails_for_a_brand_new_files_path_when_only_staged`), so
+// the row must resolve to a path HEAD's tree actually has (or be disabled
+// entirely) rather than hand the backend a path guaranteed to 404.
+describe("canBlameWorkdirFile / blameTargetForWorkdirFile", () => {
+  it("disables Blame for an untracked ('?') row — no history anywhere yet", () => {
+    expect(canBlameWorkdirFile({ status: "?" })).toBe(false);
+  });
+
+  it("disables Blame for a staged-new ('A') row — nothing committed yet to blame", () => {
+    expect(canBlameWorkdirFile({ status: "A" })).toBe(false);
+  });
+
+  it("allows Blame for every other status (M/D/R/T), including staged/unstaged renames", () => {
+    for (const status of ["M", "D", "R", "T"]) {
+      expect(canBlameWorkdirFile({ status })).toBe(true);
+    }
+  });
+
+  it("a rename ('R') targets oldPath — the identity HEAD's own tree still has", () => {
+    expect(blameTargetForWorkdirFile({ path: "new.ts", status: "R", oldPath: "old.ts" })).toBe("old.ts");
+  });
+
+  it("falls back to path if a rename row is ever missing oldPath (defensive)", () => {
+    expect(blameTargetForWorkdirFile({ path: "new.ts", status: "R", oldPath: null })).toBe("new.ts");
+  });
+
+  it("every non-rename status targets its own path unchanged", () => {
+    for (const status of ["M", "D", "T"]) {
+      expect(blameTargetForWorkdirFile({ path: "f.ts", status, oldPath: null })).toBe("f.ts");
+    }
   });
 });

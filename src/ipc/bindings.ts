@@ -782,6 +782,22 @@ async plumbingInspect(path: string, rev: string) : Promise<Result<PlumbingObject
 }
 },
 /**
+ * Blame `file` as it exists in `at_commit`'s own tree (HEAD's tree if
+ * `at_commit` is `None`). Read-only. Refuses cleanly (no panic, no raw
+ * libgit2 error reaching the frontend) for a binary file, a file absent from
+ * the target commit, or a directory-shaped path.
+ * 
+ * JS: `commands.blameFile(path, file, atCommit, ignoreWhitespace)`.
+ */
+async blameFile(path: string, file: string, atCommit: string | null, ignoreWhitespace: boolean) : Promise<Result<FileBlame, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("blame_file", { path, file, atCommit, ignoreWhitespace }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Read-only preview shown before the user commits to running filter-repo.
  */
 async filterRepoPreview(path: string, paths: string[], invert: boolean) : Promise<Result<FilterRepoPreview, string>> {
@@ -1072,6 +1088,18 @@ async submoduleForeachCancel() : Promise<Result<null, string>> {
  */
 export type AppInfo = { name: string; version: string; description: string; authors: string[]; copyright: string; website: string }
 export type BisectStatus = { ok: boolean; inProgress: boolean; current: CommitInfo | null; badRef: string | null; goodRefs: string[]; remainingRevs: number; estSteps: number; firstBad: CommitInfo | null; log: string[]; message: string; backupRef: string | null }
+/**
+ * One run of CONSECUTIVE lines last touched by the same commit — git2's own
+ * hunking, not one entry per line (far cheaper for a typical file: a few
+ * dozen hunks vs. thousands of lines).
+ */
+export type BlameHunkRow = { sha: string; shortSha: string; author: Person; startLine: number; linesInHunk: number; 
+/**
+ * Set only when the file's OWN rename lineage (always-on in libgit2, no
+ * flag needed — see module doc) traces this hunk's lines back to a
+ * different path than the one queried.
+ */
+origPath: string | null }
 export type BlobObject = { sha: string; size: number; isBinary: boolean; 
 /**
  * UTF-8-lossy content capped to [`CAP_LINES`] lines; `None` for a binary
@@ -1120,6 +1148,13 @@ export type DiffHunkRow = { header: string; lines: DiffLineRow[] }
  * with any trailing CR/LF stripped — the frontend HTML-escapes it.
  */
 export type DiffLineRow = { kind: string; oldNo: number | null; newNo: number | null; text: string }
+/**
+ * Full payload for the Blame modal: the file's (possibly capped) content, as
+ * a flat per-line array, plus the hunks covering ranges over it — kept
+ * SEPARATE from the lines (not nested, unlike DiffHunkRow/DiffLineRow) so
+ * hunk metadata stays O(hunks), not O(lines).
+ */
+export type FileBlame = { path: string; atSha: string; lang: string; totalLines: number; truncated: boolean; lines: string[]; hunks: BlameHunkRow[] }
 /**
  * One changed file: its status, per-file stats, and hunks. `hunks` is empty
  * for a binary file (`binary == true`) or when the file was capped

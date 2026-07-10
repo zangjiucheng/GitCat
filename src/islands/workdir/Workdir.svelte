@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { workdirCtrl } from "./workdir.svelte.ts";
+  import { workdirCtrl, canBlameWorkdirFile, blameTargetForWorkdirFile } from "./workdir.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import { blameCtrl } from "../blame/blame.svelte.ts";
 
   const STATUS_LABEL: Record<string, string> = { A: "A", M: "M", D: "D", R: "R", T: "T", "?": "U" };
 
@@ -87,6 +88,16 @@
             {:else}
               <button
                 class="wd-act"
+                title="Blame"
+                aria-label="Blame {f.path}"
+                disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  blameCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f), null);
+                }}>&#128065;</button
+              >
+              <button
+                class="wd-act"
                 title="Unstage"
                 aria-label="Unstage {f.path}"
                 disabled={workdirCtrl.busy}
@@ -129,6 +140,16 @@
             {#if workdirCtrl.busyTarget === f.path}
               <span class="spinner"></span>
             {:else}
+              <button
+                class="wd-act"
+                title="Blame"
+                aria-label="Blame {f.path}"
+                disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  blameCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f), null);
+                }}>&#128065;</button
+              >
               <button
                 class="wd-act"
                 title="Stage"
