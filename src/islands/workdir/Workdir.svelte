@@ -3,7 +3,16 @@
   import * as bridge from "../../legacy/bridge";
   import { blameCtrl } from "../blame/blame.svelte.ts";
   import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
+  import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 
+  // "Open in external diff" (backlog #12) — added to BOTH staged (4th icon,
+  // was 3) and unstaged (5th icon, was 4) rows: unlike Blame/History (which
+  // need HEAD's own committed tree — see canBlameWorkdirFile's own doc
+  // comment), a diff tool is exactly as meaningful for an unstaged edit as a
+  // staged one, and the un-diffable case for THIS button is narrower — only
+  // an untracked ("?") row has no `git diff`-visible content at all against
+  // the index/HEAD (a new file has nothing to compare yet), disabled below
+  // exactly like that one status is also excluded from Blame/History.
   const STATUS_LABEL: Record<string, string> = { A: "A", M: "M", D: "D", R: "R", T: "T", "?": "U" };
 
   function repo(): string {
@@ -117,6 +126,16 @@
                   workdirCtrl.unstageFile(repo(), f.path);
                 }}>&#8722;</button
               >
+              <button
+                class="wd-act"
+                title="Open in external diff"
+                aria-label="Open in external diff for {f.path}"
+                disabled={workdirCtrl.busy}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  externalToolsCtrl.openDiff(repo(), f.path, true);
+                }}>&#8646;</button
+              >
             {/if}
           </div>
         {/each}
@@ -190,6 +209,16 @@
                   e.stopPropagation();
                   workdirCtrl.confirmDiscard(f.path, f.status === "?");
                 }}>&#128465;</button
+              >
+              <button
+                class="wd-act"
+                title="Open in external diff"
+                aria-label="Open in external diff for {f.path}"
+                disabled={workdirCtrl.busy || f.status === "?"}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  externalToolsCtrl.openDiff(repo(), f.path, false);
+                }}>&#8646;</button
               >
             {/if}
           </div>

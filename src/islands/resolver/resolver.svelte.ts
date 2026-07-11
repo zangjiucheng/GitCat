@@ -308,10 +308,11 @@ class ResolverState {
   open = $state(false);
   busy = $state(false); // re-entrancy lock (was PICK_BUSY)
   // Which of the modal's own action buttons is the current `busy` spell for
-  // — "ours"/"theirs" (take), "skip", "abort", or "continue" — so the modal
-  // can spinner/label-swap the ONE button actually clicked instead of every
-  // button reacting identically to one shared flag.
-  activeAction = $state<"ours" | "theirs" | "skip" | "abort" | "continue" | null>(null);
+  // — "ours"/"theirs" (take), "tool" (resolveWithExternalTool, backlog #12),
+  // "skip", "abort", or "continue" — so the modal can spinner/label-swap the
+  // ONE button actually clicked instead of every button reacting identically
+  // to one shared flag.
+  activeAction = $state<"ours" | "theirs" | "tool" | "skip" | "abort" | "continue" | null>(null);
   demo = $state(false);
   sub = $state("");
   backupRef = $state("");
@@ -758,6 +759,40 @@ class ResolverState {
       if (!r.ok) bridge.tama.warn(r.message || "Could not resolve " + f.path);
     } catch (e) {
       bridge.tama.warn("Resolve failed — " + e);
+      return;
+    } finally {
+      this.busy = false;
+      this.activeAction = null;
+    }
+    await this.refresh();
+  }
+
+  // "Resolve with external tool" (backlog #12) — a peer of take() for the
+  // SAME selected file, not a new op or conflict-handling path: it blocks on
+  // `git mergetool` (see resolve_conflict_with_external_tool's own doc
+  // comment for why this call, unlike open_diff_tool, waits for the
+  // subprocess), then re-pulls authoritative state exactly like take() does.
+  // Reuses take()'s own demo/busy/refresh shape verbatim — the only
+  // differences are which backend command is called and which
+  // `activeAction` tag drives the button's own spinner/label swap.
+  async resolveWithExternalTool() {
+    const f = this.current;
+    if (!f) return;
+    if (this.demo) {
+      this.remaining = new Set([...this.remaining].filter((p) => p !== f.path));
+      const nx = this.files.find((x) => this.remaining.has(x.path));
+      if (nx) this.selected = nx.path;
+      bridge.tama.say("Resolved " + f.path + " with the external tool (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.activeAction = "tool";
+    try {
+      const r = await commands.resolveConflictWithExternalTool(this.repo, f.path);
+      if (!r.ok) bridge.tama.warn(r.message || "Could not resolve " + f.path + " with the external tool.");
+    } catch (e) {
+      bridge.tama.warn("Resolve with external tool failed — " + e);
       return;
     } finally {
       this.busy = false;

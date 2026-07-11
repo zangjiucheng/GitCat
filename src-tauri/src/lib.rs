@@ -27,6 +27,7 @@ pub mod repo_registry; // backlog #11: app-level tracked-repos JSON persistence
 pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
 pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 deinit/remove + M5 foreach
+pub mod tool_settings; // backlog #12: external diff/merge tool settings + delegate entirely to `git difftool`/`git mergetool`
 pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious ownership"
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
 
@@ -204,6 +205,15 @@ fn specta_builder() -> Builder<tauri::Wry> {
         repo_registry::remove_tracked_repo,
         repo_registry::track_repo_opened,
         dashboard::dashboard_repo_status,
+        // Pluggable external diff/merge tools (backlog #12): app-level tool
+        // settings (JSON under app_config_dir(), same shape as
+        // repo_registry.rs) + delegate entirely to `git difftool`/
+        // `git mergetool` — see tool_settings.rs's own module doc for why no
+        // blob-extraction/temp-file code is needed at all.
+        tool_settings::get_tool_settings,
+        tool_settings::set_tool_settings,
+        tool_settings::open_diff_tool,
+        tool_settings::resolve_conflict_with_external_tool,
     ])
 }
 

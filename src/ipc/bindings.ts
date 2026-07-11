@@ -1468,6 +1468,68 @@ async dashboardRepoStatus(path: string) : Promise<Result<DashboardRepoStatus, st
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * JS: `commands.getToolSettings()`.
+ */
+async getToolSettings() : Promise<Result<ToolSettings, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_tool_settings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Whole-form overwrite (the settings modal always submits both slots at
+ * once) — no read-modify-write needed, unlike `repo_registry`'s list
+ * mutations, but still lock-guarded for the same cheap-insurance reason.
+ * JS: `commands.setToolSettings(diffTool, mergeTool)`.
+ */
+async setToolSettings(diffTool: ExternalTool | null, mergeTool: ExternalTool | null) : Promise<Result<ToolSettings, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_tool_settings", { diffTool, mergeTool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.openDiffTool(path, file, staged, fromRev, toRev)`.
+ * 
+ * `staged` and a rev range are mutually exclusive; if a range is given, both
+ * `fromRev`/`toRev` must be given (or neither). Refuses cleanly (spawns
+ * nothing) when no tool is configured (and none of the user's own gitconfig
+ * either), pointing at the settings entry point.
+ * 
+ * FIRE-AND-FORGET: spawns and returns immediately — nothing about git state
+ * changes from viewing a diff, so there is nothing to wait for or report
+ * back.
+ * 
+ * **Accepted limitation**: because this is mandated fire-and-forget, if the
+ * resolved tool `name` is one git doesn't actually know (a typo, or a
+ * built-in name the installed git version doesn't ship) with no `cmd`
+ * override, the spawned process fails fast (`git difftool` exits 128 with a
+ * clear stderr) but this command never inspects that exit code — the user
+ * gets no in-app error, only whatever a dev-mode terminal shows. Mitigated
+ * by the settings modal's own hint text, not solved here.
+ */
+async openDiffTool(path: string, file: string, staged: boolean, fromRev: string | null, toRev: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_diff_tool", { path, file, staged, fromRev, toRev }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.resolveConflictWithExternalTool(path, file)`. BLOCKS on the
+ * mergetool subprocess (needs the outcome). Returns `conflict::ResolveResult`
+ * directly (reused, not duplicated — same `{ok, remaining, message}` shape
+ * and same non-`Result` "never rejects" contract as `resolve_conflict_file`).
+ */
+async resolveConflictWithExternalTool(path: string, file: string) : Promise<ResolveResult> {
+    return await TAURI_INVOKE("resolve_conflict_with_external_tool", { path, file });
 }
 }
 
@@ -1582,6 +1644,37 @@ export type DiffLineRow = { kind: string; oldNo: number | null; newNo: number | 
  * nothing here is Undo-able or needs to be.
  */
 export type ExportPatchResult = { ok: boolean; message: string }
+/**
+ * One configured external tool (diff OR merge — same shape for both).
+ */
+export type ExternalTool = { 
+/**
+ * A git-recognized built-in tool name (e.g. `"meld"`, `"opendiff"`,
+ * `"vscode"`, `"kdiff3"`, `"bc"`, `"p4merge"`, `"tortoisemerge"`, …) OR an
+ * arbitrary name of the user's own choosing when `cmd` is `Some`.
+ * Validated at save time (see [`normalize_tool`]) to
+ * `[A-Za-z0-9_-]+` — this is embedded verbatim into a
+ * `-c difftool.<name>.cmd=…`/`-c mergetool.<name>.cmd=…` CONFIG-KEY
+ * subsection at invocation time, and git's dotted `-c` shorthand has no
+ * way to escape a literal `.` inside a subsection name — restricting the
+ * charset at the one place the user types it removes that ambiguity
+ * entirely, rather than re-validating (and risking getting it subtly
+ * wrong) at every invocation call site.
+ */
+name: string; 
+/**
+ * `None` => rely ENTIRELY on git's own knowledge of `name` (either a
+ * built-in git ships, or something the user already set in their own
+ * gitconfig under `difftool.<name>.cmd`/`mergetool.<name>.cmd`) — no
+ * `-c …cmd=` override is passed at all. `Some(cmd)` => a one-off
+ * `-c difftool.<name>.cmd=<cmd>`/`-c mergetool.<name>.cmd=<cmd>`
+ * override for a tool git doesn't already know, using git's own
+ * `$LOCAL`/`$REMOTE`/`$BASE`/`$MERGED` placeholders — user-authored
+ * shell text with the SAME trust boundary as e.g. `submodule.rs`'s
+ * foreach command (the user is typing a command for their OWN
+ * machine); no sanitization beyond the charset check on `name` above.
+ */
+cmd: string | null }
 /**
  * Full payload for the Blame modal: the file's (possibly capped) content, as
  * a flat per-line array, plus the hunks covering ranges over it — kept
@@ -2047,6 +2140,12 @@ export type TagObject = { sha: string; name: string; tagger: PlumbingPerson | nu
  * `action` is one of `"pick" | "squash" | "fixup" | "drop" | "edit"`.
  */
 export type TodoItem = { sha: string; action: string }
+/**
+ * App-level (NOT per-repo) tool preferences — a personal cross-repo setting
+ * exactly like a real git client's tool prefs, persisted as one small JSON
+ * file under `app_config_dir()`.
+ */
+export type ToolSettings = { diffTool: ExternalTool | null; mergeTool: ExternalTool | null }
 export type TrackedRepo = { path: string; 
 /**
  * Unix seconds this repo was last OPENED through this app (via

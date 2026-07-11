@@ -180,6 +180,15 @@
           detailCtrl.historyFile(f);
         }}>&#128336;</button
       >
+      <button
+        class="wd-act"
+        title="Open in external diff"
+        aria-label="Open in external diff for {f.p}"
+        onclick={(e) => {
+          e.stopPropagation();
+          detailCtrl.openExternalDiff(f);
+        }}>&#8646;</button
+      >
     </div>
   {/each}
 {/snippet}

@@ -24,6 +24,8 @@ import PickaxeSearch from "./islands/pickaxesearch/PickaxeSearch.svelte";
 import { pickaxeSearchCtrl } from "./islands/pickaxesearch/pickaxesearch.svelte.ts";
 import Dashboard from "./islands/dashboard/Dashboard.svelte";
 import { dashboardCtrl } from "./islands/dashboard/dashboard.svelte.ts";
+import ExternalTools from "./islands/externaltools/ExternalTools.svelte";
+import { externalToolsCtrl } from "./islands/externaltools/externaltools.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import Blame from "./islands/blame/Blame.svelte";
@@ -134,6 +136,14 @@ mount(PickaxeSearch, { target: document.body });
 // dashboard.svelte.ts's own header doc): also rendered from the empty-hero
 // card's own button (Detail.svelte), not just the Tools menu/⌘K.
 mount(Dashboard, { target: document.body });
+// Pluggable external diff/merge tools (backlog #12): same on-demand-modal
+// treatment as Dashboard/Pickaxe Search/Export Patches/Remotes/Reflog/Rerere/
+// Plumbing above — an app-level settings modal reachable whether or not a
+// repo is open (see externaltools.svelte.ts's own header doc), not tied to
+// any file/commit target itself (unlike its own "Open in external diff"/
+// "Resolve with external tool" buttons, which live on Detail.svelte/
+// Workdir.svelte's file rows and Resolver.svelte instead).
+mount(ExternalTools, { target: document.body });
 
 // Native app menu -> frontend action bridge (see src-tauri/src/menu.rs).
 // Only the items whose action lives in Svelte-controller land forward here —
@@ -199,6 +209,9 @@ if (IN_TAURI) {
         break;
       case "repositories":
         dashboardCtrl.show();
+        break;
+      case "external-tools":
+        externalToolsCtrl.show();
         break;
       case "pull-merge":
         resolver.pullMerge(bridge.CUR_REPO as unknown as string);

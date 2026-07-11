@@ -26,6 +26,7 @@ import { applyPatchCtrl } from "../applypatch/applypatch.svelte.ts";
 import { pickaxeSearchCtrl } from "../pickaxesearch/pickaxesearch.svelte.ts";
 import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
 import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
+import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 
 export const CMD_CAP = 50;
 const CMD_BUF = 250;
@@ -94,6 +95,16 @@ const ACTIONS: ActionItem[] = [
     label: "Repositories",
     hint: "See every tracked repo's branch/status at a glance, and jump into one",
     run: () => dashboardCtrl.show(),
+  },
+  // Pluggable external diff/merge tools (backlog #12): like Repositories just
+  // above, this is a repo-independent settings modal — no `bridge.CUR_REPO`
+  // forwarded (see externaltools.svelte.ts's own header doc).
+  {
+    type: "action",
+    id: "external-tools",
+    label: "External Tools",
+    hint: "Configure a diff/merge tool to open from GitCat's own UI",
+    run: () => externalToolsCtrl.show(),
   },
   {
     type: "action",

@@ -173,10 +173,21 @@ fn op_name(state: RepositoryState) -> &'static str {
 /// never a defense against staleness — that defense lives upstream.
 ///
 /// Kept as ONE shared function (rather than duplicating this check) because
-/// both `conflict_status` (read) and `resolve_conflict_file`'s allowlist
-/// (write guard) must agree on it — a split here would let one recognize a
-/// conflict while the other refuses to act on it.
-fn detect_op(repo: &Repository) -> Result<&'static str, git2::Error> {
+/// `conflict_status` (read), `resolve_conflict_file`'s allowlist (write
+/// guard), AND `tool_settings::resolve_conflict_with_external_tool`'s own
+/// allowlist (a third caller, delegating to `git mergetool` instead of
+/// `checkout --ours/--theirs`) must all agree on it — a split here would let
+/// one recognize a conflict while another refuses to act on it.
+///
+/// `pub(crate)` (not private) so `tool_settings.rs` can reuse this directly
+/// rather than hand-copying the repository-state disambiguation logic — this
+/// is a deliberate EXCEPTION to this codebase's usual "duplicate small
+/// per-module helpers" convention (see `workdir.rs`'s own doc comment):
+/// `detect_op` is genuinely complex, security-relevant logic (merge/rebase/
+/// am/stash/squash state disambiguation), and a second hand-copied version
+/// would be a real drift hazard, unlike the trivial one-liners each module
+/// duplicates elsewhere (`err_msg`, `remaining_conflicts`, …).
+pub(crate) fn detect_op(repo: &Repository) -> Result<&'static str, git2::Error> {
     let op = op_name(repo.state());
     if op == "none" && repo.index()?.has_conflicts() {
         if crate::git_merge::has_merge_squash_conflict(repo) {

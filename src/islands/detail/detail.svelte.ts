@@ -18,6 +18,7 @@ import type { CommitDetail } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { blameCtrl } from "../blame/blame.svelte.ts";
 import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
+import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 
 function esc(s: unknown): string {
@@ -401,6 +402,19 @@ class DetailState {
     } catch (e) {
       bridge.tama.warn("Couldn't resolve the parent commit — " + e);
     }
+  }
+
+  // "Open in external diff" button in the file tree row — sibling of
+  // blameFile()/historyFile() above, but does NOT need either's deleted-file
+  // `<sha>^` special case: a two-revision `fromRev..toRev` diff already
+  // reproduces this commit's own diff for EVERY file status (A/M/D/R/T/C), so
+  // `c.sha + "^"`/`c.sha` is always the right pair regardless of `f.st` (see
+  // tool_settings.rs's own module doc for the empirical confirmation).
+  openExternalDiff(f: { p: string }) {
+    const c = this.commit;
+    if (!c) return;
+    const repo = bridge.CUR_REPO as unknown as string;
+    void externalToolsCtrl.openDiff(repo, f.p, false, c.sha + "^", c.sha);
   }
 
   copySha() {

@@ -130,6 +130,13 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // needing) whichever repo is currently open. Same dialog-opener "…"
         // convention as the items above it.
         let repositories = MenuItemBuilder::with_id("repositories", "Repositories\u{2026}").build(app)?;
+        // Pluggable external diff/merge tools (backlog #12): a settings
+        // modal, not a per-file action (those live on Detail.svelte/
+        // Workdir.svelte's own file rows and Resolver.svelte instead) — same
+        // dialog-opener "…" convention as the items above it, and same
+        // "reachable any time, no repo needed" shape as Repositories just
+        // above (see externaltools.svelte.ts's own header doc).
+        let external_tools = MenuItemBuilder::with_id("external-tools", "External Tools\u{2026}").build(app)?;
         // Immediate-action items (no dialog, no ellipsis) — same convention
         // as Repository's Fetch/Pull/Push above. A separator sets them apart
         // from the dialog-openers above them.
@@ -152,6 +159,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .item(&apply_patch)
             .item(&pickaxe_search)
             .item(&repositories)
+            .item(&external_tools)
             .separator()
             .item(&pull_merge)
             .item(&pull_rebase)
@@ -201,7 +209,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // logic in Rust.
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
         | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "export-patches" | "apply-patch" | "pickaxe-search"
-        | "repositories" | "pull-merge" | "pull-rebase" | "force-push-lease" | "force-push-override") => {
+        | "repositories" | "external-tools" | "pull-merge" | "pull-rebase" | "force-push-lease" | "force-push-override") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

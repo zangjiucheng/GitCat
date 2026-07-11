@@ -84,6 +84,11 @@
                   >{#if resolver.activeAction === "ours"}<span class="spinner"></span> Taking…{:else}Take ours{/if}</button
                 ><button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("theirs")}
                   >{#if resolver.activeAction === "theirs"}<span class="spinner"></span> Taking…{:else}Take theirs{/if}</button
+                ><button
+                  class="btn ghost"
+                  disabled={!resolver.currentLive || resolver.busy}
+                  onclick={() => resolver.resolveWithExternalTool()}
+                  >{#if resolver.activeAction === "tool"}<span class="spinner"></span> Resolving…{:else}Resolve with tool{/if}</button
                 >
               </span>
             </div>

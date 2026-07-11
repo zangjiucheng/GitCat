@@ -45,6 +45,7 @@ vi.mock("../../ipc/bindings", () => ({
     mergeSquashContinue: vi.fn(),
     conflictStatus: vi.fn(),
     resolveConflictFile: vi.fn(),
+    resolveConflictWithExternalTool: vi.fn(),
     currentUpstream: vi.fn(),
     fetch: vi.fn(),
   },
@@ -914,6 +915,106 @@ describe("take", () => {
 
     expect(resolver.remaining.has(path)).toBe(false);
     expect(commands.resolveConflictFile).not.toHaveBeenCalled();
+    expect(bridge.tama.say).toHaveBeenCalled();
+  });
+});
+
+describe("resolveWithExternalTool (backlog #12)", () => {
+  it("calls the backend for the CURRENT selected file, then re-pulls authoritative conflict state on success", async () => {
+    resolver.repo = "repo1";
+    resolver.demo = false;
+    resolver.files = [FILE_A, FILE_B];
+    resolver.selected = FILE_A.path;
+    resolver.remaining = new Set([FILE_A.path, FILE_B.path]);
+
+    vi.mocked(commands.resolveConflictWithExternalTool).mockResolvedValueOnce({
+      ok: true,
+      remaining: 1,
+      message: "Resolved a.ts with the external tool. 1 file(s) still conflicted.",
+    } satisfies ResolveResult);
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_B])));
+
+    await resolver.resolveWithExternalTool();
+
+    expect(commands.resolveConflictWithExternalTool).toHaveBeenCalledWith("repo1", FILE_A.path);
+    // Remaining-conflict state refreshed from the live conflict_status
+    // response — FILE_A resolved and dropped, FILE_B still outstanding.
+    expect(resolver.files).toEqual([FILE_B]);
+    expect(resolver.remaining.has(FILE_A.path)).toBe(false);
+    expect(resolver.remaining.has(FILE_B.path)).toBe(true);
+    expect(resolver.selected).toBe(FILE_B.path);
+  });
+
+  it("resolving the LAST remaining file empties .remaining and .files, same as take()", async () => {
+    resolver.repo = "repo1";
+    resolver.demo = false;
+    resolver.files = [FILE_A];
+    resolver.selected = FILE_A.path;
+    resolver.remaining = new Set([FILE_A.path]);
+
+    vi.mocked(commands.resolveConflictWithExternalTool).mockResolvedValueOnce({
+      ok: true,
+      remaining: 0,
+      message: "",
+    } satisfies ResolveResult);
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([])));
+
+    await resolver.resolveWithExternalTool();
+
+    expect(resolver.remaining.size).toBe(0);
+    expect(resolver.files).toHaveLength(0);
+    expect(resolver.selected).toBeNull();
+  });
+
+  it("a failed resolution (tool exited non-zero) surfaces the backend's message via Tama and still refreshes", async () => {
+    resolver.repo = "repo1";
+    resolver.demo = false;
+    resolver.files = [FILE_A];
+    resolver.selected = FILE_A.path;
+    resolver.remaining = new Set([FILE_A.path]);
+
+    vi.mocked(commands.resolveConflictWithExternalTool).mockResolvedValueOnce({
+      ok: false,
+      remaining: 1,
+      message: "The external tool did not report a successful resolution for a.ts.",
+    } satisfies ResolveResult);
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A])));
+
+    await resolver.resolveWithExternalTool();
+
+    expect(bridge.tama.warn).toHaveBeenCalledWith("The external tool did not report a successful resolution for a.ts.");
+    expect(resolver.remaining.has(FILE_A.path)).toBe(true);
+  });
+
+  it("is a no-op when there is no selected file", async () => {
+    resolver.selected = null;
+
+    await resolver.resolveWithExternalTool();
+
+    expect(commands.resolveConflictWithExternalTool).not.toHaveBeenCalled();
+  });
+
+  it("re-entrancy guard: a resolution already in flight ignores a second call", async () => {
+    resolver.repo = "repo1";
+    resolver.demo = false;
+    resolver.files = [FILE_A];
+    resolver.selected = FILE_A.path;
+    resolver.remaining = new Set([FILE_A.path]);
+    resolver.busy = true;
+
+    await resolver.resolveWithExternalTool();
+
+    expect(commands.resolveConflictWithExternalTool).not.toHaveBeenCalled();
+  });
+
+  it("demo mode: mutates local state only, no IPC call", () => {
+    resolver.openDemo("sha");
+    const path = resolver.files[0].path;
+
+    resolver.resolveWithExternalTool();
+
+    expect(resolver.remaining.has(path)).toBe(false);
+    expect(commands.resolveConflictWithExternalTool).not.toHaveBeenCalled();
     expect(bridge.tama.say).toHaveBeenCalled();
   });
 });
