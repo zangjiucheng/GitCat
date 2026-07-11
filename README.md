@@ -28,15 +28,30 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 - Fast commit graph (git2 read + a hand-tuned Rust swimlane layout) on a virtualized canvas — smooth even on large repos
 - Full commit detail panel: author/committer split, GPG status, diffstat, file tree, syntax-highlighted diff
 - ⌘K command palette — fuzzy search across commits and refs
+- Vim-style keyboard navigation — `j`/`k`, `gg`/`G`, Ctrl-D/Ctrl-U, and `/` to search
+- Per-file history with rename-following, like `git log --follow` — a renamed file's history continues seamlessly under its old path
+- Pickaxe / diff-content search (`git log -S`/`-G`) — find every commit whose diff touched a string or pattern, not just its commit message
+
+**Working directory**
+
+- Stage or unstage whole files, or select specific lines or a whole hunk to stage, unstage, or discard (a `git add -p` equivalent) — per-hunk toolbar plus per-line checkboxes with shift-click range select
+- Write commits, discard changes, and stash — save / apply / pop / drop
+- `git blame` (line-annotation) view — per-hunk attribution (sha, author), an ignore-whitespace toggle, and follows the file's rename history automatically
 
 **Everyday git, made safe**
 
 - Sidebar: branches / remotes / tags / snapshots, resizable, with a branch context menu
 - Checkout a local branch, or a remote one — checking out `origin/feature-x` creates and switches to a local tracking branch automatically
+- Checkout dirty-tree resolution — when checking out would overwrite local changes, a chooser offers 3 modes in increasing order of risk: stash/switch/reapply, stash/switch/leave stashed (recoverable via Manage Stash), or force switch and discard your changes (genuinely irreversible, gated behind a typed danger-confirm)
 - New Branch lets you pick the start point (any local/remote ref), not just HEAD
-- Fetch / Pull (fast-forward only) / Push, from the top bar or the native Repository menu
-- Drag-and-drop cherry-pick and merge (shift-drag) onto HEAD, with a real 3-way conflict resolver
+- Tags: create, delete, and push
+- Fetch / Pull / Push, from the top bar or the native Repository menu — Pull offers an explicit merge-or-rebase strategy choice and follows your configured upstream automatically; force push / force-with-lease are gated behind the same danger-confirm flow as other irreversible actions
+- "Manage Remotes" dialog — add / edit / rename / remove
+- Drag-and-drop cherry-pick and merge (shift-drag) onto HEAD, or right-click a commit row for cherry-pick / merge / revert — all backed by a real 3-way conflict resolver
+- Squash-merge, plus explicit fast-forward strategy choice: auto (default) / no-ff (always a real merge commit) / ff-only (refuse unless a fast-forward is possible)
 - Linear rebase onto any branch — including multi-commit conflict sequences and mid-sequence skip
+- Patch export/apply (`git format-patch` / `git am`), with real 3-way conflict resolution through the existing conflict resolver
+- Pluggable external diff/merge tools — hand off a diff or a conflict to your own configured tool (e.g. VS Code, Beyond Compare) instead of GitCat's built-in view
 - `git bisect` — mark good/bad/skip, live canvas cues for the narrowing range, automatic first-bad detection
 - `git-filter-repo` wizard — scope, preview, typed-confirm, and a full backup/restore safety net for the one genuinely irreversible operation in the app
 
@@ -44,14 +59,18 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 
 - Every mutation snapshots first; global Undo (⌘Z) is itself undoable
 - Reflog rescue — browse and restore to any historical HEAD position
+- fsck-based dangling-object recovery — find and recover a commit no branch, tag, or (often) reflog points to anymore, as a new branch, without ever touching your current branch or HEAD
 - rerere status/toggle panel
 
 **Setup + polish**
 
 - First-run setup wizard: pick a repo (click, or drag a folder in), check/fix its git identity, jump into the graph — shown once, not on every launch
+- Multi-repository dashboard for tracking and quickly switching between repos you use often
+- "Close Repository" — an in-app way back to the empty state
+- In-app `.gitignore` / `.mailmap` editors
 - A real native app menu (File / Repository / Edit / View / Window / Help) and About panel, not just a default OS stub
 - Dark theme by default (light available via the toggle)
-- Eight Tama expressions reacting to what's actually happening — searching, thinking, celebrating, or genuinely alarmed
+- Eight Tama expressions wired into every relevant moment across the app — Reflog Rescue, Dangling-Object Recovery, Plumbing, Pickaxe Search, and the Interactive Rebase planner all get mascot art, and filter-repo/conflict resolution shows a "thinking" face during real work instead of freezing on one expression the whole time
 
 ## Install
 

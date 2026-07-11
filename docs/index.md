@@ -28,7 +28,7 @@ features:
     details: Every mutation snapshots first. Global Undo (⌘Z) is one keystroke away, and Undo is itself undoable.
   - icon: 🖱️
     title: Real git, made safe
-    details: Drag-and-drop cherry-pick and merge, linear rebase, interactive rebase, git bisect, and submodules — with a real 3-way conflict resolver.
+    details: Stage and commit down to the line or hunk, drag-and-drop cherry-pick and merge, rebase (linear or interactive), and bisect — with a real 3-way conflict resolver.
   - icon: 🔎
     title: ⌘K command palette
     details: Fuzzy search across commits and refs, plus quick actions for Bisect, Reflog, Rerere, and Plumbing.
@@ -37,7 +37,7 @@ features:
     details: Browse and restore to any historical HEAD position — the restore itself is just another undoable snapshot.
   - icon: 🐈
     title: Tama
-    details: A cat mascot with eight expressions who reacts to what's actually happening — searching, thinking, celebrating, or genuinely alarmed.
+    details: A cat mascot with eight expressions who reacts to what's actually happening across the app — searching, thinking, celebrating, or genuinely alarmed.
 ---
 
 <div style="max-width: 960px; margin: 48px auto 0; padding: 0 24px;">
