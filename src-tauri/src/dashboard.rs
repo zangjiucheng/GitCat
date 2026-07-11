@@ -1,0 +1,101 @@
+//! Multi-repository dashboard (backlog #11): ONE minimal, cheap per-repo
+//! status read — current branch + its OWN ahead/behind (not every branch,
+//! unlike `git_write.rs`'s `list_refs`), a dirty/clean flag, and HEAD's tip
+//! commit subject/time via a single `git2::Commit` lookup (NOT a revwalk —
+//! see `commands.rs`'s `build_graph` doc comment for why a dashboard must
+//! never trigger that per tracked repo). Read-only (git2), reusing the exact
+//! `trust::open_repo` auto-trust path every other read command uses.
+//!
+//! Deliberately NOT a composition of `git_write::list_refs` (walks every local
+//! branch + every remote + every tag just to read one branch's ahead/behind)
+//! and `workdir::workdir_status` (has dirty/clean but no branch/ahead-behind/
+//! last-commit at all) — that would be two IPC round-trips per tracked repo
+//! and still miss "last commit"; this is one round-trip, and the only git2
+//! calls it makes are a status read (no walk) and a single commit lookup (no
+//! walk), so it stays cheap even against a repo with a huge history.
+
+use git2::StatusOptions;
+use serde::Serialize;
+
+#[derive(Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardRepoStatus {
+    pub branch: Option<String>, // current branch shorthand; None if detached or unborn
+    pub detached: bool,         // HEAD exists but isn't a branch
+    pub ahead: Option<usize>,   // vs configured upstream; None if no upstream/detached/unborn
+    pub behind: Option<usize>,
+    pub dirty: bool,            // any staged/unstaged/untracked entry (excluding conflicts, counted separately)
+    pub conflicted: usize,      // mid-merge/rebase unmerged count (mirrors WorkdirStatus.conflicted)
+    pub head_sha: Option<String>, // short (7-char) sha of HEAD's tip; None on an empty/unborn repo
+    pub last_subject: Option<String>, // HEAD tip's commit message first line
+    pub last_commit_time: Option<i64>, // unix seconds (author time, matches git_read.rs's `an` field convention)
+}
+
+/// JS: `commands.dashboardRepoStatus(path)`.
+#[tauri::command]
+#[specta::specta]
+pub fn dashboard_repo_status(path: String) -> Result<DashboardRepoStatus, String> {
+    dashboard_repo_status_inner(&path).map_err(|e| e.message().to_string())
+}
+
+fn dashboard_repo_status_inner(path: &str) -> Result<DashboardRepoStatus, git2::Error> {
+    let repo = crate::trust::open_repo(path)?; // same WSL/UNC auto-trust every other command uses
+
+    let head_ref = repo.head().ok(); // None => unborn (no commits yet); Err discarded, not fatal
+    let detached = head_ref.as_ref().is_some_and(|h| !h.is_branch());
+    let branch = head_ref
+        .as_ref()
+        .filter(|h| h.is_branch())
+        .and_then(|h| h.shorthand())
+        .map(str::to_string);
+
+    let (ahead, behind) = branch
+        .as_deref()
+        .and_then(|name| repo.find_branch(name, git2::BranchType::Local).ok())
+        .and_then(|b| {
+            let local_oid = b.get().target()?;
+            let up = b.upstream().ok()?.get().peel_to_commit().ok()?;
+            repo.graph_ahead_behind(local_oid, up.id()).ok()
+        })
+        .map(|(a, b)| (Some(a), Some(b)))
+        .unwrap_or((None, None));
+
+    let (head_sha, last_subject, last_commit_time) =
+        match head_ref.as_ref().and_then(|h| h.peel_to_commit().ok()) {
+            Some(c) => (
+                Some(c.id().to_string().chars().take(7).collect()),
+                Some(c.summary().unwrap_or("").to_string()),
+                Some(c.author().when().seconds()),
+            ),
+            None => (None, None, None),
+        };
+
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true); // same cheap, non-walking read as workdir_status
+    let statuses = repo.statuses(Some(&mut opts))?;
+    let conflicted = statuses.iter().filter(|e| e.status().is_conflicted()).count();
+    let dirty = statuses.iter().any(|e| !e.status().is_ignored());
+
+    Ok(DashboardRepoStatus {
+        branch,
+        detached,
+        ahead,
+        behind,
+        dirty,
+        conflicted,
+        head_sha,
+        last_subject,
+        last_commit_time,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bad_path_is_a_clean_error_not_a_panic() {
+        let result = dashboard_repo_status_inner("/definitely/not/a/repo/anywhere");
+        assert!(result.is_err());
+    }
+}

@@ -4,6 +4,7 @@
   import { workdirCtrl } from "../workdir/workdir.svelte.ts";
   import Workdir from "../workdir/Workdir.svelte";
   import { resolver } from "../resolver/resolver.svelte.ts";
+  import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
 </script>
 
 {#if workdirCtrl.selected}
@@ -20,7 +21,15 @@
       <div class="hero-hint">Click a commit to inspect it &#183; drag a dot onto another to cherry-pick &#183; &#8984;Z to rewind</div>
     {:else}
       <div class="hero-bubble">はじめまして! I'm <b>Tama</b>. Open a Git repository and I'll lay out its whole history in a blink. <span class="jp">にゃ〜♪</span></div>
-      <button class="btn" id="openRepoBtn" style="margin-top:2px" onclick={() => bridge.pickRepo()}>&#128193; Open a repository&#8230;</button>
+      <div style="margin-top:2px;display:flex;align-items:center;gap:8px;justify-content:center">
+        <button class="btn" id="openRepoBtn" onclick={() => bridge.pickRepo()}>&#128193; Open a repository&#8230;</button>
+        <!-- Multi-repo dashboard (backlog #11): the empty-hero card's second
+             entry point, alongside the Tools menu/⌘K — reachable here too
+             since a fresh/no-repo launch is arguably the MORE useful moment
+             to jump straight into a previously tracked repo instead of
+             re-browsing for one via the native picker. -->
+        <button class="btn ghost" onclick={() => dashboardCtrl.show()}>&#128194; Repositories&#8230;</button>
+      </div>
       <div class="hero-hint">or click the repo name <b>&#9662;</b> in the top bar</div>
     {/if}
   </div>

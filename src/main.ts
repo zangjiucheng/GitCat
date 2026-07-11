@@ -22,6 +22,8 @@ import { exportPatchesCtrl } from "./islands/exportpatches/exportpatches.svelte.
 import { applyPatchCtrl } from "./islands/applypatch/applypatch.svelte.ts";
 import PickaxeSearch from "./islands/pickaxesearch/PickaxeSearch.svelte";
 import { pickaxeSearchCtrl } from "./islands/pickaxesearch/pickaxesearch.svelte.ts";
+import Dashboard from "./islands/dashboard/Dashboard.svelte";
+import { dashboardCtrl } from "./islands/dashboard/dashboard.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import Blame from "./islands/blame/Blame.svelte";
@@ -126,6 +128,12 @@ mount(ExportPatches, { target: document.body });
 // History — it's reachable from the Tools menu/⌘K rather than a file-tree
 // row (see pickaxesearch.svelte.ts's own header doc).
 mount(PickaxeSearch, { target: document.body });
+// Multi-repository dashboard (backlog #11): same on-demand-modal treatment
+// as Pickaxe Search/Export Patches/Remotes/Reflog/Rerere/Plumbing above, but
+// — unlike every one of those — reachable with or without a repo open (see
+// dashboard.svelte.ts's own header doc): also rendered from the empty-hero
+// card's own button (Detail.svelte), not just the Tools menu/⌘K.
+mount(Dashboard, { target: document.body });
 
 // Native app menu -> frontend action bridge (see src-tauri/src/menu.rs).
 // Only the items whose action lives in Svelte-controller land forward here —
@@ -188,6 +196,9 @@ if (IN_TAURI) {
         break;
       case "pickaxe-search":
         pickaxeSearchCtrl.show(bridge.CUR_REPO as unknown as string);
+        break;
+      case "repositories":
+        dashboardCtrl.show();
         break;
       case "pull-merge":
         resolver.pullMerge(bridge.CUR_REPO as unknown as string);

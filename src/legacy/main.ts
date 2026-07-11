@@ -1089,6 +1089,15 @@ async function openRepo(path){
     // src-tauri/src/watch.rs. Best-effort: a watch failure shouldn't block
     // opening the repo, the app still works fine without live refresh.
     tinvoke("watch_repo",{path}).catch(e=>console.error("watch_repo",e));
+    // Multi-repo dashboard (backlog #11): auto-track whichever repo was just
+    // opened (real open OR submodule nav OR the setup wizard's finish() —
+    // every one of them funnels through this one openRepo() success path) so
+    // the dashboard's tracked list naturally accumulates "things I've opened"
+    // with no per-call-site wiring needed elsewhere. Fire-and-forget, same
+    // best-effort reasoning as watch_repo just above — a registry-write
+    // failure (e.g. a read-only app config dir) must never block opening the
+    // repo itself.
+    tinvoke("track_repo_opened",{path}).catch(e=>console.error("track_repo_opened",e));
     Tama.set("hint");
     Tama.say("Loaded "+g.n.toLocaleString()+" commits in "+(g.readMs+g.layoutMs).toFixed(0)+" ms. にゃ〜",4200);
     // Runs after loadGraph() (which resets the local bisect row-model) so a

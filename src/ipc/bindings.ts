@@ -1408,6 +1408,66 @@ async submoduleForeachCancel() : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * JS: `commands.listTrackedRepos()`.
+ */
+async listTrackedRepos() : Promise<Result<TrackedRepo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_tracked_repos") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Manual "+ Add repository…" (dashboard). No-ops (doesn't duplicate) if
+ * already tracked. JS: `commands.addTrackedRepo(path)`.
+ */
+async addTrackedRepo(path: string) : Promise<Result<TrackedRepo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_tracked_repo", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dashboard row's "Remove from list" — removes from the TRACKED LIST only,
+ * never touches anything on disk. JS: `commands.removeTrackedRepo(path)`.
+ */
+async removeTrackedRepo(path: string) : Promise<Result<TrackedRepo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_tracked_repo", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fire-and-forget hook called from `openRepo()`'s success path
+ * (legacy/main.ts) — auto-tracks whichever repo was just opened AND bumps it
+ * to "most recently opened". Upserts: adds if new, else updates
+ * `last_opened_at` in place. JS: `commands.trackRepoOpened(path)`.
+ */
+async trackRepoOpened(path: string) : Promise<Result<TrackedRepo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("track_repo_opened", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.dashboardRepoStatus(path)`.
+ */
+async dashboardRepoStatus(path: string) : Promise<Result<DashboardRepoStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_repo_status", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1504,6 +1564,7 @@ export type ConflictFile = { path: string; ours: string; base: string; theirs: s
  * UI can offer Continue.
  */
 export type ConflictStatus = { inProgress: boolean; op: string; files: ConflictFile[] }
+export type DashboardRepoStatus = { branch: string | null; detached: boolean; ahead: number | null; behind: number | null; dirty: boolean; conflicted: number; headSha: string | null; lastSubject: string | null; lastCommitTime: number | null }
 /**
  * One hunk within a file patch. `header` is the `@@ -a,b +c,d @@ ...` line.
  */
@@ -1986,6 +2047,14 @@ export type TagObject = { sha: string; name: string; tagger: PlumbingPerson | nu
  * `action` is one of `"pick" | "squash" | "fixup" | "drop" | "edit"`.
  */
 export type TodoItem = { sha: string; action: string }
+export type TrackedRepo = { path: string; 
+/**
+ * Unix seconds this repo was last OPENED through this app (via
+ * `openRepo()` — see legacy/main.ts). `None` for a repo added only via
+ * the dashboard's manual "+ Add repository…" picker and never actually
+ * opened. Drives the dashboard's most-recently-used ordering.
+ */
+lastOpenedAt: number | null }
 /**
  * One entry inside a tree listing.
  */

@@ -124,6 +124,12 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // Remotes/Export Patches/Apply Patch, not file-tree-scoped like
         // Blame/File History (see pickaxesearch.svelte.ts's own header doc).
         let pickaxe_search = MenuItemBuilder::with_id("pickaxe-search", "Search Commit Content\u{2026}").build(app)?;
+        // Multi-repository dashboard (backlog #11): unlike every other item in
+        // this submenu, this one does NOT need a repo open at all — it's the
+        // one place to check on OTHER tracked repos without leaving (or
+        // needing) whichever repo is currently open. Same dialog-opener "…"
+        // convention as the items above it.
+        let repositories = MenuItemBuilder::with_id("repositories", "Repositories\u{2026}").build(app)?;
         // Immediate-action items (no dialog, no ellipsis) — same convention
         // as Repository's Fetch/Pull/Push above. A separator sets them apart
         // from the dialog-openers above them.
@@ -145,6 +151,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .item(&export_patches)
             .item(&apply_patch)
             .item(&pickaxe_search)
+            .item(&repositories)
             .separator()
             .item(&pull_merge)
             .item(&pull_rebase)
@@ -194,7 +201,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // logic in Rust.
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
         | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "export-patches" | "apply-patch" | "pickaxe-search"
-        | "pull-merge" | "pull-rebase" | "force-push-lease" | "force-push-override") => {
+        | "repositories" | "pull-merge" | "pull-rebase" | "force-push-lease" | "force-push-override") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

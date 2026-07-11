@@ -778,6 +778,39 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .rm-add{border-top:1px solid var(--border);margin-top:8px;padding-top:10px}
 .rm-confirm .msg{color:var(--danger)}
 
+/* ============================== REPOSITORIES (multi-repo dashboard, backlog #11) modal ==============================
+   Dashboard.svelte — reached from the Tools menu / ⌘K ("Repositories…", see
+   menu.rs / cmdk.svelte.ts) AND the empty-hero card's own button (see
+   Detail.svelte) — deliberately reachable with or without a repo open (see
+   dashboard.svelte.ts's own header doc). Widened past the default .modal,
+   same reasoning as .modal.pickaxe above (a row needs room for name + path +
+   branch/ahead-behind/dirty chips + last-commit line on one card). Row shape
+   reuses .rm-item's own two-line-main-plus-button-cluster layout (own `.db-`
+   prefix per this codebase's per-owning-island CSS-copy convention — see
+   .rm-* 's own doc comment just above) plus .row-chip/.log-row/.mono/.mut/
+   .spinner/.btn chrome like every other one-shot dialog in this file. */
+.modal.dashboard{width:min(760px,96vw)}
+.modal.dashboard .modal-body{max-height:65vh;overflow:auto}
+.modal.dashboard .modal-foot{justify-content:space-between}
+.db-add{margin-right:auto}
+.db-list{display:flex;flex-direction:column;gap:2px}
+.db-item{display:flex;align-items:flex-start;gap:10px;padding:8px 6px;border-radius:6px}
+.db-item:hover{background:var(--elevated)}
+.db-item.broken{opacity:.75}
+.db-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
+.db-name-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.db-name{font-weight:700}
+.db-ab{font-size:11px;color:var(--muted)}
+.db-path{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db-sub{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:6px}
+.db-broken{color:var(--danger)}
+.db-act{display:flex;gap:4px;flex:none;align-items:center}
+.db-act button{font-size:11px;font-weight:600;padding:3px 8px;border-radius:6px;border:1px solid var(--border);
+  background:var(--elevated);color:var(--text)}
+.db-act button:hover:not([disabled]){border-color:var(--muted)}
+.db-act button[disabled]{opacity:.45;cursor:not-allowed}
+.row-chip.dirty{color:var(--warning);border-color:color-mix(in srgb,var(--warning) 40%,transparent)}
+
 /* ============================== BISECT floating panel ==============================
    The pre-start "arm good/bad by clicking a commit on the canvas" step —
    opened via the Tools menu / ⌘K (bisectDrawerCtrl.show()), closed once a

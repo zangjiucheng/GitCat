@@ -1,6 +1,7 @@
 pub mod blame; // read-only line-annotation (git blame) view
 pub mod commands;
 pub mod conflict;
+pub mod dashboard; // backlog #11: minimal per-repo status read for the multi-repo dashboard
 pub mod file_history; // read-only per-file commit history, following renames (git log --follow)
 pub mod filter_repo; // M5c: filter-repo wizard (backup / preview / run / restore)
 pub mod git_pick;
@@ -22,6 +23,7 @@ pub mod patch; // format-patch export + git am --3way apply (with am's own conti
 pub mod pickaxe; // pickaxe / diff-content search: git log -S/-G across (a subset of) history
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
+pub mod repo_registry; // backlog #11: app-level tracked-repos JSON persistence
 pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
 pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 deinit/remove + M5 foreach
@@ -193,6 +195,15 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // and cancellation
         submodule::submodule_foreach_start,
         submodule::submodule_foreach_cancel,
+        // Multi-repository dashboard (backlog #11): app-level tracked-repos
+        // registry (JSON under app_config_dir()) + a minimal per-repo status
+        // read (current branch's own ahead/behind, dirty flag, last commit —
+        // never a commit-graph walk; see dashboard.rs's module doc).
+        repo_registry::list_tracked_repos,
+        repo_registry::add_tracked_repo,
+        repo_registry::remove_tracked_repo,
+        repo_registry::track_repo_opened,
+        dashboard::dashboard_repo_status,
     ])
 }
 

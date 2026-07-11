@@ -25,6 +25,7 @@ import { exportPatchesCtrl } from "../exportpatches/exportpatches.svelte.ts";
 import { applyPatchCtrl } from "../applypatch/applypatch.svelte.ts";
 import { pickaxeSearchCtrl } from "../pickaxesearch/pickaxesearch.svelte.ts";
 import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
+import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
 
 export const CMD_CAP = 50;
 const CMD_BUF = 250;
@@ -82,6 +83,17 @@ const ACTIONS: ActionItem[] = [
     label: "Search Commit Content",
     hint: "Find commits whose diff touched a string or pattern (git log -S / -G)",
     run: () => pickaxeSearchCtrl.show(bridge.CUR_REPO as unknown as string),
+  },
+  // Multi-repository dashboard (backlog #11): the ONE action here that does
+  // NOT read/forward bridge.CUR_REPO at all — unlike every other entry above,
+  // it's reachable whether or not a repo is currently open (see
+  // dashboard.svelte.ts's own header doc).
+  {
+    type: "action",
+    id: "repositories",
+    label: "Repositories",
+    hint: "See every tracked repo's branch/status at a glance, and jump into one",
+    run: () => dashboardCtrl.show(),
   },
   {
     type: "action",
