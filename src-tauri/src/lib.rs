@@ -24,6 +24,7 @@ pub mod patch; // format-patch export + git am --3way apply (with am's own conti
 pub mod pickaxe; // pickaxe / diff-content search: git log -S/-G across (a subset of) history
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
+pub mod repo_files; // backlog #14 (final item): .gitignore/.mailmap in-app editors — allow-listed repo-root file read/write
 pub mod repo_registry; // backlog #11: app-level tracked-repos JSON persistence
 pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
@@ -221,6 +222,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
         tool_settings::set_tool_settings,
         tool_settings::open_diff_tool,
         tool_settings::resolve_conflict_with_external_tool,
+        // Repo-root file editors (backlog #14, final item): view/edit .gitignore
+        // and .mailmap directly — allow-listed to exactly these two names, see
+        // repo_files.rs's own module doc.
+        repo_files::read_repo_file,
+        repo_files::write_repo_file,
     ])
 }
 

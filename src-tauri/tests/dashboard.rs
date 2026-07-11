@@ -124,6 +124,18 @@ fn ahead_behind_and_diverged_are_computed_against_the_upstream_only() {
             .arg("-C")
             .arg(&clone_path)
             .args(args)
+            // Isolate from this machine's REAL global/system git config —
+            // same fix TempRepo::git() already applies to every OTHER git
+            // subprocess in this test suite (see common/mod.rs's own doc
+            // comment on why). This ad-hoc raw `git clone` (not created via
+            // TempRepo) was missing it: a real `commit.gpgsign=true` in the
+            // host's global config made its `commit` calls attempt to GPG-
+            // sign with no pinentry available in a headless test, so the
+            // commit silently never happened and the following push pushed
+            // nothing new — surfacing as a flaky-looking, but actually fully
+            // deterministic, "behind: Some(0), expected Some(1)" failure.
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("GIT_AUTHOR_NAME", "GitCat Test")
             .env("GIT_AUTHOR_EMAIL", "test@gitcat.example")
             .env("GIT_COMMITTER_NAME", "GitCat Test")
@@ -177,6 +189,18 @@ fn behind_only_is_computed_when_local_has_not_moved() {
             .arg("-C")
             .arg(&clone_path)
             .args(args)
+            // Isolate from this machine's REAL global/system git config —
+            // same fix TempRepo::git() already applies to every OTHER git
+            // subprocess in this test suite (see common/mod.rs's own doc
+            // comment on why). This ad-hoc raw `git clone` (not created via
+            // TempRepo) was missing it: a real `commit.gpgsign=true` in the
+            // host's global config made its `commit` calls attempt to GPG-
+            // sign with no pinentry available in a headless test, so the
+            // commit silently never happened and the following push pushed
+            // nothing new — surfacing as a flaky-looking, but actually fully
+            // deterministic, "behind: Some(0), expected Some(1)" failure.
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("GIT_AUTHOR_NAME", "GitCat Test")
             .env("GIT_AUTHOR_EMAIL", "test@gitcat.example")
             .env("GIT_COMMITTER_NAME", "GitCat Test")

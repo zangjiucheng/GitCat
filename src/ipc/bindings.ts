@@ -1545,6 +1545,26 @@ async openDiffTool(path: string, file: string, staged: boolean, fromRev: string 
  */
 async resolveConflictWithExternalTool(path: string, file: string) : Promise<ResolveResult> {
     return await TAURI_INVOKE("resolve_conflict_with_external_tool", { path, file });
+},
+/**
+ * Read `file_name`'s current content (repo-root only). Missing file => `Ok("")`,
+ * never an error — see module doc comment.
+ * JS: `commands.readRepoFile(path, fileName)` -> `Result<string, string>`.
+ */
+async readRepoFile(path: string, fileName: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_repo_file", { path, fileName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Overwrite `file_name` with `content` verbatim (repo-root only).
+ * JS: `commands.writeRepoFile(path, fileName, content)` -> `RepoFileResult`.
+ */
+async writeRepoFile(path: string, fileName: string, content: string) : Promise<RepoFileResult> {
+    return await TAURI_INVOKE("write_repo_file", { path, fileName, content });
 }
 }
 
@@ -1937,6 +1957,16 @@ export type RemoteResult = { ok: boolean; message: string;
  * Pre-op safety snapshot ref — only ever `Some` for `pull` (see module doc).
  */
 backupRef: string | null }
+/**
+ * Result of [`write_repo_file`] — deliberately its own minimal shape (just
+ * `ok`/`message`), NOT `git_write::WriteResult`: that type carries
+ * `backup_ref`/`conflicting_files` this command never populates (no
+ * snapshot, no conflicts possible) — reusing it would only carry dead
+ * fields, against this codebase's "one type per module once the shape
+ * genuinely differs" precedent (see submodule.rs's own
+ * `SubmoduleRemovalResult` doc comment).
+ */
+export type RepoFileResult = { ok: boolean; message: string }
 /**
  * One historical resolution recorded under `<git-common-dir>/rr-cache/<id>/`.
  * `id` is the cache directory name — a hash of the conflict hunk's content,

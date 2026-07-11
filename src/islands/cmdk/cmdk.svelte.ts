@@ -28,6 +28,7 @@ import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
 import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
 import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 import { danglingRecoveryCtrl } from "../danglingrecovery/danglingrecovery.svelte.ts";
+import { repoFilesCtrl } from "../repofiles/repofiles.svelte.ts";
 
 export const CMD_CAP = 50;
 const CMD_BUF = 250;
@@ -116,6 +117,16 @@ const ACTIONS: ActionItem[] = [
     label: "Dangling Commits",
     hint: "Recover a commit no ref points to anymore (git fsck)",
     run: () => danglingRecoveryCtrl.show(bridge.CUR_REPO as unknown as string),
+  },
+  // .gitignore / .mailmap in-app editors (backlog #14, the FINAL backlog
+  // item): repo-scoped like Reflog/Rerere/Dangling Commits above, NOT
+  // repo-independent like Repositories/External Tools.
+  {
+    type: "action",
+    id: "repo-files",
+    label: "Repo Files",
+    hint: "Edit .gitignore or .mailmap without leaving GitCat",
+    run: () => repoFilesCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",

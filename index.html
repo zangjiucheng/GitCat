@@ -1174,6 +1174,27 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   background:transparent;font-weight:600;font-size:11.5px;cursor:pointer}
 .dr-row:hover .dr-act{opacity:1}
 .dr-act:disabled{opacity:.45;cursor:not-allowed}
+
+/* ============================== REPO FILES modal (backlog #14, the FINAL
+   backlog item) ==============================
+   RepoFiles.svelte — reached from the Tools menu / ⌘K ("Repo Files…", see
+   menu.rs / cmdk.svelte.ts). ONE modal with an internal file toggle
+   (.gitignore / .mailmap) rather than two near-duplicate modals — both are
+   "load this repo-root text file verbatim, edit it, save it back" in the
+   exact same shape. `.rf-tabs`/`.rf-tab` is the one bit of new chrome: a
+   small persistent segmented toggle (unlike `.dr-act` above, which only
+   appears on hover) — closest existing precedent is `.cf-file.sel`'s own
+   accent-tinted selected state, reused here rather than inventing a new
+   "selected" treatment. The textarea itself is FilterRepo.svelte's own
+   mono-textarea shape (rows/font-family:var(--mono)/spellcheck=false)
+   inlined per-element rather than a new class, same as that island does. */
+.modal.repofiles .modal-body{display:flex;flex-direction:column;gap:10px}
+.rf-tabs{display:flex;gap:6px}
+.rf-tab{padding:5px 14px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer}
+.rf-tab:hover{background:var(--elevated)}
+.rf-tab.sel{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--text);border-color:var(--accent)}
+.rf-tab:disabled{opacity:.55;cursor:not-allowed}
+.rf-textarea{min-height:340px;font-size:12.5px;resize:vertical}
 </style>
 
 <div class="app" id="app">

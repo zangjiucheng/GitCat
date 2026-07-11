@@ -28,6 +28,8 @@ import ExternalTools from "./islands/externaltools/ExternalTools.svelte";
 import { externalToolsCtrl } from "./islands/externaltools/externaltools.svelte.ts";
 import DanglingRecovery from "./islands/danglingrecovery/DanglingRecovery.svelte";
 import { danglingRecoveryCtrl } from "./islands/danglingrecovery/danglingrecovery.svelte.ts";
+import RepoFiles from "./islands/repofiles/RepoFiles.svelte";
+import { repoFilesCtrl } from "./islands/repofiles/repofiles.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import Blame from "./islands/blame/Blame.svelte";
@@ -153,6 +155,13 @@ mount(ExternalTools, { target: document.body });
 // Repositories/External Tools (see danglingrecovery.svelte.ts's own header
 // doc).
 mount(DanglingRecovery, { target: document.body });
+// .gitignore / .mailmap in-app editors (backlog #14, the FINAL backlog
+// item): same on-demand-modal treatment as Dangling Commits/External Tools/
+// Dashboard/Pickaxe Search/Export Patches/Remotes/Reflog/Rerere/Plumbing
+// above — repo-scoped (forwards bridge.CUR_REPO) like Reflog/Rerere/Dangling
+// Commits, not repo-independent like Repositories/External Tools (see
+// repofiles.svelte.ts's own header doc).
+mount(RepoFiles, { target: document.body });
 
 // Native app menu -> frontend action bridge (see src-tauri/src/menu.rs).
 // Only the items whose action lives in Svelte-controller land forward here —
@@ -224,6 +233,9 @@ if (IN_TAURI) {
         break;
       case "dangling-recovery":
         danglingRecoveryCtrl.show(bridge.CUR_REPO as unknown as string);
+        break;
+      case "repo-files":
+        repoFilesCtrl.show(bridge.CUR_REPO as unknown as string);
         break;
       case "pull-merge":
         resolver.pullMerge(bridge.CUR_REPO as unknown as string);
