@@ -17,6 +17,9 @@ import Remotes from "./islands/remotes/Remotes.svelte";
 import { remotesCtrl } from "./islands/remotes/remotes.svelte.ts";
 import { resolver } from "./islands/resolver/resolver.svelte.ts";
 import { forcePushCtrl } from "./islands/forcepush/forcepush.svelte.ts";
+import ExportPatches from "./islands/exportpatches/ExportPatches.svelte";
+import { exportPatchesCtrl } from "./islands/exportpatches/exportpatches.svelte.ts";
+import { applyPatchCtrl } from "./islands/applypatch/applypatch.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import Blame from "./islands/blame/Blame.svelte";
@@ -108,6 +111,13 @@ mount(Plumbing, { target: document.body });
 // case from Blame above), so it gets the same Tools-menu/⌘K/on-demand-modal
 // treatment as Reflog/Rerere/Plumbing rather than Blame's direct-call one.
 mount(Remotes, { target: document.body });
+// Export Patches (range export modal, backlog #9): same on-demand-modal
+// treatment as Remotes/Reflog/Rerere/Plumbing above. Apply Patch has no
+// mount of its own — like Force Push, it's a Tools-menu/⌘K entry point with
+// no bespoke UI (see applypatch.svelte.ts's own doc comment): it opens a
+// native file dialog directly and, on a conflict, hands off to the
+// ALREADY-mounted Resolver above.
+mount(ExportPatches, { target: document.body });
 
 // Native app menu -> frontend action bridge (see src-tauri/src/menu.rs).
 // Only the items whose action lives in Svelte-controller land forward here —
@@ -161,6 +171,12 @@ if (IN_TAURI) {
         break;
       case "remotes":
         remotesCtrl.show(bridge.CUR_REPO as unknown as string);
+        break;
+      case "export-patches":
+        exportPatchesCtrl.show(bridge.CUR_REPO as unknown as string);
+        break;
+      case "apply-patch":
+        applyPatchCtrl.applyPatch(bridge.CUR_REPO as unknown as string);
         break;
       case "pull-merge":
         resolver.pullMerge(bridge.CUR_REPO as unknown as string);

@@ -18,6 +18,7 @@ pub mod identity; // Setup wizard: repo-local git identity (user.name/user.email
 pub mod layout;
 pub mod menu; // native app menu (File/Edit/View/Window/Help)
 pub mod model;
+pub mod patch; // format-patch export + git am --3way apply (with am's own continue/skip/abort)
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod rerere; // M5a: git-rerere status/toggle panel
@@ -125,6 +126,17 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_revert::revert_start,
         git_revert::revert_continue,
         git_revert::revert_abort,
+        // Patch export/apply (backlog #9): format-patch --stdout export (one
+        // commit or a whole revision range, one combined mbox file) + git am
+        // --3way apply, with am's own continue/skip/abort (see conflict.rs's
+        // op_name "am" label — NEVER git_rebase.rs's rebase_continue/
+        // rebase_abort, which are empirically confirmed to fail against an
+        // am-created conflict; see patch.rs's module doc).
+        patch::export_patch,
+        patch::apply_patch,
+        patch::am_continue,
+        patch::am_skip,
+        patch::am_abort,
         // Bisect (M3): start / mark good|bad|skip / status / reset
         git_bisect::bisect_start,
         git_bisect::bisect_mark,

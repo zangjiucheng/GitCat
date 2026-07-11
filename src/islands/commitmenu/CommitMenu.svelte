@@ -78,6 +78,13 @@
           title={commitMenuCtrl.isMerge ? "Can't revert a merge commit (needs --mainline, which isn't supported)" : undefined}
           onclick={() => commitMenuCtrl.revert()}>Revert commit</button
         >
+        <button
+          disabled={commitMenuCtrl.isMerge}
+          title={commitMenuCtrl.isMerge
+            ? "Can't export a merge commit as a single patch — use Export Patches\u{2026} with an explicit range instead"
+            : undefined}
+          onclick={() => commitMenuCtrl.exportAsPatch()}>Export as Patch&#8230;</button
+        >
         <button onclick={() => commitMenuCtrl.startBranchHere()}>Create branch here&#8230;</button>
         <button onclick={() => commitMenuCtrl.startTagHere()}>Create tag here&#8230;</button>
         <button onclick={() => commitMenuCtrl.copyShortSha()}>Copy SHA (short)</button>

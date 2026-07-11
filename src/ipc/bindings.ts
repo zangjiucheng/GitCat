@@ -900,6 +900,75 @@ async revertAbort(path: string) : Promise<RevertResult> {
     return await TAURI_INVOKE("revert_abort", { path });
 },
 /**
+ * Export `to` (or `from..to`) as one combined mbox `.patch` file at `dest`.
+ * `from: None` => single-commit mode (`-1 <to>`, robust to `to` being a root
+ * commit — see module doc for why NOT `<to>~1..<to>`, which hard-fails
+ * "ambiguous argument" on a root commit). `from: Some(rev)` => range mode
+ * (`<rev>..<to>`).
+ * 
+ * Pure read + external file write — no repo mutation, so no snapshot.
+ * Refuses a merge commit in single-commit mode (see module doc's "footgun"
+ * note) — this is a backend backstop; the frontend already disables the
+ * commit-menu action for a merge.
+ * 
+ * JS: `invoke("export_patch", { path, from, to, dest })`.
+ */
+async exportPatch(path: string, from: string | null, to: string, dest: string) : Promise<ExportPatchResult> {
+    return await TAURI_INVOKE("export_patch", { path, from, to, dest });
+},
+/**
+ * Apply a mailbox-format `.patch` file (as `git format-patch --stdout`
+ * produces — one or many commits, one file) via `git am --3way`. Snapshots
+ * FIRST, like every other history-mutating command in this codebase.
+ * `--3way` is mandatory — see module doc: without it, a failed am leaves NO
+ * index conflict stages for the Resolver to show at all.
+ * 
+ * Refuses to start on top of ANY other in-progress sequencer op (mirrors
+ * git_merge.rs's `merge_squash`'s own `other_op_in_progress`-style guard — a
+ * new top-level "start" command, not one nested inside an existing op, so it
+ * checks `repo.state() != Clean` broadly, not just this module's own kind).
+ * 
+ * JS: `invoke("apply_patch", { path, patchFilePath })`.
+ */
+async applyPatch(path: string, patchFilePath: string) : Promise<ApplyPatchResult> {
+    return await TAURI_INVOKE("apply_patch", { path, patchFilePath });
+},
+/**
+ * Continue an in-progress `git am --3way` after conflicts were resolved
+ * (files `git add`ed by the Resolver — SAME `resolve_conflict_file` path a
+ * rebase/merge/cherry-pick conflict already uses). Runs literally
+ * `git am --continue` — NEVER `git rebase --continue`, which is
+ * EMPIRICALLY CONFIRMED to fail outright against this state (see module
+ * doc).
+ * 
+ * JS: `invoke("am_continue", { path })`.
+ */
+async amContinue(path: string) : Promise<ApplyPatchResult> {
+    return await TAURI_INVOKE("am_continue", { path });
+},
+/**
+ * Drop the patch the am session is currently stopped on entirely
+ * (`git am --skip`) — mirrors `rebase_skip`'s exact "may land on the NEXT
+ * conflicting patch, re-classify accordingly" semantics (empirically
+ * confirmed for the analogous rebase case; the same state-inspection logic
+ * applies here unchanged).
+ * 
+ * JS: `invoke("am_skip", { path })`.
+ */
+async amSkip(path: string) : Promise<ApplyPatchResult> {
+    return await TAURI_INVOKE("am_skip", { path });
+},
+/**
+ * Abort an in-progress `git am` (`git am --abort`) — restores pre-am HEAD
+ * exactly (EMPIRICALLY VERIFIED). Deliberately NO snapshot — same "the
+ * escape hatch must ALWAYS run" discipline as `rebase_abort`. Idempotent.
+ * 
+ * JS: `invoke("am_abort", { path })`.
+ */
+async amAbort(path: string) : Promise<ApplyPatchResult> {
+    return await TAURI_INVOKE("am_abort", { path });
+},
+/**
  * Start a bisect between a known-bad and one-or-more known-good commits.
  * Snapshots FIRST. JS: invoke("bisect_start", { path, bad, good: [sha,…] }).
  */
@@ -1339,6 +1408,29 @@ async submoduleForeachCancel() : Promise<Result<null, string>> {
  * serializable struct instead of Tauri's menu-only `AboutMetadata` type.
  */
 export type AppInfo = { name: string; version: string; description: string; authors: string[]; copyright: string; website: string }
+/**
+ * Result of [`apply_patch`] / [`am_continue`] / [`am_skip`] / [`am_abort`].
+ * Structurally identical to git_rebase.rs's `RebaseResult` (so it slots into
+ * resolver.svelte.ts's existing `OpResult` union with zero shape friction)
+ * but WITHOUT "editing"/"empty" — `git am` has no analogue for either (see
+ * module doc: an unresolvable/already-applied patch just surfaces as an
+ * ordinary conflict/error, never a distinct "nothing to do" success).
+ */
+export type ApplyPatchResult = { ok: boolean; 
+/**
+ * "clean" | "conflict" | "error"
+ */
+state: string; 
+/**
+ * Repo-relative paths with unmerged entries — non-empty only when
+ * `state == "conflict"`.
+ */
+conflictedFiles: string[]; message: string; 
+/**
+ * Pre-op safety snapshot ref (present when we snapshotted before
+ * mutating), so the UI can name the snapshot the user can Undo to.
+ */
+backupRef: string | null }
 export type BisectStatus = { ok: boolean; inProgress: boolean; current: CommitInfo | null; badRef: string | null; goodRefs: string[]; remainingRevs: number; estSteps: number; firstBad: CommitInfo | null; log: string[]; message: string; backupRef: string | null }
 /**
  * One run of CONSECUTIVE lines last touched by the same commit — git2's own
@@ -1381,9 +1473,12 @@ export type ConflictFile = { path: string; ours: string; base: string; theirs: s
 /**
  * Result of [`conflict_status`]. `op` is one of
  * `"cherry-pick" | "merge" | "rebase" | "revert" | "stash" | "merge-squash" |
- * "none"` — see [`detect_op`] for why `"stash"` and `"merge-squash"` exist (a
- * `git stash apply`/`pop` conflict AND a `git merge --squash` conflict both
- * leave `RepositoryState` at `Clean`, unlike every other op here).
+ * "am" | "none"` — see [`detect_op`] for why `"stash"` and `"merge-squash"`
+ * exist (a `git stash apply`/`pop` conflict AND a `git merge --squash`
+ * conflict both leave `RepositoryState` at `Clean`, unlike every other op
+ * here), and see [`op_name`] for why `"am"` (a real `git am` in progress,
+ * see patch.rs) is its own label distinct from `"rebase"` even though both
+ * share the same `rebase-apply/` on-disk directory.
  * `in_progress` is true whenever a sequencer op is underway **or** there are
  * unmerged files — so once every file is resolved (`files` empty) but the
  * cherry-pick has not been continued yet, `in_progress` stays true and the
@@ -1401,6 +1496,12 @@ export type DiffHunkRow = { header: string; lines: DiffLineRow[] }
  * with any trailing CR/LF stripped — the frontend HTML-escapes it.
  */
 export type DiffLineRow = { kind: string; oldNo: number | null; newNo: number | null; text: string }
+/**
+ * Result of [`export_patch`]. Never mutates the repo (nothing git-observable
+ * changes — only an external file is written), so there is no `backupRef`:
+ * nothing here is Undo-able or needs to be.
+ */
+export type ExportPatchResult = { ok: boolean; message: string }
 /**
  * Full payload for the Blame modal: the file's (possibly capped) content, as
  * a flat per-line array, plus the hunks covering ranges over it — kept

@@ -10,13 +10,14 @@
   }
   const lines = (txt: string) => (txt || "").split("\n");
 
-  // Abort button copy — op-flavored ("Abort merge"/"Abort pick"/"Abort rebase"/"Abort revert"/"Abort stash"/"Abort squash").
+  // Abort button copy — op-flavored ("Abort merge"/"Abort pick"/"Abort rebase"/"Abort revert"/"Abort stash"/"Abort squash"/"Abort patch apply").
   function abortLabel(op: string): string {
     if (op === "merge") return "Abort merge";
     if (op === "rebase") return "Abort rebase";
     if (op === "revert") return "Abort revert";
     if (op === "stash") return "Abort stash";
     if (op === "merge-squash") return "Abort squash";
+    if (op === "am") return "Abort patch apply";
     return "Abort pick";
   }
 
@@ -109,7 +110,7 @@
       <button class="btn ghost" id="conflictAbort" disabled={resolver.busy} onclick={() => resolver.abort()}
         >{#if resolver.activeAction === "abort"}<span class="spinner"></span> Aborting…{:else}{abortLabel(resolver.op)}{/if}</button
       >
-      {#if resolver.op === "rebase" && !resolver.editing}
+      {#if (resolver.op === "rebase" || resolver.op === "am") && !resolver.editing}
         <button class="btn ghost" id="conflictSkip" disabled={resolver.busy} onclick={() => resolver.skip()}
           >{#if resolver.activeAction === "skip"}<span class="spinner"></span> Skipping…{:else}Skip this commit{/if}</button
         >

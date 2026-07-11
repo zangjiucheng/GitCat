@@ -97,7 +97,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { workdirCtrl } from "../workdir/workdir.svelte.ts";
-import type { ConflictFile, MergeResult, MergeSquashResult, PickResult, RebaseResult, RevertResult, StashResolveResult, WorkdirResult } from "../../ipc/bindings";
+import type { ApplyPatchResult, ConflictFile, MergeResult, MergeSquashResult, PickResult, RebaseResult, RevertResult, StashResolveResult, WorkdirResult } from "../../ipc/bindings";
 
 // specta generates `side: string`; keep the precise union at the call boundary.
 type ConflictSide = "ours" | "theirs";
@@ -112,10 +112,23 @@ type ConflictSide = "ours" | "theirs";
 // (`startMergeSquash`, mirroring startMerge) since nothing else owns
 // `merge_squash`'s result — but its SUCCESS state ("staged", not "clean")
 // hands off to workdirCtrl's commit UI instead of closing+cheering — see
-// `openSquashStaged` below.
-type ResolverOp = "cherry-pick" | "merge" | "rebase" | "revert" | "stash" | "merge-squash";
+// `openSquashStaged` below. "am" (backlog #9, patch apply/`git am --3way`) is
+// the newest: like "stash", there's no `startAm()` here — `apply_patch` is
+// called directly by applypatch.svelte.ts (a Tools-menu/⌘K-only entry point
+// with no island UI of its own, mirroring forcepush.svelte.ts's shape), which
+// then hands the result to `openFromResult(repo, res, "", "am")` — the SAME
+// generic hand-off `rebasePlanCtrl` already uses for the planner. This is
+// safe ONLY because patch.rs's own empirical investigation confirmed
+// `RepositoryState::ApplyMailbox` (conflict.rs's `op_name` -> `"am"`) is
+// unambiguously "a real `git am` in progress", distinct from an actual
+// `git rebase --apply` conflict (still `"rebase"`, unaffected) — see
+// patch.rs's module doc for the full disambiguation story, including why
+// `git rebase --continue`/`--abort` are EMPIRICALLY CONFIRMED to fail
+// outright against an am-created conflict, so `OPS.am` below dispatches to
+// `am_continue`/`am_abort`, never `rebase_continue`/`rebase_abort`.
+type ResolverOp = "cherry-pick" | "merge" | "rebase" | "revert" | "stash" | "merge-squash" | "am";
 
-type OpResult = PickResult | MergeResult | RebaseResult | RevertResult | StashResolveResult | MergeSquashResult;
+type OpResult = PickResult | MergeResult | RebaseResult | RevertResult | StashResolveResult | MergeSquashResult | ApplyPatchResult;
 
 const FAKE = [
   {
@@ -137,6 +150,19 @@ const OPS: Record<ResolverOp, {
   revert: { abort: commands.revertAbort, continueOp: commands.revertContinue },
   stash: { abort: commands.stashConflictAbort, continueOp: commands.stashConflictContinue },
   "merge-squash": { abort: commands.mergeSquashAbort, continueOp: commands.mergeSquashContinue },
+  am: { abort: commands.amAbort, continueOp: commands.amContinue },
+};
+
+// Ops with a meaningful mid-sequence SKIP (drop the current commit/patch
+// entirely — distinct from Abort/Continue). Only "rebase" and "am" (both
+// apply-a-sequence-of-commits ops) have one; cherry-pick/merge/revert/stash/
+// merge-squash apply exactly one thing, so skipping it is meaningless. A
+// lookup table (rather than skip()'s old hardcoded `commands.rebaseSkip`)
+// keeps adding a second skippable op a one-line change here, not a rewrite of
+// skip() itself.
+const SKIP_OPS: Partial<Record<ResolverOp, (repo: string) => Promise<OpResult>>> = {
+  rebase: commands.rebaseSkip,
+  am: commands.amSkip,
 };
 
 // Op-flavored copy (modal title, banners, fallback messages). Keeping these
@@ -253,6 +279,28 @@ const MSG: Record<ResolverOp, {
     abortMsg: "Squash-merge conflict aborted — back to the pre-squash state.",
     continueSay: "Conflict resolved — squash staged, write a commit message to finish.",
     continueCheer: 'Conflict resolved — squash staged. <span class="jp">よし!</span>',
+  },
+  // No sha of its own either (an apply_patch call is keyed by a patch FILE,
+  // not a single commit — it can apply many) — `sha` args are always "" (see
+  // applypatch.svelte.ts's `openFromResult` call). `clean`/`empty` are near-
+  // dead fallbacks (same rationale as stash/merge-squash's own comments
+  // above): `apply_patch`/`am_continue` always populate `message` themselves
+  // (see patch.rs's doc — there's no "nothing to do" success state for `am`
+  // at all), so the table's own copy is essentially unreachable.
+  am: {
+    title: "Applying the patch hit a conflict",
+    verb: "Patch apply",
+    clean: () => "Applied the patch.",
+    empty: "Nothing to apply — the patch produced no changes.",
+    conflictBanner: (_sha, n) =>
+      n
+        ? "Applying the patch conflicts in " + n + " file" + (n === 1 ? "" : "s") +
+          ". Resolve them, then Continue — or Skip this commit, or Abort."
+        : "Applying the patch needs review — resolve, then Continue, Skip, or Abort.",
+    cheer: 'Patch applied. <span class="jp">よし!</span>',
+    abortMsg: "Patch apply aborted — back to the pre-apply state.",
+    continueSay: "Conflict resolved — continuing to apply the patch.",
+    continueCheer: 'Conflict resolved — patch apply continuing. <span class="jp">よし!</span>',
   },
 };
 
@@ -676,7 +724,8 @@ class ResolverState {
           r.data.op === "rebase" ||
           r.data.op === "revert" ||
           r.data.op === "stash" ||
-          r.data.op === "merge-squash"
+          r.data.op === "merge-squash" ||
+          r.data.op === "am"
         )
           this.op = r.data.op;
       } else console.error("conflict_status", r.error);
@@ -717,18 +766,20 @@ class ResolverState {
     await this.refresh();
   }
 
-  // Drop the commit the rebase is currently stopped on entirely — rebase-only
-  // (no cherry-pick/merge equivalent; Resolver.svelte only renders the Skip
-  // button when `.op === "rebase"`). Re-classifies exactly like continue():
+  // Drop the commit/patch the sequence is currently stopped on entirely —
+  // rebase/am-only (no cherry-pick/merge equivalent; Resolver.svelte only
+  // renders the Skip button when `.op === "rebase"` or `"am"` — see
+  // SKIP_OPS's own doc comment above). Re-classifies exactly like continue():
   // "conflict" again if skipping landed on the NEXT conflicting commit, or the
   // final outcome otherwise.
   async skip() {
-    // No skip concept for cherry-pick/merge/revert/stash, AND deliberately not
-    // offered while paused for an interactive-rebase "edit" — semantically
-    // ambiguous for a pause the user explicitly asked for (see the module
-    // doc); Resolver.svelte's own guard (`!resolver.editing`) hides the button,
-    // this mirrors it defensively at the call site.
-    if (this.op !== "rebase" || this.editing) return;
+    // No skip concept for cherry-pick/merge/revert/stash/merge-squash, AND
+    // deliberately not offered while paused for an interactive-rebase "edit"
+    // — semantically ambiguous for a pause the user explicitly asked for (see
+    // the module doc); Resolver.svelte's own guard (`!resolver.editing`) hides
+    // the button, this mirrors it defensively at the call site.
+    const skipFn = SKIP_OPS[this.op];
+    if (!skipFn || this.editing) return;
     if (this.demo) {
       this.close();
       bridge.tama.set("hint");
@@ -739,7 +790,7 @@ class ResolverState {
     this.busy = true;
     this.activeAction = "skip";
     try {
-      const r = await commands.rebaseSkip(this.repo);
+      const r = await skipFn(this.repo);
       if (r.state === "conflict") {
         // See the module doc's "CRITICAL" note above: a transition INTO
         // "conflict" must always clear a stale `.editing` flag, even though

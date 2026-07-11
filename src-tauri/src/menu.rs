@@ -111,6 +111,13 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         let rerere = MenuItemBuilder::with_id("rerere", "Rerere\u{2026}").build(app)?;
         let plumbing = MenuItemBuilder::with_id("plumbing", "Plumbing\u{2026}").build(app)?;
         let remotes = MenuItemBuilder::with_id("remotes", "Manage Remotes\u{2026}").build(app)?;
+        // Patch export/apply (backlog #9, format-patch/am): two dialog-openers,
+        // same "…" ellipsis convention as bisect/reflog/rerere/plumbing/remotes
+        // above — "Export as Patch…" (single-commit) lives on the commit-menu
+        // instead (see commitmenu.svelte.ts), not here, since it needs a
+        // right-clicked commit as its target; these two are repo-global.
+        let export_patches = MenuItemBuilder::with_id("export-patches", "Export Patches\u{2026}").build(app)?;
+        let apply_patch = MenuItemBuilder::with_id("apply-patch", "Apply Patch\u{2026}").build(app)?;
         // Immediate-action items (no dialog, no ellipsis) — same convention
         // as Repository's Fetch/Pull/Push above. A separator sets them apart
         // from the dialog-openers above them.
@@ -129,6 +136,8 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .item(&rerere)
             .item(&plumbing)
             .item(&remotes)
+            .item(&export_patches)
+            .item(&apply_patch)
             .separator()
             .item(&pull_merge)
             .item(&pull_rebase)
@@ -177,8 +186,8 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // action — forward the id as a JS event rather than duplicating that
         // logic in Rust.
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
-        | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "pull-merge" | "pull-rebase" | "force-push-lease"
-        | "force-push-override") => {
+        | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "export-patches" | "apply-patch" | "pull-merge"
+        | "pull-rebase" | "force-push-lease" | "force-push-override") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

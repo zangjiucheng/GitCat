@@ -48,9 +48,12 @@ pub struct ConflictFile {
 
 /// Result of [`conflict_status`]. `op` is one of
 /// `"cherry-pick" | "merge" | "rebase" | "revert" | "stash" | "merge-squash" |
-/// "none"` — see [`detect_op`] for why `"stash"` and `"merge-squash"` exist (a
-/// `git stash apply`/`pop` conflict AND a `git merge --squash` conflict both
-/// leave `RepositoryState` at `Clean`, unlike every other op here).
+/// "am" | "none"` — see [`detect_op`] for why `"stash"` and `"merge-squash"`
+/// exist (a `git stash apply`/`pop` conflict AND a `git merge --squash`
+/// conflict both leave `RepositoryState` at `Clean`, unlike every other op
+/// here), and see [`op_name`] for why `"am"` (a real `git am` in progress,
+/// see patch.rs) is its own label distinct from `"rebase"` even though both
+/// share the same `rebase-apply/` on-disk directory.
 /// `in_progress` is true whenever a sequencer op is underway **or** there are
 /// unmerged files — so once every file is resolved (`files` empty) but the
 /// cherry-pick has not been continued yet, `in_progress` stays true and the
@@ -93,6 +96,24 @@ pub fn conflict_status(path: String) -> Result<ConflictStatus, String> {
 /// Map libgit2's repository state to the resolver's op label. Pure function
 /// of `RepositoryState` alone — see [`detect_op`] for the two cases
 /// (`"stash"`, `"merge-squash"`) this can never report on its own.
+///
+/// `RepositoryState::ApplyMailbox` gets its OWN `"am"` label, distinct from
+/// `"rebase"` — EMPIRICALLY VERIFIED (see patch.rs's module doc for the full
+/// trail, done in throwaway `/tmp` repos): a real `git am --3way` conflict
+/// and a real `git rebase --apply` (apply-based rebase backend) conflict both
+/// use the same on-disk `rebase-apply/` directory, but git's own
+/// `git rebase --continue`/`--abort` FAIL OUTRIGHT against an am-created
+/// conflict ("It looks like 'git am' is in progress. Cannot rebase.", exit
+/// 128) — only `git am --continue`/`--abort`/`--skip` work. Reading
+/// libgit2's own `git_repository_state()` (vendored under `libgit2-sys`)
+/// shows `rebase-apply/rebasing` (a REAL apply-backend rebase) resolves to
+/// `RepositoryState::Rebase` itself, never `ApplyMailbox` — so a genuine
+/// `git rebase --apply` conflict is UNAFFECTED by this split and keeps going
+/// through the "rebase" bucket below exactly as before.
+/// `ApplyMailboxOrRebase` (the rare "rebase-apply/ exists, neither marker
+/// present" anomaly) is also left in the "rebase" bucket unchanged — this
+/// split only pulls out the one state EMPIRICALLY CONFIRMED to unambiguously
+/// mean "a real `git am` is in progress".
 fn op_name(state: RepositoryState) -> &'static str {
     match state {
         RepositoryState::CherryPick | RepositoryState::CherryPickSequence => "cherry-pick",
@@ -101,8 +122,8 @@ fn op_name(state: RepositoryState) -> &'static str {
         RepositoryState::Rebase
         | RepositoryState::RebaseInteractive
         | RepositoryState::RebaseMerge
-        | RepositoryState::ApplyMailbox
         | RepositoryState::ApplyMailboxOrRebase => "rebase",
+        RepositoryState::ApplyMailbox => "am",
         RepositoryState::Clean | RepositoryState::Bisect => "none",
     }
 }
@@ -260,13 +281,16 @@ pub fn resolve_conflict_file(path: String, file: String, side: String) -> Resolv
     // Guard: only resolve inside an op GitCat snapshots AND can Abort/Continue
     // from the app — cherry-pick (git_pick), merge (git_merge), rebase
     // (git_rebase), revert (git_revert), stash
-    // (workdir::stash_conflict_abort/_continue), and merge-squash
-    // (git_merge::merge_squash_abort/_continue). Their *_abort/*_continue
-    // commands are gated on CHERRY_PICK_HEAD/MERGE_HEAD/the rebase-merge
-    // sequencer dir/REVERT_HEAD/the stash-conflict sidecar file/the
-    // merge-squash-conflict sidecar file respectively, so any OTHER op could
+    // (workdir::stash_conflict_abort/_continue), merge-squash
+    // (git_merge::merge_squash_abort/_continue), and am (patch::am_continue/
+    // am_abort/am_skip). Their *_abort/*_continue commands are gated on
+    // CHERRY_PICK_HEAD/MERGE_HEAD/the rebase-merge sequencer dir/REVERT_HEAD/
+    // the stash-conflict sidecar file/the merge-squash-conflict sidecar
+    // file/RepositoryState::ApplyMailbox respectively, so any OTHER op could
     // be neither backed out nor advanced from the app — never mutate inside
-    // one.
+    // one. `--ours`/`--theirs` checkout + `add` applies identically to an
+    // am conflict's index stages 1/2/3 as to any other op's — nothing here
+    // is rebase/am-specific.
     //
     // NOTE: this is intentionally an allowlist, not a denylist, so an op that
     // doesn't (yet) have app-level continue/abort support fails closed.
@@ -276,9 +300,9 @@ pub fn resolve_conflict_file(path: String, file: String, side: String) -> Resolv
                 Ok(o) => o,
                 Err(e) => return ResolveResult::err(format!("cannot inspect repository state: {}", e.message())),
             };
-            if op != "cherry-pick" && op != "merge" && op != "rebase" && op != "revert" && op != "stash" && op != "merge-squash" {
+            if op != "cherry-pick" && op != "merge" && op != "rebase" && op != "revert" && op != "stash" && op != "merge-squash" && op != "am" {
                 return ResolveResult::err(format!(
-                    "Not inside a cherry-pick, merge, rebase, revert, stash, or squash-merge conflict (repository state: {op}). \
+                    "Not inside a cherry-pick, merge, rebase, revert, stash, squash-merge, or patch-apply conflict (repository state: {op}). \
                      Resolve {op} conflicts with git on the command line."
                 ));
             }

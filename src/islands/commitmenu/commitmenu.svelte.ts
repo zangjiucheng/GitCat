@@ -45,8 +45,25 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
+import { save } from "@tauri-apps/plugin-dialog";
 
 type MenuView = "menu" | "branch" | "tag";
+
+// <short-sha>-<slug-of-subject>.patch — the save() dialog's suggested default
+// filename for exportAsPatch() below. Lowercased, non-alphanumeric runs
+// collapsed to a single hyphen, leading/trailing hyphens trimmed, capped at
+// 40 chars (a long subject shouldn't produce an unwieldy filename) — falls
+// back to "patch" for a subject with no alphanumeric characters at all so the
+// filename is never just "<sha>-.patch".
+function slugify(subject: string): string {
+  const s = (subject || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/, "");
+  return s || "patch";
+}
 
 class CommitMenuState {
   open = $state(false);
@@ -206,6 +223,61 @@ class CommitMenuState {
       await resolver.startRevert(repo, sha); // ---- real revert onto HEAD (Svelte island) ----
     } finally {
       this.close();
+    }
+  }
+
+  // Export the right-clicked commit as a single mbox `.patch` file (backend:
+  // patch.rs's `export_patch` with `from: null`, its own `-1 <sha>`
+  // single-commit mode). Guarded on isMerge for the SAME reason the backend
+  // itself refuses a merge commit there (see export_patch's own doc comment's
+  // "footgun" note: `git format-patch -1 <merge-sha>` silently exports the
+  // FIRST PARENT's commit instead of erroring) — this is a fast frontend
+  // backstop that avoids a round trip just to get the backend's refusal
+  // message; the tooltip on the disabled button explains the same thing.
+  // Unlike cherryPick/merge/revert, this closes the menu IMMEDIATELY (no
+  // spinner/pendingLabel kept-open state): the native save() dialog is its
+  // own blocking modal already, and export never mutates the repo (pure
+  // read + external file write), so there is nothing for the popover to stay
+  // open and show. Mirrors the copy actions' "capture into locals, close
+  // right away" shape, just with an async tail after the close.
+  async exportAsPatch() {
+    if (this.isMerge || this.busy) return;
+    const repo = this.repo,
+      sha = this.sha,
+      shortSha = this.shortSha,
+      subject = this.subject;
+    this.close();
+    if (!IN_TAURI) {
+      bridge.tama.set("celebrate");
+      bridge.tama.say("Exported " + shortSha + " as a patch (demo).");
+      return;
+    }
+    let dest: string | null;
+    try {
+      dest = await save({
+        title: "Export Patch",
+        defaultPath: shortSha + "-" + slugify(subject) + ".patch",
+        filters: [{ name: "Patch files", extensions: ["patch"] }],
+      });
+    } catch (e) {
+      bridge.tama.warn("Could not open the save dialog — " + e);
+      console.error(e);
+      return;
+    }
+    if (!dest) return; // user cancelled the dialog
+    bridge.tama.set("thinking");
+    bridge.tama.say("Exporting " + shortSha + "…");
+    try {
+      const res = await commands.exportPatch(repo, null, sha, dest);
+      if (res && res.ok) {
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Exported " + shortSha + ".", 3600);
+      } else {
+        bridge.tama.warn((res && res.message) || "Could not export " + shortSha + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Export failed — " + e);
+      console.error(e);
     }
   }
 

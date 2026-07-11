@@ -25,7 +25,13 @@ vi.mock("../../ipc/bindings", () => ({
   commands: {
     createBranch: vi.fn(),
     createTag: vi.fn(),
+    exportPatch: vi.fn(),
   },
+}));
+
+const saveMock = vi.fn();
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: (...args: unknown[]) => saveMock(...args),
 }));
 
 vi.mock("../resolver/resolver.svelte.ts", () => ({
@@ -440,6 +446,69 @@ describe("copy actions", () => {
     commitMenuCtrl.openAt("/repo", "abcdef1234567", "one", false, 0, 0);
     commitMenuCtrl.copyFullSha();
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("abcdef1234567");
+  });
+});
+
+describe("exportAsPatch", () => {
+  it("is a no-op when the target is a merge commit (single-commit export can't handle one — see the doc's footgun note)", async () => {
+    commitMenuCtrl.openAt("/repo", "aaa1111", "a merge", true, 0, 0);
+    await commitMenuCtrl.exportAsPatch();
+    expect(saveMock).not.toHaveBeenCalled();
+    expect(commands.exportPatch).not.toHaveBeenCalled();
+    expect(commitMenuCtrl.open).toBe(true); // untouched — guard returns before close()
+  });
+
+  it("closes the menu immediately, opens save() with a sha-slug default filename, then calls export_patch with from:null", async () => {
+    mockInTauri = true;
+    commitMenuCtrl.openAt("/repo", "abcdef1234567890", "Fix the login bug!", false, 0, 0);
+    saveMock.mockResolvedValueOnce("/tmp/abcdef1-fix-the-login-bug.patch");
+    vi.mocked(commands.exportPatch).mockResolvedValueOnce({ ok: true, message: "Exported 1 commit to /tmp/x.patch." });
+
+    const p = commitMenuCtrl.exportAsPatch();
+    expect(commitMenuCtrl.open).toBe(false); // closes right away, no spinner/pendingLabel kept-open state
+    await p;
+
+    expect(saveMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        defaultPath: "abcdef1-fix-the-login-bug.patch",
+        filters: [{ name: "Patch files", extensions: ["patch"] }],
+      }),
+    );
+    expect(commands.exportPatch).toHaveBeenCalledWith("/repo", null, "abcdef1234567890", "/tmp/abcdef1-fix-the-login-bug.patch");
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
+    expect(bridge.tama.say).toHaveBeenCalledWith("Exported 1 commit to /tmp/x.patch.", 3600);
+  });
+
+  it("does nothing further when the save dialog is cancelled", async () => {
+    mockInTauri = true;
+    commitMenuCtrl.openAt("/repo", "aaa1111", "one", false, 0, 0);
+    saveMock.mockResolvedValueOnce(null);
+
+    await commitMenuCtrl.exportAsPatch();
+
+    expect(commands.exportPatch).not.toHaveBeenCalled();
+  });
+
+  it("warns via tama on a failed export instead of celebrating", async () => {
+    mockInTauri = true;
+    commitMenuCtrl.openAt("/repo", "aaa1111", "one", false, 0, 0);
+    saveMock.mockResolvedValueOnce("/tmp/out.patch");
+    vi.mocked(commands.exportPatch).mockResolvedValueOnce({ ok: false, message: "git format-patch failed." });
+
+    await commitMenuCtrl.exportAsPatch();
+
+    expect(bridge.tama.warn).toHaveBeenCalledWith("git format-patch failed.");
+  });
+
+  it("demo mode (not IN_TAURI) celebrates without opening a dialog or calling the backend", async () => {
+    mockInTauri = false;
+    commitMenuCtrl.openAt("/repo", "abc1234", "one", false, 0, 0);
+
+    await commitMenuCtrl.exportAsPatch();
+
+    expect(saveMock).not.toHaveBeenCalled();
+    expect(commands.exportPatch).not.toHaveBeenCalled();
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
   });
 });
 

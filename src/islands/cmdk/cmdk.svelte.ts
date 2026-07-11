@@ -21,6 +21,8 @@ import { plumbing } from "../plumbing/plumbing.svelte.ts";
 import { remotesCtrl } from "../remotes/remotes.svelte.ts";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { forcePushCtrl } from "../forcepush/forcepush.svelte.ts";
+import { exportPatchesCtrl } from "../exportpatches/exportpatches.svelte.ts";
+import { applyPatchCtrl } from "../applypatch/applypatch.svelte.ts";
 import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
 
 export const CMD_CAP = 50;
@@ -58,6 +60,20 @@ const ACTIONS: ActionItem[] = [
     label: "Manage Remotes",
     hint: "Add, rename, edit the URL, or remove a configured remote",
     run: () => remotesCtrl.show(bridge.CUR_REPO as unknown as string),
+  },
+  {
+    type: "action",
+    id: "export-patches",
+    label: "Export Patches",
+    hint: "Export a commit range as a single .patch file (git format-patch)",
+    run: () => exportPatchesCtrl.show(bridge.CUR_REPO as unknown as string),
+  },
+  {
+    type: "action",
+    id: "apply-patch",
+    label: "Apply Patch",
+    hint: "Apply a .patch file someone gave you (git am)",
+    run: () => applyPatchCtrl.applyPatch(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
