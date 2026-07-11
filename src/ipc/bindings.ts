@@ -1119,6 +1119,25 @@ async fileHistory(path: string, file: string, atCommit: string | null) : Promise
 }
 },
 /**
+ * Every commit whose diff touched `query`, walking `at_commit`'s ancestry
+ * (HEAD if `None`) or every ref if `all_refs` — `git log -S<query>` when
+ * `mode == "added-removed"` (occurrence-COUNT-change search; `regex` turns
+ * `query` into a regex too), or `git log -G<query>` when
+ * `mode == "diff-match"` (any added/removed diff LINE matches the regex —
+ * always regex; `regex` is ignored, see module doc). Optionally scoped to
+ * `file`. Read-only.
+ * 
+ * JS: `commands.pickaxeSearch(path, query, mode, regex, allRefs, file, atCommit)`.
+ */
+async pickaxeSearch(path: string, query: string, mode: string, regex: boolean, allRefs: boolean, file: string | null, atCommit: string | null) : Promise<Result<PickaxeResults, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pickaxe_search", { path, query, mode, regex, allRefs, file, atCommit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Read-only preview shown before the user commits to running filter-repo.
  */
 async filterRepoPreview(path: string, paths: string[], invert: boolean) : Promise<Result<FilterRepoPreview, string>> {
@@ -1662,6 +1681,15 @@ conflictedFiles: string[]; message: string;
  * so the UI can name the snapshot the user can Undo to.
  */
 backupRef: string | null }
+/**
+ * One matching commit. Mirrors `FileHistoryEntry`'s abbreviated per-row
+ * naming, minus `path`/`renamed_from` — pickaxe does no rename-tracking
+ * and has no single queried path to report per row (the OPTIONAL `file`
+ * scope, when given, is the same for every row and already known to the
+ * caller).
+ */
+export type PickaxeMatch = { sha: string; shortSha: string; subject: string; an: Person }
+export type PickaxeResults = { entries: PickaxeMatch[]; truncated: boolean }
 /**
  * One row the interactive-rebase planner shows: a plannable (non-merge)
  * commit between `onto` and HEAD, oldest-first (this IS the replay/todo

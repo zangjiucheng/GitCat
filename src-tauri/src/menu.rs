@@ -118,6 +118,12 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // right-clicked commit as its target; these two are repo-global.
         let export_patches = MenuItemBuilder::with_id("export-patches", "Export Patches\u{2026}").build(app)?;
         let apply_patch = MenuItemBuilder::with_id("apply-patch", "Apply Patch\u{2026}").build(app)?;
+        // Pickaxe / diff-content search (backlog #10): searches the whole
+        // history's DIFFS, not just commit messages — same dialog-opener
+        // "…" convention as the items above; repo-global like Manage
+        // Remotes/Export Patches/Apply Patch, not file-tree-scoped like
+        // Blame/File History (see pickaxesearch.svelte.ts's own header doc).
+        let pickaxe_search = MenuItemBuilder::with_id("pickaxe-search", "Search Commit Content\u{2026}").build(app)?;
         // Immediate-action items (no dialog, no ellipsis) — same convention
         // as Repository's Fetch/Pull/Push above. A separator sets them apart
         // from the dialog-openers above them.
@@ -138,6 +144,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .item(&remotes)
             .item(&export_patches)
             .item(&apply_patch)
+            .item(&pickaxe_search)
             .separator()
             .item(&pull_merge)
             .item(&pull_rebase)
@@ -186,8 +193,8 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // action — forward the id as a JS event rather than duplicating that
         // logic in Rust.
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
-        | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "export-patches" | "apply-patch" | "pull-merge"
-        | "pull-rebase" | "force-push-lease" | "force-push-override") => {
+        | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "export-patches" | "apply-patch" | "pickaxe-search"
+        | "pull-merge" | "pull-rebase" | "force-push-lease" | "force-push-override") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

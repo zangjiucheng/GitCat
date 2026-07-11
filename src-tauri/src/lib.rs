@@ -19,6 +19,7 @@ pub mod layout;
 pub mod menu; // native app menu (File/Edit/View/Window/Help)
 pub mod model;
 pub mod patch; // format-patch export + git am --3way apply (with am's own continue/skip/abort)
+pub mod pickaxe; // pickaxe / diff-content search: git log -S/-G across (a subset of) history
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod rerere; // M5a: git-rerere status/toggle panel
@@ -157,6 +158,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
         blame::blame_file,
         // File history: read-only per-file commit list, following renames (git log --follow)
         file_history::file_history,
+        // Pickaxe / diff-content search (backlog #10): every commit whose diff
+        // touched a given string/pattern across (a subset of) history — git log
+        // -S/-G, never just commit messages. No rename-tracking (unlike
+        // file_history above); see pickaxe.rs's own module doc.
+        pickaxe::pickaxe_search,
         // Filter-repo wizard (M5c): backup+preview / run / restore / list backups
         filter_repo::filter_repo_preview,
         filter_repo::filter_repo_run,

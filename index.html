@@ -770,10 +770,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .rm-act button.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
 .rm-act button[disabled]{opacity:.45;cursor:not-allowed}
 .rm-form{display:flex;flex-direction:column;gap:6px;padding:6px 5px}
-.rm-form input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);
+.rm-form input,.rm-form select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);
   color:var(--text);font:inherit;font-size:12px;padding:6px 8px;outline:none}
-.rm-form input:focus{border-color:var(--accent)}
-.rm-form.busy input{opacity:.6}
+.rm-form input:focus,.rm-form select:focus{border-color:var(--accent)}
+.rm-form.busy input,.rm-form.busy select{opacity:.6}
 .rm-form .nb-row{display:flex;align-items:center;gap:8px}
 .rm-add{border-top:1px solid var(--border);margin-top:8px;padding-top:10px}
 .rm-confirm .msg{color:var(--danger)}
@@ -1093,6 +1093,30 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .fh-meta{font-size:10.5px}
 .fh-rename{font-size:10px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fh-caveat{font-size:10px;cursor:help}
+
+/* ============================== PICKAXE / DIFF-CONTENT SEARCH modal ==============================
+   PickaxeSearch.svelte — reached from the Tools menu / ⌘K ("Search Commit
+   Content…", see menu.rs / cmdk.svelte.ts), NOT from a file-tree row: unlike
+   Blame/FileHistory above, a pickaxe search is repo-wide by default (the
+   optional file-scope is a plain text FIELD inside this same form, not a
+   second per-row button — see pickaxesearch.svelte.ts's own header doc).
+   The form itself reuses `.rm-form`/`.nb-row`/`.log-row`/`.cp-x`/`.mono`/
+   `.mut`/`.spinner`/`.btn` verbatim (same as ExportPatches' own form above) —
+   only the RESULT LIST below it is new markup, and even that is `.pk-*`, its
+   own small near-identical copy of `.fh-list`/`.fh-row` (minus the
+   path/rename bits pickaxe has no use for) rather than reusing those
+   verbatim — same per-owning-island CSS-copy convention `.fh-*` itself
+   documents just above. */
+.modal.pickaxe{width:min(640px,96vw)}
+.modal.pickaxe .modal-body{max-height:65vh;overflow:auto;display:flex;flex-direction:column;gap:10px}
+.pk-list{display:flex;flex-direction:column;gap:1px}
+.pk-row{width:100%;display:flex;align-items:flex-start;gap:10px;padding:6px 8px;border-radius:6px;
+  background:transparent;border:0;cursor:pointer;text-align:left;font:inherit;color:inherit}
+.pk-row:hover{background:var(--elevated)}
+.pk-sha{flex:none;min-width:58px;color:var(--accent);font-size:11px;padding-top:1px}
+.pk-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.pk-subject{font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pk-meta{font-size:10.5px}
 </style>
 
 <div class="app" id="app">

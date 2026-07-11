@@ -20,6 +20,8 @@ import { forcePushCtrl } from "./islands/forcepush/forcepush.svelte.ts";
 import ExportPatches from "./islands/exportpatches/ExportPatches.svelte";
 import { exportPatchesCtrl } from "./islands/exportpatches/exportpatches.svelte.ts";
 import { applyPatchCtrl } from "./islands/applypatch/applypatch.svelte.ts";
+import PickaxeSearch from "./islands/pickaxesearch/PickaxeSearch.svelte";
+import { pickaxeSearchCtrl } from "./islands/pickaxesearch/pickaxesearch.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import Blame from "./islands/blame/Blame.svelte";
@@ -118,6 +120,12 @@ mount(Remotes, { target: document.body });
 // native file dialog directly and, on a conflict, hands off to the
 // ALREADY-mounted Resolver above.
 mount(ExportPatches, { target: document.body });
+// Pickaxe / diff-content search (backlog #10): same on-demand-modal
+// treatment as Export Patches/Remotes/Reflog/Rerere/Plumbing above — repo-
+// global (not tied to any file/commit target), so — unlike Blame/File
+// History — it's reachable from the Tools menu/⌘K rather than a file-tree
+// row (see pickaxesearch.svelte.ts's own header doc).
+mount(PickaxeSearch, { target: document.body });
 
 // Native app menu -> frontend action bridge (see src-tauri/src/menu.rs).
 // Only the items whose action lives in Svelte-controller land forward here —
@@ -177,6 +185,9 @@ if (IN_TAURI) {
         break;
       case "apply-patch":
         applyPatchCtrl.applyPatch(bridge.CUR_REPO as unknown as string);
+        break;
+      case "pickaxe-search":
+        pickaxeSearchCtrl.show(bridge.CUR_REPO as unknown as string);
         break;
       case "pull-merge":
         resolver.pullMerge(bridge.CUR_REPO as unknown as string);

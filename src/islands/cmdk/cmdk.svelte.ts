@@ -23,6 +23,7 @@ import { resolver } from "../resolver/resolver.svelte.ts";
 import { forcePushCtrl } from "../forcepush/forcepush.svelte.ts";
 import { exportPatchesCtrl } from "../exportpatches/exportpatches.svelte.ts";
 import { applyPatchCtrl } from "../applypatch/applypatch.svelte.ts";
+import { pickaxeSearchCtrl } from "../pickaxesearch/pickaxesearch.svelte.ts";
 import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
 
 export const CMD_CAP = 50;
@@ -74,6 +75,13 @@ const ACTIONS: ActionItem[] = [
     label: "Apply Patch",
     hint: "Apply a .patch file someone gave you (git am)",
     run: () => applyPatchCtrl.applyPatch(bridge.CUR_REPO as unknown as string),
+  },
+  {
+    type: "action",
+    id: "pickaxe-search",
+    label: "Search Commit Content",
+    hint: "Find commits whose diff touched a string or pattern (git log -S / -G)",
+    run: () => pickaxeSearchCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
