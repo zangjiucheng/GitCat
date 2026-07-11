@@ -27,6 +27,7 @@ import { pickaxeSearchCtrl } from "../pickaxesearch/pickaxesearch.svelte.ts";
 import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
 import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
 import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
+import { danglingRecoveryCtrl } from "../danglingrecovery/danglingrecovery.svelte.ts";
 
 export const CMD_CAP = 50;
 const CMD_BUF = 250;
@@ -105,6 +106,16 @@ const ACTIONS: ActionItem[] = [
     label: "External Tools",
     hint: "Configure a diff/merge tool to open from GitCat's own UI",
     run: () => externalToolsCtrl.show(),
+  },
+  // fsck-based dangling-object recovery (backlog #13): repo-scoped like
+  // Reflog/Rerere above (forwards bridge.CUR_REPO), NOT repo-independent like
+  // Repositories/External Tools.
+  {
+    type: "action",
+    id: "dangling-recovery",
+    label: "Dangling Commits",
+    hint: "Recover a commit no ref points to anymore (git fsck)",
+    run: () => danglingRecoveryCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",

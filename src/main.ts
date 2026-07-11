@@ -26,6 +26,8 @@ import Dashboard from "./islands/dashboard/Dashboard.svelte";
 import { dashboardCtrl } from "./islands/dashboard/dashboard.svelte.ts";
 import ExternalTools from "./islands/externaltools/ExternalTools.svelte";
 import { externalToolsCtrl } from "./islands/externaltools/externaltools.svelte.ts";
+import DanglingRecovery from "./islands/danglingrecovery/DanglingRecovery.svelte";
+import { danglingRecoveryCtrl } from "./islands/danglingrecovery/danglingrecovery.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import Blame from "./islands/blame/Blame.svelte";
@@ -144,6 +146,13 @@ mount(Dashboard, { target: document.body });
 // "Resolve with external tool" buttons, which live on Detail.svelte/
 // Workdir.svelte's file rows and Resolver.svelte instead).
 mount(ExternalTools, { target: document.body });
+// fsck-based dangling-object recovery (backlog #13): same on-demand-modal
+// treatment as External Tools/Dashboard/Pickaxe Search/Export Patches/
+// Remotes/Reflog/Rerere/Plumbing above — repo-scoped (forwards
+// bridge.CUR_REPO) like Reflog/Rerere, not repo-independent like
+// Repositories/External Tools (see danglingrecovery.svelte.ts's own header
+// doc).
+mount(DanglingRecovery, { target: document.body });
 
 // Native app menu -> frontend action bridge (see src-tauri/src/menu.rs).
 // Only the items whose action lives in Svelte-controller land forward here —
@@ -212,6 +221,9 @@ if (IN_TAURI) {
         break;
       case "external-tools":
         externalToolsCtrl.show();
+        break;
+      case "dangling-recovery":
+        danglingRecoveryCtrl.show(bridge.CUR_REPO as unknown as string);
         break;
       case "pull-merge":
         resolver.pullMerge(bridge.CUR_REPO as unknown as string);

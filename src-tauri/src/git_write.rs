@@ -384,12 +384,29 @@ pub fn create_branch(
         Ok(r) => r,
         Err(w) => return w,
     };
-    // Snapshot FIRST — never mutate without a backup.
-    let backup = match take_snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
-    };
     let switch = checkout.unwrap_or(false);
+    // Snapshot FIRST — never mutate without a backup — but ONLY when this
+    // will actually move HEAD/the current branch (`switch`): a plain
+    // `git branch <name> <start_point>` (switch:false) never touches HEAD,
+    // the current branch, the index, or the working tree at all — it only
+    // ever adds a new ref elsewhere, exactly like `force_push`/
+    // `remove_remote`'s own "nothing local changes, so nothing needs
+    // protecting" reasoning. An adversarial review of the fsck-based
+    // dangling-recovery feature (which always calls this with
+    // `checkout:false`) found the unconditional snapshot made recovery
+    // impossible in a repo with an unborn HEAD (no commit yet on the current
+    // branch — `safety::snapshot` has nothing to snapshot there) even though
+    // the underlying `git branch` call is completely safe regardless of
+    // HEAD's state. Skipping the snapshot for the non-switching case closes
+    // that gap for every caller, not just this one.
+    let backup = if switch {
+        match take_snapshot(&repo) {
+            Ok(b) => Some(b),
+            Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        }
+    } else {
+        None
+    };
     // -c takes <name> as its value; --end-of-options AFTER it still guards <start>.
     let mut args: Vec<&str> = if switch {
         vec!["switch", "-c", &name, "--end-of-options"]
@@ -400,14 +417,14 @@ pub fn create_branch(
         args.push(sp.as_str());
     }
     match run_git(&path, &args) {
-        Ok(out) if out.ok => WriteResult::ok(
-            format!(
-                "{} {name} (snapshot {}).",
-                if switch { "Created & switched to" } else { "Created branch" },
-                short_backup(&backup)
-            ),
-            Some(backup),
-        ),
+        Ok(out) if out.ok => {
+            let verb = if switch { "Created & switched to" } else { "Created branch" };
+            let message = match &backup {
+                Some(b) => format!("{verb} {name} (snapshot {}).", short_backup(b)),
+                None => format!("{verb} {name}."),
+            };
+            WriteResult::ok(message, backup)
+        }
         // When `switch` is true this can hit the same dirty-tree collision
         // `checkout` can (byte-identical wording, verified); when `switch` is
         // false this is a plain `git branch` and can never match the

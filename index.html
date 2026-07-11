@@ -1150,6 +1150,30 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .pk-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .pk-subject{font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pk-meta{font-size:10.5px}
+
+/* ============================== DANGLING-COMMIT RECOVERY modal (backlog #13) ==============================
+   DanglingRecovery.svelte — reached from the Tools menu / ⌘K ("Dangling
+   Commits…", see menu.rs / cmdk.svelte.ts), repo-scoped like Reflog/Rerere
+   above, not repo-independent like Repositories/External Tools. Plain
+   scrollable list (one row per `git fsck --dangling` commit) exactly like
+   FileHistory's own `.fh-*` above, so `.dr-*` is its own small near-identical
+   copy per that same block's documented per-owning-island CSS-copy
+   convention — only the per-row action button (`.dr-act`, shown on hover like
+   `.log-row .go` above) and its "Recover as new branch…" inline form (which
+   reuses `.rm-form`/`.nb-row` VERBATIM, same as Pickaxe's own form just above)
+   are new. */
+.modal.danglingrecovery .modal-body{max-height:60vh;overflow:auto}
+.dr-list{display:flex;flex-direction:column;gap:1px}
+.dr-row{display:flex;align-items:flex-start;gap:10px;padding:6px 8px;border-radius:6px}
+.dr-row:hover{background:var(--elevated)}
+.dr-sha{flex:none;min-width:58px;color:var(--accent);font-size:11px;padding-top:2px}
+.dr-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.dr-subject{font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dr-meta{font-size:10.5px}
+.dr-act{flex:none;opacity:0;padding:3px 9px;border-radius:6px;border:1px solid var(--accent2);color:var(--accent2);
+  background:transparent;font-weight:600;font-size:11.5px;cursor:pointer}
+.dr-row:hover .dr-act{opacity:1}
+.dr-act:disabled{opacity:.45;cursor:not-allowed}
 </style>
 
 <div class="app" id="app">

@@ -4,6 +4,7 @@ pub mod conflict;
 pub mod dashboard; // backlog #11: minimal per-repo status read for the multi-repo dashboard
 pub mod file_history; // read-only per-file commit history, following renames (git log --follow)
 pub mod filter_repo; // M5c: filter-repo wizard (backup / preview / run / restore)
+pub mod fsck; // backlog #13: fsck-based dangling-object recovery (list dangling commits; recovery reuses git_write::create_branch)
 pub mod git_pick;
 pub mod git_read;
 pub mod git_remote; // fetch / pull (ff-only) / push / force_push / push_tag
@@ -152,6 +153,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // Reflog rescue (M4): read HEAD reflog + restore to a historical entry
         reflog::reflog,
         reflog::reflog_restore,
+        // Dangling-object recovery (backlog #13): commits `git fsck
+        // --dangling --no-reflogs` finds with no ref/reflog pointing at them
+        // anymore. No new mutation command — recovery reuses
+        // git_write::create_branch as-is (see fsck.rs's own module doc for
+        // why that's genuinely sufficient).
+        fsck::dangling_commits,
         // Rerere panel (M5a): status (config + rr-cache + live conflict paths) / toggle
         rerere::rerere_status,
         rerere::rerere_set_enabled,

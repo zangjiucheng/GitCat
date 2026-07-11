@@ -1056,6 +1056,21 @@ async reflogRestore(path: string, index: number) : Promise<UndoResult> {
     return await TAURI_INVOKE("reflog_restore", { path, index });
 },
 /**
+ * Every commit `git fsck --dangling --no-reflogs` finds, newest-author-date-
+ * first (fsck's own line order is an artifact of internal object/hash
+ * iteration, not chronological). Read-only.
+ * 
+ * JS: `commands.danglingCommits(path)` -> `Result<DanglingCommits, string>`.
+ */
+async danglingCommits(path: string) : Promise<Result<DanglingCommits, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dangling_commits", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `invoke("rerere_status", { path })`.
  */
 async rerereStatus(path: string) : Promise<Result<RerereStatus, string>> {
@@ -1626,6 +1641,12 @@ export type ConflictFile = { path: string; ours: string; base: string; theirs: s
  * UI can offer Continue.
  */
 export type ConflictStatus = { inProgress: boolean; op: string; files: ConflictFile[] }
+/**
+ * One dangling commit found via `git fsck --dangling --no-reflogs` — a real
+ * recovery candidate (see module doc for why exactly this flag pair).
+ */
+export type DanglingCommit = { sha: string; shortSha: string; subject: string; an: Person }
+export type DanglingCommits = { commits: DanglingCommit[]; truncated: boolean }
 export type DashboardRepoStatus = { branch: string | null; detached: boolean; ahead: number | null; behind: number | null; dirty: boolean; conflicted: number; headSha: string | null; lastSubject: string | null; lastCommitTime: number | null }
 /**
  * One hunk within a file patch. `header` is the `@@ -a,b +c,d @@ ...` line.

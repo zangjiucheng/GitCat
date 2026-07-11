@@ -137,6 +137,13 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // "reachable any time, no repo needed" shape as Repositories just
         // above (see externaltools.svelte.ts's own header doc).
         let external_tools = MenuItemBuilder::with_id("external-tools", "External Tools\u{2026}").build(app)?;
+        // fsck-based dangling-object recovery (backlog #13): commits `git
+        // fsck` finds with no ref/reflog pointing at them anymore (a hard
+        // reset, an amend, a dropped rebase commit, a deleted branch, …) —
+        // same dialog-opener "…" convention as the items above it, repo-
+        // scoped like Reflog/Rerere (not repo-independent like Repositories/
+        // External Tools just above).
+        let dangling_recovery = MenuItemBuilder::with_id("dangling-recovery", "Dangling Commits\u{2026}").build(app)?;
         // Immediate-action items (no dialog, no ellipsis) — same convention
         // as Repository's Fetch/Pull/Push above. A separator sets them apart
         // from the dialog-openers above them.
@@ -160,6 +167,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .item(&pickaxe_search)
             .item(&repositories)
             .item(&external_tools)
+            .item(&dangling_recovery)
             .separator()
             .item(&pull_merge)
             .item(&pull_rebase)
@@ -209,7 +217,8 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // logic in Rust.
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
         | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "export-patches" | "apply-patch" | "pickaxe-search"
-        | "repositories" | "external-tools" | "pull-merge" | "pull-rebase" | "force-push-lease" | "force-push-override") => {
+        | "repositories" | "external-tools" | "dangling-recovery" | "pull-merge" | "pull-rebase" | "force-push-lease"
+        | "force-push-override") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}
