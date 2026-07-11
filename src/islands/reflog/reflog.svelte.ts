@@ -45,6 +45,14 @@ class ReflogState {
   restoringIndex = $state<number | null>(null); // which row's "Restore here" is in flight
   error = $state("");
   demo = $state(false);
+  // curious while browsing entries (mirrors bisect's own browsing/hunting
+  // expression), confident once a restore actually lands — same "successful
+  // rescue" framing as globalUndo's TAMA_IMG.confident. Lazy-init to "" (set
+  // for real in show()) — a field initializer can't safely read
+  // bridge.TAMA_IMG: it runs at this singleton's construction (module-import)
+  // time, which can race legacy/main.ts's own `const TAMA_IMG=` (see every
+  // other controller's tamaImg field for the same convention).
+  tamaImg = $state("");
 
   repo = "";
 
@@ -62,6 +70,7 @@ class ReflogState {
   // time this was open.
   show(repo: string | null): void {
     this.open = true;
+    this.tamaImg = bridge.TAMA_IMG.curious; // reset — a prior session may have left this on confident
     void this.refresh(repo);
   }
 
@@ -120,8 +129,11 @@ class ReflogState {
       // Design-mode preview: fake the mutation locally, no IPC call — mirrors
       // resolver/bisect's demo-mode conventions.
       const picked = this.entries.find((e) => e.index === index);
+      this.tamaImg = bridge.TAMA_IMG.confident;
       bridge.tama.set("celebrate");
-      bridge.tama.say("Restored to " + (picked?.sha ?? "that entry") + " (demo).", 4200);
+      const msg = "Restored to " + (picked?.sha ?? "that entry") + " (demo).";
+      bridge.tama.say(msg, 4200);
+      bridge.cheer(msg, bridge.TAMA_IMG.confident);
       return;
     }
 
@@ -136,8 +148,10 @@ class ReflogState {
       const res = await commands.reflogRestore(this.repo, index);
       if (res.ok) {
         await bridge.reloadGraph(true);
+        this.tamaImg = bridge.TAMA_IMG.confident;
         bridge.tama.set("celebrate");
         bridge.tama.say(res.message || "Restored.", 4200);
+        bridge.cheer(res.message || "Restored.", bridge.TAMA_IMG.confident);
         // Re-pull: the restore itself moved HEAD, so the reflog now has a
         // fresh entry on top (and indices have shifted).
         await this.refresh(this.repo);

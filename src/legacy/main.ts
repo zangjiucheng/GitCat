@@ -704,7 +704,7 @@ $("#themeBtn").addEventListener("click",()=>{
 });
 // painted-Tama celebration popover
 let cheerT=null;
-function cheer(msg,img=null){ $("#tamaCheerTxt").innerHTML=msg; $("#tamaCheerImg").src=img||TAMA_IMG.happy; const c=$("#tamaCheer"); c.classList.add("show");
+function cheer(msg,img: string|null=null){ $("#tamaCheerTxt").innerHTML=msg; $("#tamaCheerImg").src=img||TAMA_IMG.happy; const c=$("#tamaCheer"); c.classList.add("show");
   clearTimeout(cheerT); cheerT=setTimeout(()=>c.classList.remove("show"),3600); }
 // global undo (undo-is-itself-undoable)
 async function globalUndo(){
@@ -794,27 +794,27 @@ async function doFetch(){
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPull(){
-  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pulled (demo). にゃ〜",3200); return; }
+  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pulled (demo). にゃ〜",3200); cheer('Pulled (demo). <span class="jp">にゃ〜</span>',TAMA_IMG.happy); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
   setSyncButtonsBusy("pullBtn","Pulling…");
   Tama.set("thinking"); Tama.say("Pulling…");
   try{
     const res=await tinvoke("pull",{path:CUR_REPO});
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pulled.",3200); }
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pulled.",3200); cheer(res.message||"Pulled.",TAMA_IMG.happy); }
     else Tama.warn((res&&res.message)||"Pull failed.");
   }catch(e){ Tama.warn("Pull failed — "+e); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPush(){
-  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pushed (demo). にゃ〜",3200); return; }
+  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pushed (demo). にゃ〜",3200); cheer('Pushed (demo). <span class="jp">にゃ〜</span>',TAMA_IMG.happy); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
   setSyncButtonsBusy("pushBtn","Pushing…");
   Tama.set("thinking"); Tama.say("Pushing…");
   try{
     const res=await tinvoke("push",{path:CUR_REPO});
-    if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("celebrate"); Tama.say(res.message||"Pushed.",3200); }
+    if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("celebrate"); Tama.say(res.message||"Pushed.",3200); cheer(res.message||"Pushed.",TAMA_IMG.happy); }
     else Tama.warn((res&&res.message)||"Push failed.");
   }catch(e){ Tama.warn("Push failed — "+e); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }

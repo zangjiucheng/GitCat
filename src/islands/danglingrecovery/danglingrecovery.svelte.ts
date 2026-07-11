@@ -69,6 +69,12 @@ class DanglingRecoveryState {
   branchName = $state("");
   busy = $state(false); // re-entrancy guard for the createBranch call in flight
   busyTarget = $state<string | null>(null); // which sha, for a per-row spinner
+  // curious while browsing dangling commits, confident once one is actually
+  // recovered — same "successful rescue" framing as reflogCtrl.tamaImg.
+  // Lazy-init to "" (set for real in show()) — see reflog.svelte.ts's
+  // tamaImg field comment for why a field initializer can't read
+  // bridge.TAMA_IMG directly.
+  tamaImg = $state("");
 
   repo = "";
 
@@ -76,6 +82,7 @@ class DanglingRecoveryState {
   // "never stale" doc above.
   show(repo: string | null): void {
     this.open = true;
+    this.tamaImg = bridge.TAMA_IMG.curious; // reset — a prior session may have left this on confident
     void this.refresh(repo);
   }
 
@@ -166,8 +173,11 @@ class DanglingRecoveryState {
       // Design-mode preview: fake the mutation locally, no IPC call — mirrors
       // reflogCtrl.restore's/commitmenu's own demo-mode conventions.
       this.cancelRecover();
+      this.tamaImg = bridge.TAMA_IMG.confident;
       bridge.tama.set("celebrate");
-      bridge.tama.say("Recovered " + shortSha + " as " + name + " (demo).", 4200);
+      const msg = "Recovered " + shortSha + " as " + name + " (demo).";
+      bridge.tama.say(msg, 4200);
+      bridge.cheer(msg, bridge.TAMA_IMG.confident);
       return;
     }
 
@@ -188,8 +198,10 @@ class DanglingRecoveryState {
       if (res && res.ok) {
         this.cancelRecover();
         await bridge.reloadGraph(true);
+        this.tamaImg = bridge.TAMA_IMG.confident;
         bridge.tama.set("celebrate");
         bridge.tama.say(res.message || "Recovered as " + name + ".", 3600);
+        bridge.cheer(res.message || "Recovered as " + name + ".", bridge.TAMA_IMG.confident);
         // Re-pull: the recovered commit is no longer dangling now that a real
         // ref points at it — without this, a stale row would keep offering to
         // "recover" something that's already been recovered.

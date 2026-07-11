@@ -204,6 +204,7 @@ class FilterRepoState {
 
     if (this.demo) {
       this.busy = true;
+      this.tamaImg = bridge.TAMA_IMG.thinking;
       this.result = {
         ok: true,
         message: `History rewritten (${DEMO_PREVIEW.totalCommits} → ${
@@ -214,6 +215,7 @@ class FilterRepoState {
         commitsAfter: DEMO_PREVIEW.totalCommits - DEMO_PREVIEW.touchedCommits,
       };
       this.step = "result";
+      this.tamaImg = bridge.TAMA_IMG.happy;
       bridge.tama.set("celebrate");
       bridge.tama.say(this.result.message, 4200);
       await bridge.reloadGraph(true);
@@ -222,12 +224,14 @@ class FilterRepoState {
     }
 
     this.busy = true;
+    this.tamaImg = bridge.TAMA_IMG.thinking;
     try {
       const res = await commands.filterRepoRun(this.repo, this.pathList, this.invert);
       this.result = res;
       this.step = "result";
       if (res.ok) {
         await bridge.reloadGraph(true); // HEAD/history changed
+        this.tamaImg = bridge.TAMA_IMG.happy;
         bridge.tama.set("celebrate");
         bridge.tama.say(res.message || "History rewritten.", 4200);
         bridge.cheer('History rewritten. <span class="jp">よし!</span>');
@@ -328,6 +332,7 @@ class FilterRepoState {
 
     if (this.demo) {
       this.restoreBusy = true;
+      this.tamaImg = bridge.TAMA_IMG.thinking;
       this.restoreResult = {
         ok: true,
         message: `Restored ${DEMO_BACKUPS[0].refCount}/${DEMO_BACKUPS[0].refCount} ref(s) from backup ${this.selectedBackupId}. (demo)`,
@@ -335,6 +340,7 @@ class FilterRepoState {
         commitsBefore: null,
         commitsAfter: DEMO_PREVIEW.totalCommits,
       };
+      this.tamaImg = bridge.TAMA_IMG.confident;
       bridge.tama.set("celebrate");
       bridge.tama.say(this.restoreResult.message, 4200);
       await bridge.reloadGraph(true);
@@ -343,15 +349,18 @@ class FilterRepoState {
     }
 
     this.restoreBusy = true;
+    this.tamaImg = bridge.TAMA_IMG.thinking;
     try {
       const res = await commands.filterRepoRestore(this.repo, this.selectedBackupId);
       this.restoreResult = res;
       if (res.ok) {
         await bridge.reloadGraph(true); // HEAD/history changed back
+        this.tamaImg = bridge.TAMA_IMG.confident;
         bridge.tama.set("celebrate");
         bridge.tama.say(res.message || "Restored.", 4200);
         bridge.cheer("Backup restored.");
       } else {
+        this.tamaImg = bridge.TAMA_IMG.shocked;
         bridge.tama.warn(res.message || "Restore failed — try again.");
       }
     } catch (e) {
@@ -362,6 +371,7 @@ class FilterRepoState {
         commitsBefore: null,
         commitsAfter: null,
       };
+      this.tamaImg = bridge.TAMA_IMG.shocked;
       bridge.tama.warn(this.restoreResult.message);
     } finally {
       this.restoreBusy = false;

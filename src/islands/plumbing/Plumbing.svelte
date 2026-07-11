@@ -51,6 +51,7 @@
 <div class="scrim" class:on={plumbing.open}>
   <div class="modal plumbing">
     <div class="modal-head">
+      <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.curious} alt="Tama, curious" /></div>
       <div>
         <h3>Plumbing &#8212; inspect a raw object</h3>
         <p>Type a rev, sha, branch, or tag to see the raw commit, tree, blob, or tag object it resolves to.</p>

@@ -17,6 +17,7 @@
 <div class="scrim" class:on={pickaxeSearchCtrl.open}>
   <div class="modal pickaxe">
     <div class="modal-head">
+      <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.curious} alt="Tama, curious" /></div>
       <div>
         <h3>Search Commit Content&#8230;</h3>
         <p>Find every commit whose <b>diff</b> touched a string or pattern &#8212; not just its message (<code>git log -S</code> / <code>-G</code>).</p>

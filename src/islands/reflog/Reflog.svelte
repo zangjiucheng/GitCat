@@ -11,6 +11,7 @@
 <div class="scrim" class:on={reflogCtrl.open}>
   <div class="modal reflog">
     <div class="modal-head">
+      <div class="modal-tama"><img class="tama-pic" src={reflogCtrl.tamaImg} alt="Tama, curious" /></div>
       <div>
         <h3>Reflog &#8212; rescue a historical HEAD</h3>
         <p>Every HEAD move this repo remembers, newest first. Restoring snapshots first, so it's itself undoable.</p>

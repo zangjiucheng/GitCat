@@ -824,6 +824,7 @@ class ResolverState {
     if (this.busy) return;
     this.busy = true;
     this.activeAction = "skip";
+    this.tamaImg = bridge.TAMA_IMG.thinking;
     try {
       const r = await skipFn(this.repo);
       if (r.state === "conflict") {
@@ -833,12 +834,14 @@ class ResolverState {
         // guard above returns early) — defensive, so a future change to that
         // guard can't silently reopen the stuck-on-the-edit-banner bug.
         this.editing = false;
+        this.tamaImg = bridge.TAMA_IMG.alarm;
         await this.refresh();
         bridge.tama.warn(r.message || "Still conflicted — resolve the remaining files.");
       } else {
         await this.applyOutcome(r, this.sha);
       }
     } catch (e) {
+      this.tamaImg = bridge.TAMA_IMG.alarm;
       bridge.tama.warn("Skip failed — " + e);
     } finally {
       this.busy = false;
@@ -856,6 +859,7 @@ class ResolverState {
     if (this.busy) return;
     this.busy = true;
     this.activeAction = "abort";
+    this.tamaImg = bridge.TAMA_IMG.thinking;
     try {
       const r = await OPS[this.op].abort(this.repo);
       if (r && r.state === "clean") {
@@ -864,9 +868,11 @@ class ResolverState {
         bridge.tama.set("hint");
         bridge.tama.say(r.message || MSG[this.op].abortMsg);
       } else {
+        this.tamaImg = bridge.TAMA_IMG.alarm;
         bridge.tama.warn((r && r.message) || "Abort failed — try again, or abort from the command line.");
       }
     } catch (e) {
+      this.tamaImg = bridge.TAMA_IMG.alarm;
       bridge.tama.warn("Abort failed — " + e);
     } finally {
       this.busy = false;
@@ -885,6 +891,7 @@ class ResolverState {
     if (this.busy) return;
     this.busy = true;
     this.activeAction = "continue";
+    this.tamaImg = bridge.TAMA_IMG.thinking;
     try {
       const r = await OPS[this.op].continueOp(this.repo);
       if (r.state === "conflict") {
@@ -896,12 +903,14 @@ class ResolverState {
         // instead of the file-list/three-way-diff UI even though
         // `conflictedFiles` was just correctly populated below.
         this.editing = false;
+        this.tamaImg = bridge.TAMA_IMG.alarm;
         await this.refresh();
         bridge.tama.warn(r.message || "Still conflicted — resolve the remaining files.");
       } else {
         await this.applyOutcome(r, this.sha);
       }
     } catch (e) {
+      this.tamaImg = bridge.TAMA_IMG.alarm;
       bridge.tama.warn("Continue failed — " + e);
     } finally {
       this.busy = false;

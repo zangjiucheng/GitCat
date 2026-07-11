@@ -1,6 +1,7 @@
 <script lang="ts">
   import { rebasePlanCtrl } from "./rebaseplan.svelte.ts";
   import type { PlanAction } from "./rebaseplan.svelte.ts";
+  import * as bridge from "../../legacy/bridge";
 
   const ACTIONS: { value: PlanAction; label: string }[] = [
     { value: "pick", label: "Pick" },
@@ -60,6 +61,7 @@
 <div class="scrim" class:on={rebasePlanCtrl.open}>
   <div class="modal rebaseplan">
     <div class="modal-head">
+      <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.alarm} alt="Tama, alarmed" /></div>
       <div>
         <h3>Interactive rebase onto {rebasePlanCtrl.onto}</h3>
         <p>Drag to reorder, pick an action per commit, then Start.</p>

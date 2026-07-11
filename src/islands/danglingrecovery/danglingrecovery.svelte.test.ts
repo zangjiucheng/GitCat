@@ -9,7 +9,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../legacy/bridge", () => ({
   reloadGraph: vi.fn(async () => {}),
+  cheer: vi.fn(),
   tama: { set: vi.fn(), say: vi.fn(), warn: vi.fn(), event: vi.fn() },
+  TAMA_IMG: { curious: "curious.png", confident: "confident.png" },
   relTime: (t: number) => "a while ago (" + t + ")",
 }));
 

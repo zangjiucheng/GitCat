@@ -35,6 +35,7 @@
 <div class="scrim" class:on={danglingRecoveryCtrl.open}>
   <div class="modal danglingrecovery">
     <div class="modal-head">
+      <div class="modal-tama"><img class="tama-pic" src={danglingRecoveryCtrl.tamaImg} alt="Tama, curious" /></div>
       <div>
         <h3>Dangling Commits &#8212; recover a lost commit</h3>
         <p>

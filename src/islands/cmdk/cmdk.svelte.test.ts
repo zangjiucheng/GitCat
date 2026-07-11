@@ -21,6 +21,7 @@ vi.mock("../../legacy/bridge", () => ({
   hhex: (r: number) => "hex" + r,
   msgOf: (r: number) => "demo message " + r,
   AUTHORS: [{ n: "Demo Author", e: "demo@gitcat.dev" }],
+  TAMA_IMG: { curious: "curious.png", confident: "confident.png" },
 }));
 
 import * as bridge from "../../legacy/bridge";
