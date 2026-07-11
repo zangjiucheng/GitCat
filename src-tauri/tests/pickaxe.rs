@@ -11,8 +11,6 @@
 
 mod common;
 
-use std::process::Command;
-
 use common::TempRepo;
 use gitcat_lib::pickaxe::{pickaxe_search, PickaxeMatch};
 
@@ -280,31 +278,40 @@ fn all_refs_finds_a_commit_only_reachable_from_a_non_head_branch() {
 fn search_truncates_at_the_match_cap() {
     let repo = TempRepo::init("pickaxe_truncation_cap");
 
-    let n = 2010;
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .arg("-C")
-            .arg(&repo.dir)
-            .args(args)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .output()
-            .expect("failed to spawn git");
-        assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
-    };
     // See tests/file_history.rs's history_truncates_at_the_commit_cap for why
-    // this is needed: 2010 rapid commits in one repo comes right up against
-    // git's default gc.auto threshold, and a background auto-gc racing a
-    // subsequent commit can produce a transient "bad tree object HEAD".
-    run(&["config", "gc.auto", "0"]);
+    // this loop is built via git2 directly rather than shelling out to `git
+    // add`/`git commit` 2010 times: that version was flaky under CI resource
+    // pressure two different ways (a background `git gc --auto` racing a
+    // commit once loose-object count neared git's default gc.auto threshold,
+    // and separately a bare subprocess/tempfile failure from spawning ~4000
+    // git processes in a tight loop) — writing objects in-process through one
+    // git2::Repository handle sidesteps both entirely.
+    let n = 2010;
+    let git_repo = repo.open();
+    let mut parent: Option<git2::Oid> = None;
     for i in 0..n {
         // Every commit toggles the occurrence count of "needle" (0<->1) so
         // EVERY commit is itself a -S match — a simple, fast way to build a
         // repo with more matches than the cap.
-        let content = if i % 2 == 0 { "needle\n".to_string() } else { "no match here\n".to_string() };
-        std::fs::write(repo.dir.join("churn.txt"), content).expect("write churn.txt");
-        run(&["add", "-A"]);
-        run(&["commit", "-q", "--no-verify", "-m", &format!("c{i}")]);
+        let content = if i % 2 == 0 { "needle\n" } else { "no match here\n" };
+        let blob = git_repo.blob(content.as_bytes()).expect("write blob");
+        let mut tb = git_repo.treebuilder(None).expect("new treebuilder");
+        tb.insert("churn.txt", blob, 0o100644).expect("tree insert");
+        let tree_oid = tb.write().expect("write tree");
+        let tree = git_repo.find_tree(tree_oid).expect("find tree");
+        let parents = match parent {
+            Some(oid) => vec![git_repo.find_commit(oid).expect("find parent commit")],
+            None => vec![],
+        };
+        let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+        // Distinct, monotonically increasing times — same-second commits
+        // would make revwalk's chronological ordering ambiguous.
+        let sig = git2::Signature::new("GitCat Test", "test@gitcat.example", &git2::Time::new(1_735_689_600 + i as i64, 0))
+            .expect("build signature");
+        let commit_oid = git_repo
+            .commit(Some("HEAD"), &sig, &sig, &format!("c{i}"), &tree, &parent_refs)
+            .expect("create commit");
+        parent = Some(commit_oid);
     }
 
     let r = pickaxe_search(repo.path(), "needle".to_string(), "added-removed".to_string(), false, false, None, None)

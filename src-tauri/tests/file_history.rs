@@ -6,8 +6,6 @@
 
 mod common;
 
-use std::process::Command;
-
 use common::TempRepo;
 use gitcat_lib::file_history::{file_history, FileHistoryEntry};
 
@@ -208,32 +206,39 @@ fn history_truncates_at_the_commit_cap() {
     let repo = TempRepo::init("filehistory_truncation_cap");
 
     // MAX_HISTORY_COMMITS is 2000; build a repo with a comfortably larger
-    // number of commits that ALL touch the same file, via direct git calls
-    // (much faster than std::fs::write + TempRepo::commit's own extra checks
-    // per call for a loop this size).
+    // number of commits that ALL touch the same file. Built directly via
+    // git2 (blob+tree+commit, no `git` subprocess) rather than 2010 rounds
+    // of `git add -A && git commit` — that shelled-out version was BOTH slow
+    // AND flaky under CI resource pressure two different ways: a background
+    // `git gc --auto` racing a commit trying to read HEAD's tree once loose
+    // object count approached git's default gc.auto threshold ("bad tree
+    // object HEAD"), and separately a plain subprocess/tempfile failure
+    // ("unable to create temporary file") from spawning ~4000 git processes
+    // in a tight loop. Writing objects in-process through one long-lived
+    // git2::Repository handle sidesteps both failure classes entirely — no
+    // other process ever touches this repo while the loop runs.
     let n = 2010;
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .arg("-C")
-            .arg(&repo.dir)
-            .args(args)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .output()
-            .expect("failed to spawn git");
-        assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
-    };
-    // 2010 commits comes right up against git's default gc.auto threshold
-    // (6700 loose objects, ~3/commit here) — without disabling it, a
-    // background `git gc --auto` can fire mid-loop and race a subsequent
-    // commit in this SAME repo trying to read HEAD's tree while gc is
-    // repacking/pruning, producing a transient "bad tree object HEAD"
-    // (observed in CI, not locally — timing-dependent).
-    run(&["config", "gc.auto", "0"]);
+    let git_repo = repo.open();
+    let mut parent: Option<git2::Oid> = None;
     for i in 0..n {
-        std::fs::write(repo.dir.join("churn.txt"), format!("rev{i}\n")).expect("write churn.txt");
-        run(&["add", "-A"]);
-        run(&["commit", "-q", "--no-verify", "-m", &format!("c{i}")]);
+        let blob = git_repo.blob(format!("rev{i}\n").as_bytes()).expect("write blob");
+        let mut tb = git_repo.treebuilder(None).expect("new treebuilder");
+        tb.insert("churn.txt", blob, 0o100644).expect("tree insert");
+        let tree_oid = tb.write().expect("write tree");
+        let tree = git_repo.find_tree(tree_oid).expect("find tree");
+        let parents = match parent {
+            Some(oid) => vec![git_repo.find_commit(oid).expect("find parent commit")],
+            None => vec![],
+        };
+        let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+        // Distinct, monotonically increasing times — same-second commits
+        // would make revwalk's chronological ordering ambiguous.
+        let sig = git2::Signature::new("GitCat Test", "test@gitcat.example", &git2::Time::new(1_735_689_600 + i as i64, 0))
+            .expect("build signature");
+        let commit_oid = git_repo
+            .commit(Some("HEAD"), &sig, &sig, &format!("c{i}"), &tree, &parent_refs)
+            .expect("create commit");
+        parent = Some(commit_oid);
     }
 
     let fh = file_history(repo.path(), "churn.txt".to_string(), None).expect("history should succeed even when capped");
