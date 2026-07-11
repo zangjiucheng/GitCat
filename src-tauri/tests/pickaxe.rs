@@ -292,6 +292,11 @@ fn search_truncates_at_the_match_cap() {
             .expect("failed to spawn git");
         assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
     };
+    // See tests/file_history.rs's history_truncates_at_the_commit_cap for why
+    // this is needed: 2010 rapid commits in one repo comes right up against
+    // git's default gc.auto threshold, and a background auto-gc racing a
+    // subsequent commit can produce a transient "bad tree object HEAD".
+    run(&["config", "gc.auto", "0"]);
     for i in 0..n {
         // Every commit toggles the occurrence count of "needle" (0<->1) so
         // EVERY commit is itself a -S match — a simple, fast way to build a

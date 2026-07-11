@@ -223,6 +223,13 @@ fn history_truncates_at_the_commit_cap() {
             .expect("failed to spawn git");
         assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
     };
+    // 2010 commits comes right up against git's default gc.auto threshold
+    // (6700 loose objects, ~3/commit here) — without disabling it, a
+    // background `git gc --auto` can fire mid-loop and race a subsequent
+    // commit in this SAME repo trying to read HEAD's tree while gc is
+    // repacking/pruning, producing a transient "bad tree object HEAD"
+    // (observed in CI, not locally — timing-dependent).
+    run(&["config", "gc.auto", "0"]);
     for i in 0..n {
         std::fs::write(repo.dir.join("churn.txt"), format!("rev{i}\n")).expect("write churn.txt");
         run(&["add", "-A"]);
