@@ -475,9 +475,9 @@
             tabindex="0"
             onclick={(e) => {
               if ((e.target as HTMLElement).closest(".ref-menu") || !canOpen || sidebarCtrl.busy) return;
-              sidebarCtrl.openSubmodule(s.absolutePath);
+              sidebarCtrl.openSubmodule(s.path, s.absolutePath);
             }}
-            onkeydown={(e) => (e.key === "Enter" || e.key === " ") && canOpen && !sidebarCtrl.busy && sidebarCtrl.openSubmodule(s.absolutePath)}
+            onkeydown={(e) => (e.key === "Enter" || e.key === " ") && canOpen && !sidebarCtrl.busy && sidebarCtrl.openSubmodule(s.path, s.absolutePath)}
           >
             <span class="rname">{s.path}</span>
             <span class="sub-status" data-status={s.status}>{subStatusLabel(s.status)}</span>
@@ -681,7 +681,7 @@
          from the snapshot the popover opened with, matching what the row
          itself showed. -->
     {#if submoduleCanOpen(sm.status)}
-      <button onclick={() => { const p = sm.absolutePath; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.openSubmodule(p); }}>Open</button>
+      <button onclick={() => { const path = sm.path, p = sm.absolutePath; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.openSubmodule(path, p); }}>Open</button>
     {/if}
     <!-- Sync is offered regardless of status (unlike Init/Update below) — it
          only rewrites .git/config's url, never the submodule's own working

@@ -340,20 +340,48 @@ describe("submoduleCanOpen (Open row-action gate)", () => {
 describe("openSubmodule (per-row 'Open')", () => {
   it("design mode is a cosmetic no-op with a toast — never touches bridge.enterSubmodule", () => {
     mockInTauri = false;
-    sidebarCtrl.openSubmodule("/repo/vendor/lib-a");
+    sidebarCtrl.openSubmodule("vendor/lib-a", "/repo/vendor/lib-a");
     expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
     expect(bridge.enterSubmodule).not.toHaveBeenCalled();
   });
 
   it("real mode: calls bridge.enterSubmodule with the submodule's own absolute path", () => {
     mockInTauri = true;
-    sidebarCtrl.openSubmodule("/repo/vendor/lib-a");
+    sidebarCtrl.openSubmodule("vendor/lib-a", "/repo/vendor/lib-a");
     expect(bridge.enterSubmodule).toHaveBeenCalledWith("/repo/vendor/lib-a");
   });
 
-  it("never touches busy/busyTarget — unlike every submodule_* mutation, this isn't an IPC round-trip against the current repo", () => {
+  it("sets busy/busyTarget (the RELATIVE path, matching Sidebar.svelte's `busyTarget === s.path` spinner check) while enterSubmodule (openRepo) is in flight, clears both once it settles", async () => {
     mockInTauri = true;
-    sidebarCtrl.openSubmodule("/repo/vendor/lib-a");
+    let resolveEnter!: (ok: boolean) => void;
+    vi.mocked(bridge.enterSubmodule).mockReturnValueOnce(new Promise((r) => (resolveEnter = r)));
+
+    const p = sidebarCtrl.openSubmodule("vendor/lib-a", "/repo/vendor/lib-a");
+    expect(sidebarCtrl.busy).toBe(true);
+    expect(sidebarCtrl.busyTarget).toBe("vendor/lib-a");
+
+    resolveEnter(true);
+    await p;
+    expect(sidebarCtrl.busy).toBe(false);
+    expect(sidebarCtrl.busyTarget).toBeNull();
+  });
+
+  it("is a no-op re-entrancy guard while a switch is already in flight", () => {
+    mockInTauri = true;
+    vi.mocked(bridge.enterSubmodule).mockReturnValueOnce(new Promise(() => {})); // never settles
+    sidebarCtrl.openSubmodule("vendor/lib-a", "/repo/vendor/lib-a");
+    expect(bridge.enterSubmodule).toHaveBeenCalledTimes(1);
+
+    sidebarCtrl.openSubmodule("vendor/lib-b", "/repo/vendor/lib-b");
+    expect(bridge.enterSubmodule).toHaveBeenCalledTimes(1); // second click ignored
+  });
+
+  it("clears busy/busyTarget even if enterSubmodule rejects, so the row is clickable again", async () => {
+    mockInTauri = true;
+    vi.mocked(bridge.enterSubmodule).mockRejectedValueOnce(new Error("boom"));
+
+    await sidebarCtrl.openSubmodule("vendor/lib-a", "/repo/vendor/lib-a").catch(() => {});
+
     expect(sidebarCtrl.busy).toBe(false);
     expect(sidebarCtrl.busyTarget).toBeNull();
   });

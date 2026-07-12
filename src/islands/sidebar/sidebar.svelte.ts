@@ -433,18 +433,43 @@ class SidebarState {
   // Sidebar.svelte (see that function's own doc comment); this method itself
   // doesn't re-check status; it's a thin, directly-testable wrapper so
   // "clicking Open calls bridge.enterSubmodule with the right path" doesn't
-  // need a component-rendering harness (see sidebar.svelte.test.ts). Deliberately
-  // never touches busy/busyTarget — unlike every mutation above, this isn't a
-  // submodule_* IPC round-trip against the CURRENT repo, it's an entirely
-  // different repo being loaded; openRepo has its own re-entrancy guard
-  // (openRepoBusy) for that, same as pickRepo/the setup wizard.
-  openSubmodule(absolutePath: string) {
+  // need a component-rendering harness (see sidebar.svelte.test.ts).
+  //
+  // openRepo() (legacy/main.ts) has its own re-entrancy guard (openRepoBusy)
+  // against actually firing twice, same as pickRepo/the setup wizard — but
+  // load_graph + the sidebar/safety refresh it awaits is a real, sometimes
+  // multi-hundred-ms round-trip against an ENTIRELY different repo, and
+  // nothing near the click point ever showed that: Sidebar.svelte's own
+  // template already renders a spinner keyed on `busyTarget === s.path` and
+  // guards the row's click handler on `busy` (same shape as every other
+  // submodule mutation above), but this method never actually SET either —
+  // dead UI paths that made switching into a submodule look like it hung,
+  // with the only real feedback (Tama "thinking", the topbar repo-pick
+  // spinner) easy to miss from all the way down in a scrolled sidebar list.
+  // `path` (relative, e.g. "vendor/lib-a") is what the row's own spinner and
+  // `busy` guard key off — same convention as every mutation above (`path`,
+  // not `absolutePath`, matches `s.path` in Sidebar.svelte's template); the
+  // actual navigation needs `absolutePath` (bridge.enterSubmodule/openRepo).
+  async openSubmodule(path: string, absolutePath: string): Promise<void> {
     if (!IN_TAURI) {
       bridge.tama.set("hint");
       bridge.tama.say("Opened " + absolutePath + " (demo).");
       return;
     }
-    bridge.enterSubmodule(absolutePath);
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = path;
+    try {
+      await bridge.enterSubmodule(absolutePath);
+      // On success, openRepo() has already torn down and rebuilt this whole
+      // controller's state via refresh() (a different repo, different rows
+      // entirely) — this reset is a harmless no-op then. On failure (bad
+      // path, permission error, transiently locked), the SAME rows are still
+      // showing and this is what actually re-enables the click.
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
   }
 
   // "Init + update" — for a "not-initialized" row (submoduleAction(status)
