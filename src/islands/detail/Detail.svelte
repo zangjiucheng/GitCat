@@ -29,13 +29,16 @@
     {:else}
       <div class="hero-bubble">はじめまして! I'm <b>Tama</b>. Open a Git repository and I'll lay out its whole history in a blink. <span class="jp">にゃ〜♪</span></div>
       <div style="margin-top:2px;display:flex;align-items:center;gap:8px;justify-content:center">
-        <button class="btn" id="openRepoBtn" onclick={() => bridge.pickRepo()}>&#128193; Open a repository&#8230;</button>
-        <!-- Multi-repo dashboard (backlog #11): the empty-hero card's second
-             entry point, alongside the Tools menu/⌘K — reachable here too
-             since a fresh/no-repo launch is arguably the MORE useful moment
-             to jump straight into a previously tracked repo instead of
-             re-browsing for one via the native picker. -->
-        <button class="btn ghost" onclick={() => dashboardCtrl.show()}>&#128194; Repositories&#8230;</button>
+        <!-- Single entry point (was two: a direct native-picker button plus a
+             separate "Repositories…" dashboard button) — both behaviors now
+             live inside the ONE dashboard modal (recent/tracked repos list +
+             its own "+ Add repository…" native picker), so there's one
+             consistent "open a repository" action everywhere it's offered,
+             not a picker-vs-modal split depending on which button you click.
+             See dashboard.svelte.ts's addRepository() for why picking a
+             brand-new folder from inside the modal still opens it
+             immediately when reached from here (no repo open yet). -->
+        <button class="btn" id="openRepoBtn" onclick={() => dashboardCtrl.show()}>&#128193; Open a repository&#8230;</button>
       </div>
       <div class="hero-hint">or click the repo name <b>&#9662;</b> in the top bar</div>
     {/if}

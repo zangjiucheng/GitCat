@@ -8,6 +8,7 @@ import { bisectDrawerCtrl } from "../islands/bisectdrawer/bisectdrawer.svelte.ts
 import { sidebarCtrl } from "../islands/sidebar/sidebar.svelte.ts";
 import { workdirCtrl } from "../islands/workdir/workdir.svelte.ts";
 import { commitMenuCtrl } from "../islands/commitmenu/commitmenu.svelte.ts";
+import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
 // Typed client for the one raw `tinvoke()` call below that needs it
 // (globalUndo()'s stash-undo branch) — see that function's own comment for
 // why only that branch uses it instead of another `tinvoke()`.
@@ -1315,7 +1316,13 @@ async function closeRepo(){
   bootEmpty();
   NAV_STACK.length=0; updateBackToParentBtn();
 }
-$(".repo-pick").addEventListener("click", pickRepo);
+// Opens the same Repositories dashboard modal as the empty-hero's/sidebar's
+// own "Open a repository…" button (see Detail.svelte/Sidebar.svelte) rather
+// than jumping straight to the native folder picker — one consistent entry
+// point for "open/switch repository" everywhere it's offered in the UI,
+// whether or not a repo is currently open (the dashboard's own "+ Add
+// repository…" is where the native picker still lives).
+$(".repo-pick").addEventListener("click", ()=>dashboardCtrl.show());
 $("#backToParentBtn").addEventListener("click", goBackToParent);
 
 applyTheme("dark"); // cozy dark base by default; ◐ toggles back to light

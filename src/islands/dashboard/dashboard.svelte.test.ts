@@ -10,8 +10,15 @@
 // folder picker.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// CUR_REPO is a toggleable getter (same shape as IN_TAURI below) since
+// addRepository() now branches on whether a repo is currently open — most
+// tests want the default "no repo open" case, one wants "a repo is already
+// open" to exercise the original track-without-switching path.
+let mockCurRepo: string | null = null;
 vi.mock("../../legacy/bridge", () => ({
-  CUR_REPO: null,
+  get CUR_REPO() {
+    return mockCurRepo;
+  },
   tama: { set: vi.fn(), say: vi.fn(), warn: vi.fn(), event: vi.fn() },
   relTime: (t: number) => "t" + t,
   openRepo: vi.fn(async () => true),
@@ -84,6 +91,7 @@ function resetCtrl() {
   dashboardCtrl.addBusy = false;
   dashboardCtrl.removingPath = null;
   mockInTauri = true;
+  mockCurRepo = null;
   vi.clearAllMocks();
 }
 
@@ -259,7 +267,8 @@ describe("addRepository — native folder picker", () => {
     expect(commands.addTrackedRepo).not.toHaveBeenCalled();
   });
 
-  it("adds the picked path, merges it into rows, and fetches status only for the new row", async () => {
+  it("adds the picked path, merges it into rows, and fetches status only for the new row (a repo is already open)", async () => {
+    mockCurRepo = "/repo/a"; // already open — track-only path, not auto-open
     vi.mocked(commands.listTrackedRepos).mockResolvedValueOnce(ok([tracked("/repo/a")]));
     vi.mocked(commands.dashboardRepoStatus).mockResolvedValueOnce(ok(status({ branch: "main" })));
     await dashboardCtrl.refresh();
@@ -278,6 +287,24 @@ describe("addRepository — native folder picker", () => {
     expect(commands.dashboardRepoStatus).toHaveBeenCalledWith("/repo/new");
     expect(dashboardCtrl.rows.find((r) => r.path === "/repo/a")?.status?.branch).toBe("main");
     expect(dashboardCtrl.rows.find((r) => r.path === "/repo/new")?.status?.branch).toBe("feat/new");
+    expect(bridge.openRepo).not.toHaveBeenCalled();
+  });
+
+  it("opens the picked path immediately when no repo is currently open, instead of just tracking it", async () => {
+    // mockCurRepo defaults to null (resetCtrl) — the empty-hero/sidebar/
+    // topbar "Open a repository…" buttons all funnel here with no repo open.
+    openMock.mockResolvedValueOnce("/repo/new");
+    vi.mocked(commands.addTrackedRepo).mockResolvedValueOnce(ok([tracked("/repo/new")]));
+
+    await dashboardCtrl.addRepository();
+
+    expect(commands.addTrackedRepo).toHaveBeenCalledWith("/repo/new");
+    expect(bridge.openRepo).toHaveBeenCalledWith("/repo/new");
+    // openRepository() itself closes the modal.
+    expect(dashboardCtrl.open).toBe(false);
+    // The auto-open path returns before the row-status round-trip — nothing
+    // to show a "loading" spinner for once bridge.openRepo has taken over.
+    expect(commands.dashboardRepoStatus).not.toHaveBeenCalled();
   });
 
   it("demo (non-Tauri) mode never opens a dialog", async () => {

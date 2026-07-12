@@ -240,6 +240,19 @@ class DashboardState {
       if (res.status === "ok") {
         this.applyTrackedList(res.data);
         this.error = "";
+        // No repo currently open (the empty-hero/sidebar/topbar's own "Open
+        // a repository…" all funnel here now — see Detail.svelte/Sidebar.svelte/
+        // legacy/main.ts's `.repo-pick` handler) means there's nothing to
+        // "just track without switching to" — open it immediately, same
+        // pick-a-folder-and-go feel the old direct-to-native-dialog buttons
+        // had, rather than leaving the user staring at a list they'd have to
+        // find their own new row in and click Open a second time. A repo
+        // that IS already open keeps the original track-only behavior (this
+        // dialog is also reachable from the Tools menu/⌘K while mid-session).
+        if (!bridge.CUR_REPO) {
+          await this.openRepository(dir);
+          return;
+        }
         await this.fetchPendingStatuses();
       } else {
         bridge.tama.warn(String(res.error ?? "Could not add that repository."));

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { sidebarCtrl, submoduleAction, submoduleCanOpen, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
   import { remotesCtrl } from "../remotes/remotes.svelte.ts";
+  import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import type { SimpleRef, SubmoduleInfo } from "../../ipc/bindings";
 
@@ -141,7 +142,7 @@
     <div class="ic">&#128193;</div>
     <div class="t">No repository open</div>
     <div class="sub">Branches, remotes, and snapshots will show up here once you open one.</div>
-    <button class="btn" onclick={() => bridge.pickRepo()}>&#128193; Open a repository&#8230;</button>
+    <button class="btn" onclick={() => dashboardCtrl.show()}>&#128193; Open a repository&#8230;</button>
   </div>
 {:else}
 <div class="ref-filter">
