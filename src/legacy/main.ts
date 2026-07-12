@@ -154,7 +154,14 @@ function generateGraph(N){
    ============================================================ */
 const cv=$("#cv"), ctx=cv.getContext("2d"), wrap=$("#canvasWrap");
 const layout={zoom:1,rowH:ROW_H_BASE,laneW:LANE_W_BASE,dotR:DOT_R_BASE,chipFont:"11px "+FONT_UI,contentH:0};
-const state={scrollTop:0,scrollTarget:0,maxScroll:0,selectedRow:-1,hoverRow:-1,drag:null,pointerActive:false,isInteracting:false,stress:false};
+const state={scrollTop:0,scrollTarget:0,maxScroll:0,selectedRow:-1,hoverRow:-1,drag:null,pointerActive:false,isInteracting:false,stress:false,selectAlpha:0,hoverAlpha:0};
+// Row-highlight fade: eased toward its target each tick() (see the
+// scrollTop lerp just below tick's own definition for the same recipe) so
+// selecting/hovering a row fades the tint in instead of snapping to full
+// alpha — purely a canvas-side effect since the graph has no DOM/CSS to
+// transition. Checked once, like TamaMascot's own `this.reduced` (this file
+// has no live matchMedia listener anywhere, by the same precedent).
+const REDUCE_MOTION=matchMedia("(prefers-reduced-motion:reduce)").matches;
 const view={cssW:0,cssH:0,dpr:1};
 const perf={last:performance.now(),frames:0,accum:0,fps:0,lastDrawMs:0};
 let dirty=true, lastInteracting=false;
@@ -237,9 +244,9 @@ function draw(){
   for(let r=first;r<=last;r++){
     const y=r*rowH+rowH*0.5-st+bh, x=laneX(G.commitLane[r]), col=LANE_COLORS[G.commitColor[r]];
     const dim = B && !(r>B.lo&&r<B.hi) && r!==B.good && r!==B.bad;
-    if(r===state.selectedRow){ ctx.fillStyle=theme.accent; ctx.globalAlpha=0.20; ctx.fillRect(0,r*rowH-st+bh,W,rowH); ctx.globalAlpha=1;
+    if(r===state.selectedRow){ ctx.fillStyle=theme.accent; ctx.globalAlpha=state.selectAlpha; ctx.fillRect(0,r*rowH-st+bh,W,rowH); ctx.globalAlpha=1;
       ctx.fillStyle=theme.accent; ctx.fillRect(0,r*rowH-st+bh,3,rowH); }
-    else if(r===state.hoverRow){ ctx.fillStyle=theme.text; ctx.globalAlpha=0.08; ctx.fillRect(0,r*rowH-st+bh,W,rowH); ctx.globalAlpha=1; }
+    else if(r===state.hoverRow){ ctx.fillStyle=theme.text; ctx.globalAlpha=state.hoverAlpha; ctx.fillRect(0,r*rowH-st+bh,W,rowH); ctx.globalAlpha=1; }
     if(B&&r===B.good){ctx.fillStyle=theme.success;ctx.fillRect(0,r*rowH-st+bh,3,rowH);}
     if(B&&r===B.bad){ctx.fillStyle=theme.danger;ctx.fillRect(0,r*rowH-st+bh,3,rowH);}
     if(bisectDrawerCtrl.cur!=null&&r===bisectDrawerCtrl.cur){ctx.fillStyle=theme.accent;ctx.fillRect(0,r*rowH-st+bh,3,rowH);}
@@ -999,6 +1006,12 @@ function tick(now){
   if(Math.abs(state.scrollTarget-state.scrollTop)>0.4){state.scrollTop+=(state.scrollTarget-state.scrollTop)*0.3;dirty=true;}
   else state.scrollTop=state.scrollTarget;
   if(state.stress){state.scrollTarget+=9;if(state.scrollTarget>=state.maxScroll)state.scrollTarget=0;dirty=true;}
+  const selTarget=state.selectedRow>=0?0.20:0, hovTarget=(state.hoverRow>=0&&state.hoverRow!==state.selectedRow)?0.08:0;
+  if(REDUCE_MOTION){ state.selectAlpha=selTarget; state.hoverAlpha=hovTarget; }
+  else{
+    if(Math.abs(selTarget-state.selectAlpha)>0.003){state.selectAlpha+=(selTarget-state.selectAlpha)*0.35;dirty=true;} else state.selectAlpha=selTarget;
+    if(Math.abs(hovTarget-state.hoverAlpha)>0.003){state.hoverAlpha+=(hovTarget-state.hoverAlpha)*0.35;dirty=true;} else state.hoverAlpha=hovTarget;
+  }
   state.isInteracting=dirty||state.pointerActive;
   if(state.isInteracting!==lastInteracting){Tama.setInteracting(state.isInteracting);lastInteracting=state.isInteracting;}
   if(dirty){draw();dirty=false;}
@@ -1069,6 +1082,18 @@ async function openRepo(path){
   Tama.set("thinking");
   try{
     const g = await tinvoke("load_graph", { path });
+    // A large repo's response is tens of MB of JSON text; parsing it to get
+    // here is unavoidably synchronous (the invoke Promise only resolves once
+    // `g` already exists as a live object — nothing after `await` can move
+    // that cost off-thread). What CAN be fixed: everything from here through
+    // loadGraph(g.n) below used to run as one more uninterrupted synchronous
+    // stretch with no `await` in between, so the browser never got a single
+    // paint — not even the spinner/Tama "thinking" state already showing —
+    // until it was ALL done. A double-rAF forces one real paint first (the
+    // standard "wait for the next paint to actually commit" pattern — a
+    // single rAF can still land in the same batched frame as what follows
+    // it) so a big repo visibly shows it's working instead of looking hung.
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     BACKEND = g; CUR_REPO = path;
     // Switching repos must close the pinned "Uncommitted changes" panel (if
     // open) FIRST — its file list belongs to whichever repo was open when

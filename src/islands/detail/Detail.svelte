@@ -5,6 +5,13 @@
   import Workdir from "../workdir/Workdir.svelte";
   import { resolver } from "../resolver/resolver.svelte.ts";
   import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
+  import { fade } from "svelte/transition";
+
+  // Matches TamaMascot's own `this.reduced` check (src/legacy/main.ts) —
+  // Svelte's transition: directives don't honor prefers-reduced-motion on
+  // their own (they animate via inline styles, not CSS the reduced-motion
+  // media query in index.html can override), so this needs its own check.
+  const REDUCE_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
 </script>
 
 {#if workdirCtrl.selected}
@@ -37,6 +44,14 @@
   {@const c = detailCtrl.commit}
   {@const gpg = detailCtrl.gpgBadge}
   {@const cov = detailCtrl.coverage}
+  <!-- Keyed on sha so switching commits re-mounts (and fades) this wrapper
+       instead of every field just snapping to new values in place — a
+       plain DOM/opacity transition, no canvas involvement. Scoped to the
+       outer wrapper only (not per-diff-line): this island can render a
+       large file tree/diff, so re-triggering a transition per-line would
+       be wasteful, not just unnecessary. -->
+  {#key c.sha}
+  <div transition:fade={{ duration: REDUCE_MOTION ? 0 : 120 }}>
   <section>
     <div class="d-subject">{c.subject}</div>
     <div class="d-body" id="dBody">
@@ -141,6 +156,8 @@
       {/if}
     </div>
   </section>
+  </div>
+  {/key}
 {/if}
 
 {#snippet dirNode(node: TreeDir)}

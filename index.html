@@ -95,7 +95,8 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   background:var(--elevated);border:1px solid var(--border);color:var(--muted)}
 .sync-actions{display:flex;align-items:center;gap:6px}
 .tb-btn{display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--elevated);
-  border:1px solid var(--border);border-radius:var(--r-control);font-weight:600;white-space:nowrap}
+  border:1px solid var(--border);border-radius:var(--r-control);font-weight:600;white-space:nowrap;
+  transition:border-color .12s,background-color .12s}
 .tb-btn:hover{border-color:var(--muted)}
 .tb-btn:disabled{opacity:.45;cursor:default;pointer-events:none}
 .tb-btn .badge{font-family:var(--mono);font-size:11px;background:var(--accent);color:#fff;
@@ -106,7 +107,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   background:color-mix(in srgb,var(--danger) 8%,var(--elevated))}
 .tb-btn.danger:hover{background:color-mix(in srgb,var(--danger) 16%,var(--elevated))}
 .icon-btn{width:32px;height:32px;display:grid;place-items:center;background:var(--elevated);
-  border:1px solid var(--border);border-radius:var(--r-control)}
+  border:1px solid var(--border);border-radius:var(--r-control);transition:border-color .12s,background-color .12s}
 .icon-btn:hover{border-color:var(--muted)}
 
 /* ============================== SIDEBAR ============================== */
@@ -468,7 +469,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tama-cheer .cheer-txt{font-family:var(--display);font-weight:600;font-size:13px;line-height:1.4;max-width:184px;padding-bottom:10px}
 .tama-cheer .cheer-txt .jp{color:var(--accent2);font-weight:700}
 @media (prefers-reduced-motion:reduce){.sprite *{animation:none!important}
-  .toast-line{transition:opacity .01s!important;transform:none!important}}
+  .toast-line{transition:opacity .01s!important;transform:none!important}
+  .scrim,.scrim.on,.modal,.scrim.on .modal,.cmdk,.cmdk.on,.cmdk-panel,.cmdk.on .cmdk-panel,
+  .bisect-panel,.bisect-panel.on,.btn,.tb-btn,.icon-btn,.resize-handle,.cmdk-row{transition-duration:.01s!important}}
 
 /* ============================== GRAPH ============================== */
 .graph{grid-area:graph;position:relative;min-width:0;background:var(--bg);overflow:hidden;display:flex}
@@ -533,7 +536,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    src/legacy/main.ts's wireResizeHandle); the existing canvas ResizeObserver
    already reacts to the resulting .canvas-wrap size change, no extra wiring
    needed there. */
-.resize-handle{position:absolute;top:0;bottom:0;width:6px;z-index:5;cursor:col-resize;background:transparent}
+.resize-handle{position:absolute;top:0;bottom:0;width:6px;z-index:5;cursor:col-resize;background:transparent;transition:background-color .12s}
 .resize-handle:hover,.resize-handle.active{background:color-mix(in srgb,var(--accent2) 45%,transparent)}
 .sidebar-handle{right:-3px}
 .detail-handle{left:-3px}
@@ -826,17 +829,22 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    canvas content. */
 .bisect-panel{position:absolute;right:14px;bottom:10px;z-index:7;width:min(320px,calc(100% - 28px));
   background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--border);
-  border-radius:var(--r-panel);box-shadow:var(--shadow);padding:12px 14px;display:none}
-.bisect-panel.on{display:block}
+  border-radius:var(--r-panel);box-shadow:var(--shadow);padding:12px 14px;display:block;
+  opacity:0;visibility:hidden;transform:translateY(8px);transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s}
+.bisect-panel.on{opacity:1;visibility:visible;transform:none;transition:opacity .18s ease,transform .18s ease}
 .bisect-panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-weight:600}
 .bisect-panel-head .x{width:22px;height:22px;display:grid;place-items:center;border-radius:6px;
   border:1px solid var(--border);background:var(--elevated);color:var(--muted)}
 .bisect-panel-head .x:hover{border-color:var(--muted);color:var(--text)}
 
 /* ============================== MODALS ============================== */
-.scrim{position:fixed;inset:0;z-index:300;background:rgba(18,20,28,.62);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;padding:24px}
-.scrim.on{display:flex}
-.modal{width:min(560px,96vw);background:var(--panel);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow);overflow:hidden}
+.scrim{position:fixed;inset:0;z-index:300;background:rgba(18,20,28,.62);backdrop-filter:blur(2px);
+  display:flex;align-items:center;justify-content:center;padding:24px;
+  opacity:0;visibility:hidden;transition:opacity .16s ease,visibility 0s linear .16s}
+.scrim.on{opacity:1;visibility:visible;transition:opacity .16s ease}
+.modal{width:min(560px,96vw);background:var(--panel);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow);overflow:hidden;
+  transform:translateY(10px) scale(.98);transition:transform .2s cubic-bezier(.2,.8,.2,1)}
+.scrim.on .modal{transform:none}
 .modal.danger{border-color:color-mix(in srgb,var(--danger) 55%,var(--border));box-shadow:0 0 0 1px color-mix(in srgb,var(--danger) 30%,transparent),var(--shadow)}
 .modal-head{display:flex;align-items:center;gap:12px;padding:16px 18px;background:color-mix(in srgb,var(--danger) 10%,var(--panel));border-bottom:1px solid var(--border)}
 .modal-head .tama{width:46px;height:46px;flex:none;filter:drop-shadow(0 0 6px color-mix(in srgb,var(--danger) 55%,transparent))}
@@ -886,11 +894,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .confirm-type input{width:100%;margin-top:5px;padding:8px 10px;font-family:var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--text)}
 .confirm-type input:focus{outline:none;border-color:var(--danger)}
 .modal-foot{display:flex;gap:10px;justify-content:flex-end;padding:14px 18px;border-top:1px solid var(--border)}
-.btn{padding:8px 16px;border-radius:var(--r-control);border:1px solid var(--border);background:var(--elevated);font-weight:600}
+.btn{padding:8px 16px;border-radius:var(--r-control);border:1px solid var(--border);background:var(--elevated);font-weight:600;
+  transition:border-color .12s,background-color .12s}
 .btn.ghost{background:transparent}
+.btn:not(.danger):not([disabled]):hover{border-color:var(--muted)}
 .btn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
 .btn.danger[disabled]{opacity:.4;cursor:not-allowed}
 .btn.danger:not([disabled]){box-shadow:0 0 0 1px color-mix(in srgb,var(--danger) 40%,transparent),0 0 16px color-mix(in srgb,var(--danger) 30%,transparent)}
+.btn.danger:not([disabled]):hover{background:color-mix(in srgb,var(--danger) 85%,#000)}
 .resolver .modal-head{background:color-mix(in srgb,var(--warning) 10%,var(--panel))}
 .resolver .modal-head .tama{filter:drop-shadow(0 0 6px color-mix(in srgb,var(--warning) 55%,transparent))}
 .three-way{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:var(--r-panel);overflow:hidden;font-family:var(--mono);font-size:11px}
@@ -988,11 +999,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .btn.bz-bad:not([disabled]){background:color-mix(in srgb,var(--danger) 12%,var(--elevated))}
 .btn.bz-skip{color:var(--muted)}
 /* ============================== ⌘K COMMAND PALETTE ============================== */
-.cmdk{position:fixed;inset:0;z-index:500;display:none}
-.cmdk.on{display:block}
+.cmdk{position:fixed;inset:0;z-index:500;display:block;
+  opacity:0;visibility:hidden;transition:opacity .14s ease,visibility 0s linear .14s}
+.cmdk.on{opacity:1;visibility:visible;transition:opacity .14s ease}
 .cmdk-scrim{position:absolute;inset:0;background:rgba(18,20,28,.5);backdrop-filter:blur(2px)}
 .cmdk-panel{position:relative;width:min(620px,94vw);margin:11vh auto 0;max-height:70vh;display:flex;flex-direction:column;
-  background:var(--panel);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow);overflow:hidden}
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow);overflow:hidden;
+  transform:translateY(-8px);transition:transform .14s ease}
+.cmdk.on .cmdk-panel{transform:none}
 .cmdk-inp{display:flex;align-items:center;gap:9px;padding:11px 14px;background:var(--elevated);border-bottom:1px solid var(--border)}
 .cmdk-inp .mag{color:var(--muted);font-size:15px;flex:none}
 .cmdk-inp input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font-size:15px;font-family:var(--ui)}
@@ -1000,7 +1014,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cmdk-inp input::placeholder{color:var(--muted)}
 .cmdk-inp kbd{flex:none;font-family:var(--mono);font-size:10px;padding:2px 6px;border-radius:5px;background:var(--bg);border:1px solid var(--border);color:var(--muted)}
 .cmdk-list{flex:1;min-height:0;overflow:auto;padding:6px}
-.cmdk-row{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:var(--r-control);cursor:pointer;scroll-margin:6px}
+.cmdk-row{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:var(--r-control);cursor:pointer;scroll-margin:6px;transition:background-color .1s}
 .cmdk-row.on{background:color-mix(in srgb,var(--accent) 16%,transparent)}
 .cmdk-row .kind{flex:none;width:54px;text-align:center;font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.4px;
   color:var(--muted);border:1px solid var(--border);border-radius:var(--r-chip);padding:2px 0}
