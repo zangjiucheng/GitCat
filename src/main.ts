@@ -31,6 +31,7 @@ import { danglingRecoveryCtrl } from "./islands/danglingrecovery/danglingrecover
 import RepoFiles from "./islands/repofiles/RepoFiles.svelte";
 import { repoFilesCtrl } from "./islands/repofiles/repofiles.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
+import { filterRepoCtrl } from "./islands/filterrepo/filterrepo.svelte.ts";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
 import Blame from "./islands/blame/Blame.svelte";
 import FileHistory from "./islands/filehistory/FileHistory.svelte";
@@ -248,6 +249,15 @@ if (IN_TAURI) {
         break;
       case "force-push-override":
         forcePushCtrl.forcePushOverride(bridge.CUR_REPO as unknown as string);
+        break;
+      case "filter-repo":
+        // The IN_TAURI decision belongs to the caller here too — same
+        // convention filterRepoCtrl.start()'s own doc comment describes
+        // (mirrors resolver.startPick/bisectCtrl.start), now that this is
+        // the wizard's only entry point (its old dedicated #filterRepoBtn
+        // click handler in legacy/main.ts did the same branch).
+        if (IN_TAURI) filterRepoCtrl.start(bridge.CUR_REPO as unknown as string);
+        else filterRepoCtrl.openDemo();
         break;
     }
   });

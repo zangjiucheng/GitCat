@@ -162,6 +162,16 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         let force_push_lease = MenuItemBuilder::with_id("force-push-lease", "Force Push (Safe)").build(app)?;
         let force_push_override =
             MenuItemBuilder::with_id("force-push-override", "Force Push (Override Remote)").build(app)?;
+        // git-filter-repo: the one genuinely irreversible-by-normal-Undo
+        // operation in the app (rewrites every commit hash in scope, expires
+        // the reflog) — used to live as its own permanent red topbar button
+        // instead of here, the ONE feature that wasn't reachable from Tools/
+        // ⌘K like everything else above. Its own dedicated multi-step wizard
+        // (scope/preview/typed-confirm/run, plus restore-from-backup) already
+        // gates the actual danger, so this is just a menu entry like any
+        // other dialog-opener — but its own trailing separator, after even
+        // the force-push items, keeps it visually last/most-severe.
+        let filter_repo = MenuItemBuilder::with_id("filter-repo", "Rewrite History (filter-repo)\u{2026}").build(app)?;
         SubmenuBuilder::new(app, "Tools")
             .item(&bisect)
             .item(&reflog)
@@ -181,6 +191,8 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .separator()
             .item(&force_push_lease)
             .item(&force_push_override)
+            .separator()
+            .item(&filter_repo)
             .build()?
     };
 
@@ -225,7 +237,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
         | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "export-patches" | "apply-patch" | "pickaxe-search"
         | "repositories" | "external-tools" | "dangling-recovery" | "repo-files" | "pull-merge" | "pull-rebase"
-        | "force-push-lease" | "force-push-override") => {
+        | "force-push-lease" | "force-push-override" | "filter-repo") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

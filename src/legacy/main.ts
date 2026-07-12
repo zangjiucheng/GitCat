@@ -1,7 +1,6 @@
 // @ts-nocheck
 import { resolver } from "../islands/resolver/resolver.svelte.ts";
 import { bisectCtrl } from "../islands/bisect/bisect.svelte.ts";
-import { filterRepoCtrl } from "../islands/filterrepo/filterrepo.svelte.ts";
 import { cmdkCtrl } from "../islands/cmdk/cmdk.svelte.ts";
 import { detailCtrl } from "../islands/detail/detail.svelte.ts";
 import { bisectDrawerCtrl } from "../islands/bisectdrawer/bisectdrawer.svelte.ts";
@@ -874,15 +873,6 @@ $("#dangerGo").addEventListener("click",async ()=>{
     disarmDanger();
   }
 });
-// filter-repo now opens its OWN dedicated multi-step wizard (src/islands/
-// filterrepo) instead of the generic single-step armDanger flow above (that
-// flow stays wired for its other callers, e.g. delete-branch): scope ->
-// preview -> typed confirm -> run -> result, plus a restore-from-backup view.
-$("#filterRepoBtn").addEventListener("click",()=>{
-  if(!IN_TAURI){ filterRepoCtrl.openDemo(); return; }
-  filterRepoCtrl.start(CUR_REPO);
-});
-
 function openScrim(sel){$(sel).classList.add("on");}
 function closeScrim(sel){$(sel).classList.remove("on");}
 document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ disarmDanger(); } });

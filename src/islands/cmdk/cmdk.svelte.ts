@@ -29,6 +29,8 @@ import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
 import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 import { danglingRecoveryCtrl } from "../danglingrecovery/danglingrecovery.svelte.ts";
 import { repoFilesCtrl } from "../repofiles/repofiles.svelte.ts";
+import { filterRepoCtrl } from "../filterrepo/filterrepo.svelte.ts";
+import { IN_TAURI } from "../../ipc/env";
 
 export const CMD_CAP = 50;
 const CMD_BUF = 250;
@@ -155,6 +157,19 @@ const ACTIONS: ActionItem[] = [
     label: "Force Push (Override Remote)",
     hint: "Raw --force: unconditionally overwrites the remote branch",
     run: () => forcePushCtrl.forcePushOverride(bridge.CUR_REPO as unknown as string),
+  },
+  // git-filter-repo (backlog M5c): used to be its own permanent red topbar
+  // button, the one Tools-worthy feature that wasn't reachable from here —
+  // now consistent with every action above it. IN_TAURI branch mirrors the
+  // old #filterRepoBtn click handler / menu.rs's "filter-repo" case in
+  // src/main.ts (filterRepoCtrl.start() doc comment: this decision belongs
+  // to the caller, not the controller).
+  {
+    type: "action",
+    id: "filter-repo",
+    label: "Rewrite History (filter-repo)",
+    hint: "Scope, preview, and typed-confirm a git-filter-repo rewrite — the one irreversible-by-Undo operation",
+    run: () => (IN_TAURI ? filterRepoCtrl.start(bridge.CUR_REPO as unknown as string) : filterRepoCtrl.openDemo()),
   },
 ];
 
