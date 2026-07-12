@@ -209,10 +209,19 @@ function draw(){
   // edges — one Path2D per lane colour
   for(let c=0;c<NCOL;c++) edgePaths[c]=null;
   const gStart=Math.max(0,first-1), gEnd=Math.min(N-2,last);
+  // Track the widest lane touched anywhere in this window WHILE walking the
+  // gap segments below (not just rows with a visible commit dot) — a branch
+  // whose tip is scrolled off the top still keeps its line running straight
+  // through every intervening gap (see layout.rs), so without this a window
+  // with no branch-tip row of its own collapsed `tx` to lane 0 every frame,
+  // squashing every row's subject/sha text against the graph regardless of
+  // how many lanes were actually still open at this scroll position.
+  let maxLane=0;
   for(let g=gStart;g<=gEnd;g++){
     const yTop=g*rowH+rowH*0.5-st+bh, yBot=(g+1)*rowH+rowH*0.5-st+bh, yMid=(yTop+yBot)*0.5;
     const s=G.gapStart[g], e=G.gapStart[g+1];
     for(let k=s;k<e;k++){const top=G.gapTop[k],bot=G.gapBot[k],col=G.gapColor[k];
+      if(top>maxLane) maxLane=top; if(bot>maxLane) maxLane=bot;
       let p=edgePaths[col]; if(!p) p=edgePaths[col]=new Path2D();
       const xTop=laneX(top),xBot=laneX(bot);
       if(top===bot){p.moveTo(xTop,yTop);p.lineTo(xBot,yBot);}
@@ -221,7 +230,7 @@ function draw(){
   ctx.lineWidth=Math.max(1.7,1.9*layout.zoom); ctx.lineJoin="round"; ctx.lineCap="round";
   for(let c=0;c<NCOL;c++){const p=edgePaths[c];if(p){ctx.strokeStyle=LANE_COLORS[c];ctx.stroke(p);}}
 
-  let maxLane=0; for(let r=first;r<=last;r++) if(G.commitLane[r]>maxLane) maxLane=G.commitLane[r];
+  for(let r=first;r<=last;r++) if(G.commitLane[r]>maxLane) maxLane=G.commitLane[r];
   const tx=laneX(maxLane)+dotR+14;
 
   ctx.textBaseline="middle"; ctx.font=layout.chipFont;
