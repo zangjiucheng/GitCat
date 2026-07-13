@@ -919,12 +919,14 @@ function closeScrim(sel){$(sel).classList.remove("on");}
 document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ disarmDanger(); } });
 // perf controls
 $("#rowsSel").addEventListener("change",e=>loadGraph(+e.target.value));
-$("#zoomIn").addEventListener("click",()=>zoomAt(view.cssH/2,140));
-$("#zoomOut").addEventListener("click",()=>zoomAt(view.cssH/2,-140));
 $("#stressBtn").addEventListener("click",e=>{state.stress=!state.stress;e.target.innerHTML=state.stress?"&#9646;&#9646; stress":"&#9654; stress";});
 // dev-only perf HUD (fps/ms readout, demo row-count picker, stress test) —
 // meaningless in a real production build against a real repo, so hide it
-// there; zoom buttons and the cherry-pick -x toggle stay visible always.
+// there; the cherry-pick record-origin toggle stays visible always (a real
+// per-session preference, not a debug tool). Zoom buttons used to be a
+// third item here too — removed outright (⌘/ctrl+wheel and +/- already
+// zoom, see zoomAt()'s own call sites below), not just hidden in prod, so
+// there's no "if(!import.meta.env.DEV)" listener for them to guard here.
 if(!import.meta.env.DEV) $("#perfDevTools").style.display="none";
 
 /* ---- snapshot ribbon: recent ticks positioned by ACTUAL elapsed time,

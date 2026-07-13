@@ -1049,7 +1049,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cf-remain{font-size:12px}
 #cfThree{max-height:360px;overflow:auto}
 .tw-col .ln code{white-space:pre-wrap;word-break:break-word}
-.cp-x{display:inline-flex;align-items:center;gap:4px;color:var(--muted);font-size:11px;cursor:pointer}
+/* font-family explicit (not inherited from .perf's monospace, which fits
+   the fps/ms debug readout next to it but reads as leftover code/debug
+   chrome for an ordinary user-facing setting label like this one). */
+.cp-x{display:inline-flex;align-items:center;gap:4px;color:var(--muted);font-family:var(--ui);font-size:11px;cursor:pointer}
 /* Interactive-rebase "editing" pause (see Resolver.svelte's doc comment) —
    reuses the resolver modal shell but swaps the file-list/three-way-diff body
    for a plain call-to-action banner while paused at an `edit` todo line. */
@@ -1450,8 +1453,15 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
           <select id="rowsSel"><option value="1000">1k</option><option value="10000" selected>10k</option><option value="50000">50k</option></select>
           <button id="stressBtn" title="Auto-scroll stress test">&#9654; stress</button>
         </span>
-        <button id="zoomOut" title="Zoom out">&#8211;</button><button id="zoomIn" title="Zoom in">+</button>
-        <label class="cp-x" title="Record origin: append '(cherry picked from …)' to the commit message"><input type="checkbox" id="cpRecordOrigin"> -x</label>
+        <!-- Zoom in/out buttons used to live here too — removed outright
+             (not just hidden), not relocated: ⌘/ctrl+wheel AND the +/- keys
+             already zoom (see the on-canvas .hint text below, and
+             zoomAt()'s own call sites in legacy/main.ts), so the buttons
+             were a third, fully redundant way to do the same thing — and,
+             sharing this monospace/dense debug-panel-styled box with the
+             dev-only fps HUD above, they read as leftover developer chrome
+             even though they always worked for every user. -->
+        <label class="cp-x" title="Append '(cherry picked from …)' to the resulting commit message"><input type="checkbox" id="cpRecordOrigin"> Record origin</label>
       </div>
       <div class="delta-readout" id="deltaReadout"></div>
       <div class="hint">wheel scroll &#183; &#8984;/ctrl+wheel zoom &#183; click select &#183; drag a dot to cherry-pick &#183; shift+drag to merge &#183; &#8984;Z undo &#183; scroll the ribbon to zoom the snapshot timeline</div>
