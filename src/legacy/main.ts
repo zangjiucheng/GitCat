@@ -65,13 +65,19 @@ const TAMA_SVG=`
   <path class="mouth mouth-rest" d="M37 51 q1.5 2 3 0 q1.5 2 3 0" fill="none" stroke="var(--fur-line)" stroke-width="1.1" stroke-linecap="round"/>
   <path class="mouth mouth-open mouthf" d="M36.5 50 Q40 55.5 43.5 50 Q40 52 36.5 50 Z" stroke="var(--fur-line)" stroke-width="1"/>
   <ellipse class="mouth mouth-o mouthf" cx="40" cy="51" rx="1.6" ry="2.1" stroke="var(--fur-line)" stroke-width="1"/>
+  <path class="mouth mouth-squiggle" d="M36.5 50.5 q1.4 -2.6 2.8 0 q1.4 2.6 2.8 0 q1.4 -2.6 2.9 0" fill="none" stroke="var(--fur-line)" stroke-width="1.1" stroke-linecap="round"/>
  </g>
 </g>
 <g class="halo"><circle class="sa-stroke" cx="40" cy="40" r="32" fill="none" stroke-width="1.4"/><circle class="ember sa-fill" cx="9" cy="46" r="1.3"/><circle class="ember sa-fill" cx="71" cy="44" r="1.3"/><circle class="ember sa-fill" cx="15" cy="17" r="1.1"/><circle class="ember sa-fill" cx="65" cy="15" r="1.1"/></g>
 <g class="bristle sa-fill"><rect x="63" y="14" width="2.6" height="6" rx="1.1"/><circle cx="64.3" cy="22.5" r="1.3"/></g>
 <g class="yarn"><g class="yarn-ball"><circle class="fur-2" cx="15" cy="76" r="5"/><path class="ink" d="M10.5 74 q4.5 -3 9 .8 M10 77.5 q5 3 10 -1.8 M12.5 71.5 q1 5 -.5 10" fill="none" stroke-width=".8" opacity=".7"/></g><path class="yarn-thread sa-stroke" d="M15 76 q-6 6 -1 10" fill="none" stroke-width="1.5" stroke-linecap="round"/></g>
 <g class="zzz sa-stroke" fill="none" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" opacity=".75"><path class="z" d="M58 16 h3 l-3 3 h3"/><path class="z" d="M62 11 h2.4 l-2.4 2.4 h2.4"/><path class="z" d="M65 7 h2 l-2 2 h2"/></g>
-<g class="spark"><path class="st sparkle" d="M12 26 l1.5 3.6 l3.6 1.5 l-3.6 1.5 l-1.5 3.6 l-1.5 -3.6 l-3.6 -1.5 l3.6 -1.5 z"/><path class="st sparkle" d="M68 30 l1.2 3 l3 1.2 l-3 1.2 l-1.2 3 l-1.2 -3 l-3 -1.2 l3 -1.2 z"/><path class="st sparkle" d="M64 60 l1 2.6 l2.6 1 l-2.6 1 l-1 2.6 l-1 -2.6 l-2.6 -1 l2.6 -1 z"/></g>`;
+<g class="spark"><path class="st sparkle" d="M12 26 l1.5 3.6 l3.6 1.5 l-3.6 1.5 l-1.5 3.6 l-1.5 -3.6 l-3.6 -1.5 l3.6 -1.5 z"/><path class="st sparkle" d="M68 30 l1.2 3 l3 1.2 l-3 1.2 l-1.2 3 l-1.2 -3 l-3 -1.2 l3 -1.2 z"/><path class="st sparkle" d="M64 60 l1 2.6 l2.6 1 l-2.6 1 l-1 2.6 l-1 -2.6 l-2.6 -1 l2.6 -1 z"/></g>
+<g class="qmark sa-fill" font-family="var(--display),sans-serif" font-weight="800"><text x="52" y="18" font-size="13" text-anchor="middle">?</text></g>
+<g class="sync-arrows sa-stroke" fill="none" stroke-width="2.1" stroke-linecap="round">
+ <path d="M52.5 8.2 a6.2 6.2 0 1 1 -6 4.4"/>
+ <path class="sa-fill" stroke="none" d="M45.6 11.4 l2.1 4.2 l-4.6 -.5 z"/>
+</g>`;
 
 /* ============================================================
    1) DESIGN TOKENS the canvas paints with (kept in sync w/ CSS)
@@ -560,6 +566,12 @@ async function mergeCommit(src,dst){
       and undo run in EVERY mascot mode; Tama only decides whether
       she wakes and what one sentence she says.
    ============================================================ */
+// Ref -> its display suffix, e.g. "refs/gitgui/backup/1783884395-123456789-2"
+// -> "1783884395-123456789-2" — mirrors src-tauri's own `short_backup()`
+// (git_bisect.rs/git_merge.rs/…), used everywhere else a backup ref is shown
+// to the user. A blind `.slice(-8)` (the old code here) lands mid-number on
+// this ref shape and prints a meaningless fragment like "28000-12".
+function shortBackup(ref){ const i=ref.lastIndexOf("/"); return i<0?ref:ref.slice(i+1); }
 const Safety={ count:214, lastAt:performance.now()-2*60*1000, snaps:[], pad(n){return String(n).padStart(2,"0");},
   // Single point that writes #undoCount AND toggles #undoBtn's disabled
   // state — there's genuinely nothing for Undo to do at zero snapshots
@@ -583,8 +595,24 @@ const Safety={ count:214, lastAt:performance.now()-2*60*1000, snaps:[], pad(n){r
     const m=Math.max(0,Math.round((performance.now()-this.lastAt)/60000)); return m<1?"just now":m+"m"; } };
 
 class TamaMascot{
-  static STATES={idle:{sticky:false},sleep:{sticky:false},hint:{sticky:false,dwell:3200},thinking:{sticky:true},warn:{sticky:true},danger:{sticky:true},celebrate:{sticky:false,dwell:3600},rescue:{sticky:true}};
-  static CHIP={idle:"◡",sleep:"z",hint:"i",thinking:"…",warn:"!",danger:"!!",celebrate:"✓",rescue:"+"};
+  static STATES={idle:{sticky:false},sleep:{sticky:false},hint:{sticky:false,dwell:3200},thinking:{sticky:true},warn:{sticky:true},danger:{sticky:true},celebrate:{sticky:false,dwell:3600},rescue:{sticky:true},
+    // confused: a real operation FAILURE (see warn() below — distinct from
+    // "warn", which stays reserved for a pre-mutation CAUTION via
+    // mutation.caution; both used the same pose before this split).
+    confused:{sticky:true},
+    // curious: a fresh repo just finished loading — see openRepo()'s success
+    // path. Non-sticky/dwell like "hint" (which it replaces there): settles
+    // back to idle on its own once the toast's dwell elapses.
+    curious:{sticky:false,dwell:3200},
+    // syncing: fetch/pull/push specifically — see doFetch/doPull/doPush,
+    // which used the generic "thinking" pose before this split (still used
+    // by every OTHER long op: bisect sweeps, filter-repo, …).
+    syncing:{sticky:true},
+    // greeting: no repo open (cold boot or Close Repository) — see
+    // bootEmpty(). Non-sticky/dwell like "celebrate": settles back to idle
+    // (which just sits there, since idle IS the resting look while empty).
+    greeting:{sticky:false,dwell:3600}};
+  static CHIP={idle:"◡",sleep:"z",hint:"i",thinking:"…",warn:"!",danger:"!!",celebrate:"✓",rescue:"+",confused:"?",curious:"○",syncing:"↻",greeting:"♡"};
   constructor(el){this.nook=el.nook;this.sprite=el.sprite;this.line=el.line;this.tele=el.tele;this.chip=el.chip;
     this.sticky=null;this.toastT=null;this.dwellT=null;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
   set(s){clearTimeout(this.dwellT);const cfg=TamaMascot.STATES[s]||TamaMascot.STATES.idle;
@@ -600,21 +628,25 @@ class TamaMascot{
   say(t,ms=3200){if(!t){this.line.classList.remove("show");return;}this.line.textContent=t;this.line.classList.add("show");
     const dwell=Math.max(ms,1200+t.length*50);
     clearTimeout(this.toastT);this.toastT=setTimeout(()=>this.line.classList.remove("show"),dwell);}
-  warn(t,ms=5000){this.set("warn");this.say(t,ms);}
+  // "confused", not "warn" — this is a real operation FAILURE (every
+  // call site across the app), distinct from mutation.caution's own
+  // pre-mutation "warn" pose (which still calls set("warn") directly, not
+  // this method).
+  warn(t,ms=5000){this.set("confused");this.say(t,ms);}
   wag(){if(this.reduced)return;this.sprite.classList.remove("wag");void this.sprite.offsetWidth;this.sprite.classList.add("wag");}
   setInteracting(on){this.nook.classList.toggle("is-interacting",on);}
   event(name,p={}){
     switch(name){
       case "fetch.upToDate": case "checkout.clean": this.wag(); return null;
       case "commit.created": Safety.seal(); this._tele(); return null;
-      case "snapshot.surfaced":{const b=Safety.seal();this._tele();this.set("hint");this.say("Backup "+b.ref.slice(-8)+" pinned — you're covered.");return b;}
+      case "snapshot.surfaced":{const b=Safety.seal();this._tele();this.set("hint");this.say("Backup "+shortBackup(b.ref)+" pinned — you're covered.");return b;}
       case "op.long": this.set("thinking"); this.say(""); this._teleText((p.label||"working")+" · 0 / "+(p.total||10000)); return null;
       case "op.progress": this._teleText((p.label||"working")+" · "+p.done+" / "+p.total); return null;
       case "op.done": this.set(this.sticky&&this.sticky!=="thinking"?this.sticky:"idle"); this._tele(); return null;
-      case "mutation.caution":{const b=Safety.seal();this._tele();this.set("warn");this.say("Heads up — this rewrites "+(p.count||"a few")+" commits. Backup "+b.ref.slice(-8)+" saved first.",4200);return b;}
-      case "mutation.destructive":{const b=Safety.seal();this._tele();this.set("danger");this.say((p.label||"This")+" can't be undone. Backup "+b.ref.slice(-8)+" is pinned — type the ref name to go on.",6000);return b;}
+      case "mutation.caution":{const b=Safety.seal();this._tele();this.set("warn");const cnt=p.count?p.count+" commit"+(p.count===1?"":"s"):"a few commits";this.say("Heads up — this rewrites "+cnt+". Backup "+shortBackup(b.ref)+" saved first.",4200);return b;}
+      case "mutation.destructive":{const b=Safety.seal();this._tele();this.set("danger");this.say((p.label||"This")+" can't be undone. Backup "+shortBackup(b.ref)+" is pinned — type the ref name to go on.",6000);return b;}
       case "mutation.cancel": this.sticky=null; this.set("idle"); this.say(""); return null;
-      case "undo.performed":{const s=Safety.seal();this._tele();this.sticky=null;this.set("celebrate");this.say("Rewound to "+(p.hash||"a1b2c3d")+" — nothing lost, I sealed "+s.ref.slice(-8)+" first. ♪",4200);return s;}
+      case "undo.performed":{const s=Safety.seal();this._tele();this.sticky=null;this.set("celebrate");this.say("Rewound to "+(p.hash||"a1b2c3d")+" — nothing lost, I sealed "+shortBackup(s.ref)+" first. ♪",4200);return s;}
       case "rescue.detached": this.set("rescue"); this.say("Detached HEAD — I've got you. One tap puts you back on "+(p.branch||"main")+".",6000); return null;
       case "rescue.resolved": this.sticky=null; this.set("celebrate"); this.say("You're back on "+(p.branch||"main")+". Safe and sound.",3600); return null;
       case "idle": this.sticky=null; this.set("idle"); this.say(""); return null;
@@ -629,7 +661,7 @@ const Tama=new TamaMascot({nook:$("#nook"),sprite:$("#sprite"),line:$("#toastLin
 
 /* The nook cat watches your cursor, and naps when you go idle. */
 Tama.lastMove=performance.now();
-let _pupL=null,_pupR=null,_gazeOn=new Set(["idle","hint","warn","rescue","thinking"]);
+let _pupL=null,_pupR=null,_gazeOn=new Set(["idle","hint","warn","rescue","thinking","confused","curious","syncing"]);
 function gaze(mx,my){
   if(!_pupL){ _pupL=$("#pupL"); _pupR=$("#pupR"); if(!_pupL)return; }
   const st=$("#nook").dataset.state;
@@ -810,7 +842,7 @@ async function doFetch(){
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
   setSyncButtonsBusy("fetchBtn","Fetching…");
-  Tama.set("thinking"); Tama.say("Fetching…");
+  Tama.set("syncing"); Tama.say("Fetching…");
   try{
     const res=await tinvoke("fetch",{path:CUR_REPO,remote:null});
     if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("hint"); Tama.say(res.message||"Fetched.",3200); }
@@ -823,7 +855,7 @@ async function doPull(){
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
   setSyncButtonsBusy("pullBtn","Pulling…");
-  Tama.set("thinking"); Tama.say("Pulling…");
+  Tama.set("syncing"); Tama.say("Pulling…");
   try{
     const res=await tinvoke("pull",{path:CUR_REPO});
     if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pulled.",3200); cheer(res.message||"Pulled.",TAMA_IMG.happy); }
@@ -836,7 +868,7 @@ async function doPush(){
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
   setSyncButtonsBusy("pushBtn","Pushing…");
-  Tama.set("thinking"); Tama.say("Pushing…");
+  Tama.set("syncing"); Tama.say("Pushing…");
   try{
     const res=await tinvoke("push",{path:CUR_REPO});
     if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("celebrate"); Tama.say(res.message||"Pushed.",3200); cheer(res.message||"Pushed.",TAMA_IMG.happy); }
@@ -1132,7 +1164,7 @@ async function openRepo(path){
     // failure (e.g. a read-only app config dir) must never block opening the
     // repo itself.
     tinvoke("track_repo_opened",{path}).catch(e=>console.error("track_repo_opened",e));
-    Tama.set("hint");
+    Tama.set("curious"); // a fresh repo just loaded — she's curious what's in it
     Tama.say("Loaded "+g.n.toLocaleString()+" commits in "+(g.readMs+g.layoutMs).toFixed(0)+" ms. にゃ〜",4200);
     // Runs after loadGraph() (which resets the local bisect row-model) so a
     // recovered live bisect's canvas cues aren't immediately wiped out; and
@@ -1301,6 +1333,7 @@ function bootEmpty(){
   const pick=$(".repo-pick .repo-name"); if(pick) pick.textContent="Open a repository…";
   const bp=$(".branch-pill"); if(bp) bp.style.display="none";
   dirty=true;
+  Tama.set("greeting"); // cold boot AND "Close Repository" both land here — a wave either way
 }
 // "Close Repository" (File menu) — without this, the ONLY way back to the
 // empty/default state was quitting the app outright; bootEmpty() existed
