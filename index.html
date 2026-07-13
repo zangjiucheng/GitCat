@@ -306,35 +306,44 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    "removed". */
 .sub-status[data-status="unreadable"]{background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning)}
 .sub-item .spinner{flex:none}
-/* Bulk "Sync all"/"Update all" row — sits above the per-submodule rows (not
+/* Bulk submodule tools header — sits above the per-submodule rows (not
    crammed into the section's <summary>, which toggles open/closed on any
    click inside it) — same left-indent as .sub-item so it reads as part of
-   the same list, with the recursive checkbox + buttons laid out like the
-   workdir island's `.wd-sec-head`/`.wd-stage-all` section-level action.
-   Two `.sub-update-all` buttons now share this row (Sync all, Update all) —
-   .sub-recursive's own `flex:1` already pushes both flush right, so neither
-   button carries `margin-left:auto` itself: two auto margins on adjacent
-   flex items split the leftover space BETWEEN them instead of both hugging
-   the row's right edge, which is not what two adjacent right-aligned
-   buttons should look like. */
-.sub-head{display:flex;align-items:center;gap:8px;padding:2px 8px 6px 24px}
-.sub-recursive{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted);flex:1;min-width:0}
-.sub-update-all{flex:none;font-size:11px;font-weight:600;color:var(--accent2);background:transparent;
-  border:1px solid color-mix(in srgb,var(--accent2) 45%,var(--border));border-radius:var(--r-control);padding:3px 9px}
+   the same list. Now TWO stacked rows, not one cramped row: the recursive
+   checkbox applies to every bulk action below it (Sync all/Update all here,
+   AND the foreach runner right below — see Sidebar.svelte's own comment on
+   why it's rendered exactly once), so it gets a full-width row of its own
+   with a real label, and Sync all/Update all get their own row underneath
+   with room to breathe instead of splitting a single ~190px-wide row three
+   ways with it. */
+.sub-head{display:flex;flex-direction:column;gap:6px;padding:2px 8px 6px 24px}
+.sub-recursive{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+.sub-bulk-row{display:flex;align-items:center;gap:8px}
+.sub-update-all{flex:1;font-size:11px;font-weight:600;color:var(--accent2);background:transparent;
+  border:1px solid color-mix(in srgb,var(--accent2) 45%,var(--border));border-radius:var(--r-control);padding:4px 9px}
 .sub-update-all:hover:not([disabled]){background:color-mix(in srgb,var(--accent2) 12%,transparent)}
 .sub-update-all[disabled]{opacity:.5;cursor:default}
 /* Bulk "Run command in every submodule…" (submodule_foreach_start/-cancel)
    — sits directly below .sub-head (same left-indent, same row shape) since
    it's a sibling bulk action, but gets its own row: unlike Sync all/Update
-   all (a quick one-shot mutation sharing .sub-head's row), this is a real,
-   long-lived BLOCKING sweep (mirrors Bisect.svelte's own .bz-run "Automate
-   with a command" row) that needs an input field, its own Run/Cancel toggle,
-   and a live streamed-in results list underneath. */
+   all (a quick one-shot mutation sharing .sub-head's own section), this is a
+   real, long-lived BLOCKING sweep (mirrors Bisect.svelte's own .bz-run
+   "Automate with a command" row) that needs an input field, its own
+   Run/Cancel toggle, and a live streamed-in results list underneath.
+   .sub-foreach-input is now a full-width row of its own — NOT inside
+   .sub-foreach-row alongside Run — so its placeholder reads in full instead
+   of eliding after a few characters (the recursive checkbox that used to
+   also share this row already moved up to .sub-head's own row; splitting
+   Run onto its own right-aligned row below is the same fix taken one step
+   further). .sub-foreach-row is still used for the two-item "Running…
+   / Cancel" state, where both items DO need to share one row. */
 .sub-foreach{padding:2px 8px 6px 24px;display:flex;flex-direction:column;gap:6px}
 .sub-foreach-row{display:flex;align-items:center;gap:8px}
-.sub-foreach-input{flex:1;min-width:0;padding:5px 9px;background:var(--bg);border:1px solid var(--border);
+.sub-foreach-row-end{justify-content:flex-end}
+.sub-foreach-input{width:100%;padding:5px 9px;background:var(--bg);border:1px solid var(--border);
   border-radius:var(--r-control);color:var(--text);font-size:11.5px}
 .sub-foreach-input:focus{outline:none;border-color:var(--accent)}
+.sub-foreach .sub-update-all{flex:none}
 .sub-foreach-status{flex:1;display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted)}
 .btn.sub-foreach-cancel{color:var(--warning);border-color:color-mix(in srgb,var(--warning) 50%,var(--border));
   font-size:11px;padding:3px 9px}

@@ -366,31 +366,37 @@
       {#if !sidebarCtrl.submodules.length}
         <div class="sub-item"><span class="rname mut">no submodules</span></div>
       {:else}
-        <!-- Bulk "Update all"/"Sync all" — submodule_path:null in one call
-             each, folding init:true (never-cloned ones included, for Update
-             all) and sharing one optional recursive toggle for submodule-of-
-             a-submodule setups. Lives at the top of the list rather than
-             crammed into <summary> (clicking inside a <summary> toggles the
-             whole details/open state, and no other ref-group section has
-             ever needed an interactive control there). -->
+        <!-- Bulk submodule tools — recursive toggle, Sync all/Update all, and
+             the foreach command runner below. Lives at the top of the list
+             rather than crammed into <summary> (clicking inside a <summary>
+             toggles the whole details/open state, and no other ref-group
+             section has ever needed an interactive control there).
+             Recursive is ONE shared checkbox/state (submodulesRecursive) —
+             it used to render TWICE (once next to Sync all/Update all, once
+             again next to the foreach input), which read as two independent
+             settings instead of one, and squeezed the foreach input down to
+             a few visible characters in the process. One checkbox on its
+             own row, applying to every bulk action below it, fixes both. -->
         <div class="sub-head">
           <label class="sub-recursive"
-            ><input type="checkbox" bind:checked={sidebarCtrl.submodulesRecursive} disabled={sidebarCtrl.busy} /> recursive</label
+            ><input type="checkbox" bind:checked={sidebarCtrl.submodulesRecursive} disabled={sidebarCtrl.busy} /> Recursive (nested submodules)</label
           >
-          <button
-            class="sub-update-all"
-            disabled={sidebarCtrl.busy}
-            onclick={() => sidebarCtrl.syncAllSubmodules(sidebarCtrl.submodulesRecursive)}
-          >
-            {#if sidebarCtrl.busy && sidebarCtrl.busyTarget === SUBMODULES_SYNC_ALL}<span class="spinner"></span>{:else}Sync all{/if}
-          </button>
-          <button
-            class="sub-update-all"
-            disabled={sidebarCtrl.busy}
-            onclick={() => sidebarCtrl.updateAllSubmodules(sidebarCtrl.submodulesRecursive)}
-          >
-            {#if sidebarCtrl.busy && sidebarCtrl.busyTarget === SUBMODULES_ALL}<span class="spinner"></span>{:else}Update all{/if}
-          </button>
+          <div class="sub-bulk-row">
+            <button
+              class="sub-update-all"
+              disabled={sidebarCtrl.busy}
+              onclick={() => sidebarCtrl.syncAllSubmodules(sidebarCtrl.submodulesRecursive)}
+            >
+              {#if sidebarCtrl.busy && sidebarCtrl.busyTarget === SUBMODULES_SYNC_ALL}<span class="spinner"></span>{:else}Sync all{/if}
+            </button>
+            <button
+              class="sub-update-all"
+              disabled={sidebarCtrl.busy}
+              onclick={() => sidebarCtrl.updateAllSubmodules(sidebarCtrl.submodulesRecursive)}
+            >
+              {#if sidebarCtrl.busy && sidebarCtrl.busyTarget === SUBMODULES_ALL}<span class="spinner"></span>{:else}Update all{/if}
+            </button>
+          </div>
         </div>
         <!-- Bulk "Run command in every submodule…" (submodule_foreach_start/
              -cancel) — a real, long-lived BLOCKING sweep (same shape as
@@ -399,8 +405,8 @@
              own Run/Cancel affordance plus a live, streamed-in results list
              instead of folding into sub-head's shared busy spinner. Reuses
              submodulesRecursive (the SAME checkbox/state Sync all/Update all
-             above already share) rather than a third, parallel recursive
-             toggle — see sidebar.svelte.ts's own doc comment. -->
+             above already share, rendered ONCE now — see sub-head's own
+             comment) rather than a second, parallel recursive toggle. -->
         <div class="sub-foreach">
           {#if sidebarCtrl.foreachRunning}
             <div class="sub-foreach-row">
@@ -408,22 +414,22 @@
               <button class="btn ghost sub-foreach-cancel" onclick={() => sidebarCtrl.cancelForeach()}>&#9632; Cancel</button>
             </div>
           {:else}
-            <div class="sub-foreach-row">
-              <input
-                class="sub-foreach-input mono"
-                type="text"
-                placeholder="Run command in every submodule&#8230;"
-                spellcheck="false"
-                autocomplete="off"
-                disabled={sidebarCtrl.busy}
-                bind:value={sidebarCtrl.foreachCommand}
-                onkeydown={(e) => {
-                  if (e.key === "Enter") sidebarCtrl.startForeach(bridge.CUR_REPO as unknown as string, sidebarCtrl.foreachCommand, sidebarCtrl.submodulesRecursive);
-                }}
-              />
-              <label class="sub-recursive"
-                ><input type="checkbox" bind:checked={sidebarCtrl.submodulesRecursive} disabled={sidebarCtrl.busy} /> recursive</label
-              >
+            <!-- Input gets its OWN full-width row (not shared with Run — see
+                 .sub-foreach-input's own comment) so the placeholder actually
+                 reads in full instead of truncating after a few characters. -->
+            <input
+              class="sub-foreach-input mono"
+              type="text"
+              placeholder="Run command in every submodule&#8230;"
+              spellcheck="false"
+              autocomplete="off"
+              disabled={sidebarCtrl.busy}
+              bind:value={sidebarCtrl.foreachCommand}
+              onkeydown={(e) => {
+                if (e.key === "Enter") sidebarCtrl.startForeach(bridge.CUR_REPO as unknown as string, sidebarCtrl.foreachCommand, sidebarCtrl.submodulesRecursive);
+              }}
+            />
+            <div class="sub-foreach-row sub-foreach-row-end">
               <button
                 class="sub-update-all"
                 disabled={sidebarCtrl.busy || !sidebarCtrl.foreachCommand.trim()}
