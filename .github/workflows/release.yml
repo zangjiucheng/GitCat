@@ -160,3 +160,25 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.target }}
+
+  # tauri-action's own `prerelease: false` input above does not reliably
+  # stick — every release through v0.5.0 ended up prerelease=true on GitHub
+  # regardless (verified via `gh api repos/.../releases`), which silently
+  # breaks the in-app updater: its endpoint
+  # (releases/latest/download/latest.json) only ever resolves to a
+  # published, NON-prerelease release. Force-correct the flag here, once,
+  # after every matrix leg has uploaded its assets — independent of whatever
+  # tauri-action is actually doing internally. The release stays a draft
+  # (untouched by this step) for a human to review and publish by hand; this
+  # only makes sure that once published, it's actually discoverable as an
+  # update.
+  fix-prerelease-flag:
+    name: Force prerelease=false on the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: gh release edit --prerelease=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --prerelease=false --repo ${{ github.repository }}
