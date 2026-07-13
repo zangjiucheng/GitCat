@@ -4,7 +4,7 @@
 
 **A cozy, safety-first desktop Git client.**
 
-Tauri 2 + Rust + Svelte 5, with a warm "Lamplight / Cozy Terminal" identity — and Tama, a cat mascot who reacts to what's actually happening and keeps a snapshot under you before every mutation.
+Tauri 2 + Rust + Svelte 5, with a clean neutral canvas (white / charcoal-dark, color reserved for meaning) — and Tama, a cat mascot who reacts to what's actually happening and keeps a snapshot under you before every mutation.
 
 [![CI](https://github.com/zangjiucheng/GitCat/actions/workflows/ci.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/ci.yml)
 [![Docs](https://github.com/zangjiucheng/GitCat/actions/workflows/docs.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/docs.yml)
@@ -50,6 +50,8 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 - Drag-and-drop cherry-pick and merge (shift-drag) onto HEAD, or right-click a commit row for cherry-pick / merge / revert — all backed by a real 3-way conflict resolver
 - Squash-merge, plus explicit fast-forward strategy choice: auto (default) / no-ff (always a real merge commit) / ff-only (refuse unless a fast-forward is possible)
 - Linear rebase onto any branch — including multi-commit conflict sequences and mid-sequence skip
+- Interactive rebase — a drag-to-reorder planner (pick / edit / squash / fixup / drop) before it ever touches your history
+- Submodules — init/update (including `--recursive`), add, deinit/remove, a bulk `foreach` command runner, and "Open" to manage a submodule exactly like its own top-level repo
 - Patch export/apply (`git format-patch` / `git am`), with real 3-way conflict resolution through the existing conflict resolver
 - Pluggable external diff/merge tools — hand off a diff or a conflict to your own configured tool (e.g. VS Code, Beyond Compare) instead of GitCat's built-in view
 - `git bisect` — mark good/bad/skip, live canvas cues for the narrowing range, automatic first-bad detection
@@ -68,7 +70,7 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 - Multi-repository dashboard for tracking and quickly switching between repos you use often
 - "Close Repository" — an in-app way back to the empty state
 - In-app `.gitignore` / `.mailmap` editors
-- A real native app menu (File / Repository / Edit / View / Window / Help) and About panel, not just a default OS stub
+- A real native app menu (File / Repository / Edit / View / Tools / Window / Help) and About panel, not just a default OS stub
 - Dark theme by default (light available via the toggle)
 - Eight Tama expressions wired into every relevant moment across the app — Reflog Rescue, Dangling-Object Recovery, Plumbing, Pickaxe Search, and the Interactive Rebase planner all get mascot art, and filter-repo/conflict resolution shows a "thinking" face during real work instead of freezing on one expression the whole time
 
@@ -108,7 +110,7 @@ cargo test          # run the Rust test suite
 ## Tech stack
 
 - **Rust core** (`src-tauri/`) — [git2](https://github.com/rust-lang/git2-rs) for reads, the `git` CLI for writes (every mutation snapshots first), [tauri-specta](https://github.com/specta-rs/tauri-specta) for a fully typed IPC boundary auto-generated into `src/ipc/bindings.ts`
-- **Frontend** — Svelte 5 "islands" (one per feature: resolver, bisect, reflog, rerere, plumbing, filter-repo, setup wizard, sidebar, ⌘K, commit detail) layered over a hand-tuned vanilla canvas for the commit graph itself
+- **Frontend** — Svelte 5 "islands" (one per feature: resolver, bisect, reflog, rerere, plumbing, filter-repo, setup wizard, repositories dashboard, sidebar, ⌘K, commit detail) layered over a hand-tuned vanilla canvas for the commit graph itself
 - **CI/CD** — GitHub Actions: `cargo test` + `pnpm test` on every push/PR, a 6-platform release matrix (macOS/Linux/Windows × arm64/x86_64) on tagged releases, and a [VitePress](https://vitepress.dev) docs site (`docs/`) auto-deployed to [GitHub Pages](https://zangjiucheng.github.io/GitCat/) on every change
 
 ## License
