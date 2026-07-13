@@ -74,26 +74,79 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 @media (max-width:1180px){:root{--sidebar-w:224px;--detail-w:300px}}
 @media (max-width:980px){:root{--sidebar-w:200px;--detail-w:264px}}
 
-/* ============================== TOP BAR ============================== */
+/* ============================== TOP BAR ==============================
+   Three zones, left to right: [brand + repo IDENTITY: repo-pick, branch
+   pill] -> search -> [repo/global ACTIONS: sync actions, Undo, theme].
+   Fetch/Pull/Push sit with Undo/theme (all actions), not with repo-pick/
+   branch-pill (identity/context) — a deliberate split, not "everything
+   about the repo in one place", per direct feedback that grouping by
+   identity-vs-action reads clearer than grouping by subject-matter. Every
+   chip-like control (.repo-pick/.branch-pill/.tb-btn) shares ONE padding
+   rhythm (6px 10px) and ONE icon system (.tb-ic — see the HTML comment
+   above the markup for why this replaced the old per-button Unicode
+   glyphs) so the bar reads as one designed surface instead of several
+   buttons that each happened to be built at a different time.
+   Centering search: .tb-left and .tb-right share the SAME flex:1, with
+   .cmd-hint itself flex:none (fixed width) between them — this puts it at
+   the bar's TRUE horizontal center regardless of how wide either side's
+   actual content is. Two earlier attempts both had real bugs: an
+   absolutely-centered search box could overlap the sync actions whenever
+   the left side's content was wide enough to cross the bar's true center;
+   two INDEPENDENT flex:1 spacers (one on each side of search) center it in
+   whatever space is left over after both sides' own content, which is only
+   the bar's true center when both sides happen to be equally wide — they
+   almost never are here, hence the "search feels a bit off-center" report
+   this replaced. .tb-left/.tb-right's shared flex:1 is the one construction
+   that's correct for both sides being unequal AND can't overlap (flex items
+   never overlap). */
 .topbar{grid-area:topbar;display:flex;align-items:center;gap:10px;padding:0 12px;
   background:var(--panel);border-bottom:1px solid var(--border);position:relative;z-index:40}
-.brand{display:flex;align-items:center;gap:7px;font-family:var(--display);font-weight:700;letter-spacing:.2px}
+/* min-width DELIBERATELY left at its flex default (auto, i.e. "never shrink
+   below my own content's natural size") — an earlier draft set this to 0 to
+   let both sides shrink "evenly", which instead let .tb-left get crushed
+   past what Fetch/Pull/Push actually need, silently clipping Push behind
+   .sync-actions's own overflow:hidden (there for the segmented-control
+   corner-rounding, not meant to hide whole buttons). Both sides refusing to
+   shrink below content means centering degrades gracefully at extreme
+   window widths (search's own min-width below gives up its space first)
+   instead of ever silently hiding a real button. */
+.tb-left{display:flex;align-items:center;gap:10px;flex:1}
+.tb-right{display:flex;align-items:center;gap:10px;flex:1;justify-content:flex-end}
+.brand{display:flex;align-items:center;gap:7px;font-family:var(--display);font-weight:700;letter-spacing:.2px;flex:none}
 .brand .mark{width:24px;height:24px;flex:none}
-.repo-pick{display:flex;align-items:center;gap:6px;padding:5px 9px;background:var(--elevated);
+.tb-ic{width:14px;height:14px;flex:none}
+/* Repo identity cluster: which repo, which submodule chain, which branch —
+   grouped with a tighter gap than the bar's own outer 10px so these three
+   read as one unit, not three peers of Fetch/Pull/Push. */
+.tb-cluster{display:flex;align-items:center;gap:6px}
+.repo-pick{display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--elevated);
   border:1px solid var(--border);border-radius:var(--r-control);font-weight:600}
 .repo-pick .chev{color:var(--muted)}
-.branch-pill{display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:var(--r-pill);
+.branch-pill{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:var(--r-pill);
   background:color-mix(in srgb,var(--accent) 16%,transparent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);
   font-weight:600;font-size:12px}
-.branch-pill .ic{color:var(--accent)}
+.branch-pill .tb-ic{color:var(--accent)}
 .branch-pill .ab{font-family:var(--mono);font-size:11px;color:var(--muted)}
 .branch-pill .ab b{color:var(--text)}
-.spacer{flex:1}
-.cmd-hint{display:flex;align-items:center;gap:8px;min-width:180px;max-width:300px;flex:0 1 260px;
-  padding:5px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--muted);cursor:text}
+/* Bigger than before (320 vs. the old 260px basis) per direct feedback;
+   flex:none (not flex-basis) so .tb-left/.tb-right's own flex:1 is what
+   negotiates the actual leftover space, not this. min-width keeps it usable
+   if the window is narrow enough that .tb-left/.tb-right can't both fit
+   their content at full size. */
+.cmd-hint{display:flex;align-items:center;gap:8px;width:320px;min-width:200px;
+  padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--muted);cursor:text}
 .cmd-hint kbd{margin-left:auto;font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:5px;
   background:var(--elevated);border:1px solid var(--border);color:var(--muted)}
-.sync-actions{display:flex;align-items:center;gap:6px}
+/* Fetch/Pull/Push as ONE segmented control (shared frame, internal
+   dividers) instead of three separate bordered boxes — same underlying
+   .tb-btn markup/JS hooks (setSyncButtonsBusy/clearSyncButtonsBusy key off
+   these same #fetchBtn/#pullBtn/#pushBtn ids unchanged), just a shared
+   container doing the bordering instead of each button doing its own. */
+.sync-actions{display:flex;align-items:stretch;background:var(--elevated);
+  border:1px solid var(--border);border-radius:var(--r-control);overflow:hidden}
+.sync-actions .tb-btn{border:none;border-radius:0;background:transparent}
+.sync-actions .tb-btn:not(:last-child){border-right:1px solid var(--border)}
+.sync-actions .tb-btn:hover{background:var(--panel)}
 .tb-btn{display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--elevated);
   border:1px solid var(--border);border-radius:var(--r-control);font-weight:600;white-space:nowrap;
   transition:border-color .12s,background-color .12s}
@@ -102,6 +155,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tb-btn .badge{font-family:var(--mono);font-size:11px;background:var(--accent);color:#fff;
   border-radius:var(--r-pill);padding:0 6px;font-weight:700}
 .tb-btn.undo{border-color:color-mix(in srgb,var(--accent2) 40%,var(--border))}
+.tb-btn.undo span{display:flex;align-items:center;gap:6px}
 .tb-btn.undo:disabled .badge{background:var(--muted)}
 .tb-btn.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,transparent);
   background:color-mix(in srgb,var(--danger) 8%,var(--elevated))}
@@ -884,6 +938,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .backup-note{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;color:var(--muted);
   background:color-mix(in srgb,var(--accent2) 10%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 30%,transparent);border-radius:var(--r-control);padding:8px 10px}
 .backup-note code{font-family:var(--mono);color:var(--accent2)}
+/* Inline "stashing didn't actually fix it" notice inside the dirty-tree
+   chooser (see resolver.svelte.ts's `dirtyBlockStuck` doc comment for why
+   this can't just be a bridge.tama.warn toast — the chooser's own `.scrim`
+   sits on top of the sidebar's Tama nook the whole time it's open). Same
+   shape as .backup-note, --warning instead of --accent2 to match Tama's own
+   "confused" state's accent color for this class of message. */
+.dirty-stuck-note{margin-top:12px;font-size:12px;color:var(--text);line-height:1.5;
+  background:color-mix(in srgb,var(--warning) 12%,transparent);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);border-radius:var(--r-control);padding:9px 11px}
 /* Prominent "nothing chosen yet" prompt for a modal step whose body would
    otherwise render empty (e.g. the setup wizard's "pick a folder" step before
    a folder is chosen) — a dashed accent-colored call-to-action box instead of
@@ -1238,6 +1300,19 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 
   <!-- ============================ TOP BAR ============================ -->
   <header class="topbar">
+    <!-- .tb-left/.tb-right share the SAME flex:1 so the search bar between
+         them (flex:none, fixed width) sits at the bar's TRUE horizontal
+         center no matter how wide either side's actual content is — brand
+         is INSIDE .tb-left (not a separate sibling) specifically so its
+         width counts toward that balance too. A previous attempt centered
+         search with position:absolute instead, which could overlap the sync
+         actions whenever the left side was wide enough to cross center; a
+         later attempt used two independent flex:1 spacers around search,
+         which centers it in the LEFTOVER space rather than the bar's own
+         center — visually off-center whenever the two sides' content widths
+         differ (they almost always do here). This is the one that's actually
+         correct for both cases. -->
+    <div class="tb-left">
     <!-- Same mark as the app icon (design/assets/app-icon.svg -> src-tauri/icons/)
          inlined here instead of an <img>, so it stays crisp at any DPI and needs
          no separate asset request — mirrors how .mark was already inline SVG. -->
@@ -1254,30 +1329,76 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
         <ellipse cx="733" cy="447" rx="98" ry="119" transform="rotate(18 733 447)"/>
       </g>
     </svg>GitCat</div>
+    <!-- Icons below are ONE small hand-drawn-consistent set (16x16, 1.6
+         stroke, round caps/joins — same family the .mark/Tama SVGs already
+         use) replacing the topbar's old mix of font-rendered Unicode glyphs
+         (↻ ↓ ↑ ⌢ ▾ ↰ ◐), which varied wildly in visual weight from glyph to
+         glyph AND render inconsistently across platforms/fonts — a real
+         cross-platform risk for a Tauri app, not just a look-and-feel
+         nitpick. `fill`/`stroke`/`stroke-width` set once on each <svg> and
+         inherited by its child <path>/<circle>s (standard SVG/CSS
+         inheritance) rather than repeated per-element. -->
     <!-- .repo-name is load-bearing, not decorative: openRepo()'s loading
          spinner (legacy/main.ts) gets inserted as this button's FIRST child
          while a repo is loading, so a bare "span" selector for the name text
          would grab the spinner instead — see openRepo()'s own comment on
          that exact line for the bug this class fixes. -->
-    <button class="repo-pick"><span class="repo-name">gitcat</span><span class="chev">&#9662;</span></button>
-    <!-- "Back to <parent repo>" — only shown once the user has navigated INTO
-         a submodule (legacy/main.ts's NAV_STACK is non-empty); hidden by
-         default here, toggled by updateBackToParentBtn() alongside every
-         push/pop of that stack (enterSubmodule/goBackToParent/pickRepo). The
-         name comes from repoBasename(), the SAME folder-name logic
-         ".repo-pick"'s own span above uses for the current repo. -->
-    <button class="tb-btn" id="backToParentBtn" style="display:none" title="Go back to the repository you navigated into this submodule from">&#8592; Back to <span id="backToParentName"></span></button>
-    <div class="branch-pill"><span class="ic">&#9282;</span><span id="pillBranch">main</span><span class="ab" id="pillAb"><b>&#8593;2</b>&#183;<b>&#8595;0</b></span></div>
-    <div class="sync-actions">
-      <button class="tb-btn" id="fetchBtn" title="Fetch — update remote-tracking refs">&#8635; Fetch</button>
-      <button class="tb-btn" id="pullBtn" title="Pull (fast-forward only)">&#8595; Pull</button>
-      <button class="tb-btn" id="pushBtn" title="Push">&#8593; Push</button>
+    <div class="tb-cluster">
+      <!-- "Back to <parent repo>" — only shown once the user has navigated
+           INTO a submodule (legacy/main.ts's NAV_STACK is non-empty); hidden
+           by default here, toggled by updateBackToParentBtn() alongside
+           every push/pop of that stack (enterSubmodule/goBackToParent/
+           pickRepo). The name comes from repoBasename(), the SAME
+           folder-name logic ".repo-pick"'s own span below uses for the
+           current repo. -->
+      <button class="tb-btn" id="backToParentBtn" style="display:none" title="Go back to the repository you navigated into this submodule from">
+        <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 3.5 5 8l6 4.5"/></svg>
+        Back to <span id="backToParentName"></span>
+      </button>
+      <button class="repo-pick">
+        <span class="repo-name">gitcat</span>
+        <svg class="tb-ic chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg>
+      </button>
+      <div class="branch-pill">
+        <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="4.6" cy="3.6" r="1.6"/><circle cx="4.6" cy="12.4" r="1.6"/><circle cx="11.4" cy="8.4" r="1.6"/>
+          <path d="M4.6 5.2v5.6"/><path d="M4.6 6.8c0 2.6 2.2 2.6 5.3 1.9"/>
+        </svg>
+        <span id="pillBranch">main</span><span class="ab" id="pillAb"><b>&#8593;2</b>&#183;<b>&#8595;0</b></span>
+      </div>
     </div>
-    <div class="spacer"></div>
+    </div>
     <div class="cmd-hint" title="Command palette"><span>Search commits, refs, actions&#8230;</span><kbd>&#8984;K</kbd></div>
-    <div class="spacer"></div>
-    <button class="tb-btn undo" id="undoBtn" title="Global Undo — Safety Manager (⌘Z)"><span>&#8624; Undo</span><span class="badge" id="undoCount">214</span></button>
-    <button class="icon-btn" id="themeBtn" title="Toggle theme">&#9680;</button>
+    <div class="tb-right">
+      <!-- Fetch/Pull/Push live here (repo ACTIONS), not next to the repo-pick/
+           branch-pill cluster on the left (repo IDENTITY) — grouped with
+           Undo/theme (also actions) per direct feedback that this is the
+           clearer split, not "everything about the current repo together". -->
+      <div class="sync-actions">
+        <button class="tb-btn" id="fetchBtn" title="Fetch — update remote-tracking refs">
+          <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.6v3h-3"/></svg>
+          Fetch
+        </button>
+        <button class="tb-btn" id="pullBtn" title="Pull (fast-forward only)">
+          <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.2v7.3"/><path d="M4.8 7.2 8 10.4l3.2-3.2"/><path d="M3.2 13h9.6"/></svg>
+          Pull
+        </button>
+        <button class="tb-btn" id="pushBtn" title="Push">
+          <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.8V5.5"/><path d="M4.8 7.8 8 4.6l3.2 3.2"/><path d="M3.2 13h9.6"/></svg>
+          Push
+        </button>
+      </div>
+      <button class="tb-btn undo" id="undoBtn" title="Global Undo — Safety Manager (⌘Z)">
+        <span>
+          <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h6.5a3.5 3.5 0 0 1 0 7H7.2"/><path d="M6.5 3.3 4 6l2.5 2.7"/></svg>
+          Undo
+        </span>
+        <span class="badge" id="undoCount">214</span>
+      </button>
+      <button class="icon-btn" id="themeBtn" title="Toggle theme">
+        <svg class="tb-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 2.6a5.4 5.4 0 0 1 0 10.8z" fill="currentColor"/></svg>
+      </button>
+    </div>
   </header>
 
   <!-- ============================ SIDEBAR ============================ -->
