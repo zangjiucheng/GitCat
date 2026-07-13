@@ -43,6 +43,7 @@ vi.mock("../../ipc/bindings", () => ({
     stashSave: vi.fn(),
     stashList: vi.fn(),
     stashPop: vi.fn(),
+    workdirStatus: vi.fn(),
     mergeSquash: vi.fn(),
     mergeSquashAbort: vi.fn(),
     mergeSquashContinue: vi.fn(),
@@ -137,12 +138,20 @@ function resetResolver() {
   resolver.sha = "";
   resolver.op = "cherry-pick";
   resolver.dirtyBlock = null;
+  resolver.dirtyBlockStuck = null;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   resetResolver();
   workdirCtrl.message = ""; // real (unmocked) singleton — reset between tests, see the import's own comment
+  // Default to "genuinely clean" so every EXISTING stash-and-retry test
+  // (written before this post-stash verification existed) doesn't need to
+  // know or care about it — only the tests that specifically exercise the
+  // "stash silently left something behind" case override this.
+  vi.mocked(commands.workdirStatus).mockResolvedValue(
+    ok({ staged: [], unstaged: [], conflicted: 0, branch: "main", hasStash: false }),
+  );
 });
 
 describe("isolation", () => {
@@ -748,7 +757,11 @@ describe("dirtyBlock (stash-and-retry chooser)", () => {
     await resolver.stashAndRetryDirtyBlock();
 
     expect(commands.cherryPick).toHaveBeenCalledTimes(1); // only triggerDirtyBlock's original call — never retried
-    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("some other stash failure"));
+    // Shown INLINE (dirtyBlockStuck), not via a bridge.tama.warn toast — see
+    // that field's own doc comment: a toast in the sidebar's Tama nook is
+    // invisible while this modal's scrim sits on top of it.
+    expect(resolver.dirtyBlockStuck).toContain("some other stash failure");
+    expect(resolver.dirtyBlock).not.toBeNull(); // chooser stays open
     expect(resolver.busy).toBe(false);
   });
 
@@ -832,6 +845,45 @@ describe("dirtyBlock (stash-and-retry chooser)", () => {
     expect(resolver.dirtyBlock?.message).toBe("still blocked");
     expect(commands.stashList).not.toHaveBeenCalled();
     expect(commands.stashPop).not.toHaveBeenCalled();
+  });
+
+  // Regression test: a path staged as an embedded git repository (a
+  // submodule directory added without a matching .gitmodules entry) blocks
+  // cherry-pick/merge/rebase/revert exactly like any other dirty-tree
+  // collision, but `git stash push -u` — empirically verified against a
+  // repo built to reproduce this exact shape — reports SUCCESS (or "nothing
+  // to stash") without touching it at all, so retrying used to hit the
+  // identical refusal every time with no explanation. This must be caught
+  // BEFORE retrying, not after.
+  it("does not retry when stash reports success but workdir_status shows something is still stuck", async () => {
+    await triggerDirtyBlock();
+    vi.mocked(commands.stashSave).mockResolvedValueOnce(workdirResult({ ok: true, message: "stashed" }));
+    vi.mocked(commands.workdirStatus).mockResolvedValueOnce(
+      ok({ staged: [{ path: "vendor/widget-lib", oldPath: null, status: "A" }], unstaged: [], conflicted: 0, branch: "main", hasStash: true }),
+    );
+
+    await resolver.stashAndRetryDirtyBlock();
+
+    expect(commands.cherryPick).toHaveBeenCalledTimes(1); // only triggerDirtyBlock's original call — never retried
+    expect(resolver.dirtyBlockStuck).toContain("vendor/widget-lib");
+    expect(resolver.dirtyBlock).not.toBeNull(); // chooser stays open — nothing was resolved
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("does not retry when stash reports nothing-to-stash but workdir_status shows something is still stuck", async () => {
+    await triggerDirtyBlock();
+    vi.mocked(commands.stashSave).mockResolvedValueOnce(
+      workdirResult({ ok: false, message: "Nothing to stash — the working tree is clean." }),
+    );
+    vi.mocked(commands.workdirStatus).mockResolvedValueOnce(
+      ok({ staged: [{ path: "vendor/widget-lib", oldPath: null, status: "A" }], unstaged: [], conflicted: 0, branch: "main", hasStash: false }),
+    );
+
+    await resolver.stashAndRetryDirtyBlock();
+
+    expect(commands.cherryPick).toHaveBeenCalledTimes(1);
+    expect(resolver.dirtyBlockStuck).toContain("vendor/widget-lib");
+    expect(resolver.dirtyBlock).not.toBeNull();
   });
 });
 

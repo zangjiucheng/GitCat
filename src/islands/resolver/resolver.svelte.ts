@@ -347,6 +347,19 @@ class ResolverState {
   // force through a dirty tree, so the only two choices are "stash and
   // retry" (leave stashed, or reapply after).
   dirtyBlock = $state<{ message: string; verb: string; retry: () => Promise<void> } | null>(null);
+  // Set instead of (never alongside) closing `dirtyBlock` when a stash
+  // attempt "succeeds" but the tree is STILL not actually clean afterward
+  // (see `doStashAndRetry`'s own doc comment — an embedded-git-repository
+  // path with no `.gitmodules` mapping is the empirically-confirmed case,
+  // but this is written generically). Shown INLINE inside the dirtyBlock
+  // modal itself (see Resolver.svelte) rather than via `bridge.tama.warn` —
+  // that toast renders in the sidebar's Tama nook, which sits UNDER this
+  // modal's `.scrim` (z-index 300 vs. the nook's own unraised stacking
+  // context), so a toast alone is invisible the whole time this modal is
+  // open. Cleared by `cancelDirtyBlock()` and whenever a fresh dirtyBlock
+  // opens (see the four `this.dirtyBlock = null;` reset sites in
+  // startPick/startMerge/startRebase/startRevert, which now also reset this).
+  dirtyBlockStuck = $state<string | null>(null);
 
   sha = "";
   repo = "";
@@ -392,6 +405,7 @@ class ResolverState {
     }
     this.demo = false;
     this.dirtyBlock = null;
+    this.dirtyBlockStuck = null;
     this.op = "cherry-pick";
     this.repo = repo;
     this.busy = true;
@@ -424,6 +438,7 @@ class ResolverState {
     }
     this.demo = false;
     this.dirtyBlock = null;
+    this.dirtyBlockStuck = null;
     this.op = "merge";
     this.repo = repo;
     this.busy = true;
@@ -478,6 +493,7 @@ class ResolverState {
     }
     this.demo = false;
     this.dirtyBlock = null;
+    this.dirtyBlockStuck = null;
     this.op = "rebase";
     this.repo = repo;
     this.busy = true;
@@ -573,6 +589,7 @@ class ResolverState {
     }
     this.demo = false;
     this.dirtyBlock = null;
+    this.dirtyBlockStuck = null;
     this.op = "revert";
     this.repo = repo;
     this.busy = true;
@@ -970,6 +987,7 @@ class ResolverState {
 
   cancelDirtyBlock() {
     this.dirtyBlock = null;
+    this.dirtyBlockStuck = null;
   }
 
   private async doStashAndRetry(reapply: boolean) {
@@ -977,6 +995,7 @@ class ResolverState {
     if (!block) return;
     if (this.demo) {
       this.dirtyBlock = null;
+      this.dirtyBlockStuck = null;
       bridge.tama.set("hint");
       bridge.tama.say((reapply ? "Stashed, retried, and reapplied " : "Stashed and retried ") + "(demo).");
       return;
@@ -1003,10 +1022,37 @@ class ResolverState {
       // chooser reopens (see the module doc's `dirtyBlock` note).
       const nothingToStash = !stashRes.ok && stashRes.message === "Nothing to stash — the working tree is clean.";
       if (!stashRes.ok && !nothingToStash) {
-        bridge.tama.warn(stashRes.message || "Couldn't stash your changes — nothing was retried.");
+        // Shown INLINE (dirtyBlockStuck), not via bridge.tama.warn — see
+        // that field's own doc comment: a toast in the sidebar's Tama nook
+        // is invisible the whole time this modal's `.scrim` (z-index 300)
+        // is on top of it, which is exactly the state we're still in here
+        // (dirtyBlock is deliberately NOT cleared on this path).
+        this.dirtyBlockStuck = stashRes.message || "Couldn't stash your changes — nothing was retried.";
+        return;
+      }
+      // EMPIRICALLY VERIFIED: a path staged as an embedded git repository
+      // (a submodule directory `git add`ed directly, WITHOUT a matching
+      // .gitmodules entry — e.g. left over from an incomplete submodule
+      // remove/re-add) blocks cherry-pick/merge/rebase/revert exactly like
+      // any other dirty-tree collision, but `git stash push -u` reports
+      // success (or "nothing to stash") WITHOUT actually touching it — the
+      // path is still sitting there staged afterward. Retrying then hits
+      // the IDENTICAL refusal, reopening this exact chooser forever with no
+      // indication anything is different. Checking the tree is genuinely
+      // clean before retrying turns that silent loop into one clear,
+      // actionable message instead.
+      const statusRes = await commands.workdirStatus(repo);
+      if (statusRes.status === "ok" && (statusRes.data.staged.length || statusRes.data.unstaged.length)) {
+        const stuck = [...statusRes.data.staged, ...statusRes.data.unstaged].map((e) => e.path).join(", ");
+        this.dirtyBlockStuck =
+          "Stashing didn't clear " +
+          stuck +
+          " — retrying would just hit the same wall. This is often a submodule staged without a matching " +
+          ".gitmodules entry (git's own stash can't touch it); unstage or properly re-add it as a submodule, then try again.";
         return;
       }
       this.dirtyBlock = null;
+      this.dirtyBlockStuck = null;
       // Release the lock BEFORE calling retry() — startPick/startMerge/
       // startRebase/startRevert each take this SAME lock themselves at their
       // own top, so holding it here would make retry() silently no-op.

@@ -153,6 +153,9 @@
           Stash your uncommitted changes, then retry the {block.verb.toLowerCase()} — or leave it and sort the working
           tree out yourself.
         </p>
+        {#if resolver.dirtyBlockStuck}
+          <p class="dirty-stuck-note">&#9888;&#65039; {resolver.dirtyBlockStuck}</p>
+        {/if}
       </div>
       <div class="modal-foot">
         <button class="btn ghost" disabled={resolver.busy} onclick={() => resolver.cancelDirtyBlock()}>Cancel</button>
