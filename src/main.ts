@@ -42,6 +42,7 @@ import { cmdkCtrl } from "./islands/cmdk/cmdk.svelte.ts";
 import VimNav from "./islands/vimnav/VimNav.svelte";
 import About from "./islands/about/About.svelte";
 import { aboutCtrl } from "./islands/about/about.svelte.ts";
+import { updaterCtrl } from "./islands/updater/updater.svelte.ts";
 import Detail from "./islands/detail/Detail.svelte";
 import { workdirCtrl } from "./islands/workdir/workdir.svelte.ts";
 import BisectDrawer from "./islands/bisectdrawer/BisectDrawer.svelte";
@@ -202,6 +203,14 @@ if (IN_TAURI) {
       case "about":
         aboutCtrl.show();
         break;
+      case "check-for-updates":
+        // Opens the SAME About panel the update UI already lives in (see
+        // About.svelte) rather than a separate flow — one place to both see
+        // what's installed and check/install what's newer. show() is a
+        // no-op if already open.
+        aboutCtrl.show();
+        updaterCtrl.check();
+        break;
       case "bisect":
         openBisectEntry();
         break;
@@ -289,4 +298,18 @@ if (IN_TAURI) {
       repoChangeReloadInFlight = false;
     }
   });
+
+  // Silent startup update probe — delayed so it never competes with the
+  // repo-load/graph-layout work a cold launch is already doing. `check(true)`
+  // settles quietly back to "idle" on "up to date"/error (see its own doc
+  // comment); it only actually surfaces here when a real update WAS found,
+  // via one unobtrusive Tama hint — the About panel (see check-for-updates
+  // above) is where the user actually acts on it.
+  setTimeout(async () => {
+    await updaterCtrl.check(true);
+    if (updaterCtrl.phase === "available") {
+      bridge.tama.set("hint");
+      bridge.tama.say("GitCat v" + updaterCtrl.version + " is available — see Help ▸ About to install.", 5000);
+    }
+  }, 4000);
 }

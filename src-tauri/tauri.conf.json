@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,6 +41,14 @@
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico"
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdCRjEwREJEMzA2QkFEMUIKUldRYnJXc3d2UTN4ZTRxN2NGRTFpb1NqUE5MQUdjK0IrMEJCazh0aEErZ2ZSK1NyTUo0aHJ5MGkK",
+      "endpoints": [
+        "https://github.com/zangjiucheng/GitCat/releases/latest/download/latest.json"
+      ]
     }
   }
 }

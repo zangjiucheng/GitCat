@@ -246,6 +246,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // Updater: checks the GitHub Release matching this build's `latest.json`
+        // (see tauri.conf.json's `plugins.updater` config) and, on newer version
+        // found, downloads + verifies (against `pubkey` there) + installs it.
+        // Every release build's artifacts are minisign-signed by CI (see
+        // .github/workflows/release.yml) — an update whose signature doesn't
+        // verify against `pubkey` is refused, never installed. `process`
+        // supplies `relaunch()`, used to restart into the just-installed build
+        // once install finishes (see src/islands/updater's controller).
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(watch::WatchState::default())
         .manage(git_bisect::BisectRunState::default())
         .manage(submodule::SubmoduleForeachState::default())

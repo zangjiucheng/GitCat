@@ -9,6 +9,7 @@
   // `info` cache lives on the controller, not local view state), so
   // unmounting is free.
   import { aboutCtrl } from "./about.svelte.ts";
+  import { updaterCtrl } from "../updater/updater.svelte.ts";
   import * as bridge from "../../legacy/bridge";
 
   function onKeydown(e: KeyboardEvent) {
@@ -42,6 +43,45 @@
         <div class="about-meta">
           <div>{info.authors.join(", ")}</div>
           <div class="mut">{info.copyright}</div>
+        </div>
+
+        <div class="about-update">
+          {#if updaterCtrl.phase === "idle"}
+            <button class="btn ghost" onclick={() => updaterCtrl.check()}>Check for Updates&#8230;</button>
+          {:else if updaterCtrl.phase === "checking"}
+            <span class="mut"><span class="spinner"></span> Checking for updates&#8230;</span>
+          {:else if updaterCtrl.phase === "up-to-date"}
+            <span class="mut">You're up to date. <button class="linklike" onclick={() => updaterCtrl.dismiss()}>OK</button></span>
+          {:else if updaterCtrl.phase === "available"}
+            <div class="about-update-card">
+              <div><b>v{updaterCtrl.version}</b> is available <span class="mut">(you have v{updaterCtrl.currentVersion})</span></div>
+              {#if updaterCtrl.notes}
+                <p class="about-update-notes">{updaterCtrl.notes}</p>
+              {/if}
+              <div class="about-update-actions">
+                <button class="btn ghost" onclick={() => updaterCtrl.dismiss()}>Not now</button>
+                <button class="btn" onclick={() => updaterCtrl.downloadAndInstall()}>Download &amp; Install</button>
+              </div>
+            </div>
+          {:else if updaterCtrl.phase === "downloading"}
+            <div class="about-update-card">
+              {#if updaterCtrl.progress != null}
+                <div class="about-update-bar"><div class="about-update-fill" style="width:{updaterCtrl.progress}%"></div></div>
+                <span class="mut">Downloading&#8230; {updaterCtrl.progress}%</span>
+              {:else}
+                <span class="mut"><span class="spinner"></span> Downloading&#8230;</span>
+              {/if}
+            </div>
+          {:else if updaterCtrl.phase === "ready"}
+            <div class="about-update-card">
+              <div>Update downloaded &#8212; restart to finish installing.</div>
+              <div class="about-update-actions">
+                <button class="btn" onclick={() => updaterCtrl.restart()}>Restart Now</button>
+              </div>
+            </div>
+          {:else if updaterCtrl.phase === "error"}
+            <span class="mut">{updaterCtrl.error} <button class="linklike" onclick={() => updaterCtrl.dismiss()}>Dismiss</button></span>
+          {/if}
         </div>
 
         <div class="modal-foot" style="justify-content:center;border-top:none;padding-top:16px">
@@ -169,6 +209,57 @@
     padding-top: 14px;
     border-top: 1px solid var(--border);
     font-size: 11.5px;
+  }
+
+  .about-update {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 12.5px;
+    display: flex;
+    justify-content: center;
+  }
+  .linklike {
+    border: none;
+    background: none;
+    padding: 0;
+    color: var(--accent);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .about-update-card {
+    width: 100%;
+    text-align: left;
+  }
+  .about-update-notes {
+    color: var(--muted);
+    font-size: 11.5px;
+    line-height: 1.5;
+    margin: 8px 0 0;
+    max-height: 70px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+  .about-update-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .about-update-bar {
+    width: 100%;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--elevated);
+    overflow: hidden;
+    margin-bottom: 6px;
+  }
+  .about-update-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: inherit;
+    transition: width 0.25s ease;
   }
 
   @media (prefers-reduced-motion: reduce) {

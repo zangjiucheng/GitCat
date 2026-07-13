@@ -127,19 +127,32 @@ jobs:
       # Real release path (tag push): build AND upload every platform's
       # bundle to one shared draft release named after the tag. Draft (not
       # published) on purpose — review the generated notes/assets and hit
-      # "Publish" by hand once all 6 matrix entries have reported in.
+      # "Publish" by hand once all 6 matrix entries have reported in. The
+      # in-app updater (src/islands/updater) only sees a release once it's
+      # published AND marked "latest" (not a pre-release) — its endpoint is
+      # GitHub's stable `releases/latest/download/latest.json` URL, which
+      # only resolves to a published, non-prerelease release. Publishing
+      # this draft is therefore also what turns the update live for users.
       #
-      # NOTE: neither macOS nor Windows code-signing is configured yet (no
-      # Apple Developer / Windows code-signing certificate secrets exist in
-      # this repo), so these bundles are unsigned — macOS Gatekeeper and
-      # Windows SmartScreen will both warn on first launch. Fine for now;
-      # wiring up real signing is a separate follow-up, not blocking this
-      # workflow's ability to produce installable (if warned-about) builds.
+      # NOTE: this is TWO DIFFERENT KINDS OF "signing", not to be conflated:
+      #   - Updater signing (TAURI_SIGNING_PRIVATE_KEY* below) — a minisign
+      #     keypair (see tauri.conf.json's plugins.updater.pubkey) proving an
+      #     update payload came from this pipeline and wasn't tampered with
+      #     in transit. This alone is what's configured here.
+      #   - OS-level code signing (Apple Developer ID / notarization, Windows
+      #     Authenticode) — proving the BINARY's publisher identity to the
+      #     OS. Still NOT configured (no such certificate secrets exist in
+      #     this repo) — macOS Gatekeeper and Windows SmartScreen will both
+      #     still warn on first launch of a fresh install. That's a separate
+      #     follow-up; it does not block the updater from working for an
+      #     already-installed app checking for its next update.
       - name: Build + publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "GitCat ${{ github.ref_name }}"

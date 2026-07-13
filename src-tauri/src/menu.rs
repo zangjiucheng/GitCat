@@ -201,7 +201,12 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
     let help_menu = {
         let github = MenuItemBuilder::with_id("open-github", "GitCat on GitHub").build(app)?;
         let issue = MenuItemBuilder::with_id("report-issue", "Report an Issue\u{2026}").build(app)?;
-        let b = SubmenuBuilder::new(app, "Help").item(&github).item(&issue);
+        // Opens the SAME in-app About panel the update check/install UI lives
+        // in (see src/islands/about/About.svelte + src/islands/updater) —
+        // this item just also kicks off a check as soon as it opens, see
+        // src/main.ts's "check-for-updates" case.
+        let check_updates = MenuItemBuilder::with_id("check-for-updates", "Check for Updates\u{2026}").build(app)?;
+        let b = SubmenuBuilder::new(app, "Help").item(&github).item(&issue).separator().item(&check_updates);
         // macOS already surfaces About in the app menu above; Windows/Linux
         // have no app menu, so Help is the conventional home for it there.
         #[cfg(not(target_os = "macos"))]
@@ -237,7 +242,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
         | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "export-patches" | "apply-patch" | "pickaxe-search"
         | "repositories" | "external-tools" | "dangling-recovery" | "repo-files" | "pull-merge" | "pull-rebase"
-        | "force-push-lease" | "force-push-override" | "filter-repo") => {
+        | "force-push-lease" | "force-push-override" | "filter-repo" | "check-for-updates") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

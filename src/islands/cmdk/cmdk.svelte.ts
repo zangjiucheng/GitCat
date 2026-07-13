@@ -30,6 +30,8 @@ import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 import { danglingRecoveryCtrl } from "../danglingrecovery/danglingrecovery.svelte.ts";
 import { repoFilesCtrl } from "../repofiles/repofiles.svelte.ts";
 import { filterRepoCtrl } from "../filterrepo/filterrepo.svelte.ts";
+import { aboutCtrl } from "../about/about.svelte.ts";
+import { updaterCtrl } from "../updater/updater.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 
 export const CMD_CAP = 50;
@@ -170,6 +172,20 @@ const ACTIONS: ActionItem[] = [
     label: "Rewrite History (filter-repo)",
     hint: "Scope, preview, and typed-confirm a git-filter-repo rewrite — the one irreversible-by-Undo operation",
     run: () => (IN_TAURI ? filterRepoCtrl.start(bridge.CUR_REPO as unknown as string) : filterRepoCtrl.openDemo()),
+  },
+  // Opens the SAME in-app About panel the update check/install UI lives in
+  // (see about.svelte.ts + islands/updater) — mirrors menu.rs's
+  // "check-for-updates" item exactly (see src/main.ts's own case for it):
+  // open About, then immediately kick off a check.
+  {
+    type: "action",
+    id: "check-for-updates",
+    label: "Check for Updates…",
+    hint: "See what's installed and check GitHub Releases for a newer signed build",
+    run: () => {
+      aboutCtrl.show();
+      updaterCtrl.check();
+    },
   },
 ];
 
