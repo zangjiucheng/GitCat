@@ -212,6 +212,13 @@ function draw(){
   const B=bisectDrawerCtrl.active();
   if(B){ for(let r=first;r<=last;r++){ const y=r*rowH-st+bh;
     if(r>B.lo&&r<B.hi&&!bisectDrawerCtrl.skips.has(r)){ ctx.fillStyle=theme.warning; ctx.globalAlpha=0.12; ctx.fillRect(0,y,W,rowH); ctx.globalAlpha=1; } } }
+  // Active cherry-pick/merge drag: legalPick/legalMerge already run per-hover
+  // (pointermove, for the ghost tooltip's own reason text) — reused here
+  // per-VISIBLE-ROW so every illegal drop target dims the same way the
+  // bisect range already dims out-of-range rows below, leaving legal targets
+  // (any non-ancestor row other than the source itself) the only ones at
+  // full brightness while a drag is in flight.
+  const DR=state.drag;
 
   // edges — one Path2D per lane colour
   for(let c=0;c<NCOL;c++) edgePaths[c]=null;
@@ -243,7 +250,9 @@ function draw(){
   ctx.textBaseline="middle"; ctx.font=layout.chipFont;
   for(let r=first;r<=last;r++){
     const y=r*rowH+rowH*0.5-st+bh, x=laneX(G.commitLane[r]), col=LANE_COLORS[G.commitColor[r]];
-    const dim = B && !(r>B.lo&&r<B.hi) && r!==B.good && r!==B.bad;
+    const bisectDim = B && !(r>B.lo&&r<B.hi) && r!==B.good && r!==B.bad;
+    const dragDim = DR && !(DR.op==="merge"?legalMerge(DR.source,r):legalPick(DR.source,r)).ok;
+    const dim = bisectDim || dragDim;
     if(r===state.selectedRow){ ctx.fillStyle=theme.accent; ctx.globalAlpha=state.selectAlpha; ctx.fillRect(0,r*rowH-st+bh,W,rowH); ctx.globalAlpha=1;
       ctx.fillStyle=theme.accent; ctx.fillRect(0,r*rowH-st+bh,3,rowH); }
     else if(r===state.hoverRow){ ctx.fillStyle=theme.text; ctx.globalAlpha=state.hoverAlpha; ctx.fillRect(0,r*rowH-st+bh,W,rowH); ctx.globalAlpha=1; }
