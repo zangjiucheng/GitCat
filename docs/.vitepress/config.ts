@@ -28,7 +28,12 @@ export default defineConfig({
 
     socialLinks: [{ icon: "github", link: "https://github.com/zangjiucheng/GitCat" }],
 
-    search: { provider: "local" },
+    // detailedView: default VitePress local search hides the matched excerpt
+    // behind a toggle button, so results show only a section heading with no
+    // clue why it matched or what's actually there — with only 4 short pages
+    // (docs/*.md) to search, that heading-only view is nearly useless. Always
+    // showing the highlighted excerpt is the one-line fix.
+    search: { provider: "local", options: { detailedView: true } },
 
     footer: {
       message: "Released under the GNU General Public License v3.0 or later.",

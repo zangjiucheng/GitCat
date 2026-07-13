@@ -6,8 +6,8 @@ hero:
   text: A cozy, safety-first desktop Git client.
   tagline: Every operation that touches your history is reversible — Tama pins a snapshot before every mutation, so a global Undo is always one keystroke away.
   image:
-    src: /gitcat-icon.svg
-    alt: GitCat
+    src: /tama-hero.webp
+    alt: Tama, GitCat's cat mascot, waving hello
   actions:
     - theme: brand
       text: Download

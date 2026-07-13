@@ -1,33 +1,131 @@
-/* Lamplight / Cozy Terminal palette — matches the app's own dark theme and
- * icon gradient (design/assets/app-icon.svg), not VitePress's default blue.
- * Deliberately a light reskin of the default theme (brand colors + a warmer
- * dark background), not a full custom theme — see this project's own
- * precedent for reusing an off-the-shelf tool with CSS-var overrides rather
- * than hand-rolling everything (index.html's own --l0.."l6" lane palette is
- * the one thing here it's NOT reusing, on purpose: those are tuned for graph
- * lanes on a canvas, not prose/button contrast on a docs page).
+/* Re-themes VitePress's default theme via CSS-var overrides (see this
+ * project's own precedent for reaching for an off-the-shelf tool over
+ * hand-rolling everything) rather than replacing it outright.
+ *
+ * This used to carry the app's ORIGINAL "Lamplight / Cozy Terminal" palette
+ * — all-warm cream/amber, including amber as the general brand/interactive
+ * color. That direction was superseded in the app itself on 2026-07-06: the
+ * shipped app is a clean neutral canvas (white / charcoal-dark) with color
+ * "reserved for meaning" — an indigo/teal UI accent, and warm amber kept
+ * ONLY for Tama herself (her fur, her necklace charm, the app icon). This
+ * file had never been updated for that pivot, so the docs site's buttons
+ * and links were still amber everywhere, a design that GitCat itself no
+ * longer has. Tokens below are pulled directly from the app's own
+ * `:root`/`.dark` variables in index.html.
  */
 :root {
-  --vp-c-brand-1: #c88a3e;
-  --vp-c-brand-2: #e7b36a;
-  --vp-c-brand-3: #e7b36a;
-  --vp-c-brand-soft: rgba(231, 179, 106, 0.16);
+  /* Backgrounds */
+  --vp-c-bg: #ffffff;
+  --vp-c-bg-alt: #f6f7f9;
+  --vp-c-bg-soft: #f6f7f9;
+  --vp-c-bg-elv: #ffffff;
 
-  --vp-home-hero-name-color: transparent;
-  --vp-home-hero-name-background: linear-gradient(120deg, #c88a3e, #e7b36a 60%, #f5d9a8);
+  /* Borders */
+  --vp-c-border: #e3e6eb;
+  --vp-c-divider: #e3e6eb;
+  --vp-c-gutter: #e3e6eb;
+
+  /* Text */
+  --vp-c-text-1: #191c22;
+  --vp-c-text-2: #667085;
+  --vp-c-text-3: #98a1ae;
+
+  /* Brand — the app's actual interactive accent (indigo), not the mascot's
+     amber. Contrast-checked: #5b57d6 on white is ~5.6:1, comfortably AA. */
+  --vp-c-indigo-1: #5b57d6;
+  --vp-c-indigo-2: #4a45c4;
+  --vp-c-indigo-3: #5b57d6;
+  --vp-c-indigo-soft: rgba(91, 87, 214, 0.12);
+
+  /* Teal — the app's second accent, used here for a bit of two-tone variety
+     (feature icons, the hero glow) exactly where the app itself uses it. */
+  --vp-c-teal-1: #2e8b72;
+  --vp-c-teal-2: #24705c;
+  --vp-c-teal-soft: rgba(46, 139, 114, 0.12);
+
+  --vp-c-brand-1: var(--vp-c-indigo-1);
+  --vp-c-brand-2: var(--vp-c-indigo-2);
+  --vp-c-brand-3: var(--vp-c-indigo-3);
+  --vp-c-brand-soft: var(--vp-c-indigo-soft);
+
+  --vp-c-warning-1: #b9781c;
+  --vp-c-danger-1: #d14343;
+  --vp-c-success-1: #3c9a5a;
+
+  --vp-home-hero-name-color: var(--vp-c-indigo-1);
+  --vp-home-hero-name-background: transparent;
+  --vp-home-hero-image-background-image: radial-gradient(
+    circle,
+    var(--vp-c-indigo-soft) 0%,
+    var(--vp-c-teal-soft) 70%,
+    transparent 100%
+  );
+  --vp-home-hero-image-filter: blur(56px);
+
+  /* The app's own rounded display face, used sparingly below for the hero
+     and section headings — not the running body/prose text, which stays on
+     VitePress's default Inter for readability. */
+  --gc-display: "SF Pro Rounded", ui-rounded, "Nunito", "Segoe UI Variable", system-ui, sans-serif;
 }
 
 .dark {
-  --vp-c-bg: #14100a;
-  --vp-c-bg-alt: #100c07;
-  --vp-c-bg-soft: #221b12;
-  --vp-c-bg-elv: #221b12;
-  --vp-c-border: #3a2f20;
-  --vp-c-divider: #2c2415;
-  --vp-c-text-1: #f2e9da;
-  --vp-c-text-2: #c9bba4;
+  --vp-c-bg: #0f1116;
+  --vp-c-bg-alt: #171a21;
+  --vp-c-bg-soft: #171a21;
+  --vp-c-bg-elv: #20242d;
+
+  --vp-c-border: #2d323c;
+  --vp-c-divider: #2d323c;
+  --vp-c-gutter: #2d323c;
+
+  --vp-c-text-1: #eceef3;
+  --vp-c-text-2: #98a1ae;
+  --vp-c-text-3: #6b7280;
+
+  --vp-c-indigo-1: #8e88f2;
+  --vp-c-indigo-2: #a5a0f6;
+  --vp-c-indigo-3: #8e88f2;
+  --vp-c-indigo-soft: rgba(142, 136, 242, 0.16);
+
+  --vp-c-teal-1: #5fd0b4;
+  --vp-c-teal-2: #7ad9c2;
+  --vp-c-teal-soft: rgba(95, 208, 180, 0.16);
+
+  --vp-c-warning-1: #f0973e;
+  --vp-c-danger-1: #f06a5b;
+  --vp-c-success-1: #5fc98a;
 }
 
-.VPHero .clip {
-  font-weight: 700;
+/* ---- Typography: the rounded display face carries the "cozy" personality
+   on the hero and section headings, same as the app itself. */
+.VPHero .name,
+.VPHero .text,
+.content h1,
+.content h2 {
+  font-family: var(--gc-display);
+}
+
+.VPHero .name.clip {
+  font-weight: 800;
+}
+
+/* ---- Feature cards: default VitePress gives every icon the same flat gray
+   square (`--vp-c-default-soft`) regardless of content — replace with a
+   circular badge alternating the app's own two accents (indigo/teal), the
+   same two-color system used everywhere else in the product, rather than an
+   arbitrary rainbow of icon tints. */
+.VPFeature .icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  font-size: 26px;
+  background-color: var(--vp-c-indigo-soft);
+}
+
+.VPFeatures .item:nth-child(even) .VPFeature .icon {
+  background-color: var(--vp-c-teal-soft);
+}
+
+.VPFeature {
+  border-radius: 16px;
 }
