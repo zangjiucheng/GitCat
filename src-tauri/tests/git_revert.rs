@@ -223,6 +223,37 @@ fn revert_empty_is_classified_correctly_under_a_non_english_locale() {
 }
 
 #[test]
+fn revert_blocked_by_dirty_tree_reports_blocked_by_local_changes() {
+    let (repo, _head_b, to_revert) = build_conflicting_repo("revert_dirty_block");
+    let path = repo.path();
+
+    // Dirty f.txt (unstaged) in a way that collides with what the revert would touch.
+    std::fs::write(repo.dir.join("f.txt"), "dirty, uncommitted\n").unwrap();
+    assert!(!repo.is_clean());
+
+    let reverted = revert_start(path.clone(), to_revert, None);
+    assert!(!reverted.ok);
+    assert_eq!(reverted.state, "error", "expected a dirty-tree refusal, got state {:?}: {}", reverted.state, reverted.message);
+    assert!(reverted.blocked_by_local_changes, "expected blocked_by_local_changes=true: {}", reverted.message);
+    assert!(reverted.backup_ref.is_some(), "revert_start snapshots before running git, even on a refusal it caused");
+    assert!(reverted.conflicted_files.is_empty());
+    assert_eq!(repo.read("f.txt"), "dirty, uncommitted\n");
+    assert_eq!(repo.open().state(), RepositoryState::Clean);
+}
+
+#[test]
+fn revert_bad_revision_is_not_reported_as_blocked_by_local_changes() {
+    let repo = TempRepo::init("revert_bad_rev");
+    let _base = repo.commit("f.txt", "base\n", "base");
+    let path = repo.path();
+
+    let reverted = revert_start(path, "not-a-real-sha".into(), None);
+    assert!(!reverted.ok);
+    assert_eq!(reverted.state, "error");
+    assert!(!reverted.blocked_by_local_changes, "a bad revision must not be misclassified as a dirty-tree block: {}", reverted.message);
+}
+
+#[test]
 fn revert_abort_is_always_runnable_even_with_no_snapshot_ever_taken() {
     // A repo where NOTHING has ever been snapshotted, reverted, or otherwise
     // mutated by GitCat — revert_abort (the escape hatch) must still be safely

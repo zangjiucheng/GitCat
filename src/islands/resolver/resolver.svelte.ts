@@ -332,6 +332,21 @@ class ResolverState {
   // set directly from a fresh RebaseResult by `openEditing`, cleared by
   // `reset()`.
   editing = $state(false);
+  // Dirty-tree/index block chooser — mirrors sidebar.svelte.ts's
+  // `DirtyCheckoutMenu` (see its own doc comment for the full precedent this
+  // follows). Opened by `applyOutcome`'s "error" case when a fresh
+  // startPick/startMerge/startRebase/startRevert's OWN result reports
+  // `blockedByLocalChanges` — PickResult/MergeResult/RevertResult/
+  // RebaseResult all carry this field identically (see each op's
+  // git_*.rs module for the empirical detection) — instead of just toasting
+  // git's raw refusal like every OTHER "error" state still does. `retry`
+  // re-invokes the SAME start call that hit the block, its params already
+  // closed over by the caller (see `stashAndRetryDirtyBlock` below). Unlike
+  // the checkout chooser, there is no third "force discard" mode here — none
+  // of these four ops has a `checkout_discard`-shaped backend command to
+  // force through a dirty tree, so the only two choices are "stash and
+  // retry" (leave stashed, or reapply after).
+  dirtyBlock = $state<{ message: string; verb: string; retry: () => Promise<void> } | null>(null);
 
   sha = "";
   repo = "";
@@ -376,13 +391,14 @@ class ResolverState {
       return;
     }
     this.demo = false;
+    this.dirtyBlock = null;
     this.op = "cherry-pick";
     this.repo = repo;
     this.busy = true;
     bridge.tama.event("mutation.caution", { count: 1 });
     try {
       const res = await commands.cherryPick(repo, sha, recordOrigin);
-      await this.applyOutcome(res, sha);
+      await this.applyOutcome(res, sha, () => this.startPick(repo, sha, recordOrigin));
     } catch (e) {
       bridge.tama.warn("Cherry-pick failed — " + e);
     } finally {
@@ -407,13 +423,14 @@ class ResolverState {
       return;
     }
     this.demo = false;
+    this.dirtyBlock = null;
     this.op = "merge";
     this.repo = repo;
     this.busy = true;
     bridge.tama.event("mutation.caution", { count: 1 });
     try {
       const res = await commands.mergeStart(repo, sha, strategy ?? null);
-      await this.applyOutcome(res, sha);
+      await this.applyOutcome(res, sha, () => this.startMerge(repo, sha, strategy));
     } catch (e) {
       bridge.tama.warn("Merge failed — " + e);
     } finally {
@@ -460,13 +477,14 @@ class ResolverState {
       return;
     }
     this.demo = false;
+    this.dirtyBlock = null;
     this.op = "rebase";
     this.repo = repo;
     this.busy = true;
     bridge.tama.event("mutation.caution", { count: 1 });
     try {
       const res = await commands.rebaseStart(repo, onto);
-      await this.applyOutcome(res, onto);
+      await this.applyOutcome(res, onto, () => this.startRebase(repo, onto));
     } catch (e) {
       bridge.tama.warn("Rebase failed — " + e);
     } finally {
@@ -554,13 +572,14 @@ class ResolverState {
       return;
     }
     this.demo = false;
+    this.dirtyBlock = null;
     this.op = "revert";
     this.repo = repo;
     this.busy = true;
     bridge.tama.event("mutation.caution", { count: 1 });
     try {
       const res = await commands.revertStart(repo, sha, signoff);
-      await this.applyOutcome(res, sha);
+      await this.applyOutcome(res, sha, () => this.startRevert(repo, sha, signoff));
     } catch (e) {
       bridge.tama.warn("Revert failed — " + e);
     } finally {
@@ -570,7 +589,14 @@ class ResolverState {
 
   // Route a start/continue result (PickResult, MergeResult, RebaseResult, or
   // RevertResult — same shape) to the UI, using `.op`'s copy for messages.
-  private async applyOutcome(res: OpResult, sha: string) {
+  // `retry` is ONLY passed by startPick/startMerge/startRebase/startRevert
+  // (see each's own call site) — it re-invokes the exact same start command,
+  // and is what lets the "error" branch below open `dirtyBlock` instead of
+  // just toasting when `res.blockedByLocalChanges` is set. continue()/skip()
+  // call this with no `retry` (a dirty-tree/index block can't meaningfully
+  // recur mid-sequence — see `dirtyBlock`'s own doc comment), so those always
+  // fall through to the plain toast, unchanged.
+  private async applyOutcome(res: OpResult, sha: string, retry?: () => Promise<void>) {
     const msg = MSG[this.op];
     switch (res.state) {
       case "clean":
@@ -605,7 +631,11 @@ class ResolverState {
         this.openEditing(res as RebaseResult, sha);
         break;
       default: // "error"
-        bridge.tama.warn(res.message || msg.verb + " could not start.");
+        if (retry && "blockedByLocalChanges" in res && res.blockedByLocalChanges) {
+          this.dirtyBlock = { message: res.message || msg.verb + " could not start.", verb: msg.verb, retry };
+        } else {
+          bridge.tama.warn(res.message || msg.verb + " could not start.");
+        }
         break;
     }
   }
@@ -915,6 +945,110 @@ class ResolverState {
     } finally {
       this.busy = false;
       this.activeAction = null;
+    }
+  }
+
+  // ── dirty-tree/index block chooser (mirrors sidebar.svelte.ts's own
+  // stashThenSwitch — see that method's doc comment for the shape this
+  // follows) ──────────────────────────────────────────────────────────────
+
+  // "Stash, retry, leave stashed" — the safe, fully-recoverable default: the
+  // user's changes sit in the stash list (recoverable any time via Manage
+  // Stash) rather than being reapplied automatically.
+  async stashAndRetryDirtyBlock() {
+    await this.doStashAndRetry(false);
+  }
+
+  // "Stash, retry, then reapply" — same as above, but immediately pops the
+  // SAME stash back on top once the retried op lands somewhere safe. A
+  // reapply conflict is NOT a new conflict kind — it lands in the exact
+  // existing stash-conflict Resolver flow via `openStashConflict`, the SAME
+  // path workdir.svelte.ts's/sidebar.svelte.ts's own stash-pop already use.
+  async stashAndRetryDirtyBlockReapply() {
+    await this.doStashAndRetry(true);
+  }
+
+  cancelDirtyBlock() {
+    this.dirtyBlock = null;
+  }
+
+  private async doStashAndRetry(reapply: boolean) {
+    const block = this.dirtyBlock;
+    if (!block) return;
+    if (this.demo) {
+      this.dirtyBlock = null;
+      bridge.tama.set("hint");
+      bridge.tama.say((reapply ? "Stashed, retried, and reapplied " : "Stashed and retried ") + "(demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Stashing your changes…");
+    try {
+      const repo = this.repo;
+      // Stash EVERYTHING (tracked + untracked) so the retry below is
+      // guaranteed unblocked regardless of which collision shape (modified,
+      // staged, untracked) made the tree dirty in the first place — same
+      // rationale as sidebar.svelte.ts's stashThenSwitch.
+      const stashRes = await commands.stashSave(repo, "Auto-stash before retrying " + MSG[this.op].verb.toLowerCase(), true);
+      // "Nothing to stash" is NOT a real failure here, even though the op
+      // itself just refused — `stash_save` only sees what `git status` sees
+      // (tracked/staged/untracked changes), while the block can come from
+      // something outside that (a modified submodule pointer, or the tree
+      // simply having changed again since the block first opened). Either
+      // way, dead-ending on "couldn't stash, nothing was retried" is worse
+      // than just retrying directly with nothing to reapply — if the block
+      // is really still there, the retry fails the exact same way and this
+      // chooser reopens (see the module doc's `dirtyBlock` note).
+      const nothingToStash = !stashRes.ok && stashRes.message === "Nothing to stash — the working tree is clean.";
+      if (!stashRes.ok && !nothingToStash) {
+        bridge.tama.warn(stashRes.message || "Couldn't stash your changes — nothing was retried.");
+        return;
+      }
+      this.dirtyBlock = null;
+      // Release the lock BEFORE calling retry() — startPick/startMerge/
+      // startRebase/startRevert each take this SAME lock themselves at their
+      // own top, so holding it here would make retry() silently no-op.
+      this.busy = false;
+      bridge.tama.say("Retrying…");
+      await block.retry();
+      // If the retry landed on a real conflict/editing pause, or hit ANOTHER
+      // block (rare, but the retried op's own result routes back through
+      // applyOutcome exactly like the first attempt), leave the stash alone
+      // — auto-popping it now would land on top of a state the user hasn't
+      // seen yet. Only auto-reapply once the retry actually resolved to
+      // clean/empty (both close the modal and leave `.dirtyBlock` null).
+      // Nothing was ever stashed in the `nothingToStash` case, so there is
+      // nothing to reapply or leave stashed either way — applyOutcome's own
+      // clean/empty messaging (or the reopened chooser, on a repeat block)
+      // already told the whole story.
+      if (this.open || this.dirtyBlock || nothingToStash) return;
+      if (!reapply) {
+        bridge.tama.set("hint");
+        bridge.tama.say("Your changes are stashed — see Manage Stash.", 3200);
+        return;
+      }
+      bridge.tama.say("Reapplying your changes…");
+      // Fetch the just-created stash's own sha so stash_pop's optional
+      // identity check can catch a race — it's always stash@{0} here since
+      // nothing else has stashed since (same as stashThenSwitch's own).
+      let expectedSha: string | null = null;
+      const listRes = await commands.stashList(repo);
+      if (listRes.status === "ok" && listRes.data[0]) expectedSha = listRes.data[0].sha;
+      const popRes = await commands.stashPop(repo, 0, expectedSha);
+      if (popRes.ok) {
+        bridge.tama.set("celebrate");
+        bridge.tama.say("Done — your changes are back. にゃ〜", 3200);
+      } else if (popRes.conflictedFiles && popRes.conflictedFiles.length) {
+        await this.openStashConflict(repo, popRes);
+      } else {
+        bridge.tama.warn(popRes.message || "Couldn't reapply your stashed changes — they're kept in the stash list.");
+      }
+    } catch (e) {
+      bridge.tama.warn("Retry failed — " + e);
+    } finally {
+      this.busy = false;
     }
   }
 

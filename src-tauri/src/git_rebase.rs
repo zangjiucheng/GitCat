@@ -142,6 +142,16 @@ pub struct RebaseResult {
     /// Pre-op safety snapshot ref (present when we snapshotted before mutating),
     /// so the UI can name the snapshot the user can Undo to.
     pub backup_ref: Option<String>,
+    /// True SPECIFICALLY when `state == "error"` because git refused the
+    /// rebase outright — the dirty working tree or index would collide with
+    /// it — rather than some other refusal (bad revision, a rebase already
+    /// in progress, hook rejection, …). See `blocked_by_local_changes` (the
+    /// free function below) for the empirical detection; `false` for every
+    /// other outcome, including every success/conflict/editing/empty state,
+    /// so the frontend can offer a "stash and retry" action without doing
+    /// any prose-matching of its own — same design as git_pick.rs's field of
+    /// the same name (see that field's own doc comment).
+    pub blocked_by_local_changes: bool,
 }
 
 impl RebaseResult {
@@ -152,8 +162,23 @@ impl RebaseResult {
             conflicted_files: Vec::new(),
             message: message.into(),
             backup_ref: None,
+            blocked_by_local_changes: false,
         }
     }
+}
+
+/// EMPIRICALLY VERIFIED (git 2.53.0, default config — `rebase.autoStash`
+/// must be off, see `rebase_start`'s `--no-autostash`): a rebase refused
+/// because local changes are in the way reports "error: cannot rebase: You
+/// have unstaged changes." or "...uncommitted changes." — completely
+/// different wording from cherry-pick/merge/revert's "would be overwritten
+/// by", hence a dedicated detector rather than a shared one (duplicated per
+/// module per this codebase's own convention — see git_pick.rs's function of
+/// the same name).
+fn blocked_by_local_changes(stderr: &str) -> bool {
+    let blob = stderr.to_lowercase();
+    blob.contains("cannot rebase")
+        && (blob.contains("unstaged changes") || blob.contains("uncommitted changes"))
 }
 
 /// One row the interactive-rebase planner shows: a plannable (non-merge)
@@ -513,6 +538,7 @@ fn classify(
                 if n == 1 { "" } else { "s" }
             ),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -543,6 +569,7 @@ fn classify(
             conflicted_files: Vec::new(),
             message: format!("Rebase paused to edit {sha} — amend it, then Continue."),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -562,6 +589,7 @@ fn classify(
                     head_name(repo)
                 ),
                 backup_ref: backup,
+                blocked_by_local_changes: false,
             };
         }
         return RebaseResult {
@@ -570,6 +598,7 @@ fn classify(
             conflicted_files: Vec::new(),
             message: format!("Rebased {} onto {label}{snap_note}.", head_name(repo)),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -590,6 +619,7 @@ fn classify(
                 git_msg(out)
             ),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -601,6 +631,7 @@ fn classify(
         conflicted_files: Vec::new(),
         message: git_msg(out),
         backup_ref: backup,
+        blocked_by_local_changes: blocked_by_local_changes(&out.stderr),
     }
 }
 
@@ -670,6 +701,7 @@ pub fn rebase_start(path: String, onto: String) -> RebaseResult {
                 conflicted_files: Vec::new(),
                 message: e,
                 backup_ref: Some(backup),
+                blocked_by_local_changes: false,
             }
         }
     };
@@ -715,6 +747,7 @@ pub fn rebase_continue(path: String) -> RebaseResult {
                 conflicted_files: Vec::new(),
                 message: e,
                 backup_ref: backup,
+                blocked_by_local_changes: false,
             }
         }
     };
@@ -759,6 +792,7 @@ pub fn rebase_skip(path: String) -> RebaseResult {
                 conflicted_files: Vec::new(),
                 message: e,
                 backup_ref: backup,
+                blocked_by_local_changes: false,
             }
         }
     };
@@ -790,6 +824,7 @@ pub fn rebase_abort(path: String) -> RebaseResult {
             conflicted_files: Vec::new(),
             message: "No rebase in progress.".into(),
             backup_ref: None,
+            blocked_by_local_changes: false,
         };
     }
     match git(&path, &["rebase", "--abort"], false) {
@@ -799,6 +834,7 @@ pub fn rebase_abort(path: String) -> RebaseResult {
             conflicted_files: Vec::new(),
             message: "Rebase aborted — back to the pre-rebase state.".into(),
             backup_ref: None,
+            blocked_by_local_changes: false,
         },
         Ok(o) => RebaseResult::error(git_msg(&o)),
         Err(e) => RebaseResult::error(e),
@@ -931,6 +967,7 @@ pub fn rebase_interactive_start(path: String, onto: String, todo: Vec<TodoItem>)
                 conflicted_files: Vec::new(),
                 message: e,
                 backup_ref: Some(backup),
+                blocked_by_local_changes: false,
             }
         }
     };
@@ -943,6 +980,7 @@ pub fn rebase_interactive_start(path: String, onto: String, todo: Vec<TodoItem>)
                 conflicted_files: Vec::new(),
                 message: e,
                 backup_ref: Some(backup),
+                blocked_by_local_changes: false,
             }
         }
     };
@@ -980,6 +1018,7 @@ pub fn rebase_interactive_start(path: String, onto: String, todo: Vec<TodoItem>)
                 conflicted_files: Vec::new(),
                 message: e,
                 backup_ref: Some(backup),
+                blocked_by_local_changes: false,
             }
         }
     };

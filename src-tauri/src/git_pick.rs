@@ -46,6 +46,16 @@ pub struct PickResult {
     /// Pre-op safety snapshot ref (present when we snapshotted before mutating),
     /// so the UI can name the snapshot the user can Undo to.
     pub backup_ref: Option<String>,
+    /// True SPECIFICALLY when `state == "error"` because git refused the pick
+    /// outright — the dirty working tree OR staged index would be
+    /// overwritten — rather than some other refusal (bad revision, a pick
+    /// already in progress, hook rejection, …). See `blocked_by_local_changes`
+    /// (the free function below) for the empirical detection; `false` for
+    /// every other outcome, including every success/conflict/empty state, so
+    /// the frontend can offer a "stash and retry" action without doing any
+    /// prose-matching of its own — same design as git_write.rs's
+    /// `WriteResult.conflicting_files` (see that field's own doc comment).
+    pub blocked_by_local_changes: bool,
 }
 
 impl PickResult {
@@ -56,8 +66,24 @@ impl PickResult {
             conflicted_files: Vec::new(),
             message: message.into(),
             backup_ref: None,
+            blocked_by_local_changes: false,
         }
     }
+}
+
+/// EMPIRICALLY VERIFIED (git 2.x): a cherry-pick refused because local
+/// changes are in the way has (at least) two distinct message shapes —
+/// unstaged working-tree collisions enumerate tab-indented paths after
+/// "would be overwritten by merge:" (git reports "merge" here regardless of
+/// the porcelain command — cherry-pick shares the same underlying unpack-
+/// trees safety check), while STAGED-index collisions are a terse "your
+/// local changes would be overwritten by cherry-pick." with NO file list at
+/// all. The one substring both shapes share verbatim, lowercased, is "would
+/// be overwritten by" — reliable enough on its own without needing to also
+/// match the file-list shape, since we only need to know THAT this is the
+/// dirty-tree refusal class, not which files (git doesn't always tell us).
+fn blocked_by_local_changes(stderr: &str) -> bool {
+    stderr.to_lowercase().contains("would be overwritten by")
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +210,7 @@ fn classify(
             conflicted_files: Vec::new(),
             message: format!("Cherry-picked {label} onto {}{snap_note}.", head_name(repo)),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -200,6 +227,7 @@ fn classify(
                 if n == 1 { "" } else { "s" }
             ),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -226,6 +254,7 @@ fn classify(
                 conflicted_files: Vec::new(),
                 message: format!("{label} is already applied — nothing to cherry-pick."),
                 backup_ref: backup,
+                blocked_by_local_changes: false,
             };
         }
         // In progress, nothing unmerged, not empty (hook/sign rejection or a
@@ -240,6 +269,7 @@ fn classify(
                 git_msg(out)
             ),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -250,6 +280,7 @@ fn classify(
         state: "error".into(),
         conflicted_files: Vec::new(),
         message: git_msg(out),
+        blocked_by_local_changes: blocked_by_local_changes(&out.stderr),
         backup_ref: backup,
     }
 }
@@ -310,6 +341,7 @@ pub fn cherry_pick(path: String, sha: String, record_origin: Option<bool>) -> Pi
                 conflicted_files: Vec::new(),
                 message: e,
                 backup_ref: Some(backup),
+                blocked_by_local_changes: false,
             }
         }
     };
@@ -357,6 +389,7 @@ pub fn cherry_pick_continue(path: String) -> PickResult {
                 conflicted_files: Vec::new(),
                 message: e,
                 backup_ref: backup,
+                blocked_by_local_changes: false,
             }
         }
     };
@@ -384,6 +417,7 @@ pub fn cherry_pick_abort(path: String) -> PickResult {
             conflicted_files: Vec::new(),
             message: "No cherry-pick in progress.".into(),
             backup_ref: None,
+            blocked_by_local_changes: false,
         };
     }
     match git(&path, &["cherry-pick", "--abort"], false) {
@@ -393,6 +427,7 @@ pub fn cherry_pick_abort(path: String) -> PickResult {
             conflicted_files: Vec::new(),
             message: "Cherry-pick aborted — back to the pre-pick state.".into(),
             backup_ref: None,
+            blocked_by_local_changes: false,
         },
         Ok(o) => PickResult::error(git_msg(&o)),
         Err(e) => PickResult::error(e),

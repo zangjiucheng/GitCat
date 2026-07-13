@@ -40,6 +40,9 @@ vi.mock("../../ipc/bindings", () => ({
     revertAbort: vi.fn(),
     stashConflictAbort: vi.fn(),
     stashConflictContinue: vi.fn(),
+    stashSave: vi.fn(),
+    stashList: vi.fn(),
+    stashPop: vi.fn(),
     mergeSquash: vi.fn(),
     mergeSquashAbort: vi.fn(),
     mergeSquashContinue: vi.fn(),
@@ -89,19 +92,19 @@ const FILE_A: ConflictFile = { path: "a.ts", ours: "o", base: "b", theirs: "t" }
 const FILE_B: ConflictFile = { path: "b.ts", ours: "o2", base: "b2", theirs: "t2" };
 
 function pickResult(partial: Partial<PickResult>): PickResult {
-  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
+  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, blockedByLocalChanges: false, ...partial };
 }
 
 function mergeResult(partial: Partial<MergeResult>): MergeResult {
-  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
+  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, blockedByLocalChanges: false, ...partial };
 }
 
 function rebaseResult(partial: Partial<RebaseResult>): RebaseResult {
-  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
+  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, blockedByLocalChanges: false, ...partial };
 }
 
 function revertResult(partial: Partial<RevertResult>): RevertResult {
-  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
+  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, blockedByLocalChanges: false, ...partial };
 }
 
 function stashResolveResult(partial: Partial<StashResolveResult>): StashResolveResult {
@@ -133,6 +136,7 @@ function resetResolver() {
   resolver.repo = "";
   resolver.sha = "";
   resolver.op = "cherry-pick";
+  resolver.dirtyBlock = null;
 }
 
 beforeEach(() => {
@@ -204,6 +208,28 @@ describe("startPick", () => {
     await resolver.startPick("", "sha", true);
     expect(bridge.tama.warn).toHaveBeenCalled();
     expect(commands.cherryPick).not.toHaveBeenCalled();
+    expect(resolver.open).toBe(false);
+  });
+
+  it("a plain error (not blockedByLocalChanges) still just warns via Tama — no dirtyBlock chooser", async () => {
+    vi.mocked(commands.cherryPick).mockResolvedValueOnce(
+      pickResult({ ok: false, state: "error", message: "bad revision", blockedByLocalChanges: false }),
+    );
+    await resolver.startPick("repo1", "sha4", true);
+    expect(bridge.tama.warn).toHaveBeenCalledWith("bad revision");
+    expect(resolver.dirtyBlock).toBeNull();
+    expect(resolver.open).toBe(false);
+  });
+
+  it("a blockedByLocalChanges error opens the dirty-tree chooser instead of a plain toast", async () => {
+    vi.mocked(commands.cherryPick).mockResolvedValueOnce(
+      pickResult({ ok: false, state: "error", message: "would be overwritten by merge", blockedByLocalChanges: true }),
+    );
+    await resolver.startPick("repo1", "sha5", true);
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+    expect(resolver.dirtyBlock).not.toBeNull();
+    expect(resolver.dirtyBlock?.message).toBe("would be overwritten by merge");
+    expect(resolver.dirtyBlock?.verb).toBe("Cherry-pick");
     expect(resolver.open).toBe(false);
   });
 });
@@ -660,6 +686,152 @@ describe("startRevert", () => {
     expect(bridge.tama.warn).toHaveBeenCalled();
     expect(commands.revertStart).not.toHaveBeenCalled();
     expect(resolver.open).toBe(false);
+  });
+});
+
+// Backlog: dirty-tree/index block chooser (mirrors sidebar.svelte.ts's own
+// stashSwitchReapply/stashSwitchLeaveStashed tests above). `triggerDirtyBlock`
+// drives the chooser open through a REAL startPick call (rather than poking
+// `resolver.dirtyBlock` directly) so `.retry` closes over the real repo/sha
+// args, exactly like production use.
+describe("dirtyBlock (stash-and-retry chooser)", () => {
+  async function triggerDirtyBlock() {
+    vi.mocked(commands.cherryPick).mockResolvedValueOnce(
+      pickResult({ ok: false, state: "error", message: "would be overwritten by merge", blockedByLocalChanges: true }),
+    );
+    await resolver.startPick("repo1", "sha9", true);
+    expect(resolver.dirtyBlock).not.toBeNull();
+  }
+
+  it("cancelDirtyBlock clears the chooser without stashing anything", async () => {
+    await triggerDirtyBlock();
+    resolver.cancelDirtyBlock();
+    expect(resolver.dirtyBlock).toBeNull();
+    expect(commands.stashSave).not.toHaveBeenCalled();
+  });
+
+  it("is re-entrancy locked while busy", async () => {
+    await triggerDirtyBlock();
+    resolver.busy = true;
+    await resolver.stashAndRetryDirtyBlock();
+    expect(commands.stashSave).not.toHaveBeenCalled();
+  });
+
+  it("design mode is a cosmetic no-op with a toast", async () => {
+    resolver.demo = true;
+    resolver.dirtyBlock = { message: "blocked", verb: "Cherry-pick", retry: vi.fn() };
+    await resolver.stashAndRetryDirtyBlock();
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(commands.stashSave).not.toHaveBeenCalled();
+    expect(resolver.dirtyBlock).toBeNull();
+  });
+
+  it("stashes everything, retries the SAME start call, and never reapplies", async () => {
+    await triggerDirtyBlock();
+    vi.mocked(commands.stashSave).mockResolvedValueOnce(workdirResult({ ok: true, message: "stashed" }));
+    vi.mocked(commands.cherryPick).mockResolvedValueOnce(pickResult({ state: "clean", message: "Cherry-picked." }));
+
+    await resolver.stashAndRetryDirtyBlock();
+
+    expect(commands.stashSave).toHaveBeenCalledWith("repo1", expect.stringContaining("cherry-pick"), true);
+    expect(commands.cherryPick).toHaveBeenLastCalledWith("repo1", "sha9", true);
+    expect(commands.stashPop).not.toHaveBeenCalled();
+    expect(resolver.dirtyBlock).toBeNull();
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("does not stash or retry when stash_save itself fails for a real reason", async () => {
+    await triggerDirtyBlock();
+    vi.mocked(commands.stashSave).mockResolvedValueOnce(workdirResult({ ok: false, message: "some other stash failure" }));
+
+    await resolver.stashAndRetryDirtyBlock();
+
+    expect(commands.cherryPick).toHaveBeenCalledTimes(1); // only triggerDirtyBlock's original call — never retried
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("some other stash failure"));
+    expect(resolver.busy).toBe(false);
+  });
+
+  // Regression test: stash_save's own pre-flight check ("Nothing to stash —
+  // the working tree is clean.") can fire even though the op that opened
+  // this chooser just refused — e.g. the block is caused by something
+  // outside plain `git status`'s view (a modified submodule pointer), or the
+  // tree simply changed again in between. The old behavior dead-ended here
+  // with a discouraging toast and never retried at all; it must now retry
+  // directly instead, since there's nothing to reapply either way.
+  it("retries directly (no stash, no reapply) when stash_save finds nothing to stash", async () => {
+    await triggerDirtyBlock();
+    vi.mocked(commands.stashSave).mockResolvedValueOnce(
+      workdirResult({ ok: false, message: "Nothing to stash — the working tree is clean." }),
+    );
+    vi.mocked(commands.cherryPick).mockResolvedValueOnce(pickResult({ state: "clean", message: "Cherry-picked." }));
+
+    await resolver.stashAndRetryDirtyBlockReapply();
+
+    expect(commands.cherryPick).toHaveBeenLastCalledWith("repo1", "sha9", true);
+    expect(commands.stashList).not.toHaveBeenCalled();
+    expect(commands.stashPop).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+    expect(resolver.dirtyBlock).toBeNull();
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("reapply mode: pops the freshly-created stash back after a clean retry, using its own sha", async () => {
+    await triggerDirtyBlock();
+    vi.mocked(commands.stashSave).mockResolvedValueOnce(workdirResult({ ok: true, message: "stashed" }));
+    vi.mocked(commands.cherryPick).mockResolvedValueOnce(pickResult({ state: "clean", message: "Cherry-picked." }));
+    vi.mocked(commands.stashList).mockResolvedValueOnce(ok([{ index: 0, sha: "abc1234", branch: null, message: "auto" }]));
+    vi.mocked(commands.stashPop).mockResolvedValueOnce(workdirResult({ ok: true, message: "popped" }));
+
+    await resolver.stashAndRetryDirtyBlockReapply();
+
+    expect(commands.stashPop).toHaveBeenCalledWith("repo1", 0, "abc1234");
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
+  });
+
+  it("a reapply conflict routes to the SAME shared Resolver stash-conflict flow, not a new one", async () => {
+    await triggerDirtyBlock();
+    vi.mocked(commands.stashSave).mockResolvedValueOnce(workdirResult({ ok: true, message: "stashed" }));
+    vi.mocked(commands.cherryPick).mockResolvedValueOnce(pickResult({ state: "clean", message: "Cherry-picked." }));
+    vi.mocked(commands.stashList).mockResolvedValueOnce(ok([{ index: 0, sha: "abc1234", branch: null, message: "auto" }]));
+    const conflictRes = workdirResult({ ok: false, message: "conflict", conflictedFiles: ["a.txt"], backupRef: "refs/gitgui/backup/1" });
+    vi.mocked(commands.stashPop).mockResolvedValueOnce(conflictRes);
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "stash")));
+
+    await resolver.stashAndRetryDirtyBlockReapply();
+
+    expect(resolver.open).toBe(true);
+    expect(resolver.op).toBe("stash");
+  });
+
+  it("if the retry lands on a real conflict, the stash is left alone — no auto-reapply attempted", async () => {
+    await triggerDirtyBlock();
+    vi.mocked(commands.stashSave).mockResolvedValueOnce(workdirResult({ ok: true, message: "stashed" }));
+    vi.mocked(commands.cherryPick).mockResolvedValueOnce(
+      pickResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"], backupRef: "refs/gitgui/backup/9" }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A])));
+
+    await resolver.stashAndRetryDirtyBlockReapply();
+
+    expect(resolver.open).toBe(true);
+    expect(commands.stashList).not.toHaveBeenCalled();
+    expect(commands.stashPop).not.toHaveBeenCalled();
+  });
+
+  it("if the retry hits ANOTHER dirty-tree block, the stash is left alone and the new chooser opens", async () => {
+    await triggerDirtyBlock();
+    vi.mocked(commands.stashSave).mockResolvedValueOnce(workdirResult({ ok: true, message: "stashed" }));
+    vi.mocked(commands.cherryPick).mockResolvedValueOnce(
+      pickResult({ ok: false, state: "error", message: "still blocked", blockedByLocalChanges: true }),
+    );
+
+    await resolver.stashAndRetryDirtyBlockReapply();
+
+    expect(resolver.dirtyBlock).not.toBeNull();
+    expect(resolver.dirtyBlock?.message).toBe("still blocked");
+    expect(commands.stashList).not.toHaveBeenCalled();
+    expect(commands.stashPop).not.toHaveBeenCalled();
   });
 });
 

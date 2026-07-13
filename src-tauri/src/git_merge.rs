@@ -88,6 +88,15 @@ pub struct MergeResult {
     /// Pre-op safety snapshot ref (present when we snapshotted before mutating),
     /// so the UI can name the snapshot the user can Undo to.
     pub backup_ref: Option<String>,
+    /// True SPECIFICALLY when `state == "error"` because git refused the
+    /// merge outright — the dirty working tree OR staged index would be
+    /// overwritten — rather than some other refusal (bad revision, a merge
+    /// already in progress, `--ff-only` refusing a non-fast-forward, …). See
+    /// git_pick.rs's `blocked_by_local_changes` (identical detection, same
+    /// empirical basis — merge and cherry-pick share the exact same
+    /// unpack-trees safety check and message wording) for the full doc
+    /// comment; mirrors git_write.rs's `WriteResult.conflicting_files`.
+    pub blocked_by_local_changes: bool,
 }
 
 impl MergeResult {
@@ -98,8 +107,20 @@ impl MergeResult {
             conflicted_files: Vec::new(),
             message: message.into(),
             backup_ref: None,
+            blocked_by_local_changes: false,
         }
     }
+}
+
+/// Identical detection to git_pick.rs's own `blocked_by_local_changes` —
+/// see that function's doc comment for the full empirical basis (git 2.x):
+/// merge and cherry-pick share the exact same unpack-trees safety check and
+/// message wording for this refusal, both unstaged-tree and staged-index
+/// variants. Duplicated per module (not shared) per this codebase's own
+/// convention for small helpers — see e.g. dashboard.svelte.ts's
+/// repoBasename() doc comment.
+fn blocked_by_local_changes(stderr: &str) -> bool {
+    stderr.to_lowercase().contains("would be overwritten by")
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +259,7 @@ fn classify(
                     head_name(repo)
                 ),
                 backup_ref: backup,
+                blocked_by_local_changes: false,
             };
         }
         return MergeResult {
@@ -246,6 +268,7 @@ fn classify(
             conflicted_files: Vec::new(),
             message: format!("Merged {label} into {}{snap_note}.", head_name(repo)),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -262,6 +285,7 @@ fn classify(
                 if n == 1 { "" } else { "s" }
             ),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -281,6 +305,7 @@ fn classify(
                 git_msg(out)
             ),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -291,6 +316,7 @@ fn classify(
         state: "error".into(),
         conflicted_files: Vec::new(),
         message: git_msg(out),
+        blocked_by_local_changes: blocked_by_local_changes(&out.stderr),
         backup_ref: backup,
     }
 }
@@ -385,6 +411,7 @@ pub fn merge_start(path: String, sha: String, strategy: Option<String>) -> Merge
                 conflicted_files: Vec::new(),
                 message: e,
                 backup_ref: Some(backup),
+                blocked_by_local_changes: false,
             }
         }
     };
@@ -433,6 +460,7 @@ pub fn merge_continue(path: String) -> MergeResult {
                 conflicted_files: Vec::new(),
                 message: e,
                 backup_ref: backup,
+                blocked_by_local_changes: false,
             }
         }
     };
@@ -460,6 +488,7 @@ pub fn merge_abort(path: String) -> MergeResult {
             conflicted_files: Vec::new(),
             message: "No merge in progress.".into(),
             backup_ref: None,
+            blocked_by_local_changes: false,
         };
     }
     match git(&path, &["merge", "--abort"], false) {
@@ -469,6 +498,7 @@ pub fn merge_abort(path: String) -> MergeResult {
             conflicted_files: Vec::new(),
             message: "Merge aborted — back to the pre-merge state.".into(),
             backup_ref: None,
+            blocked_by_local_changes: false,
         },
         Ok(o) => MergeResult::error(git_msg(&o)),
         Err(e) => MergeResult::error(e),

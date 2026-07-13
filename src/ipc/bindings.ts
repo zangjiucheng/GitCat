@@ -1827,7 +1827,18 @@ conflictedFiles: string[]; message: string;
  * Pre-op safety snapshot ref (present when we snapshotted before mutating),
  * so the UI can name the snapshot the user can Undo to.
  */
-backupRef: string | null }
+backupRef: string | null; 
+/**
+ * True SPECIFICALLY when `state == "error"` because git refused the
+ * merge outright — the dirty working tree OR staged index would be
+ * overwritten — rather than some other refusal (bad revision, a merge
+ * already in progress, `--ff-only` refusing a non-fast-forward, …). See
+ * git_pick.rs's `blocked_by_local_changes` (identical detection, same
+ * empirical basis — merge and cherry-pick share the exact same
+ * unpack-trees safety check and message wording) for the full doc
+ * comment; mirrors git_write.rs's `WriteResult.conflicting_files`.
+ */
+blockedByLocalChanges: boolean }
 /**
  * Result of `merge_squash` / `merge_squash_abort` / `merge_squash_continue` —
  * ONE shared type across all three (mirrors `MergeResult`'s own start/
@@ -1875,7 +1886,19 @@ conflictedFiles: string[]; message: string;
  * Pre-op safety snapshot ref (present when we snapshotted before mutating),
  * so the UI can name the snapshot the user can Undo to.
  */
-backupRef: string | null }
+backupRef: string | null; 
+/**
+ * True SPECIFICALLY when `state == "error"` because git refused the pick
+ * outright — the dirty working tree OR staged index would be
+ * overwritten — rather than some other refusal (bad revision, a pick
+ * already in progress, hook rejection, …). See `blocked_by_local_changes`
+ * (the free function below) for the empirical detection; `false` for
+ * every other outcome, including every success/conflict/empty state, so
+ * the frontend can offer a "stash and retry" action without doing any
+ * prose-matching of its own — same design as git_write.rs's
+ * `WriteResult.conflicting_files` (see that field's own doc comment).
+ */
+blockedByLocalChanges: boolean }
 /**
  * One matching commit. Mirrors `FileHistoryEntry`'s abbreviated per-row
  * naming, minus `path`/`renamed_from` — pickaxe does no rename-tracking
@@ -1926,7 +1949,19 @@ conflictedFiles: string[]; message: string;
  * Pre-op safety snapshot ref (present when we snapshotted before mutating),
  * so the UI can name the snapshot the user can Undo to.
  */
-backupRef: string | null }
+backupRef: string | null; 
+/**
+ * True SPECIFICALLY when `state == "error"` because git refused the
+ * rebase outright — the dirty working tree or index would collide with
+ * it — rather than some other refusal (bad revision, a rebase already
+ * in progress, hook rejection, …). See `blocked_by_local_changes` (the
+ * free function below) for the empirical detection; `false` for every
+ * other outcome, including every success/conflict/editing/empty state,
+ * so the frontend can offer a "stash and retry" action without doing
+ * any prose-matching of its own — same design as git_pick.rs's field of
+ * the same name (see that field's own doc comment).
+ */
+blockedByLocalChanges: boolean }
 /**
  * A ref chip pointing at a commit. `t` is one of: head | branch | remote | tag.
  */
@@ -2039,7 +2074,16 @@ conflictedFiles: string[]; message: string;
  * Pre-op safety snapshot ref (present when we snapshotted before mutating),
  * so the UI can name the snapshot the user can Undo to.
  */
-backupRef: string | null }
+backupRef: string | null; 
+/**
+ * True SPECIFICALLY when `state == "error"` because git refused the
+ * revert outright — the dirty working tree OR staged index would be
+ * overwritten — rather than some other refusal. See git_pick.rs's
+ * `blocked_by_local_changes` for the full doc comment (identical
+ * detection basis); mirrors git_write.rs's
+ * `WriteResult.conflicting_files`.
+ */
+blockedByLocalChanges: boolean }
 /**
  * One selected "+"/"-" row, identified the SAME way `DiffLineRow` already
  * describes it to the frontend (`model.rs`) — `kind`/`old_no`/`new_no`. A

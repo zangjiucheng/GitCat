@@ -87,6 +87,13 @@ pub struct RevertResult {
     /// Pre-op safety snapshot ref (present when we snapshotted before mutating),
     /// so the UI can name the snapshot the user can Undo to.
     pub backup_ref: Option<String>,
+    /// True SPECIFICALLY when `state == "error"` because git refused the
+    /// revert outright — the dirty working tree OR staged index would be
+    /// overwritten — rather than some other refusal. See git_pick.rs's
+    /// `blocked_by_local_changes` for the full doc comment (identical
+    /// detection basis); mirrors git_write.rs's
+    /// `WriteResult.conflicting_files`.
+    pub blocked_by_local_changes: bool,
 }
 
 impl RevertResult {
@@ -97,8 +104,21 @@ impl RevertResult {
             conflicted_files: Vec::new(),
             message: message.into(),
             backup_ref: None,
+            blocked_by_local_changes: false,
         }
     }
+}
+
+/// Identical detection to git_pick.rs's own `blocked_by_local_changes` — see
+/// that function's doc comment for the full empirical basis (git 2.x):
+/// revert shares the exact same unpack-trees safety check and message
+/// wording as cherry-pick/merge for this refusal (verified: the staged-index
+/// variant reads "your local changes would be overwritten by revert.",
+/// naming revert specifically; the unstaged-tree variant reads "…by merge:"
+/// like all three). Duplicated per module per this codebase's own
+/// convention for small helpers.
+fn blocked_by_local_changes(stderr: &str) -> bool {
+    stderr.to_lowercase().contains("would be overwritten by")
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +260,7 @@ fn classify(
             conflicted_files: Vec::new(),
             message: format!("Reverted {label} on {}{snap_note}.", head_name(repo)),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -256,6 +277,7 @@ fn classify(
                 if n == 1 { "" } else { "s" }
             ),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -275,6 +297,7 @@ fn classify(
                 git_msg(out)
             ),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -295,6 +318,7 @@ fn classify(
                 head_name(repo)
             ),
             backup_ref: backup,
+            blocked_by_local_changes: false,
         };
     }
 
@@ -305,6 +329,7 @@ fn classify(
         state: "error".into(),
         conflicted_files: Vec::new(),
         message: git_msg(out),
+        blocked_by_local_changes: blocked_by_local_changes(&out.stderr),
         backup_ref: backup,
     }
 }
@@ -363,6 +388,7 @@ pub fn revert_start(path: String, sha: String, signoff: Option<bool>) -> RevertR
                 conflicted_files: Vec::new(),
                 message: e,
                 backup_ref: Some(backup),
+                blocked_by_local_changes: false,
             }
         }
     };
@@ -411,6 +437,7 @@ pub fn revert_continue(path: String) -> RevertResult {
                 conflicted_files: Vec::new(),
                 message: e,
                 backup_ref: backup,
+                blocked_by_local_changes: false,
             }
         }
     };
@@ -438,6 +465,7 @@ pub fn revert_abort(path: String) -> RevertResult {
             conflicted_files: Vec::new(),
             message: "No revert in progress.".into(),
             backup_ref: None,
+            blocked_by_local_changes: false,
         };
     }
     match git(&path, &["revert", "--abort"], false) {
@@ -447,6 +475,7 @@ pub fn revert_abort(path: String) -> RevertResult {
             conflicted_files: Vec::new(),
             message: "Revert aborted — back to the pre-revert state.".into(),
             backup_ref: None,
+            blocked_by_local_changes: false,
         },
         Ok(o) => RevertResult::error(git_msg(&o)),
         Err(e) => RevertResult::error(e),

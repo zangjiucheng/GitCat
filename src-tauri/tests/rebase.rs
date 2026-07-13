@@ -241,6 +241,8 @@ fn rebase_refuses_a_dirty_tree_even_when_autostash_is_configured() {
     let out = rebase_start(path.clone(), "main".into());
     assert_eq!(out.state, "error", "expected an upfront refusal, got state {:?}: {}", out.state, out.message);
     assert!(!out.ok);
+    assert!(out.blocked_by_local_changes, "expected blocked_by_local_changes=true: {}", out.message);
+    assert!(out.backup_ref.is_some(), "rebase_start snapshots before running git, even on a refusal it caused");
     assert_eq!(repo.open().state(), RepositoryState::Clean, "no rebase should have started");
     assert_eq!(
         repo.read("g.txt"),
@@ -712,6 +714,7 @@ fn rebase_interactive_start_rejects_stale_or_mismatched_todo() {
     );
     assert!(!out.ok);
     assert!(out.backup_ref.is_none(), "a pre-flight refusal must never snapshot");
+    assert!(!out.blocked_by_local_changes, "a stale-todo refusal must not be misclassified as a dirty-tree block: {}", out.message);
 
     // Nothing was mutated.
     assert_eq!(repo.rev("HEAD").as_deref(), Some(original_head.as_str()));

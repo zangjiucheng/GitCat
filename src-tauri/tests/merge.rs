@@ -155,6 +155,8 @@ fn merge_refuses_a_dirty_conflicting_tree_even_when_autostash_is_configured() {
     let merged = merge_start(path.clone(), feature_tip.clone(), None);
     assert_eq!(merged.state, "error", "expected an upfront refusal, got state {:?}: {}", merged.state, merged.message);
     assert!(!merged.ok);
+    assert!(merged.blocked_by_local_changes, "expected blocked_by_local_changes=true: {}", merged.message);
+    assert!(merged.backup_ref.is_some(), "merge_start snapshots before running git, even on a refusal it caused");
     assert_eq!(repo.open().state(), RepositoryState::Clean, "no merge should have started");
     assert_eq!(
         repo.read("shared.txt"),
@@ -221,6 +223,7 @@ fn merge_ff_only_refuses_when_diverged_and_succeeds_when_ff_is_possible() {
     let merged = merge_start(path.clone(), feature_tip.clone(), Some("ff-only".into()));
     assert_eq!(merged.state, "error", "expected a clean refusal, got: {}", merged.message);
     assert!(!merged.ok);
+    assert!(!merged.blocked_by_local_changes, "an --ff-only refusal must not be misclassified as a dirty-tree block: {}", merged.message);
     assert_eq!(repo.rev("HEAD").as_deref(), Some(main_head.as_str()), "HEAD must not move");
     assert_eq!(repo.open().state(), RepositoryState::Clean, "no merge should have started");
     assert!(repo.is_clean(), "the working tree must be untouched");

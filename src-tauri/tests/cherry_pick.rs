@@ -94,3 +94,40 @@ fn cherry_pick_abort_restores_head() {
     assert!(again.ok);
     assert_eq!(again.state, "clean");
 }
+
+#[test]
+fn cherry_pick_blocked_by_dirty_tree_reports_blocked_by_local_changes() {
+    let repo = TempRepo::init("pick_dirty_block");
+    let _c0 = repo.commit("a.txt", "base\n", "c0");
+    repo.must(&["branch", "feature"]);
+    repo.must(&["checkout", "-q", "feature"]);
+    let feature_tip = repo.commit("a.txt", "feature-a\n", "feature edits a.txt");
+    repo.must(&["checkout", "-q", "main"]);
+    let path = repo.path();
+
+    // Dirty a.txt (unstaged) in a way that collides with what the pick would touch.
+    std::fs::write(repo.dir.join("a.txt"), "dirty-a\n").unwrap();
+    assert!(!repo.is_clean());
+
+    let picked = cherry_pick(path.clone(), feature_tip, Some(true));
+    assert!(!picked.ok);
+    assert_eq!(picked.state, "error", "expected a dirty-tree refusal, got state {:?}: {}", picked.state, picked.message);
+    assert!(picked.blocked_by_local_changes, "expected blocked_by_local_changes=true: {}", picked.message);
+    assert!(picked.backup_ref.is_some(), "cherry_pick snapshots before running git, even on a refusal it caused");
+    assert!(picked.conflicted_files.is_empty());
+    // Refused atomically: nothing was actually picked, and the dirty file is untouched.
+    assert_eq!(repo.read("a.txt"), "dirty-a\n");
+    assert_eq!(repo.open().state(), RepositoryState::Clean);
+}
+
+#[test]
+fn cherry_pick_bad_revision_is_not_reported_as_blocked_by_local_changes() {
+    let repo = TempRepo::init("pick_bad_rev");
+    let _c0 = repo.commit("a.txt", "base\n", "c0");
+    let path = repo.path();
+
+    let picked = cherry_pick(path, "not-a-real-sha".into(), Some(true));
+    assert!(!picked.ok);
+    assert_eq!(picked.state, "error");
+    assert!(!picked.blocked_by_local_changes, "a bad revision must not be misclassified as a dirty-tree block: {}", picked.message);
+}

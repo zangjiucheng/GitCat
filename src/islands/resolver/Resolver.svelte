@@ -138,6 +138,39 @@
   </div>
 </div>
 
+{#if resolver.dirtyBlock}
+  {@const block = resolver.dirtyBlock}
+  <div class="scrim on">
+    <div class="modal">
+      <div class="modal-head">
+        <div>
+          <h3>{block.verb} blocked by local changes</h3>
+          <p>{block.message}</p>
+        </div>
+      </div>
+      <div class="modal-body">
+        <p class="mut">
+          Stash your uncommitted changes, then retry the {block.verb.toLowerCase()} — or leave it and sort the working
+          tree out yourself.
+        </p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" disabled={resolver.busy} onclick={() => resolver.cancelDirtyBlock()}>Cancel</button>
+        <button class="btn ghost" disabled={resolver.busy} onclick={() => resolver.stashAndRetryDirtyBlock()}
+          >{#if resolver.busy}<span class="spinner"></span> Working…{:else}Stash &amp; retry{/if}</button
+        >
+        <button
+          class="btn"
+          style="background:var(--accent2);border-color:var(--accent2)"
+          disabled={resolver.busy}
+          onclick={() => resolver.stashAndRetryDirtyBlockReapply()}
+          >{#if resolver.busy}<span class="spinner"></span> Working…{:else}Stash, retry &amp; reapply{/if}</button
+        >
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if resolver.editing && !resolver.open}
   <div class="rb-pause-pill" role="status">
     <span class="rb-pause-ic">&#9208;</span>

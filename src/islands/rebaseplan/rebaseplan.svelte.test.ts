@@ -59,7 +59,7 @@ function planCommit(partial: Partial<PlanCommit>): PlanCommit {
 }
 
 function rebaseResult(partial: Partial<RebaseResult>): RebaseResult {
-  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, ...partial };
+  return { ok: true, state: "clean", conflictedFiles: [], message: "", backupRef: null, blockedByLocalChanges: false, ...partial };
 }
 
 const C1 = planCommit({ sha: "1".repeat(40), shortSha: "1111111", subject: "add one.txt" });
