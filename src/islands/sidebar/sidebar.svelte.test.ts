@@ -130,13 +130,13 @@ describe("refresh", () => {
     vi.mocked(commands.listRefs).mockResolvedValueOnce(
       ok({
         head: "main",
-        locals: [{ name: "main", sha: "abc1234", ahead: 1, behind: 0 }],
+        locals: [{ name: "main", sha: "abc1234", ahead: 1, behind: 0, upstream: "origin/main" }],
         remotes: [{ name: "origin/main", sha: "abc1234" }],
         tags: [{ name: "v1.0.0", sha: "abc1234" }],
       }),
     );
     await sidebarCtrl.refresh("/repo");
-    expect(sidebarCtrl.locals).toEqual([{ name: "main", sha: "abc1234", ahead: 1, behind: 0 }]);
+    expect(sidebarCtrl.locals).toEqual([{ name: "main", sha: "abc1234", ahead: 1, behind: 0, upstream: "origin/main" }]);
     expect(sidebarCtrl.head).toBe("main");
     expect(sidebarCtrl.hasRepo).toBe(true);
     expect(bridge.updateBranchPill).toHaveBeenCalledWith("main", sidebarCtrl.locals);
@@ -1043,7 +1043,7 @@ describe("checkoutRemote", () => {
 
   it("with an existing local branch of the same short name: switches to it instead of creating a duplicate", async () => {
     mockInTauri = true;
-    sidebarCtrl.locals = [{ name: "feature-x", sha: "a1", ahead: null, behind: null }];
+    sidebarCtrl.locals = [{ name: "feature-x", sha: "a1", ahead: null, behind: null, upstream: null }];
     vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [] });
     await sidebarCtrl.checkoutRemote("origin/feature-x");
     expect(commands.checkout).toHaveBeenCalledWith("/repo", "feature-x");
@@ -1079,7 +1079,7 @@ describe("checkoutRemote", () => {
 
   it("forwards the position through to checkout() when delegating to an existing local branch of the same short name", async () => {
     mockInTauri = true;
-    sidebarCtrl.locals = [{ name: "feature-x", sha: "a1", ahead: null, behind: null }];
+    sidebarCtrl.locals = [{ name: "feature-x", sha: "a1", ahead: null, behind: null, upstream: null }];
     vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "would be overwritten", backupRef: null, conflictingFiles: ["a.txt"] });
     await sidebarCtrl.checkoutRemote("origin/feature-x", { x: 5, y: 6 });
     expect(sidebarCtrl.dirtyCheckoutMenu).toEqual({ name: "feature-x", startPoint: null, files: ["a.txt"], x: 5, y: 6 });
@@ -1638,7 +1638,7 @@ describe("setSnapshots / reset", () => {
   });
 
   it("reset clears everything including an open menu, tag menu, submodule menu, merge menu, hasRepo, and submodules", () => {
-    sidebarCtrl.locals = [{ name: "main", sha: "x", ahead: null, behind: null }];
+    sidebarCtrl.locals = [{ name: "main", sha: "x", ahead: null, behind: null, upstream: null }];
     sidebarCtrl.head = "main";
     sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
     sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };

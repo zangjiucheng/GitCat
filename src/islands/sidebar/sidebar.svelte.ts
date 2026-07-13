@@ -116,10 +116,10 @@ import type { LocalBranch, SimpleRef, Snapshot, SubmoduleForeachEntry, Submodule
 // Demo data (design-mode only) — mirrors the static markup this replaces, so
 // the browser preview still shows a populated sidebar without a real repo.
 const DEMO_LOCALS: LocalBranch[] = [
-  { name: "main", sha: "a1b2c3d", ahead: 2, behind: null },
-  { name: "feat/inline-diff", sha: "b2c3d4e", ahead: null, behind: 3 },
-  { name: "fix/lane-cull", sha: "c3d4e5f", ahead: null, behind: null },
-  { name: "release/0.3", sha: "d4e5f60", ahead: null, behind: null },
+  { name: "main", sha: "a1b2c3d", ahead: 2, behind: null, upstream: "origin/main" },
+  { name: "feat/inline-diff", sha: "b2c3d4e", ahead: null, behind: 3, upstream: "origin/feat/inline-diff" },
+  { name: "fix/lane-cull", sha: "c3d4e5f", ahead: null, behind: null, upstream: null },
+  { name: "release/0.3", sha: "d4e5f60", ahead: null, behind: null, upstream: null },
 ];
 const DEMO_REMOTES: SimpleRef[] = [
   { name: "origin/main", sha: "a1b2c3d" },

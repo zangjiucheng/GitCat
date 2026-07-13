@@ -383,6 +383,18 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   background:var(--elevated);border:1px solid var(--border);border-radius:6px;padding:3px 7px;
   font-size:10.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   z-index:20;box-shadow:var(--shadow);pointer-events:none}
+/* Branch pill's own detail tooltip (legacy/main.ts's branchPillTip()) —
+   overrides the shared [data-tip] rule above rather than reusing it as-is:
+   that one is single-line/nowrap and bounded by ITS OWN PARENT's width
+   (built for the sidebar's narrow rows, which need to never escape past the
+   sidebar edge into the graph pane — see that rule's own comment). The
+   branch pill sits in the topbar with the whole app below it, so there's no
+   equivalent edge to worry about, and the content here is deliberately
+   TWO lines (branch name + what "ahead/behind" are relative to) joined by a
+   real `\n`, which needs white-space:pre-line (not nowrap) to actually wrap. */
+.branch-pill[data-tip]:hover::after{left:0;right:auto;top:calc(100% + 4px);white-space:pre-line;
+  overflow:visible;text-overflow:clip;min-width:100%;width:max-content;max-width:240px;
+  font-size:11px;font-weight:400;line-height:1.5;padding:6px 9px}
 .ref-pop{position:fixed;z-index:300;min-width:150px;background:var(--panel);border:1px solid var(--border);border-radius:var(--r-control);box-shadow:var(--shadow);padding:4px;display:flex;flex-direction:column;gap:2px}
 .ref-pop button{font:inherit;text-align:left;background:transparent;border:none;color:var(--text);padding:6px 10px;border-radius:6px;cursor:pointer}
 .ref-pop button:hover:not([disabled]){background:var(--elevated)}

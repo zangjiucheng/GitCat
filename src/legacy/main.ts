@@ -1280,8 +1280,24 @@ async function reloadGraph(preserveRow){
 // sidebarCtrl.refresh() calls this after every list_refs fetch instead of
 // touching #pillBranch/#pillAb itself, matching every island's convention of
 // never reaching outside its own mount target.
+// Multi-line hover detail for the branch pill (see the `.branch-pill[data-tip]`
+// CSS override of the shared [data-tip] rule — that base rule is single-line/
+// nowrap, built for the sidebar's narrow rows; this one wraps and sits below
+// the topbar instead). Spells out what the bare "↑N·↓N" glyph shorthand
+// actually means (ahead/behind WHAT), which the pill itself has no room for.
+function branchPillTip(cur,curB){
+  if(!cur) return "Detached HEAD — not on any branch";
+  const up=curB&&typeof curB==="object"?curB.upstream:null;
+  if(!up) return cur+"\nNo upstream branch configured";
+  const a=(curB&&typeof curB==="object"&&curB.ahead)||0, be=(curB&&typeof curB==="object"&&curB.behind)||0;
+  const line2=!a&&!be ? "Up to date with "+up
+    : a&&!be ? a+" commit"+(a===1?"":"s")+" ahead of "+up
+    : !a&&be ? be+" commit"+(be===1?"":"s")+" behind "+up
+    : a+" commit"+(a===1?"":"s")+" ahead, "+be+" commit"+(be===1?"":"s")+" behind "+up;
+  return cur+"\n"+line2;
+}
 function updateBranchPill(cur,locals){
-  const pill=$("#pillBranch"), pillAb=$("#pillAb");
+  const pill=$("#pillBranch"), pillAb=$("#pillAb"), pillWrap=$(".branch-pill");
   if(!pill) return;
   const curB=cur&&locals.find(b=>(typeof b==="object"?b.name:b)===cur);
   pill.textContent=cur||"detached";
@@ -1290,6 +1306,7 @@ function updateBranchPill(cur,locals){
     if(cur&&(a||be)) pillAb.innerHTML="<b>&#8593;"+a+"</b>&#183;<b>&#8595;"+be+"</b>";
     else pillAb.textContent="";
   }
+  if(pillWrap) pillWrap.setAttribute("data-tip",branchPillTip(cur,curB));
 }
 async function pickRepo(){
   if(!IN_TAURI||openRepoBusy) return;

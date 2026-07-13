@@ -22,6 +22,47 @@ fn list_refs_reports_current_branch_and_tip() {
     assert_eq!(refs.locals.len(), 1);
     assert_eq!(refs.locals[0].name, "main");
     assert_eq!(refs.locals[0].sha, c0);
+    // No remote configured at all — ahead/behind/upstream must all be None
+    // together, never independently (see LocalBranch's own doc comment).
+    assert_eq!(refs.locals[0].upstream, None);
+    assert_eq!(refs.locals[0].ahead, None);
+    assert_eq!(refs.locals[0].behind, None);
+}
+
+/// Regression/coverage test for `LocalBranch.upstream` (the topbar branch
+/// pill's hover-detail field): a branch WITH a configured upstream reports
+/// that upstream's own full shorthand (e.g. "origin/main"), alongside
+/// ahead/behind counts computed relative to it. Mirrors remote_ops.rs's own
+/// bare-remote + second-clone pattern (duplicated here per this codebase's
+/// convention of not sharing test helpers across independent test binaries).
+#[test]
+fn list_refs_reports_the_configured_upstream_alongside_ahead_behind() {
+    let bare = common::TempRepo::init_bare("branch_ops_upstream_bare");
+    let bare_path = bare.path();
+
+    let local = common::TempRepo::init("branch_ops_upstream_local");
+    let _c0 = local.commit("f.txt", "0\n", "c0");
+    local.must(&["remote", "add", "origin", &bare_path]);
+    local.must(&["push", "-q", "-u", "origin", "main"]);
+
+    // "Someone else" pushes a commit straight to the bare remote — makes
+    // local's main "behind" without local ever fetching/merging it itself.
+    let other = common::TempRepo::init("branch_ops_upstream_other");
+    other.must(&["remote", "add", "origin", &bare_path]);
+    other.must(&["fetch", "-q", "origin", "main"]);
+    other.must(&["checkout", "-q", "-B", "main", "origin/main"]);
+    other.commit("g.txt", "0\n", "remote-only commit");
+    other.must(&["push", "-q", "origin", "main"]);
+
+    local.must(&["fetch", "-q", "origin"]);
+    // Local-only commit, on top of fetching the above — diverged both ways now.
+    local.commit("f.txt", "1\n", "local-only commit");
+
+    let refs = list_refs(local.path()).expect("list_refs failed");
+    let main = refs.locals.iter().find(|b| b.name == "main").expect("main branch missing");
+    assert_eq!(main.upstream.as_deref(), Some("origin/main"));
+    assert_eq!(main.ahead, Some(1));
+    assert_eq!(main.behind, Some(1));
 }
 
 #[test]

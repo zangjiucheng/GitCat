@@ -71,6 +71,11 @@ impl WriteResult {
 
 /// A local branch row for the data-driven sidebar. `ahead`/`behind` are relative
 /// to the branch's configured upstream, or `None` when it has no upstream.
+/// `upstream` is that same configured branch's own full shorthand (e.g.
+/// "origin/main") — `None` exactly when `ahead`/`behind` are also `None` (no
+/// upstream configured), never independently. Surfaced so the UI can say
+/// what "ahead"/"behind" are actually relative TO (the topbar branch pill's
+/// hover detail), not just show the bare numbers.
 #[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalBranch {
@@ -78,6 +83,7 @@ pub struct LocalBranch {
     pub sha: String,
     pub ahead: Option<usize>,
     pub behind: Option<usize>,
+    pub upstream: Option<String>,
 }
 
 /// A remote-tracking branch or a tag: just a name and the commit it resolves to.
@@ -316,15 +322,19 @@ fn list_refs_inner(path: &str) -> Result<RefList, git2::Error> {
         let sha = oid.to_string();
         match btype {
             BranchType::Local => {
-                // ahead/behind against the configured upstream, if any.
-                let (ahead, behind) = branch
-                    .upstream()
-                    .ok()
+                // ahead/behind (+ the upstream's own name, for the topbar
+                // branch pill's hover detail) against the configured
+                // upstream, if any.
+                let upstream = branch.upstream().ok();
+                let upstream_name = upstream
+                    .as_ref()
+                    .and_then(|up| up.name().ok().flatten().map(|s| s.to_string()));
+                let (ahead, behind) = upstream
                     .and_then(|up| up.get().peel_to_commit().ok())
                     .and_then(|uc| repo.graph_ahead_behind(oid, uc.id()).ok())
                     .map(|(a, b)| (Some(a), Some(b)))
                     .unwrap_or((None, None));
-                locals.push(LocalBranch { name, sha, ahead, behind });
+                locals.push(LocalBranch { name, sha, ahead, behind, upstream: upstream_name });
             }
             BranchType::Remote => {
                 if name.ends_with("/HEAD") {

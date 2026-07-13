@@ -1807,8 +1807,13 @@ export type HunkSelection = { header: string; lines: SelectedLine[] }
 /**
  * A local branch row for the data-driven sidebar. `ahead`/`behind` are relative
  * to the branch's configured upstream, or `None` when it has no upstream.
+ * `upstream` is that same configured branch's own full shorthand (e.g.
+ * "origin/main") — `None` exactly when `ahead`/`behind` are also `None` (no
+ * upstream configured), never independently. Surfaced so the UI can say
+ * what "ahead"/"behind" are actually relative TO (the topbar branch pill's
+ * hover detail), not just show the bare numbers.
  */
-export type LocalBranch = { name: string; sha: string; ahead: number | null; behind: number | null }
+export type LocalBranch = { name: string; sha: string; ahead: number | null; behind: number | null; upstream: string | null }
 /**
  * Result of any merge step (initial / continue / abort). Serializes
  * camelCase: `conflictedFiles`, `backupRef`.
