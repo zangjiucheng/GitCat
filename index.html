@@ -821,7 +821,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .rm-act button.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
 .rm-act button[disabled]{opacity:.45;cursor:not-allowed}
 .rm-form{display:flex;flex-direction:column;gap:6px;padding:6px 5px}
-.rm-form input,.rm-form select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);
+/* :not([type="checkbox"]) — this rule is meant for the text/select inputs
+   that fill the form's own width; without the exclusion it ALSO matched a
+   `.cp-x` checkbox nested inside (Pickaxe's "treat as regex"/"search all
+   branches", Search Code's "case sensitive"), stretching it to width:100%
+   with 6px/8px padding and squeezing its label text into a garbled multi-line
+   wrap — reproduced and confirmed the fix at the modal's own full width, not
+   a narrow-viewport-only issue. */
+.rm-form input:not([type="checkbox"]),.rm-form select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);
   color:var(--text);font:inherit;font-size:12px;padding:6px 8px;outline:none}
 .rm-form input:focus,.rm-form select:focus{border-color:var(--accent)}
 .rm-form.busy input,.rm-form.busy select{opacity:.6}
