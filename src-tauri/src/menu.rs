@@ -110,6 +110,13 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         let reflog = MenuItemBuilder::with_id("reflog", "Reflog\u{2026}").build(app)?;
         let rerere = MenuItemBuilder::with_id("rerere", "Rerere\u{2026}").build(app)?;
         let plumbing = MenuItemBuilder::with_id("plumbing", "Plumbing\u{2026}").build(app)?;
+        // Repository Summary: a git-log-derived diagnostic (churn hotspots,
+        // contributor ranking/bus factor, monthly activity, problem areas) —
+        // same dialog-opener "…" convention as the items around it. Also
+        // shown automatically once, the first time a repo is opened (see
+        // reposummary.svelte.ts's maybeAutoShow), independent of this menu
+        // item, which is just the on-demand entry point.
+        let repo_summary = MenuItemBuilder::with_id("repo-summary", "Repository Summary\u{2026}").build(app)?;
         let remotes = MenuItemBuilder::with_id("remotes", "Manage Remotes\u{2026}").build(app)?;
         // Patch export/apply (backlog #9, format-patch/am): two dialog-openers,
         // same "…" ellipsis convention as bisect/reflog/rerere/plumbing/remotes
@@ -189,6 +196,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .item(&reflog)
             .item(&rerere)
             .item(&plumbing)
+            .item(&repo_summary)
             .item(&remotes)
             .item(&export_patches)
             .item(&apply_patch)
@@ -254,9 +262,10 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // action — forward the id as a JS event rather than duplicating that
         // logic in Rust.
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
-        | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "export-patches" | "apply-patch" | "pickaxe-search"
-        | "repositories" | "external-tools" | "settings" | "dangling-recovery" | "repo-files" | "pull-merge" | "pull-rebase"
-        | "open-terminal" | "force-push-lease" | "force-push-override" | "filter-repo" | "check-for-updates") => {
+        | "bisect" | "reflog" | "rerere" | "plumbing" | "repo-summary" | "remotes" | "export-patches" | "apply-patch"
+        | "pickaxe-search" | "repositories" | "external-tools" | "settings" | "dangling-recovery" | "repo-files"
+        | "pull-merge" | "pull-rebase" | "open-terminal" | "force-push-lease" | "force-push-override" | "filter-repo"
+        | "check-for-updates") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

@@ -34,6 +34,18 @@ pub struct TrackedRepo {
     /// the dashboard's manual "+ Add repository…" picker and never actually
     /// opened. Drives the dashboard's most-recently-used ordering.
     pub last_opened_at: Option<i64>,
+    /// Whether the one-time Repository Summary auto-show (see
+    /// `claim_repo_summary_first_open`) has already fired for this path.
+    /// `#[serde(default)]` is REQUIRED, not stylistic: this field was added
+    /// after `tracked_repos.json` was already a persisted, versioned file —
+    /// without a default, every existing user's file (lacking this key)
+    /// would fail to deserialize and trip `load_from`'s corrupt-file-
+    /// recovery path, silently emptying their whole tracked list on
+    /// upgrade. `false` is exactly the right meaning for a pre-existing
+    /// entry ("not yet shown") — it naturally arms one harmless future
+    /// auto-show, never data loss.
+    #[serde(default)]
+    pub repo_summary_shown: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -153,7 +165,7 @@ pub fn add_tracked_repo(app: AppHandle<Wry>, path: String) -> Result<Vec<Tracked
     let norm = normalize(&path);
     let mut repos = load_from(&registry)?;
     if !repos.iter().any(|r| r.path == norm) {
-        repos.push(TrackedRepo { path: norm, last_opened_at: None });
+        repos.push(TrackedRepo { path: norm, last_opened_at: None, repo_summary_shown: false });
         save_to(&registry, &repos)?;
     }
     Ok(repos)
@@ -190,10 +202,52 @@ pub fn track_repo_opened(app: AppHandle<Wry>, path: String) -> Result<Vec<Tracke
     let mut repos = load_from(&registry)?;
     match repos.iter_mut().find(|r| r.path == norm) {
         Some(r) => r.last_opened_at = Some(now),
-        None => repos.push(TrackedRepo { path: norm, last_opened_at: Some(now) }),
+        None => repos.push(TrackedRepo { path: norm, last_opened_at: Some(now), repo_summary_shown: false }),
     }
     save_to(&registry, &repos)?;
     Ok(repos)
+}
+
+/// Atomically checks-and-marks whether `path`'s one-time auto-shown
+/// Repository Summary has already fired. `Ok(true)` only the FIRST time
+/// ever called for a given (normalized) path — the caller should show it
+/// now; the flag is set in this same lock-guarded step so a race (e.g. two
+/// windows opening the same repo at once) can never double-claim. `Ok(false)`
+/// on every later call.
+///
+/// Independently upserts (same defensive shape as `track_repo_opened`)
+/// rather than assuming that sibling call already ran for this path.
+///
+/// Deliberately does NOT return the whole tracked list, unlike every other
+/// mutation in this file (that convention exists so the dashboard can
+/// re-render without a second round trip) — this command's only caller
+/// (`openRepo()`'s success path) has no use for the list, just this one
+/// boolean.
+///
+/// Deliberately git-unaware (a pure registry check, same boundary this
+/// module already holds — see the module doc's "the registry itself is
+/// just a list of strings" framing): opening a genuinely empty/unborn repo
+/// still consumes the claim without the Repository Summary ever actually
+/// showing anything meaningful. Accepted trade-off — the feature stays
+/// fully reachable on demand via Tools/⌘K regardless.
+///
+/// JS: `commands.claimRepoSummaryFirstOpen(path)`.
+#[tauri::command]
+#[specta::specta]
+pub fn claim_repo_summary_first_open(app: AppHandle<Wry>, path: String) -> Result<bool, String> {
+    let _guard = registry_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let registry = registry_path(&app)?;
+    let norm = normalize(&path);
+    let mut repos = load_from(&registry)?;
+    if repos.iter().any(|r| r.path == norm && r.repo_summary_shown) {
+        return Ok(false);
+    }
+    match repos.iter_mut().find(|r| r.path == norm) {
+        Some(r) => r.repo_summary_shown = true,
+        None => repos.push(TrackedRepo { path: norm, last_opened_at: None, repo_summary_shown: true }),
+    }
+    save_to(&registry, &repos)?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -253,7 +307,7 @@ mod tests {
                 scope.spawn(move || {
                     let _guard = registry_lock().lock().unwrap_or_else(|e| e.into_inner());
                     let mut repos = load_from(path).expect("load under lock should succeed");
-                    repos.push(TrackedRepo { path: format!("/repo/{i}"), last_opened_at: None });
+                    repos.push(TrackedRepo { path: format!("/repo/{i}"), last_opened_at: None, repo_summary_shown: false });
                     save_to(path, &repos).expect("save under lock should succeed");
                 });
             }
@@ -278,8 +332,8 @@ mod tests {
         let path = dir.join("tracked_repos.json");
 
         let repos = vec![
-            TrackedRepo { path: "/tmp/repo-a".into(), last_opened_at: Some(1_720_000_000) },
-            TrackedRepo { path: "/tmp/repo-b".into(), last_opened_at: None },
+            TrackedRepo { path: "/tmp/repo-a".into(), last_opened_at: Some(1_720_000_000), repo_summary_shown: false },
+            TrackedRepo { path: "/tmp/repo-b".into(), last_opened_at: None, repo_summary_shown: true },
         ];
         save_to(&path, &repos).expect("save_to failed");
 
@@ -287,8 +341,82 @@ mod tests {
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0].path, "/tmp/repo-a");
         assert_eq!(loaded[0].last_opened_at, Some(1_720_000_000));
+        assert!(!loaded[0].repo_summary_shown);
         assert_eq!(loaded[1].path, "/tmp/repo-b");
         assert_eq!(loaded[1].last_opened_at, None);
+        assert!(loaded[1].repo_summary_shown);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_json_without_repo_summary_shown_key_deserializes_with_default_false() {
+        // Regression test: tracked_repos.json is an already-persisted file
+        // from before this field existed. Without #[serde(default)] on
+        // TrackedRepo::repo_summary_shown, a real user's existing file
+        // (which looks exactly like this) would fail to deserialize and
+        // trip load_from's corrupt-file-recovery path, silently wiping
+        // their whole tracked-repos list on upgrade.
+        let dir = std::env::temp_dir().join(format!(
+            "gitcat-registry-test-legacy-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tracked_repos.json");
+        std::fs::write(
+            &path,
+            r#"{"version":1,"repos":[{"path":"/tmp/legacy-repo","lastOpenedAt":1700000000}]}"#,
+        )
+        .unwrap();
+
+        let repos = load_from(&path).expect("legacy-shaped JSON must still deserialize");
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].path, "/tmp/legacy-repo");
+        assert_eq!(repos[0].last_opened_at, Some(1_700_000_000));
+        assert!(!repos[0].repo_summary_shown, "a pre-existing entry must default to not-yet-shown");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn claim_repo_summary_first_open_fires_once_then_stays_false() {
+        // Re-implements claim_repo_summary_first_open's load->check->mutate->save
+        // logic directly against load_from/save_to, mirroring how this file's
+        // own track_opened-style tests exercise the persistence layer without
+        // a real AppHandle (see module doc on load_from/save_to being pub for
+        // exactly this reason).
+        let dir = std::env::temp_dir().join(format!(
+            "gitcat-registry-test-claim-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tracked_repos.json");
+
+        fn claim(path: &Path, norm: &str) -> bool {
+            let mut repos = load_from(path).expect("load should succeed");
+            if repos.iter().any(|r| r.path == norm && r.repo_summary_shown) {
+                return false;
+            }
+            match repos.iter_mut().find(|r| r.path == norm) {
+                Some(r) => r.repo_summary_shown = true,
+                None => repos.push(TrackedRepo {
+                    path: norm.to_string(),
+                    last_opened_at: None,
+                    repo_summary_shown: true,
+                }),
+            }
+            save_to(path, &repos).expect("save should succeed");
+            true
+        }
+
+        assert!(claim(&path, "/tmp/repo-a"), "first claim for a fresh path must be true");
+        assert!(!claim(&path, "/tmp/repo-a"), "second claim for the same path must be false");
+
+        let repos = load_from(&path).expect("load should succeed");
+        assert_eq!(repos.len(), 1);
+        assert!(repos[0].repo_summary_shown);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

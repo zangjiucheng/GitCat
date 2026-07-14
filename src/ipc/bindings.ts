@@ -1452,6 +1452,56 @@ async dashboardRepoStatus(path: string) : Promise<Result<DashboardRepoStatus, st
 }
 },
 /**
+ * Atomically checks-and-marks whether `path`'s one-time auto-shown
+ * Repository Summary has already fired. `Ok(true)` only the FIRST time
+ * ever called for a given (normalized) path — the caller should show it
+ * now; the flag is set in this same lock-guarded step so a race (e.g. two
+ * windows opening the same repo at once) can never double-claim. `Ok(false)`
+ * on every later call.
+ * 
+ * Independently upserts (same defensive shape as `track_repo_opened`)
+ * rather than assuming that sibling call already ran for this path.
+ * 
+ * Deliberately does NOT return the whole tracked list, unlike every other
+ * mutation in this file (that convention exists so the dashboard can
+ * re-render without a second round trip) — this command's only caller
+ * (`openRepo()`'s success path) has no use for the list, just this one
+ * boolean.
+ * 
+ * Deliberately git-unaware (a pure registry check, same boundary this
+ * module already holds — see the module doc's "the registry itself is
+ * just a list of strings" framing): opening a genuinely empty/unborn repo
+ * still consumes the claim without the Repository Summary ever actually
+ * showing anything meaningful. Accepted trade-off — the feature stays
+ * fully reachable on demand via Tools/⌘K regardless.
+ * 
+ * JS: `commands.claimRepoSummaryFirstOpen(path)`.
+ */
+async claimRepoSummaryFirstOpen(path: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("claim_repo_summary_first_open", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Aggregated churn/contributor/monthly-activity/problem-area diagnostics
+ * over the last [`CHURN_WINDOW_DAYS`] of `HEAD`'s ancestry. An unborn/empty
+ * repo (no commits yet) returns a zeroed summary, not an error — matches
+ * `dashboard.rs`'s own "empty repo is a normal state" convention.
+ * 
+ * JS: `commands.repoSummary(path)`.
+ */
+async repoSummary(path: string) : Promise<Result<RepoSummary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_summary", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.getToolSettings()`.
  */
 async getToolSettings() : Promise<Result<ToolSettings, string>> {
@@ -1604,6 +1654,7 @@ export type BlobObject = { sha: string; size: number; isBinary: boolean;
  * blob (only `size` is reported).
  */
 content: string | null; truncated: boolean }
+export type ChurnFile = { path: string; touches: number }
 /**
  * Full payload for the M1 commit detail panel: message + real diff tree.
  */
@@ -1639,6 +1690,7 @@ export type ConflictFile = { path: string; ours: string; base: string; theirs: s
  * UI can offer Continue.
  */
 export type ConflictStatus = { inProgress: boolean; op: string; files: ConflictFile[] }
+export type Contributor = { name: string; email: string; commits: number }
 /**
  * One dangling commit found via `git fsck --dangling --no-reflogs` — a real
  * recovery candidate (see module doc for why exactly this flag pair).
@@ -1847,6 +1899,7 @@ state: string; conflictedFiles: string[]; message: string; backupRef: string | n
  * `.git/SQUASH_MSG`'s content — populated only when state == "staged".
  */
 suggestedMessage: string | null }
+export type MonthlyActivity = { month: string; commits: number }
 /**
  * One author/committer identity. `t` is a unix timestamp; the frontend formats it.
  */
@@ -1914,6 +1967,8 @@ export type PlumbingObject = ({ kind: "commit" } & CommitObject) | ({ kind: "tre
  * One author/tagger/committer identity. `time` is unix seconds.
  */
 export type PlumbingPerson = { name: string; email: string; time: number }
+export type ProblemAreas = { files: ProblemFile[]; revertOrHotfixCommits: number; totalCommits: number }
+export type ProblemFile = { path: string; bugfixTouches: number; totalTouches: number }
 /**
  * Result of any rebase step (start / continue / skip / abort). Serializes
  * camelCase: `conflictedFiles`, `backupRef`.
@@ -1985,6 +2040,7 @@ backupRef: string | null }
  * `SubmoduleRemovalResult` doc comment).
  */
 export type RepoFileResult = { ok: boolean; message: string }
+export type RepoSummary = { windowDays: number; totalCommits: number; truncated: boolean; churn: ChurnFile[]; contributors: Contributor[]; busFactor: number; monthly: MonthlyActivity[]; problemAreas: ProblemAreas }
 /**
  * One historical resolution recorded under `<git-common-dir>/rr-cache/<id>/`.
  * `id` is the cache directory name — a hash of the conflict hunk's content,
@@ -2193,7 +2249,20 @@ export type TrackedRepo = { path: string;
  * the dashboard's manual "+ Add repository…" picker and never actually
  * opened. Drives the dashboard's most-recently-used ordering.
  */
-lastOpenedAt: number | null }
+lastOpenedAt: number | null; 
+/**
+ * Whether the one-time Repository Summary auto-show (see
+ * `claim_repo_summary_first_open`) has already fired for this path.
+ * `#[serde(default)]` is REQUIRED, not stylistic: this field was added
+ * after `tracked_repos.json` was already a persisted, versioned file —
+ * without a default, every existing user's file (lacking this key)
+ * would fail to deserialize and trip `load_from`'s corrupt-file-
+ * recovery path, silently emptying their whole tracked list on
+ * upgrade. `false` is exactly the right meaning for a pre-existing
+ * entry ("not yet shown") — it naturally arms one harmless future
+ * auto-show, never data loss.
+ */
+repoSummaryShown?: boolean }
 /**
  * One entry inside a tree listing.
  */

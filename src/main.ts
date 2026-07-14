@@ -13,6 +13,8 @@ import Rerere from "./islands/rerere/Rerere.svelte";
 import { rerereCtrl } from "./islands/rerere/rerere.svelte.ts";
 import Plumbing from "./islands/plumbing/Plumbing.svelte";
 import { plumbing } from "./islands/plumbing/plumbing.svelte.ts";
+import RepoSummary from "./islands/reposummary/RepoSummary.svelte";
+import { repoSummaryCtrl } from "./islands/reposummary/reposummary.svelte.ts";
 import Remotes from "./islands/remotes/Remotes.svelte";
 import { remotesCtrl } from "./islands/remotes/remotes.svelte.ts";
 import { resolver } from "./islands/resolver/resolver.svelte.ts";
@@ -122,6 +124,12 @@ sidebarCtrl.refresh(bridge.CUR_REPO as unknown as string);
 mount(Reflog, { target: document.body });
 mount(Rerere, { target: document.body });
 mount(Plumbing, { target: document.body });
+// Repository Summary: same on-demand-modal treatment as Reflog/Rerere/
+// Plumbing above, PLUS it also opens itself automatically the very first
+// time a given repo is opened in GitCat — see openRepo()'s own call to
+// reposummaryCtrl.maybeAutoShow (legacy/main.ts) and reposummary.svelte.ts's
+// own header doc.
+mount(RepoSummary, { target: document.body });
 // Manage Remotes: repo-global (not tied to any file/commit — the OPPOSITE
 // case from Blame above), so it gets the same Tools-menu/⌘K/on-demand-modal
 // treatment as Reflog/Rerere/Plumbing rather than Blame's direct-call one.
@@ -231,6 +239,9 @@ if (IN_TAURI) {
         break;
       case "plumbing":
         plumbing.show();
+        break;
+      case "repo-summary":
+        repoSummaryCtrl.show(bridge.CUR_REPO as unknown as string);
         break;
       case "remotes":
         remotesCtrl.show(bridge.CUR_REPO as unknown as string);

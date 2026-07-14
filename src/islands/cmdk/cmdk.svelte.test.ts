@@ -82,7 +82,7 @@ describe("filter", () => {
     setBackendGraph([{ sha: "aaa1111", subject: "Add feature", an: { n: "Dev" }, refs: [] }]);
     cmdkCtrl.show();
     const kinds = cmdkCtrl.results.map((r: any) => r.type);
-    expect(kinds.filter((t) => t === "action").length).toBe(20);
+    expect(kinds.filter((t) => t === "action").length).toBe(21);
     expect(kinds.filter((t) => t === "commit").length).toBe(1);
   });
 

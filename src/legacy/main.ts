@@ -9,6 +9,7 @@ import { sidebarCtrl } from "../islands/sidebar/sidebar.svelte.ts";
 import { workdirCtrl } from "../islands/workdir/workdir.svelte.ts";
 import { commitMenuCtrl } from "../islands/commitmenu/commitmenu.svelte.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
+import { repoSummaryCtrl } from "../islands/reposummary/reposummary.svelte.ts";
 // Typed client for the one raw `tinvoke()` call below that needs it
 // (globalUndo()'s stash-undo branch) — see that function's own comment for
 // why only that branch uses it instead of another `tinvoke()`.
@@ -1179,6 +1180,13 @@ async function openRepo(path){
     // last, most relevant thing the user sees — it deliberately overrides the
     // generic greeting rather than racing it.
     await bisectCtrl.probeOnOpen(path);
+    // Repository Summary: auto-shows itself, but only the very first time
+    // THIS path has ever been opened in GitCat (see
+    // claim_repo_summary_first_open) — placed last, same "don't race a more
+    // relevant notice" reasoning as probeOnOpen immediately above. Best-effort
+    // and self-contained (own try/catch), so it can never block opening the
+    // repo — same as watch_repo/track_repo_opened above.
+    await repoSummaryCtrl.maybeAutoShow(path);
     return true;
   }catch(e){ Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); return false; }
   finally{ openRepoBusy=false; if(pickBtn){ pickBtn.disabled=false; if(pickSpinner) pickSpinner.remove(); } if(backBtn) backBtn.disabled=false; }

@@ -26,6 +26,7 @@ pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod repo_files; // backlog #14 (final item): .gitignore/.mailmap in-app editors — allow-listed repo-root file read/write
 pub mod repo_registry; // backlog #11: app-level tracked-repos JSON persistence
+pub mod repo_summary; // Repository Summary: git-log-derived churn/contributor/activity/problem-area diagnostics
 pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
 pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 deinit/remove
@@ -209,6 +210,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
         repo_registry::remove_tracked_repo,
         repo_registry::track_repo_opened,
         dashboard::dashboard_repo_status,
+        // Repository Summary: a git-log-derived diagnostic (churn hotspots,
+        // contributor ranking/bus factor, monthly activity, problem areas)
+        // shown once automatically on a repo's first-ever open in GitCat
+        // (claim_repo_summary_first_open lives in repo_registry.rs, the
+        // module that already owns the "has this repo been opened before"
+        // state) and reachable afterward via Tools/⌘K.
+        repo_registry::claim_repo_summary_first_open,
+        repo_summary::repo_summary,
         // Pluggable external diff/merge tools (backlog #12): app-level tool
         // settings (JSON under app_config_dir(), same shape as
         // repo_registry.rs) + delegate entirely to `git difftool`/

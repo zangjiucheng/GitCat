@@ -1277,6 +1277,34 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .rf-tab.sel{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--text);border-color:var(--accent)}
 .rf-tab:disabled{opacity:.55;cursor:not-allowed}
 .rf-textarea{min-height:340px;font-size:12.5px;resize:vertical}
+
+/* ============================== REPOSITORY SUMMARY modal ==============================
+   RepoSummary.svelte — reached from the Tools menu / ⌘K ("Repository
+   Summary…", see menu.rs / cmdk.svelte.ts), and shown automatically once,
+   the very first time a given repo is opened in GitCat (see
+   reposummary.svelte.ts's maybeAutoShow / repo_registry.rs's
+   claim_repo_summary_first_open). Four read-only sections stacked in one
+   scrollable pane — not tabs, since these are complementary facts meant to
+   be skimmed together, unlike RepoFiles.svelte's genuinely-two-different-
+   files .gitignore/.mailmap toggle. Reuses Detail.svelte's own
+   `.stat-bar`/`.stat-bar .a`/`.stat-bar .d` mini-bar VERBATIM (a single `<i>`
+   child, no sibling, renders as one proportional fill) repurposed here for
+   "share of the top value" rather than "share of additions vs deletions".
+   `.fh-caveat` (FileHistory's own heuristic-disclaimer treatment) is reused
+   verbatim for the Problem Areas section's own caveat line. */
+.modal.reposummary{width:min(820px,96vw)}
+.modal.reposummary .modal-body{max-height:70vh;overflow:auto;display:flex;flex-direction:column;gap:18px}
+.rs-section h4{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.rs-chip{font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:var(--r-pill);background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent)}
+.rs-list{display:flex;flex-direction:column;gap:6px}
+.rs-row{display:flex;align-items:center;gap:10px}
+.rs-path{flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rs-row .stat-bar{flex:0 0 120px}
+.rs-count{flex:none;min-width:40px;text-align:right;font-size:11px}
+.rs-months{display:flex;align-items:flex-end;gap:6px;height:90px;padding-top:10px}
+.rs-month{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;height:100%}
+.rs-month-bar{width:100%;max-width:28px;border-radius:3px 3px 0 0;background:var(--accent);min-height:2px}
+.rs-month-label{font-size:9.5px;white-space:nowrap}
 </style>
 
 <div class="app" id="app">

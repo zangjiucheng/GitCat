@@ -18,6 +18,7 @@ import * as bridge from "../../legacy/bridge";
 import { reflogCtrl } from "../reflog/reflog.svelte.ts";
 import { rerereCtrl } from "../rerere/rerere.svelte.ts";
 import { plumbing } from "../plumbing/plumbing.svelte.ts";
+import { repoSummaryCtrl } from "../reposummary/reposummary.svelte.ts";
 import { remotesCtrl } from "../remotes/remotes.svelte.ts";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { forcePushCtrl } from "../forcepush/forcepush.svelte.ts";
@@ -65,6 +66,13 @@ const ACTIONS: ActionItem[] = [
     run: () => rerereCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   { type: "action", id: "plumbing", label: "Plumbing", hint: "Inspect a raw commit, tree, blob, or tag", run: () => plumbing.show() },
+  {
+    type: "action",
+    id: "repo-summary",
+    label: "Repository Summary",
+    hint: "Churn hotspots, contributor ranking, monthly activity, problem areas",
+    run: () => repoSummaryCtrl.show(bridge.CUR_REPO as unknown as string),
+  },
   {
     type: "action",
     id: "remotes",
