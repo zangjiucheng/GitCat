@@ -4,6 +4,7 @@ import { bisectCtrl } from "../islands/bisect/bisect.svelte.ts";
 import { cmdkCtrl } from "../islands/cmdk/cmdk.svelte.ts";
 import { detailCtrl } from "../islands/detail/detail.svelte.ts";
 import { bisectDrawerCtrl } from "../islands/bisectdrawer/bisectdrawer.svelte.ts";
+import { loadSettings, saveSettings } from "../islands/settings/settings.svelte.ts";
 import { sidebarCtrl } from "../islands/sidebar/sidebar.svelte.ts";
 import { workdirCtrl } from "../islands/workdir/workdir.svelte.ts";
 import { commitMenuCtrl } from "../islands/commitmenu/commitmenu.svelte.ts";
@@ -754,7 +755,15 @@ wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false);
 wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true);
 
 // theme
-function applyTheme(name){ document.documentElement.setAttribute("data-theme",name); readTheme(); }
+function applyTheme(name){ document.documentElement.setAttribute("data-theme",name); readTheme(); saveSettings({themeMode:name}); }
+// "system" removes the explicit override entirely, letting index.html's own
+// `@media(prefers-color-scheme:dark)` rule decide — see settings.svelte.ts's
+// header doc for why this (and applyTheme above) persist via localStorage
+// rather than a new Rust settings file.
+function applyThemeMode(mode){
+  if(mode==="system"){ document.documentElement.removeAttribute("data-theme"); readTheme(); saveSettings({themeMode:"system"}); }
+  else applyTheme(mode);
+}
 $("#themeBtn").addEventListener("click",()=>{
   const cur=document.documentElement.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light");
   applyTheme(cur==="dark"?"light":"dark");
@@ -1376,7 +1385,12 @@ async function closeRepo(){
 $(".repo-pick").addEventListener("click", ()=>dashboardCtrl.show());
 $("#backToParentBtn").addEventListener("click", goBackToParent);
 
-applyTheme("dark"); // cozy dark base by default; ◐ toggles back to light
+// Persisted settings (Settings modal, src/islands/settings) — defaults match
+// what this boot sequence used to hardcode, so an existing user with nothing
+// saved yet sees no behavior change. cherryPickRecordOriginDefault itself is
+// read fresh at cherry-pick time (see cherryPick() above), not seeded into
+// any DOM element here — there's no longer a live per-pick checkbox to seed.
+applyThemeMode(loadSettings().themeMode);
 $("#sprite").innerHTML=TAMA_SVG;
 $("#dangerTamaImg").src=TAMA_IMG.alarm; $("#tamaCheerImg").src=TAMA_IMG.happy;
 new ResizeObserver(()=>resize()).observe(wrap);
@@ -1395,7 +1409,7 @@ function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, pickRepo, closeRepo, armDanger, updateBranchPill,
-  openRepo, doFetch, doPull, doPush, bandH,
+  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
   // above for the full design) — enterSubmodule/goBackToParent are hoisted
   // `function` declarations, so no TDZ risk (same reasoning as

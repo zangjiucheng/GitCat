@@ -137,6 +137,12 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // "reachable any time, no repo needed" shape as Repositories just
         // above (see externaltools.svelte.ts's own header doc).
         let external_tools = MenuItemBuilder::with_id("external-tools", "External Tools\u{2026}").build(app)?;
+        // App Settings (theme, cherry-pick record-origin default,
+        // auto-check-updates toggle, and a Git Identity section scoped to
+        // whichever repo is open) — same "reachable any time, no repo
+        // needed" shape as Repositories/External Tools just above (see
+        // settings.svelte.ts's own header doc).
+        let settings = MenuItemBuilder::with_id("settings", "Settings\u{2026}").build(app)?;
         // fsck-based dangling-object recovery (backlog #13): commits `git
         // fsck` finds with no ref/reflog pointing at them anymore (a hard
         // reset, an amend, a dropped rebase commit, a deleted branch, …) —
@@ -183,6 +189,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .item(&pickaxe_search)
             .item(&repositories)
             .item(&external_tools)
+            .item(&settings)
             .item(&dangling_recovery)
             .item(&repo_files)
             .separator()
@@ -241,7 +248,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // logic in Rust.
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
         | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "export-patches" | "apply-patch" | "pickaxe-search"
-        | "repositories" | "external-tools" | "dangling-recovery" | "repo-files" | "pull-merge" | "pull-rebase"
+        | "repositories" | "external-tools" | "settings" | "dangling-recovery" | "repo-files" | "pull-merge" | "pull-rebase"
         | "force-push-lease" | "force-push-override" | "filter-repo" | "check-for-updates") => {
             let _ = app.emit("menu-action", id);
         }

@@ -71,6 +71,11 @@ export {
   doFetch,
   doPull,
   doPush,
+  // Settings island (src/islands/settings) calls this for its theme picker —
+  // applies "system"/"light"/"dark" to the DOM AND persists via
+  // settings.svelte.ts's saveSettings(), same live-re-export safety as
+  // openRepo/pickRepo above (hoisted `function`, no TDZ risk).
+  applyThemeMode,
   // Submodule navigation stack: enterSubmodule(absolutePath) pushes the
   // current repo then opens the submodule via openRepo above;
   // goBackToParent() pops and reopens the popped path. NAV_STACK is the

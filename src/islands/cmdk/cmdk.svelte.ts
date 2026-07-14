@@ -27,6 +27,7 @@ import { pickaxeSearchCtrl } from "../pickaxesearch/pickaxesearch.svelte.ts";
 import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
 import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
 import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
+import { settingsCtrl } from "../settings/settings.svelte.ts";
 import { danglingRecoveryCtrl } from "../danglingrecovery/danglingrecovery.svelte.ts";
 import { repoFilesCtrl } from "../repofiles/repofiles.svelte.ts";
 import { filterRepoCtrl } from "../filterrepo/filterrepo.svelte.ts";
@@ -111,6 +112,17 @@ const ACTIONS: ActionItem[] = [
     label: "External Tools",
     hint: "Configure a diff/merge tool to open from GitCat's own UI",
     run: () => externalToolsCtrl.show(),
+  },
+  // App Settings: theme/cherry-pick-default/auto-update-check prefs plus a
+  // Git Identity section — repo-scoped like Reflog/Rerere (forwards
+  // bridge.CUR_REPO) since that identity section needs to know which repo,
+  // even though the modal itself is reachable with no repo open too.
+  {
+    type: "action",
+    id: "settings",
+    label: "Settings",
+    hint: "Theme, cherry-pick defaults, update checks, and this repo's git identity",
+    run: () => settingsCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   // fsck-based dangling-object recovery (backlog #13): repo-scoped like
   // Reflog/Rerere above (forwards bridge.CUR_REPO), NOT repo-independent like

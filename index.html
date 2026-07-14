@@ -1079,6 +1079,15 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .setupwizard .modal-head .tama{filter:drop-shadow(0 0 6px color-mix(in srgb,var(--accent2) 55%,transparent))}
 .setupwizard .msteps .s.done{background:var(--accent2)}
 .setupwizard .msteps .s.now{background:var(--accent)}
+/* ---------- Settings modal: same "don't inherit the danger-red tint by
+   mistake" rule as bisect/setupwizard above — a neutral utility screen gets
+   the same accent tint as bisect (indigo), not a new color. ---------- */
+.settings .modal-head{background:color-mix(in srgb,var(--accent) 10%,var(--panel))}
+/* Reusable "small labeled checkbox row" for Settings' instant-apply toggles
+   — deliberately NOT reusing .cp-x (that class is named for the cherry-pick
+   -x flag specifically; reusing it here under an unrelated name would read
+   wrong to a future maintainer), same visual treatment otherwise. */
+.set-toggle{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text);cursor:pointer}
 .bz-prog{display:flex;align-items:center;gap:10px}
 .bz-track{flex:1;height:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-pill);overflow:hidden}
 .bz-track i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}

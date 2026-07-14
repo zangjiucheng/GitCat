@@ -26,6 +26,8 @@ import Dashboard from "./islands/dashboard/Dashboard.svelte";
 import { dashboardCtrl } from "./islands/dashboard/dashboard.svelte.ts";
 import ExternalTools from "./islands/externaltools/ExternalTools.svelte";
 import { externalToolsCtrl } from "./islands/externaltools/externaltools.svelte.ts";
+import Settings from "./islands/settings/Settings.svelte";
+import { settingsCtrl, loadSettings } from "./islands/settings/settings.svelte.ts";
 import DanglingRecovery from "./islands/danglingrecovery/DanglingRecovery.svelte";
 import { danglingRecoveryCtrl } from "./islands/danglingrecovery/danglingrecovery.svelte.ts";
 import RepoFiles from "./islands/repofiles/RepoFiles.svelte";
@@ -150,6 +152,12 @@ mount(Dashboard, { target: document.body });
 // "Resolve with external tool" buttons, which live on Detail.svelte/
 // Workdir.svelte's file rows and Resolver.svelte instead).
 mount(ExternalTools, { target: document.body });
+// App Settings: theme/cherry-pick-default/auto-update-check prefs (app-level,
+// like External Tools/Dashboard above) plus a Git Identity section scoped to
+// whichever repo is open (forwards bridge.CUR_REPO, like Remotes) — see
+// settings.svelte.ts's own header doc for why these live in localStorage
+// rather than a new Rust settings file.
+mount(Settings, { target: document.body });
 // fsck-based dangling-object recovery (backlog #13): same on-demand-modal
 // treatment as External Tools/Dashboard/Pickaxe Search/Export Patches/
 // Remotes/Reflog/Rerere/Plumbing above — repo-scoped (forwards
@@ -241,6 +249,9 @@ if (IN_TAURI) {
       case "external-tools":
         externalToolsCtrl.show();
         break;
+      case "settings":
+        settingsCtrl.show(bridge.CUR_REPO as unknown as string);
+        break;
       case "dangling-recovery":
         danglingRecoveryCtrl.show(bridge.CUR_REPO as unknown as string);
         break;
@@ -304,12 +315,16 @@ if (IN_TAURI) {
   // settles quietly back to "idle" on "up to date"/error (see its own doc
   // comment); it only actually surfaces here when a real update WAS found,
   // via one unobtrusive Tama hint — the About panel (see check-for-updates
-  // above) is where the user actually acts on it.
-  setTimeout(async () => {
-    await updaterCtrl.check(true);
-    if (updaterCtrl.phase === "available") {
-      bridge.tama.set("hint");
-      bridge.tama.say("GitCat v" + updaterCtrl.version + " is available — see Help ▸ About to install.", 5000);
-    }
-  }, 4000);
+  // above) is where the user actually acts on it. Gated behind the Settings
+  // modal's "Automatically check for updates on launch" toggle (default on,
+  // matching this probe's original always-on behavior).
+  if (loadSettings().autoCheckUpdates) {
+    setTimeout(async () => {
+      await updaterCtrl.check(true);
+      if (updaterCtrl.phase === "available") {
+        bridge.tama.set("hint");
+        bridge.tama.say("GitCat v" + updaterCtrl.version + " is available — see Help ▸ About to install.", 5000);
+      }
+    }, 4000);
+  }
 }
