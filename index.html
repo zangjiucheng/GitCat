@@ -1233,6 +1233,28 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .pk-subject{font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pk-meta{font-size:10.5px}
 
+/* ============================== SEARCH CODE modal ==============================
+   CodeSearch.svelte — reached from the Tools menu / ⌘K ("Search Code…", see
+   menu.rs / cmdk.svelte.ts). Complements Pickaxe just above (which searches
+   historical diffs and returns commits): this searches current file CONTENT
+   and returns file+line+text, so its row shape is closer to a grep result
+   than a commit row — path+line (`.cs-loc`), a snippet of the matched line
+   (`.cs-snippet`), and two per-row actions reusing `.wd-act`'s own icon-
+   button treatment (Workdir.svelte's 👁/🕐 buttons) VERBATIM rather than
+   `.pk-row`'s own whole-row-is-a-button shape, since here the row itself
+   isn't clickable — only its two explicit actions are. Hover-reveal on the
+   action pair mirrors `.dr-act`'s own treatment just below. */
+.modal.codesearch{width:min(720px,96vw)}
+.modal.codesearch .modal-body{max-height:65vh;overflow:auto;display:flex;flex-direction:column;gap:10px}
+.cs-list{display:flex;flex-direction:column;gap:1px}
+.cs-row{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:6px}
+.cs-row:hover{background:var(--elevated)}
+.cs-loc{flex:none;max-width:40%;color:var(--accent);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cs-snippet{flex:1;min-width:0;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cs-act{flex:none;display:flex;gap:2px;opacity:0}
+.cs-row:hover .cs-act{opacity:1}
+.cs-act .wd-act{width:22px;height:22px}
+
 /* ============================== DANGLING-COMMIT RECOVERY modal (backlog #13) ==============================
    DanglingRecovery.svelte — reached from the Tools menu / ⌘K ("Dangling
    Commits…", see menu.rs / cmdk.svelte.ts), repo-scoped like Reflog/Rerere

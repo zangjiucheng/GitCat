@@ -25,6 +25,8 @@ import { applyPatchCtrl } from "./islands/applypatch/applypatch.svelte.ts";
 import { openTerminalCtrl } from "./islands/openterminal/openterminal.svelte.ts";
 import PickaxeSearch from "./islands/pickaxesearch/PickaxeSearch.svelte";
 import { pickaxeSearchCtrl } from "./islands/pickaxesearch/pickaxesearch.svelte.ts";
+import CodeSearch from "./islands/codesearch/CodeSearch.svelte";
+import { codeSearchCtrl } from "./islands/codesearch/codesearch.svelte.ts";
 import Dashboard from "./islands/dashboard/Dashboard.svelte";
 import { dashboardCtrl } from "./islands/dashboard/dashboard.svelte.ts";
 import ExternalTools from "./islands/externaltools/ExternalTools.svelte";
@@ -147,6 +149,11 @@ mount(ExportPatches, { target: document.body });
 // History — it's reachable from the Tools menu/⌘K rather than a file-tree
 // row (see pickaxesearch.svelte.ts's own header doc).
 mount(PickaxeSearch, { target: document.body });
+// Search Code: same on-demand-modal treatment as Pickaxe just above — repo-
+// global full-text search of the current checkout (or a chosen historical
+// commit), complementing Pickaxe's own diff/commit search (see
+// codesearch.svelte.ts's own header doc).
+mount(CodeSearch, { target: document.body });
 // Multi-repository dashboard (backlog #11): same on-demand-modal treatment
 // as Pickaxe Search/Export Patches/Remotes/Reflog/Rerere/Plumbing above, but
 // — unlike every one of those — reachable with or without a repo open (see
@@ -254,6 +261,9 @@ if (IN_TAURI) {
         break;
       case "pickaxe-search":
         pickaxeSearchCtrl.show(bridge.CUR_REPO as unknown as string);
+        break;
+      case "code-search":
+        codeSearchCtrl.show(bridge.CUR_REPO as unknown as string);
         break;
       case "repositories":
         dashboardCtrl.show();

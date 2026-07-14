@@ -1153,6 +1153,21 @@ async pickaxeSearch(path: string, query: string, mode: string, regex: boolean, a
 }
 },
 /**
+ * Full-text search of `query` across `path`'s tracked files — the working
+ * tree (including uncommitted edits) if `at_commit` is `None`, or that
+ * commit's own tree otherwise. Read-only.
+ * 
+ * JS: `commands.codeSearch(path, query, caseSensitive, atCommit)`.
+ */
+async codeSearch(path: string, query: string, caseSensitive: boolean, atCommit: string | null) : Promise<Result<CodeSearchResults, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("code_search", { path, query, caseSensitive, atCommit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Read-only preview shown before the user commits to running filter-repo.
  */
 async filterRepoPreview(path: string, paths: string[], invert: boolean) : Promise<Result<FilterRepoPreview, string>> {
@@ -1655,6 +1670,8 @@ export type BlobObject = { sha: string; size: number; isBinary: boolean;
  */
 content: string | null; truncated: boolean }
 export type ChurnFile = { path: string; touches: number }
+export type CodeSearchMatch = { path: string; line: number; text: string }
+export type CodeSearchResults = { matches: CodeSearchMatch[]; truncated: boolean }
 /**
  * Full payload for the M1 commit detail panel: message + real diff tree.
  */

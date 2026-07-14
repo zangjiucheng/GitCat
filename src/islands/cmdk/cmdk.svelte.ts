@@ -26,6 +26,7 @@ import { exportPatchesCtrl } from "../exportpatches/exportpatches.svelte.ts";
 import { applyPatchCtrl } from "../applypatch/applypatch.svelte.ts";
 import { openTerminalCtrl } from "../openterminal/openterminal.svelte.ts";
 import { pickaxeSearchCtrl } from "../pickaxesearch/pickaxesearch.svelte.ts";
+import { codeSearchCtrl } from "../codesearch/codesearch.svelte.ts";
 import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
 import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
 import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
@@ -107,6 +108,13 @@ const ACTIONS: ActionItem[] = [
     label: "Search Commit Content",
     hint: "Find commits whose diff touched a string or pattern (git log -S / -G)",
     run: () => pickaxeSearchCtrl.show(bridge.CUR_REPO as unknown as string),
+  },
+  {
+    type: "action",
+    id: "code-search",
+    label: "Search Code",
+    hint: "Full-text search the current checkout (or a chosen historical commit)",
+    run: () => codeSearchCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   // Multi-repository dashboard (backlog #11): the ONE action here that does
   // NOT read/forward bridge.CUR_REPO at all — unlike every other entry above,

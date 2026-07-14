@@ -1,4 +1,5 @@
 pub mod blame; // read-only line-annotation (git blame) view
+pub mod code_search; // Search Code: git-grep-based full-text search of the current checkout (or a chosen historical commit)
 pub mod commands;
 pub mod conflict;
 pub mod dashboard; // backlog #11: minimal per-repo status read for the multi-repo dashboard
@@ -176,6 +177,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // -S/-G, never just commit messages. No rename-tracking (unlike
         // file_history above); see pickaxe.rs's own module doc.
         pickaxe::pickaxe_search,
+        // Search Code: full-text search of the current checkout (or a chosen
+        // historical commit's tree) via `git grep` — complements Pickaxe
+        // above, which searches diffs and returns commits; this searches
+        // file CONTENT and returns file+line+text. See code_search.rs's own
+        // module doc.
+        code_search::code_search,
         // Filter-repo wizard (M5c): backup+preview / run / restore / list backups
         filter_repo::filter_repo_preview,
         filter_repo::filter_repo_run,

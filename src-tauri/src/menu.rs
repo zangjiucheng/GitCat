@@ -131,6 +131,13 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // Remotes/Export Patches/Apply Patch, not file-tree-scoped like
         // Blame/File History (see pickaxesearch.svelte.ts's own header doc).
         let pickaxe_search = MenuItemBuilder::with_id("pickaxe-search", "Search Commit Content\u{2026}").build(app)?;
+        // Search Code: full-text search of the current checkout (or a chosen
+        // historical commit's tree) via `git grep` — complements Pickaxe just
+        // above (which searches diffs and returns commits): this searches
+        // file CONTENT and returns file+line+text. Same dialog-opener "…"
+        // convention, repo-global like Pickaxe (see code_search.rs's own
+        // module doc).
+        let code_search = MenuItemBuilder::with_id("code-search", "Search Code\u{2026}").build(app)?;
         // Multi-repository dashboard (backlog #11): unlike every other item in
         // this submenu, this one does NOT need a repo open at all — it's the
         // one place to check on OTHER tracked repos without leaving (or
@@ -207,6 +214,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .item(&export_patches)
             .item(&apply_patch)
             .item(&pickaxe_search)
+            .item(&code_search)
             .item(&repositories)
             .item(&external_tools)
             .item(&settings)
@@ -270,8 +278,8 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // logic in Rust.
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
         | "bisect" | "reflog" | "rerere" | "plumbing" | "repo-summary" | "remotes" | "export-patches" | "apply-patch"
-        | "pickaxe-search" | "repositories" | "external-tools" | "settings" | "dangling-recovery" | "repo-files"
-        | "uncommitted-changes" | "pull-merge" | "pull-rebase" | "open-terminal" | "force-push-lease"
+        | "pickaxe-search" | "code-search" | "repositories" | "external-tools" | "settings" | "dangling-recovery"
+        | "repo-files" | "uncommitted-changes" | "pull-merge" | "pull-rebase" | "open-terminal" | "force-push-lease"
         | "force-push-override" | "filter-repo" | "check-for-updates") => {
             let _ = app.emit("menu-action", id);
         }
