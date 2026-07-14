@@ -270,6 +270,9 @@ if (IN_TAURI) {
       case "repo-files":
         repoFilesCtrl.show(bridge.CUR_REPO as unknown as string);
         break;
+      case "uncommitted-changes":
+        bridge.goToUncommitted();
+        break;
       case "pull-merge":
         resolver.pullMerge(bridge.CUR_REPO as unknown as string);
         break;

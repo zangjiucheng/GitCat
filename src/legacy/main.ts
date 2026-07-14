@@ -700,6 +700,13 @@ function select(row){ state.selectedRow=row; workdirCtrl.deselect(); detailCtrl.
 // to the Workdir Svelte island instead of a real commit's detail. -2 is
 // distinct from -1 (nothing selected) and any real row (>=0).
 function selectWorkdir(){ state.selectedRow=-2; workdirCtrl.select(CUR_REPO); dirty=true; }
+// "Uncommitted Changes" (Tools menu / ⌘K, see menu.rs/cmdk.svelte.ts) — a fast
+// jump to the pinned row above, equivalent to clicking it directly, PLUS a
+// scroll reset: the band is always visible regardless of scroll position, but
+// resetting scrollTarget re-orients a user who was deep in history rather than
+// leaving the rest of the canvas showing unrelated old commits. cv.focus() is
+// best-effort, same convention as cmdk's own jump().
+function goToUncommitted(){ selectWorkdir(); state.scrollTarget=0; try{cv.focus()}catch(_){} }
 // Clicking empty canvas space (no commit dot under the pointer) while a
 // commit OR the pinned row is selected — brings back Tama's hero card
 // instead of leaving the detail panel stuck on the last selection forever.
@@ -1410,7 +1417,7 @@ const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>c
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, hhex, msgOf, AUTHORS,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH, applyThemeMode,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section

@@ -42,6 +42,11 @@ export {
   // counterpart to select(row)/deselect() above. Hoisted `function`, so no
   // TDZ risk (same reasoning as select/openRepo above).
   selectWorkdir,
+  // fast jump to the pinned "Uncommitted changes" row (Tools menu / ⌘K,
+  // "Uncommitted Changes" — see menu.rs/cmdk.svelte.ts): selectWorkdir() plus
+  // a scroll reset, so a user deep in history lands somewhere oriented.
+  // Hoisted `function`, so no TDZ risk (same reasoning as select/openRepo above).
+  goToUncommitted,
   // design-mode (plain-browser) synthetic data helpers, shared by generateGraph
   // and ⌘K's fallback index when no real repo/BACKEND is loaded.
   hhex,

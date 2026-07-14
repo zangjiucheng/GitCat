@@ -18,6 +18,7 @@ vi.mock("../../legacy/bridge", () => ({
   bandH: vi.fn(() => 0),
   clampScroll: (v: number) => (v < 0 ? 0 : v > 1000 ? 1000 : v),
   select: vi.fn(),
+  goToUncommitted: vi.fn(),
   hhex: (r: number) => "hex" + r,
   msgOf: (r: number) => "demo message " + r,
   AUTHORS: [{ n: "Demo Author", e: "demo@gitcat.dev" }],
@@ -82,7 +83,7 @@ describe("filter", () => {
     setBackendGraph([{ sha: "aaa1111", subject: "Add feature", an: { n: "Dev" }, refs: [] }]);
     cmdkCtrl.show();
     const kinds = cmdkCtrl.results.map((r: any) => r.type);
-    expect(kinds.filter((t) => t === "action").length).toBe(21);
+    expect(kinds.filter((t) => t === "action").length).toBe(22);
     expect(kinds.filter((t) => t === "commit").length).toBe(1);
   });
 
@@ -204,6 +205,15 @@ describe("jump", () => {
     cmdkCtrl.jump({ type: "commit", row: 99, subject: "gone", sha: "zzz", author: "Dev", hay: "" });
     expect(cmdkCtrl.open).toBe(false);
     expect(bridge.select).not.toHaveBeenCalled();
+  });
+
+  it("the Uncommitted Changes action calls bridge.goToUncommitted()", () => {
+    setBackendGraph([]);
+    cmdkCtrl.show();
+    cmdkCtrl.filter("uncommitted");
+    expect(cmdkCtrl.results.length).toBe(1);
+    cmdkCtrl.jump(cmdkCtrl.results[0]);
+    expect(bridge.goToUncommitted).toHaveBeenCalled();
   });
 });
 

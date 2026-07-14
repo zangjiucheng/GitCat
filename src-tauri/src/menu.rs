@@ -166,6 +166,12 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // Immediate-action items (no dialog, no ellipsis) — same convention
         // as Repository's Fetch/Pull/Push above. A separator sets them apart
         // from the dialog-openers above them.
+        //
+        // Jumps straight to the pinned "Uncommitted changes" row (equivalent
+        // to clicking it directly) and resets scroll — see legacy/main.ts's
+        // goToUncommitted() doc comment. First in this group: it's pure
+        // navigation with zero side effects, safer than even Pull below it.
+        let uncommitted_changes = MenuItemBuilder::with_id("uncommitted-changes", "Uncommitted Changes").build(app)?;
         let pull_merge = MenuItemBuilder::with_id("pull-merge", "Pull (Merge)").build(app)?;
         let pull_rebase = MenuItemBuilder::with_id("pull-rebase", "Pull (Rebase)").build(app)?;
         // Opens a real OS terminal at the repo's root (see terminal.rs's own
@@ -207,6 +213,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .item(&dangling_recovery)
             .item(&repo_files)
             .separator()
+            .item(&uncommitted_changes)
             .item(&pull_merge)
             .item(&pull_rebase)
             .item(&open_terminal)
@@ -264,8 +271,8 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
         | "bisect" | "reflog" | "rerere" | "plumbing" | "repo-summary" | "remotes" | "export-patches" | "apply-patch"
         | "pickaxe-search" | "repositories" | "external-tools" | "settings" | "dangling-recovery" | "repo-files"
-        | "pull-merge" | "pull-rebase" | "open-terminal" | "force-push-lease" | "force-push-override" | "filter-repo"
-        | "check-for-updates") => {
+        | "uncommitted-changes" | "pull-merge" | "pull-rebase" | "open-terminal" | "force-push-lease"
+        | "force-push-override" | "filter-repo" | "check-for-updates") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}
