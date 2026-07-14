@@ -1462,15 +1462,19 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
           <select id="rowsSel"><option value="1000">1k</option><option value="10000" selected>10k</option><option value="50000">50k</option></select>
           <button id="stressBtn" title="Auto-scroll stress test">&#9654; stress</button>
         </span>
-        <!-- Zoom in/out buttons used to live here too — removed outright
-             (not just hidden), not relocated: ⌘/ctrl+wheel AND the +/- keys
-             already zoom (see the on-canvas .hint text below, and
-             zoomAt()'s own call sites in legacy/main.ts), so the buttons
-             were a third, fully redundant way to do the same thing — and,
-             sharing this monospace/dense debug-panel-styled box with the
-             dev-only fps HUD above, they read as leftover developer chrome
-             even though they always worked for every user. -->
-        <label class="cp-x" title="Append '(cherry picked from …)' to the resulting commit message"><input type="checkbox" id="cpRecordOrigin"> Record origin</label>
+        <!-- Zoom in/out buttons, and the "Record origin" (cherry-pick -x)
+             checkbox, used to live here too — both removed outright, not
+             relocated. Zoom: ⌘/ctrl+wheel AND the +/- keys already zoom (see
+             the on-canvas .hint text below, and zoomAt()'s own call sites in
+             legacy/main.ts), so the buttons were a third, fully redundant
+             way to do the same thing. Record origin: now a single Settings
+             preference (see src/islands/settings) rather than a live
+             per-cherry-pick toggle sitting in front of the commit graph —
+             cherryPick() below reads loadSettings().cherryPickRecordOriginDefault
+             directly instead of a DOM checkbox's .checked. Both, sharing
+             this monospace/dense debug-panel-styled box with the dev-only
+             fps HUD above, read as leftover developer chrome even though
+             they always worked for every user. -->
       </div>
       <div class="delta-readout" id="deltaReadout"></div>
       <div class="hint">wheel scroll &#183; &#8984;/ctrl+wheel zoom &#183; click select &#183; drag a dot to cherry-pick &#183; shift+drag to merge &#183; &#8984;Z undo &#183; scroll the ribbon to zoom the snapshot timeline</div>

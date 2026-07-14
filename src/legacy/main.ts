@@ -552,7 +552,7 @@ function removeGhost(){ if(ghostEl){ghostEl.remove();ghostEl=null;} }
 async function cherryPick(src,dst){
   const srcSha=(BACKEND&&BACKEND.rows[src])?BACKEND.rows[src].sha:hhex(src);
   if(!IN_TAURI){ resolver.openDemo(srcSha); return; }   // ---- design-mode demo ----
-  const recordOrigin=!!($("#cpRecordOrigin")&&$("#cpRecordOrigin").checked);
+  const recordOrigin=loadSettings().cherryPickRecordOriginDefault;
   await resolver.startPick(CUR_REPO, srcSha, recordOrigin);  // ---- real pick onto HEAD (Svelte island) ----
 }
 async function mergeCommit(src,dst){
