@@ -309,13 +309,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 /* Bulk submodule tools header — sits above the per-submodule rows (not
    crammed into the section's <summary>, which toggles open/closed on any
    click inside it) — same left-indent as .sub-item so it reads as part of
-   the same list. Now TWO stacked rows, not one cramped row: the recursive
-   checkbox applies to every bulk action below it (Sync all/Update all here,
-   AND the foreach runner right below — see Sidebar.svelte's own comment on
-   why it's rendered exactly once), so it gets a full-width row of its own
-   with a real label, and Sync all/Update all get their own row underneath
-   with room to breathe instead of splitting a single ~190px-wide row three
-   ways with it. */
+   the same list. Two stacked rows: the recursive checkbox applies to every
+   bulk action below it (Sync all/Update all), so it gets a full-width row
+   of its own with a real label, and Sync all/Update all get their own row
+   underneath with room to breathe. */
 .sub-head{display:flex;flex-direction:column;gap:6px;padding:2px 8px 6px 24px}
 .sub-recursive{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
 .sub-bulk-row{display:flex;align-items:center;gap:8px}
@@ -323,53 +320,6 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   border:1px solid color-mix(in srgb,var(--accent2) 45%,var(--border));border-radius:var(--r-control);padding:4px 9px}
 .sub-update-all:hover:not([disabled]){background:color-mix(in srgb,var(--accent2) 12%,transparent)}
 .sub-update-all[disabled]{opacity:.5;cursor:default}
-/* Bulk "Run command in every submodule…" (submodule_foreach_start/-cancel)
-   — sits directly below .sub-head (same left-indent, same row shape) since
-   it's a sibling bulk action, but gets its own row: unlike Sync all/Update
-   all (a quick one-shot mutation sharing .sub-head's own section), this is a
-   real, long-lived BLOCKING sweep (mirrors Bisect.svelte's own .bz-run
-   "Automate with a command" row) that needs an input field, its own
-   Run/Cancel toggle, and a live streamed-in results list underneath.
-   .sub-foreach-input is now a full-width row of its own — NOT inside
-   .sub-foreach-row alongside Run — so its placeholder reads in full instead
-   of eliding after a few characters (the recursive checkbox that used to
-   also share this row already moved up to .sub-head's own row; splitting
-   Run onto its own right-aligned row below is the same fix taken one step
-   further). .sub-foreach-row is still used for the two-item "Running…
-   / Cancel" state, where both items DO need to share one row. */
-.sub-foreach{padding:2px 8px 6px 24px;display:flex;flex-direction:column;gap:6px}
-.sub-foreach-row{display:flex;align-items:center;gap:8px}
-.sub-foreach-row-end{justify-content:flex-end}
-.sub-foreach-input{width:100%;padding:5px 9px;background:var(--bg);border:1px solid var(--border);
-  border-radius:var(--r-control);color:var(--text);font-size:11.5px}
-.sub-foreach-input:focus{outline:none;border-color:var(--accent)}
-.sub-foreach .sub-update-all{flex:none}
-.sub-foreach-status{flex:1;display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted)}
-.btn.sub-foreach-cancel{color:var(--warning);border-color:color-mix(in srgb,var(--warning) 50%,var(--border));
-  font-size:11px;padding:3px 9px}
-.btn.sub-foreach-cancel:not([disabled]){background:color-mix(in srgb,var(--warning) 12%,var(--elevated))}
-/* Per-submodule foreach result — reuses .sub-item's rname column via
-   .sub-foreach-item-row's own flex row (not .sub-item itself: these rows
-   never hover-highlight or carry row actions, only a status chip + optional
-   stderr underneath). */
-.sub-foreach-results{display:flex;flex-direction:column;gap:2px;max-height:220px;overflow-y:auto;
-  padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-panel)}
-.sub-foreach-item{padding:3px 0}
-.sub-foreach-item-row{display:flex;align-items:center;gap:8px}
-.sub-foreach-item-row .rname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px}
-.sub-foreach-chip{font-size:9.5px;font-weight:600;padding:1px 7px;border-radius:var(--r-pill);flex:none;white-space:nowrap}
-.sub-foreach-chip[data-status="ok"]{background:color-mix(in srgb,var(--success) 16%,transparent);color:var(--success)}
-.sub-foreach-chip[data-status="failed"]{background:color-mix(in srgb,var(--danger) 16%,transparent);color:var(--danger)}
-.sub-foreach-chip[data-status="skipped"]{background:color-mix(in srgb,var(--muted) 16%,transparent);color:var(--muted)}
-.sub-foreach-chip[data-status="cancelled"]{background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning)}
-/* Failed entries' stderr — capped server-side at 20,000 chars
-   (submodule.rs's cap_output) and ALSO height-capped + scrollable here, so a
-   noisy failing command's output never balloons the sidebar or dumps
-   unbounded text into the DOM's visible layout. */
-.sub-foreach-stderr{margin:4px 0 0;max-height:90px;overflow:auto;font-size:10.5px;line-height:1.5;
-  color:var(--danger);background:color-mix(in srgb,var(--danger) 8%,var(--bg));
-  border:1px solid color-mix(in srgb,var(--danger) 30%,var(--border));border-radius:6px;
-  padding:5px 7px;white-space:pre-wrap;word-break:break-word}
 /* Sidebar hover tooltip that can NEVER escape its own row — native `title`
    attributes are unstyleable and unclipped, positioned by the browser near
    the cursor with no awareness of the app's own sidebar/graph boundary, so

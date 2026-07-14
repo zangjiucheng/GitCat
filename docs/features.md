@@ -20,6 +20,7 @@ GitCat is built around one idea: every operation that touches your history shoul
 - **New Branch** lets you pick the start point from any local or remote ref, not just HEAD.
 - Fetch / Pull / Push, from the top bar or the native Repository menu — Pull asks you to choose merge or rebase explicitly, following your configured upstream automatically, so it never silently picks a strategy behind your back.
 - **Manage Remotes** — add, edit, rename, and remove remotes from a dedicated dialog instead of hand-editing `.git/config`.
+- **Open Terminal** — drop into a real terminal at the repo's root when you need a raw shell, from the Tools menu/⌘K.
 - **Revert** is a first-class operation alongside cherry-pick and merge, not a workaround — right-click a commit to revert it, backed by the same 3-way conflict resolver when it doesn't apply cleanly.
 - **Right-click context menu** on any commit row for cherry-pick, merge, or revert — the point-and-click alternative to drag-and-drop.
 - **Drag-and-drop cherry-pick and merge** (shift-drag) directly onto HEAD, backed by a real 3-way conflict resolver when things don't apply cleanly.
@@ -27,7 +28,7 @@ GitCat is built around one idea: every operation that touches your history shoul
 - **Linear rebase** onto any branch, including multi-commit conflict sequences and the ability to skip a commit mid-sequence.
 - **Interactive rebase** — a drag-to-reorder planner (pick / edit / squash / fixup / drop) before it ever touches your history.
 - **`git bisect`** — mark commits good/bad/skip, watch the candidate range narrow live on the canvas, and get the first-bad commit found automatically.
-- **Submodules** — init/update (including `--recursive`), add, deinit/remove, a bulk `foreach` runner, and "Open" to manage a submodule exactly like its own top-level repo.
+- **Submodules** — init/update (including `--recursive`), add, deinit/remove, and "Open" to manage a submodule exactly like its own top-level repo.
 - **Patch export/apply** (`git format-patch` / `git am`) — hand a commit or range to someone outside GitCat, or bring one in, with real 3-way conflict resolution through the same resolver used everywhere else.
 - **Pluggable external diff/merge tools** — hand a diff or a conflict off to your own configured tool (VS Code, Beyond Compare, or anything else) instead of GitCat's built-in view.
 - **`git-filter-repo` wizard** — scope, preview, a typed confirmation, and a full backup/restore safety net for the one genuinely irreversible operation in the app.

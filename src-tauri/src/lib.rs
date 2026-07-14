@@ -28,7 +28,8 @@ pub mod repo_files; // backlog #14 (final item): .gitignore/.mailmap in-app edit
 pub mod repo_registry; // backlog #11: app-level tracked-repos JSON persistence
 pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
-pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 deinit/remove + M5 foreach
+pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 deinit/remove
+pub mod terminal; // "Open Terminal": launch the OS's own terminal app at a repo's root
 pub mod tool_settings; // backlog #12: external diff/merge tool settings + delegate entirely to `git difftool`/`git mergetool`
 pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious ownership"
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
@@ -199,11 +200,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // survives) / remove (deinit + git rm, stages .gitmodules cleanup too)
         submodule::submodule_deinit,
         submodule::submodule_remove,
-        // Submodules (M5, final): foreach — run a shell command in every
-        // initialized submodule's own working directory, with live progress
-        // and cancellation
-        submodule::submodule_foreach_start,
-        submodule::submodule_foreach_cancel,
         // Multi-repository dashboard (backlog #11): app-level tracked-repos
         // registry (JSON under app_config_dir()) + a minimal per-repo status
         // read (current branch's own ahead/behind, dirty flag, last commit —
@@ -227,6 +223,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // repo_files.rs's own module doc.
         repo_files::read_repo_file,
         repo_files::write_repo_file,
+        // "Open Terminal": launches the OS's own terminal app at a repo's
+        // root — replaces the old submodule foreach bulk-command-runner
+        // feature (see terminal.rs's own module doc).
+        terminal::open_terminal,
     ])
 }
 
@@ -258,7 +258,6 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(watch::WatchState::default())
         .manage(git_bisect::BisectRunState::default())
-        .manage(submodule::SubmoduleForeachState::default())
         // invoke_handler is the tauri-specta equivalent of generate_handler! —
         // command runtime behavior (Ok resolves / Err rejects) is unchanged.
         .invoke_handler(builder.invoke_handler())

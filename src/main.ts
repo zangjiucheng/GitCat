@@ -20,6 +20,7 @@ import { forcePushCtrl } from "./islands/forcepush/forcepush.svelte.ts";
 import ExportPatches from "./islands/exportpatches/ExportPatches.svelte";
 import { exportPatchesCtrl } from "./islands/exportpatches/exportpatches.svelte.ts";
 import { applyPatchCtrl } from "./islands/applypatch/applypatch.svelte.ts";
+import { openTerminalCtrl } from "./islands/openterminal/openterminal.svelte.ts";
 import PickaxeSearch from "./islands/pickaxesearch/PickaxeSearch.svelte";
 import { pickaxeSearchCtrl } from "./islands/pickaxesearch/pickaxesearch.svelte.ts";
 import Dashboard from "./islands/dashboard/Dashboard.svelte";
@@ -263,6 +264,9 @@ if (IN_TAURI) {
         break;
       case "pull-rebase":
         resolver.pullRebase(bridge.CUR_REPO as unknown as string);
+        break;
+      case "open-terminal":
+        openTerminalCtrl.openTerminal(bridge.CUR_REPO as unknown as string);
         break;
       case "force-push-lease":
         forcePushCtrl.forcePushLease(bridge.CUR_REPO as unknown as string);

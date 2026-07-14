@@ -1392,39 +1392,6 @@ async submoduleRemove(path: string, submodulePath: string) : Promise<SubmoduleRe
     return await TAURI_INVOKE("submodule_remove", { path, submodulePath });
 },
 /**
- * Run `command` (via a shell) once in every initialized submodule's own
- * working directory (`recursive:true` also descends into a
- * submodule-of-a-submodule), emitting a `"submodule-foreach-progress"` event
- * with each submodule's `SubmoduleForeachEntry` as it completes and
- * returning the full list at the end. Refuses cleanly (no sweep attempted)
- * if another sweep is already in flight for this app — see
- * `try_run_submodule_foreach`.
- * JS call: `invoke("submodule_foreach_start", { path, command, recursive })`.
- */
-async submoduleForeachStart(path: string, command: string, recursive: boolean) : Promise<Result<SubmoduleForeachEntry[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("submodule_foreach_start", { path, command, recursive }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Request that an in-flight `submodule_foreach_start` sweep stop before its
- * next submodule. Always callable (mirrors `bisect_run_cancel`'s own
- * always-callable escape-hatch spirit), though this only sets a flag rather
- * than mutating repo state.
- * JS call: `invoke("submodule_foreach_cancel")`.
- */
-async submoduleForeachCancel() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("submodule_foreach_cancel") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * JS: `commands.listTrackedRepos()`.
  */
 async listTrackedRepos() : Promise<Result<TrackedRepo[], string>> {
@@ -1565,6 +1532,17 @@ async readRepoFile(path: string, fileName: string) : Promise<Result<string, stri
  */
 async writeRepoFile(path: string, fileName: string, content: string) : Promise<RepoFileResult> {
     return await TAURI_INVOKE("write_repo_file", { path, fileName, content });
+},
+/**
+ * JS: `commands.openTerminal(path)`.
+ */
+async openTerminal(path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_terminal", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -2123,44 +2101,6 @@ export type StashResolveResult = { ok: boolean;
  * conflict is never a no-op).
  */
 state: string; conflictedFiles: string[]; message: string; backupRef: string | null }
-/**
- * One submodule's result from a `submodule_foreach_start` sweep — the SAME
- * struct is both pushed into the returned `Vec` and emitted verbatim as the
- * "submodule-foreach-progress" event payload as each submodule finishes
- * (mirrors `bisect_run_start`'s own "emit the same struct type as the return
- * value, don't invent a second payload shape" precedent — see `BisectStatus`
- * there).
- */
-export type SubmoduleForeachEntry = { 
-/**
- * Root-relative submodule path (e.g. "sub" or "sub/nested"), exactly
- * like `SubmoduleInfo::path`/real `git submodule foreach`'s own display.
- */
-path: string; 
-/**
- * "ok" (exit 0) | "failed" (nonzero exit, OR the shell itself couldn't
- * even be spawned) | "skipped" (not-initialized/removed — no command
- * run) | "cancelled" (never reached — a cancellation request was
- * observed before this submodule's turn).
- */
-status: string; 
-/**
- * The command's raw process exit code. `None` for "skipped"/"cancelled"
- * (no command ever ran), and also `None` on the rare "failed" case where
- * the shell itself could not be spawned at all (no exit code exists).
- */
-exitCode: number | null; 
-/**
- * Captured stdout, capped by `cap_output` — empty for "skipped"/
- * "cancelled".
- */
-stdout: string; 
-/**
- * Captured stderr, capped by `cap_output` — for the shell-could-not-be-
- * spawned "failed" case this carries the spawn error message instead (no
- * real stderr exists to capture).
- */
-stderr: string }
 /**
  * One `.gitmodules`-registered submodule row.
  */

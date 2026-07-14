@@ -78,11 +78,11 @@ describe("show/close/toggle", () => {
 });
 
 describe("filter", () => {
-  it("with no query, always includes the 19 static tool actions plus loaded commits (no refs in this fixture)", () => {
+  it("with no query, always includes the 20 static tool actions plus loaded commits (no refs in this fixture)", () => {
     setBackendGraph([{ sha: "aaa1111", subject: "Add feature", an: { n: "Dev" }, refs: [] }]);
     cmdkCtrl.show();
     const kinds = cmdkCtrl.results.map((r: any) => r.type);
-    expect(kinds.filter((t) => t === "action").length).toBe(19);
+    expect(kinds.filter((t) => t === "action").length).toBe(20);
     expect(kinds.filter((t) => t === "commit").length).toBe(1);
   });
 

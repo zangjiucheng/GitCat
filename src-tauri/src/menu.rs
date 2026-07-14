@@ -161,6 +161,12 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // from the dialog-openers above them.
         let pull_merge = MenuItemBuilder::with_id("pull-merge", "Pull (Merge)").build(app)?;
         let pull_rebase = MenuItemBuilder::with_id("pull-rebase", "Pull (Rebase)").build(app)?;
+        // Opens a real OS terminal at the repo's root (see terminal.rs's own
+        // module doc) — an immediate action like Pull above, not a dialog,
+        // so no "…" ellipsis. Ranked below the two Pull variants but above
+        // Force Push, matching this menu's increasing-order-of-risk ordering
+        // (opening a terminal is safe; the items below it are not).
+        let open_terminal = MenuItemBuilder::with_id("open-terminal", "Open Terminal").build(app)?;
         // Force push: TWO separate items (never one item + a checkbox) so a
         // user can never reach the destructive raw-force action by
         // fat-fingering the safer lease flow — see git_remote.rs's
@@ -195,6 +201,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .separator()
             .item(&pull_merge)
             .item(&pull_rebase)
+            .item(&open_terminal)
             .separator()
             .item(&force_push_lease)
             .item(&force_push_override)
@@ -249,7 +256,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
         | "bisect" | "reflog" | "rerere" | "plumbing" | "remotes" | "export-patches" | "apply-patch" | "pickaxe-search"
         | "repositories" | "external-tools" | "settings" | "dangling-recovery" | "repo-files" | "pull-merge" | "pull-rebase"
-        | "force-push-lease" | "force-push-override" | "filter-repo" | "check-for-updates") => {
+        | "open-terminal" | "force-push-lease" | "force-push-override" | "filter-repo" | "check-for-updates") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

@@ -47,11 +47,12 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 - Tags: create, delete, and push
 - Fetch / Pull / Push, from the top bar or the native Repository menu — Pull offers an explicit merge-or-rebase strategy choice and follows your configured upstream automatically; force push / force-with-lease are gated behind the same danger-confirm flow as other irreversible actions
 - "Manage Remotes" dialog — add / edit / rename / remove
+- "Open Terminal" — drop into a real terminal at the repo's root when you need a raw shell, from the Tools menu/⌘K
 - Drag-and-drop cherry-pick and merge (shift-drag) onto HEAD, or right-click a commit row for cherry-pick / merge / revert — all backed by a real 3-way conflict resolver
 - Squash-merge, plus explicit fast-forward strategy choice: auto (default) / no-ff (always a real merge commit) / ff-only (refuse unless a fast-forward is possible)
 - Linear rebase onto any branch — including multi-commit conflict sequences and mid-sequence skip
 - Interactive rebase — a drag-to-reorder planner (pick / edit / squash / fixup / drop) before it ever touches your history
-- Submodules — init/update (including `--recursive`), add, deinit/remove, a bulk `foreach` command runner, and "Open" to manage a submodule exactly like its own top-level repo
+- Submodules — init/update (including `--recursive`), add, deinit/remove, and "Open" to manage a submodule exactly like its own top-level repo
 - Patch export/apply (`git format-patch` / `git am`), with real 3-way conflict resolution through the existing conflict resolver
 - Pluggable external diff/merge tools — hand off a diff or a conflict to your own configured tool (e.g. VS Code, Beyond Compare) instead of GitCat's built-in view
 - `git bisect` — mark good/bad/skip, live canvas cues for the narrowing range, automatic first-bad detection

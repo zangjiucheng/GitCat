@@ -1,8 +1,5 @@
 //! Submodule status (M1) + init/update (M2) + add/sync (M3) + deinit/remove
-//! (M4) + foreach (M5, final milestone): run an arbitrary user-supplied shell
-//! command in every initialized submodule's own working directory, with live
-//! progress and cancellation. See this file's own M5 section doc comment
-//! (below the M4 section) for the foreach design.
+//! (M4).
 //!
 //! Read-only, git2-based (mirrors `git_write::list_refs`'s read half): iterates
 //! every submodule registered in `.gitmodules` via `Repository::submodules()`
@@ -14,11 +11,7 @@
 //! bit/index-derived states, and how they line up with git's own `-`/`+`/`
 //! `/`U` prefixes; there is a 7th, `submodule_status`-specific state,
 //! "unreadable", layered on top of all of them — see its own bullet below):
-//!   - "unreadable": CRASH FIX, added after `submodule_foreach`'s own
-//!     unbounded-recursion stack-overflow crash (see this file's M5 section,
-//!     `discover_nested_targets`'s doc comment for the full empirically
-//!     confirmed mechanism) turned out to be independently reachable through
-//!     THIS function too — `submodule_status_inner` also unconditionally
+//!   - "unreadable": CRASH FIX — `submodule_status_inner` unconditionally
 //!     called `repo.submodule_status(name, ..)` for every top-level
 //!     submodule, with no cycle check at all. That call itself is what
 //!     stack-overflows (crashing the ENTIRE application process) when asked
@@ -26,16 +19,15 @@
 //!     reachable in its nested-submodule subtree at any depth, is cyclic
 //!     (a malformed or maliciously crafted `.git` gitfile pointer) — and,
 //!     more surprisingly, the identical crash fires for any ANCESTOR of the
-//!     cyclic node too, not just the offending submodule itself. This is a
-//!     materially bigger blast radius than the foreach crash: `submodule_status`
+//!     cyclic node too, not just the offending submodule itself. `submodule_status`
 //!     runs AUTOMATICALLY every time a repo is opened (the sidebar's own
 //!     `refreshSubmodules()`), so an unguarded call here crashed the whole app
 //!     just from OPENING a third-party/untrusted repo containing such a
-//!     submodule — no foreach sweep, no opt-in action, needed. Fixed by
-//!     `check_submodule_safe_for_status`, which verifies (reusing the exact
+//!     submodule — no opt-in action needed. Fixed by
+//!     `check_submodule_safe_for_status`, which verifies (via the
 //!     canonicalize-and-track-visited-paths mechanism `check_safe_to_recurse`/
-//!     `discover_nested_targets` already established for the foreach fix)
-//!     that a top-level submodule's ENTIRE reachable subtree is confirmed
+//!     `discover_nested_targets` implement, below in this file) that a
+//!     top-level submodule's ENTIRE reachable subtree is confirmed
 //!     cycle-free BEFORE `submodule_status_inner` ever calls
 //!     `repo.submodule_status()` on it. When it is not, "unreadable" is
 //!     reported directly and `submodule_status` is never called for that row
@@ -214,12 +206,11 @@
 use std::collections::HashSet;
 use std::fs;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use git2::{Diff, DiffOptions, Patch, Repository, StatusOptions, SubmoduleIgnore};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State, Wry};
 
 use crate::git_write::WriteResult;
 
@@ -279,15 +270,13 @@ pub fn submodule_status(path: String) -> Result<Vec<SubmoduleInfo>, String> {
 fn submodule_status_inner(path: &str) -> Result<Vec<SubmoduleInfo>, git2::Error> {
     let repo = crate::trust::open_repo(path)?;
 
-    // CRASH FIX: seed the exact same cycle-detection `visited` set
-    // `submodule_foreach_run` seeds (the outermost repo's own canonical git
-    // directory) BEFORE ever asking libgit2 for any top-level submodule's own
-    // status — closes the case where a top-level submodule's gitfile points
-    // straight back at ITS OWN containing (this very) repo. Threaded through
-    // every `check_submodule_safe_for_status` call below (one shared set for
-    // the whole listing, not a fresh one per submodule), mirroring
-    // `submodule_foreach_run`'s own single-seed-per-sweep discipline. See
-    // `check_submodule_safe_for_status`'s doc comment for the full,
+    // CRASH FIX: seed the cycle-detection `visited` set with this repo's own
+    // canonical git directory BEFORE ever asking libgit2 for any top-level
+    // submodule's own status — closes the case where a top-level submodule's
+    // gitfile points straight back at ITS OWN containing (this very) repo.
+    // Threaded through every `check_submodule_safe_for_status` call below
+    // (one shared set for the whole listing, not a fresh one per submodule).
+    // See `check_submodule_safe_for_status`'s doc comment for the full,
     // empirically-confirmed crash this guards against.
     let mut visited: HashSet<std::path::PathBuf> = HashSet::new();
     if let Ok(canon) = fs::canonicalize(repo.path()) {
@@ -328,9 +317,8 @@ fn submodule_status_inner(path: &str) -> Result<Vec<SubmoduleInfo>, git2::Error>
         // on it — that call itself is what stack-overflows (crashing the
         // whole process) on a cyclic submodule, or on any ANCESTOR of one.
         // See `check_submodule_safe_for_status`'s own doc comment for the
-        // full mechanism this mirrors from the M5 foreach fix. Takes priority
-        // over every other classification below: none of them can be safely
-        // computed once this is true.
+        // full mechanism. Takes priority over every other classification
+        // below: none of them can be safely computed once this is true.
         let status = match check_submodule_safe_for_status(&sm, &sm_path, &mut visited) {
             Err(_reason) => "unreadable".to_string(),
             Ok(()) => {
@@ -460,27 +448,25 @@ fn submodule_conflicted(repo: &git2::Repository, sm_path: &str) -> Result<bool, 
 /// CRASH FIX (M1): answers the one question `submodule_status_inner` needs
 /// before it may safely call `repo.submodule_status(name, ..)` for a given
 /// TOP-LEVEL submodule `sm` — is `sm`'s entire reachable subtree, at any
-/// depth, confirmed cycle-free? EMPIRICALLY CONFIRMED (the exact same
-/// investigation that produced `submodule_foreach`'s own crash fix — see
-/// `discover_nested_targets`'s doc comment in the M5 section below for the
-/// full trail): `Repository::submodule_status()` itself stack-overflows
-/// (crashing the whole process, not just returning an `Err`) when asked about
-/// a submodule whose own resolved git directory — or ANYTHING reachable in
-/// its own nested-submodule subtree, at any depth — is cyclic (a malformed or
+/// depth, confirmed cycle-free? EMPIRICALLY CONFIRMED — see
+/// `discover_nested_targets`'s doc comment below for the full trail —
+/// `Repository::submodule_status()` itself stack-overflows (crashing the
+/// whole process, not just returning an `Err`) when asked about a submodule
+/// whose own resolved git directory — or ANYTHING reachable in its own
+/// nested-submodule subtree, at any depth — is cyclic (a malformed or
 /// maliciously crafted `.git` gitfile pointer that redirects back at an
 /// ancestor already being walked). And, more surprisingly, the identical
 /// crash fires when asking about any ANCESTOR of the cyclic node too, not
 /// only the offending submodule itself (an ancestor's own dirty-status
 /// computation transitively walks its whole reachable workdir).
 ///
-/// This is independently reachable from `submodule_status_inner` alone — it
-/// never needed the foreach feature at all: `submodule_status` runs
-/// AUTOMATICALLY on every repo-open (the sidebar's own `refreshSubmodules()`),
-/// so an unguarded `repo.submodule_status()` call here crashed the entire
-/// application just from OPENING a repository containing such a submodule.
+/// `submodule_status` runs AUTOMATICALLY on every repo-open (the sidebar's
+/// own `refreshSubmodules()`), so an unguarded `repo.submodule_status()` call
+/// here crashed the entire application just from OPENING a repository
+/// containing such a submodule.
 ///
-/// Reuses, rather than re-derives, the exact cycle-detection primitives the
-/// M5 foreach fix already established:
+/// Reuses, rather than re-derives, `discover_nested_targets`/
+/// `check_safe_to_recurse`'s cycle-detection primitives:
 ///   - `sm.open()` failing just means this submodule was never checked out —
 ///     nothing reachable underneath it, and `Submodule::open()` alone was
 ///     verified safe even on the cyclic fixture (the crash lives inside
@@ -496,18 +482,15 @@ fn submodule_conflicted(repo: &git2::Repository, sm_path: &str) -> Result<bool, 
 ///     the "ancestor crashes too" surprise above) that alone does not make
 ///     querying `sm`'s status safe: something DEEPER in its own subtree might
 ///     still be cyclic. `discover_nested_targets` is called one level down
-///     (`depth: 1`, matching the depth `submodule_foreach_run`'s own
-///     outermost call passes to ITS top-level submodules) purely for its
-///     `tainted` return value — its actual `Vec<ForeachTarget>` is discarded;
-///     `submodule_status_inner` only ever reports TOP-LEVEL rows and has no
-///     use for deeper entries, unlike foreach's own `recursive: true` sweep.
+///     (`depth: 1`) purely for its `tainted` return value — its actual
+///     `Vec<ForeachTarget>` is discarded; `submodule_status_inner` only ever
+///     reports TOP-LEVEL rows and has no use for deeper entries.
 ///
 /// `visited` is threaded through by the caller (`submodule_status_inner`) as
 /// ONE shared set for the whole top-level listing, seeded with the outermost
-/// repo's own canonical git directory before the first call — identical
-/// discipline to `submodule_foreach_run`'s own single-seed-per-sweep pattern,
-/// which is what closes the "a top-level submodule points straight back at
-/// its own containing repo" case.
+/// repo's own canonical git directory before the first call — which is what
+/// closes the "a top-level submodule points straight back at its own
+/// containing repo" case.
 fn check_submodule_safe_for_status(
     sm: &git2::Submodule,
     full_path: &str,
@@ -1510,114 +1493,55 @@ fn ensure_gitmodules_section_removed(path: &str, name: &str) -> Result<(), Strin
 }
 
 // ---------------------------------------------------------------------------
-// M5 (final): foreach — `git submodule foreach <command>` equivalent, driven
-// step-by-step from Rust so each submodule's result can be pushed to the
-// frontend as "submodule-foreach-progress" while the sweep runs, instead of
-// only seeing one final batch result.
+// Cyclic-nested-submodule cycle detection, shared infrastructure for
+// `check_submodule_safe_for_status` (M1, above) — the only remaining caller
+// of everything below.
 //
-// This directly mirrors git_bisect.rs's own automated-run machinery
-// end-to-end (`BisectRunState` / `run_bisect` / `try_run_bisect` /
-// `bisect_run_start` / `bisect_run_cancel`) — including a lesson ALREADY
-// LEARNED there rather than repeated here: `BisectRunState` originally
-// shipped as a bare cancellation-flag `AtomicBool` with NO mutual-exclusion
-// against a second concurrent run, which adversarial review caught as a real
-// bug (two concurrent automated runs could interleave and corrupt state) and
-// had to be fixed in a follow-up pass with a `compare_exchange`-guarded
-// "already running" claim. `SubmoduleForeachState` below copies
-// `BisectRunState`'s FINAL, already-fixed shape verbatim from the very
-// start — a `running` AtomicBool claimed via `compare_exchange` and released
-// on every exit path, PLUS a separate `cancel` AtomicBool polled between
-// every submodule iteration and cleared on every exit path — rather than
-// needing that identical fix as a follow-up here too.
+// CRASH FIX, EMPIRICALLY CONFIRMED: asking libgit2 for even a single
+// TOP-LEVEL submodule's own status can stack-overflow the whole process if
+// ANYTHING in that submodule's reachable nested-submodule subtree is cyclic,
+// at any depth (a malformed or maliciously crafted `.git` gitfile pointer
+// that redirects back at an ancestor already being walked) — see
+// `check_submodule_safe_for_status`'s own doc comment (M1, above) for the
+// full trail and `discover_nested_targets`'s doc comment just below for the
+// exact ordering/traversal details that make this safe.
 //
-// UNLIKE bisect, there is no good/bad/skip exit-code semantics here:
-// `command` is an arbitrary user-supplied shell command run once per
-// initialized submodule's own working directory, and only its exit code (0
-// vs anything else) decides "ok" vs "failed" — no attempt to distinguish
-// "couldn't run at all" the way `classify_exit` does for bisect, since there
-// is no bisect-style convergence loop reading meaning INTO the exit code
-// here, just pass/fail per submodule.
-//
-// ONE FAILURE DOES NOT ABORT THE SWEEP — EMPIRICALLY VERIFIED (git 2.53,
-// throwaway fixture with 3 submodules, the middle one's command exiting
-// non-zero) before relying on it: real `git submodule foreach` with no extra
-// flags keeps going and still runs the command in every remaining submodule
-// after one fails, only reporting the overall foreach exit code as non-zero
-// at the very end. This mirrors that: a "failed" entry for one submodule
-// never stops the loop from reaching the rest.
-//
-// CANCELLATION is checked BETWEEN submodule iterations only, never
-// mid-command — the identical, already-documented TOCTOU limitation
-// `run_bisect` itself carries (a long-running command already in flight for
-// submodule N finishes before cancellation takes effect ahead of submodule
-// N+1); every submodule that was never reached once cancellation is observed
-// gets a "cancelled" entry rather than being silently dropped from the
-// result.
-//
-// DISCOVERY reuses, rather than re-derives, M1's own BIT-CLASSIFICATION
-// helpers (`classify_status`/`submodule_conflicted`, unchanged) — but, as of
-// the cyclic-submodule crash fix below, NO LONGER calls M1's
-// `submodule_status_inner` wrapper itself for the top-level list the way an
-// earlier version of this code did. EMPIRICALLY CONFIRMED (see
-// `discover_nested_targets`'s own CRASH FIX doc comment) that doing so was
-// itself unsafe: asking libgit2 for even a single TOP-LEVEL submodule's own
-// status can stack-overflow if ANYTHING in that submodule's reachable
-// nested-submodule subtree is cyclic, at any depth — not only when this code
-// goes on to actually recurse into it. So top-level and every deeper
-// submodule-of-a-submodule classification now go through the exact same
-// safe, taint-aware walk (`discover_nested_targets`, called once from the
-// OUTERMOST repo with an empty path prefix — see `submodule_foreach_run`),
-// which mirrors `first_dirty_nested_submodule`'s own recursive-discovery
-// shape (M4 bug-2 fix, above) — `sub_repo.submodules()`, `open()` each,
-// recurse — reused/mirrored here rather than writing a third copy of that
-// exact walk, just collecting full (path, status) entries instead of a
-// single dirty boolean.
-//
-// UPDATE (M1 crash fix, added later): the dependency now also runs the OTHER
-// way — M1's `submodule_status_inner` was found to be independently
-// vulnerable to this exact crash (see its own `check_submodule_safe_for_status`
-// doc comment above M2) and now calls straight into `discover_nested_targets`/
-// `check_safe_to_recurse` itself, for the identical reason this section
-// stopped calling M1's wrapper: computing even one top-level submodule's
-// status is unsafe unless its whole reachable subtree is confirmed
-// cycle-free first. This is NOT a reintroduction of the old M1<->M5 coupling
-// this section's own fix removed — `submodule_status_inner` never calls back
-// into `submodule_foreach_run`/`discover_nested_targets`'s TOP-LEVEL entry
-// point, it only reuses the safe, side-effect-free cycle-detection PRIMITIVES
-// one level down, exactly the way `check_submodule_safe_for_status` is
-// documented to.
-//
-// No Safety-Manager snapshot: `submodule_foreach_start` only ever spawns an
-// arbitrary command inside each submodule's OWN already-checked-out working
-// directory — it never itself moves a ref, touches the superproject's index/
-// HEAD, or mutates any submodule's gitlink. Whatever the user's own command
-// happens to do inside a submodule is exactly as uncontrolled/uncapturable
-// by a ref snapshot as `bisect_run_start`'s own test command is — identical
-// "nothing this command itself does is snapshot-shaped" reasoning already
-// used throughout this file.
+// This machinery originally also drove a bulk "run a command in every
+// submodule" (`git submodule foreach <command>`) feature, removed since —
+// the cycle-detection walk below turned out to be needed independently of
+// that feature (`submodule_status` runs automatically on every repo-open via
+// the sidebar's own `refreshSubmodules()`, so an unguarded
+// `repo.submodule_status()` call crashed the app just from OPENING a
+// repository containing such a submodule), so it stayed when that feature
+// was removed.
 
-/// One submodule targeted by a `submodule_foreach_start` sweep, discovered
-/// before any command runs — path is root-relative (e.g. "sub/nested" for a
-/// submodule-of-a-submodule, exactly how real `git submodule foreach` prints
-/// it), status is the same "conflicted"/"removed"/"not-initialized"/
-/// "out-of-date"/"dirty"/"clean" vocabulary `SubmoduleInfo::status` uses,
-/// consulted only to decide skip-vs-run (never surfaced to the frontend
-/// directly — see `SubmoduleForeachEntry::status`, a completely different,
-/// pass/fail vocabulary).
+/// One submodule reached by `discover_nested_targets`'s own recursive walk —
+/// path is root-relative (e.g. "sub/nested" for a submodule-of-a-submodule),
+/// status is the same "conflicted"/"removed"/"not-initialized"/
+/// "out-of-date"/"dirty"/"clean" vocabulary `SubmoduleInfo::status` uses.
+/// `check_submodule_safe_for_status` (the only caller) discards the actual
+/// `Vec<ForeachTarget>` it gets back and only ever consults the walk's
+/// `tainted` bool — this struct only needs to exist because
+/// `discover_nested_targets` builds one internally per submodule visited.
+// Fields are written (one per submodule visited) but never read: the only
+// remaining caller, `check_submodule_safe_for_status`, discards the whole
+// `Vec<ForeachTarget>` and only consults `discover_nested_targets`'s other
+// return value (`tainted`) — deliberate, not a bug, so `#[allow(dead_code)]`
+// rather than deleting these fields and the path/status-tracking they'd
+// otherwise need discover_nested_targets to keep computing anyway.
+#[allow(dead_code)]
 struct ForeachTarget {
     path: String,
     status: String,
-    /// `Some(reason)` when this target must be treated as "skipped" for a
-    /// reason OTHER than the ordinary not-initialized/removed classification
-    /// above — specifically, `discover_nested_targets`/its top-level caller
-    /// in `submodule_foreach_run` refusing to recurse into this submodule's
-    /// OWN nested submodules because doing so was detected to be unsafe (a
-    /// cyclic submodule reference, or the hard recursion-depth cap — see
-    /// `discover_nested_targets`'s doc comment). `None` for every ordinary
-    /// target. When set, `submodule_foreach_run` reports this target as
-    /// "skipped" with this message in `stderr`, regardless of `status` —
-    /// this submodule's own row is still shown, it just never had a command
-    /// run in it and was never recursed into further.
+    /// `Some(reason)` when `discover_nested_targets` refused to recurse into
+    /// this submodule's OWN nested submodules because doing so was detected
+    /// to be unsafe (a cyclic submodule reference, or the hard
+    /// recursion-depth cap — see `discover_nested_targets`'s doc comment).
+    /// `None` for every ordinary target. `check_submodule_safe_for_status`
+    /// (the only caller) never reads this field directly — it only checks
+    /// the walk's overall `tainted` bool — but it's what lets
+    /// `discover_nested_targets` tell "this node is fine" apart from "this
+    /// node's own subtree is unsafe" while building that bool up.
     skip_reason: Option<String>,
 }
 
@@ -1635,15 +1559,14 @@ const MAX_SUBMODULE_RECURSION_DEPTH: usize = 32;
 /// overflow`, process exit 134): a nested submodule's `.git` gitfile pointer
 /// can be malformed or maliciously crafted to redirect its resolved git
 /// directory back at an ancestor already being walked — its own containing
-/// repo, or any repo already visited on this sweep. `git2::Submodule::open()`
+/// repo, or any repo already visited on this walk. `git2::Submodule::open()`
 /// itself does NO cycle detection at all; it just follows the gitfile
 /// pointer to whatever repository it names, so a self/ancestor-referencing
 /// pointer previously made this function recurse into the EXACT SAME
 /// `.gitmodules`/index over and over, forever — reachable from ordinary,
-/// untrusted user input via `submodule_foreach_start` (with OR without
-/// `recursive: true` — see below) on any third-party repo containing such a
-/// submodule, with no need to go through this app's own
-/// `submodule_add`/`submodule_update` at all.
+/// untrusted user input just by OPENING any third-party repo containing such
+/// a submodule (`submodule_status` runs on every repo-open), with no need to
+/// go through this app's own `submodule_add`/`submodule_update` at all.
 ///
 /// CRITICAL ORDERING, ALSO EMPIRICALLY CONFIRMED WITH A MINIMAL REPRO BEFORE
 /// TRUSTING IT: the stack overflow happens INSIDE libgit2's own C
@@ -1675,10 +1598,9 @@ const MAX_SUBMODULE_RECURSION_DEPTH: usize = 32;
 /// (`sm.open()` + `check_safe_to_recurse`/depth-check only — always safe, no
 /// status calls) and only calls `nested_submodule_status` for a node ONCE
 /// its entire reachable subtree, at any depth, is confirmed cycle-free. This
-/// is also why `submodule_foreach_run` no longer special-cases the TOP-LEVEL
-/// list via M1's `submodule_status_inner` (see this section's own doc
-/// comment): that call is exactly as unsafe as any deeper one for the exact
-/// same reason.
+/// is also why `submodule_status_inner` never special-cases the TOP-LEVEL
+/// list (see `check_submodule_safe_for_status`'s own doc comment): that call
+/// is exactly as unsafe as any deeper one for the exact same reason.
 ///
 /// Fixed by canonicalizing (`std::fs::canonicalize`) each submodule's own
 /// resolved GIT DIRECTORY (`Repository::path()`, exactly what
@@ -1688,37 +1610,33 @@ const MAX_SUBMODULE_RECURSION_DEPTH: usize = 32;
 /// genuinely distinct, non-cyclic git directory can never re-trigger the
 /// same `.gitmodules` read) and tracking the set of canonical paths already
 /// visited in a `HashSet` threaded through the whole recursive walk
-/// (`visited`, seeded by the caller with the outermost superproject's own
-/// canonical git directory — see `submodule_foreach_run`). See
+/// (`visited`, seeded by the caller — `submodule_status_inner` — with the
+/// outermost superproject's own canonical git directory). See
 /// `check_safe_to_recurse` for the actual check/insert. `MAX_SUBMODULE_RECURSION_DEPTH`
 /// above is an additional, independent depth cap applied alongside this one
 /// — defense-in-depth, not a substitute for it.
 ///
-/// Either check failing (a real cycle, an unresolvable path, or the depth cap)
-/// reports a distinct "skipped" entry with a clear message for the OFFENDING
-/// path (see `ForeachTarget::skip_reason`) rather than silently dropping it OR
-/// crashing — `submodule_foreach_run` surfaces it to the caller/frontend as
-/// `SubmoduleForeachEntry { status: "skipped", stderr: <message>, .. }`,
-/// exactly like every other skip reason already flowing through that same
-/// vocabulary. When a DEEPER node is the one actually found unsafe, every
-/// ancestor back up to (and including) the top-level submodule ALSO gets its
-/// own "skipped" entry (a distinct message naming the deeper path that made it
-/// unsafe) instead of a real status — never a guessed "clean"/"ok" for
-/// something this code could not actually verify without risking the exact
-/// crash being fixed.
+/// Either check failing (a real cycle, an unresolvable path, or the depth
+/// cap) records a `ForeachTarget` with a `skip_reason` for the OFFENDING path
+/// and marks the walk `tainted` (see this function's own return-type doc
+/// below) rather than silently dropping it OR crashing. When a DEEPER node
+/// is the one actually found unsafe, every ancestor back up to (and
+/// including) the top-level submodule ALSO gets marked tainted instead of a
+/// real status — never a guessed "clean"/"ok" for something this code could
+/// not actually verify without risking the exact crash being fixed.
 ///
 /// Recursively discover every submodule registered INSIDE `repo`, to any
 /// depth (capped, see above) — `repo` may be the OUTERMOST superproject
-/// itself (`prefix: ""`, called once from `submodule_foreach_run`) or a
-/// submodule's own already-open repository one or more levels down. Mirrors
-/// the exact traversal shape `first_dirty_nested_submodule` (M4, above)
-/// already uses for its own dirty-content detection one level down (`sub_repo
-/// .submodules()`, `open()` each nested one, recurse), reused/mirrored here
-/// rather than writing a third copy of that walk — just collecting full
-/// (path, status) entries instead of a single dirty boolean. NOTE:
-/// `first_dirty_nested_submodule` itself has no analogous crash risk to fix —
-/// it never calls `submodule_status` at all (only diffs/status-walks each
-/// repo's OWN tree directly), so it was never exposed to this specific
+/// itself (`prefix: ""`) or a submodule's own already-open repository one or
+/// more levels down. Mirrors the exact traversal shape
+/// `first_dirty_nested_submodule` (M4, above) already uses for its own
+/// dirty-content detection one level down (`sub_repo.submodules()`, `open()`
+/// each nested one, recurse), reused/mirrored here rather than writing a
+/// third copy of that walk — just collecting full (path, status) entries
+/// instead of a single dirty boolean. NOTE: `first_dirty_nested_submodule`
+/// itself has no analogous crash risk to fix — it never calls
+/// `submodule_status` at all (only diffs/status-walks each repo's OWN tree
+/// directly), so it was never exposed to this specific
 /// libgit2 behavior.
 ///
 /// `prefix` is `repo`'s own path relative to the OUTERMOST repo (`""` for the
@@ -1740,9 +1658,9 @@ const MAX_SUBMODULE_RECURSION_DEPTH: usize = 32;
 /// (plus deeper ones when `recurse`), and `subtree_tainted` is `true` when
 /// ANYTHING in `repo`'s own reachable subtree (at any depth, regardless of
 /// `recurse`) was found cyclic or past the depth cap — the caller (either
-/// this function's own recursive call, or `submodule_foreach_run` for the
-/// outermost call) needs this bit to decide whether it is safe to compute
-/// ITS OWN status, not just whether to include deeper entries.
+/// this function's own recursive call, or `check_submodule_safe_for_status`
+/// for the outermost call) needs this bit to decide whether it is safe to
+/// compute ITS OWN status, not just whether to include deeper entries.
 ///
 /// A submodule whose own status can't even be read, or whose nested repo
 /// can't be opened, is treated the same conservative way `open_submodule_repo`
@@ -1840,9 +1758,9 @@ fn discover_nested_targets(
 
 /// `format!("{prefix}/{leaf}")`, except a `""` prefix (the outermost repo,
 /// which has no root-relative path of its own) contributes no leading
-/// slash — used so `discover_nested_targets` can be called uniformly from
-/// `submodule_foreach_run` with `prefix: ""` for the outermost repo's own
-/// direct children, instead of needing a special first-level case.
+/// slash — lets `discover_nested_targets` build each nested submodule's
+/// root-relative path uniformly at every recursion depth, instead of needing
+/// a special first-level case.
 fn join_path(prefix: &str, leaf: &str) -> String {
     if prefix.is_empty() {
         leaf.to_string()
@@ -1876,11 +1794,12 @@ fn nested_submodule_status(repo: &Repository, name: &str, sm_path: &str) -> Stri
 }
 
 /// Shared cycle-detection primitive used by every one of
-/// `discover_nested_targets`'s own recursive calls (including its very first
-/// one, from `submodule_foreach_run`, against the outermost repo's own direct
-/// children) — the identical canonicalize-check-insert sequence right before
-/// descending one level further into a submodule's own nested submodules.
-/// See `discover_nested_targets`'s doc comment for the full
+/// `discover_nested_targets`'s own recursive calls, AND directly by
+/// `check_submodule_safe_for_status` (for the outermost submodule itself,
+/// before ever calling into `discover_nested_targets`) — the identical
+/// canonicalize-check-insert sequence right before descending one level
+/// further into a submodule's own nested submodules. See
+/// `discover_nested_targets`'s doc comment for the full
 /// empirically-confirmed crash this fixes.
 ///
 /// Returns `Ok(())` — having inserted `sub_repo`'s canonical git directory
@@ -1911,318 +1830,5 @@ fn check_safe_to_recurse(
              cyclic submodule reference"
         )),
     }
-}
-
-/// Caps so one runaway/chatty submodule command's stdout or stderr can't blow
-/// up the progress payload — same truncate-and-flag spirit as `commands.rs`'s
-/// `MAX_FILES`/`MAX_LINES_PER_FILE` cap on `commit_detail`'s diff output, just
-/// measured in characters for free-form process output rather than diff
-/// files/lines (an arbitrary shell command has no "hunk" structure to cap by).
-const MAX_OUTPUT_CHARS: usize = 20_000;
-
-fn cap_output(s: String) -> String {
-    let total = s.chars().count();
-    if total <= MAX_OUTPUT_CHARS {
-        return s;
-    }
-    let head: String = s.chars().take(MAX_OUTPUT_CHARS).collect();
-    format!("{head}\n… (truncated, {} more character(s) not shown)", total - MAX_OUTPUT_CHARS)
-}
-
-/// Run `command` through a shell (`sh -c` on Unix, `cmd /C` on Windows —
-/// identical cross-platform gating to `git_bisect.rs`'s own
-/// `run_test_command`) with its current working directory set to `cwd` (a
-/// single submodule's own working tree). Returns `Err` only when the shell
-/// itself could not be spawned; a nonzero exit is a normal, expected way for
-/// the command to report failure and comes back as `Ok` with that code —
-/// unlike bisect there is no exit-code convention to interpret here (no
-/// good/bad/skip), just the raw code plus captured stdout/stderr.
-fn run_foreach_command(cwd: &std::path::Path, command: &str) -> Result<(i32, String, String), String> {
-    let mut cmd = if cfg!(target_os = "windows") {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(command);
-        c
-    } else {
-        let mut c = Command::new("sh");
-        c.arg("-c").arg(command);
-        c
-    };
-    cmd.current_dir(cwd);
-    let output = cmd.output().map_err(|e| format!("Could not run the command: {e}"))?;
-    let code = output.status.code().unwrap_or(-1);
-    Ok((
-        code,
-        String::from_utf8_lossy(&output.stdout).trim().to_string(),
-        String::from_utf8_lossy(&output.stderr).trim().to_string(),
-    ))
-}
-
-/// One submodule's result from a `submodule_foreach_start` sweep — the SAME
-/// struct is both pushed into the returned `Vec` and emitted verbatim as the
-/// "submodule-foreach-progress" event payload as each submodule finishes
-/// (mirrors `bisect_run_start`'s own "emit the same struct type as the return
-/// value, don't invent a second payload shape" precedent — see `BisectStatus`
-/// there).
-#[derive(Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct SubmoduleForeachEntry {
-    /// Root-relative submodule path (e.g. "sub" or "sub/nested"), exactly
-    /// like `SubmoduleInfo::path`/real `git submodule foreach`'s own display.
-    pub path: String,
-    /// "ok" (exit 0) | "failed" (nonzero exit, OR the shell itself couldn't
-    /// even be spawned) | "skipped" (not-initialized/removed — no command
-    /// run) | "cancelled" (never reached — a cancellation request was
-    /// observed before this submodule's turn).
-    pub status: String,
-    /// The command's raw process exit code. `None` for "skipped"/"cancelled"
-    /// (no command ever ran), and also `None` on the rare "failed" case where
-    /// the shell itself could not be spawned at all (no exit code exists).
-    pub exit_code: Option<i32>,
-    /// Captured stdout, capped by `cap_output` — empty for "skipped"/
-    /// "cancelled".
-    pub stdout: String,
-    /// Captured stderr, capped by `cap_output` — for the shell-could-not-be-
-    /// spawned "failed" case this carries the spawn error message instead (no
-    /// real stderr exists to capture).
-    pub stderr: String,
-}
-
-/// State for an in-flight `submodule_foreach_start` sweep, `app.manage()`d in
-/// lib.rs — copies `BisectRunState`'s shape field-for-field (see this
-/// section's doc comment for why: that shape is already the FIXED one, not
-/// the original bare-cancellation-flag version). `running` is the real,
-/// structurally-enforced mutual-exclusion lock (`try_start`'s
-/// `compare_exchange`); `cancel` is a plain signal polled between submodule
-/// iterations. Exactly one `SubmoduleForeachState` per app, mirroring
-/// `BisectRunState`'s own "one automated run at a time" scope.
-#[derive(Default)]
-pub struct SubmoduleForeachState {
-    cancel: AtomicBool,
-    running: AtomicBool,
-}
-
-impl SubmoduleForeachState {
-    fn request_cancel(&self) {
-        self.cancel.store(true, Ordering::SeqCst);
-    }
-    fn is_cancelled(&self) -> bool {
-        self.cancel.load(Ordering::SeqCst)
-    }
-    fn clear_cancel(&self) {
-        self.cancel.store(false, Ordering::SeqCst);
-    }
-    /// Atomically claim the "a sweep is in flight" guard — see
-    /// `BisectRunState::try_start`'s doc comment for why `compare_exchange`
-    /// (not a plain load-then-store) is what makes this a REAL lock rather
-    /// than a check-then-act race.
-    fn try_start(&self) -> bool {
-        self.running.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok()
-    }
-    /// Release the claim. Must run on every exit path out of a sweep that
-    /// successfully claimed it.
-    fn finish(&self) {
-        self.running.store(false, Ordering::SeqCst);
-    }
-}
-
-/// The core foreach sweep, independent of any running Tauri app — split out
-/// from the `#[tauri::command]` exactly like `run_bisect` is split from
-/// `bisect_run_start`, so it's directly unit-testable without a real
-/// AppHandle/State (see tests/submodule.rs). `should_cancel` is polled once
-/// per submodule iteration, BEFORE that submodule's command would run (see
-/// this section's doc comment for why not mid-command); `on_progress` fires
-/// once per submodule — skipped, cancelled, or actually run — with the exact
-/// same `SubmoduleForeachEntry` this function eventually returns for that
-/// submodule.
-pub fn submodule_foreach_run(
-    path: &str,
-    command: &str,
-    recursive: bool,
-    should_cancel: impl Fn() -> bool,
-    mut on_progress: impl FnMut(&SubmoduleForeachEntry),
-) -> Result<Vec<SubmoduleForeachEntry>, String> {
-    let repo = crate::trust::open_repo(path).map_err(|e| format!("Cannot open repository: {}", e.message()))?;
-    let workdir = repo
-        .workdir()
-        .ok_or_else(|| "Repository has no working directory (bare repository?).".to_string())?
-        .to_path_buf();
-
-    // CRASH FIX: seed the cycle-detection set with the OUTERMOST
-    // superproject's own canonical git directory before any recursion starts
-    // — closes the case where a top-level submodule's gitfile points back at
-    // ITS OWN containing (outermost) repo, not just at some deeper ancestor
-    // discovered along the way. See `discover_nested_targets`'s doc comment
-    // for the full empirically-confirmed crash this whole `visited` set
-    // fixes, and `check_safe_to_recurse` for the shared check this and every
-    // recursive descent below use before entering a submodule's own nested
-    // submodules.
-    let mut visited: HashSet<std::path::PathBuf> = HashSet::new();
-    if let Ok(canon) = fs::canonicalize(repo.path()) {
-        visited.insert(canon);
-    }
-
-    // CRASH FIX: the top-level list is now discovered through the SAME safe,
-    // taint-aware walk as every deeper submodule-of-a-submodule level
-    // (`discover_nested_targets`, called here against the outermost repo
-    // itself with an empty path prefix) — NOT via M1's `submodule_status_inner`
-    // the way an earlier version of this code did. See `discover_nested_targets`'s
-    // own doc comment, and this section's top doc comment, for why reusing
-    // that M1 wrapper directly for the top level was itself found unsafe:
-    // EMPIRICALLY CONFIRMED that even a single top-level submodule's own
-    // status query can crash if anything in ITS reachable subtree, at any
-    // depth, is cyclic. The second return value (whether the outermost repo's
-    // own reachable forest was tainted anywhere) is intentionally discarded
-    // here — there is no ancestor above the outermost repo to report it to;
-    // any tainted node along the way already has its own "skipped" entry
-    // inside `targets`.
-    let (targets, _root_tainted) = discover_nested_targets(&repo, "", &mut visited, 0, recursive);
-
-    let mut out = Vec::with_capacity(targets.len());
-    for (i, target) in targets.iter().enumerate() {
-        // Checked BETWEEN every iteration, including before the very first —
-        // see this section's doc comment for the documented not-mid-command
-        // TOCTOU limitation this shares with `run_bisect`.
-        if should_cancel() {
-            for remaining in &targets[i..] {
-                let entry = SubmoduleForeachEntry {
-                    path: remaining.path.clone(),
-                    status: "cancelled".to_string(),
-                    exit_code: None,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                };
-                on_progress(&entry);
-                out.push(entry);
-            }
-            return Ok(out);
-        }
-
-        let entry = if let Some(reason) = &target.skip_reason {
-            // CRASH FIX: a cyclic submodule reference or a hard recursion-
-            // depth-cap refusal (see `discover_nested_targets`'s doc comment)
-            // — reported the same "skipped" way as not-initialized/removed
-            // below, just with a clear message in `stderr` instead of an
-            // empty one, and checked FIRST since `target.status` here is
-            // still whatever this submodule's own ordinary classification
-            // was (e.g. "clean") — it's the recursion into it, not the
-            // submodule itself, that was refused.
-            SubmoduleForeachEntry {
-                path: target.path.clone(),
-                status: "skipped".to_string(),
-                exit_code: None,
-                stdout: String::new(),
-                stderr: reason.clone(),
-            }
-        } else if target.status == "not-initialized" || target.status == "removed" {
-            SubmoduleForeachEntry {
-                path: target.path.clone(),
-                status: "skipped".to_string(),
-                exit_code: None,
-                stdout: String::new(),
-                stderr: String::new(),
-            }
-        } else {
-            let cwd = workdir.join(&target.path);
-            match run_foreach_command(&cwd, command) {
-                Ok((code, stdout, stderr)) => SubmoduleForeachEntry {
-                    path: target.path.clone(),
-                    // No good/bad/skip semantics here — just pass/fail.
-                    status: if code == 0 { "ok".to_string() } else { "failed".to_string() },
-                    exit_code: Some(code),
-                    stdout: cap_output(stdout),
-                    stderr: cap_output(stderr),
-                },
-                Err(e) => SubmoduleForeachEntry {
-                    path: target.path.clone(),
-                    status: "failed".to_string(),
-                    exit_code: None,
-                    stdout: String::new(),
-                    stderr: cap_output(e),
-                },
-            }
-        };
-        // Never abort the sweep because one submodule's command failed — see
-        // this section's doc comment for the empirical verification behind
-        // that being real git's own default too.
-        on_progress(&entry);
-        out.push(entry);
-    }
-
-    Ok(out)
-}
-
-/// Claim `state`'s "already running" guard (see
-/// `SubmoduleForeachState::try_start`) and, ONLY if the claim succeeds, run
-/// `submodule_foreach_run` to completion, always releasing the guard
-/// afterward. Returns `None` — and does not call `submodule_foreach_run` AT
-/// ALL — when another sweep is already in flight: a second concurrent
-/// `submodule_foreach_start` must refuse cleanly rather than spinning up a
-/// second loop that could run commands in the same submodules concurrently.
-/// Split out from the `#[tauri::command]` so it's directly unit-testable
-/// without a real AppHandle/State (mirrors `try_run_bisect`'s own split from
-/// `bisect_run_start`; see tests/submodule.rs).
-pub fn try_run_submodule_foreach(
-    state: &SubmoduleForeachState,
-    path: &str,
-    command: &str,
-    recursive: bool,
-    should_cancel: impl Fn() -> bool,
-    on_progress: impl FnMut(&SubmoduleForeachEntry),
-) -> Option<Result<Vec<SubmoduleForeachEntry>, String>> {
-    if !state.try_start() {
-        return None;
-    }
-    state.clear_cancel(); // a stale cancel from a previous sweep must never leak into this one
-    let result = submodule_foreach_run(path, command, recursive, should_cancel, on_progress);
-    state.clear_cancel(); // always leave the flag clear on the way out, whatever the reason
-    state.finish(); // release the sweep-in-progress claim on every exit path, mirroring the above
-    Some(result)
-}
-
-/// Run `command` (via a shell) once in every initialized submodule's own
-/// working directory (`recursive:true` also descends into a
-/// submodule-of-a-submodule), emitting a `"submodule-foreach-progress"` event
-/// with each submodule's `SubmoduleForeachEntry` as it completes and
-/// returning the full list at the end. Refuses cleanly (no sweep attempted)
-/// if another sweep is already in flight for this app — see
-/// `try_run_submodule_foreach`.
-/// JS call: `invoke("submodule_foreach_start", { path, command, recursive })`.
-#[tauri::command]
-#[specta::specta]
-pub fn submodule_foreach_start(
-    app: AppHandle<Wry>,
-    state: State<SubmoduleForeachState>,
-    path: String,
-    command: String,
-    recursive: bool,
-) -> Result<Vec<SubmoduleForeachEntry>, String> {
-    let outcome = try_run_submodule_foreach(
-        &state,
-        &path,
-        &command,
-        recursive,
-        || state.is_cancelled(),
-        |entry| {
-            let _ = app.emit("submodule-foreach-progress", entry);
-        },
-    );
-    match outcome {
-        Some(result) => result,
-        None => Err(
-            "A submodule foreach sweep is already in progress — cancel it before starting another.".to_string(),
-        ),
-    }
-}
-
-/// Request that an in-flight `submodule_foreach_start` sweep stop before its
-/// next submodule. Always callable (mirrors `bisect_run_cancel`'s own
-/// always-callable escape-hatch spirit), though this only sets a flag rather
-/// than mutating repo state.
-/// JS call: `invoke("submodule_foreach_cancel")`.
-#[tauri::command]
-#[specta::specta]
-pub fn submodule_foreach_cancel(state: State<SubmoduleForeachState>) -> Result<(), String> {
-    state.request_cancel();
-    Ok(())
 }
 

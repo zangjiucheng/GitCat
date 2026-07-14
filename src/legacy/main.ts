@@ -1110,10 +1110,6 @@ async function openRepo(path){
   // below — so request cancellation first (best-effort, see
   // bisectCtrl.cancelIfRunning's own documented TOCTOU note).
   await bisectCtrl.cancelIfRunning();
-  // Same rationale, same shape, for a submodule "Run command in every
-  // submodule…" sweep (submodule_foreach_start) — see
-  // sidebarCtrl.cancelIfRunning's own doc comment.
-  await sidebarCtrl.cancelIfRunning();
   const pickBtn=$(".repo-pick");
   const backBtn=$("#backToParentBtn");
   let pickSpinner=null;
@@ -1372,7 +1368,6 @@ function bootEmpty(){
 async function closeRepo(){
   if(!IN_TAURI||!CUR_REPO) return;
   await bisectCtrl.cancelIfRunning();
-  await sidebarCtrl.cancelIfRunning();
   bootEmpty();
   NAV_STACK.length=0; updateBackToParentBtn();
 }

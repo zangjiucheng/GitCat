@@ -23,6 +23,7 @@ import { resolver } from "../resolver/resolver.svelte.ts";
 import { forcePushCtrl } from "../forcepush/forcepush.svelte.ts";
 import { exportPatchesCtrl } from "../exportpatches/exportpatches.svelte.ts";
 import { applyPatchCtrl } from "../applypatch/applypatch.svelte.ts";
+import { openTerminalCtrl } from "../openterminal/openterminal.svelte.ts";
 import { pickaxeSearchCtrl } from "../pickaxesearch/pickaxesearch.svelte.ts";
 import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
 import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
@@ -157,6 +158,13 @@ const ACTIONS: ActionItem[] = [
     label: "Pull (Rebase)",
     hint: "Fetch, then rebase the current branch onto its upstream",
     run: () => resolver.pullRebase(bridge.CUR_REPO as unknown as string),
+  },
+  {
+    type: "action",
+    id: "open-terminal",
+    label: "Open Terminal",
+    hint: "Open a real terminal at this repository's root",
+    run: () => openTerminalCtrl.openTerminal(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
