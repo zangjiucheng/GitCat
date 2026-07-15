@@ -60,6 +60,16 @@
         Automatically check for updates on launch
       </label>
 
+      <h4 class="d-lab">Tama</h4>
+      <label class="set-toggle" style="margin-bottom:14px" title="A few short synthesized chimes for her more significant moments — warnings, danger, celebrating">
+        <input
+          type="checkbox"
+          checked={settingsCtrl.soundEffectsEnabled}
+          onchange={(e) => settingsCtrl.setSoundEffectsEnabled((e.target as HTMLInputElement).checked)}
+        />
+        Play sound effects
+      </label>
+
       <h4 class="d-lab">Git identity</h4>
       {#if !settingsCtrl.repo}
         <p class="mut">Open a repository to view or edit its git identity.</p>

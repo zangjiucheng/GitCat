@@ -3,13 +3,15 @@
 // Two very different kinds of "setting" live here, each following its own
 // existing precedent rather than a made-up new one:
 //
-//   - Theme mode / cherry-pick record-origin / auto-check-updates — simple
-//     client-only preferences nothing on the Rust side ever needs to read or
-//     write (theme is pure CSS/DOM; cherry-pick's recordOrigin arg is read
-//     straight from here at pick-time by legacy/main.ts's cherryPick() — no
-//     live per-pick checkbox anymore, this IS the only control now that it
-//     was moved out of the canvas toolbar; auto-check is just a frontend
-//     gate around one setTimeout in main.ts). These persist
+//   - Theme mode / cherry-pick record-origin / auto-check-updates / sound
+//     effects — simple client-only preferences nothing on the Rust side
+//     ever needs to read or write (theme is pure CSS/DOM; cherry-pick's
+//     recordOrigin arg is read straight from here at pick-time by
+//     legacy/main.ts's cherryPick() — no live per-pick checkbox anymore,
+//     this IS the only control now that it was moved out of the canvas
+//     toolbar; auto-check is just a frontend gate around one setTimeout in
+//     main.ts; sound effects gates src/legacy/sound.ts's own playTamaSound,
+//     read fresh on every play the same way). These persist
 //     to localStorage under one namespaced JSON blob — the same idiom
 //     setupwizard.svelte.ts's own `gitcat.setupWizardDismissed` flag already
 //     established — NOT a new Rust `tool_settings.rs`-style JSON-file
@@ -38,17 +40,25 @@ export interface PersistedSettings {
   themeMode: ThemeMode;
   cherryPickRecordOriginDefault: boolean;
   autoCheckUpdates: boolean;
+  // Whether Tama's synthesized sound effects (see src/legacy/sound.ts) play
+  // on her more significant state changes (warn/danger/celebrate/hint-ish —
+  // see sound.ts's own STATE_SOUND map). Read fresh on every play, not
+  // cached, so toggling this mid-session takes effect immediately with no
+  // extra wiring — same idiom cherryPickRecordOriginDefault's own read
+  // already established.
+  soundEffectsEnabled: boolean;
 }
 
 const STORAGE_KEY = "gitcat.settings";
 
 // Exactly today's hardcoded behavior (forced dark, unchecked record-origin,
-// auto-update-check always on) — existing users see no behavior change
-// until they actually open Settings and change something.
+// auto-update-check always on, sounds on) — existing users see no behavior
+// change until they actually open Settings and change something.
 const DEFAULTS: PersistedSettings = {
   themeMode: "dark",
   cherryPickRecordOriginDefault: false,
   autoCheckUpdates: true,
+  soundEffectsEnabled: true,
 };
 
 export function loadSettings(): PersistedSettings {
@@ -84,6 +94,7 @@ class SettingsState {
   themeMode = $state<ThemeMode>(DEFAULTS.themeMode);
   cherryPickRecordOriginDefault = $state(DEFAULTS.cherryPickRecordOriginDefault);
   autoCheckUpdates = $state(DEFAULTS.autoCheckUpdates);
+  soundEffectsEnabled = $state(DEFAULTS.soundEffectsEnabled);
 
   // ── git identity section (repo-scoped, explicit Save) ───────────────────
   // Unlike remotes.svelte.ts's own plain (non-$state) `repo` field — which
@@ -116,6 +127,7 @@ class SettingsState {
     this.themeMode = s.themeMode;
     this.cherryPickRecordOriginDefault = s.cherryPickRecordOriginDefault;
     this.autoCheckUpdates = s.autoCheckUpdates;
+    this.soundEffectsEnabled = s.soundEffectsEnabled;
     this.repo = repo ?? "";
     this.identityError = "";
     this.open = true;
@@ -141,6 +153,11 @@ class SettingsState {
   setAutoCheckUpdates(v: boolean): void {
     this.autoCheckUpdates = v;
     saveSettings({ autoCheckUpdates: v });
+  }
+
+  setSoundEffectsEnabled(v: boolean): void {
+    this.soundEffectsEnabled = v;
+    saveSettings({ soundEffectsEnabled: v });
   }
 
   async refreshIdentity(): Promise<void> {

@@ -17,6 +17,10 @@ import { tamaGalleryCtrl } from "../islands/tamagallery/tamagallery.svelte.ts";
 // (globalUndo()'s stash-undo branch) — see that function's own comment for
 // why only that branch uses it instead of another `tinvoke()`.
 import { commands } from "../ipc/bindings";
+// TamaMascot.set() below plays a short synthesized chime on a real state
+// change via STATE_SOUND — see sound.ts's own header for why this is a leaf
+// module main.ts imports FROM, never the reverse.
+import { playTamaSound, STATE_SOUND } from "./sound.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -591,7 +595,13 @@ class TamaMascot{
         },110);
       }
     }
+    // Sound plays on a real FSM-STATE change, not a pose change (several
+    // states above intentionally share one pose) — captured before
+    // overwriting dataset.state so re-entering the same state (e.g. two
+    // "warn" calls in a row) doesn't replay the chime.
+    const prevState=this.nook.dataset.state;
     this.nook.dataset.state=s;
+    if(prevState!==s){const kind=STATE_SOUND[s];if(kind)playTamaSound(kind);}
     if(cfg.sticky)this.sticky=s;
     if(!cfg.sticky&&cfg.dwell)this.dwellT=setTimeout(()=>this.set(this.sticky||"idle"),cfg.dwell);
     if(!cfg.sticky&&!cfg.dwell)this.sticky=null;}

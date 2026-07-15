@@ -72,6 +72,7 @@ function resetCtrl() {
   settingsCtrl.themeMode = "dark";
   settingsCtrl.cherryPickRecordOriginDefault = false;
   settingsCtrl.autoCheckUpdates = true;
+  settingsCtrl.soundEffectsEnabled = true;
   settingsCtrl.repo = "";
   settingsCtrl.identity = null;
   settingsCtrl.nameInput = "";
@@ -100,6 +101,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       themeMode: "dark",
       cherryPickRecordOriginDefault: false,
       autoCheckUpdates: true,
+      soundEffectsEnabled: true,
     });
   });
 
@@ -111,6 +113,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       themeMode: "light",
       cherryPickRecordOriginDefault: true,
       autoCheckUpdates: true,
+      soundEffectsEnabled: true,
     });
   });
 
@@ -121,6 +124,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       themeMode: "dark",
       cherryPickRecordOriginDefault: false,
       autoCheckUpdates: true,
+      soundEffectsEnabled: true,
     });
   });
 
@@ -140,13 +144,14 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       themeMode: "dark",
       cherryPickRecordOriginDefault: false,
       autoCheckUpdates: true,
+      soundEffectsEnabled: true,
     });
   });
 });
 
 describe("show — seeds app-level fields and drives the identity section", () => {
-  it("seeds themeMode/cherryPickRecordOriginDefault/autoCheckUpdates from localStorage", () => {
-    saveSettings({ themeMode: "system", cherryPickRecordOriginDefault: true, autoCheckUpdates: false });
+  it("seeds themeMode/cherryPickRecordOriginDefault/autoCheckUpdates/soundEffectsEnabled from localStorage", () => {
+    saveSettings({ themeMode: "system", cherryPickRecordOriginDefault: true, autoCheckUpdates: false, soundEffectsEnabled: false });
 
     settingsCtrl.show(null);
 
@@ -154,6 +159,7 @@ describe("show — seeds app-level fields and drives the identity section", () =
     expect(settingsCtrl.themeMode).toBe("system");
     expect(settingsCtrl.cherryPickRecordOriginDefault).toBe(true);
     expect(settingsCtrl.autoCheckUpdates).toBe(false);
+    expect(settingsCtrl.soundEffectsEnabled).toBe(false);
   });
 
   it("with no repo open, clears identity and never calls getGitIdentity", () => {
@@ -178,7 +184,7 @@ describe("show — seeds app-level fields and drives the identity section", () =
   });
 });
 
-describe("setThemeMode / setCherryPickRecordOriginDefault / setAutoCheckUpdates — instant apply", () => {
+describe("setThemeMode / setCherryPickRecordOriginDefault / setAutoCheckUpdates / setSoundEffectsEnabled — instant apply", () => {
   it("setThemeMode updates state, persists, and applies via bridge.applyThemeMode", () => {
     settingsCtrl.setThemeMode("light");
 
@@ -198,6 +204,13 @@ describe("setThemeMode / setCherryPickRecordOriginDefault / setAutoCheckUpdates 
 
     expect(settingsCtrl.autoCheckUpdates).toBe(false);
     expect(loadSettings().autoCheckUpdates).toBe(false);
+  });
+
+  it("setSoundEffectsEnabled updates state and persists directly (no bridge call)", () => {
+    settingsCtrl.setSoundEffectsEnabled(false);
+
+    expect(settingsCtrl.soundEffectsEnabled).toBe(false);
+    expect(loadSettings().soundEffectsEnabled).toBe(false);
   });
 });
 
