@@ -16,6 +16,7 @@
   let submoduleMenuEl: HTMLDivElement | undefined = $state();
   let mergeMenuEl: HTMLDivElement | undefined = $state();
   let dirtyCheckoutMenuEl: HTMLDivElement | undefined = $state();
+  let checkoutConfirmEl: HTMLDivElement | undefined = $state();
 
   function onWindowPointerdown(e: PointerEvent) {
     if (sidebarCtrl.menu && menuEl && !menuEl.contains(e.target as Node)) sidebarCtrl.closeMenu();
@@ -33,6 +34,7 @@
     if (sidebarCtrl.submoduleMenu && submoduleMenuEl && !submoduleMenuEl.contains(e.target as Node)) sidebarCtrl.closeSubmoduleMenu();
     if (sidebarCtrl.mergeMenu && mergeMenuEl && !mergeMenuEl.contains(e.target as Node)) sidebarCtrl.closeMergeMenu();
     if (sidebarCtrl.dirtyCheckoutMenu && dirtyCheckoutMenuEl && !dirtyCheckoutMenuEl.contains(e.target as Node)) sidebarCtrl.closeDirtyCheckoutMenu();
+    if (sidebarCtrl.checkoutConfirm && checkoutConfirmEl && !checkoutConfirmEl.contains(e.target as Node)) sidebarCtrl.closeCheckoutConfirm();
   }
 
   $effect(() => {
@@ -159,12 +161,12 @@
           onclick={(e) => {
             if ((e.target as HTMLElement).closest(".ref-menu") || isCur || sidebarCtrl.busy) return;
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            sidebarCtrl.checkout(b.name, { x: r.left, y: r.bottom + 4 });
+            sidebarCtrl.openCheckoutConfirm(b.name, false, r.left, r.bottom + 4);
           }}
           onkeydown={(e) => {
             if ((e.key !== "Enter" && e.key !== " ") || isCur || sidebarCtrl.busy) return;
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            sidebarCtrl.checkout(b.name, { x: r.left, y: r.bottom + 4 });
+            sidebarCtrl.openCheckoutConfirm(b.name, false, r.left, r.bottom + 4);
           }}
           oncontextmenu={(e) => {
             e.preventDefault();
@@ -278,12 +280,12 @@
             onclick={(e) => {
               if (sidebarCtrl.busy) return;
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              sidebarCtrl.checkoutRemote(r.name, { x: rect.left, y: rect.bottom + 4 });
+              sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
             }}
             onkeydown={(e) => {
               if ((e.key !== "Enter" && e.key !== " ") || sidebarCtrl.busy) return;
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              sidebarCtrl.checkoutRemote(r.name, { x: rect.left, y: rect.bottom + 4 });
+              sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
             }}
           >
             <input
@@ -630,6 +632,29 @@
         sidebarCtrl.closeDirtyCheckoutMenu();
         sidebarCtrl.forceDiscardCheckout(name, sp, n);
       }}>Force switch, discarding my changes&#8230;</button
+    >
+  </div>
+{/if}
+
+<!-- A branch row's own click/Enter opens this instead of checking out
+     directly (see CheckoutConfirm's own doc comment) — a stray click that
+     misses the visibility checkbox right next to it, or just brushes the
+     row, used to switch branches with zero recourse. Reuses `.ref-pop.cm-pop`/
+     `.cm-head` verbatim, same as the dirty-tree chooser above; no Cancel
+     button, matching every OTHER popover here (menu/tagMenu/submoduleMenu/
+     mergeMenu/dirtyCheckoutMenu) — outside-click dismisses it. -->
+{#if sidebarCtrl.checkoutConfirm}
+  {@const cc = sidebarCtrl.checkoutConfirm}
+  <div class="ref-pop cm-pop" bind:this={checkoutConfirmEl} style="left:{cc.x}px;top:{cc.y}px">
+    <div class="cm-head">Switch to <b>{cc.name}</b>?</div>
+    <!-- Same capture-before-close rationale as the branch menu above. -->
+    <button
+      onclick={() => {
+        const name = cc.name, remote = cc.remote, pos = { x: cc.x, y: cc.y };
+        sidebarCtrl.closeCheckoutConfirm();
+        if (remote) sidebarCtrl.checkoutRemote(name, pos);
+        else sidebarCtrl.checkout(name, pos);
+      }}>Switch</button
     >
   </div>
 {/if}

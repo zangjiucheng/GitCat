@@ -83,6 +83,7 @@ function resetAll() {
   sidebarCtrl.tagMenu = null;
   sidebarCtrl.mergeMenu = null;
   sidebarCtrl.dirtyCheckoutMenu = null;
+  sidebarCtrl.checkoutConfirm = null;
   sidebarCtrl.newTagOpen = false;
   sidebarCtrl.newTagName = "";
   sidebarCtrl.newTagMessage = "";
@@ -1162,6 +1163,67 @@ describe("openDirtyCheckoutMenu / closeDirtyCheckoutMenu (#34)", () => {
     sidebarCtrl.dirtyCheckoutMenu = { name: "feature", startPoint: null, files: [], x: 0, y: 0 };
     sidebarCtrl.openMergeMenu("feature", 10, 40);
     expect(sidebarCtrl.dirtyCheckoutMenu).toBeNull();
+  });
+});
+
+// A branch row's own click/Enter no longer checks out immediately — it opens
+// this confirm popover instead (see CheckoutConfirm's own doc comment).
+describe("openCheckoutConfirm / closeCheckoutConfirm", () => {
+  it("positions the popover clamped to the viewport width", () => {
+    sidebarCtrl.openCheckoutConfirm("feature", false, window.innerWidth, 40);
+    expect(sidebarCtrl.checkoutConfirm?.x).toBe(window.innerWidth - 200);
+    expect(sidebarCtrl.checkoutConfirm?.y).toBe(40);
+  });
+
+  it("records whether the target is a local branch or a remote ref", () => {
+    sidebarCtrl.openCheckoutConfirm("feature", false, 10, 40);
+    expect(sidebarCtrl.checkoutConfirm?.remote).toBe(false);
+    sidebarCtrl.openCheckoutConfirm("origin/feature", true, 10, 40);
+    expect(sidebarCtrl.checkoutConfirm?.remote).toBe(true);
+  });
+
+  it("closeCheckoutConfirm clears it", () => {
+    sidebarCtrl.checkoutConfirm = { name: "feature", remote: false, x: 0, y: 0 };
+    sidebarCtrl.closeCheckoutConfirm();
+    expect(sidebarCtrl.checkoutConfirm).toBeNull();
+  });
+
+  it("opening it closes an open branch menu, tag menu, submodule menu, merge menu, and dirty-checkout chooser", () => {
+    sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
+    sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
+    sidebarCtrl.submoduleMenu = { path: "sub", status: "clean", absolutePath: "/repo/sub", x: 0, y: 0 };
+    sidebarCtrl.mergeMenu = { name: "feature", x: 0, y: 0 };
+    sidebarCtrl.dirtyCheckoutMenu = { name: "feature", startPoint: null, files: [], x: 0, y: 0 };
+    sidebarCtrl.openCheckoutConfirm("feature", false, 10, 40);
+    expect(sidebarCtrl.menu).toBeNull();
+    expect(sidebarCtrl.tagMenu).toBeNull();
+    expect(sidebarCtrl.submoduleMenu).toBeNull();
+    expect(sidebarCtrl.mergeMenu).toBeNull();
+    expect(sidebarCtrl.dirtyCheckoutMenu).toBeNull();
+  });
+
+  it("opening the branch/tag/submodule/merge menu or the dirty-checkout chooser each close an open checkout confirm", () => {
+    const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
+
+    sidebarCtrl.checkoutConfirm = { name: "feature", remote: false, x: 0, y: 0 };
+    sidebarCtrl.openMenu("feature", false, anchor);
+    expect(sidebarCtrl.checkoutConfirm).toBeNull();
+
+    sidebarCtrl.checkoutConfirm = { name: "feature", remote: false, x: 0, y: 0 };
+    sidebarCtrl.openTagMenu("v1.0.0", anchor);
+    expect(sidebarCtrl.checkoutConfirm).toBeNull();
+
+    sidebarCtrl.checkoutConfirm = { name: "feature", remote: false, x: 0, y: 0 };
+    sidebarCtrl.openSubmoduleMenu("sub", "clean", "/repo/sub", anchor);
+    expect(sidebarCtrl.checkoutConfirm).toBeNull();
+
+    sidebarCtrl.checkoutConfirm = { name: "feature", remote: false, x: 0, y: 0 };
+    sidebarCtrl.openMergeMenu("feature", 10, 40);
+    expect(sidebarCtrl.checkoutConfirm).toBeNull();
+
+    sidebarCtrl.checkoutConfirm = { name: "feature", remote: false, x: 0, y: 0 };
+    sidebarCtrl.openDirtyCheckoutMenu("feature", null, ["a.txt"], 10, 40);
+    expect(sidebarCtrl.checkoutConfirm).toBeNull();
   });
 });
 

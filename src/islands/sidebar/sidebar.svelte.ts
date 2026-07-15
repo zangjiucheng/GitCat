@@ -158,6 +158,15 @@ export type MergeMenu = { name: string; x: number; y: number };
 // same way. `files` is `WriteResult.conflictingFiles` verbatim, for the
 // popover's own "N files would be overwritten: …" copy.
 export type DirtyCheckoutMenu = { name: string; startPoint: string | null; files: string[]; x: number; y: number };
+// A branch row's click/Enter no longer checks out immediately — a
+// misdirected click (aiming for the visibility checkbox right next to it, or
+// just brushing the row) used to switch branches with zero recourse. It
+// opens this small popover instead; only the popover's own "Switch" button
+// actually calls checkout/checkoutRemote. `remote` mirrors DirtyCheckoutMenu's
+// own local-vs-remote-ref shape: false calls plain `checkout` (an existing
+// local branch row), true calls `checkoutRemote` (a remote row, which may
+// still need to CREATE a local branch first).
+export type CheckoutConfirm = { name: string; remote: boolean; x: number; y: number };
 
 // Which action (if any) a submodule row's status affords — a pure, exported
 // function rather than inline template logic so it's directly unit-testable
@@ -316,6 +325,11 @@ class SidebarState {
   // openDirtyCheckoutMenu, and every other open* method's own null-out of
   // this one).
   dirtyCheckoutMenu = $state<DirtyCheckoutMenu | null>(null);
+  // The checkout-confirm popover — same "only one popover open at a time"
+  // invariant as menu/tagMenu/submoduleMenu/mergeMenu/dirtyCheckoutMenu above
+  // (see openCheckoutConfirm, and every other open* method's own null-out of
+  // this one).
+  checkoutConfirm = $state<CheckoutConfirm | null>(null);
   newTagOpen = $state(false);
   newTagName = $state("");
   // "" means lightweight (no -a/-m); non-empty means annotated with this
@@ -1026,6 +1040,7 @@ class SidebarState {
     this.submoduleMenu = null;
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
+    this.checkoutConfirm = null;
     this.hasRepo = false;
   }
 
@@ -1446,6 +1461,7 @@ class SidebarState {
     this.submoduleMenu = null;
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
+    this.checkoutConfirm = null;
     const r = anchor.getBoundingClientRect();
     this.menu = { name, isCurrent, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
@@ -1464,6 +1480,7 @@ class SidebarState {
     this.tagMenu = null;
     this.submoduleMenu = null;
     this.dirtyCheckoutMenu = null;
+    this.checkoutConfirm = null;
     this.mergeMenu = { name, x: Math.min(x, window.innerWidth - 220), y };
   }
 
@@ -1484,11 +1501,29 @@ class SidebarState {
     this.tagMenu = null;
     this.submoduleMenu = null;
     this.mergeMenu = null;
+    this.checkoutConfirm = null;
     this.dirtyCheckoutMenu = { name, startPoint, files, x: Math.min(x, window.innerWidth - 260), y };
   }
 
   closeDirtyCheckoutMenu() {
     this.dirtyCheckoutMenu = null;
+  }
+
+  // Opened by a branch row's own click/Enter — see CheckoutConfirm's own doc
+  // comment for why checkout no longer fires directly from the row. Reuses
+  // whatever (x, y) the row's own bounding rect already produced, same as
+  // openMergeMenu/openDirtyCheckoutMenu above.
+  openCheckoutConfirm(name: string, remote: boolean, x: number, y: number) {
+    this.menu = null; // only one popover open at a time
+    this.tagMenu = null;
+    this.submoduleMenu = null;
+    this.mergeMenu = null;
+    this.dirtyCheckoutMenu = null;
+    this.checkoutConfirm = { name, remote, x: Math.min(x, window.innerWidth - 200), y };
+  }
+
+  closeCheckoutConfirm() {
+    this.checkoutConfirm = null;
   }
 
   // Auto / always-create-a-merge-commit / fast-forward-only — all three
@@ -1664,6 +1699,7 @@ class SidebarState {
     this.submoduleMenu = null;
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
+    this.checkoutConfirm = null;
     const r = anchor.getBoundingClientRect();
     this.tagMenu = { name, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
@@ -1677,6 +1713,7 @@ class SidebarState {
     this.tagMenu = null;
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
+    this.checkoutConfirm = null;
     const r = anchor.getBoundingClientRect();
     this.submoduleMenu = { path, status, absolutePath, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
