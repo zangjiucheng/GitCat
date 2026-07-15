@@ -101,7 +101,7 @@ fn end_to_end_recovery_via_create_branch_removes_it_from_the_dangling_list() {
     // Recover exactly as the frontend would: create_branch with the
     // dangling sha as start_point, no checkout (mirrors the design's
     // checkout:false shape verification).
-    let recovered = create_branch(path.clone(), "recovered-c2".into(), Some(c2.clone()), Some(false));
+    let recovered = tauri::async_runtime::block_on(create_branch(path.clone(), "recovered-c2".into(), Some(c2.clone()), Some(false)));
     assert!(recovered.ok, "create_branch should succeed recovering a real dangling sha: {}", recovered.message);
     assert_eq!(repo.rev("refs/heads/recovered-c2").as_deref(), Some(c2.as_str()));
 
@@ -172,7 +172,7 @@ fn recovery_works_on_an_unborn_head_repo_with_a_plumbing_only_dangling_commit() 
 
     // The actual regression: recovering it must succeed even though HEAD has
     // no commit to snapshot.
-    let recovered = create_branch(path, "recovered-plumbing".into(), Some(commit_sha.clone()), Some(false));
+    let recovered = tauri::async_runtime::block_on(create_branch(path, "recovered-plumbing".into(), Some(commit_sha.clone()), Some(false)));
     assert!(recovered.ok, "recovery must succeed on an unborn-HEAD repo: {}", recovered.message);
     assert!(recovered.backup_ref.is_none(), "checkout:false should never snapshot — nothing local changes");
     assert_eq!(repo.rev("refs/heads/recovered-plumbing").as_deref(), Some(commit_sha.as_str()));

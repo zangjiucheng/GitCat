@@ -1207,7 +1207,7 @@ fn stash_conflict_continue_keeps_the_stash_when_an_untracked_restore_also_failed
     assert!(saved.ok, "stash_save (with untracked) failed: {}", saved.message);
     assert!(repo.is_clean());
 
-    let co = checkout(path.clone(), "feature".into());
+    let co = tauri::async_runtime::block_on(checkout(path.clone(), "feature".into()));
     assert!(co.ok, "checkout to feature failed: {}", co.message);
 
     let popped = stash_pop(path.clone(), 0, None);
@@ -1267,7 +1267,7 @@ fn stash_pop_untracked_restore_failure_alone_is_a_plain_error_with_stash_kept() 
     assert!(saved.ok, "stash_save (with untracked) failed: {}", saved.message);
     assert!(repo.is_clean());
 
-    let co = checkout(path.clone(), "feature".into());
+    let co = tauri::async_runtime::block_on(checkout(path.clone(), "feature".into()));
     assert!(co.ok, "checkout to feature failed: {}", co.message);
 
     let popped = stash_pop(path.clone(), 0, None);
