@@ -394,10 +394,67 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tstage[data-state="celebrate"],.tstage[data-state="greeting"]{--sa:var(--success)}
 .tstage[data-state="rescue"]{--sa:var(--accent2)}
 .tstage[data-state="confused"]{--sa:var(--warning)}
-.sprite{width:106px;height:114px;flex:none;overflow:visible}
-.sprite .skin{fill:var(--skin)} .sprite .swf{fill:var(--sweater)} .sprite .swl{stroke:var(--sweater-line);fill:none}
-.sprite .eyew{fill:#FFFDF7} .sprite .iris{fill:var(--eye)} .sprite .irisd{fill:var(--eye-dark)} .sprite .hi{fill:#fff}
-.sprite .sparkle{fill:var(--accent)} .sprite .mouthf{fill:var(--mouth)}
+/* Painted portrait (same TAMA_IMG poses the hero/modals/cheer popover use —
+   see main.ts's TamaMascot.POSE) instead of the old hand-drawn vector cat
+   this corner used to be stuck on from before Tama's cat-girl pivot.
+   .sprite-wrap carries the cursor-parallax tilt (JS-set style.transform,
+   see gaze()); .sprite itself carries the continuous idle breathe/nod
+   animations — split across two elements because both would otherwise
+   fight over the same `transform` property. Sized to match
+   .tama-cheer .tama-pic's already-proven size, aspect-matched to the
+   portraits' own ~0.746 native ratio so object-fit:contain barely
+   letterboxes. No frame/ring around it — the portrait's own white
+   background blends into .nook's panel color with nothing boxing it in. */
+.sprite-wrap{position:relative;flex:none;transition:transform .12s ease;will-change:transform}
+.sprite{width:78px;height:104px;display:block;object-fit:contain;object-position:top;
+  filter:drop-shadow(0 3px 8px rgba(0,0,0,.18));
+  animation:spriteBreathe 4.2s ease-in-out infinite}
+/* Pose swap is a real "pop" (shrink+fade out, swap src, overshoot back in)
+   rather than a flat crossfade — see TamaMascot.set()'s own comment for the
+   timing this pairs with. Both classes override the base spriteBreathe
+   animation for their brief duration (a more specific selector wins), same
+   trick .nod already used. */
+.sprite.swap{animation:spriteSwapOut .11s ease forwards}
+.sprite.swap-in{animation:spriteSwapIn .24s cubic-bezier(.2,.8,.2,1)}
+.sprite.nod{animation:spriteNod .42s ease}
+@keyframes spriteBreathe{
+  0%,100%{transform:translateY(0) rotate(0deg) scale(1)}
+  30%{transform:translateY(-1.5px) rotate(-.6deg) scale(1.008)}
+  60%{transform:translateY(-2.6px) rotate(.4deg) scale(1.012)}
+  85%{transform:translateY(-.8px) rotate(-.2deg) scale(1.004)}}
+@keyframes spriteSwapOut{to{opacity:0;transform:scale(.93) translateY(3px)}}
+@keyframes spriteSwapIn{from{opacity:0;transform:scale(.93) translateY(3px)}to{opacity:1;transform:scale(1) translateY(0)}}
+@keyframes spriteNod{0%,100%{transform:translateY(0) scale(1)}30%{transform:translateY(-4px) scale(1.04)}60%{transform:translateY(1px) scale(.98)}}
+/* Autonomous idle "glance" (Tama.scheduleGlance) — a brief automatic tilt
+   even when the cursor hasn't moved, so the corner still reads as alive
+   during a still mouse, not just while actively tracking the cursor. */
+.sprite-wrap.glance{animation:spriteGlance 1.1s ease}
+@keyframes spriteGlance{
+  0%,100%{transform:translate(0,0) rotate(0deg)}
+  30%{transform:translate(-3px,-1px) rotate(-2deg)}
+  55%{transform:translate(2.5px,-.5px) rotate(1.6deg)}
+  80%{transform:translate(-1px,0) rotate(-.5deg)}}
+/* Mood flourishes that don't need new art — a soft pulsing glow for
+   danger (layered as a second drop-shadow, not a hard ring — see the
+   nook's own no-frame decision above), a few CSS-only sparkles for
+   celebrate, drifting "Z"s for sleep. All absolutely positioned against
+   .sprite-wrap's own relative box. */
+.tstage[data-state="danger"] .sprite{animation:spriteBreathe 4.2s ease-in-out infinite,dangerPulse 1.3s ease-in-out infinite}
+@keyframes dangerPulse{0%,100%{filter:drop-shadow(0 3px 8px rgba(0,0,0,.18)) drop-shadow(0 0 0 transparent)}
+  50%{filter:drop-shadow(0 3px 8px rgba(0,0,0,.18)) drop-shadow(0 0 14px var(--sa))}}
+.spark{position:absolute;width:6px;height:6px;opacity:0;pointer-events:none;background:var(--success);
+  clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)}
+.tstage[data-state="celebrate"] .spark{animation:sparkPop 1s ease-in-out infinite}
+.spark.s1{top:-4px;left:-6px;animation-delay:0s!important}
+.spark.s2{top:8px;right:-8px;animation-delay:.3s!important}
+.spark.s3{bottom:6px;left:-4px;animation-delay:.6s!important}
+@keyframes sparkPop{0%,100%{opacity:0;transform:scale(.3) rotate(0deg)}50%{opacity:1;transform:scale(1) rotate(50deg)}}
+.zz{position:absolute;top:-6px;right:-4px;font-family:var(--display);font-weight:700;color:var(--muted);opacity:0;pointer-events:none}
+.tstage[data-state="sleep"] .zz{animation:zzDrift 3.6s ease-in-out infinite}
+.zz.z1{font-size:11px;animation-delay:0s!important}
+.zz.z2{font-size:14px;top:-14px;right:-10px;animation-delay:1.1s!important}
+.zz.z3{font-size:17px;top:-24px;right:-16px;animation-delay:2.2s!important}
+@keyframes zzDrift{0%{opacity:0;transform:translate(0,0) scale(.7)}20%{opacity:.6}100%{opacity:0;transform:translate(6px,-14px) scale(1.15)}}
 .talk{flex:1;min-width:0}
 .toast-line{font-family:var(--display);font-weight:600;font-size:12.5px;line-height:1.32;color:var(--sa);min-height:16px;
   opacity:0;transform:translateY(3px);transition:opacity .22s,transform .22s;overflow:hidden;
@@ -412,103 +469,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .telemetry{display:flex;align-items:center;gap:6px;margin-top:6px;font-family:var(--mono);font-size:10px;color:var(--muted)}
 .telemetry .pip{width:6px;height:6px;border-radius:50%;background:var(--success);flex:none;animation:pip 2.6s ease-out infinite}
 @keyframes pip{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--success) 55%,transparent)}70%,100%{box-shadow:0 0 0 5px transparent}}
-.chip{display:none;width:22px;height:22px;border-radius:7px;flex:none;align-items:center;justify-content:center;
-  background:color-mix(in srgb,var(--sa) 22%,transparent);border:1.5px solid var(--sa);color:var(--sa);font:800 12px var(--display)}
-/* sprite expression visibility per state (one shows) */
-.eyes,.zzz,.yarn,.halo,.collar,.medic-tag,.paw-wait,.bristle,.tail-check,.mouth-open,.mouth-o,.spark,.eyes-wide,.mouth-squiggle,.qmark,.sync-arrows{opacity:0}
-.tail-rest,.mouth-rest{opacity:1} .eyes{transition:opacity .16s}
-.tstage[data-state="idle"] .eyes-open{opacity:1}
-.tstage[data-state="sleep"] .eyes-closed{opacity:1}
-.tstage[data-state="sleep"] .zzz{opacity:1}
-.tstage[data-state="hint"] .eyes-open{opacity:1}
-.tstage[data-state="thinking"] .eyes-open{opacity:1}
-.tstage[data-state="thinking"] .yarn{opacity:1}
-.tstage[data-state="warn"] .eyes-open{opacity:1}
-.tstage[data-state="warn"] .paw-wait{opacity:1}
-.tstage[data-state="danger"] .eyes-wide{opacity:1}
-.tstage[data-state="danger"] .mouth-rest{opacity:0}
-.tstage[data-state="danger"] .mouth-o{opacity:1}
-.tstage[data-state="danger"] .halo{opacity:1}
-.tstage[data-state="danger"] .bristle{opacity:1}
-.tstage[data-state="danger"] .paw-wait{opacity:1}
-.tstage[data-state="celebrate"] .eyes-happy{opacity:1}
-.tstage[data-state="celebrate"] .mouth-rest{opacity:0}
-.tstage[data-state="celebrate"] .mouth-open{opacity:1}
-.tstage[data-state="celebrate"] .tail-rest{opacity:0}
-.tstage[data-state="celebrate"] .tail-check{opacity:1}
-.tstage[data-state="celebrate"] .spark{opacity:1}
-.tstage[data-state="rescue"] .eyes-open{opacity:1}
-.tstage[data-state="rescue"] .collar{opacity:1}
-.tstage[data-state="rescue"] .medic-tag{opacity:1}
-.tstage[data-state="confused"] .eyes-open{opacity:1}
-.tstage[data-state="confused"] .mouth-rest{opacity:0}
-.tstage[data-state="confused"] .mouth-squiggle{opacity:1}
-.tstage[data-state="confused"] .qmark{opacity:1;animation:qmarkIn .3s ease forwards}
-.tstage[data-state="curious"] .eyes-open{opacity:1}
-.tstage[data-state="syncing"] .eyes-open{opacity:1}
-.tstage[data-state="syncing"] .sync-arrows{opacity:1;animation:syncSpin 1s linear infinite}
-.tstage[data-state="greeting"] .eyes-happy{opacity:1}
-.tstage[data-state="greeting"] .mouth-rest{opacity:0}
-.tstage[data-state="greeting"] .mouth-open{opacity:1}
-.tstage[data-state="greeting"] .paw-wait{opacity:1;animation:pawWave 1.1s ease-in-out 2 forwards}
-.sprite .fur{fill:var(--fur)} .sprite .fur-2{fill:var(--fur-shade)}
-.sprite .ink{stroke:var(--fur-line)} .sprite .ink-f{fill:var(--fur-line)}
-.sprite .pink{fill:var(--ear-in)} .sprite .sa-stroke{stroke:var(--sa)} .sprite .sa-fill{fill:var(--sa)}
-.body,.head,.tail-rest,.ear-left,.ear-right,.eyes-open,.halo,.ember,.zzz .z,.yarn-ball,.yarn-thread,.paw-wait,.bristle,.tail-check,.cat,.sync-arrows,.qmark{transform-box:fill-box;will-change:transform,opacity}
-.body{transform-origin:50% 100%;animation:breathe 4s ease-in-out infinite}
-.head{transform-origin:50% 100%;animation:bob 4s ease-in-out infinite}
-@keyframes breathe{0%,100%{transform:scaleY(1) translateY(0)}50%{transform:scaleY(1.035) translateY(-.6px)}}
-@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-.7px)}}
-.tail-rest{transform-origin:88% 40%;animation:tailSway 4.5s ease-in-out infinite}
-@keyframes tailSway{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}
-.sprite.wag .tail-rest{animation:tailWag .55s ease-in-out 2}
-@keyframes tailWag{0%,100%{transform:rotate(0)}25%{transform:rotate(10deg)}75%{transform:rotate(-10deg)}}
-.eyes-open{transform-origin:50% 50%;animation:blink 5.2s ease-in-out infinite}
-@keyframes blink{0%,93%,100%{transform:scaleY(1)}96%{transform:scaleY(.12)}}
-.tstage[data-state="hint"] .ear-right{transform-origin:50% 100%;animation:earTwitch .55s ease 2}
-@keyframes earTwitch{0%,100%{transform:rotate(0)}30%{transform:rotate(-15deg)}62%{transform:rotate(-4deg)}}
-.tstage[data-state="curious"] .ear-left,.tstage[data-state="curious"] .ear-right{transform-origin:50% 100%;animation:earsPerk .4s ease forwards}
-@keyframes earsPerk{from{transform:rotate(0) scale(1)}to{transform:rotate(-14deg) scale(1.1)}}
-.tstage[data-state="curious"] .ear-right{animation-name:earsPerkR}
-@keyframes earsPerkR{from{transform:rotate(0) scale(1)}to{transform:rotate(11deg) scale(1.1)}}
-.tstage[data-state="curious"] .head{transform-origin:50% 100%;animation:leanIn .35s ease forwards}
-@keyframes leanIn{from{transform:translateY(0) rotate(0)}to{transform:translateY(1.6px) rotate(5deg)}}
-.tstage[data-state="confused"] .head{transform-origin:50% 100%;animation:headTilt .32s ease forwards}
-@keyframes headTilt{from{transform:rotate(0)}to{transform:rotate(-9deg)}}
-.yarn-ball{transform-origin:50% 50%;animation:yarnRoll 3.2s linear infinite}
-@keyframes yarnRoll{to{transform:rotate(-360deg)}}
-.yarn-thread{stroke-dasharray:22;stroke-dashoffset:22;animation:unspool 2.4s ease-in-out infinite}
-@keyframes unspool{0%{stroke-dashoffset:22}55%{stroke-dashoffset:0}100%{stroke-dashoffset:0;opacity:.3}}
-@keyframes syncSpin{to{transform:rotate(360deg)}}
-.tstage[data-state="warn"] .paw-wait{transform-origin:80% 90%;animation:pawUp .34s ease forwards}
-@keyframes pawUp{from{transform:rotate(0) translateY(3px);opacity:0}to{transform:rotate(-10deg) translateY(0);opacity:1}}
-@keyframes pawWave{0%{transform:rotate(0) translateY(3px);opacity:0}20%{opacity:1}35%{transform:rotate(-12deg) translateY(0)}55%{transform:rotate(16deg) translateY(0)}75%{transform:rotate(-10deg) translateY(0)}100%{transform:rotate(-10deg) translateY(0);opacity:1}}
-@keyframes qmarkIn{from{opacity:0;transform:translateY(2px) scale(.7)}to{opacity:1;transform:translateY(0) scale(1)}}
-.tstage[data-state="danger"] .cat{transform-origin:50% 100%;animation:stand .35s ease forwards}
-@keyframes stand{from{transform:translateY(0) scaleY(1)}to{transform:translateY(-2px) scaleY(1.06)}}
-.tstage[data-state="danger"] .bristle{animation:bristleIn .3s ease forwards}
-@keyframes bristleIn{from{opacity:0;transform:translateY(1.5px)}to{opacity:1;transform:translateY(0)}}
-.halo{transform-origin:50% 50%}
-.tstage[data-state="danger"] .halo{animation:haloPulse 1.6s ease-in-out infinite}
-@keyframes haloPulse{0%,100%{opacity:.28;transform:scale(1)}50%{opacity:.5;transform:scale(1.04)}}
-.tstage[data-state="danger"] .ember{animation:emberRise 2s ease-in-out infinite}
-.ember:nth-of-type(2){animation-delay:.5s} .ember:nth-of-type(3){animation-delay:1s} .ember:nth-of-type(4){animation-delay:1.5s}
-@keyframes emberRise{0%{opacity:0;transform:translateY(2px) scale(.5)}25%{opacity:.85}100%{opacity:0;transform:translateY(-9px) scale(1)}}
-.tstage[data-state="celebrate"] .tail-check{stroke-dasharray:26;stroke-dashoffset:26;animation:drawCheck .42s ease forwards}
-@keyframes drawCheck{to{stroke-dashoffset:0}}
-.zzz .z{transform-origin:50% 50%;opacity:0;animation:zzz 4s ease-in-out infinite}
-.zzz .z:nth-child(2){animation-delay:1.1s} .zzz .z:nth-child(3){animation-delay:2.2s}
-@keyframes zzz{0%{opacity:0;transform:translate(0,0) scale(.7)}22%{opacity:.55}100%{opacity:0;transform:translate(5px,-11px) scale(1.1)}}
 .nook.is-interacting *{animation-play-state:paused!important}
-/* celebrate sparkles */
-.spark .st{transform-box:fill-box;transform-origin:50% 50%}
-.tstage[data-state="celebrate"] .spark .st{animation:sparkle 1.1s ease-in-out infinite}
-.tstage[data-state="celebrate"] .spark .st:nth-child(2){animation-delay:.35s}
-.tstage[data-state="celebrate"] .spark .st:nth-child(3){animation-delay:.7s}
-@keyframes sparkle{0%,100%{opacity:0;transform:scale(.3) rotate(0)}50%{opacity:1;transform:scale(1) rotate(45deg)}}
 /* hero catgirl in the empty state */
 .tama-hero{display:flex;flex-direction:column;align-items:center;gap:13px;padding:22px 18px 8px;text-align:center}
-.tama-hero .sprite{width:172px;height:224px}
 .hero-bubble{position:relative;max-width:262px;background:var(--elevated);border:1px solid var(--border);border-radius:14px;
   padding:11px 14px;font-size:12.5px;line-height:1.55;box-shadow:var(--shadow);margin-top:2px}
 .hero-bubble::after{content:"";position:absolute;top:-7px;left:50%;transform:translateX(-50%) rotate(45deg);
@@ -531,7 +494,8 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tama-cheer .tama-pic{width:78px;height:104px;flex:none}
 .tama-cheer .cheer-txt{font-family:var(--display);font-weight:600;font-size:13px;line-height:1.4;max-width:184px;padding-bottom:10px}
 .tama-cheer .cheer-txt .jp{color:var(--accent2);font-weight:700}
-@media (prefers-reduced-motion:reduce){.sprite *{animation:none!important}
+@media (prefers-reduced-motion:reduce){.sprite,.sprite-wrap{animation:none!important;transition:none!important}
+  .spark,.zz{animation:none!important}
   .toast-line{transition:opacity .01s!important;transform:none!important}
   .scrim,.scrim.on,.modal,.scrim.on .modal,.cmdk,.cmdk.on,.cmdk-panel,.cmdk.on .cmdk-panel,
   .bisect-panel,.bisect-panel.on,.btn,.tb-btn,.icon-btn,.resize-handle,.cmdk-row{transition-duration:.01s!important}}
@@ -1508,8 +1472,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 
     <!-- Tama's lamp-nook -->
     <div class="nook tstage" id="nook" data-state="idle" role="status" aria-live="polite">
-      <svg class="sprite" id="sprite" viewBox="0 0 80 86" aria-hidden="true"></svg>
-      <div class="chip" id="chip">z</div>
+      <div class="sprite-wrap" id="spriteWrap">
+        <img class="sprite" id="sprite" alt="Tama">
+        <span class="spark s1"></span><span class="spark s2"></span><span class="spark s3"></span>
+        <span class="zz z1">z</span><span class="zz z2">z</span><span class="zz z3">z</span>
+      </div>
       <div class="talk">
         <div class="toast-line" id="toastLine"></div>
         <div class="telemetry"><span class="pip"></span><span id="telemetry">snapshots 214 &#183; last 2m</span></div>
