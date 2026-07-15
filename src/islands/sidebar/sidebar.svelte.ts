@@ -493,24 +493,31 @@ class SidebarState {
 
   // Current branch (always kept, same guarantee push_head() already gives
   // every OTHER filter path) + anything with unpushed commits (ahead of its
-  // own upstream, or no upstream configured at all — "ahead"/"upstream" are
-  // both `None` together in that case, see LocalBranch's own doc comment)
-  // + anything not yet merged into the repo's resolved default branch
-  // (branch_merge_status — when NO default branch could be resolved at all,
-  // its `merged` list comes back empty, so every branch fails this check
-  // and nothing gets hidden purely from "merged" reasoning: erring toward
-  // SHOWING when we can't tell is safer than hiding real work). Only ever
-  // writes visibleLocal — see autoMode's own doc comment for why remotes
-  // are left alone.
+  // own upstream) + anything not yet merged into the repo's resolved default
+  // branch (branch_merge_status). Only ever writes visibleLocal — see
+  // autoMode's own doc comment for why remotes are left alone.
+  //
+  // "No upstream configured" is NOT by itself treated as "keep" once real
+  // merge data is available — a branch with no upstream can still be fully
+  // merged into the default branch (a local-only topic branch, or one whose
+  // remote counterpart was deleted after a squash-merge, both very common),
+  // and BUG: an earlier version OR'd `b.upstream === null` in unconditionally,
+  // so every such branch stayed visible forever regardless of merge status —
+  // in a repo where most local branches lack upstream tracking, that made
+  // Auto mode look like it wasn't filtering anything at all. "No upstream" is
+  // only used as the fallback signal for "possibly unpushed" when merge
+  // status genuinely couldn't be determined (mergedInto === null — design
+  // mode, or the backend call itself failed) — see the `mergedInto !== null
+  // ? ... : ...` branch below, not an extra OR'd-in clause.
   //
   // Design mode has no backend to ask branch_merge_status of, so `mergedInto`
   // stays `null` there rather than an empty Set: the two must NOT collapse
   // into the same case — an empty Set means "asked, nothing came back
   // merged" (every branch legitimately fails the merged check, by design),
-  // while `null` means "never asked" and the merged clause must be skipped
-  // entirely rather than defaulting to "unmerged" for every branch. Getting
-  // that backwards is exactly how demo mode used to show every branch the
-  // instant Auto was toggled on.
+  // while `null` means "never asked" and the merged clause must fall back to
+  // the upstream heuristic entirely rather than defaulting to "unmerged" for
+  // every branch. Getting that backwards is exactly how demo mode used to
+  // show every branch the instant Auto was toggled on.
   async recomputeAutoVisibility(repo: string): Promise<void> {
     let mergedInto: Set<string> | null = null;
     if (IN_TAURI) {
@@ -529,7 +536,7 @@ class SidebarState {
       }
     }
     this.visibleLocal = this.locals
-      .filter((b) => b.name === this.head || (b.ahead ?? 0) > 0 || b.upstream === null || (mergedInto !== null && !mergedInto.has(b.name)))
+      .filter((b) => b.name === this.head || (b.ahead ?? 0) > 0 || (mergedInto !== null ? !mergedInto.has(b.name) : b.upstream === null))
       .map((b) => b.name);
     this.visibleRemote = null;
     await this.persistVisibleBranches(repo);

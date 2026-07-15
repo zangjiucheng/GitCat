@@ -294,6 +294,25 @@ describe("branch visibility", () => {
     expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", true, ["main", "no-upstream"], null);
   });
 
+  it("recomputeAutoVisibility: a branch merged into default but with NO upstream is still hidden (regression — used to stay visible forever)", async () => {
+    mockInTauri = true;
+    sidebarCtrl.head = "main";
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main" },
+      // Never pushed at all (e.g. a local-only topic branch, or its remote
+      // counterpart was deleted after a squash-merge) — upstream: null, but
+      // it IS fully merged into main. Must be hidden just like a merged
+      // branch that happens to have upstream tracking.
+      { name: "merged-no-upstream", sha: "b", ahead: null, behind: null, upstream: null },
+      { name: "unmerged-no-upstream", sha: "c", ahead: null, behind: null, upstream: null },
+    ];
+    vi.mocked(commands.branchMergeStatus).mockResolvedValueOnce(ok({ defaultBranch: "main", merged: ["merged-no-upstream"] }));
+
+    await sidebarCtrl.recomputeAutoVisibility("/repo");
+
+    expect(sidebarCtrl.visibleLocal).toEqual(["main", "unmerged-no-upstream"]);
+  });
+
   it("toggleAutoMode: turning it off is a full reset, same as showAllBranches", async () => {
     mockInTauri = true;
     sidebarCtrl.autoMode = true;
