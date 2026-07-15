@@ -967,7 +967,12 @@ $("#stressBtn").addEventListener("click",e=>{state.stress=!state.stress;e.target
 // third item here too — removed outright (⌘/ctrl+wheel and +/- already
 // zoom, see zoomAt()'s own call sites below), not just hidden in prod, so
 // there's no "if(!import.meta.env.DEV)" listener for them to guard here.
-if(!import.meta.env.DEV) $("#perfDevTools").style.display="none";
+// Hides #perf itself, NOT just the inner #perfDevTools span: #perfDevTools
+// is #perf's only child, so hiding just the child left the OUTER box (its
+// own background/border/shadow/padding) empty but still visible — a blank
+// chip sitting over the top-right corner of the graph in every release
+// build, with nothing inside it to explain why it was there.
+if(!import.meta.env.DEV) $("#perf").style.display="none";
 
 /* ---- snapshot ribbon: recent ticks positioned by ACTUAL elapsed time,
    with a zoomable time window ----
