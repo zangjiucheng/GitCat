@@ -182,24 +182,28 @@
       <span class="st {f.st === 'A' ? 'A' : f.st === 'D' ? 'D' : 'M'}">{f.st}</span>
       <span>{f.name}</span>
       <span class="badge"><span class="add">+{f.add}</span> <span class="del">&minus;{f.del}</span></span>
-      <button
-        class="wd-act"
-        title="Blame"
-        aria-label="Blame {f.p}"
-        onclick={(e) => {
-          e.stopPropagation();
-          detailCtrl.blameFile(f);
-        }}>&#128065;</button
-      >
-      <button
-        class="wd-act"
-        title="History"
-        aria-label="History {f.p}"
-        onclick={(e) => {
-          e.stopPropagation();
-          detailCtrl.historyFile(f);
-        }}>&#128336;</button
-      >
+      {#if detailCtrl.resolvingDeletedFileFor === f.p}
+        <span class="spinner"></span>
+      {:else}
+        <button
+          class="wd-act"
+          title="Blame"
+          aria-label="Blame {f.p}"
+          onclick={(e) => {
+            e.stopPropagation();
+            detailCtrl.blameFile(f);
+          }}>&#128065;</button
+        >
+        <button
+          class="wd-act"
+          title="History"
+          aria-label="History {f.p}"
+          onclick={(e) => {
+            e.stopPropagation();
+            detailCtrl.historyFile(f);
+          }}>&#128336;</button
+        >
+      {/if}
       <button
         class="wd-act"
         title="Open in external diff"

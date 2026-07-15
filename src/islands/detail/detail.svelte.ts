@@ -116,6 +116,11 @@ class DetailState {
   selectedFile = $state<string | null>(null);
   diffHeader = $state("");
   diffRows = $state<DiffRow[]>([]);
+  // Which file-tree row's Blame/History click is mid-`plumbingInspect`
+  // (deleted-file rows only — see blameFile()/historyFile()'s own doc
+  // comment) — lets the row swap those two buttons for a spinner instead of
+  // showing nothing while that extra round trip is in flight.
+  resolvingDeletedFileFor = $state<string | null>(null);
 
   private curChanged: FileEntry[] = [];
   private curDiffs: Record<string, DiffFile> = {};
@@ -304,36 +309,56 @@ class DetailState {
 
   // Render the diff for `path`, or the default (first) file when omitted —
   // mirrors the legacy renderDiff(path)'s explicit-vs-fallback distinction.
+  //
+  // All the per-file diffs for this commit are already prefetched (curDiffs),
+  // so this never awaits anything — but the syntax-highlighting loop below
+  // (bridge.highlight() per line, up to MAX_LINES_PER_FILE=2000) is real,
+  // synchronous work that used to run inline with zero opportunity for the
+  // browser to paint anything first: clicking a large changed file just
+  // froze with no visible change until the whole loop finished. diffLoading
+  // is now set FIRST (the view already renders a spinner for it — see
+  // Detail.svelte's `.diffview` block, shared with the commit-level loader),
+  // and the actual highlighting is deferred one macrotask via setTimeout so
+  // that flag change gets a real paint before the expensive loop starts.
   selectFile(path?: string) {
     const explicit = path != null;
     const keys = Object.keys(this.curDiffs || {});
     const resolved = path || (this.curChanged[0] && this.curChanged[0].p) || keys[0];
     this.selectedFile = resolved ?? null;
-    let d = resolved ? this.curDiffs[resolved] : undefined;
-    if (!d && !explicit) d = this.curDiffs[keys[0]];
     this.diffHeader = resolved || "";
-    if (!d) {
-      this.diffRows = [{ kind: "note", text: "no textual diff" }];
-      return;
-    }
-    if (d.binary) {
-      this.diffRows = [{ kind: "note", text: "binary file — not shown" }];
-      return;
-    }
-    let n1 = 0,
-      n2 = 0;
-    const rows: DiffRow[] = [];
-    d.lines.forEach(([mk, txt]) => {
-      if (mk === "@@") {
-        rows.push({ kind: "hunk", text: txt });
+    this.diffLoading = true;
+    setTimeout(() => this.renderSelectedFileDiff(resolved, explicit), 0);
+  }
+
+  private renderSelectedFileDiff(resolved: string | undefined, explicit: boolean): void {
+    try {
+      let d = resolved ? this.curDiffs[resolved] : undefined;
+      if (!d && !explicit) d = this.curDiffs[Object.keys(this.curDiffs || {})[0]];
+      if (!d) {
+        this.diffRows = [{ kind: "note", text: "no textual diff" }];
         return;
       }
-      const cls = mk === "+" ? "add" : mk === "-" ? "del" : "";
-      const ln = mk === "+" ? n2++ : mk === "-" ? n1++ : (n1++, n2++);
-      rows.push({ kind: "line", ln, mk: mk === "+" || mk === "-" ? mk : "", cls, html: bridge.highlight(txt, d.lang) });
-    });
-    if (d.truncated) rows.push({ kind: "note", text: "… diff truncated (file capped)" });
-    this.diffRows = rows;
+      if (d.binary) {
+        this.diffRows = [{ kind: "note", text: "binary file — not shown" }];
+        return;
+      }
+      let n1 = 0,
+        n2 = 0;
+      const rows: DiffRow[] = [];
+      d.lines.forEach(([mk, txt]) => {
+        if (mk === "@@") {
+          rows.push({ kind: "hunk", text: txt });
+          return;
+        }
+        const cls = mk === "+" ? "add" : mk === "-" ? "del" : "";
+        const ln = mk === "+" ? n2++ : mk === "-" ? n1++ : (n1++, n2++);
+        rows.push({ kind: "line", ln, mk: mk === "+" || mk === "-" ? mk : "", cls, html: bridge.highlight(txt, d.lang) });
+      });
+      if (d.truncated) rows.push({ kind: "note", text: "… diff truncated (file capped)" });
+      this.diffRows = rows;
+    } finally {
+      this.diffLoading = false;
+    }
   }
 
   // "Blame" button in the file tree row — resolves the right (commit, file)
@@ -361,6 +386,7 @@ class DetailState {
       blameCtrl.openFor(repo, c.sha, f.p, f.oldPath);
       return;
     }
+    this.resolvingDeletedFileFor = f.p;
     try {
       const r = await commands.plumbingInspect(repo, c.sha + "^");
       if (r.status === "ok" && r.data.kind === "commit") {
@@ -370,6 +396,8 @@ class DetailState {
       }
     } catch (e) {
       bridge.tama.warn("Couldn't resolve the parent commit — " + e);
+    } finally {
+      this.resolvingDeletedFileFor = null;
     }
   }
 
@@ -392,6 +420,7 @@ class DetailState {
       fileHistoryCtrl.openFor(repo, c.sha, f.p, f.oldPath);
       return;
     }
+    this.resolvingDeletedFileFor = f.p;
     try {
       const r = await commands.plumbingInspect(repo, c.sha + "^");
       if (r.status === "ok" && r.data.kind === "commit") {
@@ -401,6 +430,8 @@ class DetailState {
       }
     } catch (e) {
       bridge.tama.warn("Couldn't resolve the parent commit — " + e);
+    } finally {
+      this.resolvingDeletedFileFor = null;
     }
   }
 

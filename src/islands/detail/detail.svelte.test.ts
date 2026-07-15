@@ -18,6 +18,15 @@ vi.mock("../../legacy/bridge", () => ({
   highlight: (src: string) => src,
   TAMA_IMG: { hero: "hero.png" },
   pickRepo: vi.fn(),
+  tama: { warn: vi.fn() },
+}));
+
+vi.mock("../blame/blame.svelte.ts", () => ({
+  blameCtrl: { openFor: vi.fn(async () => {}) },
+}));
+
+vi.mock("../filehistory/filehistory.svelte.ts", () => ({
+  fileHistoryCtrl: { openFor: vi.fn(async () => {}) },
 }));
 
 let mockInTauri = false;
@@ -37,11 +46,14 @@ vi.mock("../resolver/resolver.svelte.ts", () => ({
 import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
+import { blameCtrl } from "../blame/blame.svelte.ts";
+import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
 import { detailCtrl } from "./detail.svelte.ts";
 
 vi.mock("../../ipc/bindings", () => ({
   commands: {
     commitDetail: vi.fn(),
+    plumbingInspect: vi.fn(),
   },
 }));
 
@@ -83,6 +95,7 @@ function resetDetail() {
   detailCtrl.selectedFile = null;
   detailCtrl.diffHeader = "";
   detailCtrl.diffRows = [];
+  detailCtrl.resolvingDeletedFileFor = null;
   (bridge as any).G = null;
   (bridge as any).BACKEND = null;
   vi.clearAllMocks();
@@ -150,11 +163,14 @@ describe("select (design mode / demo data)", () => {
     expect(commands.commitDetail).not.toHaveBeenCalled();
   });
 
-  it("selects the first file's diff by default", () => {
+  it("selects the first file's diff by default", async () => {
     setDemoGraph();
     detailCtrl.select(0);
-    expect(detailCtrl.selectedFile).toBe("src/auth/session.ts");
+    expect(detailCtrl.selectedFile).toBe("src/auth/session.ts"); // set synchronously
+    expect(detailCtrl.diffLoading).toBe(true); // rows themselves are deferred a tick — see selectFile()'s own doc comment
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(detailCtrl.diffRows.length).toBeGreaterThan(0);
+    expect(detailCtrl.diffLoading).toBe(false);
   });
 
   it("selectFile switches to an explicit path", () => {
@@ -212,9 +228,12 @@ describe("select (live / real repo)", () => {
 
     expect(detailCtrl.bodyText).toBe("Full message body.");
     expect(detailCtrl.treeLoading).toBe(false);
-    expect(detailCtrl.diffLoading).toBe(false);
     expect(detailCtrl.diffstat?.add).toBe(5);
-    expect(detailCtrl.selectedFile).toBe("a.ts");
+    expect(detailCtrl.selectedFile).toBe("a.ts"); // set synchronously by selectFile() before its deferred work runs
+    expect(detailCtrl.diffLoading).toBe(true); // rows themselves are still deferred a tick
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(detailCtrl.diffLoading).toBe(false);
   });
 
   it("a stale in-flight response is ignored once a newer selection supersedes it", async () => {
@@ -413,5 +432,128 @@ describe("revertDisabled (merge-commit guard)", () => {
     } finally {
       (resolver as any).busy = false;
     }
+  });
+});
+
+function plumbingCommit(sha: string) {
+  return ok({
+    kind: "commit" as const,
+    sha,
+    shortSha: sha.slice(0, 7),
+    author: { name: "Dev", email: "d@x.dev", time: 0 },
+    committer: { name: "Dev", email: "d@x.dev", time: 0 },
+    parents: [],
+    tree: "t",
+    message: "m",
+  });
+}
+
+// A deleted-file row has nothing at f.p in the selected commit's own tree, so
+// blameFile()/historyFile() must resolve the first-parent sha via a real
+// plumbingInspect() await before opening Blame/History — the loading-
+// indicator bug fix added resolvingDeletedFileFor so the row's buttons swap
+// to a spinner for exactly that await, rather than sitting inert with no
+// feedback. Non-deleted rows and design-mode never await anything, so they
+// must never touch the flag at all.
+describe("blameFile / historyFile (deleted-file parent resolution)", () => {
+  it("blameFile: sets resolvingDeletedFileFor for the duration of the parent lookup, then opens blame at the resolved sha", async () => {
+    mockInTauri = true;
+    setDemoGraph();
+    detailCtrl.select(0);
+    const sha = detailCtrl.commit!.sha;
+
+    let resolveInspect: (v: any) => void;
+    vi.mocked(commands.plumbingInspect).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveInspect = resolve;
+      }) as any,
+    );
+
+    const pending = detailCtrl.blameFile({ p: "gone.ts", st: "D", oldPath: null });
+    expect(detailCtrl.resolvingDeletedFileFor).toBe("gone.ts");
+    expect(blameCtrl.openFor).not.toHaveBeenCalled();
+
+    resolveInspect!(plumbingCommit(sha + "-parent"));
+    await pending;
+
+    expect(detailCtrl.resolvingDeletedFileFor).toBeNull();
+    expect(commands.plumbingInspect).toHaveBeenCalledWith("/repo", sha + "^");
+    expect(blameCtrl.openFor).toHaveBeenCalledWith("/repo", sha + "-parent", "gone.ts", null);
+  });
+
+  it("blameFile: clears resolvingDeletedFileFor and warns instead of opening blame when the parent can't be resolved", async () => {
+    mockInTauri = true;
+    setDemoGraph();
+    detailCtrl.select(0);
+    vi.mocked(commands.plumbingInspect).mockResolvedValueOnce(err("bad revision"));
+
+    await detailCtrl.blameFile({ p: "gone.ts", st: "D", oldPath: null });
+
+    expect(detailCtrl.resolvingDeletedFileFor).toBeNull();
+    expect(blameCtrl.openFor).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalled();
+  });
+
+  it("blameFile: design mode (not IN_TAURI) skips the parent lookup for a deleted file, never touching resolvingDeletedFileFor", async () => {
+    mockInTauri = false;
+    setDemoGraph();
+    detailCtrl.select(0);
+    const sha = detailCtrl.commit!.sha;
+
+    await detailCtrl.blameFile({ p: "gone.ts", st: "D", oldPath: null });
+
+    expect(detailCtrl.resolvingDeletedFileFor).toBeNull();
+    expect(commands.plumbingInspect).not.toHaveBeenCalled();
+    expect(blameCtrl.openFor).toHaveBeenCalledWith("/repo", sha, "gone.ts", null);
+  });
+
+  it("blameFile: a non-deleted file opens blame immediately, never touching resolvingDeletedFileFor", async () => {
+    mockInTauri = true;
+    setDemoGraph();
+    detailCtrl.select(0);
+    const sha = detailCtrl.commit!.sha;
+
+    await detailCtrl.blameFile({ p: "kept.ts", st: "M", oldPath: null });
+
+    expect(detailCtrl.resolvingDeletedFileFor).toBeNull();
+    expect(commands.plumbingInspect).not.toHaveBeenCalled();
+    expect(blameCtrl.openFor).toHaveBeenCalledWith("/repo", sha, "kept.ts", null);
+  });
+
+  it("historyFile: sets resolvingDeletedFileFor for the duration of the parent lookup, then opens history at the resolved sha", async () => {
+    mockInTauri = true;
+    setDemoGraph();
+    detailCtrl.select(0);
+    const sha = detailCtrl.commit!.sha;
+
+    let resolveInspect: (v: any) => void;
+    vi.mocked(commands.plumbingInspect).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveInspect = resolve;
+      }) as any,
+    );
+
+    const pending = detailCtrl.historyFile({ p: "gone.ts", st: "D", oldPath: null });
+    expect(detailCtrl.resolvingDeletedFileFor).toBe("gone.ts");
+    expect(fileHistoryCtrl.openFor).not.toHaveBeenCalled();
+
+    resolveInspect!(plumbingCommit(sha + "-parent"));
+    await pending;
+
+    expect(detailCtrl.resolvingDeletedFileFor).toBeNull();
+    expect(fileHistoryCtrl.openFor).toHaveBeenCalledWith("/repo", sha + "-parent", "gone.ts", null);
+  });
+
+  it("historyFile: clears resolvingDeletedFileFor and warns instead of opening history when the parent can't be resolved", async () => {
+    mockInTauri = true;
+    setDemoGraph();
+    detailCtrl.select(0);
+    vi.mocked(commands.plumbingInspect).mockResolvedValueOnce(err("bad revision"));
+
+    await detailCtrl.historyFile({ p: "gone.ts", st: "D", oldPath: null });
+
+    expect(detailCtrl.resolvingDeletedFileFor).toBeNull();
+    expect(fileHistoryCtrl.openFor).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalled();
   });
 });
