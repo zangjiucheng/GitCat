@@ -190,6 +190,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   border-radius:var(--r-control);color:var(--text);font-size:12px}
 .ref-filter input:focus{outline:none;border-color:var(--accent)}
 .ref-filter .mag{position:absolute;left:20px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
+/* "Show all branches" — appears only while a branch-visibility filter is
+   active (sidebarCtrl.isFiltering), resetting it back to "no filter". Small
+   ghost-button treatment, own class since it sits in .ref-filter's own row
+   rather than any existing button context. */
+.ref-filter{display:flex;flex-direction:column;gap:6px}
+.ref-filter .show-all{align-self:flex-start;border:1px solid var(--border);background:transparent;color:var(--muted);
+  font-size:11px;padding:3px 8px;border-radius:var(--r-pill);cursor:pointer}
+.ref-filter .show-all:hover{background:var(--elevated);color:var(--text);border-color:var(--muted)}
 .ref-scroll{flex:1;min-height:0;overflow:auto;padding:6px}
 .ref-group{margin-bottom:2px}
 .ref-group>summary{list-style:none;display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;
@@ -223,6 +231,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-item.current .ref-menu{opacity:.65}
 .ref-item .rname.nb{color:var(--accent);font-weight:600}
 .ref-item .rname.mut{color:var(--muted)}
+/* Branch-visibility checkbox — sits before .rname in local/remote rows,
+   toggling whether this branch feeds the commit graph's revwalk (see
+   sidebarCtrl.toggleBranchVisible). Disabled+always-checked for the current
+   branch (never hideable) — same flex:none sizing as the row's other small
+   fixed-size children (.dot/.ab). */
+.ref-item .rb-check{flex:none;margin:0;cursor:pointer}
+.ref-item .rb-check:disabled{cursor:default;opacity:.6}
 .ref-item.new-branch:hover{background:color-mix(in srgb,var(--accent) 12%,transparent)}
 /* Any row mid-checkout/delete dims and stops accepting clicks — the
    sidebar-wide `busy` flag covers every row (not just the one acted on)
