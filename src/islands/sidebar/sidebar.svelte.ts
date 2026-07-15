@@ -272,6 +272,15 @@ class SidebarState {
   // below only ever touches the one kind it's called for.
   visibleLocal = $state<string[] | null>(null);
   visibleRemote = $state<string[] | null>(null);
+  // "Auto" branch-visibility mode (persisted alongside visibleLocal/
+  // visibleRemote — see repo_registry.rs's own VisibleBranches.auto doc
+  // comment): when true, visibleLocal is periodically RECOMPUTED (current
+  // branch + anything with unpushed or unmerged-into-default commits) and
+  // overwritten by recomputeAutoVisibility, rather than manually curated —
+  // manually toggling a checkbox turns it back off (see toggleBranchVisible).
+  // Only ever curates LOCAL branches; visibleRemote stays untouched/null in
+  // auto mode (remotes are read-only mirrors, not "my own" work to declutter).
+  autoMode = $state(false);
   snapshots = $state<Snapshot[]>([]);
   filter = $state("");
   busy = $state(false);
@@ -362,6 +371,11 @@ class SidebarState {
     // another — none needs another's result, and a slow/failing one
     // shouldn't hold up the rest.
     await Promise.all([this.refreshRefs(repo), this.refreshSubmodules(repo), this.refreshVisibleBranches(repo)]);
+    // Auto mode recomputes AFTER the barrier above, never inside it — it
+    // needs refreshRefs's own fresh ahead/behind data (this.locals), which
+    // refreshVisibleBranches (just loading the persisted `auto` flag) can't
+    // guarantee has landed yet if run concurrently with it.
+    if (this.autoMode) await this.recomputeAutoVisibility(repo);
   }
 
   private async refreshRefs(repo: string) {
@@ -388,6 +402,7 @@ class SidebarState {
         console.error("get_visible_branches", r.error);
         return;
       }
+      this.autoMode = r.data.auto;
       this.visibleLocal = r.data.local;
       this.visibleRemote = r.data.remote;
     } catch (e) {
@@ -407,6 +422,11 @@ class SidebarState {
   }
 
   async toggleBranchVisible(repo: string, kind: "local" | "remote", name: string): Promise<void> {
+    // A manual toggle is an explicit override — exits auto mode first (so
+    // the very next refresh doesn't silently recompute over the user's own
+    // click), same "grabbing the wheel turns off autopilot" reasoning
+    // toggleAutoMode's own doc comment describes.
+    this.autoMode = false;
     // Only ever touches the ONE kind being toggled — local/remote filters
     // are independent (see visibleLocal's own doc comment), so toggling a
     // local branch must never materialize (and thus start filtering) the
@@ -432,7 +452,51 @@ class SidebarState {
   }
 
   async showAllBranches(repo: string): Promise<void> {
+    this.autoMode = false;
     this.visibleLocal = null;
+    this.visibleRemote = null;
+    await this.persistVisibleBranches(repo);
+  }
+
+  // Tools-menu-adjacent entry point (the sidebar's own "Auto" pill) — turns
+  // auto mode on (computing+persisting a filter immediately, not waiting for
+  // the next refresh) or off (same full reset as showAllBranches, since
+  // there's no manually-curated filter to fall back to once auto mode's own
+  // computed one is discarded).
+  async toggleAutoMode(repo: string): Promise<void> {
+    if (!IN_TAURI) {
+      this.autoMode = !this.autoMode; // demo mode: no real merge/ahead data to compute from
+      return;
+    }
+    this.autoMode = !this.autoMode;
+    if (this.autoMode) await this.recomputeAutoVisibility(repo);
+    else await this.showAllBranches(repo);
+  }
+
+  // Current branch (always kept, same guarantee push_head() already gives
+  // every OTHER filter path) + anything with unpushed commits (ahead of its
+  // own upstream, or no upstream configured at all — "ahead"/"upstream" are
+  // both `None` together in that case, see LocalBranch's own doc comment)
+  // + anything not yet merged into the repo's resolved default branch
+  // (branch_merge_status — when NO default branch could be resolved at all,
+  // its `merged` list comes back empty, so every branch fails this check
+  // and nothing gets hidden purely from "merged" reasoning: erring toward
+  // SHOWING when we can't tell is safer than hiding real work). Only ever
+  // writes visibleLocal — see autoMode's own doc comment for why remotes
+  // are left alone.
+  async recomputeAutoVisibility(repo: string): Promise<void> {
+    if (!IN_TAURI || !repo) return;
+    let mergedInto = new Set<string>();
+    try {
+      const merge = await commands.branchMergeStatus(repo);
+      if (merge.status === "ok") mergedInto = new Set(merge.data.merged);
+      else console.error("branch_merge_status", merge.error);
+    } catch (e) {
+      console.error("branch_merge_status", e);
+    }
+    this.visibleLocal = this.locals
+      .filter((b) => b.name === this.head || (b.ahead ?? 0) > 0 || b.upstream === null || !mergedInto.has(b.name))
+      .map((b) => b.name);
     this.visibleRemote = null;
     await this.persistVisibleBranches(repo);
   }
@@ -440,7 +504,7 @@ class SidebarState {
   private async persistVisibleBranches(repo: string): Promise<void> {
     if (!IN_TAURI || !repo) return; // design-mode: local state only, nothing to persist/reload
     try {
-      await commands.setVisibleBranches(repo, this.visibleLocal, this.visibleRemote);
+      await commands.setVisibleBranches(repo, this.autoMode, this.visibleLocal, this.visibleRemote);
     } catch (e) {
       console.error("set_visible_branches", e);
     }
@@ -1267,7 +1331,7 @@ class SidebarState {
         if (this.visibleLocal !== null && !this.visibleLocal.includes(name)) {
           this.visibleLocal = [...this.visibleLocal, name];
           try {
-            await commands.setVisibleBranches(bridge.CUR_REPO as unknown as string, this.visibleLocal, this.visibleRemote);
+            await commands.setVisibleBranches(bridge.CUR_REPO as unknown as string, this.autoMode, this.visibleLocal, this.visibleRemote);
           } catch (e) {
             console.error("set_visible_branches", e);
           }

@@ -80,6 +80,17 @@ async listRefs(path: string) : Promise<Result<RefList, string>> {
 }
 },
 /**
+ * JS: `commands.branchMergeStatus(path)`. Read-only (git2).
+ */
+async branchMergeStatus(path: string) : Promise<Result<BranchMergeInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("branch_merge_status", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Create a branch; when `checkout` is true, also switch to it (`git switch -c`).
  * `start_point` is an optional commit-ish; defaults to HEAD when omitted.
  * JS call: `invoke("create_branch", { path, name, startPoint?, checkout? })`.
@@ -1538,9 +1549,9 @@ async getVisibleBranches(path: string) : Promise<Result<VisibleBranches, string>
  * `claim_repo_summary_first_open` — doesn't assume a row already exists for
  * this path). JS: `commands.setVisibleBranches(path, local, remote)`.
  */
-async setVisibleBranches(path: string, local: string[] | null, remote: string[] | null) : Promise<Result<null, string>> {
+async setVisibleBranches(path: string, auto: boolean, local: string[] | null, remote: string[] | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_visible_branches", { path, local, remote }) };
+    return { status: "ok", data: await TAURI_INVOKE("set_visible_branches", { path, auto, local, remote }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1747,6 +1758,28 @@ export type BlobObject = { sha: string; size: number; isBinary: boolean;
  * blob (only `size` is reported).
  */
 content: string | null; truncated: boolean }
+/**
+ * Which local branches are already fully merged into the repo's own
+ * default branch, plus the resolved default branch's own name.
+ * 
+ * Backs the sidebar's "Auto" branch-visibility mode (see
+ * `src/islands/sidebar/sidebar.svelte.ts`'s `recomputeAutoVisibility`):
+ * combined with `list_refs`'s own ahead/behind-vs-upstream data (already
+ * enough to detect "has unpushed commits"), this is the one piece needing
+ * real new logic — no ancestor/merge-base check existed anywhere in this
+ * codebase before.
+ */
+export type BranchMergeInfo = { defaultBranch: string | null; 
+/**
+ * Local branch names whose tip is already reachable from
+ * `default_branch`'s tip — i.e. none of their work is missing from
+ * default, so they're safe to hide from an auto-computed filter.
+ * Never includes `default_branch`'s own name (trivially "merged into
+ * itself", not a useful signal for the caller). Empty (not an error)
+ * when `default_branch` is `None` — nothing can be classified as
+ * merged without something to compare against.
+ */
+merged: string[] }
 export type ChurnFile = { path: string; touches: number }
 export type CodeSearchMatch = { path: string; line: number; text: string }
 export type CodeSearchResults = { matches: CodeSearchMatch[]; truncated: boolean }
@@ -2378,7 +2411,16 @@ repoSummaryShown?: boolean;
  * already-persisted file predating this field must still deserialize.
  * `None` means "no filter, show every branch" (today's behavior).
  */
-visibleLocalBranches?: string[] | null; visibleRemoteBranches?: string[] | null }
+visibleLocalBranches?: string[] | null; visibleRemoteBranches?: string[] | null; 
+/**
+ * Whether the sidebar's "Auto" branch-visibility mode is on for this
+ * repo — when true, `visible_local_branches` is periodically
+ * RECOMPUTED and overwritten by the frontend (current branch + any
+ * branch with unpushed or unmerged-into-default commits), not manually
+ * curated. `#[serde(default)]` for the same backward-compatibility
+ * reason as `visible_local_branches` above.
+ */
+autoBranchVisibility?: boolean }
 /**
  * One entry inside a tree listing.
  */
@@ -2410,7 +2452,11 @@ export type UndoResult = { ok: boolean; message: string; restoredTo: string | nu
  * see `git_read::read_repo`'s own doc comment for exactly how each side is
  * applied to the revwalk independently.
  */
-export type VisibleBranches = { local: string[] | null; remote: string[] | null }
+export type VisibleBranches = { local: string[] | null; remote: string[] | null; 
+/**
+ * See `TrackedRepo::auto_branch_visibility`'s own doc comment.
+ */
+auto: boolean }
 /**
  * One working-tree/index entry. `status` reuses `FileChange`'s vocabulary
  * (A/M/D/R/T) plus `"?"` for untracked (git's own porcelain symbol; distinct

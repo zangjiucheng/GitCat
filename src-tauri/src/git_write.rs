@@ -367,6 +367,99 @@ fn list_refs_inner(path: &str) -> Result<RefList, git2::Error> {
     Ok(RefList { head, locals, remotes, tags })
 }
 
+/// Which local branches are already fully merged into the repo's own
+/// default branch, plus the resolved default branch's own name.
+///
+/// Backs the sidebar's "Auto" branch-visibility mode (see
+/// `src/islands/sidebar/sidebar.svelte.ts`'s `recomputeAutoVisibility`):
+/// combined with `list_refs`'s own ahead/behind-vs-upstream data (already
+/// enough to detect "has unpushed commits"), this is the one piece needing
+/// real new logic — no ancestor/merge-base check existed anywhere in this
+/// codebase before.
+#[derive(Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchMergeInfo {
+    pub default_branch: Option<String>,
+    /// Local branch names whose tip is already reachable from
+    /// `default_branch`'s tip — i.e. none of their work is missing from
+    /// default, so they're safe to hide from an auto-computed filter.
+    /// Never includes `default_branch`'s own name (trivially "merged into
+    /// itself", not a useful signal for the caller). Empty (not an error)
+    /// when `default_branch` is `None` — nothing can be classified as
+    /// merged without something to compare against.
+    pub merged: Vec<String>,
+}
+
+/// Best-effort: which branch is "the" default, resolved the same way
+/// GitHub/GitLab/`git clone` itself would show it.
+/// 1. `refs/remotes/<remote>/HEAD`'s symbolic target, for the first remote
+///    that has one (`list_refs` above already drops this exact ref from the
+///    remote-branch list as noise — this is the one place that reads it for
+///    its actual meaning instead of discarding it).
+/// 2. A local branch literally named `main`, then `master` — the common
+///    fallback when no remote is configured at all (a brand-new local-only
+///    repo).
+/// Returns the short name AND its tip's oid together (not just the name)
+/// so the caller never has to re-resolve a name it could look up twice
+/// under two different ref namespaces (local vs. remote-tracking).
+fn resolve_default_branch_oid(repo: &Repository) -> Option<(String, git2::Oid)> {
+    if let Ok(remotes) = repo.remotes() {
+        for remote_name in remotes.iter().flatten() {
+            let head_ref = format!("refs/remotes/{remote_name}/HEAD");
+            let Ok(r) = repo.find_reference(&head_ref) else { continue };
+            let Some(target) = r.symbolic_target() else { continue };
+            let prefix = format!("refs/remotes/{remote_name}/");
+            let Some(short) = target.strip_prefix(&prefix) else { continue };
+            let Ok(resolved) = r.resolve() else { continue };
+            if let Some(oid) = resolved.target() {
+                return Some((short.to_string(), oid));
+            }
+        }
+    }
+    for candidate in ["main", "master"] {
+        if let Ok(b) = repo.find_branch(candidate, BranchType::Local) {
+            if let Ok(oid) = b.get().peel_to_commit().map(|c| c.id()) {
+                return Some((candidate.to_string(), oid));
+            }
+        }
+    }
+    None
+}
+
+/// JS: `commands.branchMergeStatus(path)`. Read-only (git2).
+#[tauri::command]
+#[specta::specta]
+pub fn branch_merge_status(path: String) -> Result<BranchMergeInfo, String> {
+    branch_merge_status_inner(&path).map_err(|e| e.message().to_string())
+}
+
+fn branch_merge_status_inner(path: &str) -> Result<BranchMergeInfo, git2::Error> {
+    let repo = crate::trust::open_repo(path)?;
+    let Some((default_name, default_oid)) = resolve_default_branch_oid(&repo) else {
+        return Ok(BranchMergeInfo { default_branch: None, merged: Vec::new() });
+    };
+
+    let mut merged = Vec::new();
+    for entry in repo.branches(Some(BranchType::Local))? {
+        let (branch, _) = entry?;
+        let name = match branch.name()? {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if name == default_name {
+            continue;
+        }
+        let Ok(oid) = branch.get().peel_to_commit().map(|c| c.id()) else { continue };
+        // Merged when this branch's own tip is an ancestor of (or identical
+        // to) default's tip — i.e. default is a descendant of it, so none
+        // of its work is missing from default.
+        if oid == default_oid || repo.graph_descendant_of(default_oid, oid).unwrap_or(false) {
+            merged.push(name);
+        }
+    }
+    Ok(BranchMergeInfo { default_branch: Some(default_name), merged })
+}
+
 // ---------------------------------------------------------------------------
 // Writes: branch operations (each snapshots FIRST, then shells out to git)
 // ---------------------------------------------------------------------------

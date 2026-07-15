@@ -8,7 +8,7 @@
 mod common;
 
 use common::{short, TempRepo};
-use gitcat_lib::git_write::{checkout, create_branch, delete_branch, list_refs, rename_branch};
+use gitcat_lib::git_write::{branch_merge_status, checkout, create_branch, delete_branch, list_refs, rename_branch};
 use gitcat_lib::safety::{create_snapshot, list_snapshots, undo_last};
 
 #[test]
@@ -164,4 +164,68 @@ fn undo_refuses_on_dirty_tree_and_restores_head_when_clean() {
     // as a new snapshot before rewinding.
     let snaps_after = list_snapshots(path.clone()).expect("list_snapshots failed");
     assert!(snaps_after.len() > snaps_before.len(), "undo should add a sealing snapshot");
+}
+
+// ---------------------------------------------------------------------------
+// branch_merge_status (backs the sidebar's "Auto" branch-visibility mode)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn merged_branch_is_reported_merged_unmerged_branch_is_not() {
+    let repo = TempRepo::init("merge_status_basic");
+    repo.commit("f.txt", "0\n", "c0");
+    repo.must(&["checkout", "-q", "-b", "feature-merged"]);
+    repo.commit("f.txt", "1\n", "feature work");
+    repo.must(&["checkout", "-q", "main"]);
+    repo.must(&["merge", "-q", "--no-ff", "feature-merged", "-m", "merge feature"]);
+
+    repo.must(&["checkout", "-q", "-b", "feature-unmerged"]);
+    repo.commit("f.txt", "2\n", "still in progress");
+    repo.must(&["checkout", "-q", "main"]);
+
+    let info = branch_merge_status(repo.path()).expect("branch_merge_status failed");
+    assert_eq!(info.default_branch.as_deref(), Some("main"));
+    assert!(info.merged.contains(&"feature-merged".to_string()), "feature-merged should be reported merged");
+    assert!(!info.merged.contains(&"feature-unmerged".to_string()), "feature-unmerged has commits main lacks — must not be reported merged");
+    assert!(!info.merged.contains(&"main".to_string()), "the default branch itself must never appear in its own merged list");
+}
+
+#[test]
+fn resolves_default_branch_via_origin_head_symref_over_local_main_fallback() {
+    let bare = common::TempRepo::init_bare("merge_status_origin_head_bare");
+    let bare_path = bare.path();
+
+    let repo = TempRepo::init("merge_status_origin_head_local");
+    repo.commit("f.txt", "0\n", "c0");
+    repo.must(&["branch", "-m", "main", "trunk"]); // rename main -> trunk
+    repo.must(&["remote", "add", "origin", &bare_path]);
+    repo.must(&["push", "-q", "-u", "origin", "trunk"]);
+    repo.must(&["remote", "set-head", "origin", "trunk"]);
+    // A LOCAL branch literally named "main" too, pointing at the SAME
+    // commit — proves origin/HEAD's symref wins over the local-name
+    // fallback rather than "trunk" just coincidentally being picked.
+    repo.must(&["branch", "main"]);
+
+    let info = branch_merge_status(repo.path()).expect("branch_merge_status failed");
+    assert_eq!(info.default_branch.as_deref(), Some("trunk"), "origin/HEAD's symbolic target should win over the main/master fallback");
+}
+
+#[test]
+fn falls_back_to_local_main_when_no_remote_is_configured() {
+    let repo = TempRepo::init("merge_status_fallback_main");
+    repo.commit("f.txt", "0\n", "c0");
+
+    let info = branch_merge_status(repo.path()).expect("branch_merge_status failed");
+    assert_eq!(info.default_branch.as_deref(), Some("main"), "no remote configured — should fall back to the local 'main' branch");
+}
+
+#[test]
+fn no_default_branch_resolvable_returns_none_and_an_empty_merged_list() {
+    let repo = TempRepo::init("merge_status_no_default");
+    repo.commit("f.txt", "0\n", "c0");
+    repo.must(&["branch", "-m", "main", "trunk"]); // rename away from main/master; no remote configured either
+
+    let info = branch_merge_status(repo.path()).expect("branch_merge_status failed");
+    assert_eq!(info.default_branch, None, "no origin/HEAD and no main/master branch — nothing to resolve");
+    assert!(info.merged.is_empty(), "can't classify anything as merged without a default branch to compare against");
 }

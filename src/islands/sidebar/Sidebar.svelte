@@ -126,11 +126,22 @@
   </div>
 {:else}
 <div class="ref-filter">
-  <span class="mag">&#9906;</span>
-  <input id="refFilter" placeholder="Filter refs&#8230;" spellcheck="false" bind:value={sidebarCtrl.filter} />
-  {#if sidebarCtrl.isFiltering}
-    <button class="show-all" onclick={() => sidebarCtrl.showAllBranches(bridge.CUR_REPO as unknown as string)}>Show all branches</button>
-  {/if}
+  <div class="ref-search">
+    <span class="mag">&#9906;</span>
+    <input id="refFilter" placeholder="Filter refs&#8230;" spellcheck="false" bind:value={sidebarCtrl.filter} />
+  </div>
+  <div class="ref-filter-actions">
+    <button
+      class="auto-toggle"
+      class:active={sidebarCtrl.autoMode}
+      title="Auto: show the current branch plus anything with unpushed or unmerged commits, always up to date"
+      onclick={() => sidebarCtrl.toggleAutoMode(bridge.CUR_REPO as unknown as string)}
+      >{sidebarCtrl.autoMode ? "⚡ Auto" : "Auto"}</button
+    >
+    {#if sidebarCtrl.isFiltering}
+      <button class="show-all" onclick={() => sidebarCtrl.showAllBranches(bridge.CUR_REPO as unknown as string)}>Show all branches</button>
+    {/if}
+  </div>
 </div>
 <div class="ref-scroll" id="refScroll" data-vimnav-list>
   <details class="ref-group" open>

@@ -52,7 +52,7 @@ fn add_then_read_back_persists_across_a_simulated_restart() {
 
     // Simulate add_tracked_repo's upsert logic against the file directly.
     let mut repos = load_from(&file).unwrap();
-    repos.push(TrackedRepo { path: "/tmp/some/repo".into(), last_opened_at: None, repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None });
+    repos.push(TrackedRepo { path: "/tmp/some/repo".into(), last_opened_at: None, repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None , auto_branch_visibility: false});
     save_to(&file, &repos).expect("save_to failed");
 
     // A totally fresh load (as if the app had restarted) must see it.
@@ -70,8 +70,8 @@ fn remove_then_read_back_persists_across_a_simulated_restart() {
     save_to(
         &file,
         &[
-            TrackedRepo { path: "/tmp/repo-a".into(), last_opened_at: Some(100), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None },
-            TrackedRepo { path: "/tmp/repo-b".into(), last_opened_at: Some(200), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None },
+            TrackedRepo { path: "/tmp/repo-a".into(), last_opened_at: Some(100), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None , auto_branch_visibility: false},
+            TrackedRepo { path: "/tmp/repo-b".into(), last_opened_at: Some(200), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None , auto_branch_visibility: false},
         ],
     )
     .unwrap();
@@ -97,7 +97,7 @@ fn track_opened_upserts_new_and_bumps_existing() {
     let now1 = 111;
     match repos.iter_mut().find(|r| r.path == "/tmp/repo-c") {
         Some(r) => r.last_opened_at = Some(now1),
-        None => repos.push(TrackedRepo { path: "/tmp/repo-c".into(), last_opened_at: Some(now1), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None }),
+        None => repos.push(TrackedRepo { path: "/tmp/repo-c".into(), last_opened_at: Some(now1), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None , auto_branch_visibility: false}),
     }
     save_to(&file, &repos).unwrap();
     let after_first = load_from(&file).unwrap();
@@ -109,7 +109,7 @@ fn track_opened_upserts_new_and_bumps_existing() {
     let now2 = 222;
     match repos.iter_mut().find(|r| r.path == "/tmp/repo-c") {
         Some(r) => r.last_opened_at = Some(now2),
-        None => repos.push(TrackedRepo { path: "/tmp/repo-c".into(), last_opened_at: Some(now2), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None }),
+        None => repos.push(TrackedRepo { path: "/tmp/repo-c".into(), last_opened_at: Some(now2), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None , auto_branch_visibility: false}),
     }
     save_to(&file, &repos).unwrap();
     let after_second = load_from(&file).unwrap();
@@ -157,7 +157,7 @@ fn a_path_that_is_not_a_git_repo_can_still_be_tracked_and_removed() {
 
     let bogus = "/definitely/not/a/repo/anywhere";
     let mut repos = load_from(&file).unwrap();
-    repos.push(TrackedRepo { path: normalize(bogus), last_opened_at: None, repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None });
+    repos.push(TrackedRepo { path: normalize(bogus), last_opened_at: None, repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None , auto_branch_visibility: false});
     save_to(&file, &repos).unwrap();
 
     let reloaded = load_from(&file).unwrap();
@@ -207,6 +207,7 @@ fn visible_branches_round_trips_through_save_and_load() {
         repo_summary_shown: false,
         visible_local_branches: Some(vec!["main".to_string(), "dev".to_string()]),
         visible_remote_branches: Some(vec![]),
+        auto_branch_visibility: true,
     });
     save_to(&file, &repos).unwrap();
 
@@ -214,6 +215,7 @@ fn visible_branches_round_trips_through_save_and_load() {
     assert_eq!(reloaded.len(), 1);
     assert_eq!(reloaded[0].visible_local_branches, Some(vec!["main".to_string(), "dev".to_string()]));
     assert_eq!(reloaded[0].visible_remote_branches, Some(vec![]), "an empty (not absent) Vec means \"none of this kind\"");
+    assert!(reloaded[0].auto_branch_visibility, "auto mode must round-trip too");
 }
 
 #[test]

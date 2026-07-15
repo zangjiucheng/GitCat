@@ -41,6 +41,7 @@ vi.mock("../../ipc/bindings", () => ({
     submoduleRemove: vi.fn(),
     getVisibleBranches: vi.fn(),
     setVisibleBranches: vi.fn(),
+    branchMergeStatus: vi.fn(),
   },
 }));
 
@@ -74,6 +75,7 @@ function resetAll() {
   sidebarCtrl.head = null;
   sidebarCtrl.visibleLocal = null;
   sidebarCtrl.visibleRemote = null;
+  sidebarCtrl.autoMode = false;
   sidebarCtrl.snapshots = [];
   sidebarCtrl.filter = "";
   sidebarCtrl.busy = false;
@@ -102,7 +104,7 @@ function resetAll() {
   // Default: no branch-visibility filter, same "don't make every other test
   // care about this" reasoning as submoduleStatus above — only the
   // "branch visibility" describe block overrides this per-test.
-  vi.mocked(commands.getVisibleBranches).mockResolvedValue(ok({ local: null, remote: null }));
+  vi.mocked(commands.getVisibleBranches).mockResolvedValue(ok({ local: null, remote: null, auto: false }));
 }
 
 beforeEach(() => {
@@ -162,10 +164,39 @@ describe("refresh", () => {
 
   it("real mode: also populates the branch-visibility filter from commands.getVisibleBranches", async () => {
     mockInTauri = true;
-    vi.mocked(commands.getVisibleBranches).mockResolvedValueOnce(ok({ local: ["main"], remote: [] }));
+    vi.mocked(commands.getVisibleBranches).mockResolvedValueOnce(ok({ local: ["main"], remote: [], auto: false }));
     await sidebarCtrl.refresh("/repo");
     expect(sidebarCtrl.visibleLocal).toEqual(["main"]);
     expect(sidebarCtrl.visibleRemote).toEqual([]);
+    expect(sidebarCtrl.autoMode).toBe(false);
+  });
+
+  it("real mode: auto mode recomputes the filter after refs are loaded, using fresh ahead/behind + merge data", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.listRefs).mockResolvedValueOnce(
+      ok({
+        head: "main",
+        locals: [
+          { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main" },
+          { name: "feature", sha: "b", ahead: 2, behind: 0, upstream: "origin/feature" },
+          { name: "merged-done", sha: "c", ahead: 0, behind: 0, upstream: "origin/merged-done" },
+        ],
+        remotes: [],
+        tags: [],
+      }),
+    );
+    vi.mocked(commands.getVisibleBranches).mockResolvedValueOnce(ok({ local: null, remote: null, auto: true }));
+    vi.mocked(commands.branchMergeStatus).mockResolvedValueOnce(ok({ defaultBranch: "main", merged: ["merged-done"] }));
+    vi.mocked(commands.setVisibleBranches).mockResolvedValueOnce(ok(null));
+
+    await sidebarCtrl.refresh("/repo");
+
+    expect(sidebarCtrl.autoMode).toBe(true);
+    // main (current) and feature (unpushed) are kept; merged-done is merged
+    // into main AND has nothing unpushed, so auto mode hides it.
+    expect(sidebarCtrl.visibleLocal).toEqual(["main", "feature"]);
+    expect(sidebarCtrl.visibleRemote).toBeNull();
+    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", true, ["main", "feature"], null);
   });
 });
 
@@ -200,8 +231,18 @@ describe("branch visibility", () => {
     sidebarCtrl.visibleLocal = null; // unfiltered
     await sidebarCtrl.toggleBranchVisible("/repo", "local", "dev");
     expect(sidebarCtrl.visibleLocal).toEqual(["main"]);
-    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", ["main"], null);
+    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", false, ["main"], null);
     expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+  });
+
+  it("toggleBranchVisible: a manual toggle turns auto mode off (grabbing the wheel exits autopilot)", async () => {
+    mockInTauri = true;
+    sidebarCtrl.autoMode = true;
+    sidebarCtrl.locals = [{ name: "main", sha: "a", ahead: null, behind: null, upstream: null }];
+    sidebarCtrl.visibleLocal = ["main"];
+    await sidebarCtrl.toggleBranchVisible("/repo", "local", "main");
+    expect(sidebarCtrl.autoMode).toBe(false);
+    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", false, [], null);
   });
 
   it("toggleBranchVisible: toggling an already-hidden name back on re-adds just that name", async () => {
@@ -221,15 +262,66 @@ describe("branch visibility", () => {
     expect(sidebarCtrl.visibleLocal).toBeNull();
   });
 
-  it("showAllBranches resets both sets to null and persists", async () => {
+  it("showAllBranches resets both sets AND auto mode to null/off, and persists", async () => {
     mockInTauri = true;
+    sidebarCtrl.autoMode = true;
     sidebarCtrl.visibleLocal = ["main"];
     sidebarCtrl.visibleRemote = [];
     await sidebarCtrl.showAllBranches("/repo");
+    expect(sidebarCtrl.autoMode).toBe(false);
     expect(sidebarCtrl.visibleLocal).toBeNull();
     expect(sidebarCtrl.visibleRemote).toBeNull();
-    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", null, null);
+    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", false, null, null);
     expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+  });
+
+  it("toggleAutoMode: turning it on recomputes+persists immediately (current branch + unpushed + unmerged kept)", async () => {
+    mockInTauri = true;
+    sidebarCtrl.head = "main";
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main" },
+      { name: "no-upstream", sha: "b", ahead: null, behind: null, upstream: null },
+      { name: "merged-and-pushed", sha: "c", ahead: 0, behind: 0, upstream: "origin/merged-and-pushed" },
+    ];
+    vi.mocked(commands.branchMergeStatus).mockResolvedValueOnce(ok({ defaultBranch: "main", merged: ["merged-and-pushed"] }));
+
+    await sidebarCtrl.toggleAutoMode("/repo");
+
+    expect(sidebarCtrl.autoMode).toBe(true);
+    expect(sidebarCtrl.visibleLocal).toEqual(["main", "no-upstream"]);
+    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", true, ["main", "no-upstream"], null);
+  });
+
+  it("toggleAutoMode: turning it off is a full reset, same as showAllBranches", async () => {
+    mockInTauri = true;
+    sidebarCtrl.autoMode = true;
+    sidebarCtrl.visibleLocal = ["main"];
+    await sidebarCtrl.toggleAutoMode("/repo");
+    expect(sidebarCtrl.autoMode).toBe(false);
+    expect(sidebarCtrl.visibleLocal).toBeNull();
+    expect(commands.branchMergeStatus).not.toHaveBeenCalled();
+  });
+
+  it("recomputeAutoVisibility: when branch_merge_status can't resolve a default branch, nothing is hidden purely from merge status", async () => {
+    mockInTauri = true;
+    sidebarCtrl.head = "main";
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main" },
+      { name: "old-but-unresolved", sha: "b", ahead: 0, behind: 0, upstream: "origin/old-but-unresolved" },
+    ];
+    vi.mocked(commands.branchMergeStatus).mockResolvedValueOnce(ok({ defaultBranch: null, merged: [] }));
+
+    await sidebarCtrl.recomputeAutoVisibility("/repo");
+
+    expect(sidebarCtrl.visibleLocal).toEqual(["main", "old-but-unresolved"]);
+  });
+
+  it("recomputeAutoVisibility: design mode is a no-op (no merge data to compute from)", async () => {
+    mockInTauri = false;
+    sidebarCtrl.visibleLocal = null;
+    await sidebarCtrl.recomputeAutoVisibility("/repo");
+    expect(sidebarCtrl.visibleLocal).toBeNull();
+    expect(commands.branchMergeStatus).not.toHaveBeenCalled();
   });
 
   it("design mode: toggling updates local state only, no IPC call, no graph reload", async () => {
@@ -1222,7 +1314,7 @@ describe("newBranch", () => {
     sidebarCtrl.newBranchInput = "feature/new";
     await sidebarCtrl.confirmNewBranch();
     expect(sidebarCtrl.visibleLocal).toEqual(["main", "feature/new"]);
-    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", ["main", "feature/new"], []);
+    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", false, ["main", "feature/new"], []);
   });
 
   it("with no filter active, creating a branch never touches setVisibleBranches", async () => {

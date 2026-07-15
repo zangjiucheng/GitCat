@@ -185,19 +185,28 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .sidebar-empty .t{font-size:13px;font-weight:700;color:var(--text)}
 .sidebar-empty .sub{font-size:11.5px;line-height:1.6;max-width:190px}
 .sidebar-empty .btn{margin-top:8px;font-size:12px;padding:7px 12px}
-.ref-filter{padding:10px;border-bottom:1px solid var(--border);position:relative}
-.ref-filter input{width:100%;padding:7px 10px 7px 30px;background:var(--bg);border:1px solid var(--border);
+/* .ref-search wraps ONLY the input+icon, own position:relative context —
+   .mag's top:50% used to resolve against .ref-filter itself, which was fine
+   back when the input was its only child, but broke once "Show all
+   branches" started conditionally sharing that box: the icon drifted below
+   the input whenever the button pushed the container taller. */
+.ref-filter{padding:10px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px}
+.ref-search{position:relative}
+.ref-search input{width:100%;padding:7px 10px 7px 30px;background:var(--bg);border:1px solid var(--border);
   border-radius:var(--r-control);color:var(--text);font-size:12px}
-.ref-filter input:focus{outline:none;border-color:var(--accent)}
-.ref-filter .mag{position:absolute;left:20px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
-/* "Show all branches" — appears only while a branch-visibility filter is
-   active (sidebarCtrl.isFiltering), resetting it back to "no filter". Small
-   ghost-button treatment, own class since it sits in .ref-filter's own row
-   rather than any existing button context. */
-.ref-filter{display:flex;flex-direction:column;gap:6px}
-.ref-filter .show-all{align-self:flex-start;border:1px solid var(--border);background:transparent;color:var(--muted);
+.ref-search input:focus{outline:none;border-color:var(--accent)}
+.ref-search .mag{position:absolute;left:20px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
+/* "Auto" (persistent branch-visibility mode — always shown, the entry
+   point to turn it on) + "Show all branches" (only while a filter, auto or
+   manual, is active — sidebarCtrl.isFiltering) — same small ghost-button
+   treatment, own row since they sit below .ref-search rather than any
+   existing button context. */
+.ref-filter-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ref-filter-actions .auto-toggle,.ref-filter-actions .show-all{border:1px solid var(--border);background:transparent;color:var(--muted);
   font-size:11px;padding:3px 8px;border-radius:var(--r-pill);cursor:pointer}
-.ref-filter .show-all:hover{background:var(--elevated);color:var(--text);border-color:var(--muted)}
+.ref-filter-actions .auto-toggle:hover,.ref-filter-actions .show-all:hover{background:var(--elevated);color:var(--text);border-color:var(--muted)}
+.ref-filter-actions .auto-toggle.active{background:color-mix(in srgb,var(--accent) 16%,transparent);
+  border-color:var(--accent);color:var(--accent);font-weight:600}
 .ref-scroll{flex:1;min-height:0;overflow:auto;padding:6px}
 .ref-group{margin-bottom:2px}
 .ref-group>summary{list-style:none;display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;
@@ -220,7 +229,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-item.current::before{content:"";position:absolute;left:10px;top:50%;transform:translateY(-50%);width:5px;height:5px;border-radius:50%;background:var(--accent)}
 .ref-item .rname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ref-item.current .rname{font-weight:700}
-.ref-item .ab{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.ref-item .ab{flex:none;white-space:nowrap;font-family:var(--mono);font-size:10px;color:var(--muted)}
 .ref-item .ab .up{color:var(--success)} .ref-item .ab .dn{color:var(--danger)}
 .ref-item .dot{width:8px;height:8px;border-radius:50%;flex:none}
 .remote-head{padding:4px 8px 4px 24px;font-size:11px;color:var(--muted);font-weight:600;display:flex;gap:6px;align-items:center}

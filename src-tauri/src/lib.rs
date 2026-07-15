@@ -53,6 +53,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         safety::undo_last,
         // Branch ops
         git_write::list_refs,
+        // Backs the sidebar's "Auto" branch-visibility mode — which local
+        // branches are already merged into the repo's own default branch
+        // (see git_write.rs's own module doc on this command).
+        git_write::branch_merge_status,
         git_write::create_branch,
         git_write::checkout,
         git_write::checkout_discard,
