@@ -52,7 +52,7 @@ fn add_then_read_back_persists_across_a_simulated_restart() {
 
     // Simulate add_tracked_repo's upsert logic against the file directly.
     let mut repos = load_from(&file).unwrap();
-    repos.push(TrackedRepo { path: "/tmp/some/repo".into(), last_opened_at: None, repo_summary_shown: false });
+    repos.push(TrackedRepo { path: "/tmp/some/repo".into(), last_opened_at: None, repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None });
     save_to(&file, &repos).expect("save_to failed");
 
     // A totally fresh load (as if the app had restarted) must see it.
@@ -70,8 +70,8 @@ fn remove_then_read_back_persists_across_a_simulated_restart() {
     save_to(
         &file,
         &[
-            TrackedRepo { path: "/tmp/repo-a".into(), last_opened_at: Some(100), repo_summary_shown: false },
-            TrackedRepo { path: "/tmp/repo-b".into(), last_opened_at: Some(200), repo_summary_shown: false },
+            TrackedRepo { path: "/tmp/repo-a".into(), last_opened_at: Some(100), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None },
+            TrackedRepo { path: "/tmp/repo-b".into(), last_opened_at: Some(200), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None },
         ],
     )
     .unwrap();
@@ -97,7 +97,7 @@ fn track_opened_upserts_new_and_bumps_existing() {
     let now1 = 111;
     match repos.iter_mut().find(|r| r.path == "/tmp/repo-c") {
         Some(r) => r.last_opened_at = Some(now1),
-        None => repos.push(TrackedRepo { path: "/tmp/repo-c".into(), last_opened_at: Some(now1), repo_summary_shown: false }),
+        None => repos.push(TrackedRepo { path: "/tmp/repo-c".into(), last_opened_at: Some(now1), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None }),
     }
     save_to(&file, &repos).unwrap();
     let after_first = load_from(&file).unwrap();
@@ -109,7 +109,7 @@ fn track_opened_upserts_new_and_bumps_existing() {
     let now2 = 222;
     match repos.iter_mut().find(|r| r.path == "/tmp/repo-c") {
         Some(r) => r.last_opened_at = Some(now2),
-        None => repos.push(TrackedRepo { path: "/tmp/repo-c".into(), last_opened_at: Some(now2), repo_summary_shown: false }),
+        None => repos.push(TrackedRepo { path: "/tmp/repo-c".into(), last_opened_at: Some(now2), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None }),
     }
     save_to(&file, &repos).unwrap();
     let after_second = load_from(&file).unwrap();
@@ -157,7 +157,7 @@ fn a_path_that_is_not_a_git_repo_can_still_be_tracked_and_removed() {
 
     let bogus = "/definitely/not/a/repo/anywhere";
     let mut repos = load_from(&file).unwrap();
-    repos.push(TrackedRepo { path: normalize(bogus), last_opened_at: None, repo_summary_shown: false });
+    repos.push(TrackedRepo { path: normalize(bogus), last_opened_at: None, repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None });
     save_to(&file, &repos).unwrap();
 
     let reloaded = load_from(&file).unwrap();
@@ -193,4 +193,55 @@ fn normalize_dedupes_a_symlinked_path_to_the_same_canonical_string() {
     }
 
     let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn visible_branches_round_trips_through_save_and_load() {
+    let reg = TempRegistry::new("visible_roundtrip");
+    let file = reg.file();
+
+    let mut repos = load_from(&file).unwrap();
+    repos.push(TrackedRepo {
+        path: "/tmp/repo-a".into(),
+        last_opened_at: None,
+        repo_summary_shown: false,
+        visible_local_branches: Some(vec!["main".to_string(), "dev".to_string()]),
+        visible_remote_branches: Some(vec![]),
+    });
+    save_to(&file, &repos).unwrap();
+
+    let reloaded = load_from(&file).unwrap();
+    assert_eq!(reloaded.len(), 1);
+    assert_eq!(reloaded[0].visible_local_branches, Some(vec!["main".to_string(), "dev".to_string()]));
+    assert_eq!(reloaded[0].visible_remote_branches, Some(vec![]), "an empty (not absent) Vec means \"none of this kind\"");
+}
+
+#[test]
+fn an_untracked_repo_has_no_row_at_all_which_is_the_same_as_no_filter() {
+    // visible_branches_for's own fallback (no row found => {local: None,
+    // remote: None}) is exercised at the command layer (needs a real
+    // AppHandle); this confirms the underlying registry-file precondition
+    // it relies on: an untracked path genuinely has no row to find.
+    let reg = TempRegistry::new("visible_untracked");
+    let repos = load_from(&reg.file()).unwrap();
+    assert!(repos.iter().find(|r| r.path == "/tmp/never-tracked-anywhere").is_none());
+}
+
+#[test]
+fn legacy_json_without_visible_branches_keys_deserializes_with_none_default() {
+    // Same regression class as repo_summary_shown's own legacy test: a
+    // tracked_repos.json predating these two fields must still deserialize,
+    // defaulting to None/None ("no filter") rather than losing the whole file.
+    let reg = TempRegistry::new("visible_legacy");
+    let file = reg.file();
+    std::fs::write(
+        &file,
+        r#"{"version":1,"repos":[{"path":"/tmp/legacy-repo","lastOpenedAt":1700000000,"repoSummaryShown":false}]}"#,
+    )
+    .unwrap();
+
+    let repos = load_from(&file).expect("legacy-shaped JSON must still deserialize");
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0].visible_local_branches, None);
+    assert_eq!(repos[0].visible_remote_branches, None);
 }

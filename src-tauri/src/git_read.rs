@@ -22,19 +22,63 @@ pub struct RepoRead {
     pub refs: HashMap<String, Vec<RefChip>>,
 }
 
-/// Walk up to `limit` commits reachable from all branches + HEAD, most-recent first.
-pub fn read_repo(path: &str, limit: usize) -> Result<RepoRead, git2::Error> {
+/// Walk up to `limit` commits reachable from all branches + HEAD, most-recent
+/// first — or, when `visible_local`/`visible_remote` are `Some`, only from
+/// the NAMED local/remote branches + HEAD (the current branch always stays
+/// reachable regardless of the filter — see [`push_head`]'s own call below).
+///
+/// `visible_local`/`visible_remote` are INDEPENDENT, each its own `None`
+/// ("no filter for this kind — walk every branch of it, today's default") or
+/// `Some` ("only these named branches of this kind" — an empty slice means
+/// "none of this kind"). They are NOT required to agree: filtering local
+/// branches while leaving every remote branch visible (or vice versa) is a
+/// legitimate, expected combination, not an edge case.
+///
+/// [`push_head`]: git2::Revwalk::push_head
+pub fn read_repo(
+    path: &str,
+    limit: usize,
+    visible_local: Option<&[String]>,
+    visible_remote: Option<&[String]>,
+) -> Result<RepoRead, git2::Error> {
     let repo = crate::trust::open_repo(path)?;
 
     // --- ref chips: map each commit oid to the refs pointing at it ---
-    let refs = collect_refs(&repo);
+    let mut refs = collect_refs(&repo);
+    filter_hidden_chips(&mut refs, visible_local, visible_remote);
 
-    // --- revwalk: topological + time, seeded from every branch tip + HEAD ---
+    // --- revwalk: topological + time, seeded from every branch tip + HEAD,
+    // or only the selected ones when a filter is active — independently per
+    // kind, see this function's own doc comment ---
     let mut walk = repo.revwalk()?;
     walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
-    // push_glob peels refs to their commit target; ignore globs that match nothing.
-    let _ = walk.push_glob("refs/heads/*");
-    let _ = walk.push_glob("refs/remotes/*");
+    match visible_local {
+        // push_glob peels refs to their commit target; ignore globs that match nothing.
+        None => {
+            let _ = walk.push_glob("refs/heads/*");
+        }
+        Some(names) => {
+            // push_ref on a stale/renamed/deleted branch name is ignored,
+            // same tolerance push_glob already has for "matches nothing" —
+            // a filter referencing a since-deleted branch shouldn't error.
+            for name in names {
+                let _ = walk.push_ref(&format!("refs/heads/{name}"));
+            }
+        }
+    }
+    match visible_remote {
+        None => {
+            let _ = walk.push_glob("refs/remotes/*");
+        }
+        Some(names) => {
+            for name in names {
+                let _ = walk.push_ref(&format!("refs/remotes/{name}"));
+            }
+        }
+    }
+    // Always pushed, filter or not — the current branch's commits must stay
+    // reachable even if its own name isn't in the (or is explicitly excluded
+    // from the) visible set.
     let _ = walk.push_head();
 
     let mut commits = Vec::with_capacity(limit.min(4096));
@@ -64,6 +108,37 @@ pub fn read_repo(path: &str, limit: usize) -> Result<RepoRead, git2::Error> {
     }
 
     Ok(RepoRead { commits, refs })
+}
+
+/// Drop `"branch"`/`"remote"` chips for names NOT in the visible set —
+/// independently per kind (a no-op for `"branch"` chips specifically when
+/// `visible_local` is `None`, regardless of `visible_remote`'s own state,
+/// and vice versa — see `read_repo`'s own doc comment on why the two are
+/// independent). `"head"`/`"tag"` chips are never touched: HEAD's own chip
+/// is unaffected by definition (the current branch is always visible), and
+/// tags were never part of this filter's scope — they aren't walk roots
+/// either, filtered or not. This keeps a hidden branch's label from
+/// lingering on some ancestor commit that's still reachable via a visible
+/// branch/HEAD.
+fn filter_hidden_chips(
+    refs: &mut HashMap<String, Vec<RefChip>>,
+    visible_local: Option<&[String]>,
+    visible_remote: Option<&[String]>,
+) {
+    if visible_local.is_none() && visible_remote.is_none() {
+        return; // fast path: neither kind is filtered
+    }
+    let local_set: Option<std::collections::HashSet<&str>> =
+        visible_local.map(|v| v.iter().map(String::as_str).collect());
+    let remote_set: Option<std::collections::HashSet<&str>> =
+        visible_remote.map(|v| v.iter().map(String::as_str).collect());
+    for chips in refs.values_mut() {
+        chips.retain(|c| match c.t.as_str() {
+            "branch" => local_set.as_ref().is_none_or(|s| s.contains(c.n.as_str())),
+            "remote" => remote_set.as_ref().is_none_or(|s| s.contains(c.n.as_str())),
+            _ => true, // "head" | "tag" (or any future kind) — always keep
+        });
+    }
 }
 
 fn collect_refs(repo: &Repository) -> HashMap<String, Vec<RefChip>> {

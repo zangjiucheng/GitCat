@@ -39,6 +39,8 @@ vi.mock("../../ipc/bindings", () => ({
     submoduleSync: vi.fn(),
     submoduleDeinit: vi.fn(),
     submoduleRemove: vi.fn(),
+    getVisibleBranches: vi.fn(),
+    setVisibleBranches: vi.fn(),
   },
 }));
 
@@ -70,6 +72,8 @@ function resetAll() {
   sidebarCtrl.tags = [];
   sidebarCtrl.submodules = [];
   sidebarCtrl.head = null;
+  sidebarCtrl.visibleLocal = null;
+  sidebarCtrl.visibleRemote = null;
   sidebarCtrl.snapshots = [];
   sidebarCtrl.filter = "";
   sidebarCtrl.busy = false;
@@ -95,6 +99,10 @@ function resetAll() {
   // that refresh() now also fires it in parallel — only the "submodules"
   // describe block overrides this per-test.
   vi.mocked(commands.submoduleStatus).mockResolvedValue(ok([]));
+  // Default: no branch-visibility filter, same "don't make every other test
+  // care about this" reasoning as submoduleStatus above — only the
+  // "branch visibility" describe block overrides this per-test.
+  vi.mocked(commands.getVisibleBranches).mockResolvedValue(ok({ local: null, remote: null }));
 }
 
 beforeEach(() => {
@@ -150,6 +158,88 @@ describe("refresh", () => {
     expect(commands.listRefs).not.toHaveBeenCalled();
     expect(commands.submoduleStatus).not.toHaveBeenCalled();
     expect(sidebarCtrl.hasRepo).toBe(false);
+  });
+
+  it("real mode: also populates the branch-visibility filter from commands.getVisibleBranches", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.getVisibleBranches).mockResolvedValueOnce(ok({ local: ["main"], remote: [] }));
+    await sidebarCtrl.refresh("/repo");
+    expect(sidebarCtrl.visibleLocal).toEqual(["main"]);
+    expect(sidebarCtrl.visibleRemote).toEqual([]);
+  });
+});
+
+describe("branch visibility", () => {
+  it("isBranchVisible: everything is visible when no filter is set (null)", () => {
+    sidebarCtrl.visibleLocal = null;
+    sidebarCtrl.visibleRemote = null;
+    expect(sidebarCtrl.isBranchVisible("local", "anything")).toBe(true);
+    expect(sidebarCtrl.isBranchVisible("remote", "origin/anything")).toBe(true);
+  });
+
+  it("isBranchVisible: only names in the set are visible once filtering", () => {
+    sidebarCtrl.visibleLocal = ["main"];
+    expect(sidebarCtrl.isBranchVisible("local", "main")).toBe(true);
+    expect(sidebarCtrl.isBranchVisible("local", "other")).toBe(false);
+  });
+
+  it("isFiltering reflects whether either set is non-null", () => {
+    sidebarCtrl.visibleLocal = null;
+    sidebarCtrl.visibleRemote = null;
+    expect(sidebarCtrl.isFiltering).toBe(false);
+    sidebarCtrl.visibleLocal = ["main"];
+    expect(sidebarCtrl.isFiltering).toBe(true);
+  });
+
+  it("toggleBranchVisible: first toggle (hiding one) seeds from the full current list, not empty", async () => {
+    mockInTauri = true;
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: null, behind: null, upstream: null },
+      { name: "dev", sha: "b", ahead: null, behind: null, upstream: null },
+    ];
+    sidebarCtrl.visibleLocal = null; // unfiltered
+    await sidebarCtrl.toggleBranchVisible("/repo", "local", "dev");
+    expect(sidebarCtrl.visibleLocal).toEqual(["main"]);
+    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", ["main"], null);
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+  });
+
+  it("toggleBranchVisible: toggling an already-hidden name back on re-adds just that name", async () => {
+    mockInTauri = true;
+    sidebarCtrl.visibleLocal = ["main"];
+    await sidebarCtrl.toggleBranchVisible("/repo", "local", "dev");
+    expect(sidebarCtrl.visibleLocal).toEqual(["main", "dev"]);
+  });
+
+  it("toggleBranchVisible: works independently for remote branches", async () => {
+    mockInTauri = true;
+    sidebarCtrl.remotes = [{ name: "origin/main", sha: "a" }, { name: "origin/dev", sha: "b" }];
+    sidebarCtrl.visibleRemote = null;
+    await sidebarCtrl.toggleBranchVisible("/repo", "remote", "origin/dev");
+    expect(sidebarCtrl.visibleRemote).toEqual(["origin/main"]);
+    // toggling a remote must not touch the local filter
+    expect(sidebarCtrl.visibleLocal).toBeNull();
+  });
+
+  it("showAllBranches resets both sets to null and persists", async () => {
+    mockInTauri = true;
+    sidebarCtrl.visibleLocal = ["main"];
+    sidebarCtrl.visibleRemote = [];
+    await sidebarCtrl.showAllBranches("/repo");
+    expect(sidebarCtrl.visibleLocal).toBeNull();
+    expect(sidebarCtrl.visibleRemote).toBeNull();
+    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", null, null);
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+  });
+
+  it("design mode: toggling updates local state only, no IPC call, no graph reload", async () => {
+    mockInTauri = false;
+    sidebarCtrl.locals = [{ name: "main", sha: "a", ahead: null, behind: null, upstream: null }];
+    sidebarCtrl.visibleLocal = null;
+    await sidebarCtrl.toggleBranchVisible("/repo", "local", "main");
+    expect(sidebarCtrl.visibleLocal).toEqual([]);
+    expect(commands.setVisibleBranches).not.toHaveBeenCalled();
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
   });
 });
 
@@ -1121,6 +1211,28 @@ describe("newBranch", () => {
     await sidebarCtrl.confirmNewBranch();
     expect(commands.createBranch).toHaveBeenCalledWith("/repo", "feature/new", "origin/main", true);
     expect(sidebarCtrl.newBranchFrom).toBe("");
+  });
+
+  it("while a local branch filter is active, a newly created branch is auto-added to it (not left mysteriously hidden)", async () => {
+    mockInTauri = true;
+    sidebarCtrl.visibleLocal = ["main"];
+    sidebarCtrl.visibleRemote = [];
+    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [] });
+    sidebarCtrl.startNewBranch();
+    sidebarCtrl.newBranchInput = "feature/new";
+    await sidebarCtrl.confirmNewBranch();
+    expect(sidebarCtrl.visibleLocal).toEqual(["main", "feature/new"]);
+    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", ["main", "feature/new"], []);
+  });
+
+  it("with no filter active, creating a branch never touches setVisibleBranches", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [] });
+    sidebarCtrl.startNewBranch();
+    sidebarCtrl.newBranchInput = "feature/new";
+    await sidebarCtrl.confirmNewBranch();
+    expect(commands.setVisibleBranches).not.toHaveBeenCalled();
+    expect(sidebarCtrl.visibleLocal).toBeNull();
   });
 });
 

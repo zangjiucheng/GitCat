@@ -128,6 +128,9 @@
 <div class="ref-filter">
   <span class="mag">&#9906;</span>
   <input id="refFilter" placeholder="Filter refs&#8230;" spellcheck="false" bind:value={sidebarCtrl.filter} />
+  {#if sidebarCtrl.isFiltering}
+    <button class="show-all" onclick={() => sidebarCtrl.showAllBranches(bridge.CUR_REPO as unknown as string)}>Show all branches</button>
+  {/if}
 </div>
 <div class="ref-scroll" id="refScroll" data-vimnav-list>
   <details class="ref-group" open>
@@ -157,6 +160,17 @@
             if (!sidebarCtrl.busy) sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement);
           }}
         >
+          <input
+            type="checkbox"
+            class="rb-check"
+            checked={isCur || sidebarCtrl.isBranchVisible("local", b.name)}
+            disabled={isCur}
+            title={isCur ? "The current branch is always shown in the graph" : "Show/hide this branch in the graph"}
+            onclick={(e) => {
+              e.stopPropagation();
+              sidebarCtrl.toggleBranchVisible(bridge.CUR_REPO as unknown as string, "local", b.name);
+            }}
+          />
           <span class="rname">{b.name}</span>
           {#if sidebarCtrl.busyTarget === b.name}
             <span class="spinner"></span>
@@ -252,6 +266,16 @@
               sidebarCtrl.checkoutRemote(r.name, { x: rect.left, y: rect.bottom + 4 });
             }}
           >
+            <input
+              type="checkbox"
+              class="rb-check"
+              checked={sidebarCtrl.isBranchVisible("remote", r.name)}
+              title="Show/hide this branch in the graph"
+              onclick={(e) => {
+                e.stopPropagation();
+                sidebarCtrl.toggleBranchVisible(bridge.CUR_REPO as unknown as string, "remote", r.name);
+              }}
+            />
             <span class="dot" style="background:var(--l{gi % 7})"></span><span class="rname">{r.name}</span>
             {#if sidebarCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
           </div>

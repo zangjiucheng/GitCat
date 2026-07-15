@@ -39,7 +39,7 @@ fn graph_row_count_and_merge_flag() {
     let (repo, [c0, c1, c2, c3, c4]) = build_repo();
     let path = repo.path();
 
-    let g = build_graph(&path, 50_000).expect("build_graph failed");
+    let g = build_graph(&path, 50_000, None, None).expect("build_graph failed");
 
     // 5 commits: c0, c1, c2 (feature), c3 (main), c4 (merge).
     assert_eq!(g.n, 5, "expected 5 commits, got {}", g.n);
@@ -87,7 +87,7 @@ fn graph_row_count_and_merge_flag() {
 fn graph_layout_has_no_impossible_lane_overlaps() {
     let (repo, _) = build_repo();
     let path = repo.path();
-    let g = build_graph(&path, 50_000).expect("build_graph failed");
+    let g = build_graph(&path, 50_000, None, None).expect("build_graph failed");
 
     // Every lane index actually used (row assignment, and every gap segment
     // endpoint) must fit inside the reported `lane_count` high-water mark.
@@ -152,7 +152,106 @@ fn graph_respects_limit() {
     let (repo, _) = build_repo();
     let path = repo.path();
 
-    let g = build_graph(&path, 2).expect("build_graph failed");
+    let g = build_graph(&path, 2, None, None).expect("build_graph failed");
     assert_eq!(g.n, 2, "limit=2 should cap the walk to 2 commits");
     assert_eq!(g.rows.len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// Branch-visibility filtering — read_repo's visible_local/visible_remote params.
+// ---------------------------------------------------------------------------
+
+/// Two branches that DIVERGE and are never merged back together — unlike
+/// `build_repo()`'s topology, this lets a filter genuinely exclude one
+/// branch's unique commits, not just its ref chip. HEAD ends on `main`.
+///
+/// ```text
+/// c0 (root) -- c1 (main, HEAD)
+///          \-- c2 (feature)
+/// ```
+fn build_diverged_repo() -> (common::TempRepo, [String; 3]) {
+    let repo = common::TempRepo::init("graph_filter");
+    let c0 = repo.commit("f.txt", "0\n", "c0 root");
+    repo.must(&["branch", "feature"]); // branches off c0 without switching
+    let c1 = repo.commit("f.txt", "1 on main\n", "c1 on main only");
+    repo.must(&["checkout", "-q", "feature"]);
+    let c2 = repo.commit("g.txt", "on feature\n", "c2 on feature only");
+    repo.must(&["checkout", "-q", "main"]); // HEAD ends on main
+    (repo, [c0, c1, c2])
+}
+
+fn has_subject(g: &gitcat_lib::model::GraphData, subject: &str) -> bool {
+    g.rows.iter().any(|r| r.subject == subject)
+}
+
+#[test]
+fn unfiltered_walk_includes_both_diverged_branches() {
+    let (repo, _) = build_diverged_repo();
+    let g = build_graph(&repo.path(), 50_000, None, None).expect("build_graph failed");
+    assert!(has_subject(&g, "c1 on main only"));
+    assert!(has_subject(&g, "c2 on feature only"));
+}
+
+#[test]
+fn empty_local_filter_still_shows_the_current_branch_via_push_head() {
+    let (repo, _) = build_diverged_repo();
+    // HEAD is on main; local filter is explicitly empty (no branch NAMED),
+    // and no remotes either — only push_head()'s own unconditional inclusion
+    // should surface anything beyond the shared root.
+    let g = build_graph(&repo.path(), 50_000, Some(&[]), Some(&[])).expect("build_graph failed");
+    assert!(has_subject(&g, "c0 root"));
+    assert!(has_subject(&g, "c1 on main only"), "HEAD's own branch must stay visible regardless of the filter");
+    assert!(!has_subject(&g, "c2 on feature only"), "feature was excluded and isn't HEAD, so it must not appear");
+}
+
+#[test]
+fn local_and_remote_filters_apply_independently() {
+    let (repo, [_c0, _c1, c2]) = build_diverged_repo();
+    // A remote-tracking ref pointing at feature's tip, without a real
+    // configured remote — read_repo only ever looks at the ref itself.
+    repo.must(&["update-ref", "refs/remotes/origin/feature", &c2]);
+
+    // LOCAL filtered to nothing; REMOTE left unfiltered (None) — the two
+    // must not affect each other.
+    let g = build_graph(&repo.path(), 50_000, Some(&[]), None).expect("build_graph failed");
+    assert!(has_subject(&g, "c1 on main only"), "HEAD (main) always shows regardless of the local filter");
+    assert!(
+        has_subject(&g, "c2 on feature only"),
+        "remote is unfiltered (None), so origin/feature's commit must show even though local 'feature' itself is excluded"
+    );
+}
+
+#[test]
+fn naming_a_branch_in_the_filter_adds_it_alongside_the_forced_head() {
+    let (repo, _) = build_diverged_repo();
+    let local = vec!["feature".to_string()];
+    let g = build_graph(&repo.path(), 50_000, Some(&local), Some(&[])).expect("build_graph failed");
+    assert!(has_subject(&g, "c1 on main only"), "HEAD (main) always stays visible");
+    assert!(has_subject(&g, "c2 on feature only"), "explicitly selected branch must also show");
+}
+
+#[test]
+fn a_stale_nonexistent_branch_name_in_the_filter_is_silently_ignored_not_an_error() {
+    let (repo, _) = build_diverged_repo();
+    let local = vec!["totally-does-not-exist".to_string()];
+    let g = build_graph(&repo.path(), 50_000, Some(&local), Some(&[])).expect("a nonexistent branch name in the filter must not error");
+    assert!(has_subject(&g, "c1 on main only"), "HEAD still shows regardless");
+    assert!(!has_subject(&g, "c2 on feature only"));
+}
+
+#[test]
+fn hidden_branch_chip_is_dropped_even_though_its_commit_remains_reachable_via_a_visible_branch() {
+    // build_repo()'s topology (feature merged into main) — c2 ("feature")
+    // stays reachable via main's own ancestry after the merge, so this
+    // exercises the chip-filtering path specifically, independent of walk reachability.
+    let (repo, [_c0, _c1, c2, _c3, _c4]) = build_repo();
+    let local = vec!["main".to_string()]; // "feature" deliberately excluded
+    let g = build_graph(&repo.path(), 50_000, Some(&local), Some(&[])).expect("build_graph failed");
+
+    let feature_tip_row = g.rows.iter().find(|r| r.sha == short(&c2)).expect("feature's commit must still be reachable via main's own ancestry");
+    assert!(
+        !feature_tip_row.refs.iter().any(|r| r.t == "branch" && r.n == "feature"),
+        "the 'feature' chip must be dropped when feature isn't in the visible set, even though its commit is still shown: {:?}",
+        feature_tip_row.refs.iter().map(|r| (&r.n, &r.t)).collect::<Vec<_>>()
+    );
 }

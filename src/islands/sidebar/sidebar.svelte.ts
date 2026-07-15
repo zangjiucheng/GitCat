@@ -262,6 +262,16 @@ class SidebarState {
   tags = $state<SimpleRef[]>([]);
   submodules = $state<SubmoduleInfo[]>([]);
   head = $state<string | null>(null);
+  // Branch-visibility filter for the commit graph (persisted per repo — see
+  // repo_registry.rs's own VisibleBranches doc comment). `null` = no filter
+  // for this KIND, show every branch of it (today's default); a non-null
+  // array means "only these branch names" (an empty array legitimately
+  // means "none of this kind"). The two are INDEPENDENT — filtering local
+  // branches while leaving every remote fully visible (or vice versa) is a
+  // normal, expected combination, not an edge case; toggleBranchVisible
+  // below only ever touches the one kind it's called for.
+  visibleLocal = $state<string[] | null>(null);
+  visibleRemote = $state<string[] | null>(null);
   snapshots = $state<Snapshot[]>([]);
   filter = $state("");
   busy = $state(false);
@@ -348,10 +358,10 @@ class SidebarState {
     }
     if (!repo) return;
     this.hasRepo = true;
-    // Two independent reads, fired concurrently rather than one awaiting the
-    // other — a submodule_status failure/slowdown shouldn't hold up refs (or
-    // vice versa), and there's nothing one needs from the other's result.
-    await Promise.all([this.refreshRefs(repo), this.refreshSubmodules(repo)]);
+    // Three independent reads, fired concurrently rather than one awaiting
+    // another — none needs another's result, and a slow/failing one
+    // shouldn't hold up the rest.
+    await Promise.all([this.refreshRefs(repo), this.refreshSubmodules(repo), this.refreshVisibleBranches(repo)]);
   }
 
   private async refreshRefs(repo: string) {
@@ -369,6 +379,72 @@ class SidebarState {
     } catch (e) {
       console.error("list_refs", e);
     }
+  }
+
+  private async refreshVisibleBranches(repo: string) {
+    try {
+      const r = await commands.getVisibleBranches(repo);
+      if (r.status !== "ok") {
+        console.error("get_visible_branches", r.error);
+        return;
+      }
+      this.visibleLocal = r.data.local;
+      this.visibleRemote = r.data.remote;
+    } catch (e) {
+      console.error("get_visible_branches", e);
+    }
+  }
+
+  // ── branch-visibility filter (repo-scoped, persisted) ───────────────────
+
+  isBranchVisible(kind: "local" | "remote", name: string): boolean {
+    const set = kind === "local" ? this.visibleLocal : this.visibleRemote;
+    return set === null || set.includes(name);
+  }
+
+  get isFiltering(): boolean {
+    return this.visibleLocal !== null || this.visibleRemote !== null;
+  }
+
+  async toggleBranchVisible(repo: string, kind: "local" | "remote", name: string): Promise<void> {
+    // Only ever touches the ONE kind being toggled — local/remote filters
+    // are independent (see visibleLocal's own doc comment), so toggling a
+    // local branch must never materialize (and thus start filtering) the
+    // remote set, and vice versa. Lazily enters filtered mode for THIS kind
+    // on its own first uncheck: seeds from everything of that kind
+    // currently listed (not empty) minus the one being hidden — otherwise
+    // the very first toggle would instantly hide every other branch of that
+    // kind too, which is the opposite of "hide just this one".
+    if (kind === "local") {
+      const local = this.visibleLocal ?? this.locals.map((b) => b.name);
+      const idx = local.indexOf(name);
+      if (idx >= 0) local.splice(idx, 1);
+      else local.push(name);
+      this.visibleLocal = local;
+    } else {
+      const remote = this.visibleRemote ?? this.remotes.map((r) => r.name);
+      const idx = remote.indexOf(name);
+      if (idx >= 0) remote.splice(idx, 1);
+      else remote.push(name);
+      this.visibleRemote = remote;
+    }
+    await this.persistVisibleBranches(repo);
+  }
+
+  async showAllBranches(repo: string): Promise<void> {
+    this.visibleLocal = null;
+    this.visibleRemote = null;
+    await this.persistVisibleBranches(repo);
+  }
+
+  private async persistVisibleBranches(repo: string): Promise<void> {
+    if (!IN_TAURI || !repo) return; // design-mode: local state only, nothing to persist/reload
+    try {
+      await commands.setVisibleBranches(repo, this.visibleLocal, this.visibleRemote);
+    } catch (e) {
+      console.error("set_visible_branches", e);
+    }
+    await bridge.reloadGraph(true);
   }
 
   private async refreshSubmodules(repo: string) {
@@ -1181,6 +1257,21 @@ class SidebarState {
         this.newBranchOpen = false;
         this.newBranchInput = "";
         this.newBranchFrom = "";
+        // While a branch-visibility filter is active, a just-created branch
+        // defaults to VISIBLE — otherwise a decluttered view would make a
+        // freshly created branch mysteriously invisible, which reads as a
+        // bug, not a feature. Persisted directly (not via
+        // persistVisibleBranches, which also reloads the graph) so the
+        // reloadGraph(true) just below is the only reload, picking up the
+        // updated filter.
+        if (this.visibleLocal !== null && !this.visibleLocal.includes(name)) {
+          this.visibleLocal = [...this.visibleLocal, name];
+          try {
+            await commands.setVisibleBranches(bridge.CUR_REPO as unknown as string, this.visibleLocal, this.visibleRemote);
+          } catch (e) {
+            console.error("set_visible_branches", e);
+          }
+        }
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
         bridge.tama.say(res.message || "Branch " + name + " created.", 3200);

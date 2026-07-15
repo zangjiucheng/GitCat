@@ -21,7 +21,7 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(50_000);
 
-    let g = build_graph(&path, limit).expect("build_graph failed");
+    let g = build_graph(&path, limit, None, None).expect("build_graph failed");
 
     eprintln!("commits: {}", g.n);
     eprintln!("max lane width: {}", g.lane_count);

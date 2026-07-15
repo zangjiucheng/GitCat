@@ -49,19 +49,33 @@ const MAX_LINES_PER_FILE: usize = 2000;
 /// Default cap so a giant repo can't hang the UI on first load (M0 target: 10k < 1s).
 const DEFAULT_LIMIT: usize = 50_000;
 
-/// Tauri command wrapper — see [`build_graph`].
+/// Tauri command wrapper — see [`build_graph`]. `app` is Tauri-injected (not
+/// part of the JS-facing call args, same as `repo_registry::list_tracked_repos`'s
+/// own `AppHandle` parameter) and used ONLY to look up this repo's persisted
+/// branch-visibility filter (`repo_registry::visible_branches_for`) before
+/// building the graph — see that function's own doc comment for why the
+/// lookup lives here rather than requiring the frontend to fetch-then-pass
+/// it on every call.
 #[tauri::command]
 #[specta::specta]
-pub fn load_graph(path: String, limit: Option<usize>) -> Result<GraphData, String> {
-    build_graph(&path, limit.unwrap_or(DEFAULT_LIMIT))
+pub fn load_graph(app: tauri::AppHandle<tauri::Wry>, path: String, limit: Option<usize>) -> Result<GraphData, String> {
+    let vb = crate::repo_registry::visible_branches_for(&app, &path)?;
+    build_graph(&path, limit.unwrap_or(DEFAULT_LIMIT), vb.local.as_deref(), vb.remote.as_deref())
 }
 
 /// Open `path`, walk its commits, lay out the swimlane graph, and return the
 /// full payload the canvas renders. `limit` caps how many commits are loaded.
-pub fn build_graph(path: &str, limit: usize) -> Result<GraphData, String> {
-
+/// `visible_local`/`visible_remote`: `None`+`None` walks every branch (today's
+/// default); `Some`+`Some` restricts the walk to just the named branches (+
+/// HEAD, always) — see `git_read::read_repo`'s own doc comment.
+pub fn build_graph(
+    path: &str,
+    limit: usize,
+    visible_local: Option<&[String]>,
+    visible_remote: Option<&[String]>,
+) -> Result<GraphData, String> {
     let t0 = Instant::now();
-    let mut read = read_repo(path, limit).map_err(|e| e.message().to_string())?;
+    let mut read = read_repo(path, limit, visible_local, visible_remote).map_err(|e| e.message().to_string())?;
     let read_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     let t1 = Instant::now();

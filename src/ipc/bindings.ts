@@ -7,7 +7,13 @@
 
 export const commands = {
 /**
- * Tauri command wrapper — see [`build_graph`].
+ * Tauri command wrapper — see [`build_graph`]. `app` is Tauri-injected (not
+ * part of the JS-facing call args, same as `repo_registry::list_tracked_repos`'s
+ * own `AppHandle` parameter) and used ONLY to look up this repo's persisted
+ * branch-visibility filter (`repo_registry::visible_branches_for`) before
+ * building the graph — see that function's own doc comment for why the
+ * lookup lives here rather than requiring the frontend to fetch-then-pass
+ * it on every call.
  */
 async loadGraph(path: string, limit: number | null) : Promise<Result<GraphData, string>> {
     try {
@@ -1517,6 +1523,30 @@ async repoSummary(path: string) : Promise<Result<RepoSummary, string>> {
 }
 },
 /**
+ * JS: `commands.getVisibleBranches(path)`.
+ */
+async getVisibleBranches(path: string) : Promise<Result<VisibleBranches, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_visible_branches", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Independently upserts (same defensive shape as `track_repo_opened`/
+ * `claim_repo_summary_first_open` — doesn't assume a row already exists for
+ * this path). JS: `commands.setVisibleBranches(path, local, remote)`.
+ */
+async setVisibleBranches(path: string, local: string[] | null, remote: string[] | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_visible_branches", { path, local, remote }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.getToolSettings()`.
  */
 async getToolSettings() : Promise<Result<ToolSettings, string>> {
@@ -1826,11 +1856,24 @@ touchedCommits: number }
  * Rust `Err`) — see module docs on the failure model.
  */
 export type FilterRepoResult = { ok: boolean; message: string; backupBundle: string | null; commitsBefore: number | null; commitsAfter: number | null }
-export type GitIdentity = { name: string | null; email: string | null; 
+export type GitIdentity = { 
 /**
- * true only when BOTH name and email are set in this repo's local config.
+ * Effective value: this repo's own local override if set, otherwise
+ * whatever `--global` resolves to. `None` only when NEITHER has it.
  */
-configured: boolean }
+name: string | null; email: string | null; 
+/**
+ * true when an effective name AND email exist from EITHER source — "a
+ * commit made right now would already have an identity". Drives the
+ * setup wizard's skip-the-identity-step gate.
+ */
+configured: boolean; 
+/**
+ * true only when BOTH are set in THIS repo's own local config
+ * specifically, not inherited from global — lets Settings distinguish
+ * "set for this repo" from "using your global identity".
+ */
+local: boolean }
 /**
  * The full graph payload. Rows are in reverse-chronological/topological order
  * (child before parent). `lane`/`color`/`merge` are one-per-row.
@@ -2279,7 +2322,15 @@ lastOpenedAt: number | null;
  * entry ("not yet shown") — it naturally arms one harmless future
  * auto-show, never data loss.
  */
-repoSummaryShown?: boolean }
+repoSummaryShown?: boolean; 
+/**
+ * Persisted branch-visibility filter for this repo's commit graph — see
+ * `VisibleBranches`'s own doc comment. `#[serde(default)]` for the same
+ * backward-compatibility reason as `repo_summary_shown` above: an
+ * already-persisted file predating this field must still deserialize.
+ * `None` means "no filter, show every branch" (today's behavior).
+ */
+visibleLocalBranches?: string[] | null; visibleRemoteBranches?: string[] | null }
 /**
  * One entry inside a tree listing.
  */
@@ -2299,6 +2350,19 @@ export type TreeObject = { sha: string; entries: TreeEntryRow[] }
  * Result of a global undo.
  */
 export type UndoResult = { ok: boolean; message: string; restoredTo: string | null; sealed: string | null }
+/**
+ * A repo's branch-visibility filter, as read by `commands::load_graph`
+ * (transparently, on every load) and written by the sidebar's own branch
+ * checkboxes. `local`/`remote` are INDEPENDENT: each is its own `None`
+ * ("no filter for this kind — show every branch of it") or `Some`
+ * (filtering active for this kind — an empty `Vec` legitimately means
+ * "none of this kind", never confused with "no filter" the way an empty
+ * `Vec` alone would be). Filtering local branches while leaving every
+ * remote fully visible (or vice versa) is a normal, expected combination —
+ * see `git_read::read_repo`'s own doc comment for exactly how each side is
+ * applied to the revwalk independently.
+ */
+export type VisibleBranches = { local: string[] | null; remote: string[] | null }
 /**
  * One working-tree/index entry. `status` reuses `FileChange`'s vocabulary
  * (A/M/D/R/T) plus `"?"` for untracked (git's own porcelain symbol; distinct

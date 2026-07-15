@@ -225,6 +225,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // state) and reachable afterward via Tools/⌘K.
         repo_registry::claim_repo_summary_first_open,
         repo_summary::repo_summary,
+        // Branch visibility filter: which local/remote branches the commit
+        // graph's revwalk is seeded from, persisted per repo (see
+        // repo_registry.rs's own VisibleBranches doc comment). Read
+        // transparently by commands::load_graph on every load — these two
+        // commands are only for the sidebar's own checkboxes to read/write
+        // the current selection.
+        repo_registry::get_visible_branches,
+        repo_registry::set_visible_branches,
         // Pluggable external diff/merge tools (backlog #12): app-level tool
         // settings (JSON under app_config_dir(), same shape as
         // repo_registry.rs) + delegate entirely to `git difftool`/

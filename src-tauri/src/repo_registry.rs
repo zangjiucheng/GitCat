@@ -46,6 +46,48 @@ pub struct TrackedRepo {
     /// auto-show, never data loss.
     #[serde(default)]
     pub repo_summary_shown: bool,
+    /// Persisted branch-visibility filter for this repo's commit graph — see
+    /// `VisibleBranches`'s own doc comment. `#[serde(default)]` for the same
+    /// backward-compatibility reason as `repo_summary_shown` above: an
+    /// already-persisted file predating this field must still deserialize.
+    /// `None` means "no filter, show every branch" (today's behavior).
+    #[serde(default)]
+    pub visible_local_branches: Option<Vec<String>>,
+    #[serde(default)]
+    pub visible_remote_branches: Option<Vec<String>>,
+}
+
+/// A repo's branch-visibility filter, as read by `commands::load_graph`
+/// (transparently, on every load) and written by the sidebar's own branch
+/// checkboxes. `local`/`remote` are INDEPENDENT: each is its own `None`
+/// ("no filter for this kind — show every branch of it") or `Some`
+/// (filtering active for this kind — an empty `Vec` legitimately means
+/// "none of this kind", never confused with "no filter" the way an empty
+/// `Vec` alone would be). Filtering local branches while leaving every
+/// remote fully visible (or vice versa) is a normal, expected combination —
+/// see `git_read::read_repo`'s own doc comment for exactly how each side is
+/// applied to the revwalk independently.
+#[derive(Serialize, Deserialize, Clone, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VisibleBranches {
+    pub local: Option<Vec<String>>,
+    pub remote: Option<Vec<String>>,
+}
+
+/// Plain helper (not a `#[tauri::command]`) — shared by `get_visible_branches`
+/// below AND by `commands::load_graph`, which calls this directly to apply
+/// the filter transparently on every graph load. An untracked repo (no row
+/// in the registry yet) resolves to `{local: None, remote: None}` — same
+/// "no filter" meaning as an explicitly-tracked repo that's never set one.
+pub fn visible_branches_for(app: &AppHandle<Wry>, path: &str) -> Result<VisibleBranches, String> {
+    let registry = registry_path(app)?;
+    let norm = normalize(path);
+    let repos = load_from(&registry)?;
+    let row = repos.iter().find(|r| r.path == norm);
+    Ok(VisibleBranches {
+        local: row.and_then(|r| r.visible_local_branches.clone()),
+        remote: row.and_then(|r| r.visible_remote_branches.clone()),
+    })
 }
 
 #[derive(Serialize, Deserialize)]
@@ -165,7 +207,13 @@ pub fn add_tracked_repo(app: AppHandle<Wry>, path: String) -> Result<Vec<Tracked
     let norm = normalize(&path);
     let mut repos = load_from(&registry)?;
     if !repos.iter().any(|r| r.path == norm) {
-        repos.push(TrackedRepo { path: norm, last_opened_at: None, repo_summary_shown: false });
+        repos.push(TrackedRepo {
+            path: norm,
+            last_opened_at: None,
+            repo_summary_shown: false,
+            visible_local_branches: None,
+            visible_remote_branches: None,
+        });
         save_to(&registry, &repos)?;
     }
     Ok(repos)
@@ -202,7 +250,13 @@ pub fn track_repo_opened(app: AppHandle<Wry>, path: String) -> Result<Vec<Tracke
     let mut repos = load_from(&registry)?;
     match repos.iter_mut().find(|r| r.path == norm) {
         Some(r) => r.last_opened_at = Some(now),
-        None => repos.push(TrackedRepo { path: norm, last_opened_at: Some(now), repo_summary_shown: false }),
+        None => repos.push(TrackedRepo {
+            path: norm,
+            last_opened_at: Some(now),
+            repo_summary_shown: false,
+            visible_local_branches: None,
+            visible_remote_branches: None,
+        }),
     }
     save_to(&registry, &repos)?;
     Ok(repos)
@@ -244,10 +298,54 @@ pub fn claim_repo_summary_first_open(app: AppHandle<Wry>, path: String) -> Resul
     }
     match repos.iter_mut().find(|r| r.path == norm) {
         Some(r) => r.repo_summary_shown = true,
-        None => repos.push(TrackedRepo { path: norm, last_opened_at: None, repo_summary_shown: true }),
+        None => repos.push(TrackedRepo {
+            path: norm,
+            last_opened_at: None,
+            repo_summary_shown: true,
+            visible_local_branches: None,
+            visible_remote_branches: None,
+        }),
     }
     save_to(&registry, &repos)?;
     Ok(true)
+}
+
+/// JS: `commands.getVisibleBranches(path)`.
+#[tauri::command]
+#[specta::specta]
+pub fn get_visible_branches(app: AppHandle<Wry>, path: String) -> Result<VisibleBranches, String> {
+    visible_branches_for(&app, &path)
+}
+
+/// Independently upserts (same defensive shape as `track_repo_opened`/
+/// `claim_repo_summary_first_open` — doesn't assume a row already exists for
+/// this path). JS: `commands.setVisibleBranches(path, local, remote)`.
+#[tauri::command]
+#[specta::specta]
+pub fn set_visible_branches(
+    app: AppHandle<Wry>,
+    path: String,
+    local: Option<Vec<String>>,
+    remote: Option<Vec<String>>,
+) -> Result<(), String> {
+    let _guard = registry_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let registry = registry_path(&app)?;
+    let norm = normalize(&path);
+    let mut repos = load_from(&registry)?;
+    match repos.iter_mut().find(|r| r.path == norm) {
+        Some(r) => {
+            r.visible_local_branches = local;
+            r.visible_remote_branches = remote;
+        }
+        None => repos.push(TrackedRepo {
+            path: norm,
+            last_opened_at: None,
+            repo_summary_shown: false,
+            visible_local_branches: local,
+            visible_remote_branches: remote,
+        }),
+    }
+    save_to(&registry, &repos)
 }
 
 #[cfg(test)]
@@ -307,7 +405,7 @@ mod tests {
                 scope.spawn(move || {
                     let _guard = registry_lock().lock().unwrap_or_else(|e| e.into_inner());
                     let mut repos = load_from(path).expect("load under lock should succeed");
-                    repos.push(TrackedRepo { path: format!("/repo/{i}"), last_opened_at: None, repo_summary_shown: false });
+                    repos.push(TrackedRepo { path: format!("/repo/{i}"), last_opened_at: None, repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None });
                     save_to(path, &repos).expect("save under lock should succeed");
                 });
             }
@@ -332,8 +430,8 @@ mod tests {
         let path = dir.join("tracked_repos.json");
 
         let repos = vec![
-            TrackedRepo { path: "/tmp/repo-a".into(), last_opened_at: Some(1_720_000_000), repo_summary_shown: false },
-            TrackedRepo { path: "/tmp/repo-b".into(), last_opened_at: None, repo_summary_shown: true },
+            TrackedRepo { path: "/tmp/repo-a".into(), last_opened_at: Some(1_720_000_000), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None },
+            TrackedRepo { path: "/tmp/repo-b".into(), last_opened_at: None, repo_summary_shown: true, visible_local_branches: None, visible_remote_branches: None },
         ];
         save_to(&path, &repos).expect("save_to failed");
 
@@ -405,6 +503,8 @@ mod tests {
                     path: norm.to_string(),
                     last_opened_at: None,
                     repo_summary_shown: true,
+                    visible_local_branches: None,
+                    visible_remote_branches: None,
                 }),
             }
             save_to(path, &repos).expect("save should succeed");
