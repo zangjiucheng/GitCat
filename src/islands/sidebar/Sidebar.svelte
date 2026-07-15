@@ -183,6 +183,15 @@
             }}
           />
           <span class="rname">{b.name}</span>
+          <button
+            class="copy-name"
+            title={sidebarCtrl.copiedBranch === b.name ? "Copied!" : "Copy branch name"}
+            aria-label="Copy branch name {b.name}"
+            onclick={(e) => {
+              e.stopPropagation();
+              sidebarCtrl.copyBranchName(b.name);
+            }}>{sidebarCtrl.copiedBranch === b.name ? "✓" : "📋"}</button
+          >
           {#if sidebarCtrl.busyTarget === b.name}
             <span class="spinner"></span>
           {:else if b.ahead || b.behind}
@@ -288,6 +297,15 @@
               }}
             />
             <span class="dot" style="background:var(--l{gi % 7})"></span><span class="rname">{r.name}</span>
+            <button
+              class="copy-name"
+              title={sidebarCtrl.copiedBranch === r.name ? "Copied!" : "Copy branch name"}
+              aria-label="Copy branch name {r.name}"
+              onclick={(e) => {
+                e.stopPropagation();
+                sidebarCtrl.copyBranchName(r.name);
+              }}>{sidebarCtrl.copiedBranch === r.name ? "✓" : "📋"}</button
+            >
             {#if sidebarCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
           </div>
         {/each}

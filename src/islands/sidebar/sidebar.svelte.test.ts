@@ -89,6 +89,7 @@ function resetAll() {
   sidebarCtrl.newTagFrom = "";
   sidebarCtrl.hasRepo = false;
   sidebarCtrl.copiedSnapshotSha = "";
+  sidebarCtrl.copiedBranch = "";
   sidebarCtrl.submodulesRecursive = false;
   sidebarCtrl.newSubmoduleOpen = false;
   sidebarCtrl.newSubmoduleUrl = "";
@@ -1714,6 +1715,39 @@ describe("copySnapshotSha", () => {
 
     vi.advanceTimersByTime(900);
     expect(sidebarCtrl.copiedSnapshotSha).toBe("");
+    vi.useRealTimers();
+  });
+});
+
+describe("copyBranchName", () => {
+  it("writes to the clipboard and clears the copied flag after a delay", () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    sidebarCtrl.copyBranchName("feature/inline-diff");
+    expect(writeText).toHaveBeenCalledWith("feature/inline-diff");
+    expect(sidebarCtrl.copiedBranch).toBe("feature/inline-diff");
+
+    vi.advanceTimersByTime(900);
+    expect(sidebarCtrl.copiedBranch).toBe("");
+    vi.useRealTimers();
+  });
+
+  it("a later copy's own timeout doesn't clear feedback for an even-later copy of a DIFFERENT name", () => {
+    vi.useFakeTimers();
+    Object.assign(navigator, { clipboard: { writeText: vi.fn() } });
+
+    sidebarCtrl.copyBranchName("main");
+    vi.advanceTimersByTime(500);
+    sidebarCtrl.copyBranchName("dev"); // a second copy before the first's timeout fires
+    expect(sidebarCtrl.copiedBranch).toBe("dev");
+
+    vi.advanceTimersByTime(500); // main's original 900ms timeout fires here — must be a no-op now
+    expect(sidebarCtrl.copiedBranch).toBe("dev");
+
+    vi.advanceTimersByTime(400); // dev's own 900ms timeout
+    expect(sidebarCtrl.copiedBranch).toBe("");
     vi.useRealTimers();
   });
 });

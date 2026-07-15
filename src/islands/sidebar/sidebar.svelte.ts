@@ -335,6 +335,10 @@ class SidebarState {
   // empty-state branch) that the rest of the file already needed anyway.
   hasRepo = $state(false);
   copiedSnapshotSha = $state("");
+  // Which branch/remote-ref name's "copy" button was last clicked — "" when
+  // none (or the 900ms feedback window has already elapsed). Same shape as
+  // copiedSnapshotSha above.
+  copiedBranch = $state("");
   // "Update all submodules" bulk toggle — deliberately only exposed at the
   // bulk level, not per-row (see initAndUpdateSubmodule/updateSubmodule
   // below): a single row's "Init + update"/"Update" button stays simple
@@ -978,6 +982,19 @@ class SidebarState {
     this.copiedSnapshotSha = sha;
     setTimeout(() => {
       if (this.copiedSnapshotSha === sha) this.copiedSnapshotSha = "";
+    }, 900);
+  }
+
+  // Same click-to-copy + brief "copied" feedback shape as copySnapshotSha
+  // above (and Detail.svelte's own commit-hash copy) — a dedicated hover-
+  // revealed button next to .rname, not the row's own click (which already
+  // means "check out this branch"; stealing that gesture for copy would
+  // shrink/replace a much more frequently used action).
+  copyBranchName(name: string) {
+    navigator.clipboard?.writeText(name);
+    this.copiedBranch = name;
+    setTimeout(() => {
+      if (this.copiedBranch === name) this.copiedBranch = "";
     }, 900);
   }
 

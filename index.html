@@ -247,6 +247,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    fixed-size children (.dot/.ab). */
 .ref-item .rb-check{flex:none;margin:0;cursor:pointer}
 .ref-item .rb-check:disabled{cursor:default;opacity:.6}
+/* Copy-branch-name — sits right after .rname, hover-revealed like
+   .ref-menu (same opacity:0/1 idiom), but its OWN click never checks out
+   the row: the row's own click already means "check out this branch", so
+   copy needs a distinct, small target rather than stealing that gesture. */
+.ref-item .copy-name{flex:none;opacity:0;border:none;background:transparent;color:var(--muted);cursor:pointer;
+  font-size:11px;line-height:1;padding:2px 4px;border-radius:4px}
+.ref-item:hover .copy-name{opacity:1}
+.ref-item .copy-name:hover{background:var(--elevated);color:var(--text)}
 .ref-item.new-branch:hover{background:color-mix(in srgb,var(--accent) 12%,transparent)}
 /* Any row mid-checkout/delete dims and stops accepting clicks — the
    sidebar-wide `busy` flag covers every row (not just the one acted on)
