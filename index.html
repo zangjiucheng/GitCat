@@ -120,8 +120,16 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    read as one unit, not three peers of Fetch/Pull/Push. */
 .tb-cluster{display:flex;align-items:center;gap:6px}
 .repo-pick{display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--elevated);
-  border:1px solid var(--border);border-radius:var(--r-control);font-weight:600}
+  border:1px solid var(--border);border-radius:var(--r-control);font-weight:600;min-width:0}
+/* Truncates instead of wrapping at narrow window widths — with no rule at
+   all, a hyphenated repo name (e.g. "viztracer-source") had a natural
+   soft-wrap point the browser preferred over shrinking the toolbar, so it
+   wrapped to two lines instead. overflow:hidden zeroes out this flex item's
+   automatic min-width (and .repo-pick's own min-width:0 above lets that
+   shrink propagate up to it), so it shrinks and ellipsizes like every other
+   chip's text does instead. */
 .repo-pick .chev{color:var(--muted)}
+.repo-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .branch-pill{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:var(--r-pill);
   background:color-mix(in srgb,var(--accent) 16%,transparent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);
   font-weight:600;font-size:12px}
