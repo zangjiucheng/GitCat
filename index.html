@@ -24,7 +24,7 @@
   --mono:ui-monospace,"SF Mono","Menlo","Cascadia Code","Consolas",monospace;
   --display:"SF Pro Rounded",ui-rounded,"Nunito","Segoe UI Variable",system-ui,sans-serif;
   --r-card:12px; --r-panel:10px; --r-control:8px; --r-pill:999px; --r-chip:4px;
-  --topbar-h:46px; --sidebar-w:264px; --detail-w:344px; --ribbon-w:46px; --nook-h:132px; --row-h:26px;
+  --topbar-h:46px; --sidebar-w:264px; --detail-w:344px; --ribbon-w:46px; --nook-h:132px; --row-h:26px; --term-h:280px;
   --shadow:0 6px 20px rgba(16,18,27,.10), 0 1px 3px rgba(16,18,27,.08);
   color-scheme:light;
 }
@@ -654,6 +654,15 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .diffview{font-family:var(--mono);font-size:11.5px;line-height:1.55;background:var(--bg);border:1px solid var(--border);
   border-radius:var(--r-panel);overflow:auto;max-height:320px;margin-top:2px}
 .diff-file-h{position:sticky;top:0;background:var(--elevated);border-bottom:1px solid var(--border);padding:5px 10px;font-weight:600;font-size:11px;color:var(--muted);z-index:1}
+/* width:fit-content;min-width:100% — without an explicit width, this
+   block-level flex row defaults to its scroll container's own VISIBLE
+   width (not the full scrollable content width `white-space:pre`'s
+   non-wrapping text creates), so its background stopped exactly at the
+   edge of the first screenful: scrolling .diffview right at all moved past
+   a colored row into painted-but-uncolored overflow. fit-content lets a
+   long line's own row grow to cover its full (unwrappable) text width;
+   min-width:100% keeps a short line's row filling the container exactly
+   like before, so nothing regresses for the common unscrolled case. */
 .diff-line{display:flex;white-space:pre;padding-right:8px;width:fit-content;min-width:100%}
 .diff-line .ln{flex:none;width:34px;text-align:right;padding-right:8px;color:var(--muted);opacity:.6;user-select:none}
 .diff-line .mk{flex:none;width:14px;text-align:center;user-select:none}
@@ -906,6 +915,39 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .bisect-panel-head .x{width:22px;height:22px;display:grid;place-items:center;border-radius:6px;
   border:1px solid var(--border);background:var(--elevated);color:var(--muted)}
 .bisect-panel-head .x:hover{border-color:var(--muted);color:var(--text)}
+
+/* ============================== BUILT-IN TERMINAL drawer ==============================
+   A real PTY-backed shell (see src-tauri/src/terminal.rs), toggled via the
+   Tools menu/⌘K/CmdOrCtrl+` (src/islands/terminal). Deliberately NOT a
+   .scrim modal — a terminal you can't glance at the graph/detail panes
+   alongside would defeat half the point of it living inside the app at
+   all. Slides up from the bottom instead, same show/hide idiom as
+   .bisect-panel/.scrim (opacity+transform, visibility delayed until the
+   transition finishes so a hidden drawer doesn't eat clicks or show up in
+   the a11y tree) but full-width and resizable (.term-drag), since an
+   80-column shell needs real room, not a small floating chip. */
+.term-drawer{position:fixed;left:0;right:0;bottom:0;height:var(--term-h);z-index:250;
+  background:var(--bg);border-top:1px solid var(--border);box-shadow:0 -8px 24px rgba(0,0,0,.35);
+  display:flex;flex-direction:column;transform:translateY(100%);
+  visibility:hidden;transition:transform .18s ease,visibility 0s linear .18s}
+.term-drawer.on{transform:none;visibility:visible;transition:transform .18s ease}
+.term-drag{height:6px;flex:none;cursor:row-resize}
+.term-drag:hover{background:color-mix(in srgb,var(--accent) 30%,transparent)}
+.term-head{display:flex;align-items:center;gap:10px;flex:none;padding:6px 10px;
+  background:var(--panel);border-bottom:1px solid var(--border);font-size:12px}
+.term-title{font-weight:600}
+.term-ic{font-family:var(--mono);font-weight:700;color:var(--accent)}
+.term-exited{color:var(--muted)}
+.term-btn{font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;border:1px solid var(--border);
+  background:var(--elevated);color:var(--text)}
+.term-btn:hover{border-color:var(--muted)}
+.term-x{margin-left:auto;width:22px;height:22px;flex:none;display:grid;place-items:center;border-radius:6px;
+  border:1px solid var(--border);background:var(--elevated);color:var(--muted)}
+.term-x:hover{border-color:var(--muted);color:var(--text)}
+.term-body{flex:1;position:relative;min-height:0}
+.term-xterm{position:absolute;inset:0;padding:4px 8px}
+.term-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:8px;
+  font-size:12.5px;background:var(--bg);text-align:center;padding:0 20px}
 
 /* ============================== MODALS ============================== */
 .scrim{position:fixed;inset:0;z-index:300;background:rgba(18,20,28,.62);backdrop-filter:blur(2px);

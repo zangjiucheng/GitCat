@@ -31,11 +31,12 @@ pub mod repo_summary; // Repository Summary: git-log-derived churn/contributor/a
 pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
 pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 deinit/remove
-pub mod terminal; // "Open Terminal": launch the OS's own terminal app at a repo's root
+pub mod terminal; // "Open Terminal": a real PTY-backed shell embedded in GitCat's own UI
 pub mod tool_settings; // backlog #12: external diff/merge tool settings + delegate entirely to `git difftool`/`git mergetool`
 pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious ownership"
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
 
+use tauri::Manager;
 use tauri_specta::{collect_commands, Builder};
 
 /// The tauri-specta builder — the SINGLE source of truth for the command set,
@@ -247,10 +248,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // repo_files.rs's own module doc.
         repo_files::read_repo_file,
         repo_files::write_repo_file,
-        // "Open Terminal": launches the OS's own terminal app at a repo's
-        // root — replaces the old submodule foreach bulk-command-runner
-        // feature (see terminal.rs's own module doc).
-        terminal::open_terminal,
+        // "Open Terminal": a real PTY-backed shell embedded in GitCat's own
+        // UI (a bottom drawer) — see terminal.rs's own module doc.
+        terminal::terminal_spawn,
+        terminal::terminal_write,
+        terminal::terminal_resize,
+        terminal::terminal_kill,
     ])
 }
 
@@ -282,6 +285,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(watch::WatchState::default())
         .manage(git_bisect::BisectRunState::default())
+        .manage(terminal::TerminalRegistry::default())
         // invoke_handler is the tauri-specta equivalent of generate_handler! —
         // command runtime behavior (Ok resolves / Err rejects) is unchanged.
         .invoke_handler(builder.invoke_handler())
@@ -291,8 +295,17 @@ pub fn run() {
             builder.mount_events(app);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // `ExitRequested` (not `Exit`): fires once, before the process
+            // actually goes away, guaranteeing every open built-in-terminal
+            // shell (see terminal.rs's own module doc) gets killed rather
+            // than orphaned as a background process once GitCat quits.
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                app_handle.state::<terminal::TerminalRegistry>().kill_all();
+            }
+        });
 }
 
 /// `cargo test export_bindings` regenerates `src/ipc/bindings.ts` from the Rust

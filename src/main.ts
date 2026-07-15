@@ -22,7 +22,8 @@ import { forcePushCtrl } from "./islands/forcepush/forcepush.svelte.ts";
 import ExportPatches from "./islands/exportpatches/ExportPatches.svelte";
 import { exportPatchesCtrl } from "./islands/exportpatches/exportpatches.svelte.ts";
 import { applyPatchCtrl } from "./islands/applypatch/applypatch.svelte.ts";
-import { openTerminalCtrl } from "./islands/openterminal/openterminal.svelte.ts";
+import Terminal from "./islands/terminal/Terminal.svelte";
+import { terminalCtrl } from "./islands/terminal/terminal.svelte.ts";
 import PickaxeSearch from "./islands/pickaxesearch/PickaxeSearch.svelte";
 import { pickaxeSearchCtrl } from "./islands/pickaxesearch/pickaxesearch.svelte.ts";
 import CodeSearch from "./islands/codesearch/CodeSearch.svelte";
@@ -188,6 +189,13 @@ mount(DanglingRecovery, { target: document.body });
 // Commits, not repo-independent like Repositories/External Tools (see
 // repofiles.svelte.ts's own header doc).
 mount(RepoFiles, { target: document.body });
+// Built-in terminal: a real PTY-backed shell embedded in GitCat's own UI (a
+// bottom drawer) — see terminal.svelte.ts's own header doc. Unlike every
+// on-demand modal above, this ISN'T a .scrim overlay, so it stays mounted
+// and visually toggled (`.term-drawer.on`) rather than shown/hidden by a
+// controller-owned boolean gating the whole component's render, keeping its
+// one xterm.js instance alive (and its scrollback intact) across hide/show.
+mount(Terminal, { target: document.body });
 
 // Native app menu -> frontend action bridge (see src-tauri/src/menu.rs).
 // Only the items whose action lives in Svelte-controller land forward here —
@@ -290,7 +298,7 @@ if (IN_TAURI) {
         resolver.pullRebase(bridge.CUR_REPO as unknown as string);
         break;
       case "open-terminal":
-        openTerminalCtrl.openTerminal(bridge.CUR_REPO as unknown as string);
+        terminalCtrl.toggle(bridge.CUR_REPO as unknown as string);
         break;
       case "force-push-lease":
         forcePushCtrl.forcePushLease(bridge.CUR_REPO as unknown as string);

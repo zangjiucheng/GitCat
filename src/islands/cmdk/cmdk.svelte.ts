@@ -24,7 +24,7 @@ import { resolver } from "../resolver/resolver.svelte.ts";
 import { forcePushCtrl } from "../forcepush/forcepush.svelte.ts";
 import { exportPatchesCtrl } from "../exportpatches/exportpatches.svelte.ts";
 import { applyPatchCtrl } from "../applypatch/applypatch.svelte.ts";
-import { openTerminalCtrl } from "../openterminal/openterminal.svelte.ts";
+import { terminalCtrl } from "../terminal/terminal.svelte.ts";
 import { pickaxeSearchCtrl } from "../pickaxesearch/pickaxesearch.svelte.ts";
 import { codeSearchCtrl } from "../codesearch/codesearch.svelte.ts";
 import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
@@ -186,8 +186,8 @@ const ACTIONS: ActionItem[] = [
     type: "action",
     id: "open-terminal",
     label: "Open Terminal",
-    hint: "Open a real terminal at this repository's root",
-    run: () => openTerminalCtrl.openTerminal(bridge.CUR_REPO as unknown as string),
+    hint: "Toggle the built-in terminal at this repository's root",
+    run: () => terminalCtrl.toggle(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",

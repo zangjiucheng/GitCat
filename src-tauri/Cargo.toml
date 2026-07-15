@@ -31,4 +31,6 @@ specta-typescript = "=0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 notify-debouncer-mini = "0.7.0"
+portable-pty = "0.9"
+base64 = "0.22"
 

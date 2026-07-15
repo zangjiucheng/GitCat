@@ -225,12 +225,15 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         let uncommitted_changes = MenuItemBuilder::with_id("uncommitted-changes", "Uncommitted Changes").build(app)?;
         let pull_merge = MenuItemBuilder::with_id("pull-merge", "Pull (Merge)").build(app)?;
         let pull_rebase = MenuItemBuilder::with_id("pull-rebase", "Pull (Rebase)").build(app)?;
-        // Opens a real OS terminal at the repo's root (see terminal.rs's own
-        // module doc) — an immediate action like Pull above, not a dialog,
-        // so no "…" ellipsis. Ranked below the two Pull variants but above
-        // Force Push, matching this menu's increasing-order-of-risk ordering
-        // (opening a terminal is safe; the items below it are not).
-        let open_terminal = MenuItemBuilder::with_id("open-terminal", "Open Terminal").build(app)?;
+        // Toggles the built-in terminal drawer at the repo's root (a real
+        // PTY-backed shell embedded in GitCat's own UI — see terminal.rs's
+        // own module doc); an immediate action like Pull above, not a
+        // dialog, so no "…" ellipsis. Ranked below the two Pull variants but
+        // above Force Push, matching this menu's increasing-order-of-risk
+        // ordering (a terminal is safe; the items below it are not).
+        // CmdOrCtrl+` mirrors the same shortcut's meaning in every other
+        // editor with an integrated terminal (VS Code, JetBrains IDEs, …).
+        let open_terminal = MenuItemBuilder::with_id("open-terminal", "Open Terminal").accelerator("CmdOrCtrl+`").build(app)?;
         // Force push: TWO separate items (never one item + a checkbox) so a
         // user can never reach the destructive raw-force action by
         // fat-fingering the safer lease flow — see git_remote.rs's

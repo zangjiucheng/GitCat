@@ -1629,11 +1629,59 @@ async writeRepoFile(path: string, fileName: string, content: string) : Promise<R
     return await TAURI_INVOKE("write_repo_file", { path, fileName, content });
 },
 /**
- * JS: `commands.openTerminal(path)`.
+ * JS: `commands.terminalSpawn(path)`. Returns the new session's id, which
+ * every other command below takes to address it.
  */
-async openTerminal(path: string) : Promise<Result<null, string>> {
+async terminalSpawn(path: string) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("open_terminal", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("terminal_spawn", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.terminalWrite(id, data)` — `data` is plain UTF-8 text (see
+ * this module's own doc comment for why only the OUTPUT direction is
+ * base64). A session that's already gone (e.g. the shell exited on its own
+ * right before this call landed) is reported as an error rather than
+ * silently ignored, unlike `terminal_kill`'s own idempotent close, since a
+ * keystroke that silently went nowhere is exactly the kind of "why isn't
+ * anything happening" confusion this app just fixed for the diff/history
+ * loading-indicator gap.
+ */
+async terminalWrite(id: string, data: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("terminal_write", { id, data }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.terminalResize(id, cols, rows)` — called by the frontend's
+ * `FitAddon` whenever the drawer's own size changes (mount, window resize,
+ * drag-to-resize), so the shell's own idea of the terminal size (anything
+ * that cares, e.g. `$COLUMNS`, a full-screen TUI like `less`/`vim`) tracks
+ * what's actually visible.
+ */
+async terminalResize(id: string, cols: number, rows: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("terminal_resize", { id, cols, rows }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.terminalKill(id)` — ends the session and drops it from the
+ * registry. Idempotent: a session that's already gone is a no-op success,
+ * not an error, since "close a thing that's already closed" is a UI action
+ * (the drawer's own × button), not a report of the session's own liveness.
+ */
+async terminalKill(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("terminal_kill", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
