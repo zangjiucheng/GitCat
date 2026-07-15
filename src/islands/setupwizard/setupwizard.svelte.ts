@@ -31,7 +31,7 @@ export type SetupWizardStep = "welcome" | "pick" | "identity" | "done";
 // Canned data for design-mode (!IN_TAURI), same spirit as every other
 // island's DEMO_* constants, so the browser preview still demos the full flow.
 const DEMO_PATH = "/home/demo/my-project";
-const DEMO_IDENTITY: GitIdentity = { name: null, email: null, configured: false };
+const DEMO_IDENTITY: GitIdentity = { name: null, email: null, configured: false, local: false };
 
 const DISMISSED_KEY = "gitcat.setupWizardDismissed";
 
@@ -248,13 +248,13 @@ class SetupWizardState {
       const name = this.nameInput.trim();
       const email = this.emailInput.trim();
       if (this.demo) {
-        this.identity = { name, email, configured: true };
+        this.identity = { name, email, configured: true, local: true };
         this.step = "done";
         return;
       }
       const res = await commands.setGitIdentity(this.repoPath, name, email);
       if (res.ok) {
-        this.identity = { name, email, configured: true };
+        this.identity = { name, email, configured: true, local: true };
         this.step = "done";
       } else {
         this.saveError = res.message || "Could not set the repository identity.";

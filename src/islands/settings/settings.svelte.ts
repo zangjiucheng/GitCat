@@ -72,8 +72,10 @@ export function saveSettings(partial: Partial<PersistedSettings>): PersistedSett
 }
 
 // Canned identity for design-mode (!IN_TAURI), same spirit as setupwizard's
-// own DEMO_IDENTITY.
-const DEMO_IDENTITY: GitIdentity = { name: "Demo User", email: "demo@example.com", configured: true };
+// own DEMO_IDENTITY. local:false so the browser preview also demos the
+// "using your global identity" messaging (see Settings.svelte), not just
+// the plain-filled-in-fields case.
+const DEMO_IDENTITY: GitIdentity = { name: "Demo User", email: "demo@example.com", configured: true, local: false };
 
 class SettingsState {
   open = $state(false);
@@ -183,13 +185,13 @@ class SettingsState {
       const name = this.nameInput.trim();
       const email = this.emailInput.trim();
       if (!IN_TAURI) {
-        this.identity = { name, email, configured: true };
+        this.identity = { name, email, configured: true, local: true };
         bridge.tama.say("This is where this repository's git identity would save (demo).");
         return;
       }
       const res = await commands.setGitIdentity(this.repo, name, email);
       if (res.ok) {
-        this.identity = { name, email, configured: true };
+        this.identity = { name, email, configured: true, local: true };
         bridge.tama.say("Git identity updated.");
       } else {
         this.identityError = res.message || "Could not update this repository's git identity.";

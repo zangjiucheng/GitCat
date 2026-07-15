@@ -69,6 +69,11 @@
         {#if settingsCtrl.identityError}
           <div class="pl-err" style="margin-bottom:8px">{settingsCtrl.identityError}</div>
         {/if}
+        {#if settingsCtrl.identity?.configured && !settingsCtrl.identity.local}
+          <p class="mut" style="font-size:11.5px;margin:0 0 8px">
+            No identity set for this repository specifically — showing your <b>global</b> git identity below. Save to set one just for this repo instead.
+          </p>
+        {/if}
         <div class="confirm-type">
           <label for="setName">Name</label>
           <input id="setName" autocomplete="off" spellcheck="false" bind:value={settingsCtrl.nameInput} disabled={settingsCtrl.identitySaving} />

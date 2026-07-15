@@ -63,7 +63,7 @@ function err(error: string): { status: "error"; error: string } {
   return { status: "error", error };
 }
 function identity(partial: Partial<GitIdentity> = {}): GitIdentity {
-  return { name: null, email: null, configured: false, ...partial };
+  return { name: null, email: null, configured: false, local: false, ...partial };
 }
 
 function resetCtrl() {
@@ -271,6 +271,22 @@ describe("refreshIdentity", () => {
     expect(commands.getGitIdentity).not.toHaveBeenCalled();
     expect(settingsCtrl.identity?.configured).toBe(true);
   });
+
+  it("surfaces local:false as-is when the backend falls back to a global identity", async () => {
+    settingsCtrl.repo = "/repo/a";
+    vi.mocked(commands.getGitIdentity).mockResolvedValueOnce(
+      ok(identity({ name: "Global User", email: "global@example.com", configured: true, local: false })),
+    );
+
+    await settingsCtrl.refreshIdentity();
+
+    expect(settingsCtrl.identity?.local).toBe(false);
+    expect(settingsCtrl.identity?.configured).toBe(true);
+    // The fields still pre-fill from the effective (global-sourced) values —
+    // Save would turn this into a repo-local override, but nothing forces that.
+    expect(settingsCtrl.nameInput).toBe("Global User");
+    expect(settingsCtrl.emailInput).toBe("global@example.com");
+  });
 });
 
 describe("saveIdentity", () => {
@@ -283,7 +299,7 @@ describe("saveIdentity", () => {
     await settingsCtrl.saveIdentity();
 
     expect(commands.setGitIdentity).toHaveBeenCalledWith("/repo/a", "A. Turing", "alan@enigma.dev");
-    expect(settingsCtrl.identity).toEqual({ name: "A. Turing", email: "alan@enigma.dev", configured: true });
+    expect(settingsCtrl.identity).toEqual({ name: "A. Turing", email: "alan@enigma.dev", configured: true, local: true });
     expect(bridge.tama.say).toHaveBeenCalled();
   });
 
