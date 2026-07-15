@@ -100,54 +100,98 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
     };
 
     let tools_menu = {
-        // No accelerators — same reasoning as Repository's Fetch/Pull/Push and
-        // View's Toggle Theme/Command Palette above. These 4 used to live in
-        // a permanent bottom drawer (4 tabs, always taking up a grid row);
-        // now they're on-demand, opened from here or matched in ⌘K (see
-        // cmdk.svelte.ts) — each forwards through the same menu-action path
-        // as everything else in this file.
-        let bisect = MenuItemBuilder::with_id("bisect", "Bisect\u{2026}").build(app)?;
-        let reflog = MenuItemBuilder::with_id("reflog", "Reflog\u{2026}").build(app)?;
-        let rerere = MenuItemBuilder::with_id("rerere", "Rerere\u{2026}").build(app)?;
-        let plumbing = MenuItemBuilder::with_id("plumbing", "Plumbing\u{2026}").build(app)?;
-        // Repository Summary: a git-log-derived diagnostic (churn hotspots,
-        // contributor ranking/bus factor, monthly activity, problem areas) —
-        // same dialog-opener "…" convention as the items around it. Also
-        // shown automatically once, the first time a repo is opened (see
-        // reposummary.svelte.ts's maybeAutoShow), independent of this menu
-        // item, which is just the on-demand entry point.
-        let repo_summary = MenuItemBuilder::with_id("repo-summary", "Repository Summary\u{2026}").build(app)?;
+        // The Tools menu grew to ~22 flat items across this app's backlog
+        // (#9-#14 plus several later additions) — genuinely too much to scan
+        // as one list. Related dialog-openers are grouped into 3 nested
+        // submenus below (Search/History/Patches); everything else stays a
+        // flat top-level item, same as before. Nesting is purely a menu-
+        // STRUCTURE change — every item keeps its own id/label/accelerator
+        // unchanged, so handle_event()'s match arm and every frontend
+        // reference to these ids (cmdk.svelte.ts, main.ts) need no changes
+        // at all; only where an item lives in the tree moved.
+
+        // "Search" ▸ — the two content-search tools (backlog #10 + its own
+        // later full-text-code counterpart), a natural, already-documented
+        // pair (see code_search.rs's own module doc on how they complement
+        // each other). ⌘F/⌘⇧F stay on the individual items, not the submenu
+        // itself (a submenu can't carry an accelerator) — same "Find" /
+        // "Find in Files" pairing reasoning as before.
+        let search_menu = {
+            // Search Code: full-text search of the current checkout (or a
+            // chosen historical commit's tree) via `git grep` — searches
+            // file CONTENT, returns file+line+text (see code_search.rs's own
+            // module doc). ⌘F: the near-universal "Find" binding, and this
+            // is the closest thing GitCat has to it (no in-app text-search
+            // elsewhere in the UI competes for it).
+            let code_search = MenuItemBuilder::with_id("code-search", "Search Code\u{2026}")
+                .accelerator("CmdOrCtrl+F")
+                .build(app)?;
+            // Pickaxe / diff-content search (backlog #10): searches the
+            // whole history's DIFFS, not just commit messages — complements
+            // Search Code above (which searches content, not diffs; see
+            // pickaxesearch.svelte.ts's own header doc). ⌘⇧F mirrors the
+            // "search across everything" binding several editors already
+            // use for a project/history-wide search (e.g. VS Code's/Xcode's
+            // own ⌘⇧F "Find in Files"), pairing with Search Code's plain ⌘F.
+            let pickaxe_search = MenuItemBuilder::with_id("pickaxe-search", "Search Commit Content\u{2026}")
+                .accelerator("CmdOrCtrl+Shift+F")
+                .build(app)?;
+            SubmenuBuilder::new(app, "Search").item(&code_search).item(&pickaxe_search).build()?
+        };
+
+        // "History" ▸ — every read-only investigation/recovery tool over
+        // commit history. These 6 used to live in a permanent bottom drawer
+        // (the original 4: Bisect/Reflog/Rerere/Plumbing) or as flat Tools
+        // entries (Repository Summary, Dangling Commits) added later; all
+        // forward through the same menu-action path as everything else in
+        // this file, also matched in ⌘K (see cmdk.svelte.ts).
+        let history_menu = {
+            let bisect = MenuItemBuilder::with_id("bisect", "Bisect\u{2026}").build(app)?;
+            let reflog = MenuItemBuilder::with_id("reflog", "Reflog\u{2026}").build(app)?;
+            let rerere = MenuItemBuilder::with_id("rerere", "Rerere\u{2026}").build(app)?;
+            let plumbing = MenuItemBuilder::with_id("plumbing", "Plumbing\u{2026}").build(app)?;
+            // Repository Summary: a git-log-derived diagnostic (churn
+            // hotspots, contributor ranking/bus factor, monthly activity,
+            // problem areas). Also shown automatically once, the first time
+            // a repo is opened (see reposummary.svelte.ts's maybeAutoShow),
+            // independent of this menu item, which is just the on-demand
+            // entry point.
+            let repo_summary = MenuItemBuilder::with_id("repo-summary", "Repository Summary\u{2026}").build(app)?;
+            // fsck-based dangling-object recovery (backlog #13): commits
+            // `git fsck` finds with no ref/reflog pointing at them anymore
+            // (a hard reset, an amend, a dropped rebase commit, a deleted
+            // branch, …).
+            let dangling_recovery = MenuItemBuilder::with_id("dangling-recovery", "Dangling Commits\u{2026}").build(app)?;
+            SubmenuBuilder::new(app, "History")
+                .item(&bisect)
+                .item(&reflog)
+                .item(&rerere)
+                .item(&plumbing)
+                .item(&repo_summary)
+                .item(&dangling_recovery)
+                .build()?
+        };
+
+        // "Patches" ▸ (backlog #9, format-patch/am) — export/apply, a
+        // natural pair. "Export as Patch…" (single-commit) lives on the
+        // commit-menu instead (see commitmenu.svelte.ts), not here, since it
+        // needs a right-clicked commit as its target; these two are
+        // repo-global.
+        let patches_menu = {
+            let export_patches = MenuItemBuilder::with_id("export-patches", "Export Patches\u{2026}").build(app)?;
+            let apply_patch = MenuItemBuilder::with_id("apply-patch", "Apply Patch\u{2026}").build(app)?;
+            SubmenuBuilder::new(app, "Patches").item(&export_patches).item(&apply_patch).build()?
+        };
+
         let remotes = MenuItemBuilder::with_id("remotes", "Manage Remotes\u{2026}").build(app)?;
-        // Patch export/apply (backlog #9, format-patch/am): two dialog-openers,
-        // same "…" ellipsis convention as bisect/reflog/rerere/plumbing/remotes
-        // above — "Export as Patch…" (single-commit) lives on the commit-menu
-        // instead (see commitmenu.svelte.ts), not here, since it needs a
-        // right-clicked commit as its target; these two are repo-global.
-        let export_patches = MenuItemBuilder::with_id("export-patches", "Export Patches\u{2026}").build(app)?;
-        let apply_patch = MenuItemBuilder::with_id("apply-patch", "Apply Patch\u{2026}").build(app)?;
-        // Pickaxe / diff-content search (backlog #10): searches the whole
-        // history's DIFFS, not just commit messages — same dialog-opener
-        // "…" convention as the items above; repo-global like Manage
-        // Remotes/Export Patches/Apply Patch, not file-tree-scoped like
-        // Blame/File History (see pickaxesearch.svelte.ts's own header doc).
-        let pickaxe_search = MenuItemBuilder::with_id("pickaxe-search", "Search Commit Content\u{2026}").build(app)?;
-        // Search Code: full-text search of the current checkout (or a chosen
-        // historical commit's tree) via `git grep` — complements Pickaxe just
-        // above (which searches diffs and returns commits): this searches
-        // file CONTENT and returns file+line+text. Same dialog-opener "…"
-        // convention, repo-global like Pickaxe (see code_search.rs's own
-        // module doc).
-        let code_search = MenuItemBuilder::with_id("code-search", "Search Code\u{2026}").build(app)?;
-        // Multi-repository dashboard (backlog #11): unlike every other item in
-        // this submenu, this one does NOT need a repo open at all — it's the
-        // one place to check on OTHER tracked repos without leaving (or
-        // needing) whichever repo is currently open. Same dialog-opener "…"
-        // convention as the items above it.
+        // Multi-repository dashboard (backlog #11): unlike every other item
+        // in this submenu, this one does NOT need a repo open at all — it's
+        // the one place to check on OTHER tracked repos without leaving (or
+        // needing) whichever repo is currently open.
         let repositories = MenuItemBuilder::with_id("repositories", "Repositories\u{2026}").build(app)?;
         // Pluggable external diff/merge tools (backlog #12): a settings
         // modal, not a per-file action (those live on Detail.svelte/
         // Workdir.svelte's own file rows and Resolver.svelte instead) — same
-        // dialog-opener "…" convention as the items above it, and same
         // "reachable any time, no repo needed" shape as Repositories just
         // above (see externaltools.svelte.ts's own header doc).
         let external_tools = MenuItemBuilder::with_id("external-tools", "External Tools\u{2026}").build(app)?;
@@ -155,24 +199,24 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // auto-check-updates toggle, and a Git Identity section scoped to
         // whichever repo is open) — same "reachable any time, no repo
         // needed" shape as Repositories/External Tools just above (see
-        // settings.svelte.ts's own header doc).
-        let settings = MenuItemBuilder::with_id("settings", "Settings\u{2026}").build(app)?;
-        // fsck-based dangling-object recovery (backlog #13): commits `git
-        // fsck` finds with no ref/reflog pointing at them anymore (a hard
-        // reset, an amend, a dropped rebase commit, a deleted branch, …) —
-        // same dialog-opener "…" convention as the items above it, repo-
-        // scoped like Reflog/Rerere (not repo-independent like Repositories/
-        // External Tools just above).
-        let dangling_recovery = MenuItemBuilder::with_id("dangling-recovery", "Dangling Commits\u{2026}").build(app)?;
+        // settings.svelte.ts's own header doc). ⌘, is a deliberate exception
+        // to this submenu's usual "no accelerators" default — it's the
+        // near-universal Preferences/Settings binding on macOS (same "too
+        // standard to skip" reasoning as File's own ⌘O), kept here rather
+        // than moving the item into the app menu (where macOS convention
+        // usually places it) since that's a bigger, unrequested menu-
+        // structure change than this binding itself calls for.
+        let settings = MenuItemBuilder::with_id("settings", "Settings\u{2026}")
+            .accelerator("CmdOrCtrl+,")
+            .build(app)?;
         // .gitignore / .mailmap in-app editors (backlog #14, the FINAL
         // backlog item): view/edit these repo-root text files without
-        // leaving GitCat — same dialog-opener "…" convention as the items
-        // above it, repo-scoped like Reflog/Rerere/Dangling Commits (not
-        // repo-independent like Repositories/External Tools).
+        // leaving GitCat — repo-scoped like History's own items above (not
+        // repo-independent like Repositories/External Tools just above).
         let repo_files = MenuItemBuilder::with_id("repo-files", "Repo Files (.gitignore / .mailmap)\u{2026}").build(app)?;
         // Immediate-action items (no dialog, no ellipsis) — same convention
         // as Repository's Fetch/Pull/Push above. A separator sets them apart
-        // from the dialog-openers above them.
+        // from the dialog-openers/submenus above them.
         //
         // Jumps straight to the pinned "Uncommitted changes" row (equivalent
         // to clicking it directly) and resets scroll — see legacy/main.ts's
@@ -205,21 +249,15 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // the force-push items, keeps it visually last/most-severe.
         let filter_repo = MenuItemBuilder::with_id("filter-repo", "Rewrite History (filter-repo)\u{2026}").build(app)?;
         SubmenuBuilder::new(app, "Tools")
-            .item(&bisect)
-            .item(&reflog)
-            .item(&rerere)
-            .item(&plumbing)
-            .item(&repo_summary)
+            .item(&search_menu)
+            .item(&history_menu)
+            .item(&patches_menu)
             .item(&remotes)
-            .item(&export_patches)
-            .item(&apply_patch)
-            .item(&pickaxe_search)
-            .item(&code_search)
+            .item(&repo_files)
+            .separator()
             .item(&repositories)
             .item(&external_tools)
             .item(&settings)
-            .item(&dangling_recovery)
-            .item(&repo_files)
             .separator()
             .item(&uncommitted_changes)
             .item(&pull_merge)
