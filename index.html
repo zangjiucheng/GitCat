@@ -551,6 +551,16 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tick.pulse{animation:tickpulse .6s ease}
 @keyframes tickpulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 70%,transparent)}100%{box-shadow:0 0 0 10px transparent}}
 .canvas-wrap{position:relative;flex:1;min-width:0;overflow:hidden}
+/* Shown for the full duration of openRepo() (legacy/main.ts) — the graph
+   canvas keeps rendering whatever repo was open before (tick()'s own rAF
+   loop never stops), so without this the pane looks fully interactive but
+   is silently frozen on stale data for however long load_graph takes on a
+   large repo. Sits on top (no pointer-events override, so it also blocks
+   clicks on that stale, about-to-be-replaced graph) with the exact same
+   show/hide lifecycle as the topbar .repo-pick button's own inline spinner. */
+.graph-loading{position:absolute;inset:0;z-index:8;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  background:color-mix(in srgb,var(--bg) 85%,transparent);color:var(--muted);font-size:13px}
+.graph-loading .spinner{width:26px;height:26px;border-width:3px}
 #cv{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
 .perf{position:absolute;top:10px;right:14px;z-index:6;display:flex;align-items:center;gap:8px;
   font-family:var(--mono);font-size:11px;color:var(--muted);
@@ -1547,6 +1557,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
     <div class="ribbon" id="ribbon"><span class="rlabel">snapshots</span><span class="rwindow" id="ribbonWindow"></span></div>
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="cv" tabindex="0"></canvas>
+      <div class="graph-loading" id="graphLoading" style="display:none">
+        <span class="spinner"></span>
+        <span>Loading repository&#8230;</span>
+      </div>
       <div class="perf" id="perf">
         <span class="perf-dev" id="perfDevTools">
           <span id="hud"><b>—</b> fps</span><span class="sep"></span>

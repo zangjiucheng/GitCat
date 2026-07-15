@@ -1164,6 +1164,15 @@ async function openRepo(path){
   // re-entrancy reason as pickBtn above — it triggers openRepo() too (via
   // goBackToParent), just from a different button.
   if(backBtn) backBtn.disabled=true;
+  // The graph canvas keeps rendering whichever repo was open before (see
+  // index.html's own comment on #graphLoading) — nothing else in the main
+  // frame otherwise hints that it's showing stale data while load_graph is
+  // in flight. Same show/hide lifecycle as pickSpinner above (finally,
+  // below), not just around loadGraph() — Dashboard.svelte's own
+  // openRepository() closes its modal BEFORE awaiting this whole function,
+  // so this overlay is the only cue left once that modal is gone.
+  const graphLoading=$("#graphLoading");
+  if(graphLoading) graphLoading.style.display="";
   Tama.set("thinking");
   try{
     const g = await tinvoke("load_graph", { path });
@@ -1234,7 +1243,7 @@ async function openRepo(path){
     await repoSummaryCtrl.maybeAutoShow(path);
     return true;
   }catch(e){ Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); return false; }
-  finally{ openRepoBusy=false; if(pickBtn){ pickBtn.disabled=false; if(pickSpinner) pickSpinner.remove(); } if(backBtn) backBtn.disabled=false; }
+  finally{ openRepoBusy=false; if(pickBtn){ pickBtn.disabled=false; if(pickSpinner) pickSpinner.remove(); } if(backBtn) backBtn.disabled=false; if(graphLoading) graphLoading.style.display="none"; }
 }
 /* ------------------------------------------------------------
    12a) SUBMODULE NAVIGATION STACK — "enter" a submodule (become its own
