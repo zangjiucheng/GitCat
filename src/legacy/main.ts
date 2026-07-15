@@ -10,6 +10,9 @@ import { workdirCtrl } from "../islands/workdir/workdir.svelte.ts";
 import { commitMenuCtrl } from "../islands/commitmenu/commitmenu.svelte.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
 import { repoSummaryCtrl } from "../islands/reposummary/reposummary.svelte.ts";
+// Hidden Easter egg — see its own header doc + this file's click-counter
+// right after gaze()/the idle-sleep interval below.
+import { tamaGalleryCtrl } from "../islands/tamagallery/tamagallery.svelte.ts";
 // Typed client for the one raw `tinvoke()` call below that needs it
 // (globalUndo()'s stash-undo branch) — see that function's own comment for
 // why only that branch uses it instead of another `tinvoke()`.
@@ -677,6 +680,29 @@ function scheduleGlance(){
   },8000+Math.random()*6000);
 }
 scheduleGlance();
+
+// Hidden Easter egg: click the portrait itself 7 times within 2.5s to open
+// Tama Gallery (src/islands/tamagallery) — every pose in one grid, click a
+// card to "play" it live right here. Deliberately undiscoverable —
+// scoped to just the portrait (not the whole nook, which would fire on
+// stray clicks on the toast/telemetry text too), no cursor hint, no menu/
+// ⌘K entry anywhere else. Resets on its own after 2.5s of no further
+// clicks, so an idle stray double-click can't silently half-arm it.
+(function () {
+  let n = 0,
+    t = null;
+  $("#spriteWrap").addEventListener("click", () => {
+    n++;
+    clearTimeout(t);
+    t = setTimeout(() => {
+      n = 0;
+    }, 2500);
+    if (n >= 7) {
+      n = 0;
+      tamaGalleryCtrl.show();
+    }
+  });
+})();
 
 /* ============================================================
    7) DETAIL PANEL (author/committer split, gpg, diffstat, tree, diff)

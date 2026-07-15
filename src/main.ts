@@ -24,6 +24,7 @@ import { exportPatchesCtrl } from "./islands/exportpatches/exportpatches.svelte.
 import { applyPatchCtrl } from "./islands/applypatch/applypatch.svelte.ts";
 import Terminal from "./islands/terminal/Terminal.svelte";
 import { terminalCtrl } from "./islands/terminal/terminal.svelte.ts";
+import TamaGallery from "./islands/tamagallery/TamaGallery.svelte";
 import PickaxeSearch from "./islands/pickaxesearch/PickaxeSearch.svelte";
 import { pickaxeSearchCtrl } from "./islands/pickaxesearch/pickaxesearch.svelte.ts";
 import CodeSearch from "./islands/codesearch/CodeSearch.svelte";
@@ -196,6 +197,11 @@ mount(RepoFiles, { target: document.body });
 // controller-owned boolean gating the whole component's render, keeping its
 // one xterm.js instance alive (and its scrollback intact) across hide/show.
 mount(Terminal, { target: document.body });
+// Tama Gallery: a hidden Easter egg (see tamagallery.svelte.ts's own header
+// doc) — same on-demand-modal treatment as every other one above, but with
+// no menu/⌘K entry point anywhere; legacy/main.ts's own click-counter on
+// the nook portrait is the only way in.
+mount(TamaGallery, { target: document.body });
 
 // Native app menu -> frontend action bridge (see src-tauri/src/menu.rs).
 // Only the items whose action lives in Svelte-controller land forward here —

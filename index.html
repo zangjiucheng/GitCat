@@ -783,6 +783,23 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .modal.reflog .modal-body,.modal.rerere .modal-body{max-height:60vh;overflow:auto}
 .modal.plumbing{width:min(640px,96vw)}
 
+/* ============================== TAMA GALLERY (hidden Easter egg) ==============================
+   Click the nook portrait 7x within ~2.5s (see legacy/main.ts's own click
+   counter) — every painted pose in one grid, click a card to "play" it
+   live in the real nook via the same TamaMascot state machine every other
+   Tama surface already drives. Same .scrim/.modal/.modal-head/.modal-body/
+   .modal-foot chrome as every other one-shot dialog; only the card grid
+   itself (.tg-*) is new. */
+.modal.tama-gallery{width:min(560px,94vw)}
+.tg-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.tg-card{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px;
+  border-radius:var(--r-panel);border:1px solid var(--border);background:var(--elevated);
+  cursor:pointer;font:inherit;color:inherit;transition:border-color .12s,transform .12s}
+.tg-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+.tg-card.active{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 30%,transparent)}
+.tg-card img{width:64px;height:85px;object-fit:contain;object-position:top;pointer-events:none}
+.tg-card .tg-label{font-size:11px;color:var(--muted);text-align:center}
+
 /* ============================== MANAGE REMOTES modal ==============================
    Same .scrim/.modal/.modal-head/.modal-body/.modal-foot/.btn/.btn.ghost/
    .btn.danger/.nb-row/.mono/.mut/.spinner/.row-chip chrome as every other
