@@ -2,6 +2,7 @@
   import { resolver } from "./resolver.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import { IN_TAURI } from "../../ipc/env";
+  import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
 
   // ext -> highlight grammar key (was langForConflict)
   function langFor(path: string): string {
@@ -108,7 +109,7 @@
         </div>
       {/if}
       <div class="backup-note" style="margin-top:12px">
-        &#128257; Snapshot before {resolver.op}: <code>{resolver.backupRef}</code>{#if !resolver.editing} &#183; rerere may auto-apply a recorded resolution.{/if}
+        <RotateCcw class="ico" size={14} aria-hidden="true" /> Snapshot before {resolver.op}: <code>{resolver.backupRef}</code>{#if !resolver.editing} &#183; rerere may auto-apply a recorded resolution.{/if}
       </div>
     </div>
     <div class="modal-foot">

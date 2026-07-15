@@ -90,6 +90,7 @@ import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { rebasePlanCtrl } from "../rebaseplan/rebaseplan.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
+import { ICON_BACKUP, ICON_WARNING } from "../../legacy/icons";
 import type { LocalBranch, SimpleRef, Snapshot, SubmoduleInfo } from "../../ipc/bindings";
 
 // Demo data (design-mode only) — mirrors the static markup this replaces, so
@@ -887,7 +888,8 @@ class SidebarState {
         esc(path) +
         "</code>'s working tree</li><li>Unregisters it from this repo's local config</li><li>Its own uncommitted changes are backed up first, under <code>gitgui/submodule-backup/&#8230;</code></li></ul>",
       note:
-        "🔁 I back up " +
+        ICON_BACKUP +
+        " I back up " +
         esc(path) +
         "'s own uncommitted changes before clearing it — its committed history is untouched and restorable via Init + update. This is NOT the global Undo (⌘Z) — that only ever rewinds THIS repo's own branches/HEAD.",
       name: path,
@@ -966,7 +968,8 @@ class SidebarState {
         esc(path) +
         "</code> (same as Deinit)</li><li>Stages its removal from the index (<code>git rm</code>)</li><li>Removes and stages its <code>[submodule]</code> entry from <code>.gitmodules</code></li><li>Nothing is committed — review and commit when ready</li></ul>",
       note:
-        "🔁 If " +
+        ICON_BACKUP +
+        " If " +
         esc(path) +
         " had uncommitted changes, they're backed up first. This only STAGES the removal — Undo/discard the staged .gitmodules + " +
         esc(path) +
@@ -1288,7 +1291,8 @@ class SidebarState {
         esc(name) +
         "</code></li></ul>",
       note:
-        "⚠️ This is NOT recoverable, and it is NOT limited to the " +
+        ICON_WARNING +
+        " This is NOT recoverable, and it is NOT limited to the " +
         n +
         " named above — every uncommitted tracked/staged change in the repository is gone the instant you confirm. Safety Manager/Undo only ever protects committed history, never uncommitted content.",
       name,
@@ -1417,7 +1421,7 @@ class SidebarState {
         '<h5>What happens</h5><ul><li>Removes local branch <code>' +
         esc(name) +
         "</code></li><li>Its tip is pinned under <code>refs/gitgui/deleted/…</code> — recover with ＋ New branch → the printed sha</li></ul>",
-      note: "🔁 I pin the branch tip before deleting; ⌘Z restores your CURRENT branch position (not the deleted branch).",
+      note: ICON_BACKUP + " I pin the branch tip before deleting; ⌘Z restores your CURRENT branch position (not the deleted branch).",
       name,
       confirmLabel: "Delete branch",
       onConfirm: async () => {
@@ -1635,7 +1639,7 @@ class SidebarState {
         "</code></li><li>Its target is pinned under <code>refs/gitgui/deleted-tag/…</code> — recover with <code>git tag " +
         esc(name) +
         " &lt;pinned ref&gt;</code></li></ul>",
-      note: "🔁 I pin the tag's target before deleting; this is NOT restorable via the global Undo (⌘Z) — that only rewinds branches, never tags.",
+      note: ICON_BACKUP + " I pin the tag's target before deleting; this is NOT restorable via the global Undo (⌘Z) — that only rewinds branches, never tags.",
       name,
       confirmLabel: "Delete tag",
       onConfirm: async () => {

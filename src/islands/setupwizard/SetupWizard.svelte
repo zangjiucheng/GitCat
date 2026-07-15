@@ -24,6 +24,7 @@
   // too so dropping a different folder onto it re-picks, rather than needing
   // a separate footer button once something's chosen.
   import { setupWizardCtrl, type SetupWizardStep } from "./setupwizard.svelte.ts";
+  import Folder from "@lucide/svelte/icons/folder";
 
   const STEP_ORDER: SetupWizardStep[] = ["welcome", "pick", "identity", "done"];
 
@@ -108,7 +109,7 @@
           onclick={() => setupWizardCtrl.pickDirectory()}
           onkeydown={onDropZoneKeydown}
         >
-          <div class="ic">&#128193;</div>
+          <div class="ic"><Folder size={30} strokeWidth={1.3} aria-hidden="true" /></div>
           {#if setupWizardCtrl.repoPath}
             <div class="t mono">{setupWizardCtrl.repoPath}</div>
             <div class="sub">

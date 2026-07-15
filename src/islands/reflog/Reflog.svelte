@@ -27,7 +27,7 @@
       {:else}
         {#each reflogCtrl.entries as e (e.index)}
           <div class="log-row">
-            <span class="ic">{reflogCtrl.icon(e.kind)}</span>
+            <span class="ic">{@html reflogCtrl.icon(e.kind)}</span>
             <span class="sel">{e.sha}</span>
             <span class="msg">{reflogCtrl.label(e)}</span>
             <button class="go" disabled={reflogCtrl.busy} onclick={() => reflogCtrl.restore(e.index)}

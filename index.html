@@ -115,6 +115,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .brand{display:flex;align-items:center;gap:7px;font-family:var(--display);font-weight:700;letter-spacing:.2px;flex:none}
 .brand .mark{width:24px;height:24px;flex:none}
 .tb-ic{width:14px;height:14px;flex:none}
+/* .ico is .tb-ic's sibling for every OTHER icon in the app (buttons/notes/
+   status glyphs outside the topbar itself) — same reasoning, same visual
+   language (see the topbar comment above), just a distinct class since these
+   sit in a lot of contexts .tb-ic's own 14x14/flex:none isn't guaranteed to
+   fit (e.g. inline within running text, where a small negative
+   vertical-align keeps the icon from sitting high against the baseline). */
+.ico{flex:none;vertical-align:-2px}
 /* Repo identity cluster: which repo, which submodule chain, which branch —
    grouped with a tighter gap than the bar's own outer 10px so these three
    read as one unit, not three peers of Fetch/Pull/Push. */
@@ -1589,7 +1596,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
         <li>Rewrites <code>42</code> commits on <code>main</code> and <code>feat/inline-diff</code></li>
         <li>Original SHAs become unreachable: <code>a1b2c3d</code> &#8230; <code>90ff210</code></li>
         <li>GPG signatures on rewritten commits are dropped</li></ul></div>
-      <div class="backup-note" id="dangerNote">&#128257; Pre-op backup pinned first &#8594; full pre-rewrite state stays recoverable.</div>
+      <div class="backup-note" id="dangerNote"><svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Pre-op backup pinned first &#8594; full pre-rewrite state stays recoverable.</div>
       <div class="confirm-type"><label>Type the branch name <b class="mono" id="dangerTypeName">main</b> to arm the rewrite:</label>
         <input id="confirmInput" placeholder="main" spellcheck="false" autocomplete="off"></div>
     </div>

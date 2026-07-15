@@ -311,7 +311,7 @@ class SetupWizardState {
     // only path that opens one) — point at both ways back in, since the
     // empty-state hero card's own button is easy to miss right after a modal
     // closes.
-    bridge.tama.say("No rush — open a repository anytime via 📁 or the repo name ▾ up top. にゃ〜", 4200);
+    bridge.tama.say("No rush — open a repository anytime via the folder icon or the repo name ▾ up top. にゃ〜", 4200);
   }
 
   private resetWizard() {

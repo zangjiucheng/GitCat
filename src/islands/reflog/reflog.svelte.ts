@@ -10,17 +10,23 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { ICON_WARNING, ICON_CHERRY } from "../../legacy/icons";
 import type { ReflogEntry } from "../../ipc/bindings";
 
 // Coarse icon per `kind` — best-effort, mirrors the static mockup's glyphs
 // (●/⚠/↷/🍒) with a couple of extra fallbacks for shapes `reflog::classify`
-// recognizes but the original 4-row demo didn't show.
+// recognizes but the original 4-row demo didn't show. "reset"/"cherry-pick"
+// are real pictographic emoji (ICON_WARNING/ICON_CHERRY, rendered via
+// Reflog.svelte's own {@html icon(...)} — see icons.ts's own header for why
+// these two specifically are string constants, not Svelte components); the
+// rest are plain Unicode dingbats, which (unlike color emoji) already render
+// consistently enough across platforms not to need replacing.
 const ICONS: Record<string, string> = {
   commit: "●",
-  reset: "⚠",
+  reset: ICON_WARNING,
   checkout: "⇄",
   rebase: "↷",
-  "cherry-pick": "🍒",
+  "cherry-pick": ICON_CHERRY,
   merge: "⑂",
   branch: "⌥",
   pull: "⇣",

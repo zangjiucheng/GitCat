@@ -1,6 +1,8 @@
 <script lang="ts">
   import { codeSearchCtrl } from "./codesearch.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import Eye from "@lucide/svelte/icons/eye";
+  import History from "@lucide/svelte/icons/history";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && codeSearchCtrl.open) codeSearchCtrl.close();
@@ -69,8 +71,8 @@
                 <span class="cs-loc mono">{m.path}<span class="mut">:{m.line}</span></span>
                 <code class="cs-snippet mono">{m.text.trim()}</code>
                 <span class="cs-act">
-                  <button class="wd-act" title="Blame {m.path}" onclick={() => codeSearchCtrl.openBlame(m)}>&#128065;</button>
-                  <button class="wd-act" title="History of {m.path}" onclick={() => codeSearchCtrl.openHistory(m)}>&#128336;</button>
+                  <button class="wd-act" title="Blame {m.path}" onclick={() => codeSearchCtrl.openBlame(m)}><Eye class="ico" size={14} aria-hidden="true" /></button>
+                  <button class="wd-act" title="History of {m.path}" onclick={() => codeSearchCtrl.openHistory(m)}><History class="ico" size={14} aria-hidden="true" /></button>
                 </span>
               </div>
             {/each}

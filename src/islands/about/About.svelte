@@ -11,6 +11,7 @@
   import { aboutCtrl } from "./about.svelte.ts";
   import { updaterCtrl } from "../updater/updater.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import Link from "@lucide/svelte/icons/link";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key !== "Escape" || !aboutCtrl.open) return;
@@ -85,7 +86,7 @@
         </div>
 
         <div class="modal-foot" style="justify-content:center;border-top:none;padding-top:16px">
-          <button class="btn ghost" onclick={() => aboutCtrl.openWebsite()}>&#128279; GitHub</button>
+          <button class="btn ghost" onclick={() => aboutCtrl.openWebsite()}><Link class="ico" size={14} aria-hidden="true" /> GitHub</button>
           <button class="btn" onclick={() => aboutCtrl.close()}>Close</button>
         </div>
       {/if}

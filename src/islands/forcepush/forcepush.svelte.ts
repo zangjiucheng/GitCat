@@ -42,6 +42,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { sidebarCtrl } from "../sidebar/sidebar.svelte.ts";
+import { ICON_BACKUP, ICON_WARNING } from "../../legacy/icons";
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
@@ -96,7 +97,7 @@ class ForcePushState {
           esc(branch) +
           "</code> on the remote to match your local branch</li><li>Refuses cleanly, with no changes made, if the remote moved since your last fetch — fetch and reconcile first, then retry</li><li>Nothing local changes — HEAD, your branch, and your working tree are untouched</li></ul>",
         note:
-          "🔁 This only touches the REMOTE — there's nothing local for ⌘Z/Undo to protect here. If it succeeds and it did overwrite prior remote commits, they have no in-app recovery path.",
+          ICON_BACKUP + " This only touches the REMOTE — there's nothing local for ⌘Z/Undo to protect here. If it succeeds and it did overwrite prior remote commits, they have no in-app recovery path.",
         name: branch,
         confirmLabel: "Force push",
         onConfirm: async () => {
@@ -120,7 +121,7 @@ class ForcePushState {
           esc(branch) +
           "</code> on the remote to match your local branch, no matter what is currently there</li><li>Any commits on the remote that your local repo doesn't have are discarded, permanently, the moment this succeeds</li><li>Nothing local changes — HEAD, your branch, and your working tree are untouched</li></ul>",
         note:
-          "⚠️ This can destroy OTHER PEOPLE'S work on the remote with no way back from inside GitCat — Safety Manager/Undo only ever protects this repo's own LOCAL refs, never anything already pushed. Prefer Force Push (Safe) unless you specifically need to override someone else's changes.",
+          ICON_WARNING + " This can destroy OTHER PEOPLE'S work on the remote with no way back from inside GitCat — Safety Manager/Undo only ever protects this repo's own LOCAL refs, never anything already pushed. Prefer Force Push (Safe) unless you specifically need to override someone else's changes.",
         name: branch,
         confirmLabel: "Force push (override)",
         onConfirm: async () => {

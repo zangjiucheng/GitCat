@@ -6,6 +6,10 @@
   import { resolver } from "../resolver/resolver.svelte.ts";
   import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
   import { fade } from "svelte/transition";
+  import Folder from "@lucide/svelte/icons/folder";
+  import Eye from "@lucide/svelte/icons/eye";
+  import History from "@lucide/svelte/icons/history";
+  import ExternalLink from "@lucide/svelte/icons/external-link";
 
   // Matches TamaMascot's own `this.reduced` check (src/legacy/main.ts) —
   // Svelte's transition: directives don't honor prefers-reduced-motion on
@@ -38,7 +42,7 @@
              See dashboard.svelte.ts's addRepository() for why picking a
              brand-new folder from inside the modal still opens it
              immediately when reached from here (no repo open yet). -->
-        <button class="btn" id="openRepoBtn" onclick={() => dashboardCtrl.show()}>&#128193; Open a repository&#8230;</button>
+        <button class="btn" id="openRepoBtn" onclick={() => dashboardCtrl.show()}><Folder class="ico" size={14} aria-hidden="true" /> Open a repository&#8230;</button>
       </div>
       <div class="hero-hint">or click the repo name <b>&#9662;</b> in the top bar</div>
     {/if}
@@ -166,7 +170,7 @@
 {#snippet dirNode(node: TreeDir)}
   {#each Object.entries(node.dirs) as [name, child]}
     <details class="dir" open>
-      <summary><span class="tw">&#9656;</span>&#128193; {name}</summary>
+      <summary><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /> {name}</summary>
       <div class="indent">{@render dirNode(child)}</div>
     </details>
   {/each}
@@ -192,7 +196,7 @@
           onclick={(e) => {
             e.stopPropagation();
             detailCtrl.blameFile(f);
-          }}>&#128065;</button
+          }}><Eye class="ico" size={14} aria-hidden="true" /></button
         >
         <button
           class="wd-act"
@@ -201,7 +205,7 @@
           onclick={(e) => {
             e.stopPropagation();
             detailCtrl.historyFile(f);
-          }}>&#128336;</button
+          }}><History class="ico" size={14} aria-hidden="true" /></button
         >
       {/if}
       <button
@@ -211,7 +215,7 @@
         onclick={(e) => {
           e.stopPropagation();
           detailCtrl.openExternalDiff(f);
-        }}>&#8646;</button
+        }}><ExternalLink class="ico" size={14} aria-hidden="true" /></button
       >
     </div>
   {/each}

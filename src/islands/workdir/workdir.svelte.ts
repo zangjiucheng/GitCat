@@ -62,6 +62,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
+import { ICON_BACKUP } from "../../legacy/icons";
 import type { DiffLineRow, FileChange, HunkSelection, SelectedLine, StashEntry, WorkdirEntry, WorkdirStatus } from "../../ipc/bindings";
 
 function esc(s: unknown): string {
@@ -597,7 +598,7 @@ class WorkdirState {
           ? "Deletes <code>" + esc(file) + "</code> from disk (it was never committed)"
           : "Reverts <code>" + esc(file) + "</code> to its last staged/committed content") +
         "</li></ul>",
-      note: "🔁 I back up the " + (untracked ? "file's bytes" : "exact diff") + " before discarding — ask if you need it back.",
+      note: ICON_BACKUP + " I back up the " + (untracked ? "file's bytes" : "exact diff") + " before discarding — ask if you need it back.",
       name: file,
       confirmLabel: "Discard changes",
       onConfirm: async () => {
@@ -722,7 +723,7 @@ class WorkdirState {
       steps: false,
       desc: "This reverts the selected " + label + " in " + file + " to what's in the index/HEAD, discarding just those unstaged edits. The exact diff is backed up first.",
       lose: "<h5>What happens</h5><ul><li>Reverts " + label + " in <code>" + esc(file) + "</code> to their last staged/committed content</li></ul>",
-      note: "🔁 I back up the file's exact diff before discarding — ask if you need it back.",
+      note: ICON_BACKUP + " I back up the file's exact diff before discarding — ask if you need it back.",
       name: file,
       confirmLabel: "Discard lines",
       onConfirm: async () => {
@@ -919,7 +920,7 @@ class WorkdirState {
       steps: false,
       desc: "This permanently discards the stashed changes. Once git garbage-collects the stash commit, it's not recoverable from here.",
       lose: "<h5>What happens</h5><ul><li>Removes <code>" + esc(label) + "</code> from the stash list</li></ul>",
-      note: "🔁 I pin HEAD to a backup first, but that does not cover the stash's own content once git prunes it.",
+      note: ICON_BACKUP + " I pin HEAD to a backup first, but that does not cover the stash's own content once git prunes it.",
       name: label,
       confirmLabel: "Drop stash",
       onConfirm: async () => {

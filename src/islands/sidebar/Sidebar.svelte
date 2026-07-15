@@ -4,6 +4,9 @@
   import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import type { SimpleRef, SubmoduleInfo } from "../../ipc/bindings";
+  import Folder from "@lucide/svelte/icons/folder";
+  import Zap from "@lucide/svelte/icons/zap";
+  import Clipboard from "@lucide/svelte/icons/clipboard";
 
   let menuEl: HTMLDivElement | undefined = $state();
   let newBranchEl: HTMLInputElement | undefined = $state();
@@ -121,10 +124,12 @@
 
 {#if !sidebarCtrl.hasRepo}
   <div class="sidebar-empty">
-    <div class="ic">&#128193;</div>
+    <div class="ic"><Folder size={30} strokeWidth={1.3} aria-hidden="true" /></div>
     <div class="t">No repository open</div>
     <div class="sub">Branches, remotes, and snapshots will show up here once you open one.</div>
-    <button class="btn" onclick={() => dashboardCtrl.show()}>&#128193; Open a repository&#8230;</button>
+    <button class="btn" onclick={() => dashboardCtrl.show()}
+      ><Folder class="ico" size={14} aria-hidden="true" /> Open a repository&#8230;</button
+    >
   </div>
 {:else}
 <div class="ref-filter">
@@ -138,7 +143,7 @@
       class:active={sidebarCtrl.autoMode}
       title="Auto: show the current branch plus anything with unpushed or unmerged commits, always up to date"
       onclick={() => sidebarCtrl.toggleAutoMode(bridge.CUR_REPO as unknown as string)}
-      >{sidebarCtrl.autoMode ? "⚡ Auto" : "Auto"}</button
+      >{#if sidebarCtrl.autoMode}<Zap class="ico" size={12} aria-hidden="true" /> {/if}Auto</button
     >
     {#if sidebarCtrl.isFiltering}
       <button class="show-all" onclick={() => sidebarCtrl.showAllBranches(bridge.CUR_REPO as unknown as string)}>Show all branches</button>
@@ -192,7 +197,7 @@
             onclick={(e) => {
               e.stopPropagation();
               sidebarCtrl.copyBranchName(b.name);
-            }}>{sidebarCtrl.copiedBranch === b.name ? "✓" : "📋"}</button
+            }}>{#if sidebarCtrl.copiedBranch === b.name}✓{:else}<Clipboard class="ico" size={12} aria-hidden="true" />{/if}</button
           >
           {#if sidebarCtrl.busyTarget === b.name}
             <span class="spinner"></span>
@@ -306,7 +311,7 @@
               onclick={(e) => {
                 e.stopPropagation();
                 sidebarCtrl.copyBranchName(r.name);
-              }}>{sidebarCtrl.copiedBranch === r.name ? "✓" : "📋"}</button
+              }}>{#if sidebarCtrl.copiedBranch === r.name}✓{:else}<Clipboard class="ico" size={12} aria-hidden="true" />{/if}</button
             >
             {#if sidebarCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
           </div>

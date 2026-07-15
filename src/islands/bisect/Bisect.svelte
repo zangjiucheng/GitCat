@@ -1,5 +1,6 @@
 <script lang="ts">
   import { bisectCtrl } from "./bisect.svelte.ts";
+  import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
 
   // Escape hides the panel non-destructively — the bisect keeps running in the
   // backend; re-open via the drawer "Start bisect".
@@ -65,7 +66,7 @@
         </div>
       {/if}
       <div class="backup-note" style="margin-top:12px">
-        &#128257; Your original branch is safe &#8212; <b>Reset</b> puts HEAD back. A snapshot was pinned before checkout.
+        <RotateCcw class="ico" size={14} aria-hidden="true" /> Your original branch is safe &#8212; <b>Reset</b> puts HEAD back. A snapshot was pinned before checkout.
       </div>
     </div>
     <div class="modal-foot">

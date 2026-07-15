@@ -7,6 +7,7 @@
   // Bisect), NOT the generic #dangerScrim/armDanger flow.
   import { filterRepoCtrl, REWRITE_PHRASE, RESTORE_PHRASE } from "./filterrepo.svelte.ts";
   import { IN_TAURI } from "../../ipc/env";
+  import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
 
   const STEP_ORDER = ["scope", "preview", "confirm", "result"] as const;
 
@@ -108,7 +109,7 @@
               </ul>
             </div>
             <div class="backup-note">
-              &#128257; A verified backup bundle is saved <b>before</b> filter-repo ever runs &#8594; full pre-rewrite state stays recoverable via Restore.
+              <RotateCcw class="ico" size={14} aria-hidden="true" /> A verified backup bundle is saved <b>before</b> filter-repo ever runs &#8594; full pre-rewrite state stays recoverable via Restore.
             </div>
           {/if}
         {/if}
@@ -125,7 +126,7 @@
               <li>Scope: <code>{filterRepoCtrl.pathList.join(", ")}</code> — {filterRepoCtrl.invert ? "removed, everything else kept" : "KEPT, everything else removed"}</li>
             </ul>
           </div>
-          <div class="backup-note">&#128257; Pre-op backup is saved and verified first &#8594; full pre-rewrite state stays recoverable.</div>
+          <div class="backup-note"><RotateCcw class="ico" size={14} aria-hidden="true" /> Pre-op backup is saved and verified first &#8594; full pre-rewrite state stays recoverable.</div>
           <div class="confirm-type">
             <label for="filterRepoConfirm">Type <b class="mono">{REWRITE_PHRASE}</b> to arm the rewrite:</label>
             <input

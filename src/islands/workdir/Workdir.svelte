@@ -4,6 +4,10 @@
   import { blameCtrl } from "../blame/blame.svelte.ts";
   import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
   import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
+  import Eye from "@lucide/svelte/icons/eye";
+  import History from "@lucide/svelte/icons/history";
+  import ExternalLink from "@lucide/svelte/icons/external-link";
+  import Trash2 from "@lucide/svelte/icons/trash-2";
 
   // "Open in external diff" (backlog #12) — added to BOTH staged (4th icon,
   // was 3) and unstaged (5th icon, was 4) rows: unlike Blame/History (which
@@ -104,7 +108,7 @@
                 onclick={(e) => {
                   e.stopPropagation();
                   blameCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f), null);
-                }}>&#128065;</button
+                }}><Eye class="ico" size={14} aria-hidden="true" /></button
               >
               <button
                 class="wd-act"
@@ -114,7 +118,7 @@
                 onclick={(e) => {
                   e.stopPropagation();
                   fileHistoryCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f));
-                }}>&#128336;</button
+                }}><History class="ico" size={14} aria-hidden="true" /></button
               >
               <button
                 class="wd-act"
@@ -134,7 +138,7 @@
                 onclick={(e) => {
                   e.stopPropagation();
                   externalToolsCtrl.openDiff(repo(), f.path, true);
-                }}>&#8646;</button
+                }}><ExternalLink class="ico" size={14} aria-hidden="true" /></button
               >
             {/if}
           </div>
@@ -178,7 +182,7 @@
                 onclick={(e) => {
                   e.stopPropagation();
                   blameCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f), null);
-                }}>&#128065;</button
+                }}><Eye class="ico" size={14} aria-hidden="true" /></button
               >
               <button
                 class="wd-act"
@@ -188,7 +192,7 @@
                 onclick={(e) => {
                   e.stopPropagation();
                   fileHistoryCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f));
-                }}>&#128336;</button
+                }}><History class="ico" size={14} aria-hidden="true" /></button
               >
               <button
                 class="wd-act"
@@ -208,7 +212,7 @@
                 onclick={(e) => {
                   e.stopPropagation();
                   workdirCtrl.confirmDiscard(f.path, f.status === "?");
-                }}>&#128465;</button
+                }}><Trash2 class="ico" size={14} aria-hidden="true" /></button
               >
               <button
                 class="wd-act"
@@ -218,7 +222,7 @@
                 onclick={(e) => {
                   e.stopPropagation();
                   externalToolsCtrl.openDiff(repo(), f.path, false);
-                }}>&#8646;</button
+                }}><ExternalLink class="ico" size={14} aria-hidden="true" /></button
               >
             {/if}
           </div>
@@ -332,7 +336,7 @@
                   class="danger"
                   title="Drop"
                   disabled={workdirCtrl.stashBusy}
-                  onclick={() => workdirCtrl.confirmDropStash(repo(), s.index)}>&#128465;</button
+                  onclick={() => workdirCtrl.confirmDropStash(repo(), s.index)}><Trash2 class="ico" size={12} aria-hidden="true" /></button
                 >
               </div>
             {/if}

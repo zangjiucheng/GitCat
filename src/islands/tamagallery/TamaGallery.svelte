@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tamaGalleryCtrl, POSES, poseImg } from "./tamagallery.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import Sparkles from "@lucide/svelte/icons/sparkles";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && tamaGalleryCtrl.open) tamaGalleryCtrl.close();
@@ -14,7 +15,7 @@
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.happy} alt="Tama, delighted you found this" /></div>
       <div>
-        <h3>You found Tama's gallery! &#127881;</h3>
+        <h3>You found Tama's gallery! <Sparkles class="ico" size={15} aria-hidden="true" /></h3>
         <p>Every pose she wears around the app &#8212; click one to see her wear it right now, in the corner. にゃ〜</p>
       </div>
     </div>
