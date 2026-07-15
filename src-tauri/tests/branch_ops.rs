@@ -190,6 +190,32 @@ fn merged_branch_is_reported_merged_unmerged_branch_is_not() {
     assert!(!info.merged.contains(&"main".to_string()), "the default branch itself must never appear in its own merged list");
 }
 
+/// Regression test for the "Auto still shows too many branches" report: a
+/// squash-merged branch (GitHub/GitLab's own default "Squash and merge"
+/// button) never becomes a literal ancestor of default — the squash commit
+/// has different parents entirely — so a pure `graph_descendant_of` check
+/// reported it "unmerged" forever, keeping it visible in Auto mode
+/// indefinitely even though none of its work is missing. Fixed via a tree-
+/// equality fallback: right after a squash-merge, the merge commit's tree is
+/// byte-identical to the topic branch's own tip tree.
+#[test]
+fn squash_merged_branch_is_reported_merged_even_though_its_tip_is_not_a_literal_ancestor() {
+    let repo = TempRepo::init("merge_status_squash");
+    repo.commit("f.txt", "0\n", "c0");
+    repo.must(&["checkout", "-q", "-b", "feature-squashed"]);
+    repo.commit("f.txt", "1\n", "feature work one");
+    repo.commit("f.txt", "2\n", "feature work two");
+    repo.must(&["checkout", "-q", "main"]);
+    repo.must(&["merge", "-q", "--squash", "feature-squashed"]);
+    repo.must(&["commit", "-q", "-m", "squash-merge feature-squashed"]);
+
+    let info = tauri::async_runtime::block_on(branch_merge_status(repo.path())).expect("branch_merge_status failed");
+    assert!(
+        info.merged.contains(&"feature-squashed".to_string()),
+        "feature-squashed's tip tree is identical to main's new tip — its work is fully captured, should be reported merged"
+    );
+}
+
 #[test]
 fn resolves_default_branch_via_origin_head_symref_over_local_main_fallback() {
     let bare = common::TempRepo::init_bare("merge_status_origin_head_bare");

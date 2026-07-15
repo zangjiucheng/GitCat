@@ -433,11 +433,46 @@ pub async fn branch_merge_status(path: String) -> Result<BranchMergeInfo, String
     crate::blocking::run_blocking(move || branch_merge_status_inner(&path).map_err(|e| e.message().to_string())).await
 }
 
+// Bounds the squash-merge tree scan below — a repo's full history could be
+// huge, and this runs on every Auto-mode refresh. Beyond this many of
+// default's most recent commits, a squash-merged branch just falls back to
+// looking "unmerged" (still visible), same "erring toward SHOWING when we
+// can't tell" philosophy recomputeAutoVisibility's own doc comment already
+// applies to an unresolvable default branch.
+const MAX_SQUASH_SCAN: usize = 5000;
+
 fn branch_merge_status_inner(path: &str) -> Result<BranchMergeInfo, git2::Error> {
     let repo = crate::trust::open_repo(path)?;
     let Some((default_name, default_oid)) = resolve_default_branch_oid(&repo) else {
         return Ok(BranchMergeInfo { default_branch: None, merged: Vec::new() });
     };
+
+    // Squash-merged branches (GitHub/GitLab's own default "Squash and
+    // merge" button) never become a literal ancestor of default — the
+    // squash produces a brand-new commit with different parents, so
+    // graph_descendant_of alone reports these branches "unmerged" forever,
+    // even though none of their work is actually missing. That left Auto
+    // mode showing every squash-merged branch permanently, which is exactly
+    // the report this fixes ("Auto still shows too many branches" even
+    // after the no-upstream fix). Detected here by tree equality instead:
+    // right after a squash-merge, the merge commit's tree is byte-identical
+    // to the topic branch's own tip tree, so a branch whose tip tree
+    // appears ANYWHERE in default's recent history is treated as merged
+    // too. This can still miss a squash-merge if unrelated changes landed
+    // in the very same squash commit (the resulting tree would then differ
+    // from the branch's own tip) — a false negative (stays visible), never
+    // a false positive, consistent with this function's existing bias.
+    let mut default_trees: std::collections::HashSet<git2::Oid> = std::collections::HashSet::new();
+    if let Ok(mut walk) = repo.revwalk() {
+        if walk.push(default_oid).is_ok() {
+            for oid in walk.take(MAX_SQUASH_SCAN) {
+                let Ok(oid) = oid else { continue };
+                if let Ok(commit) = repo.find_commit(oid) {
+                    default_trees.insert(commit.tree_id());
+                }
+            }
+        }
+    }
 
     let mut merged = Vec::new();
     for entry in repo.branches(Some(BranchType::Local))? {
@@ -449,11 +484,14 @@ fn branch_merge_status_inner(path: &str) -> Result<BranchMergeInfo, git2::Error>
         if name == default_name {
             continue;
         }
-        let Ok(oid) = branch.get().peel_to_commit().map(|c| c.id()) else { continue };
+        let Ok(commit) = branch.get().peel_to_commit() else { continue };
+        let oid = commit.id();
         // Merged when this branch's own tip is an ancestor of (or identical
         // to) default's tip — i.e. default is a descendant of it, so none
-        // of its work is missing from default.
-        if oid == default_oid || repo.graph_descendant_of(default_oid, oid).unwrap_or(false) {
+        // of its work is missing from default — OR its tip's tree already
+        // shows up in default's recent history (squash-merge, see above).
+        let is_ancestor = oid == default_oid || repo.graph_descendant_of(default_oid, oid).unwrap_or(false);
+        if is_ancestor || default_trees.contains(&commit.tree_id()) {
             merged.push(name);
         }
     }
