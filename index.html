@@ -639,7 +639,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .diffview{font-family:var(--mono);font-size:11.5px;line-height:1.55;background:var(--bg);border:1px solid var(--border);
   border-radius:var(--r-panel);overflow:auto;max-height:320px;margin-top:2px}
 .diff-file-h{position:sticky;top:0;background:var(--elevated);border-bottom:1px solid var(--border);padding:5px 10px;font-weight:600;font-size:11px;color:var(--muted);z-index:1}
-.diff-line{display:flex;white-space:pre;padding-right:8px}
+.diff-line{display:flex;white-space:pre;padding-right:8px;width:fit-content;min-width:100%}
 .diff-line .ln{flex:none;width:34px;text-align:right;padding-right:8px;color:var(--muted);opacity:.6;user-select:none}
 .diff-line .mk{flex:none;width:14px;text-align:center;user-select:none}
 .diff-line code{white-space:pre}
@@ -1170,7 +1170,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .blame-iw{flex:none;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap;margin-top:2px}
 .modal.blame .modal-body{flex:1;min-height:0;overflow:auto;padding:0}
 .blame-grid{font-family:var(--mono);font-size:11.5px;line-height:1.55}
-.blame-row{display:flex;align-items:stretch}
+/* width:fit-content;min-width:100% — same fix, same reason, as .diff-line
+   above: without it, a row's alternating tint-a/tint-b background stopped
+   at .modal-body's own visible width instead of the full scrollable width
+   long (white-space:pre, non-wrapping) blame lines create. */
+.blame-row{display:flex;align-items:stretch;width:fit-content;min-width:100%}
 .blame-row.tint-a{background:var(--bg)}
 .blame-row.tint-b{background:color-mix(in srgb,var(--accent2) 4%,var(--bg))}
 .blame-gutter{flex:none;width:200px;border-right:1px solid var(--border);padding:2px 8px;display:flex;align-items:center}
