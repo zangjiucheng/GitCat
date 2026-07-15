@@ -317,11 +317,21 @@ describe("branch visibility", () => {
     expect(sidebarCtrl.visibleLocal).toEqual(["main", "old-but-unresolved"]);
   });
 
-  it("recomputeAutoVisibility: design mode is a no-op (no merge data to compute from)", async () => {
+  it("recomputeAutoVisibility: design mode still filters from local ahead/upstream data, just skipping the merge-status term (no backend to ask)", async () => {
     mockInTauri = false;
-    sidebarCtrl.visibleLocal = null;
+    sidebarCtrl.head = "main";
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: 2, behind: null, upstream: "origin/main" },
+      { name: "feat/inline-diff", sha: "b", ahead: null, behind: 3, upstream: "origin/feat/inline-diff" },
+      { name: "fix/lane-cull", sha: "c", ahead: null, behind: null, upstream: null },
+    ];
     await sidebarCtrl.recomputeAutoVisibility("/repo");
-    expect(sidebarCtrl.visibleLocal).toBeNull();
+    // main (current + ahead) and fix/lane-cull (no upstream) are kept;
+    // feat/inline-diff has nothing ahead and a real upstream, so with no
+    // merge data to fall back on it's the one case design mode can't tell
+    // apart from "already merged" — dropped, same as toggling Auto used to
+    // silently do nothing at all (this at least narrows the list visibly).
+    expect(sidebarCtrl.visibleLocal).toEqual(["main", "fix/lane-cull"]);
     expect(commands.branchMergeStatus).not.toHaveBeenCalled();
   });
 

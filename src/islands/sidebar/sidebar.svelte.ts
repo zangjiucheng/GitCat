@@ -466,12 +466,12 @@ class SidebarState {
   // auto mode on (computing+persisting a filter immediately, not waiting for
   // the next refresh) or off (same full reset as showAllBranches, since
   // there's no manually-curated filter to fall back to once auto mode's own
-  // computed one is discarded).
+  // computed one is discarded). Demo mode goes through the SAME path as
+  // real mode (recomputeAutoVisibility's own doc comment covers how it
+  // degrades gracefully without a backend) — a design-mode-only early
+  // return here used to leave the filter untouched while still flipping the
+  // "⚡ Auto" pill on, which looked exactly like "Auto shows everything".
   async toggleAutoMode(repo: string): Promise<void> {
-    if (!IN_TAURI) {
-      this.autoMode = !this.autoMode; // demo mode: no real merge/ahead data to compute from
-      return;
-    }
     this.autoMode = !this.autoMode;
     if (this.autoMode) await this.recomputeAutoVisibility(repo);
     else await this.showAllBranches(repo);
@@ -488,18 +488,34 @@ class SidebarState {
   // SHOWING when we can't tell is safer than hiding real work). Only ever
   // writes visibleLocal — see autoMode's own doc comment for why remotes
   // are left alone.
+  //
+  // Design mode has no backend to ask branch_merge_status of, so `mergedInto`
+  // stays `null` there rather than an empty Set: the two must NOT collapse
+  // into the same case — an empty Set means "asked, nothing came back
+  // merged" (every branch legitimately fails the merged check, by design),
+  // while `null` means "never asked" and the merged clause must be skipped
+  // entirely rather than defaulting to "unmerged" for every branch. Getting
+  // that backwards is exactly how demo mode used to show every branch the
+  // instant Auto was toggled on.
   async recomputeAutoVisibility(repo: string): Promise<void> {
-    if (!IN_TAURI || !repo) return;
-    let mergedInto = new Set<string>();
-    try {
-      const merge = await commands.branchMergeStatus(repo);
-      if (merge.status === "ok") mergedInto = new Set(merge.data.merged);
-      else console.error("branch_merge_status", merge.error);
-    } catch (e) {
-      console.error("branch_merge_status", e);
+    let mergedInto: Set<string> | null = null;
+    if (IN_TAURI) {
+      // Only the real backend call needs a real repo path — design mode's
+      // filter below is computed entirely from already-loaded `this.locals`,
+      // same as `bridge.CUR_REPO` staying null throughout a design-mode
+      // session that never "opens" a real repo at all.
+      if (!repo) return;
+      mergedInto = new Set<string>();
+      try {
+        const merge = await commands.branchMergeStatus(repo);
+        if (merge.status === "ok") mergedInto = new Set(merge.data.merged);
+        else console.error("branch_merge_status", merge.error);
+      } catch (e) {
+        console.error("branch_merge_status", e);
+      }
     }
     this.visibleLocal = this.locals
-      .filter((b) => b.name === this.head || (b.ahead ?? 0) > 0 || b.upstream === null || !mergedInto.has(b.name))
+      .filter((b) => b.name === this.head || (b.ahead ?? 0) > 0 || b.upstream === null || (mergedInto !== null && !mergedInto.has(b.name)))
       .map((b) => b.name);
     this.visibleRemote = null;
     await this.persistVisibleBranches(repo);
