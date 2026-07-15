@@ -145,7 +145,7 @@ fn repo_with_no_submodules_returns_empty_list() {
     let repo = TempRepo::init("submodule_none");
     let _c0 = repo.commit("f.txt", "hello\n", "c0");
 
-    let rows = submodule_status(repo.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(repo.path())).expect("submodule_status failed");
     assert!(rows.is_empty(), "expected no submodules, got {} rows", rows.len());
 }
 
@@ -166,7 +166,7 @@ fn freshly_cloned_submodule_is_not_initialized() {
         "sub/ should be an empty directory before init"
     );
 
-    let rows = submodule_status(clone.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(clone.path())).expect("submodule_status failed");
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
     assert_eq!(row.path, "sub");
@@ -185,7 +185,7 @@ fn submodule_in_sync_is_clean() {
     let _p0 = parent.commit("root.txt", "root\n", "p0");
     add_submodule(&parent, &child, "sub");
 
-    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
     assert_eq!(row.status, "clean");
@@ -220,7 +220,7 @@ fn submodule_with_uncommitted_change_is_dirty() {
     assert!(ok);
     assert!(out.contains("M sub"), "expected superproject to see sub as modified: {out:?}");
 
-    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].status, "dirty");
 }
@@ -249,7 +249,7 @@ fn submodule_with_bumped_tracked_commit_is_out_of_date() {
     let (_, sm_status, _) = parent.git(&["submodule", "status"]);
     assert!(sm_status.starts_with('+'), "expected a '+'-prefixed submodule status: {sm_status:?}");
 
-    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
     assert_eq!(row.status, "out-of-date");
@@ -300,7 +300,7 @@ fn submodule_with_staged_uncommitted_change_is_dirty() {
     assert!(ok);
     assert!(out.contains("M sub"), "expected superproject to see sub as modified: {out:?}");
 
-    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].status, "dirty", "a staged-but-uncommitted change inside the submodule must not read as clean");
 }
@@ -323,7 +323,7 @@ fn manually_deleted_submodule_directory_is_not_initialized() {
     // is registered but the workdir path is entirely gone).
     std::fs::remove_dir_all(parent.dir.join("sub")).expect("remove submodule dir");
 
-    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
     assert_eq!(
@@ -370,7 +370,7 @@ fn submodule_gitlink_merge_conflict_is_not_clean() {
     assert_eq!(parent.open().state(), git2::RepositoryState::Merge, "expected a real mid-merge repo state");
     assert!(parent.open().index().unwrap().has_conflicts(), "expected the index to carry the unresolved gitlink");
 
-    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
     assert_ne!(row.status, "clean", "a merge-conflicted gitlink must never read as clean");
@@ -398,7 +398,7 @@ fn submodule_status_reports_correct_absolute_path_for_a_normal_submodule() {
     let _p0 = parent.commit("root.txt", "root\n", "p0");
     add_submodule(&parent, &child, "sub");
 
-    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
 
@@ -451,7 +451,7 @@ fn submodule_status_on_a_mid_level_repo_computes_absolute_path_relative_to_its_o
     // Sanity: from the TOP-level repo, submodule_status only sees "sub" (its
     // own direct submodule) — "nested" is one level deeper and is not a
     // top-level entry of `parent`'s own .gitmodules at all.
-    let top_rows = submodule_status(parent.path()).expect("submodule_status (top) failed");
+    let top_rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status (top) failed");
     assert_eq!(top_rows.len(), 1);
     assert_eq!(top_rows[0].path, "sub");
     let expected_sub = std::fs::canonicalize(parent.dir.join("sub")).expect("canonicalize sub dir");
@@ -464,7 +464,7 @@ fn submodule_status_on_a_mid_level_repo_computes_absolute_path_relative_to_its_o
     // exactly what the frontend does after "opening" a submodule: it treats
     // `sub`'s own absolute_path as a brand-new active repo root.
     let sub_path = parent.dir.join("sub").to_string_lossy().to_string();
-    let mid_rows = submodule_status(sub_path).expect("submodule_status (mid-level) failed");
+    let mid_rows = tauri::async_runtime::block_on(submodule_status(sub_path)).expect("submodule_status (mid-level) failed");
     assert_eq!(mid_rows.len(), 1, "sub's own .gitmodules registers exactly one submodule: nested");
     let nested_row = &mid_rows[0];
     assert_eq!(nested_row.path, "nested");
@@ -521,7 +521,7 @@ fn submodule_status_reports_correct_absolute_path_for_a_multi_component_nested_p
     // for this row comes back as the literal 2-component string "vendor/lib-a".
     add_submodule(&parent, &child, "vendor/lib-a");
 
-    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
     assert_eq!(row.path, "vendor/lib-a");
@@ -624,7 +624,7 @@ fn submodule_init_registers_url_without_cloning() {
     let (has_url_before, _, _) = clone.git(&["config", "--get", "submodule.sub.url"]);
     assert!(!has_url_before, "expected no submodule.sub.url in .git/config before init");
 
-    let rows_before = submodule_status(clone.path()).expect("submodule_status failed");
+    let rows_before = tauri::async_runtime::block_on(submodule_status(clone.path())).expect("submodule_status failed");
     assert_eq!(rows_before.len(), 1);
     assert_eq!(rows_before[0].status, "not-initialized");
 
@@ -642,7 +642,7 @@ fn submodule_init_registers_url_without_cloning() {
         std::fs::read_dir(PathBuf::from(clone.path()).join("sub")).unwrap().next().is_none(),
         "sub/ should still be an empty directory after init alone"
     );
-    let rows_after = submodule_status(clone.path()).expect("submodule_status failed");
+    let rows_after = tauri::async_runtime::block_on(submodule_status(clone.path())).expect("submodule_status failed");
     assert_eq!(rows_after.len(), 1);
     assert_eq!(
         rows_after[0].status, "not-initialized",
@@ -662,7 +662,7 @@ fn submodule_update_with_init_clones_and_checks_out_never_initialized_submodule(
     add_submodule(&parent, &child, "sub");
 
     let clone = FreshClone::of(&parent, "submodule_updinit");
-    let rows_before = submodule_status(clone.path()).expect("submodule_status failed");
+    let rows_before = tauri::async_runtime::block_on(submodule_status(clone.path())).expect("submodule_status failed");
     assert_eq!(rows_before[0].status, "not-initialized");
 
     // init:true folds registration + clone + checkout into this one call —
@@ -675,7 +675,7 @@ fn submodule_update_with_init_clones_and_checks_out_never_initialized_submodule(
         .expect("read cloned submodule file");
     assert_eq!(content, "hello\n");
 
-    let rows_after = submodule_status(clone.path()).expect("submodule_status failed");
+    let rows_after = tauri::async_runtime::block_on(submodule_status(clone.path())).expect("submodule_status failed");
     assert_eq!(rows_after.len(), 1);
     let row = &rows_after[0];
     assert_eq!(row.status, "clean", "expected a freshly init+updated submodule to read as clean");
@@ -828,7 +828,7 @@ fn submodule_update_all_updates_multiple_submodules_in_one_call() {
     add_submodule(&parent, &child_b, "subB");
 
     let clone = FreshClone::of(&parent, "submodule_updall");
-    let rows_before = submodule_status(clone.path()).expect("submodule_status failed");
+    let rows_before = tauri::async_runtime::block_on(submodule_status(clone.path())).expect("submodule_status failed");
     assert_eq!(rows_before.len(), 2);
     assert!(rows_before.iter().all(|r| r.status == "not-initialized"));
 
@@ -837,7 +837,7 @@ fn submodule_update_all_updates_multiple_submodules_in_one_call() {
     let result = submodule_update(clone.path(), None, false, true);
     assert!(result.ok, "submodule_update (all) failed: {}", result.message);
 
-    let rows_after = submodule_status(clone.path()).expect("submodule_status failed");
+    let rows_after = tauri::async_runtime::block_on(submodule_status(clone.path())).expect("submodule_status failed");
     assert_eq!(rows_after.len(), 2);
     for row in &rows_after {
         assert_eq!(row.status, "clean", "expected {} to be clean after update-all", row.path);
@@ -897,7 +897,7 @@ fn submodule_add_clones_new_submodule_and_it_is_immediately_clean() {
     // none of `WD_UNINITIALIZED`/`WD_DELETED`/`WD_MODIFIED` fire for a
     // freshly cloned-and-staged submodule — so the row still, correctly,
     // reads "clean".
-    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
     assert_eq!(row.path, "sub");
@@ -1115,7 +1115,7 @@ fn submodule_deinit_clears_workdir_and_survives_in_git_modules() {
     let config_text = std::fs::read_to_string(&modules_config).unwrap();
     assert!(config_text.contains("[remote \"origin\"]"), "expected .git/modules/sub/config to still have its remote");
 
-    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].status, "not-initialized");
 }
@@ -1144,7 +1144,7 @@ fn submodule_deinit_without_force_refuses_on_dirty_submodule_and_keeps_content()
     assert_eq!(parent.read("sub/f.txt"), "dirty edit\n", "the dirty edit must survive a refused deinit");
     assert_eq!(parent.read("sub/untracked.txt"), "new file\n", "the untracked file must survive a refused deinit");
 
-    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
     assert_eq!(rows[0].status, "dirty");
 }
 
@@ -1898,7 +1898,7 @@ fn bug6_submodule_status_reports_removed_not_clean_after_submodule_remove_stages
     let remove_result = submodule_remove(parent.path(), "sub".to_string());
     assert!(remove_result.ok, "submodule_remove failed: {}", remove_result.message);
 
-    let rows = submodule_status(parent.path()).expect("submodule_status failed");
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
     assert_eq!(
         rows.len(),
         1,
@@ -1985,7 +1985,7 @@ fn submodule_status_on_cyclic_nested_submodule_terminates_cleanly_instead_of_cra
     // `submodule_foreach_run` — called directly on a repo containing the
     // cyclic submodule. Must terminate cleanly (no crash, no hang) and return
     // a full, sorted Vec covering BOTH submodules.
-    let rows = submodule_status(parent.path())
+    let rows = tauri::async_runtime::block_on(submodule_status(parent.path()))
         .expect("submodule_status must terminate cleanly (Ok), not hang or crash, on a cyclic nested submodule");
     assert_eq!(
         rows.len(),

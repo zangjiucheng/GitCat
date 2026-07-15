@@ -31,11 +31,11 @@ fn checkout_clean_tree_is_completely_unaffected() {
     repo.must(&["switch", "-q", "main"]);
     let path = repo.path();
 
-    let res = checkout(path.clone(), "feature".into());
+    let res = tauri::async_runtime::block_on(checkout(path.clone(), "feature".into()));
     assert!(res.ok, "expected clean checkout to succeed: {}", res.message);
     assert!(res.backup_ref.is_some(), "checkout should snapshot first");
     assert!(res.conflicting_files.is_empty(), "a successful checkout must report no conflicting files");
-    assert_eq!(list_refs(path).unwrap().head.as_deref(), Some("feature"));
+    assert_eq!(tauri::async_runtime::block_on(list_refs(path)).unwrap().head.as_deref(), Some("feature"));
     assert_eq!(repo.read("a.txt"), "feature\n");
     let _ = c1;
 }
@@ -58,7 +58,7 @@ fn checkout_dirty_collision_reports_the_exact_colliding_files() {
     repo.must(&["add", "--", "b.txt"]);
     assert!(!repo.is_clean());
 
-    let res = checkout(path.clone(), "feature".into());
+    let res = tauri::async_runtime::block_on(checkout(path.clone(), "feature".into()));
     assert!(!res.ok, "expected the dirty-tree collision to be refused");
     assert!(res.backup_ref.is_none(), "a refused (never-attempted) mutation must not have snapshotted");
     let mut files = res.conflicting_files.clone();
@@ -71,7 +71,7 @@ fn checkout_dirty_collision_reports_the_exact_colliding_files() {
     );
 
     // Atomic refusal: git touches nothing on a failed switch.
-    assert_eq!(list_refs(path).unwrap().head.as_deref(), Some("main"));
+    assert_eq!(tauri::async_runtime::block_on(list_refs(path)).unwrap().head.as_deref(), Some("main"));
     assert_eq!(repo.read("a.txt"), "dirty-a\n");
     assert_eq!(repo.read("b.txt"), "dirty-b\n");
 }
@@ -90,10 +90,10 @@ fn checkout_dirty_untracked_collision_reports_the_untracked_path() {
     // A second, NON-colliding untracked file (feature doesn't touch this path).
     std::fs::write(repo.dir.join("other.txt"), "unrelated\n").unwrap();
 
-    let res = checkout(path.clone(), "feature".into());
+    let res = tauri::async_runtime::block_on(checkout(path.clone(), "feature".into()));
     assert!(!res.ok, "expected untracked-collision checkout to be refused");
     assert_eq!(res.conflicting_files, vec!["newfile.txt".to_string()]);
-    assert_eq!(list_refs(path).unwrap().head.as_deref(), Some("main"));
+    assert_eq!(tauri::async_runtime::block_on(list_refs(path)).unwrap().head.as_deref(), Some("main"));
     assert_eq!(repo.read("newfile.txt"), "untracked local content\n");
     assert_eq!(repo.read("other.txt"), "unrelated\n");
 }
@@ -113,10 +113,10 @@ fn checkout_dirty_tree_that_does_not_collide_still_checks_out_cleanly() {
     std::fs::write(repo.dir.join("b.txt"), "still-dirty\n").unwrap();
     assert!(!repo.is_clean());
 
-    let res = checkout(path.clone(), "feature".into());
+    let res = tauri::async_runtime::block_on(checkout(path.clone(), "feature".into()));
     assert!(res.ok, "a non-colliding dirty tree must still check out cleanly: {}", res.message);
     assert!(res.conflicting_files.is_empty());
-    assert_eq!(list_refs(path).unwrap().head.as_deref(), Some("feature"));
+    assert_eq!(tauri::async_runtime::block_on(list_refs(path)).unwrap().head.as_deref(), Some("feature"));
     assert_eq!(repo.read("a.txt"), "feature-a\n", "a.txt should reflect feature's content");
     assert_eq!(repo.read("b.txt"), "still-dirty\n", "the non-colliding dirty file must be carried along untouched");
 }
@@ -140,7 +140,7 @@ fn create_branch_switch_dirty_collision_is_classified_the_same_way() {
     // Re-dirty (switching back and forth above needed a clean tree).
     std::fs::write(repo.dir.join("a.txt"), "dirty\n").unwrap();
 
-    let res = create_branch(path.clone(), "feature2".into(), Some(c1.clone()), Some(true));
+    let res = tauri::async_runtime::block_on(create_branch(path.clone(), "feature2".into(), Some(c1.clone()), Some(true)));
     assert!(!res.ok, "expected create_branch's checkout:true to be refused on collision");
     assert_eq!(res.conflicting_files, vec!["a.txt".to_string()]);
     assert!(res.backup_ref.is_none());
@@ -162,14 +162,14 @@ fn checkout_discard_discards_a_dirty_tracked_files_changes_and_switches() {
 
     // Sanity: the plain checkout would indeed be refused first (mirrors what
     // the frontend does before ever arming this mode).
-    let plain = checkout(path.clone(), "feature".into());
+    let plain = tauri::async_runtime::block_on(checkout(path.clone(), "feature".into()));
     assert!(!plain.ok);
     assert_eq!(plain.conflicting_files, vec!["a.txt".to_string()]);
 
-    let discarded = checkout_discard(path.clone(), "feature".into(), None);
+    let discarded = tauri::async_runtime::block_on(checkout_discard(path.clone(), "feature".into(), None));
     assert!(discarded.ok, "checkout_discard failed: {}", discarded.message);
     assert!(discarded.backup_ref.is_some(), "checkout_discard should still snapshot HEAD first");
-    assert_eq!(list_refs(path).unwrap().head.as_deref(), Some("feature"));
+    assert_eq!(tauri::async_runtime::block_on(list_refs(path)).unwrap().head.as_deref(), Some("feature"));
     assert_eq!(repo.read("a.txt"), "feature-a\n", "the dirty tracked change must be discarded");
     assert!(repo.is_clean(), "working tree must be clean after a force-discard switch");
 }
@@ -187,9 +187,9 @@ fn checkout_discard_force_overwrites_colliding_untracked_file_but_spares_others(
     std::fs::write(repo.dir.join("newfile.txt"), "untracked local content\n").unwrap();
     std::fs::write(repo.dir.join("other.txt"), "unrelated, must survive\n").unwrap();
 
-    let discarded = checkout_discard(path.clone(), "feature".into(), None);
+    let discarded = tauri::async_runtime::block_on(checkout_discard(path.clone(), "feature".into(), None));
     assert!(discarded.ok, "checkout_discard failed on untracked collision: {}", discarded.message);
-    assert_eq!(list_refs(path).unwrap().head.as_deref(), Some("feature"));
+    assert_eq!(tauri::async_runtime::block_on(list_refs(path)).unwrap().head.as_deref(), Some("feature"));
     assert_eq!(
         repo.read("newfile.txt"),
         "feature content\n",
@@ -233,7 +233,7 @@ fn checkout_discard_wipes_an_unrelated_dirty_tracked_file_not_just_the_colliding
     std::fs::write(repo.dir.join("unrelated.txt"), "unrelated dirty edit, NOT part of the collision\n").unwrap();
     repo.must(&["add", "unrelated.txt"]); // staged, not just working-tree dirty
 
-    let discarded = checkout_discard(path.clone(), "feature".into(), None);
+    let discarded = tauri::async_runtime::block_on(checkout_discard(path.clone(), "feature".into(), None));
     assert!(discarded.ok, "checkout_discard failed: {}", discarded.message);
     assert_eq!(
         repo.read("unrelated.txt"),
@@ -260,9 +260,9 @@ fn checkout_discard_can_create_and_switch_from_a_start_point() {
     std::fs::write(repo.dir.join("a.txt"), "dirty on main\n").unwrap();
     assert!(!repo.is_clean());
 
-    let res = checkout_discard(path.clone(), "brand-new".into(), Some(c1.clone()));
+    let res = tauri::async_runtime::block_on(checkout_discard(path.clone(), "brand-new".into(), Some(c1.clone())));
     assert!(res.ok, "checkout_discard with a start_point failed: {}", res.message);
-    assert_eq!(list_refs(path.clone()).unwrap().head.as_deref(), Some("brand-new"));
+    assert_eq!(tauri::async_runtime::block_on(list_refs(path.clone())).unwrap().head.as_deref(), Some("brand-new"));
     assert_eq!(repo.read("a.txt"), "other-content\n");
     assert_eq!(repo.rev("refs/heads/brand-new").as_deref(), Some(c1.as_str()));
 }

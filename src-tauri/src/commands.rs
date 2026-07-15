@@ -58,9 +58,12 @@ const DEFAULT_LIMIT: usize = 50_000;
 /// it on every call.
 #[tauri::command]
 #[specta::specta]
-pub fn load_graph(app: tauri::AppHandle<tauri::Wry>, path: String, limit: Option<usize>) -> Result<GraphData, String> {
-    let vb = crate::repo_registry::visible_branches_for(&app, &path)?;
-    build_graph(&path, limit.unwrap_or(DEFAULT_LIMIT), vb.local.as_deref(), vb.remote.as_deref())
+pub async fn load_graph(app: tauri::AppHandle<tauri::Wry>, path: String, limit: Option<usize>) -> Result<GraphData, String> {
+    crate::blocking::run_blocking(move || {
+        let vb = crate::repo_registry::visible_branches_for(&app, &path)?;
+        build_graph(&path, limit.unwrap_or(DEFAULT_LIMIT), vb.local.as_deref(), vb.remote.as_deref())
+    })
+    .await
 }
 
 /// Open `path`, walk its commits, lay out the swimlane graph, and return the

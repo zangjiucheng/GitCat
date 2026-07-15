@@ -1,4 +1,5 @@
 pub mod blame; // read-only line-annotation (git blame) view
+pub mod blocking; // run a repo-touching command's body off the main thread — see its own doc comment
 pub mod code_search; // Search Code: git-grep-based full-text search of the current checkout (or a chosen historical commit)
 pub mod commands;
 pub mod conflict;

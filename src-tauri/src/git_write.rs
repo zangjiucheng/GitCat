@@ -292,8 +292,8 @@ fn open_repo(path: &str) -> Result<Repository, WriteResult> {
 /// branches, and tags, plus the current branch shorthand. Read-only (git2).
 #[tauri::command]
 #[specta::specta]
-pub fn list_refs(path: String) -> Result<RefList, String> {
-    list_refs_inner(&path).map_err(|e| e.message().to_string())
+pub async fn list_refs(path: String) -> Result<RefList, String> {
+    crate::blocking::run_blocking(move || list_refs_inner(&path).map_err(|e| e.message().to_string())).await
 }
 
 fn list_refs_inner(path: &str) -> Result<RefList, git2::Error> {
@@ -429,8 +429,8 @@ fn resolve_default_branch_oid(repo: &Repository) -> Option<(String, git2::Oid)> 
 /// JS: `commands.branchMergeStatus(path)`. Read-only (git2).
 #[tauri::command]
 #[specta::specta]
-pub fn branch_merge_status(path: String) -> Result<BranchMergeInfo, String> {
-    branch_merge_status_inner(&path).map_err(|e| e.message().to_string())
+pub async fn branch_merge_status(path: String) -> Result<BranchMergeInfo, String> {
+    crate::blocking::run_blocking(move || branch_merge_status_inner(&path).map_err(|e| e.message().to_string())).await
 }
 
 fn branch_merge_status_inner(path: &str) -> Result<BranchMergeInfo, git2::Error> {
@@ -469,73 +469,76 @@ fn branch_merge_status_inner(path: &str) -> Result<BranchMergeInfo, git2::Error>
 /// JS call: `invoke("create_branch", { path, name, startPoint?, checkout? })`.
 #[tauri::command]
 #[specta::specta]
-pub fn create_branch(
+pub async fn create_branch(
     path: String,
     name: String,
     start_point: Option<String>,
     checkout: Option<bool>,
 ) -> WriteResult {
-    if let Err(e) = validate_branch_name(&name) {
-        return WriteResult::err(e);
-    }
-    if let Some(sp) = &start_point {
-        if let Err(e) = validate_revision(sp) {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_branch_name(&name) {
             return WriteResult::err(e);
         }
-    }
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    let switch = checkout.unwrap_or(false);
-    // Snapshot FIRST — never mutate without a backup — but ONLY when this
-    // will actually move HEAD/the current branch (`switch`): a plain
-    // `git branch <name> <start_point>` (switch:false) never touches HEAD,
-    // the current branch, the index, or the working tree at all — it only
-    // ever adds a new ref elsewhere, exactly like `force_push`/
-    // `remove_remote`'s own "nothing local changes, so nothing needs
-    // protecting" reasoning. An adversarial review of the fsck-based
-    // dangling-recovery feature (which always calls this with
-    // `checkout:false`) found the unconditional snapshot made recovery
-    // impossible in a repo with an unborn HEAD (no commit yet on the current
-    // branch — `safety::snapshot` has nothing to snapshot there) even though
-    // the underlying `git branch` call is completely safe regardless of
-    // HEAD's state. Skipping the snapshot for the non-switching case closes
-    // that gap for every caller, not just this one.
-    let backup = if switch {
-        match take_snapshot(&repo) {
-            Ok(b) => Some(b),
-            Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        if let Some(sp) = &start_point {
+            if let Err(e) = validate_revision(sp) {
+                return WriteResult::err(e);
+            }
         }
-    } else {
-        None
-    };
-    // -c takes <name> as its value; --end-of-options AFTER it still guards <start>.
-    let mut args: Vec<&str> = if switch {
-        vec!["switch", "-c", &name, "--end-of-options"]
-    } else {
-        vec!["branch", "--end-of-options", &name]
-    };
-    if let Some(sp) = &start_point {
-        args.push(sp.as_str());
-    }
-    match run_git(&path, &args) {
-        Ok(out) if out.ok => {
-            let verb = if switch { "Created & switched to" } else { "Created branch" };
-            let message = match &backup {
-                Some(b) => format!("{verb} {name} (snapshot {}).", short_backup(b)),
-                None => format!("{verb} {name}."),
-            };
-            WriteResult::ok(message, backup)
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        let switch = checkout.unwrap_or(false);
+        // Snapshot FIRST — never mutate without a backup — but ONLY when this
+        // will actually move HEAD/the current branch (`switch`): a plain
+        // `git branch <name> <start_point>` (switch:false) never touches HEAD,
+        // the current branch, the index, or the working tree at all — it only
+        // ever adds a new ref elsewhere, exactly like `force_push`/
+        // `remove_remote`'s own "nothing local changes, so nothing needs
+        // protecting" reasoning. An adversarial review of the fsck-based
+        // dangling-recovery feature (which always calls this with
+        // `checkout:false`) found the unconditional snapshot made recovery
+        // impossible in a repo with an unborn HEAD (no commit yet on the current
+        // branch — `safety::snapshot` has nothing to snapshot there) even though
+        // the underlying `git branch` call is completely safe regardless of
+        // HEAD's state. Skipping the snapshot for the non-switching case closes
+        // that gap for every caller, not just this one.
+        let backup = if switch {
+            match take_snapshot(&repo) {
+                Ok(b) => Some(b),
+                Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            }
+        } else {
+            None
+        };
+        // -c takes <name> as its value; --end-of-options AFTER it still guards <start>.
+        let mut args: Vec<&str> = if switch {
+            vec!["switch", "-c", &name, "--end-of-options"]
+        } else {
+            vec!["branch", "--end-of-options", &name]
+        };
+        if let Some(sp) = &start_point {
+            args.push(sp.as_str());
         }
-        // When `switch` is true this can hit the same dirty-tree collision
-        // `checkout` can (byte-identical wording, verified); when `switch` is
-        // false this is a plain `git branch` and can never match the
-        // substring, so classifying unconditionally is safe and simpler than
-        // branching on `switch` here too.
-        Ok(out) => classify_switch_failure(&out),
-        Err(e) => WriteResult::err(e),
-    }
+        match run_git(&path, &args) {
+            Ok(out) if out.ok => {
+                let verb = if switch { "Created & switched to" } else { "Created branch" };
+                let message = match &backup {
+                    Some(b) => format!("{verb} {name} (snapshot {}).", short_backup(b)),
+                    None => format!("{verb} {name}."),
+                };
+                WriteResult::ok(message, backup)
+            }
+            // When `switch` is true this can hit the same dirty-tree collision
+            // `checkout` can (byte-identical wording, verified); when `switch` is
+            // false this is a plain `git branch` and can never match the
+            // substring, so classifying unconditionally is safe and simpler than
+            // branching on `switch` here too.
+            Ok(out) => classify_switch_failure(&out),
+            Err(e) => WriteResult::err(e),
+        }
+    })
+    .await
 }
 
 /// Switch HEAD to an existing branch. Uses `git switch` (never touches
@@ -544,32 +547,35 @@ pub fn create_branch(
 /// JS call: `invoke("checkout", { path, name })`.
 #[tauri::command]
 #[specta::specta]
-pub fn checkout(path: String, name: String) -> WriteResult {
-    if let Err(e) = validate_branch_name(&name) {
-        return WriteResult::err(e);
-    }
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    let backup = match take_snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
-    };
+pub async fn checkout(path: String, name: String) -> WriteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_branch_name(&name) {
+            return WriteResult::err(e);
+        }
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        let backup = match take_snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        };
 
-    // git switch --end-of-options <name>
-    match run_git(&path, &["switch", "--end-of-options", &name]) {
-        Ok(out) if out.ok => WriteResult::ok(
-            format!("Switched to {name} (snapshot {}).", short_backup(&backup)),
-            Some(backup),
-        ),
-        // dirty-tree: "Your local changes ... would be overwritten by checkout"
-        // (or the untracked-collision sibling) -> classify so the frontend
-        // can offer the dirty-tree resolution chooser instead of a plain
-        // toast; every OTHER refusal still comes back as a plain error.
-        Ok(out) => classify_switch_failure(&out),
-        Err(e) => WriteResult::err(e),
-    }
+        // git switch --end-of-options <name>
+        match run_git(&path, &["switch", "--end-of-options", &name]) {
+            Ok(out) if out.ok => WriteResult::ok(
+                format!("Switched to {name} (snapshot {}).", short_backup(&backup)),
+                Some(backup),
+            ),
+            // dirty-tree: "Your local changes ... would be overwritten by checkout"
+            // (or the untracked-collision sibling) -> classify so the frontend
+            // can offer the dirty-tree resolution chooser instead of a plain
+            // toast; every OTHER refusal still comes back as a plain error.
+            Ok(out) => classify_switch_failure(&out),
+            Err(e) => WriteResult::err(e),
+        }
+    })
+    .await
 }
 
 /// Force-switch to `name` (optionally creating it from `start_point`,
@@ -623,45 +629,48 @@ pub fn checkout(path: String, name: String) -> WriteResult {
 /// JS: `invoke("checkout_discard", { path, name, startPoint })`.
 #[tauri::command]
 #[specta::specta]
-pub fn checkout_discard(path: String, name: String, start_point: Option<String>) -> WriteResult {
-    if let Err(e) = validate_branch_name(&name) {
-        return WriteResult::err(e);
-    }
-    if let Some(sp) = &start_point {
-        if let Err(e) = validate_revision(sp) {
+pub async fn checkout_discard(path: String, name: String, start_point: Option<String>) -> WriteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_branch_name(&name) {
             return WriteResult::err(e);
         }
-    }
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    let backup = match take_snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
-    };
+        if let Some(sp) = &start_point {
+            if let Err(e) = validate_revision(sp) {
+                return WriteResult::err(e);
+            }
+        }
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        let backup = match take_snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        };
 
-    // -c takes <name> as its value; --end-of-options AFTER it still guards <start>.
-    let mut args: Vec<&str> = if start_point.is_some() {
-        vec!["switch", "--force", "-c", &name, "--end-of-options"]
-    } else {
-        vec!["switch", "--force", "--end-of-options", &name]
-    };
-    if let Some(sp) = &start_point {
-        args.push(sp.as_str());
-    }
+        // -c takes <name> as its value; --end-of-options AFTER it still guards <start>.
+        let mut args: Vec<&str> = if start_point.is_some() {
+            vec!["switch", "--force", "-c", &name, "--end-of-options"]
+        } else {
+            vec!["switch", "--force", "--end-of-options", &name]
+        };
+        if let Some(sp) = &start_point {
+            args.push(sp.as_str());
+        }
 
-    match run_git(&path, &args) {
-        Ok(out) if out.ok => WriteResult::ok(
-            format!(
-                "Force-switched to {name}, discarding local changes (snapshot {}).",
-                short_backup(&backup)
+        match run_git(&path, &args) {
+            Ok(out) if out.ok => WriteResult::ok(
+                format!(
+                    "Force-switched to {name}, discarding local changes (snapshot {}).",
+                    short_backup(&backup)
+                ),
+                Some(backup),
             ),
-            Some(backup),
-        ),
-        Ok(out) => WriteResult::err(git_error_message(&out)),
-        Err(e) => WriteResult::err(e),
-    }
+            Ok(out) => WriteResult::err(git_error_message(&out)),
+            Err(e) => WriteResult::err(e),
+        }
+    })
+    .await
 }
 
 /// Delete a branch. Refuses the current branch. `force=false` uses `git branch
@@ -671,55 +680,58 @@ pub fn checkout_discard(path: String, name: String, start_point: Option<String>)
 /// JS call: `invoke("delete_branch", { path, name, force })`.
 #[tauri::command]
 #[specta::specta]
-pub fn delete_branch(path: String, name: String, force: bool) -> WriteResult {
-    if let Err(e) = validate_branch_name(&name) {
-        return WriteResult::err(e);
-    }
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-
-    // Refuse to delete the checked-out branch (friendlier than git's worktree error).
-    if let Ok(head) = repo.head() {
-        if head.is_branch() && head.shorthand() == Some(name.as_str()) {
-            return WriteResult::err(format!(
-                "Cannot delete {name}: it is the current branch. Switch away first."
-            ));
+pub async fn delete_branch(path: String, name: String, force: bool) -> WriteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_branch_name(&name) {
+            return WriteResult::err(e);
         }
-    }
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
 
-    // Capture the tip before deletion so the message can tell the user how to recreate it.
-    let tip = repo
-        .find_branch(&name, BranchType::Local)
-        .ok()
-        .and_then(|b| b.get().peel_to_commit().ok())
-        .map(|c| c.id().to_string());
-    let tip7 = tip.as_deref().map(|s| &s[..7.min(s.len())]);
-
-    let backup = match take_snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
-    };
-    // Keep the deleted branch's commits reachable & recoverable (best-effort;
-    // pinned under refs/gitgui/deleted/* so it is never an undo target).
-    if let Some(oid) = tip.as_deref().and_then(|s| git2::Oid::from_str(s).ok()) {
-        let _ = crate::safety::pin_deleted_tip(&repo, oid, &name);
-    }
-
-    let flag = if force { "-D" } else { "-d" };
-    match run_git(&path, &["branch", flag, "--end-of-options", &name]) {
-        Ok(out) if out.ok => {
-            let msg = match tip7 {
-                Some(t) => format!("Deleted branch {name} (was {t}). Recreate it with New branch → {t}."),
-                None => format!("Deleted branch {name}."),
-            };
-            WriteResult::ok(msg, Some(backup))
+        // Refuse to delete the checked-out branch (friendlier than git's worktree error).
+        if let Ok(head) = repo.head() {
+            if head.is_branch() && head.shorthand() == Some(name.as_str()) {
+                return WriteResult::err(format!(
+                    "Cannot delete {name}: it is the current branch. Switch away first."
+                ));
+            }
         }
-        // -d on an unmerged branch: "the branch '<name>' is not fully merged"
-        Ok(out) => WriteResult::err(git_error_message(&out)),
-        Err(e) => WriteResult::err(e),
-    }
+
+        // Capture the tip before deletion so the message can tell the user how to recreate it.
+        let tip = repo
+            .find_branch(&name, BranchType::Local)
+            .ok()
+            .and_then(|b| b.get().peel_to_commit().ok())
+            .map(|c| c.id().to_string());
+        let tip7 = tip.as_deref().map(|s| &s[..7.min(s.len())]);
+
+        let backup = match take_snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        };
+        // Keep the deleted branch's commits reachable & recoverable (best-effort;
+        // pinned under refs/gitgui/deleted/* so it is never an undo target).
+        if let Some(oid) = tip.as_deref().and_then(|s| git2::Oid::from_str(s).ok()) {
+            let _ = crate::safety::pin_deleted_tip(&repo, oid, &name);
+        }
+
+        let flag = if force { "-D" } else { "-d" };
+        match run_git(&path, &["branch", flag, "--end-of-options", &name]) {
+            Ok(out) if out.ok => {
+                let msg = match tip7 {
+                    Some(t) => format!("Deleted branch {name} (was {t}). Recreate it with New branch → {t}."),
+                    None => format!("Deleted branch {name}."),
+                };
+                WriteResult::ok(msg, Some(backup))
+            }
+            // -d on an unmerged branch: "the branch '<name>' is not fully merged"
+            Ok(out) => WriteResult::err(git_error_message(&out)),
+            Err(e) => WriteResult::err(e),
+        }
+    })
+    .await
 }
 
 /// Rename a branch. Uses `git branch -m` (NOT `-M`), so it refuses to clobber an
@@ -727,30 +739,33 @@ pub fn delete_branch(path: String, name: String, force: bool) -> WriteResult {
 /// JS call: `invoke("rename_branch", { path, from, to })`.
 #[tauri::command]
 #[specta::specta]
-pub fn rename_branch(path: String, from: String, to: String) -> WriteResult {
-    if let Err(e) = validate_branch_name(&from) {
-        return WriteResult::err(e);
-    }
-    if let Err(e) = validate_branch_name(&to) {
-        return WriteResult::err(e);
-    }
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    let backup = match take_snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
-    };
+pub async fn rename_branch(path: String, from: String, to: String) -> WriteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_branch_name(&from) {
+            return WriteResult::err(e);
+        }
+        if let Err(e) = validate_branch_name(&to) {
+            return WriteResult::err(e);
+        }
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        let backup = match take_snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        };
 
-    // git branch -m --end-of-options <from> <to>
-    match run_git(&path, &["branch", "-m", "--end-of-options", &from, &to]) {
-        Ok(out) if out.ok => WriteResult::ok(
-            format!("Renamed {from} → {to} (snapshot {}).", short_backup(&backup)),
-            Some(backup),
-        ),
-        // e.g. "a branch named '<to>' already exists"
-        Ok(out) => WriteResult::err(git_error_message(&out)),
-        Err(e) => WriteResult::err(e),
-    }
+        // git branch -m --end-of-options <from> <to>
+        match run_git(&path, &["branch", "-m", "--end-of-options", &from, &to]) {
+            Ok(out) if out.ok => WriteResult::ok(
+                format!("Renamed {from} → {to} (snapshot {}).", short_backup(&backup)),
+                Some(backup),
+            ),
+            // e.g. "a branch named '<to>' already exists"
+            Ok(out) => WriteResult::err(git_error_message(&out)),
+            Err(e) => WriteResult::err(e),
+        }
+    })
+    .await
 }

@@ -263,8 +263,8 @@ pub struct SubmoduleInfo {
 /// JS call: `invoke("submodule_status", { path })`.
 #[tauri::command]
 #[specta::specta]
-pub fn submodule_status(path: String) -> Result<Vec<SubmoduleInfo>, String> {
-    submodule_status_inner(&path).map_err(|e| e.message().to_string())
+pub async fn submodule_status(path: String) -> Result<Vec<SubmoduleInfo>, String> {
+    crate::blocking::run_blocking(move || submodule_status_inner(&path).map_err(|e| e.message().to_string())).await
 }
 
 fn submodule_status_inner(path: &str) -> Result<Vec<SubmoduleInfo>, git2::Error> {

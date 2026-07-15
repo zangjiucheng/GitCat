@@ -17,7 +17,7 @@ fn list_refs_reports_current_branch_and_tip() {
     let c0 = repo.commit("f.txt", "0\n", "c0");
     let path = repo.path();
 
-    let refs = list_refs(path).expect("list_refs failed");
+    let refs = tauri::async_runtime::block_on(list_refs(path)).expect("list_refs failed");
     assert_eq!(refs.head.as_deref(), Some("main"));
     assert_eq!(refs.locals.len(), 1);
     assert_eq!(refs.locals[0].name, "main");
@@ -58,7 +58,7 @@ fn list_refs_reports_the_configured_upstream_alongside_ahead_behind() {
     // Local-only commit, on top of fetching the above — diverged both ways now.
     local.commit("f.txt", "1\n", "local-only commit");
 
-    let refs = list_refs(local.path()).expect("list_refs failed");
+    let refs = tauri::async_runtime::block_on(list_refs(local.path())).expect("list_refs failed");
     let main = refs.locals.iter().find(|b| b.name == "main").expect("main branch missing");
     assert_eq!(main.upstream.as_deref(), Some("origin/main"));
     assert_eq!(main.ahead, Some(1));
@@ -73,16 +73,16 @@ fn create_checkout_delete_and_rename_branch() {
     let path = repo.path();
 
     // create + switch to a new branch at HEAD.
-    let created = create_branch(path.clone(), "feature".into(), None, Some(true));
+    let created = tauri::async_runtime::block_on(create_branch(path.clone(), "feature".into(), None, Some(true)));
     assert!(created.ok, "create_branch failed: {}", created.message);
     assert!(created.backup_ref.is_some(), "create_branch should snapshot first");
 
-    let refs = list_refs(path.clone()).unwrap();
+    let refs = tauri::async_runtime::block_on(list_refs(path.clone())).unwrap();
     assert_eq!(refs.head.as_deref(), Some("feature"));
     assert!(refs.locals.iter().any(|b| b.name == "feature" && b.sha == c1));
 
     // Refuse deleting the CURRENT branch.
-    let refused = delete_branch(path.clone(), "feature".into(), false);
+    let refused = tauri::async_runtime::block_on(delete_branch(path.clone(), "feature".into(), false));
     assert!(!refused.ok, "expected delete of current branch to be refused");
     assert!(
         refused.message.to_lowercase().contains("current branch"),
@@ -94,18 +94,18 @@ fn create_checkout_delete_and_rename_branch() {
 
     // Switch back to main, then delete feature (no longer current, and fully
     // merged since it never diverged from main).
-    let co = checkout(path.clone(), "main".into());
+    let co = tauri::async_runtime::block_on(checkout(path.clone(), "main".into()));
     assert!(co.ok, "checkout failed: {}", co.message);
-    assert_eq!(list_refs(path.clone()).unwrap().head.as_deref(), Some("main"));
+    assert_eq!(tauri::async_runtime::block_on(list_refs(path.clone())).unwrap().head.as_deref(), Some("main"));
 
-    let deleted = delete_branch(path.clone(), "feature".into(), false);
+    let deleted = tauri::async_runtime::block_on(delete_branch(path.clone(), "feature".into(), false));
     assert!(deleted.ok, "delete_branch failed: {}", deleted.message);
     assert!(repo.rev("refs/heads/feature").is_none());
 
     // Create another branch and rename it.
-    let cb = create_branch(path.clone(), "temp".into(), None, Some(false));
+    let cb = tauri::async_runtime::block_on(create_branch(path.clone(), "temp".into(), None, Some(false)));
     assert!(cb.ok, "create_branch(temp) failed: {}", cb.message);
-    let rn = rename_branch(path.clone(), "temp".into(), "temp2".into());
+    let rn = tauri::async_runtime::block_on(rename_branch(path.clone(), "temp".into(), "temp2".into()));
     assert!(rn.ok, "rename_branch failed: {}", rn.message);
     assert!(repo.rev("refs/heads/temp").is_none(), "old name should be gone");
     assert!(repo.rev("refs/heads/temp2").is_some(), "new name should exist");
@@ -183,7 +183,7 @@ fn merged_branch_is_reported_merged_unmerged_branch_is_not() {
     repo.commit("f.txt", "2\n", "still in progress");
     repo.must(&["checkout", "-q", "main"]);
 
-    let info = branch_merge_status(repo.path()).expect("branch_merge_status failed");
+    let info = tauri::async_runtime::block_on(branch_merge_status(repo.path())).expect("branch_merge_status failed");
     assert_eq!(info.default_branch.as_deref(), Some("main"));
     assert!(info.merged.contains(&"feature-merged".to_string()), "feature-merged should be reported merged");
     assert!(!info.merged.contains(&"feature-unmerged".to_string()), "feature-unmerged has commits main lacks — must not be reported merged");
@@ -206,7 +206,7 @@ fn resolves_default_branch_via_origin_head_symref_over_local_main_fallback() {
     // fallback rather than "trunk" just coincidentally being picked.
     repo.must(&["branch", "main"]);
 
-    let info = branch_merge_status(repo.path()).expect("branch_merge_status failed");
+    let info = tauri::async_runtime::block_on(branch_merge_status(repo.path())).expect("branch_merge_status failed");
     assert_eq!(info.default_branch.as_deref(), Some("trunk"), "origin/HEAD's symbolic target should win over the main/master fallback");
 }
 
@@ -215,7 +215,7 @@ fn falls_back_to_local_main_when_no_remote_is_configured() {
     let repo = TempRepo::init("merge_status_fallback_main");
     repo.commit("f.txt", "0\n", "c0");
 
-    let info = branch_merge_status(repo.path()).expect("branch_merge_status failed");
+    let info = tauri::async_runtime::block_on(branch_merge_status(repo.path())).expect("branch_merge_status failed");
     assert_eq!(info.default_branch.as_deref(), Some("main"), "no remote configured — should fall back to the local 'main' branch");
 }
 
@@ -225,7 +225,7 @@ fn no_default_branch_resolvable_returns_none_and_an_empty_merged_list() {
     repo.commit("f.txt", "0\n", "c0");
     repo.must(&["branch", "-m", "main", "trunk"]); // rename away from main/master; no remote configured either
 
-    let info = branch_merge_status(repo.path()).expect("branch_merge_status failed");
+    let info = tauri::async_runtime::block_on(branch_merge_status(repo.path())).expect("branch_merge_status failed");
     assert_eq!(info.default_branch, None, "no origin/HEAD and no main/master branch — nothing to resolve");
     assert!(info.merged.is_empty(), "can't classify anything as merged without a default branch to compare against");
 }

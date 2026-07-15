@@ -9,6 +9,8 @@ fn j<T: serde::Serialize>(t: &T) -> String {
 }
 
 fn main() {
+    use tauri::async_runtime::block_on;
+
     let p = std::env::args().nth(1).expect("usage: m2check <repo> [undo|refs]");
     match std::env::args().nth(2).as_deref() {
         Some("undo") => {
@@ -16,22 +18,25 @@ fn main() {
             return;
         }
         Some("refs") => {
-            println!("list_refs -> {}", j(&list_refs(p.clone()).unwrap()));
+            println!("list_refs -> {}", j(&block_on(list_refs(p.clone())).unwrap()));
             return;
         }
         _ => {}
     }
 
-    println!("1) list_refs        {}", j(&list_refs(p.clone()).unwrap()));
+    println!("1) list_refs        {}", j(&block_on(list_refs(p.clone())).unwrap()));
     println!("2) create_snapshot  {}", j(&create_snapshot(p.clone()).unwrap()));
     println!("3) list_snapshots   {}", j(&list_snapshots(p.clone()).unwrap()));
-    println!("4) checkout feature {}", j(&checkout(p.clone(), "feature".into())));
-    println!("5) refs (on feature){}", j(&list_refs(p.clone()).unwrap()));
+    println!("4) checkout feature {}", j(&block_on(checkout(p.clone(), "feature".into()))));
+    println!("5) refs (on feature){}", j(&block_on(list_refs(p.clone())).unwrap()));
     println!("6) undo_last        {}", j(&undo_last(p.clone()).unwrap()));
-    println!("7) refs (RESTORED?) {}", j(&list_refs(p.clone()).unwrap()));
-    println!("8) create_branch exp{}", j(&create_branch(p.clone(), "exp".into(), None, None)));
-    println!("9) delete CURRENT   {}", j(&delete_branch(p.clone(), "main".into(), false)));
-    println!("10) rename exp->exp2 {}", j(&rename_branch(p.clone(), "exp".into(), "exp2".into())));
-    println!("11) delete exp2      {}", j(&delete_branch(p.clone(), "exp2".into(), false)));
+    println!("7) refs (RESTORED?) {}", j(&block_on(list_refs(p.clone())).unwrap()));
+    println!("8) create_branch exp{}", j(&block_on(create_branch(p.clone(), "exp".into(), None, None))));
+    println!("9) delete CURRENT   {}", j(&block_on(delete_branch(p.clone(), "main".into(), false))));
+    println!(
+        "10) rename exp->exp2 {}",
+        j(&block_on(rename_branch(p.clone(), "exp".into(), "exp2".into())))
+    );
+    println!("11) delete exp2      {}", j(&block_on(delete_branch(p.clone(), "exp2".into(), false))));
     println!("12) snapshots (grew) {}", j(&list_snapshots(p.clone()).unwrap()));
 }
