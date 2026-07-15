@@ -161,24 +161,49 @@ jobs:
           prerelease: false
           args: --target ${{ matrix.target }}
 
-  # tauri-action's own `prerelease: false` input above does not reliably
-  # stick — every release through v0.5.0 ended up prerelease=true on GitHub
-  # regardless (verified via `gh api repos/.../releases`), which silently
-  # breaks the in-app updater: its endpoint
-  # (releases/latest/download/latest.json) only ever resolves to a
-  # published, NON-prerelease release. Force-correct the flag here, once,
-  # after every matrix leg has uploaded its assets — independent of whatever
-  # tauri-action is actually doing internally. The release stays a draft
-  # (untouched by this step) for a human to review and publish by hand; this
-  # only makes sure that once published, it's actually discoverable as an
-  # update.
-  fix-prerelease-flag:
-    name: Force prerelease=false on the release
+  # Runs ONCE after every matrix leg has uploaded its assets (not per-leg —
+  # all 6 platforms share one release) to finish two things tauri-action
+  # doesn't reliably handle on its own:
+  finalize-release:
+    name: Finalize release (prerelease flag + changelog notes)
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      # tauri-action's own `prerelease: false` input (see the build step
+      # above) does not reliably stick — every release through v0.5.0 ended
+      # up prerelease=true on GitHub regardless (verified via
+      # `gh api repos/.../releases`), which silently breaks the in-app
+      # updater: its endpoint (releases/latest/download/latest.json) only
+      # ever resolves to a published, NON-prerelease release. Force-correct
+      # the flag here, independent of whatever tauri-action is actually
+      # doing internally. The release stays a draft (untouched by this
+      # step) for a human to review and publish by hand; this only makes
+      # sure that once published, it's actually discoverable as an update.
       - name: gh release edit --prerelease=false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "${{ github.ref_name }}" --prerelease=false --repo ${{ github.repository }}
+
+      # The build step's own `releaseBody` above is one fixed, generic
+      # sentence — fine as a placeholder, useless as an actual changelog.
+      # Replace the draft's description with GitHub's own auto-generated
+      # release notes (commits/PRs since the previous tag, same content
+      # `gh release create --generate-notes` would produce — `gh release
+      # edit` itself has no such flag, so the generate-notes API is called
+      # directly) every time this workflow finishes, so the draft is always
+      # ready to publish as-is without a human hand-writing notes first.
+      - name: Regenerate the draft's release notes from commits since the last tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="${{ github.ref_name }}" --jq .body > changelog.md
+          {
+            cat changelog.md
+            echo
+            echo "---"
+            echo
+            echo "See the assets below for your platform's installer."
+          } > notes.md
+          gh release edit "${{ github.ref_name }}" --notes-file notes.md --repo ${{ github.repository }}
