@@ -628,9 +628,17 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tree .file:hover{background:var(--elevated)}
 .tree .file.active{background:color-mix(in srgb,var(--accent) 15%,transparent)}
 .tree .indent{padding-left:16px}
-.tree .badge{margin-left:auto;font-family:var(--mono);font-size:10px}
+/* .fname truncates instead of wrapping — without this, a long filename
+   under deep tree indentation wraps to 2-3 lines, growing .file's own
+   height; .file's align-items:center then centers the fixed-size .wd-act
+   icon buttons against that taller row, so they (and their title tooltips)
+   drift down into the NEXT sibling row instead of staying pinned to this
+   row's text. flex:none on .st/.badge matches .wd-file's own equivalents
+   (Workdir.svelte's parallel per-file row) so neither can shrink/wrap either. */
+.tree .fname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree .badge{margin-left:auto;flex:none;white-space:nowrap;font-family:var(--mono);font-size:10px}
 .tree .badge .add{color:var(--success)} .tree .badge .del{color:var(--danger)}
-.tree .st{width:14px;text-align:center;font-family:var(--mono);font-weight:700;font-size:11px}
+.tree .st{flex:none;width:14px;text-align:center;font-family:var(--mono);font-weight:700;font-size:11px}
 .tree .st.M{color:var(--warning)} .tree .st.A{color:var(--success)} .tree .st.D{color:var(--danger)}
 .diffview{font-family:var(--mono);font-size:11.5px;line-height:1.55;background:var(--bg);border:1px solid var(--border);
   border-radius:var(--r-panel);overflow:auto;max-height:320px;margin-top:2px}

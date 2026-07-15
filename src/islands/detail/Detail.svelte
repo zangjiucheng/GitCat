@@ -180,7 +180,7 @@
       onkeydown={(e) => (e.key === "Enter" || e.key === " ") && detailCtrl.selectFile(f.p)}
     >
       <span class="st {f.st === 'A' ? 'A' : f.st === 'D' ? 'D' : 'M'}">{f.st}</span>
-      <span>{f.name}</span>
+      <span class="fname">{f.name}</span>
       <span class="badge"><span class="add">+{f.add}</span> <span class="del">&minus;{f.del}</span></span>
       {#if detailCtrl.resolvingDeletedFileFor === f.p}
         <span class="spinner"></span>
