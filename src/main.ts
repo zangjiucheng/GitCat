@@ -423,17 +423,26 @@ if (IN_TAURI) {
   // Silent startup update probe — delayed so it never competes with the
   // repo-load/graph-layout work a cold launch is already doing. `check(true)`
   // settles quietly back to "idle" on "up to date"/error (see its own doc
-  // comment); it only actually surfaces here when a real update WAS found,
-  // via one unobtrusive Tama hint — the About panel (see check-for-updates
-  // above) is where the user actually acts on it. Gated behind the Settings
-  // modal's "Automatically check for updates on launch" toggle (default on,
-  // matching this probe's original always-on behavior).
+  // comment); it only actually surfaces here when a real update WAS found.
+  // Gated behind the Settings modal's "Automatically check for updates on
+  // launch" toggle (default on, matching this probe's original always-on
+  // behavior).
+  //
+  // ADVERSARIALLY-FOUND FIX: this used to only nudge Tama with a toast
+  // pointing at "Help ▸ About" — a real update sat there ready to install,
+  // but the user had to go find it themselves. Auto-opening the About panel
+  // (same one the manual "Check for Updates…" menu item/button opens; safe
+  // to call any time, no repo needed — see about.svelte.ts's own doc
+  // comment) instead puts its "Download & Install" button directly in front
+  // of them the moment a real update is found, VS Code's own "here's the
+  // update, click to install" convention rather than a hint to go dig for it.
   if (loadSettings().autoCheckUpdates) {
     setTimeout(async () => {
       await updaterCtrl.check(true);
       if (updaterCtrl.phase === "available") {
         bridge.tama.set("hint");
-        bridge.tama.say("GitCat v" + updaterCtrl.version + " is available — see Help ▸ About to install.", 5000);
+        bridge.tama.say("GitCat v" + updaterCtrl.version + " is available. にゃ〜", 4200);
+        aboutCtrl.show();
       }
     }, 4000);
   }
