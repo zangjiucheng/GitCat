@@ -34,6 +34,7 @@ function memoryStorage(): Storage {
 
 vi.mock("../../legacy/bridge", () => ({
   applyThemeMode: vi.fn(),
+  setGraphShowAllTags: vi.fn(),
   tama: { set: vi.fn(), say: vi.fn(), warn: vi.fn(), event: vi.fn() },
 }));
 
@@ -104,6 +105,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       autoCheckUpdates: true,
       soundEffectsEnabled: true,
       soundEffectsVolume: 1,
+      showAllCommitTags: false,
     });
   });
 
@@ -118,6 +120,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       autoCheckUpdates: true,
       soundEffectsEnabled: true,
       soundEffectsVolume: 0.9,
+      showAllCommitTags: false,
     });
   });
 
@@ -130,6 +133,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       autoCheckUpdates: true,
       soundEffectsEnabled: true,
       soundEffectsVolume: 1,
+      showAllCommitTags: false,
     });
   });
 
@@ -151,6 +155,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       autoCheckUpdates: true,
       soundEffectsEnabled: true,
       soundEffectsVolume: 1,
+      showAllCommitTags: false,
     });
   });
 
@@ -179,8 +184,8 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
 });
 
 describe("show — seeds app-level fields and drives the identity section", () => {
-  it("seeds themeMode/cherryPickRecordOriginDefault/autoCheckUpdates/soundEffectsEnabled/soundEffectsVolume from localStorage", () => {
-    saveSettings({ themeMode: "system", cherryPickRecordOriginDefault: true, autoCheckUpdates: false, soundEffectsEnabled: false, soundEffectsVolume: 0.25 });
+  it("seeds themeMode/cherryPickRecordOriginDefault/autoCheckUpdates/soundEffectsEnabled/soundEffectsVolume/showAllCommitTags from localStorage", () => {
+    saveSettings({ themeMode: "system", cherryPickRecordOriginDefault: true, autoCheckUpdates: false, soundEffectsEnabled: false, soundEffectsVolume: 0.25, showAllCommitTags: true });
 
     settingsCtrl.show(null);
 
@@ -190,6 +195,7 @@ describe("show — seeds app-level fields and drives the identity section", () =
     expect(settingsCtrl.autoCheckUpdates).toBe(false);
     expect(settingsCtrl.soundEffectsEnabled).toBe(false);
     expect(settingsCtrl.soundEffectsVolume).toBe(0.25);
+    expect(settingsCtrl.showAllCommitTags).toBe(true);
   });
 
   it("with no repo open, clears identity and never calls getGitIdentity", () => {
@@ -256,6 +262,14 @@ describe("setThemeMode / setCherryPickRecordOriginDefault / setAutoCheckUpdates 
 
     settingsCtrl.setSoundEffectsVolume(-0.2);
     expect(settingsCtrl.soundEffectsVolume).toBe(0);
+  });
+
+  it("setShowAllCommitTags updates state, persists, and applies via bridge.setGraphShowAllTags", () => {
+    settingsCtrl.setShowAllCommitTags(true);
+
+    expect(settingsCtrl.showAllCommitTags).toBe(true);
+    expect(loadSettings().showAllCommitTags).toBe(true);
+    expect(bridge.setGraphShowAllTags).toHaveBeenCalledWith(true);
   });
 });
 

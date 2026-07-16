@@ -49,6 +49,16 @@
         </select>
       </div>
 
+      <h4 class="d-lab">Graph</h4>
+      <label class="set-toggle" style="margin-bottom:14px" title="When a commit has more than one tag, draw all of them instead of just the first">
+        <input
+          type="checkbox"
+          checked={settingsCtrl.showAllCommitTags}
+          onchange={(e) => settingsCtrl.setShowAllCommitTags((e.target as HTMLInputElement).checked)}
+        />
+        Show all tags on a commit
+      </label>
+
       <h4 class="d-lab">Cherry-pick</h4>
       <label class="set-toggle" style="margin-bottom:14px" title="Append '(cherry picked from …)' to the resulting commit message">
         <input

@@ -105,9 +105,17 @@ function generateGraph(N){
   const refs=new Array(N).fill(null); refs[0]={label:"main",kind:"head"};
   for(let r=40;r<N;r+=380+((r*131)%520)) refs[r]={label:"v0."+(1+((r/1400)|0))+"."+((r/220)%9|0),kind:"tag"};
   let bn=0; for(let r=1;r<N;r++){if(commitLane[r]>0&&!refs[r]&&r%223===0&&bn<48){refs[r]={label:BR[bn%BR.length],kind:"branch"};bn++;}}
+  // allRefs mirrors refs above (a 0- or 1-element array) EXCEPT at row 40,
+  // deliberately seeded with a second co-located tag — the one place this
+  // synthetic dataset actually exercises the "more than one ref per commit"
+  // case, so the Settings "show all tags" toggle has something real to
+  // demo in browser design mode (refs[40] itself stays single-element, so
+  // the setting OFF still shows exactly one chip there, matching a fresh repo).
+  const allRefs=refs.map(r=>r?[r]:[]);
+  if(refs[40]) allRefs[40]=[refs[40],{label:"v0.2.9-rc1",kind:"tag"}];
   const snapRows=[]; const snapTs={};
   for(let r=6;r<N;r+=38+((r*97)%46)){snapRows.push(r);snapTs[r]=fakeAgo(r);}
-  return {N,commitLane,commitColor,isMerge,gapStart,gapTop,gapBot,gapColor,refs,snapRows,snapTs};
+  return {N,commitLane,commitColor,isMerge,gapStart,gapTop,gapBot,gapColor,refs,allRefs,snapRows,snapTs};
 }
 
 /* ============================================================
@@ -227,8 +235,9 @@ function draw(){
     if(r===state.selectedRow){ctx.beginPath();ctx.arc(x,y,dotR+3.2,0,TAU);ctx.strokeStyle=theme.text;ctx.lineWidth=1.6;ctx.stroke();}
     else if(r===state.hoverRow){ctx.beginPath();ctx.arc(x,y,dotR+2.6,0,TAU);ctx.strokeStyle=theme.muted;ctx.lineWidth=1;ctx.stroke();}
     if(bisectDrawerCtrl.cur!=null&&r===bisectDrawerCtrl.cur&&r!==state.selectedRow){ctx.beginPath();ctx.arc(x,y,dotR+3.4,0,TAU);ctx.strokeStyle=theme.accent;ctx.lineWidth=2;ctx.stroke();}
-    let cx=tx; const ref=G.refs[r]; ctx.font=layout.chipFont;
-    if(ref) cx=drawChip(cx,y,ref.label,ref.kind)+8;
+    let cx=tx; ctx.font=layout.chipFont;
+    if(showAllTags&&G.allRefs){ const list=G.allRefs[r]; for(let i=0;i<list.length;i++) cx=drawChip(cx,y,list[i].label,list[i].kind)+8; }
+    else { const ref=G.refs[r]; if(ref) cx=drawChip(cx,y,ref.label,ref.kind)+8; }
     if(rowH>=15){
       ctx.font=Math.round(12.5*Math.min(1.25,layout.zoom))+"px "+FONT_UI; ctx.fillStyle=theme.text; ctx.textAlign="left";
       let s=msgOf(r); const maxw=W-cx-96;
@@ -805,6 +814,15 @@ function applyThemeMode(mode){
   if(mode==="system"){ document.documentElement.removeAttribute("data-theme"); readTheme(); saveSettings({themeMode:"system"}); }
   else applyTheme(mode);
 }
+// Whether the canvas draws EVERY ref chip on a commit row (multiple tags
+// included) or just the first one (this app's original, still-default
+// behavior) — read once per draw() call (a cached flag, not loadSettings()
+// itself: draw() runs every animation frame, and loadSettings() does a
+// localStorage read + JSON.parse per call, wasteful in a hot per-frame loop).
+// settings.svelte.ts's setShowAllCommitTags calls this live, exactly like
+// applyThemeMode above; boot seeds it from the persisted value below.
+let showAllTags=false;
+function setGraphShowAllTags(v){ showAllTags=v; dirty=true; }
 $("#themeBtn").addEventListener("click",()=>{
   const cur=document.documentElement.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light");
   applyTheme(cur==="dark"?"light":"dark");
@@ -1119,10 +1137,18 @@ function loadGraph(N){
   resize(); // ensure the canvas matches the current wrap size (cold Tauri windows can report 0×0 at boot)
   const t0=performance.now(); let NN, ms;
   if(BACKEND){ const g=BACKEND;
-    const refs=g.rows.map(row=> row.refs.length ? {label:row.refs[0].n,
-      kind:(row.refs[0].t==="tag"?"tag":row.refs[0].t==="head"?"head":row.refs[0].t==="remote"?"remote":"branch")} : null);
+    const chip=rc=>({label:rc.n, kind:(rc.t==="tag"?"tag":rc.t==="head"?"head":rc.t==="remote"?"remote":"branch")});
+    const refs=g.rows.map(row=> row.refs.length ? chip(row.refs[0]) : null);
+    // allRefs: every ref on the row, not just the first — the backend
+    // already collects all of them (row.refs is a full Vec<RefChip>, see
+    // git_read.rs's collect_refs), refs above just never used to look past
+    // index 0. Kept as a SEPARATE field (not a shape change to refs itself)
+    // since detail.svelte.ts/cmdk.svelte.ts's own G.refs fallback paths
+    // (no-BACKEND synthetic data only) still expect refs' original
+    // one-object-or-null shape.
+    const allRefs=g.rows.map(row=> row.refs.map(chip));
     G={N:g.n, commitLane:g.lane, commitColor:g.color, isMerge:g.merge,
-       gapStart:g.gapStart, gapTop:g.gapTop, gapBot:g.gapBot, gapColor:g.gapColor, refs, snapRows:[], snapTs:{}};
+       gapStart:g.gapStart, gapTop:g.gapTop, gapBot:g.gapBot, gapColor:g.gapColor, refs, allRefs, snapRows:[], snapTs:{}};
     NN=g.n; ms=g.readMs+g.layoutMs;
   } else { G=generateGraph(N); NN=N; ms=performance.now()-t0; }
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
@@ -1476,6 +1502,7 @@ $("#backToParentBtn").addEventListener("click", goBackToParent);
 // read fresh at cherry-pick time (see cherryPick() above), not seeded into
 // any DOM element here — there's no longer a live per-pick checkbox to seed.
 applyThemeMode(loadSettings().themeMode);
+setGraphShowAllTags(loadSettings().showAllCommitTags);
 $("#dangerTamaImg").src=TAMA_IMG.alarm; $("#tamaCheerImg").src=TAMA_IMG.happy;
 new ResizeObserver(()=>resize()).observe(wrap);
 resize();
@@ -1493,7 +1520,7 @@ function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, pickRepo, closeRepo, armDanger, updateBranchPill,
-  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode,
+  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
   // above for the full design) — enterSubmodule/goBackToParent are hoisted
   // `function` declarations, so no TDZ risk (same reasoning as

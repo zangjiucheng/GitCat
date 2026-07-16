@@ -81,6 +81,11 @@ export {
   // settings.svelte.ts's saveSettings(), same live-re-export safety as
   // openRepo/pickRepo above (hoisted `function`, no TDZ risk).
   applyThemeMode,
+  // Settings island's "show all tags on a commit" toggle — applies to the
+  // canvas draw loop immediately (module-level cached flag, not read from
+  // localStorage per frame), same live-re-export safety as applyThemeMode
+  // above (hoisted `function`, no TDZ risk).
+  setGraphShowAllTags,
   // Submodule navigation stack: enterSubmodule(absolutePath) pushes the
   // current repo then opens the submodule via openRepo above;
   // goBackToParent() pops and reopens the popped path. NAV_STACK is the

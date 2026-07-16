@@ -53,6 +53,13 @@ export interface PersistedSettings {
   // replacement for it — "on but quieter" and "off" are different states a
   // user reaches for independently (see Settings.svelte's own slider).
   soundEffectsVolume: number;
+  // Whether the main graph's canvas draws EVERY ref chip on a commit that
+  // has more than one (e.g. two tags pushed to the same sha), or just the
+  // first one — legacy/main.ts's original, still-default behavior. Off by
+  // default: a commit with several tags growing a correspondingly wider chip
+  // row is a real layout change existing users haven't opted into, unlike
+  // the other toggles here which don't affect the graph's own rendering.
+  showAllCommitTags: boolean;
 }
 
 const STORAGE_KEY = "gitcat.settings";
@@ -71,6 +78,7 @@ const DEFAULTS: PersistedSettings = {
   autoCheckUpdates: true,
   soundEffectsEnabled: true,
   soundEffectsVolume: 1,
+  showAllCommitTags: false,
 };
 
 // Both loadSettings() (below) and setSoundEffectsVolume() need the same 0-1
@@ -124,6 +132,7 @@ class SettingsState {
   autoCheckUpdates = $state(DEFAULTS.autoCheckUpdates);
   soundEffectsEnabled = $state(DEFAULTS.soundEffectsEnabled);
   soundEffectsVolume = $state(DEFAULTS.soundEffectsVolume);
+  showAllCommitTags = $state(DEFAULTS.showAllCommitTags);
 
   // ── git identity section (repo-scoped, explicit Save) ───────────────────
   // Unlike remotes.svelte.ts's own plain (non-$state) `repo` field — which
@@ -158,6 +167,7 @@ class SettingsState {
     this.autoCheckUpdates = s.autoCheckUpdates;
     this.soundEffectsEnabled = s.soundEffectsEnabled;
     this.soundEffectsVolume = s.soundEffectsVolume;
+    this.showAllCommitTags = s.showAllCommitTags;
     this.repo = repo ?? "";
     this.identityError = "";
     this.open = true;
@@ -197,6 +207,12 @@ class SettingsState {
   setSoundEffectsVolume(v: number): void {
     this.soundEffectsVolume = clamp01(v);
     saveSettings({ soundEffectsVolume: this.soundEffectsVolume });
+  }
+
+  setShowAllCommitTags(v: boolean): void {
+    this.showAllCommitTags = v;
+    saveSettings({ showAllCommitTags: v });
+    bridge.setGraphShowAllTags(v); // applies to the canvas immediately — see legacy/main.ts
   }
 
   async refreshIdentity(): Promise<void> {
