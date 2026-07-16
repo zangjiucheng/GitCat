@@ -300,17 +300,34 @@ class SetupWizardState {
   }
 
   // ── skippable at any step ────────────────────────────────────────────────
-  skip() {
+  //
+  // ADVERSARIALLY-FOUND FIX: this used to unconditionally discard repoPath
+  // via resetWizard(), even when the user had already picked and VALIDATED a
+  // real repo (this.identity set by a successful validate()) and was only
+  // skipping the identity-setup steps that follow — those are optional help,
+  // not a precondition for opening. Now a validated pick is opened directly
+  // instead of being thrown away, exactly like finish() would have; only a
+  // skip BEFORE ever validating a repo (welcome/pick with no valid path yet)
+  // still leaves the app with nothing open.
+  async skip() {
     // Honor the re-entrancy lock like the Escape handler: dismissing mid-flight
     // would let a resolving validate()/openRepo() reopen or jump the wizard
     // after the user already chose to leave.
     if (this.busy) return;
+    // Never call bridge.openRepo in demo mode — same reasoning as finish()'s
+    // own demo branch: there is no real Tauri backend to hit, and tinvoke has
+    // no IN_TAURI guard of its own.
+    const path = this.identity && !this.demo ? this.repoPath : null;
     this.resetWizard();
     this.markDismissed();
-    // Skipping always leaves the app with no repo open yet (finish() is the
-    // only path that opens one) — point at both ways back in, since the
-    // empty-state hero card's own button is easy to miss right after a modal
-    // closes.
+    if (path) {
+      const ok = await bridge.openRepo(path);
+      if (ok) return;
+    }
+    // Reached when skipping before ever validating a repo, in demo mode, or
+    // when the openRepo attempt above failed — point at both ways back in,
+    // since the empty-state hero card's own button is easy to miss right
+    // after a modal closes.
     bridge.tama.say("No rush — open a repository anytime via the folder icon or the repo name ▾ up top. にゃ〜", 4200);
   }
 
