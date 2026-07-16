@@ -46,6 +46,7 @@ import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { save } from "@tauri-apps/plugin-dialog";
+import { copyToClipboard } from "../../legacy/clipboard.ts";
 
 type MenuView = "menu" | "branch" | "tag";
 
@@ -290,19 +291,19 @@ class CommitMenuState {
   // popover is about to go away anyway). ────────────────────────────────────
   copyShortSha() {
     if (this.busy) return;
-    navigator.clipboard?.writeText(this.shortSha);
+    copyToClipboard(this.shortSha);
     this.close();
   }
 
   copyFullSha() {
     if (this.busy) return;
-    navigator.clipboard?.writeText(this.sha);
+    copyToClipboard(this.sha);
     this.close();
   }
 
   copyMessage() {
     if (this.busy) return;
-    navigator.clipboard?.writeText(this.subject);
+    copyToClipboard(this.subject);
     this.close();
   }
 

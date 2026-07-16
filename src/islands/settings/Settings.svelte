@@ -1,15 +1,17 @@
 <script lang="ts">
   // App Settings modal — view. Deliberately no bespoke <style> block beyond
-  // the two small additions index.html's own doc comment on the MODALS
+  // the three small additions index.html's own doc comment on the MODALS
   // section calls out (.settings .modal-head tint, .set-toggle checkbox
-  // row) — everything else reuses `.scrim`/`.modal`/`.modal-head`/
-  // `.modal-body`/`.modal-foot`/`.btn`/`.btn.ghost`/`.rm-form select`/
-  // `.confirm-type`/`.d-lab`/`.mut`/`.spinner`/`.log-row`/`.pl-err`/
-  // `.backup-note` verbatim (same shared chrome ExternalTools/SetupWizard
-  // reuse). The Git Identity section mirrors SetupWizard's own identity
-  // step markup closely — see settings.svelte.ts's header doc for why.
+  // row, .set-volume slider+Test row) — everything else reuses
+  // `.scrim`/`.modal`/`.modal-head`/`.modal-body`/`.modal-foot`/`.btn`/
+  // `.btn.ghost`/`.rm-form select`/`.confirm-type`/`.d-lab`/`.mut`/
+  // `.spinner`/`.log-row`/`.pl-err`/`.backup-note` verbatim (same shared
+  // chrome ExternalTools/SetupWizard reuse). The Git Identity section
+  // mirrors SetupWizard's own identity step markup closely — see
+  // settings.svelte.ts's header doc for why.
   import { settingsCtrl } from "./settings.svelte.ts";
   import type { ThemeMode } from "./settings.svelte.ts";
+  import { playTamaSound } from "../../legacy/sound.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && settingsCtrl.open) settingsCtrl.close();
@@ -17,6 +19,13 @@
 
   function onThemeChange(e: Event) {
     settingsCtrl.setThemeMode((e.target as HTMLSelectElement).value as ThemeMode);
+  }
+
+  // Volume is stored 0-1 (sound.ts's own master-gain range); the slider
+  // itself works in whole percent (0-100, step 5) since a 0-1 range input
+  // with no step would invite showing users a distracting 17-decimal float.
+  function onVolumeInput(e: Event) {
+    settingsCtrl.setSoundEffectsVolume(Number((e.target as HTMLInputElement).value) / 100);
   }
 </script>
 
@@ -61,7 +70,7 @@
       </label>
 
       <h4 class="d-lab">Tama</h4>
-      <label class="set-toggle" style="margin-bottom:14px" title="A few short synthesized chimes for her more significant moments — warnings, danger, celebrating">
+      <label class="set-toggle" style="margin-bottom:10px" title="A few short synthesized chimes for her more significant moments — warnings, danger, celebrating, a copy-to-clipboard tick">
         <input
           type="checkbox"
           checked={settingsCtrl.soundEffectsEnabled}
@@ -69,6 +78,23 @@
         />
         Play sound effects
       </label>
+      <div class="set-volume" style="margin-bottom:14px">
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="5"
+          value={Math.round(settingsCtrl.soundEffectsVolume * 100)}
+          disabled={!settingsCtrl.soundEffectsEnabled}
+          oninput={onVolumeInput}
+          aria-label="Sound effects volume"
+        />
+        <button
+          class="btn ghost"
+          disabled={!settingsCtrl.soundEffectsEnabled}
+          onclick={() => playTamaSound("celebrate", { bypassCooldown: true })}>Test</button
+        >
+      </div>
 
       <h4 class="d-lab">Git identity</h4>
       {#if !settingsCtrl.repo}

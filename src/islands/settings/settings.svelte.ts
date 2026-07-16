@@ -47,25 +47,53 @@ export interface PersistedSettings {
   // extra wiring — same idiom cherryPickRecordOriginDefault's own read
   // already established.
   soundEffectsEnabled: boolean;
+  // 0-1 master volume for the above, applied to sound.ts's own shared
+  // GainNode fresh on every play (same "no extra wiring for a mid-session
+  // change" idiom). A SEPARATE control from the enabled toggle, not a
+  // replacement for it — "on but quieter" and "off" are different states a
+  // user reaches for independently (see Settings.svelte's own slider).
+  soundEffectsVolume: number;
 }
 
 const STORAGE_KEY = "gitcat.settings";
 
 // Exactly today's hardcoded behavior (forced dark, unchecked record-origin,
-// auto-update-check always on, sounds on) — existing users see no behavior
-// change until they actually open Settings and change something.
+// auto-update-check always on, sounds on at full volume) — existing users
+// see no behavior change until they actually open Settings and change
+// something. soundEffectsVolume specifically defaults to 1 (not some
+// "nicer-sounding" lower number) for that exact reason: every tone in
+// sound.ts had no master-gain multiplier at all before this setting
+// existed, so anything below 1 here would quietly make every sound quieter
+// than it used to be for users who never touch this slider.
 const DEFAULTS: PersistedSettings = {
   themeMode: "dark",
   cherryPickRecordOriginDefault: false,
   autoCheckUpdates: true,
   soundEffectsEnabled: true,
+  soundEffectsVolume: 1,
 };
+
+// Both loadSettings() (below) and setSoundEffectsVolume() need the same 0-1
+// clamp — a single private helper instead of two hand-rolled copies of the
+// same math, so a future fix only has one call site to find.
+function clamp01(v: number): number {
+  return Math.min(1, Math.max(0, v));
+}
 
 export function loadSettings(): PersistedSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULTS };
-    return { ...DEFAULTS, ...JSON.parse(raw) };
+    const merged = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    // Defensive clamp at the READ boundary, not just in the setter below: a
+    // hand-edited (or otherwise corrupted) localStorage blob could carry a
+    // non-numeric or out-of-range soundEffectsVolume straight through to
+    // sound.ts's own AudioParam assignment, which THROWS on a non-finite
+    // value (assigning NaN to a real GainNode's .value is a spec violation,
+    // not a silent no-op) — every consumer of loadSettings() should be able
+    // to trust this field is always a valid finite 0-1 number, not just the
+    // one call site (the volume slider) that happens to go through the setter.
+    merged.soundEffectsVolume = Number.isFinite(merged.soundEffectsVolume) ? clamp01(merged.soundEffectsVolume) : DEFAULTS.soundEffectsVolume;
+    return merged;
   } catch {
     return { ...DEFAULTS }; // storage disabled (e.g. private mode) or corrupt JSON — fall back quietly
   }
@@ -95,6 +123,7 @@ class SettingsState {
   cherryPickRecordOriginDefault = $state(DEFAULTS.cherryPickRecordOriginDefault);
   autoCheckUpdates = $state(DEFAULTS.autoCheckUpdates);
   soundEffectsEnabled = $state(DEFAULTS.soundEffectsEnabled);
+  soundEffectsVolume = $state(DEFAULTS.soundEffectsVolume);
 
   // ── git identity section (repo-scoped, explicit Save) ───────────────────
   // Unlike remotes.svelte.ts's own plain (non-$state) `repo` field — which
@@ -128,6 +157,7 @@ class SettingsState {
     this.cherryPickRecordOriginDefault = s.cherryPickRecordOriginDefault;
     this.autoCheckUpdates = s.autoCheckUpdates;
     this.soundEffectsEnabled = s.soundEffectsEnabled;
+    this.soundEffectsVolume = s.soundEffectsVolume;
     this.repo = repo ?? "";
     this.identityError = "";
     this.open = true;
@@ -158,6 +188,15 @@ class SettingsState {
   setSoundEffectsEnabled(v: boolean): void {
     this.soundEffectsEnabled = v;
     saveSettings({ soundEffectsEnabled: v });
+  }
+
+  // Clamped defensively even though the slider's own min/max already keeps
+  // the UI itself in range — loadSettings() applies the SAME clamp01() on
+  // every read too, so this isn't the only thing standing between a bad
+  // value and sound.ts's own AudioParam assignment, just the write-side half.
+  setSoundEffectsVolume(v: number): void {
+    this.soundEffectsVolume = clamp01(v);
+    saveSettings({ soundEffectsVolume: this.soundEffectsVolume });
   }
 
   async refreshIdentity(): Promise<void> {

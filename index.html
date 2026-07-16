@@ -1133,6 +1133,17 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    -x flag specifically; reusing it here under an unrelated name would read
    wrong to a future maintainer), same visual treatment otherwise. */
 .set-toggle{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text);cursor:pointer}
+/* Sound effects volume row — a `Test` button right next to the slider is
+   the one control most worth having here: several of these sounds
+   (celebrate especially) are rare by design, so without a way to preview
+   on demand there's no way to discover what turning this on/off or up/down
+   even sounds like. accent-color recolors the native range thumb/track to
+   match the app's own palette with no custom ::-webkit-slider-thumb/
+   ::-moz-range-thumb rules needed. */
+.set-volume{display:flex;align-items:center;gap:10px}
+.set-volume input[type="range"]{flex:1;accent-color:var(--accent)}
+.set-volume input[type="range"]:disabled{opacity:.45}
+.set-volume .btn{flex:none;padding:5px 12px;font-size:11.5px}
 .bz-prog{display:flex;align-items:center;gap:10px}
 .bz-track{flex:1;height:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-pill);overflow:hidden}
 .bz-track i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}

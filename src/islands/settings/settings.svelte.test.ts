@@ -73,6 +73,7 @@ function resetCtrl() {
   settingsCtrl.cherryPickRecordOriginDefault = false;
   settingsCtrl.autoCheckUpdates = true;
   settingsCtrl.soundEffectsEnabled = true;
+  settingsCtrl.soundEffectsVolume = 1;
   settingsCtrl.repo = "";
   settingsCtrl.identity = null;
   settingsCtrl.nameInput = "";
@@ -102,18 +103,21 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       cherryPickRecordOriginDefault: false,
       autoCheckUpdates: true,
       soundEffectsEnabled: true,
+      soundEffectsVolume: 1,
     });
   });
 
   it("round-trips a partial save merged over the previous values", () => {
     saveSettings({ themeMode: "light" });
     saveSettings({ cherryPickRecordOriginDefault: true });
+    saveSettings({ soundEffectsVolume: 0.9 });
 
     expect(loadSettings()).toEqual({
       themeMode: "light",
       cherryPickRecordOriginDefault: true,
       autoCheckUpdates: true,
       soundEffectsEnabled: true,
+      soundEffectsVolume: 0.9,
     });
   });
 
@@ -125,6 +129,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       cherryPickRecordOriginDefault: false,
       autoCheckUpdates: true,
       soundEffectsEnabled: true,
+      soundEffectsVolume: 1,
     });
   });
 
@@ -145,13 +150,37 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       cherryPickRecordOriginDefault: false,
       autoCheckUpdates: true,
       soundEffectsEnabled: true,
+      soundEffectsVolume: 1,
+    });
+  });
+
+  // A non-finite value assigned directly to a real Web Audio GainNode's
+  // .value throws — sound.ts's own playTamaSound() trusts loadSettings() to
+  // never hand it one, so this clamp has to live HERE, at the read
+  // boundary, not just in setSoundEffectsVolume()'s write-side clamp (a
+  // hand-edited localStorage blob never goes through that setter at all).
+  describe("soundEffectsVolume sanitization (defends sound.ts's own AudioParam assignment)", () => {
+    it("clamps an out-of-range persisted volume back into 0-1", () => {
+      localStorage.setItem("gitcat.settings", JSON.stringify({ soundEffectsVolume: 5 }));
+      expect(loadSettings().soundEffectsVolume).toBe(1);
+
+      localStorage.setItem("gitcat.settings", JSON.stringify({ soundEffectsVolume: -2 }));
+      expect(loadSettings().soundEffectsVolume).toBe(0);
+    });
+
+    it("falls back to the default when the persisted volume isn't a finite number at all", () => {
+      localStorage.setItem("gitcat.settings", JSON.stringify({ soundEffectsVolume: "loud" }));
+      expect(loadSettings().soundEffectsVolume).toBe(1);
+
+      localStorage.setItem("gitcat.settings", JSON.stringify({ soundEffectsVolume: null }));
+      expect(loadSettings().soundEffectsVolume).toBe(1);
     });
   });
 });
 
 describe("show — seeds app-level fields and drives the identity section", () => {
-  it("seeds themeMode/cherryPickRecordOriginDefault/autoCheckUpdates/soundEffectsEnabled from localStorage", () => {
-    saveSettings({ themeMode: "system", cherryPickRecordOriginDefault: true, autoCheckUpdates: false, soundEffectsEnabled: false });
+  it("seeds themeMode/cherryPickRecordOriginDefault/autoCheckUpdates/soundEffectsEnabled/soundEffectsVolume from localStorage", () => {
+    saveSettings({ themeMode: "system", cherryPickRecordOriginDefault: true, autoCheckUpdates: false, soundEffectsEnabled: false, soundEffectsVolume: 0.25 });
 
     settingsCtrl.show(null);
 
@@ -160,6 +189,7 @@ describe("show — seeds app-level fields and drives the identity section", () =
     expect(settingsCtrl.cherryPickRecordOriginDefault).toBe(true);
     expect(settingsCtrl.autoCheckUpdates).toBe(false);
     expect(settingsCtrl.soundEffectsEnabled).toBe(false);
+    expect(settingsCtrl.soundEffectsVolume).toBe(0.25);
   });
 
   it("with no repo open, clears identity and never calls getGitIdentity", () => {
@@ -211,6 +241,21 @@ describe("setThemeMode / setCherryPickRecordOriginDefault / setAutoCheckUpdates 
 
     expect(settingsCtrl.soundEffectsEnabled).toBe(false);
     expect(loadSettings().soundEffectsEnabled).toBe(false);
+  });
+
+  it("setSoundEffectsVolume updates state and persists directly (no bridge call)", () => {
+    settingsCtrl.setSoundEffectsVolume(0.3);
+
+    expect(settingsCtrl.soundEffectsVolume).toBe(0.3);
+    expect(loadSettings().soundEffectsVolume).toBe(0.3);
+  });
+
+  it("setSoundEffectsVolume clamps out-of-range values instead of persisting them as-is", () => {
+    settingsCtrl.setSoundEffectsVolume(1.4);
+    expect(settingsCtrl.soundEffectsVolume).toBe(1);
+
+    settingsCtrl.setSoundEffectsVolume(-0.2);
+    expect(settingsCtrl.soundEffectsVolume).toBe(0);
   });
 });
 

@@ -20,6 +20,7 @@ import { blameCtrl } from "../blame/blame.svelte.ts";
 import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
 import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
+import { copyToClipboard } from "../../legacy/clipboard.ts";
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
@@ -450,7 +451,7 @@ class DetailState {
 
   copySha() {
     if (!this.commit) return;
-    navigator.clipboard?.writeText(this.commit.sha);
+    copyToClipboard(this.commit.sha);
     this.copied = true;
     setTimeout(() => {
       this.copied = false;

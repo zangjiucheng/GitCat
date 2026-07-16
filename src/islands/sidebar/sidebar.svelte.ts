@@ -91,6 +91,7 @@ import { resolver } from "../resolver/resolver.svelte.ts";
 import { rebasePlanCtrl } from "../rebaseplan/rebaseplan.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { ICON_BACKUP, ICON_WARNING } from "../../legacy/icons";
+import { copyToClipboard } from "../../legacy/clipboard.ts";
 import type { LocalBranch, SimpleRef, Snapshot, SubmoduleInfo } from "../../ipc/bindings";
 
 // Demo data (design-mode only) — mirrors the static markup this replaces, so
@@ -1018,7 +1019,7 @@ class SidebarState {
   }
 
   copySnapshotSha(sha: string) {
-    navigator.clipboard?.writeText(sha);
+    copyToClipboard(sha);
     this.copiedSnapshotSha = sha;
     setTimeout(() => {
       if (this.copiedSnapshotSha === sha) this.copiedSnapshotSha = "";
@@ -1031,7 +1032,7 @@ class SidebarState {
   // means "check out this branch"; stealing that gesture for copy would
   // shrink/replace a much more frequently used action).
   copyBranchName(name: string) {
-    navigator.clipboard?.writeText(name);
+    copyToClipboard(name);
     this.copiedBranch = name;
     setTimeout(() => {
       if (this.copiedBranch === name) this.copiedBranch = "";
