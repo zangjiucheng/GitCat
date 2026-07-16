@@ -70,6 +70,28 @@ fn fires_on_a_branch_created_outside_the_watcher() {
     assert!(wait_until(&fired, Duration::from_secs(3)), "watcher should have fired after a branch was created under refs/");
 }
 
+/// Regression test for the git-dir-ROOT-watch fix (see watch.rs's own doc
+/// comment): checking out an EXISTING branch only rewrites `.git/HEAD`'s own
+/// symref target — it never touches `refs/heads/*` at all (the branch's own
+/// ref file is untouched). This is exactly the "HEAD-only" change the old
+/// single-file `HEAD` watch was meant to catch, and exactly the case a
+/// rename-replace-fragile single-file watch (this fix's whole motivation)
+/// would risk missing after an earlier HEAD update already replaced the
+/// watched inode once.
+#[test]
+fn fires_on_a_checkout_that_only_changes_head_not_refs() {
+    let repo = TempRepo::init("watch_checkout_head_only");
+    repo.commit("f.txt", "0\n", "c0");
+    repo.must(&["branch", "other"]); // exists before the watcher arms, so checkout below touches ONLY HEAD
+
+    let fired = Arc::new(AtomicBool::new(false));
+    let _debouncer = arm_and_settle(&repo.path(), &fired);
+
+    repo.must(&["checkout", "-q", "other"]); // rewrites .git/HEAD's symref target only
+
+    assert!(wait_until(&fired, Duration::from_secs(3)), "watcher should have fired after a HEAD-only checkout");
+}
+
 #[test]
 fn does_not_fire_on_an_unrelated_working_tree_file_change() {
     let repo = TempRepo::init("watch_unrelated");

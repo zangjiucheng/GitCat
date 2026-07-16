@@ -4,12 +4,16 @@
 //! itself after ITS OWN mutations, so anything done elsewhere left the graph
 //! silently stale until the user manually reopened the repo.
 //!
-//! Watches just `HEAD` + `refs/` (recursive), resolved via git2 (not a naive
-//! `<path>/.git` join) so this is correct even when `.git` is a gitfile
-//! pointing elsewhere (worktrees/submodules). Between the two, virtually
-//! every state-changing git operation touches at least one: commit/checkout/
-//! merge/rebase/reset move a ref and/or HEAD; branch/tag create-or-delete
-//! touches refs/heads or refs/tags. Deliberately does NOT watch objects/ (can
+//! Watches the git-dir ROOT (non-recursive — see `start_watching`'s own
+//! comment on why not just the `HEAD` file path) + `refs/` (recursive),
+//! resolved via git2 (not a naive `<path>/.git` join) so this is correct even
+//! when `.git` is a gitfile pointing elsewhere (worktrees/submodules).
+//! Between the two, virtually every state-changing git operation touches at
+//! least one: commit/checkout/merge/rebase/reset move a ref and/or HEAD;
+//! branch/tag create-or-delete touches refs/heads or refs/tags.
+//! `is_relevant` below still filters to just HEAD/refs events, so watching
+//! the root doesn't widen what triggers a refresh — it only makes the HEAD
+//! side of that filter more robust. Deliberately does NOT watch objects/ (can
 //! hold many thousands of loose-object files in a large repo — recursively
 //! watching it risks exhausting inotify's per-user watch-descriptor limit on
 //! Linux) or the index (staged-but-uncommitted changes aren't shown by this
@@ -60,12 +64,25 @@ pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Resu
     })
     .map_err(|e| e.to_string())?;
 
+    // ADVERSARIALLY-FOUND FIX: watch the git-dir ROOT non-recursively rather
+    // than the exact `HEAD` file path. Git updates HEAD via the same
+    // lock-then-rename pattern it uses for refs — `notify`'s own docs warn
+    // that a single-file watch isn't guaranteed to survive the watched path
+    // being renamed/replaced (a well-documented inotify limitation on
+    // Linux); watching the PARENT directory instead is exactly what those
+    // docs recommend, and non-recursive here still only sees DIRECT children
+    // (HEAD, index, COMMIT_EDITMSG, refs/ itself, …) — it does NOT descend
+    // into objects/, preserving the same watch-descriptor-exhaustion
+    // avoidance `is_relevant`'s filtering already relied on. Extra
+    // non-matching events (e.g. `index`/`COMMIT_EDITMSG` touches) are
+    // harmless: `is_relevant` below still only reacts to HEAD/refs.
     debouncer
         .watcher()
-        .watch(&git_dir.join("HEAD"), RecursiveMode::NonRecursive)
+        .watch(&git_dir, RecursiveMode::NonRecursive)
         .map_err(|e| e.to_string())?;
     // refs/ always exists after `git init`, but don't fail watch_repo over a
-    // missing/unusual layout — HEAD alone still catches checkouts/commits.
+    // missing/unusual layout — the git-dir root watch above still catches
+    // checkouts/commits via HEAD either way.
     let _ = debouncer.watcher().watch(&git_dir.join("refs"), RecursiveMode::Recursive);
 
     Ok(debouncer)

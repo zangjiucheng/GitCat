@@ -82,7 +82,18 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         let fetch = MenuItemBuilder::with_id("fetch", "Fetch").build(app)?;
         let pull = MenuItemBuilder::with_id("pull", "Pull").build(app)?;
         let push = MenuItemBuilder::with_id("push", "Push").build(app)?;
-        SubmenuBuilder::new(app, "Repository").item(&fetch).item(&pull).item(&push).build()?
+        // Manual resync with the repo on disk — the menu-discoverable twin of
+        // the topbar's own refreshBtn (see src/main.ts's
+        // refreshFromExternalChange), for whenever the live file-watcher
+        // (src-tauri/src/watch.rs) might have missed an external change.
+        let refresh = MenuItemBuilder::with_id("refresh", "Refresh").build(app)?;
+        SubmenuBuilder::new(app, "Repository")
+            .item(&fetch)
+            .item(&pull)
+            .item(&push)
+            .separator()
+            .item(&refresh)
+            .build()?
     };
 
     // Cut/Copy/Paste/Select All aren't decorative here: without them wired up
@@ -317,7 +328,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // Everything else is a frontend (Svelte controller / legacy chrome)
         // action — forward the id as a JS event rather than duplicating that
         // logic in Rust.
-        id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "about"
+        id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "refresh" | "about"
         | "bisect" | "reflog" | "rerere" | "plumbing" | "repo-summary" | "remotes" | "export-patches" | "apply-patch"
         | "pickaxe-search" | "code-search" | "repositories" | "external-tools" | "settings" | "dangling-recovery"
         | "repo-files" | "uncommitted-changes" | "pull-merge" | "pull-rebase" | "open-terminal" | "force-push-lease"

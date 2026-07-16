@@ -1321,28 +1321,56 @@ function updateBackToParentBtn(){
 // Called from ~10 different sites (every real mutation across every island)
 // with no shared lock of its own before this guard — two callers firing back
 // to back could overlap two load_graph calls and race on BACKEND/state.
+//
+// ADVERSARIALLY-FOUND FIX: a call arriving while another is already running
+// used to just return early and be silently dropped forever — no queued
+// follow-up. That's fine when the caller is about to trigger its OWN later
+// reload anyway, but the live-refresh "repo-changed" listener has no such
+// second chance: if its reload lands mid-flight behind some other mutation's
+// own reloadGraph() call, the external change it was reporting would never
+// get reflected until some UNRELATED later action happened to reload again.
+// reloadGraphPending remembers "one more reload is owed" and the loop below
+// drains it after the in-flight one finishes, coalescing any number of
+// overlapping requests into exactly one extra pass — never zero.
 let reloadGraphBusy=false;
+let reloadGraphPending=false;
+let reloadGraphPendingPreserveRow=false;
 async function reloadGraph(preserveRow){
-  if(!IN_TAURI||!CUR_REPO||reloadGraphBusy) return;
+  if(!IN_TAURI||!CUR_REPO) return;
+  if(reloadGraphBusy){
+    reloadGraphPending=true;
+    reloadGraphPendingPreserveRow = reloadGraphPendingPreserveRow || !!preserveRow;
+    return;
+  }
   reloadGraphBusy=true;
-  const keepSha = preserveRow && state.selectedRow>=0 && BACKEND && BACKEND.rows[state.selectedRow]
-    ? BACKEND.rows[state.selectedRow].sha : null;
-  // The pinned "Uncommitted changes" row has no sha to re-locate by — its own
-  // sentinel (-2) IS the identity, so just remember it was open and reopen it
-  // after loadGraph() (which unconditionally resets state.selectedRow to -1)
-  // instead of trying (and failing) to find it in BACKEND.rows below.
-  const keepWorkdir = preserveRow && state.selectedRow===-2;
   try{
-    const g=await tinvoke("load_graph",{path:CUR_REPO});
-    BACKEND=g; loadGraph(g.n);
-    if(keepSha){ const row=BACKEND.rows.findIndex(r=>r.sha===keepSha);
-      // Center within the scrollable viewport BELOW the pinned header
-      // (view.cssH-bandH()), not the full canvas height — see bandH()'s comment.
-      if(row>=0){ select(row); state.scrollTarget=clampScroll(row*layout.rowH-(view.cssH-bandH())/2); dirty=true; } }
-    else if(keepWorkdir){ selectWorkdir(); }
-    await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
-  }catch(e){ Tama.warn("Reload failed — "+e); console.error(e); }
-  finally{ reloadGraphBusy=false; }
+    let nextPreserveRow=preserveRow;
+    for(;;){
+      const keepSha = nextPreserveRow && state.selectedRow>=0 && BACKEND && BACKEND.rows[state.selectedRow]
+        ? BACKEND.rows[state.selectedRow].sha : null;
+      // The pinned "Uncommitted changes" row has no sha to re-locate by — its own
+      // sentinel (-2) IS the identity, so just remember it was open and reopen it
+      // after loadGraph() (which unconditionally resets state.selectedRow to -1)
+      // instead of trying (and failing) to find it in BACKEND.rows below.
+      const keepWorkdir = nextPreserveRow && state.selectedRow===-2;
+      try{
+        const g=await tinvoke("load_graph",{path:CUR_REPO});
+        BACKEND=g; loadGraph(g.n);
+        if(keepSha){ const row=BACKEND.rows.findIndex(r=>r.sha===keepSha);
+          // Center within the scrollable viewport BELOW the pinned header
+          // (view.cssH-bandH()), not the full canvas height — see bandH()'s comment.
+          if(row>=0){ select(row); state.scrollTarget=clampScroll(row*layout.rowH-(view.cssH-bandH())/2); dirty=true; } }
+        else if(keepWorkdir){ selectWorkdir(); }
+        await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
+      }catch(e){ Tama.warn("Reload failed — "+e); console.error(e); }
+      if(!reloadGraphPending) break;
+      reloadGraphPending=false;
+      nextPreserveRow=reloadGraphPendingPreserveRow;
+      reloadGraphPendingPreserveRow=false;
+    }
+  } finally {
+    reloadGraphBusy=false;
+  }
 }
 // Sidebar (refs tree + branch menu) is now a Svelte island (src/islands/sidebar).
 // Topbar branch pill stays legacy-owned (a separate future migration) —

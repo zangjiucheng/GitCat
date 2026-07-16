@@ -212,6 +212,89 @@ mount(TamaGallery, { target: document.body });
 // side and never reach this listener. window.__TAURI__ (not a static
 // @tauri-apps/api import) matches every other real-Tauri-only call site in
 // this codebase (see setupwizard.svelte.ts's pickDirectory/armDropZone).
+// Live refresh: the backend watches the open repo's git-dir and emits
+// "repo-changed" when something changes it from OUTSIDE the app (a terminal
+// commit, another tool, a background fetch, a hook) — see
+// src-tauri/src/watch.rs. Declared at module scope (not inside the
+// `if (IN_TAURI)` block below) so the manual Refresh button can call it
+// unconditionally, exactly like doFetch/doPull/doPush's own click listeners
+// are always registered and branch on IN_TAURI internally — a listener
+// registered only inside that block would silently do nothing when clicked
+// in browser design mode.
+//
+// ADVERSARIALLY-FOUND FIX: the old re-entrancy guard just returned early on
+// a second event arriving mid-refresh, silently dropping it — fine for an
+// event that's merely redundant with one already in flight, but wrong for
+// the LAST event in a burst (a rebase, a squash, several quick commits):
+// if that final "things have settled" event landed while a still-running
+// refresh (its own or an unrelated one) held the guard, nothing else would
+// ever refresh again and the UI stayed stale until some other, unrelated
+// action happened to trigger a reload. `repoChangePending` now remembers
+// "at least one more refresh is owed" and the loop below drains it once
+// the in-flight pass finishes, so the true final state always eventually
+// gets reflected — this is also what the manual Refresh button below
+// calls, so a click while an auto-refresh is already running coalesces
+// with it instead of racing it.
+let repoChangeReloadInFlight = false;
+let repoChangePending = false;
+async function refreshFromExternalChange() {
+  if (!bridge.CUR_REPO) return;
+  if (repoChangeReloadInFlight) {
+    repoChangePending = true;
+    return;
+  }
+  repoChangeReloadInFlight = true;
+  try {
+    for (;;) {
+      await bridge.reloadGraph(true);
+      // Working-tree state (stage/unstage/dirty files) can change from
+      // OUTSIDE the app exactly like refs can (an external `git add`, a
+      // terminal edit, a save from another editor) — keep the pinned row's
+      // badge and, if open, the staging panel itself live. The stash list is
+      // its own separate read (`git stash` from a terminal fires this same
+      // event — confirmed via watch.rs) and was previously never refreshed
+      // here, so an external stash change could silently invalidate the
+      // index the panel was showing (see stash_apply/pop/drop's
+      // `expected_sha` identity check on the backend for the other half of
+      // this fix).
+      const repo = bridge.CUR_REPO as unknown as string;
+      await Promise.all([workdirCtrl.refreshStatus(repo), workdirCtrl.refreshStashes(repo)]);
+      if (!repoChangePending) break;
+      repoChangePending = false;
+    }
+  } finally {
+    repoChangeReloadInFlight = false;
+  }
+}
+
+// Manual refresh (topbar button) — the explicit escape hatch for exactly
+// the gap the fix above closes: if a user ever suspects the graph is out
+// of sync with the repo on disk, this forces the same full resync
+// (graph + sidebar refs/branch-pill + Safety snapshots, via reloadGraph;
+// plus workdir status + stashes) rather than requiring them to reopen the
+// repo. Reuses refreshFromExternalChange so a click during an already-
+// in-flight auto-refresh coalesces with it instead of firing a redundant
+// second one. Registered unconditionally (see this block's own opening
+// comment) — the handler itself branches on IN_TAURI first.
+document.getElementById("refreshBtn")?.addEventListener("click", () => {
+  // IN_TAURI checked FIRST, same order as doFetch/doPull/doPush's own demo
+  // branch: in browser design mode CUR_REPO stays null even though the
+  // synthetic graph stands in for an open repo throughout (see
+  // legacy/main.ts's workdirAvailable() doc comment) — checking CUR_REPO
+  // first would misleadingly warn "Open a repository first" over a graph
+  // that's clearly already showing commits.
+  if (!IN_TAURI) {
+    bridge.tama.set("hint");
+    bridge.tama.say("Refreshed (demo). にゃ〜", 3200);
+    return;
+  }
+  if (!bridge.CUR_REPO) {
+    bridge.tama.warn("Open a repository first.");
+    return;
+  }
+  refreshFromExternalChange();
+});
+
 if (IN_TAURI) {
   const w = window as unknown as { __TAURI__?: any };
   w.__TAURI__?.event.listen("menu-action", (e: { payload: string }) => {
@@ -239,6 +322,12 @@ if (IN_TAURI) {
         break;
       case "push":
         bridge.doPush();
+        break;
+      case "refresh":
+        // Same "dispatch a click on the real button" indirection as
+        // toggle-theme above — refreshBtn's own listener already lives in
+        // this file (see refreshFromExternalChange), no bridge export needed.
+        document.getElementById("refreshBtn")?.dispatchEvent(new MouseEvent("click"));
         break;
       case "about":
         aboutCtrl.show();
@@ -326,33 +415,10 @@ if (IN_TAURI) {
     }
   });
 
-  // Live refresh: the backend watches the open repo's git-dir and emits this
-  // when something changes it from OUTSIDE the app (a terminal commit,
-  // another tool, a background fetch, a hook) — see src-tauri/src/watch.rs.
-  // Re-entrancy guarded so a burst of external activity can't queue up
-  // overlapping reloads.
-  let repoChangeReloadInFlight = false;
-  w.__TAURI__?.event.listen("repo-changed", async () => {
-    if (repoChangeReloadInFlight || !bridge.CUR_REPO) return;
-    repoChangeReloadInFlight = true;
-    try {
-      await bridge.reloadGraph(true);
-      // Working-tree state (stage/unstage/dirty files) can change from
-      // OUTSIDE the app exactly like refs can (an external `git add`, a
-      // terminal edit, a save from another editor) — keep the pinned row's
-      // badge and, if open, the staging panel itself live. The stash list is
-      // its own separate read (`git stash` from a terminal fires this same
-      // event — confirmed via watch.rs) and was previously never refreshed
-      // here, so an external stash change could silently invalidate the
-      // index the panel was showing (see stash_apply/pop/drop's
-      // `expected_sha` identity check on the backend for the other half of
-      // this fix).
-      const repo = bridge.CUR_REPO as unknown as string;
-      await Promise.all([workdirCtrl.refreshStatus(repo), workdirCtrl.refreshStashes(repo)]);
-    } finally {
-      repoChangeReloadInFlight = false;
-    }
-  });
+  // Live refresh: notify refreshFromExternalChange (module scope, declared
+  // above this `if (IN_TAURI)` block — see its own doc comment) whenever the
+  // backend's file-watcher reports an external git-dir change.
+  w.__TAURI__?.event.listen("repo-changed", refreshFromExternalChange);
 
   // Silent startup update probe — delayed so it never competes with the
   // repo-load/graph-layout work a cold launch is already doing. `check(true)`
