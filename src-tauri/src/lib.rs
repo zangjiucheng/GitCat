@@ -115,6 +115,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // Conflict resolver (M2b): inspect stages + per-file ours/theirs
         conflict::conflict_status,
         conflict::resolve_conflict_file,
+        // Conflict resolver: in-app hunk-level editor (whole-file ours/theirs
+        // above is unchanged; these are a third, additive resolution path)
+        conflict::conflict_file_hunks,
+        conflict::resolve_conflict_hunks,
         // Cherry-pick (M2b): drag-onto-HEAD + continue / abort
         git_pick::cherry_pick,
         git_pick::cherry_pick_continue,
@@ -129,6 +133,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_merge::merge_squash,
         git_merge::merge_squash_abort,
         git_merge::merge_squash_continue,
+        // Multi-branch merge: octopus (one commit, any conflict aborts
+        // outright) or sequential (a queue of ordinary pairwise merges)
+        git_merge::merge_start_multi,
+        git_merge::merge_queue_continue,
+        git_merge::merge_queue_abort,
+        git_merge::merge_queue_status,
         // Rebase (M6 stage 2): linear rebase onto a target + continue / skip / abort
         git_rebase::rebase_start,
         git_rebase::rebase_continue,

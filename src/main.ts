@@ -42,6 +42,7 @@ import { repoFilesCtrl } from "./islands/repofiles/repofiles.svelte.ts";
 import FilterRepo from "./islands/filterrepo/FilterRepo.svelte";
 import { filterRepoCtrl } from "./islands/filterrepo/filterrepo.svelte.ts";
 import RebasePlan from "./islands/rebaseplan/RebasePlan.svelte";
+import MultiMerge from "./islands/multimerge/MultiMerge.svelte";
 import Blame from "./islands/blame/Blame.svelte";
 import FileHistory from "./islands/filehistory/FileHistory.svelte";
 import SetupWizard from "./islands/setupwizard/SetupWizard.svelte";
@@ -66,6 +67,7 @@ mount(CommitMenu, { target: document.body });
 mount(Bisect, { target: document.body });
 mount(FilterRepo, { target: document.body });
 mount(RebasePlan, { target: document.body });
+mount(MultiMerge, { target: document.body });
 // Blame (line-annotation view) — unlike Reflog/Rerere/Plumbing below, this is
 // NOT reachable from the Tools menu or ⌘K: it inherently needs a (commit,
 // file) target that only exists in file-tree context (Detail.svelte's file

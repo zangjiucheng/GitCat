@@ -34,6 +34,7 @@ import { settingsCtrl } from "../settings/settings.svelte.ts";
 import { danglingRecoveryCtrl } from "../danglingrecovery/danglingrecovery.svelte.ts";
 import { repoFilesCtrl } from "../repofiles/repofiles.svelte.ts";
 import { filterRepoCtrl } from "../filterrepo/filterrepo.svelte.ts";
+import { multimergeCtrl } from "../multimerge/multimerge.svelte.ts";
 import { aboutCtrl } from "../about/about.svelte.ts";
 import { updaterCtrl } from "../updater/updater.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
@@ -167,6 +168,17 @@ const ACTIONS: ActionItem[] = [
     label: "Repo Files",
     hint: "Edit .gitignore or .mailmap without leaving GitCat",
     run: () => repoFilesCtrl.show(bridge.CUR_REPO as unknown as string),
+  },
+  // Multi-branch merge (octopus or sequential — see multimerge.svelte.ts's
+  // own header doc): repo-global like Pickaxe/Dangling Commits above (not
+  // tied to any one branch's own context menu), so it lives here rather than
+  // a per-branch-row menu item.
+  {
+    type: "action",
+    id: "multi-merge",
+    label: "Merge Multiple Branches",
+    hint: "Pick several branches and merge them all into the current branch at once",
+    run: () => multimergeCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",

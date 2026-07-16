@@ -639,6 +639,38 @@ async resolveConflictFile(path: string, file: string, side: string) : Promise<Re
     return await TAURI_INVOKE("resolve_conflict_file", { path, file, side });
 },
 /**
+ * Aligned per-hunk view of one conflicted file, for the in-app resolution
+ * editor — as opposed to [`conflict_status`]'s whole-side-per-column view,
+ * which stays completely unchanged. Shells `git merge-file --diff3` on the
+ * three already-fetched stages (reusing git's own 3-way merge/diff
+ * algorithm to generate correct `<<<<<<</|||||||/=======/>>>>>>>` marker
+ * text, rather than reimplementing line-alignment from scratch) and parses
+ * that into structured hunks the frontend can render/edit per-region.
+ * JS: `invoke("conflict_file_hunks", { path, file })`.
+ */
+async conflictFileHunks(path: string, file: string) : Promise<Result<ConflictFileHunks, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("conflict_file_hunks", { path, file }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Write the frontend's already-assembled final resolution (joined from its
+ * own hunk choices/edits — see [`conflict_file_hunks`]) straight to the
+ * working tree, then stage it. The hunk-editor counterpart to
+ * [`resolve_conflict_file`]: same finalize step (write + `git add`), just
+ * fed a caller-assembled string instead of a `--ours`/`--theirs` side.
+ * JS: `invoke("resolve_conflict_hunks", { path, file, resolvedContent })`.
+ * 
+ * No snapshot here — same reasoning as `resolve_conflict_file`: this only
+ * ever runs inside an already-snapshotted, already-in-progress operation.
+ */
+async resolveConflictHunks(path: string, file: string, resolvedContent: string) : Promise<ResolveResult> {
+    return await TAURI_INVOKE("resolve_conflict_hunks", { path, file, resolvedContent });
+},
+/**
  * Cherry-pick `sha` onto the current branch (HEAD). Snapshots FIRST, then runs
  * `git cherry-pick [-x] --no-edit --end-of-options <sha>`. `record_origin`
  * (the `-x` toggle) appends "(cherry picked from commit …)" to the message.
@@ -764,6 +796,114 @@ async mergeSquashAbort(path: string) : Promise<MergeSquashResult> {
  */
 async mergeSquashContinue(path: string) : Promise<MergeSquashResult> {
     return await TAURI_INVOKE("merge_squash_continue", { path });
+},
+/**
+ * Start a multi-branch merge — every sha in `shas` merges INTO the current
+ * branch (HEAD), same "source(s) onto HEAD" semantics as `merge_start`.
+ * `mode` picks:
+ * 
+ * - `"octopus"`: ONE real `git merge` invocation naming every sha (git picks
+ * the octopus strategy automatically for >1 non-HEAD ref) — a single merge
+ * commit with every sha as a parent, exactly like running the equivalent
+ * `git merge` by hand. EMPIRICALLY VERIFIED (git 2.53.0) this can conflict
+ * in two genuinely different ways depending on internal per-branch trial
+ * order that a caller has no reliable way to predict up front: if the LAST
+ * sha in the list is the one whose merge conflicts, git leaves an ordinary
+ * resolvable conflict (MERGE_HEAD naming every sha, normal unmerged index
+ * entries — indistinguishable from a plain two-way merge conflict once
+ * left in that state); if instead ANY EARLIER sha's merge conflicts, git
+ * refuses the WHOLE octopus merge outright ("Should not be doing an
+ * octopus.", exit 2, nothing mutated at all, no MERGE_HEAD, tree
+ * untouched). Exposing that split to users would be needlessly confusing —
+ * which case you land in depends on internal trial order, not anything the
+ * user chose — so BOTH are treated identically here: any octopus failure
+ * runs `git merge --abort` (a harmless no-op in the exit-2 case, where
+ * there was never anything to abort) and reports one honest
+ * `state:"octopus-conflict-unsupported"` — git's octopus strategy can't
+ * resolve a conflict across more than two heads in a way this app can
+ * safely surface; retry as Sequential instead.
+ * - `"sequential"`: a queue of ordinary pairwise merges, one call at a time.
+ * THIS call merges ONLY `shas[0]` (an ordinary `merge_start`-shaped call —
+ * snapshot included, via the shared `merge_one`) and persists a
+ * [`MergeQueueState`] sidecar recording the rest BEFORE attempting it, so a
+ * conflict on this very first step is still resolvable exactly like any
+ * other merge conflict, and a crash mid-attempt leaves the queue
+ * recoverable. [`merge_queue_continue`] advances through `shas[1..]`, one
+ * sha at a time.
+ * 
+ * Both modes refuse up front (no mutation) if fewer than two shas are given
+ * — "multi-branch merge" always means at least two — or if a real merge or
+ * another sequential queue is already in progress.
+ * 
+ * `strategy` (same three values `merge_start` takes) applies to every
+ * sequential step (captured once in the sidecar, reused by every
+ * `merge_queue_continue` call); ignored for octopus — git has no fast-
+ * forward/no-ff concept across more than one non-HEAD ref, the result is
+ * always a real merge commit once there's more than one.
+ * 
+ * JS: `invoke("merge_start_multi", { path, shas, mode, strategy })`.
+ */
+async mergeStartMulti(path: string, shas: string[], mode: string, strategy: string | null) : Promise<MergeResult> {
+    return await TAURI_INVOKE("merge_start_multi", { path, shas, mode, strategy });
+},
+/**
+ * Advance a sequential merge queue by one step: verify the current step is
+ * genuinely finished (no in-progress merge, no unmerged files — the queue
+ * analogue of `rebase_continue`'s own precondition-then-advance shape, just
+ * phrased for "the LAST step must already be done" rather than "a step IS in
+ * progress"), pop the next sha off `remaining`, persist that BEFORE
+ * attempting it (the same crash-recoverable ordering `merge_start_multi`
+ * uses for the first step), and merge it with the SAME strategy the queue
+ * started with.
+ * 
+ * If `current` is still set at this point, its own step is what needs
+ * settling before advancing. A clean repo at this point is ambiguous on its
+ * own — ADVERSARIALLY-FOUND BUG this fixes: it's equally true whether the
+ * user genuinely resolved `current`'s conflict via the ordinary
+ * `resolve_conflict_file`/`resolve_conflict_hunks` + `merge_continue`
+ * commands (which know nothing about this sidecar), OR `current`'s merge was
+ * aborted via the plain Resolver "Abort merge" button (not
+ * `merge_queue_abort`, the only thing that clears this sidecar), OR it
+ * errored outright (e.g. an `--ff-only` refusal) and never mutated anything
+ * at all — the old code promoted `current` into `done` unconditionally in
+ * EVERY one of these cases, silently reporting an unmerged branch as merged.
+ * Comparing HEAD now against `head_before_current` (see that field's own doc
+ * comment) tells them apart: only a genuine merge conclusion moves HEAD. If
+ * HEAD hasn't moved, `current` is RETRIED instead — the honest behavior for
+ * "the previous attempt never actually happened".
+ * 
+ * JS: `invoke("merge_queue_continue", { path })`.
+ */
+async mergeQueueContinue(path: string) : Promise<MergeResult> {
+    return await TAURI_INVOKE("merge_queue_continue", { path });
+},
+/**
+ * Cancel a sequential merge queue: best-effort abort any conflict on the
+ * CURRENT step (reuses `merge_abort` verbatim — idempotent, a safe no-op if
+ * nothing is actually mid-merge; if it's genuinely in progress and abort
+ * itself fails, surface that error and leave the sidecar alone rather than
+ * silently claiming "cancelled" while conflict markers are still sitting in
+ * the tree), then delete the sidecar. Branches already merged cleanly
+ * (`done`) are NOT rolled back — mirrors `rebase_abort`/`merge_abort`'s own
+ * scope (undo only the live in-progress op, never history already
+ * committed); a user who wants the whole sequence undone has the pre-queue
+ * Safety Manager snapshot for that (see this module's doc comment: merges
+ * rely on the snapshot as their only safety net, by design).
+ * 
+ * JS: `invoke("merge_queue_abort", { path })`.
+ */
+async mergeQueueAbort(path: string) : Promise<MergeResult> {
+    return await TAURI_INVOKE("merge_queue_abort", { path });
+},
+/**
+ * Read-only queue status. See [`MergeQueueStatus`]'s own doc comment for the
+ * two uses (reopen-recovery + the frontend's own "keep going or stop?"
+ * check).
+ * 
+ * JS: `invoke("merge_queue_status", { path })`.
+ */
+async mergeQueueStatus(path: string) : Promise<MergeQueueStatus> {
+    return await TAURI_INVOKE("merge_queue_status", { path });
 },
 /**
  * Rebase the current branch onto `onto`. Snapshots FIRST, then runs
@@ -1804,6 +1944,22 @@ export type CommitObject = { sha: string; shortSha: string; author: PlumbingPers
  */
 export type ConflictFile = { path: string; ours: string; base: string; theirs: string }
 /**
+ * Result of [`conflict_file_hunks`]. `binary` means at least one stage is a
+ * binary blob — `git merge-file` can't meaningfully line-diff that, so
+ * `hunks` is empty and the frontend falls back to whole-file
+ * Take-ours/Take-theirs (still available via [`resolve_conflict_file`],
+ * unchanged by any of this).
+ */
+export type ConflictFileHunks = { path: string; hunks: ConflictHunk[]; binary: boolean }
+/**
+ * One aligned region of a conflicted file: either shared, unconflicted
+ * `context` (identical text across all three stages, surrounding a real
+ * conflict), or a `conflict` region carrying each stage's own version of
+ * just that region. `context`/(`ours`,`base`,`theirs`) are populated
+ * according to `kind` — the other fields are `None`.
+ */
+export type ConflictHunk = { kind: string; context: string | null; ours: string | null; base: string | null; theirs: string | null }
+/**
  * Result of [`conflict_status`]. `op` is one of
  * `"cherry-pick" | "merge" | "rebase" | "revert" | "stash" | "merge-squash" |
  * "am" | "none"` — see [`detect_op`] for why `"stash"` and `"merge-squash"`
@@ -1986,12 +2142,23 @@ export type HunkSelection = { header: string; lines: SelectedLine[] }
  */
 export type LocalBranch = { name: string; sha: string; ahead: number | null; behind: number | null; upstream: string | null }
 /**
+ * Result of `merge_queue_status` — a plain read, mirrors git_bisect.rs's own
+ * `BisectStatus`: always returns a value (`in_progress:false` + empty vecs
+ * when no queue is active), never `Option`/`null`, so the frontend can call
+ * this unconditionally both on repo-open (recovery, mirroring
+ * `bisectCtrl.probeOnOpen`) and after every queue step (to decide whether to
+ * keep going or the queue is already finished).
+ */
+export type MergeQueueStatus = { inProgress: boolean; current: string | null; remaining: string[]; done: string[] }
+/**
  * Result of any merge step (initial / continue / abort). Serializes
  * camelCase: `conflictedFiles`, `backupRef`.
  */
 export type MergeResult = { ok: boolean; 
 /**
- * "clean" | "conflict" | "empty" | "error"
+ * "clean" | "conflict" | "empty" | "error" | "octopus-conflict-unsupported"
+ * (the last one is `merge_start_multi`'s octopus mode only — see this
+ * module's own doc comment)
  */
 state: string; 
 /**

@@ -50,6 +50,8 @@ vi.mock("../../ipc/bindings", () => ({
     conflictStatus: vi.fn(),
     resolveConflictFile: vi.fn(),
     resolveConflictWithExternalTool: vi.fn(),
+    conflictFileHunks: vi.fn(),
+    resolveConflictHunks: vi.fn(),
     currentUpstream: vi.fn(),
     fetch: vi.fn(),
   },
@@ -59,6 +61,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type {
   ConflictFile,
+  ConflictFileHunks,
   ConflictStatus,
   MergeResult,
   MergeSquashResult,
@@ -139,6 +142,12 @@ function resetResolver() {
   resolver.op = "cherry-pick";
   resolver.dirtyBlock = null;
   resolver.dirtyBlockStuck = null;
+  resolver.editMode = false;
+  resolver.editLoading = false;
+  resolver.editBinary = false;
+  resolver.editHunks = [];
+  resolver.editValues = [];
+  resolver.queueContinue = null;
 }
 
 beforeEach(() => {
@@ -1243,6 +1252,303 @@ describe("resolveWithExternalTool (backlog #12)", () => {
   });
 });
 
+describe("in-app hunk-level resolution editor", () => {
+  function fileHunks(partial: Partial<ConflictFileHunks> = {}): ConflictFileHunks {
+    return { path: FILE_A.path, binary: false, hunks: [], ...partial };
+  }
+
+  describe("openEditMode", () => {
+    it("fetches hunks for the current file and enters edit mode, seeding conflict hunks from ours", async () => {
+      resolver.repo = "repo1";
+      resolver.demo = false;
+      resolver.files = [FILE_A];
+      resolver.selected = FILE_A.path;
+      resolver.remaining = new Set([FILE_A.path]);
+      vi.mocked(commands.conflictFileHunks).mockResolvedValueOnce(
+        ok(
+          fileHunks({
+            hunks: [
+              { kind: "context", context: "shared line\n", ours: null, base: null, theirs: null },
+              { kind: "conflict", context: null, ours: "ours text\n", base: "base text\n", theirs: "theirs text\n" },
+            ],
+          }),
+        ),
+      );
+
+      await resolver.openEditMode();
+
+      expect(commands.conflictFileHunks).toHaveBeenCalledWith("repo1", FILE_A.path);
+      expect(resolver.editMode).toBe(true);
+      expect(resolver.editBinary).toBe(false);
+      expect(resolver.editHunks).toHaveLength(2);
+      // context seeds from its own fixed text; the conflict hunk seeds from "ours".
+      expect(resolver.editValues).toEqual(["shared line\n", "ours text\n"]);
+    });
+
+    it("a binary conflict opens with editBinary=true and no hunks, instead of refusing to open", async () => {
+      resolver.repo = "repo1";
+      resolver.files = [FILE_A];
+      resolver.selected = FILE_A.path;
+      resolver.remaining = new Set([FILE_A.path]);
+      vi.mocked(commands.conflictFileHunks).mockResolvedValueOnce(ok(fileHunks({ binary: true, hunks: [] })));
+
+      await resolver.openEditMode();
+
+      expect(resolver.editMode).toBe(true);
+      expect(resolver.editBinary).toBe(true);
+      expect(resolver.editHunks).toHaveLength(0);
+    });
+
+    it("a backend error surfaces via Tama and does not enter edit mode", async () => {
+      resolver.repo = "repo1";
+      resolver.files = [FILE_A];
+      resolver.selected = FILE_A.path;
+      resolver.remaining = new Set([FILE_A.path]);
+      vi.mocked(commands.conflictFileHunks).mockResolvedValueOnce(err("a.ts is not conflicted."));
+
+      await resolver.openEditMode();
+
+      expect(resolver.editMode).toBe(false);
+      expect(bridge.tama.warn).toHaveBeenCalledWith("a.ts is not conflicted.");
+    });
+
+    it("is a no-op when there is no selected file", async () => {
+      resolver.selected = null;
+
+      await resolver.openEditMode();
+
+      expect(commands.conflictFileHunks).not.toHaveBeenCalled();
+      expect(resolver.editMode).toBe(false);
+    });
+
+    it("demo mode: simulates a single conflict hunk from the canned FAKE data, no IPC call", async () => {
+      resolver.openDemo("sha");
+      const f = resolver.files[0];
+
+      await resolver.openEditMode();
+
+      expect(commands.conflictFileHunks).not.toHaveBeenCalled();
+      expect(resolver.editMode).toBe(true);
+      expect(resolver.editBinary).toBe(false);
+      expect(resolver.editHunks).toEqual([{ kind: "conflict", context: null, ours: f.ours, base: f.base, theirs: f.theirs }]);
+      expect(resolver.editValues).toEqual([f.ours]);
+    });
+
+    // ADVERSARIALLY-FOUND FIX: a second, independent guard (on top of
+    // select()'s own editLoading refusal) for the case some other future
+    // path moves `selected` during the await.
+    it("discards a stale fetch result if the selected file changed while it was in flight", async () => {
+      resolver.repo = "repo1";
+      resolver.files = [FILE_A, FILE_B];
+      resolver.selected = FILE_A.path;
+      resolver.remaining = new Set([FILE_A.path, FILE_B.path]);
+      let resolveFetch!: (v: Awaited<ReturnType<typeof commands.conflictFileHunks>>) => void;
+      vi.mocked(commands.conflictFileHunks).mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+      );
+
+      const pending = resolver.openEditMode();
+      // Simulate `selected` moving during the await (bypassing select()'s own
+      // guard directly, to prove THIS guard is independent of it).
+      resolver.selected = FILE_B.path;
+      resolveFetch(
+        ok(fileHunks({ hunks: [{ kind: "conflict", context: null, ours: "A ours\n", base: "A base\n", theirs: "A theirs\n" }] })),
+      );
+      await pending;
+
+      expect(resolver.editMode).toBe(false);
+      expect(resolver.editHunks).toHaveLength(0);
+    });
+  });
+
+  describe("useSide / setEditValue / editJoined", () => {
+    beforeEach(() => {
+      resolver.editHunks = [
+        { kind: "context", context: "before\n", ours: null, base: null, theirs: null },
+        { kind: "conflict", context: null, ours: "ours text\n", base: "base text\n", theirs: "theirs text\n" },
+        { kind: "context", context: "after\n", ours: null, base: null, theirs: null },
+      ];
+      resolver.editValues = ["before\n", "ours text\n", "after\n"];
+    });
+
+    it("useSide quick-fills the conflict hunk's value from the chosen side", () => {
+      resolver.useSide(1, "theirs");
+      expect(resolver.editValues[1]).toBe("theirs text\n");
+
+      resolver.useSide(1, "ours");
+      expect(resolver.editValues[1]).toBe("ours text\n");
+    });
+
+    it("useSide is a no-op on a context hunk (nothing to quick-fill)", () => {
+      resolver.useSide(0, "theirs");
+      expect(resolver.editValues[0]).toBe("before\n");
+    });
+
+    it("setEditValue freely overwrites a hunk's value, including after a quick-fill", () => {
+      resolver.useSide(1, "theirs");
+      resolver.setEditValue(1, "hand-typed final text\n");
+      expect(resolver.editValues[1]).toBe("hand-typed final text\n");
+    });
+
+    it("editJoined concatenates every hunk's current value in order", () => {
+      resolver.useSide(1, "theirs");
+      expect(resolver.editJoined).toBe("before\ntheirs text\nafter\n");
+    });
+  });
+
+  describe("closeEditMode", () => {
+    it("clears edit-mode state back to its defaults", () => {
+      resolver.editMode = true;
+      resolver.editBinary = true;
+      resolver.editHunks = [{ kind: "context", context: "x", ours: null, base: null, theirs: null }];
+      resolver.editValues = ["x"];
+
+      resolver.closeEditMode();
+
+      expect(resolver.editMode).toBe(false);
+      expect(resolver.editBinary).toBe(false);
+      expect(resolver.editHunks).toHaveLength(0);
+      expect(resolver.editValues).toHaveLength(0);
+    });
+  });
+
+  describe("select — switching files exits edit mode", () => {
+    it("closes edit mode when selecting a DIFFERENT file", () => {
+      resolver.files = [FILE_A, FILE_B];
+      resolver.selected = FILE_A.path;
+      resolver.editMode = true;
+      resolver.editHunks = [{ kind: "context", context: "x", ours: null, base: null, theirs: null }];
+
+      resolver.select(FILE_B.path);
+
+      expect(resolver.selected).toBe(FILE_B.path);
+      expect(resolver.editMode).toBe(false);
+      expect(resolver.editHunks).toHaveLength(0);
+    });
+
+    it("re-selecting the SAME file leaves edit mode untouched", () => {
+      resolver.files = [FILE_A];
+      resolver.selected = FILE_A.path;
+      resolver.editMode = true;
+      resolver.editHunks = [{ kind: "context", context: "x", ours: null, base: null, theirs: null }];
+
+      resolver.select(FILE_A.path);
+
+      expect(resolver.editMode).toBe(true);
+      expect(resolver.editHunks).toHaveLength(1);
+    });
+
+    // ADVERSARIALLY-FOUND FIX: switching files while a hunk fetch is in
+    // flight used to leave the OLD file's fetch result landing against
+    // whichever file the user had switched to by then.
+    it("refuses to switch files while a hunk fetch is in flight (editLoading)", () => {
+      resolver.files = [FILE_A, FILE_B];
+      resolver.selected = FILE_A.path;
+      resolver.editLoading = true;
+
+      resolver.select(FILE_B.path);
+
+      expect(resolver.selected).toBe(FILE_A.path); // unchanged — the switch was refused
+    });
+
+    it("switching files works normally again once editLoading clears", () => {
+      resolver.files = [FILE_A, FILE_B];
+      resolver.selected = FILE_A.path;
+      resolver.editLoading = false;
+
+      resolver.select(FILE_B.path);
+
+      expect(resolver.selected).toBe(FILE_B.path);
+    });
+  });
+
+  describe("saveEditResolution", () => {
+    it("saves the joined text, exits edit mode, and re-pulls authoritative conflict state on success", async () => {
+      resolver.repo = "repo1";
+      resolver.demo = false;
+      resolver.files = [FILE_A, FILE_B];
+      resolver.selected = FILE_A.path;
+      resolver.remaining = new Set([FILE_A.path, FILE_B.path]);
+      resolver.editMode = true;
+      resolver.editHunks = [{ kind: "conflict", context: null, ours: "ours\n", base: "base\n", theirs: "theirs\n" }];
+      resolver.editValues = ["hand-resolved\n"];
+
+      vi.mocked(commands.resolveConflictHunks).mockResolvedValueOnce({
+        ok: true,
+        remaining: 1,
+        message: "Saved.",
+      } satisfies ResolveResult);
+      vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_B])));
+
+      await resolver.saveEditResolution();
+
+      expect(commands.resolveConflictHunks).toHaveBeenCalledWith("repo1", FILE_A.path, "hand-resolved\n");
+      expect(resolver.editMode).toBe(false);
+      expect(resolver.files).toEqual([FILE_B]);
+      expect(resolver.remaining.has(FILE_A.path)).toBe(false);
+    });
+
+    it("a backend failure surfaces via Tama and LEAVES edit mode open so the user doesn't lose their draft", async () => {
+      resolver.repo = "repo1";
+      resolver.demo = false;
+      resolver.files = [FILE_A];
+      resolver.selected = FILE_A.path;
+      resolver.remaining = new Set([FILE_A.path]);
+      resolver.editMode = true;
+      resolver.editValues = ["hand-resolved\n"];
+
+      vi.mocked(commands.resolveConflictHunks).mockResolvedValueOnce({
+        ok: false,
+        remaining: 1,
+        message: "cannot write a.ts: permission denied",
+      } satisfies ResolveResult);
+      vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A])));
+
+      await resolver.saveEditResolution();
+
+      expect(bridge.tama.warn).toHaveBeenCalledWith("cannot write a.ts: permission denied");
+      expect(resolver.editMode).toBe(true);
+      expect(resolver.editValues).toEqual(["hand-resolved\n"]);
+    });
+
+    it("is a no-op when there is no selected file", async () => {
+      resolver.selected = null;
+
+      await resolver.saveEditResolution();
+
+      expect(commands.resolveConflictHunks).not.toHaveBeenCalled();
+    });
+
+    it("re-entrancy guard: a save already in flight ignores a second call", async () => {
+      resolver.repo = "repo1";
+      resolver.demo = false;
+      resolver.files = [FILE_A];
+      resolver.selected = FILE_A.path;
+      resolver.remaining = new Set([FILE_A.path]);
+      resolver.busy = true;
+
+      await resolver.saveEditResolution();
+
+      expect(commands.resolveConflictHunks).not.toHaveBeenCalled();
+    });
+
+    it("demo mode: mutates local state only, no IPC call", () => {
+      resolver.openDemo("sha");
+      const path = resolver.files[0].path;
+      resolver.editMode = true;
+
+      resolver.saveEditResolution();
+
+      expect(resolver.remaining.has(path)).toBe(false);
+      expect(resolver.editMode).toBe(false);
+      expect(commands.resolveConflictHunks).not.toHaveBeenCalled();
+      expect(bridge.tama.say).toHaveBeenCalled();
+    });
+  });
+});
+
 describe("abort", () => {
   it("success (clean) closes the modal and reloads the graph", async () => {
     resolver.open = true;
@@ -1323,6 +1629,117 @@ describe("continue", () => {
     expect(resolver.open).toBe(false);
     expect(commands.cherryPickContinue).not.toHaveBeenCalled();
     expect(bridge.cheer).toHaveBeenCalled();
+  });
+});
+
+describe("queueContinue hook (multimergeCtrl's sequential-mode advance)", () => {
+  it("openFromResult stores the onQueueContinue callback for a conflict result", async () => {
+    const cb = vi.fn();
+    const res = mergeResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] });
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "merge")));
+
+    await resolver.openFromResult("repo1", res, "sha1", "merge", cb);
+
+    expect(resolver.queueContinue).toBe(cb);
+  });
+
+  it("openFromResult ALSO stores the onQueueAbort callback, independent of onQueueContinue", async () => {
+    const onContinue = vi.fn();
+    const onAbort = vi.fn();
+    const res = mergeResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] });
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "merge")));
+
+    await resolver.openFromResult("repo1", res, "sha1", "merge", onContinue, onAbort);
+
+    expect(resolver.queueContinue).toBe(onContinue);
+    expect(resolver.queueAbort).toBe(onAbort);
+  });
+
+  it("a successful continue() fires the callback exactly once and clears it", async () => {
+    const cb = vi.fn();
+    resolver.open = true;
+    resolver.repo = "repo1";
+    resolver.op = "merge";
+    resolver.queueContinue = cb;
+    vi.mocked(commands.mergeContinue).mockResolvedValueOnce(mergeResult({ state: "clean", message: "Merged." }));
+
+    await resolver.continue();
+
+    expect(cb).toHaveBeenCalledTimes(1);
+    expect(resolver.queueContinue).toBeNull();
+  });
+
+  it("continue() landing on ANOTHER conflict (still mid-sequence) does NOT fire the callback yet", async () => {
+    const cb = vi.fn();
+    resolver.open = true;
+    resolver.repo = "repo1";
+    resolver.op = "rebase"; // the shared "still conflicted" branch is generic across ops
+    resolver.queueContinue = cb;
+    vi.mocked(commands.rebaseContinue).mockResolvedValueOnce(
+      rebaseResult({ ok: false, state: "conflict", conflictedFiles: ["b.ts"] }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_B], true, "rebase")));
+
+    await resolver.continue();
+
+    expect(cb).not.toHaveBeenCalled();
+    expect(resolver.queueContinue).toBe(cb); // still pending — this exact conflict hasn't resolved yet
+  });
+
+  it("abort() success discards queueContinue WITHOUT firing it — a queue must never silently ADVANCE on abort", async () => {
+    const cb = vi.fn();
+    resolver.open = true;
+    resolver.repo = "repo1";
+    resolver.op = "merge";
+    resolver.queueContinue = cb;
+    vi.mocked(commands.mergeAbort).mockResolvedValueOnce(mergeResult({ state: "clean", message: "Merge aborted." }));
+
+    await resolver.abort();
+
+    expect(cb).not.toHaveBeenCalled();
+    expect(resolver.queueContinue).toBeNull();
+  });
+
+  it("abort() success FIRES queueAbort exactly once and clears it — the queue's own cleanup hook", async () => {
+    const onAbort = vi.fn();
+    resolver.open = true;
+    resolver.repo = "repo1";
+    resolver.op = "merge";
+    resolver.queueAbort = onAbort;
+    vi.mocked(commands.mergeAbort).mockResolvedValueOnce(mergeResult({ state: "clean", message: "Merge aborted." }));
+
+    await resolver.abort();
+
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(resolver.queueAbort).toBeNull();
+  });
+
+  it("abort() failure fires neither queueContinue nor queueAbort — never strand a live pick with a fired cleanup", async () => {
+    const onContinue = vi.fn();
+    const onAbort = vi.fn();
+    resolver.open = true;
+    resolver.repo = "repo1";
+    resolver.op = "merge";
+    resolver.queueContinue = onContinue;
+    resolver.queueAbort = onAbort;
+    vi.mocked(commands.mergeAbort).mockResolvedValueOnce(mergeResult({ ok: false, state: "error", message: "abort failed" }));
+
+    await resolver.abort();
+
+    expect(onContinue).not.toHaveBeenCalled();
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it("a fresh openFromResult call with no callbacks clears any stale queueContinue/queueAbort from a prior conflict", async () => {
+    resolver.queueContinue = vi.fn();
+    resolver.queueAbort = vi.fn();
+    const res = mergeResult({ ok: false, state: "conflict", conflictedFiles: ["a.ts"] });
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "merge")));
+
+    await resolver.openFromResult("repo1", res, "sha1", "merge");
+
+    expect(resolver.queueContinue).toBeNull();
+    expect(resolver.queueAbort).toBeNull();
   });
 });
 

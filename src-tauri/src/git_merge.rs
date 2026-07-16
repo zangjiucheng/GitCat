@@ -22,6 +22,10 @@
 //!   "error"    — anything else (dirty-tree refusal, bad revision, …);
 //!                `message` carries git's own stderr. No in-progress state is
 //!                left behind.
+//!   "octopus-conflict-unsupported" — `merge_start_multi`'s octopus mode
+//!                only: a conflict git's octopus strategy can't resolve
+//!                across more than two heads; the merge was aborted and
+//!                nothing was mutated (see `merge_octopus`'s own doc).
 //!
 //! Failure model (like git_pick / git_write): commands return a plain
 //! [`MergeResult`], never a Rust `Err`, so the JS promise always resolves.
@@ -79,7 +83,9 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct MergeResult {
     pub ok: bool,
-    /// "clean" | "conflict" | "empty" | "error"
+    /// "clean" | "conflict" | "empty" | "error" | "octopus-conflict-unsupported"
+    /// (the last one is `merge_start_multi`'s octopus mode only — see this
+    /// module's own doc comment)
     pub state: String,
     /// Repo-relative paths with unmerged entries — non-empty only when
     /// `state == "conflict"`.
@@ -119,8 +125,16 @@ impl MergeResult {
 /// variants. Duplicated per module (not shared) per this codebase's own
 /// convention for small helpers — see e.g. dashboard.svelte.ts's
 /// repoBasename() doc comment.
+///
+/// EMPIRICALLY VERIFIED (git 2.53.0) `merge_octopus`'s own dirty-tree
+/// refusal uses DIFFERENT wording from a plain two-ref merge's: instead of
+/// "Your local changes ... would be overwritten by merge", an octopus merge
+/// (>1 non-HEAD ref) refuses with "error: Entry '<path>' not uptodate.
+/// Cannot merge." — same underlying safety check, different message, so
+/// this needed its own second pattern rather than being caught by the first.
 fn blocked_by_local_changes(stderr: &str) -> bool {
-    stderr.to_lowercase().contains("would be overwritten by")
+    let blob = stderr.to_lowercase();
+    blob.contains("would be overwritten by") || blob.contains("not uptodate. cannot merge")
 }
 
 // ---------------------------------------------------------------------------
@@ -352,15 +366,9 @@ pub fn merge_start(path: String, sha: String, strategy: Option<String>) -> Merge
     if let Err(e) = validate_sha(&sha) {
         return MergeResult::error(e);
     }
-    let extra_flag: Option<&str> = match strategy.as_deref() {
-        None | Some("") | Some("auto") => None,
-        Some("no-ff") => Some("--no-ff"),
-        Some("ff-only") => Some("--ff-only"),
-        Some(other) => {
-            return MergeResult::error(format!(
-                "Unknown merge strategy {other:?} (expected \"auto\", \"no-ff\", or \"ff-only\")."
-            ))
-        }
+    let extra_flag = match parse_strategy(strategy.as_deref()) {
+        Ok(f) => f,
+        Err(e) => return MergeResult::error(e),
     };
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
@@ -372,37 +380,64 @@ pub fn merge_start(path: String, sha: String, strategy: Option<String>) -> Merge
         return MergeResult::error("A merge is already in progress — resolve or abort it first.");
     }
 
+    merge_one(&repo, &path, &sha, extra_flag)
+}
+
+/// `strategy` -> the extra CLI flag it maps to (or `None` for today's exact
+/// default behavior) — shared by `merge_start` and `merge_start_multi`'s
+/// sequential mode (see that command's own doc comment: the flag is captured
+/// once per queue and reused for every step). Rejects an unknown value up
+/// front with a clean message, mirroring `resolve_conflict_file`'s `side`
+/// validation.
+fn parse_strategy(strategy: Option<&str>) -> Result<Option<&'static str>, String> {
+    match strategy {
+        None | Some("") | Some("auto") => Ok(None),
+        Some("no-ff") => Ok(Some("--no-ff")),
+        Some("ff-only") => Ok(Some("--ff-only")),
+        Some(other) => Err(format!(
+            "Unknown merge strategy {other:?} (expected \"auto\", \"no-ff\", or \"ff-only\")."
+        )),
+    }
+}
+
+/// One `git merge` attempt against an already-opened, already-`in_progress`-
+/// checked repo: snapshot, run `git merge --no-edit --no-autostash
+/// [extra_flag] --end-of-options <sha>`, classify the result. Shared by
+/// `merge_start` (single-branch) and `merge_start_multi`/`merge_queue_continue`
+/// (sequential mode's per-step merges) — extracted so the sequential queue's
+/// steps run through the EXACT SAME snapshot/args/classify path a plain
+/// single merge does, rather than a second, drifting copy of it.
+///
+/// --no-autostash is explicit, not incidental: with an ambient
+/// `merge.autoStash=true` in the user's global gitconfig, a dirty tree
+/// that collides with the merge doesn't refuse up front — git silently
+/// stashes it, merges, and re-applies the stash. If THAT reapply itself
+/// conflicts, git still exits 0 (MERGE_HEAD gone), so `classify()` below
+/// (which checks unmerged_files unconditionally, not gated on
+/// in_progress) reports a normal "conflict" and opens the Resolver — but
+/// `merge_continue`/`merge_abort` both gate on `in_progress()` first and
+/// find the merge already concluded: continue/abort then either error
+/// ("no merge in progress") or, worse, `abort` falsely reports "clean",
+/// silently leaving real conflict markers in the working tree with the
+/// user's original edit stranded in `stash@{0}`. Passing --no-autostash
+/// makes the dirty-tree case refuse up front instead, matching this
+/// module's own "never leave the tree in a misleading state" contract —
+/// independent of what the user's global gitconfig happens to set.
+fn merge_one(repo: &Repository, path: &str, sha: &str, extra_flag: Option<&str>) -> MergeResult {
     // Snapshot FIRST — never mutate without a pre-op backup. If it fails, abort.
-    let backup = match crate::safety::snapshot(&repo) {
+    let backup = match crate::safety::snapshot(repo) {
         Ok(b) => b,
         Err(e) => return MergeResult::error(format!("Safety snapshot failed, aborting: {e}")),
     };
 
-    // git merge --no-edit --no-autostash [--no-ff|--ff-only] --end-of-options <sha>
-    //
-    // --no-autostash is explicit, not incidental: with an ambient
-    // `merge.autoStash=true` in the user's global gitconfig, a dirty tree
-    // that collides with the merge doesn't refuse up front — git silently
-    // stashes it, merges, and re-applies the stash. If THAT reapply itself
-    // conflicts, git still exits 0 (MERGE_HEAD gone), so `classify()` below
-    // (which checks unmerged_files unconditionally, not gated on
-    // in_progress) reports a normal "conflict" and opens the Resolver — but
-    // `merge_continue`/`merge_abort` both gate on `in_progress()` first and
-    // find the merge already concluded: continue/abort then either error
-    // ("no merge in progress") or, worse, `abort` falsely reports "clean",
-    // silently leaving real conflict markers in the working tree with the
-    // user's original edit stranded in `stash@{0}`. Passing --no-autostash
-    // makes the dirty-tree case refuse up front instead, matching this
-    // module's own "never leave the tree in a misleading state" contract —
-    // independent of what the user's global gitconfig happens to set.
     let mut args: Vec<&str> = vec!["merge", "--no-edit", "--no-autostash"];
     if let Some(f) = extra_flag {
         args.push(f);
     }
     args.push("--end-of-options");
-    args.push(&sha);
+    args.push(sha);
 
-    let out = match git(&path, &args, true) {
+    let out = match git(path, &args, true) {
         Ok(o) => o,
         Err(e) => {
             return MergeResult {
@@ -416,7 +451,7 @@ pub fn merge_start(path: String, sha: String, strategy: Option<String>) -> Merge
         }
     };
 
-    classify(&repo, &path, &out, Some(backup), &sha)
+    classify(repo, path, &out, Some(backup), sha)
 }
 
 /// Continue an in-progress merge after the user resolved the conflict (files
@@ -481,7 +516,14 @@ pub fn merge_abort(path: String) -> MergeResult {
         Ok(r) => r,
         Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
     };
-    if !in_progress(&repo) {
+    merge_abort_impl(&repo, &path)
+}
+
+/// Shared body of [`merge_abort`], taking an already-open repo handle —
+/// lets [`merge_queue_abort`] reuse it without a second `Repository::open` +
+/// a second `in_progress` check against a repo it already has open.
+fn merge_abort_impl(repo: &Repository, path: &str) -> MergeResult {
+    if !in_progress(repo) {
         return MergeResult {
             ok: true,
             state: "clean".into(),
@@ -491,7 +533,7 @@ pub fn merge_abort(path: String) -> MergeResult {
             blocked_by_local_changes: false,
         };
     }
-    match git(&path, &["merge", "--abort"], false) {
+    match git(path, &["merge", "--abort"], false) {
         Ok(o) if o.ok => MergeResult {
             ok: true,
             state: "clean".into(),
@@ -869,5 +911,467 @@ pub fn merge_squash_continue(path: String) -> MergeSquashResult {
         message: "Squash-merge conflict resolved — write a commit message to finish.".into(),
         backup_ref: None,
         suggested_message: read_squash_msg(&repo),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Multi-branch merge: octopus (one commit, ANY conflict aborts the whole
+// thing outright) or sequential (a queue of ordinary pairwise merges, one per
+// call, each individually resolvable exactly like `merge_start`'s own
+// conflicts). See `merge_start_multi`'s own doc comment for the full design
+// and the empirical trail behind octopus's conflict handling.
+// ---------------------------------------------------------------------------
+
+/// `<git-dir>/gitgui/merge-queue.json` — same sidecar convention as
+/// `MergeSquashConflictState` above / git_rebase.rs's `rebase-todo/` (repo-
+/// scoped, inspectable, cleaned up the same way — see that module's own
+/// comment for why NOT `std::env::temp_dir()`).
+///
+/// `current` is the sha presently being merged — written BEFORE that merge
+/// runs (see `merge_start_multi`/`merge_queue_continue`), so a crash
+/// mid-attempt still leaves the queue recoverable, the same "snapshot/persist
+/// before every mutating step" discipline this module's doc comment
+/// describes, applied to the sidecar itself. `remaining` is every sha not yet
+/// attempted; `done` is every sha already merged cleanly. `strategy` is
+/// captured ONCE at queue start and reused for every step, so a later
+/// `merge_queue_continue` call never has to be passed it again.
+///
+/// `head_before_current` is HEAD's sha at the moment `current` was set —
+/// ADVERSARIALLY-FOUND FIX: `merge_queue_continue`'s only way to tell "the
+/// previous step is finished" is that the repo looks clean (no MERGE_HEAD, no
+/// unmerged files). But that's ALSO true when `current`'s merge was aborted
+/// via the ordinary Resolver "Abort merge" button (not `merge_queue_abort`,
+/// the only thing that clears this sidecar) or when it errored outright
+/// (e.g. an `--ff-only` refusal, which never mutates anything) — in both
+/// cases `current` was never actually merged, yet the old code unconditionally
+/// promoted it into `done` and moved on, silently reporting a branch as
+/// merged when it wasn't. Comparing HEAD now against `head_before_current`
+/// tells the two cases apart: HEAD only moves on a genuine merge commit or
+/// fast-forward, never on an abort or a no-op error.
+#[derive(Serialize, Deserialize)]
+struct MergeQueueState {
+    current: Option<String>,
+    head_before_current: Option<String>,
+    remaining: Vec<String>,
+    done: Vec<String>,
+    strategy: Option<String>,
+}
+
+/// HEAD's current commit sha, or `None` for an unborn/detached-with-no-target
+/// HEAD (a multi-branch merge queue can't meaningfully be mid-flight in that
+/// state anyway — merging always requires a base commit to merge onto).
+fn head_sha(repo: &Repository) -> Option<String> {
+    repo.head().ok()?.target().map(|oid| oid.to_string())
+}
+
+fn merge_queue_state_path(repo: &Repository) -> std::path::PathBuf {
+    repo.path().join("gitgui").join("merge-queue.json")
+}
+
+/// Best-effort write: losing this sidecar mid-queue would only degrade
+/// `merge_queue_continue`/`merge_queue_status`'s recovery UX (the in-flight
+/// merge itself, if any, is still resolvable/abortable by hand) — mirrors
+/// `write_merge_squash_conflict_state`'s own reasoning above.
+fn write_merge_queue_state(repo: &Repository, st: &MergeQueueState) {
+    let p = merge_queue_state_path(repo);
+    if let Some(dir) = p.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    if let Ok(s) = serde_json::to_string(st) {
+        let _ = fs::write(p, s);
+    }
+}
+
+fn read_merge_queue_state(repo: &Repository) -> Option<MergeQueueState> {
+    let data = fs::read_to_string(merge_queue_state_path(repo)).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+fn clear_merge_queue_state(repo: &Repository) {
+    let _ = fs::remove_file(merge_queue_state_path(repo));
+}
+
+/// Result of `merge_queue_status` — a plain read, mirrors git_bisect.rs's own
+/// `BisectStatus`: always returns a value (`in_progress:false` + empty vecs
+/// when no queue is active), never `Option`/`null`, so the frontend can call
+/// this unconditionally both on repo-open (recovery, mirroring
+/// `bisectCtrl.probeOnOpen`) and after every queue step (to decide whether to
+/// keep going or the queue is already finished).
+#[derive(Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeQueueStatus {
+    pub in_progress: bool,
+    pub current: Option<String>,
+    pub remaining: Vec<String>,
+    pub done: Vec<String>,
+}
+
+const IDLE_QUEUE_STATUS: MergeQueueStatus = MergeQueueStatus {
+    in_progress: false,
+    current: None,
+    remaining: Vec::new(),
+    done: Vec::new(),
+};
+
+/// Reject an unknown mode up front with a clean message — `"octopus"` |
+/// `"sequential"` only.
+fn validate_mode(mode: &str) -> Result<(), String> {
+    if mode == "octopus" || mode == "sequential" {
+        Ok(())
+    } else {
+        Err(format!(
+            "Unknown merge mode {mode:?} (expected \"octopus\" or \"sequential\")."
+        ))
+    }
+}
+
+/// Start a multi-branch merge — every sha in `shas` merges INTO the current
+/// branch (HEAD), same "source(s) onto HEAD" semantics as `merge_start`.
+/// `mode` picks:
+///
+/// - `"octopus"`: ONE real `git merge` invocation naming every sha (git picks
+///   the octopus strategy automatically for >1 non-HEAD ref) — a single merge
+///   commit with every sha as a parent, exactly like running the equivalent
+///   `git merge` by hand. EMPIRICALLY VERIFIED (git 2.53.0) this can conflict
+///   in two genuinely different ways depending on internal per-branch trial
+///   order that a caller has no reliable way to predict up front: if the LAST
+///   sha in the list is the one whose merge conflicts, git leaves an ordinary
+///   resolvable conflict (MERGE_HEAD naming every sha, normal unmerged index
+///   entries — indistinguishable from a plain two-way merge conflict once
+///   left in that state); if instead ANY EARLIER sha's merge conflicts, git
+///   refuses the WHOLE octopus merge outright ("Should not be doing an
+///   octopus.", exit 2, nothing mutated at all, no MERGE_HEAD, tree
+///   untouched). Exposing that split to users would be needlessly confusing —
+///   which case you land in depends on internal trial order, not anything the
+///   user chose — so BOTH are treated identically here: any octopus failure
+///   runs `git merge --abort` (a harmless no-op in the exit-2 case, where
+///   there was never anything to abort) and reports one honest
+///   `state:"octopus-conflict-unsupported"` — git's octopus strategy can't
+///   resolve a conflict across more than two heads in a way this app can
+///   safely surface; retry as Sequential instead.
+/// - `"sequential"`: a queue of ordinary pairwise merges, one call at a time.
+///   THIS call merges ONLY `shas[0]` (an ordinary `merge_start`-shaped call —
+///   snapshot included, via the shared `merge_one`) and persists a
+///   [`MergeQueueState`] sidecar recording the rest BEFORE attempting it, so a
+///   conflict on this very first step is still resolvable exactly like any
+///   other merge conflict, and a crash mid-attempt leaves the queue
+///   recoverable. [`merge_queue_continue`] advances through `shas[1..]`, one
+///   sha at a time.
+///
+/// Both modes refuse up front (no mutation) if fewer than two shas are given
+/// — "multi-branch merge" always means at least two — or if a real merge or
+/// another sequential queue is already in progress.
+///
+/// `strategy` (same three values `merge_start` takes) applies to every
+/// sequential step (captured once in the sidecar, reused by every
+/// `merge_queue_continue` call); ignored for octopus — git has no fast-
+/// forward/no-ff concept across more than one non-HEAD ref, the result is
+/// always a real merge commit once there's more than one.
+///
+/// JS: `invoke("merge_start_multi", { path, shas, mode, strategy })`.
+#[tauri::command]
+#[specta::specta]
+pub fn merge_start_multi(path: String, shas: Vec<String>, mode: String, strategy: Option<String>) -> MergeResult {
+    if let Err(e) = validate_mode(&mode) {
+        return MergeResult::error(e);
+    }
+    if shas.len() < 2 {
+        return MergeResult::error("Pick at least two branches to merge.");
+    }
+    for sha in &shas {
+        if let Err(e) = validate_sha(sha) {
+            return MergeResult::error(e);
+        }
+    }
+    let repo = match crate::trust::open_repo(&path) {
+        Ok(r) => r,
+        Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+    };
+    if in_progress(&repo) {
+        return MergeResult::error("A merge is already in progress — resolve or abort it first.");
+    }
+    if read_merge_queue_state(&repo).is_some() {
+        return MergeResult::error(
+            "A sequential merge queue is already in progress — continue or abort it first.",
+        );
+    }
+
+    if mode == "octopus" {
+        return merge_octopus(&repo, &path, &shas);
+    }
+
+    // sequential — validate the strategy before writing anything.
+    let extra_flag = match parse_strategy(strategy.as_deref()) {
+        Ok(f) => f,
+        Err(e) => return MergeResult::error(e),
+    };
+    write_merge_queue_state(
+        &repo,
+        &MergeQueueState {
+            current: Some(shas[0].clone()),
+            head_before_current: head_sha(&repo),
+            remaining: shas[1..].to_vec(),
+            done: Vec::new(),
+            strategy,
+        },
+    );
+    let result = merge_one(&repo, &path, &shas[0], extra_flag);
+    settle_queue_step(&repo, &shas[0], &result);
+    result
+}
+
+/// One octopus attempt — see `merge_start_multi`'s own doc comment for the
+/// full empirical trail on why any failure (either shape git can produce) is
+/// treated identically here.
+fn merge_octopus(repo: &Repository, path: &str, shas: &[String]) -> MergeResult {
+    let backup = match crate::safety::snapshot(repo) {
+        Ok(b) => b,
+        Err(e) => return MergeResult::error(format!("Safety snapshot failed, aborting: {e}")),
+    };
+    let mut args: Vec<&str> = vec!["merge", "--no-edit", "--no-autostash", "--end-of-options"];
+    for sha in shas {
+        args.push(sha);
+    }
+    let out = match git(path, &args, true) {
+        Ok(o) => o,
+        Err(e) => {
+            return MergeResult {
+                ok: false,
+                state: "error".into(),
+                conflicted_files: Vec::new(),
+                message: e,
+                backup_ref: Some(backup),
+                blocked_by_local_changes: false,
+            }
+        }
+    };
+    if !out.ok {
+        let label = shas.join(", ");
+        // ADVERSARIALLY-FOUND FIX: an ordinary pre-flight refusal (a dirty
+        // working tree or staged-index collision — the SAME detection
+        // git_pick.rs's own `blocked_by_local_changes` uses) never even
+        // attempts a merge, so it isn't the octopus-strategy limitation this
+        // function otherwise handles — Sequential mode would refuse
+        // identically on its very first step for the same reason, so "try
+        // Sequential instead" would be actively misleading advice. Route it
+        // through the ordinary classify() error path instead, which already
+        // sets `blocked_by_local_changes` correctly (mirrors `merge_start`'s
+        // own identical dirty-tree case).
+        if blocked_by_local_changes(&out.stderr) {
+            return classify(repo, path, &out, Some(backup), &label);
+        }
+        // EMPIRICALLY VERIFIED: `git merge --abort` succeeds when there's a
+        // real MERGE_HEAD to undo (the "conflict on the last sha" shape), and
+        // is simply never needed when the exit-2 refusal already left nothing
+        // mutated (the "conflict on an earlier sha" shape) — only attempt it
+        // when something is actually in progress.
+        if in_progress(repo) {
+            let _ = git(path, &["merge", "--abort"], false);
+            // ADVERSARIALLY-FOUND FIX: the abort's own exit code was
+            // previously discarded, so a failed abort (hook rejection, lock
+            // contention, permissions) used to still report "merge aborted,
+            // nothing changed" while real conflict markers were sitting in
+            // the tree, with no `state:"conflict"` to ever open the Resolver
+            // over them. Re-check the repo directly (this module's own
+            // "verify by inspecting state, never trust stdout alone"
+            // discipline — see `classify`) rather than trusting the abort's
+            // exit code: if it's STILL in progress, the abort didn't take —
+            // fall back to the ordinary conflict path so the Resolver can
+            // still open and let the user fix it by hand.
+            if in_progress(repo) {
+                return classify(repo, path, &out, Some(backup), &label);
+            }
+        }
+        return MergeResult {
+            ok: false,
+            state: "octopus-conflict-unsupported".into(),
+            conflicted_files: Vec::new(),
+            message: format!(
+                "Octopus merge of {label} hit a conflict git can't resolve across more than two \
+                 branches at once — merge aborted, nothing changed. Try Sequential instead."
+            ),
+            backup_ref: Some(backup),
+            blocked_by_local_changes: false,
+        };
+    }
+    classify(repo, path, &out, Some(backup), &shas.join(", "))
+}
+
+/// After a sequential step's merge attempt, fold the outcome into the queue
+/// sidecar: a conflict/error leaves it untouched (`current` is still the sha
+/// that needs resolving/retrying); a clean/empty result moves `sha` from
+/// `current` into `done`, and deletes the sidecar entirely once nothing is
+/// left in `remaining` — the whole queue is finished.
+fn settle_queue_step(repo: &Repository, sha: &str, result: &MergeResult) {
+    if result.state != "clean" && result.state != "empty" {
+        return;
+    }
+    let Some(mut st) = read_merge_queue_state(repo) else {
+        return;
+    };
+    st.done.push(sha.to_string());
+    st.current = None;
+    if st.remaining.is_empty() {
+        clear_merge_queue_state(repo);
+    } else {
+        write_merge_queue_state(repo, &st);
+    }
+}
+
+/// Advance a sequential merge queue by one step: verify the current step is
+/// genuinely finished (no in-progress merge, no unmerged files — the queue
+/// analogue of `rebase_continue`'s own precondition-then-advance shape, just
+/// phrased for "the LAST step must already be done" rather than "a step IS in
+/// progress"), pop the next sha off `remaining`, persist that BEFORE
+/// attempting it (the same crash-recoverable ordering `merge_start_multi`
+/// uses for the first step), and merge it with the SAME strategy the queue
+/// started with.
+///
+/// If `current` is still set at this point, its own step is what needs
+/// settling before advancing. A clean repo at this point is ambiguous on its
+/// own — ADVERSARIALLY-FOUND BUG this fixes: it's equally true whether the
+/// user genuinely resolved `current`'s conflict via the ordinary
+/// `resolve_conflict_file`/`resolve_conflict_hunks` + `merge_continue`
+/// commands (which know nothing about this sidecar), OR `current`'s merge was
+/// aborted via the plain Resolver "Abort merge" button (not
+/// `merge_queue_abort`, the only thing that clears this sidecar), OR it
+/// errored outright (e.g. an `--ff-only` refusal) and never mutated anything
+/// at all — the old code promoted `current` into `done` unconditionally in
+/// EVERY one of these cases, silently reporting an unmerged branch as merged.
+/// Comparing HEAD now against `head_before_current` (see that field's own doc
+/// comment) tells them apart: only a genuine merge conclusion moves HEAD. If
+/// HEAD hasn't moved, `current` is RETRIED instead — the honest behavior for
+/// "the previous attempt never actually happened".
+///
+/// JS: `invoke("merge_queue_continue", { path })`.
+#[tauri::command]
+#[specta::specta]
+pub fn merge_queue_continue(path: String) -> MergeResult {
+    let repo = match crate::trust::open_repo(&path) {
+        Ok(r) => r,
+        Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+    };
+    let Some(mut st) = read_merge_queue_state(&repo) else {
+        return MergeResult::error("No sequential merge queue in progress.");
+    };
+    if in_progress(&repo) || !unmerged_files(&path).is_empty() {
+        return MergeResult::error("Finish resolving the current merge first.");
+    }
+    if let Some(cur) = st.current.clone() {
+        if head_sha(&repo) == st.head_before_current {
+            // HEAD hasn't moved since `current` was set — it was never
+            // actually merged (aborted out of band, or errored outright).
+            // Retry it rather than silently marking it done and skipping on.
+            let extra_flag = match parse_strategy(st.strategy.as_deref()) {
+                Ok(f) => f,
+                Err(e) => return MergeResult::error(e),
+            };
+            let result = merge_one(&repo, &path, &cur, extra_flag);
+            settle_queue_step(&repo, &cur, &result);
+            return result;
+        }
+        st.current = None;
+        st.done.push(cur);
+    }
+    if st.remaining.is_empty() {
+        // Nothing left to advance to. This IS the success path when the sha
+        // just promoted above was the queue's LAST one, resolved via a
+        // conflict (a clean/empty step instead reaches here with `current`
+        // already `None` and `remaining` already empty — `settle_queue_step`
+        // clears the sidecar the moment that happens, so this call wouldn't
+        // even find one — see the `else` above). Report it as the ordinary
+        // "clean" a caller already knows how to route (close + reload +
+        // cheer), same as any other finished merge.
+        clear_merge_queue_state(&repo);
+        return MergeResult {
+            ok: true,
+            state: "clean".into(),
+            conflicted_files: Vec::new(),
+            message: "Sequential merge queue complete.".into(),
+            backup_ref: None,
+            blocked_by_local_changes: false,
+        };
+    }
+    let next = st.remaining.remove(0);
+    st.current = Some(next.clone());
+    st.head_before_current = head_sha(&repo);
+    write_merge_queue_state(&repo, &st);
+
+    let extra_flag = match parse_strategy(st.strategy.as_deref()) {
+        Ok(f) => f,
+        Err(e) => return MergeResult::error(e),
+    };
+    let result = merge_one(&repo, &path, &next, extra_flag);
+    settle_queue_step(&repo, &next, &result);
+    result
+}
+
+/// Cancel a sequential merge queue: best-effort abort any conflict on the
+/// CURRENT step (reuses `merge_abort` verbatim — idempotent, a safe no-op if
+/// nothing is actually mid-merge; if it's genuinely in progress and abort
+/// itself fails, surface that error and leave the sidecar alone rather than
+/// silently claiming "cancelled" while conflict markers are still sitting in
+/// the tree), then delete the sidecar. Branches already merged cleanly
+/// (`done`) are NOT rolled back — mirrors `rebase_abort`/`merge_abort`'s own
+/// scope (undo only the live in-progress op, never history already
+/// committed); a user who wants the whole sequence undone has the pre-queue
+/// Safety Manager snapshot for that (see this module's doc comment: merges
+/// rely on the snapshot as their only safety net, by design).
+///
+/// JS: `invoke("merge_queue_abort", { path })`.
+#[tauri::command]
+#[specta::specta]
+pub fn merge_queue_abort(path: String) -> MergeResult {
+    let repo = match crate::trust::open_repo(&path) {
+        Ok(r) => r,
+        Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+    };
+    if read_merge_queue_state(&repo).is_none() {
+        return MergeResult {
+            ok: true,
+            state: "clean".into(),
+            conflicted_files: Vec::new(),
+            message: "No sequential merge queue in progress.".into(),
+            backup_ref: None,
+            blocked_by_local_changes: false,
+        };
+    }
+    if in_progress(&repo) {
+        let r = merge_abort_impl(&repo, &path);
+        if r.state != "clean" {
+            return r;
+        }
+    }
+    clear_merge_queue_state(&repo);
+    MergeResult {
+        ok: true,
+        state: "clean".into(),
+        conflicted_files: Vec::new(),
+        message: "Sequential merge queue cancelled — branches already merged are kept.".into(),
+        backup_ref: None,
+        blocked_by_local_changes: false,
+    }
+}
+
+/// Read-only queue status. See [`MergeQueueStatus`]'s own doc comment for the
+/// two uses (reopen-recovery + the frontend's own "keep going or stop?"
+/// check).
+///
+/// JS: `invoke("merge_queue_status", { path })`.
+#[tauri::command]
+#[specta::specta]
+pub fn merge_queue_status(path: String) -> MergeQueueStatus {
+    let repo = match crate::trust::open_repo(&path) {
+        Ok(r) => r,
+        Err(_) => return IDLE_QUEUE_STATUS,
+    };
+    match read_merge_queue_state(&repo) {
+        Some(st) => MergeQueueStatus {
+            in_progress: true,
+            current: st.current,
+            remaining: st.remaining,
+            done: st.done,
+        },
+        None => IDLE_QUEUE_STATUS,
     }
 }

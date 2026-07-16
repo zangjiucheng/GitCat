@@ -97,7 +97,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { workdirCtrl } from "../workdir/workdir.svelte.ts";
-import type { ApplyPatchResult, ConflictFile, MergeResult, MergeSquashResult, PickResult, RebaseResult, RevertResult, StashResolveResult, WorkdirResult } from "../../ipc/bindings";
+import type { ApplyPatchResult, ConflictFile, ConflictHunk, MergeResult, MergeSquashResult, PickResult, RebaseResult, RevertResult, StashResolveResult, WorkdirResult } from "../../ipc/bindings";
 
 // specta generates `side: string`; keep the precise union at the call boundary.
 type ConflictSide = "ours" | "theirs";
@@ -309,10 +309,11 @@ class ResolverState {
   busy = $state(false); // re-entrancy lock (was PICK_BUSY)
   // Which of the modal's own action buttons is the current `busy` spell for
   // — "ours"/"theirs" (take), "tool" (resolveWithExternalTool, backlog #12),
+  // "editSave" (saveEditResolution, the hunk editor's own Save button),
   // "skip", "abort", or "continue" — so the modal can spinner/label-swap the
   // ONE button actually clicked instead of every button reacting identically
   // to one shared flag.
-  activeAction = $state<"ours" | "theirs" | "tool" | "skip" | "abort" | "continue" | null>(null);
+  activeAction = $state<"ours" | "theirs" | "tool" | "editSave" | "skip" | "abort" | "continue" | null>(null);
   demo = $state(false);
   sub = $state("");
   backupRef = $state("");
@@ -320,6 +321,25 @@ class ResolverState {
   files = $state<ConflictFile[]>([]);
   selected = $state<string | null>(null);
   remaining = $state<Set<string>>(new Set()); // reassigned, never mutated in place (Set isn't deep-proxied)
+  // ── in-app hunk-level resolution editor (additive to take()'s whole-file
+  // ours/theirs and resolveWithExternalTool()'s external-mergetool handoff
+  // above — see conflict.rs's own conflict_file_hunks/resolve_conflict_hunks
+  // doc comments) — a per-selected-file mode, not a separate modal: opening
+  // it swaps the 3-column read-only view for an editable one; `select()`
+  // below closes it whenever the user switches to a DIFFERENT file, since
+  // `editHunks`/`editValues` are only ever valid for whichever file they were
+  // fetched for.
+  editMode = $state(false);
+  editLoading = $state(false);
+  editBinary = $state(false);
+  editHunks = $state<ConflictHunk[]>([]);
+  // Parallel to editHunks: the CURRENT editable text for each hunk — a
+  // context hunk's entry is fixed (its own shared text, never edited by the
+  // user); a conflict hunk's entry starts as "ours" and stays freely
+  // editable afterward (including after a "Use ours"/"Use theirs" quick-fill
+  // — see useSide()) so hunk buttons and free-form editing compose rather
+  // than being two separate, mutually-exclusive modes.
+  editValues = $state<string[]>([]);
   // The in-progress op driving this conflict, e.g. "cherry-pick" | "merge".
   // Set optimistically by startPick/startMerge/startRebase/startRevert/
   // openDemo; re-derived authoritatively from conflict_status().op on every
@@ -361,6 +381,31 @@ class ResolverState {
   // startPick/startMerge/startRebase/startRevert, which now also reset this).
   dirtyBlockStuck = $state<string | null>(null);
 
+  // Set ONLY by openFromResult's optional `onQueueContinue` param (see that
+  // method's own doc comment) — multimerge.svelte.ts's sequential-mode hook
+  // to advance its own queue once THIS conflict resolves. Fired (captured
+  // into a local var, cleared, then called) from applyOutcome's "clean" case
+  // — the ONLY path that means "the user just finished resolving this step
+  // via Continue". Deliberately NOT cleared by reset()/close(): those run
+  // (via openConflict) from WITHIN the very call that just set this field
+  // (openFromResult -> applyOutcome -> openConflict), so clearing it there
+  // would destroy the value before it could ever fire. Not `private`: mirrors
+  // `sha`/`repo` just below — plain, directly settable/resettable by tests
+  // (see resolver.svelte.test.ts's own `resetResolver()`).
+  queueContinue: (() => void) | null = null;
+  // Set ONLY by openFromResult's optional `onQueueAbort` param — the
+  // counterpart hook fired by abort()'s own success path INSTEAD of firing
+  // `queueContinue` (which is simply discarded there, never called: aborting
+  // must never silently ADVANCE someone else's queue). ADVERSARIALLY-FOUND
+  // FIX: abort() used to just discard `queueContinue` and stop — but the
+  // backend's merge-queue sidecar (git_merge.rs's MergeQueueState) has no
+  // idea the plain `merge_abort`/`cherry_pick_abort`/etc. it calls just ran;
+  // without this hook the sidecar was left stranded, later silently
+  // misreporting the aborted branch as "done" the next time the queue
+  // advanced. multimergeCtrl wires this to `merge_queue_abort`, so aborting
+  // the CURRENT step's conflict here properly cancels the whole queue too.
+  queueAbort: (() => void) | null = null;
+
   sha = "";
   repo = "";
 
@@ -382,6 +427,14 @@ class ResolverState {
   }
 
   select(path: string) {
+    // ADVERSARIALLY-FOUND FIX: refusing to switch files while a hunk fetch is
+    // in flight (editLoading) closes the race openEditMode() guards against
+    // below — without this, switching files mid-fetch left `editMode` false
+    // (so this closeEditMode() call was a no-op) while the OLD file's fetch
+    // was still pending, and its result would later land against whichever
+    // file the user had switched to by then.
+    if (this.editLoading) return;
+    if (path !== this.selected) this.closeEditMode();
     this.selected = path;
   }
 
@@ -390,6 +443,7 @@ class ResolverState {
     this.selected = null;
     this.remaining = new Set();
     this.editing = false;
+    this.closeEditMode();
   }
   close() {
     this.open = false;
@@ -616,14 +670,22 @@ class ResolverState {
   private async applyOutcome(res: OpResult, sha: string, retry?: () => Promise<void>) {
     const msg = MSG[this.op];
     switch (res.state) {
-      case "clean":
+      case "clean": {
+        // Capture + clear BEFORE close()/reset() run (belt-and-suspenders —
+        // reset() deliberately never touches this field either way, see its
+        // own doc comment above) so a queued sequential merge can advance
+        // exactly once per finished step.
+        const onQueueContinue = this.queueContinue;
+        this.queueContinue = null;
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.event("snapshot.surfaced");
         bridge.tama.set("celebrate");
         bridge.tama.say(res.message || msg.clean(sha || ""), 4200);
         bridge.cheer(msg.cheer);
+        onQueueContinue?.();
         break;
+      }
       case "empty":
         this.close();
         await bridge.reloadGraph(true);
@@ -658,16 +720,33 @@ class ResolverState {
   }
 
   // Public entry point for a caller that already ran its OWN "start" command
-  // (e.g. rebasePlanCtrl.start() after `rebase_interactive_start`) and just
-  // wants the result routed through the SAME clean/empty/conflict/editing/
-  // error handling every startPick/startMerge/startRebase/startRevert uses —
-  // so there is exactly one conflict/editing-resolution UI no matter which of
-  // the two rebase entry points (linear vs. planner) produced it. `op`
-  // defaults to "rebase" (the only real caller today).
-  async openFromResult(repo: string, res: OpResult, sha: string, op: ResolverOp = "rebase") {
+  // (e.g. rebasePlanCtrl.start() after `rebase_interactive_start`, or
+  // multimergeCtrl's sequential mode after `merge_start_multi`/
+  // `merge_queue_continue`) and just wants the result routed through the SAME
+  // clean/empty/conflict/editing/error handling every startPick/startMerge/
+  // startRebase/startRevert uses — so there is exactly one conflict/editing-
+  // resolution UI no matter which entry point produced it. `op` defaults to
+  // "rebase" (the first caller of this method).
+  //
+  // `onQueueContinue`/`onQueueAbort` are additive, for multimergeCtrl's
+  // sequential mode only: once THIS conflict resolves via the ordinary
+  // Continue button, or is aborted via the ordinary Abort button, the
+  // matching hook is called so the queue can advance or clean itself up —
+  // see `queueContinue`/`queueAbort`'s own doc comments for exactly when
+  // each fires.
+  async openFromResult(
+    repo: string,
+    res: OpResult,
+    sha: string,
+    op: ResolverOp = "rebase",
+    onQueueContinue?: () => void,
+    onQueueAbort?: () => void,
+  ) {
     this.demo = false;
     this.op = op;
     this.repo = repo;
+    this.queueContinue = onQueueContinue ?? null;
+    this.queueAbort = onQueueAbort ?? null;
     await this.applyOutcome(res, sha);
   }
 
@@ -848,6 +927,117 @@ class ResolverState {
     await this.refresh();
   }
 
+  // ── in-app hunk-level resolution editor ─────────────────────────────────
+
+  // Fetch the selected file's aligned hunks and swap the 3-column read-only
+  // view for the editable one. A binary conflict (r.data.binary) still opens
+  // — Resolver.svelte shows a plain "binary file" notice with no hunks
+  // instead of an empty editor, rather than silently refusing to open.
+  async openEditMode() {
+    const f = this.current;
+    if (!f) return;
+    if (this.demo) {
+      // Same "simulate plausibly, no IPC call" convention as take()/
+      // resolveWithExternalTool() above — the demo FAKE conflict has no
+      // real context/conflict split to offer (it's static canned data, not
+      // a real diff3 merge), so the whole file is treated as one conflict
+      // hunk, which is enough to preview the editor's own layout.
+      this.editBinary = false;
+      this.editHunks = [{ kind: "conflict", context: null, ours: f.ours, base: f.base, theirs: f.theirs }];
+      this.editValues = [f.ours];
+      this.editMode = true;
+      return;
+    }
+    this.editLoading = true;
+    this.editHunks = [];
+    this.editValues = [];
+    this.editBinary = false;
+    try {
+      const r = await commands.conflictFileHunks(this.repo, f.path);
+      // ADVERSARIALLY-FOUND FIX: select() now refuses to run while
+      // editLoading is true (see its own comment), which already closes this
+      // race in practice — this is a second, independent guard in case some
+      // other future path ever moves `selected` during the await.
+      if (this.current?.path !== f.path) return;
+      if (r.status !== "ok") {
+        bridge.tama.warn(r.error || "Could not load this file's conflict hunks.");
+        return;
+      }
+      this.editBinary = r.data.binary;
+      this.editHunks = r.data.hunks;
+      // context hunks are fixed (their own shared text); a conflict hunk
+      // starts as "ours" — an arbitrary but reasonable starting point,
+      // freely replaceable via useSide() or direct typing either way.
+      this.editValues = r.data.hunks.map((h) => (h.kind === "context" ? (h.context ?? "") : (h.ours ?? "")));
+      this.editMode = true;
+    } catch (e) {
+      bridge.tama.warn("Could not load this file's conflict hunks — " + e);
+    } finally {
+      this.editLoading = false;
+    }
+  }
+
+  closeEditMode() {
+    this.editMode = false;
+    this.editHunks = [];
+    this.editValues = [];
+    this.editBinary = false;
+  }
+
+  // Quick-fill a conflict hunk's own text from one whole side — the textarea
+  // stays editable afterward (see editValues' own doc comment), so this is a
+  // starting point, not a final commitment the way take()'s whole-file
+  // ours/theirs is.
+  useSide(i: number, side: "ours" | "theirs") {
+    const h = this.editHunks[i];
+    if (!h || h.kind !== "conflict") return;
+    const text = side === "ours" ? h.ours : h.theirs;
+    this.editValues[i] = text ?? "";
+  }
+
+  setEditValue(i: number, value: string) {
+    this.editValues[i] = value;
+  }
+
+  // The whole file's resolved content — every hunk's current text, in
+  // order. Context hunks contribute their fixed shared text; conflict hunks
+  // contribute whatever useSide()/setEditValue() last left in editValues.
+  get editJoined(): string {
+    return this.editValues.join("");
+  }
+
+  // Save the joined text as this file's resolution — the hunk editor's
+  // counterpart to take()'s whole-file ours/theirs, same demo/busy/refresh
+  // shape as take()/resolveWithExternalTool() above.
+  async saveEditResolution() {
+    const f = this.current;
+    if (!f) return;
+    if (this.demo) {
+      this.remaining = new Set([...this.remaining].filter((p) => p !== f.path));
+      const nx = this.files.find((x) => this.remaining.has(x.path));
+      if (nx) this.selected = nx.path;
+      this.closeEditMode();
+      bridge.tama.say("Saved your edited resolution for " + f.path + " (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.activeAction = "editSave";
+    const content = this.editJoined;
+    try {
+      const r = await commands.resolveConflictHunks(this.repo, f.path, content);
+      if (!r.ok) bridge.tama.warn(r.message || "Could not save your resolution for " + f.path);
+      else this.closeEditMode();
+    } catch (e) {
+      bridge.tama.warn("Save failed — " + e);
+      return;
+    } finally {
+      this.busy = false;
+      this.activeAction = null;
+    }
+    await this.refresh();
+  }
+
   // Drop the commit/patch the sequence is currently stopped on entirely —
   // rebase/am-only (no cherry-pick/merge equivalent; Resolver.svelte only
   // renders the Skip button when `.op === "rebase"` or `"am"` — see
@@ -910,10 +1100,19 @@ class ResolverState {
     try {
       const r = await OPS[this.op].abort(this.repo);
       if (r && r.state === "clean") {
+        // Discard queueContinue, never fire it: aborting the current step
+        // must not silently ADVANCE someone else's queue. Fire queueAbort
+        // instead (capture + clear first, same convention as queueContinue's
+        // own firing site) so multimergeCtrl can clean up its backend
+        // sidecar — see both fields' own doc comments.
+        this.queueContinue = null;
+        const onQueueAbort = this.queueAbort;
+        this.queueAbort = null;
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.set("hint");
         bridge.tama.say(r.message || MSG[this.op].abortMsg);
+        onQueueAbort?.();
       } else {
         this.tamaImg = bridge.TAMA_IMG.alarm;
         bridge.tama.warn((r && r.message) || "Abort failed — try again, or abort from the command line.");

@@ -81,20 +81,59 @@
             <div class="cf-actions">
               <span class="cf-cur">{resolver.current?.path ?? ""}</span>
               <span class="cf-take">
-                <button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("ours")}
-                  >{#if resolver.activeAction === "ours"}<span class="spinner"></span> Taking…{:else}Take ours{/if}</button
-                ><button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("theirs")}
-                  >{#if resolver.activeAction === "theirs"}<span class="spinner"></span> Taking…{:else}Take theirs{/if}</button
-                ><button
-                  class="btn ghost"
-                  disabled={!resolver.currentLive || resolver.busy}
-                  onclick={() => resolver.resolveWithExternalTool()}
-                  >{#if resolver.activeAction === "tool"}<span class="spinner"></span> Resolving…{:else}Resolve with tool{/if}</button
-                >
+                {#if resolver.editMode}
+                  <button class="btn ghost" disabled={resolver.busy} onclick={() => resolver.closeEditMode()}>Cancel</button>
+                  <button class="btn" disabled={resolver.busy || resolver.editBinary} onclick={() => resolver.saveEditResolution()}
+                    >{#if resolver.activeAction === "editSave"}<span class="spinner"></span> Saving…{:else}Save resolution{/if}</button
+                  >
+                {:else}
+                  <button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("ours")}
+                    >{#if resolver.activeAction === "ours"}<span class="spinner"></span> Taking…{:else}Take ours{/if}</button
+                  ><button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("theirs")}
+                    >{#if resolver.activeAction === "theirs"}<span class="spinner"></span> Taking…{:else}Take theirs{/if}</button
+                  ><button
+                    class="btn ghost"
+                    disabled={!resolver.currentLive || resolver.busy}
+                    onclick={() => resolver.resolveWithExternalTool()}
+                    >{#if resolver.activeAction === "tool"}<span class="spinner"></span> Resolving…{:else}Resolve with tool{/if}</button
+                  ><button
+                    class="btn ghost"
+                    disabled={!resolver.currentLive || resolver.busy || resolver.editLoading}
+                    onclick={() => resolver.openEditMode()}
+                    >{#if resolver.editLoading}<span class="spinner"></span> Loading…{:else}Edit resolution{/if}</button
+                  >
+                {/if}
               </span>
             </div>
             <div class="three-way" id="cfThree">
-              {#if resolver.current}
+              {#if resolver.editMode}
+                {#if resolver.editBinary}
+                  <div class="tw-col" style="grid-column:1/4;padding:14px">
+                    <span class="mut">This file is binary — use Take ours/theirs or Resolve with tool instead.</span>
+                  </div>
+                {:else}
+                  <div class="cf-edit">
+                    {#each resolver.editHunks as h, i}
+                      {#if h.kind === "context"}
+                        <pre class="cf-edit-context">{h.context}</pre>
+                      {:else}
+                        <div class="cf-edit-conflict">
+                          <div class="cf-edit-conflict-actions">
+                            <button class="btn ghost" onclick={() => resolver.useSide(i, "ours")}>Use ours</button>
+                            <button class="btn ghost" onclick={() => resolver.useSide(i, "theirs")}>Use theirs</button>
+                          </div>
+                          <textarea
+                            class="cf-edit-textarea"
+                            spellcheck="false"
+                            value={resolver.editValues[i]}
+                            oninput={(e) => resolver.setEditValue(i, (e.target as HTMLTextAreaElement).value)}
+                          ></textarea>
+                        </div>
+                      {/if}
+                    {/each}
+                  </div>
+                {/if}
+              {:else if resolver.current}
                 {@const lang = langFor(resolver.current.path)}
                 {@render col("ours", "Ours (HEAD)", resolver.current.ours, lang)}
                 {@render col("", "Base", resolver.current.base, lang)}

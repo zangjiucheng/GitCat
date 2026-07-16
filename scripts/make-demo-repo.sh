@@ -163,6 +163,26 @@ EOF
 git -C "$REPO" add -A
 git -C "$REPO" commit -q -m "Add package.json"
 
+# A large generated file — big enough (~450 entries, past line 400) to exercise
+# the hunk-level conflict editor's large-file path, not just a one-line diff.
+cat > "$REPO/src/data.ts" <<'EOF'
+export interface Item {
+  id: number;
+  name: string;
+}
+
+export const items: Item[] = [
+EOF
+for i in $(seq 1 450); do
+  echo "  { id: $i, name: \"item-$i\" }," >> "$REPO/src/data.ts"
+done
+cat >> "$REPO/src/data.ts" <<'EOF'
+];
+EOF
+git -C "$REPO" add -A
+git -C "$REPO" commit -q -m "Add src/data.ts"
+DATA_SHA=$(git -C "$REPO" rev-parse HEAD)
+
 # --- feature branch, merged with --no-ff -----------------------------------
 git -C "$REPO" branch feature/dark-mode
 git -C "$REPO" checkout -q feature/dark-mode
@@ -192,6 +212,7 @@ git -C "$REPO" commit -q -m "Note dark mode in docs"
 
 git -C "$REPO" tag -a v0.1.0 -m "v0.1.0"
 
+sed -i.bak 's/^## Roadmap$/## Shipped So Far/' "$REPO/README.md" && rm -f "$REPO/README.md.bak"
 cat >> "$REPO/README.md" <<'EOF'
 - [x] Ship the widget renderer
 EOF
@@ -201,13 +222,47 @@ git -C "$REPO" tag checkpoint
 
 # --- unmerged branch that will conflict with main on purpose ---------------
 # Left un-merged deliberately: drag it onto HEAD (or shift-drag to merge) in
-# GitCat to exercise the real 3-way conflict resolver, both branches touch
-# the same README.md roadmap line differently since main's last commit.
+# GitCat to exercise the real 3-way conflict resolver. Both sides rename the
+# EXACT SAME "## Roadmap" heading line to different text since main~1 (main
+# to "## Shipped So Far" above, this branch to "## Upcoming" below) —
+# guaranteed to conflict, unlike editing merely nearby/non-overlapping lines.
 git -C "$REPO" branch conflict/rename-roadmap main~1
 git -C "$REPO" checkout -q conflict/rename-roadmap
 sed -i.bak 's/^## Roadmap$/## Upcoming/' "$REPO/README.md" && rm -f "$REPO/README.md.bak"
 git -C "$REPO" add -A
 git -C "$REPO" commit -q -m "Rename Roadmap section to Upcoming"
+git -C "$REPO" checkout -q main
+
+# --- unmerged branch that will conflict with main on a LARGE file ----------
+# Branches from DATA_SHA (before src/data.ts grew any further) and edits the
+# item-420 entry — past line 400, deep enough that a naive save would've hit
+# the large-file truncation bug the hunk-level conflict editor used to have.
+git -C "$REPO" branch conflict/large-file-tweak "$DATA_SHA"
+git -C "$REPO" checkout -q conflict/large-file-tweak
+sed -i.bak 's/"item-420"/"item-420-branch-edit"/' "$REPO/src/data.ts" && rm -f "$REPO/src/data.ts.bak"
+git -C "$REPO" add -A
+git -C "$REPO" commit -q -m "Rename item-420 on large-file-tweak branch"
+git -C "$REPO" checkout -q main
+
+# main also edits that same item-420 entry, to a different value, so the
+# branch above genuinely conflicts with main instead of auto-merging clean.
+sed -i.bak 's/"item-420"/"item-420-main-edit"/' "$REPO/src/data.ts" && rm -f "$REPO/src/data.ts.bak"
+git -C "$REPO" add -A
+git -C "$REPO" commit -q -m "Rename item-420 on main"
+
+# --- unmerged branch that merges CLEANLY with main --------------------------
+# No conflict at all — left unmerged so it's a clean pick alongside the two
+# conflicting branches above when trying the Merge Multiple Branches tool.
+git -C "$REPO" branch feature/quick-win
+git -C "$REPO" checkout -q feature/quick-win
+cat > "$REPO/docs/faq.md" <<'EOF'
+# FAQ
+
+**Q: Is this repo real?**
+A: Yes — it's a generated demo repo for exploring GitCat.
+EOF
+git -C "$REPO" add -A
+git -C "$REPO" commit -q -m "Add docs/faq.md"
 git -C "$REPO" checkout -q main
 
 # --- submodule ---------------------------------------------------------------
@@ -269,7 +324,12 @@ Demo repo ready at: $REPO
   (support files — not a repo to open — live in: $SUPPORT)
 
 Open $REPO in GitCat (File > Open Repo) to explore:
-  - branches: main, feature/dark-mode (merged), conflict/rename-roadmap (unmerged — try merging it)
+  - branches: main, feature/dark-mode (merged), conflict/rename-roadmap (unmerged — try merging it),
+    conflict/large-file-tweak (unmerged — conflicts on src/data.ts past line 400, good for the
+    hunk-level conflict editor), feature/quick-win (unmerged, merges cleanly)
+  - try ⌘K → "Merge Multiple Branches" with those three unmerged branches: sequential mode to
+    merge quick-win cleanly then resolve the large-file conflict, octopus mode to see it abort
+    outright once a conflicting branch is in the mix
   - tags: v0.1.0 (annotated), checkpoint (lightweight)
   - a submodule at vendor/widget-lib
   - 2 stashes, a staged file, an unstaged edit, and an untracked file

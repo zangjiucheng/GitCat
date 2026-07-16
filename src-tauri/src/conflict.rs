@@ -261,6 +261,37 @@ fn cap_lines(s: &str) -> String {
     }
 }
 
+/// Guard: only resolve inside an op GitCat snapshots AND can Abort/Continue
+/// from the app — cherry-pick (git_pick), merge (git_merge), rebase
+/// (git_rebase), revert (git_revert), stash
+/// (workdir::stash_conflict_abort/_continue), merge-squash
+/// (git_merge::merge_squash_abort/_continue), and am (patch::am_continue/
+/// am_abort/am_skip). Their *_abort/*_continue commands are gated on
+/// CHERRY_PICK_HEAD/MERGE_HEAD/the rebase-merge sequencer dir/REVERT_HEAD/
+/// the stash-conflict sidecar file/the merge-squash-conflict sidecar
+/// file/RepositoryState::ApplyMailbox respectively, so any OTHER op could
+/// be neither backed out nor advanced from the app — never mutate inside
+/// one. `--ours`/`--theirs` checkout + `add` (or the hunk editor's own
+/// write + `add`) applies identically to an am conflict's index stages
+/// 1/2/3 as to any other op's — nothing here is rebase/am-specific.
+///
+/// NOTE: this is intentionally an allowlist, not a denylist, so an op that
+/// doesn't (yet) have app-level continue/abort support fails closed.
+/// Shared by [`resolve_conflict_file`] and [`resolve_conflict_hunks`] — the
+/// whole-file and hunk-level resolution paths must never drift apart on
+/// which ops are safe to mutate inside.
+fn ensure_resolvable_op(path: &str) -> Result<(), String> {
+    let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+    let op = detect_op(&repo).map_err(|e| format!("cannot inspect repository state: {}", e.message()))?;
+    if op != "cherry-pick" && op != "merge" && op != "rebase" && op != "revert" && op != "stash" && op != "merge-squash" && op != "am" {
+        return Err(format!(
+            "Not inside a cherry-pick, merge, rebase, revert, stash, squash-merge, or patch-apply conflict (repository state: {op}). \
+             Resolve {op} conflicts with git on the command line."
+        ));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Command: resolve_conflict_file  (WRITE — git CLI checkout + add)
 // ---------------------------------------------------------------------------
@@ -289,38 +320,8 @@ pub fn resolve_conflict_file(path: String, file: String, side: String) -> Resolv
         return ResolveResult::err(e);
     }
 
-    // Guard: only resolve inside an op GitCat snapshots AND can Abort/Continue
-    // from the app — cherry-pick (git_pick), merge (git_merge), rebase
-    // (git_rebase), revert (git_revert), stash
-    // (workdir::stash_conflict_abort/_continue), merge-squash
-    // (git_merge::merge_squash_abort/_continue), and am (patch::am_continue/
-    // am_abort/am_skip). Their *_abort/*_continue commands are gated on
-    // CHERRY_PICK_HEAD/MERGE_HEAD/the rebase-merge sequencer dir/REVERT_HEAD/
-    // the stash-conflict sidecar file/the merge-squash-conflict sidecar
-    // file/RepositoryState::ApplyMailbox respectively, so any OTHER op could
-    // be neither backed out nor advanced from the app — never mutate inside
-    // one. `--ours`/`--theirs` checkout + `add` applies identically to an
-    // am conflict's index stages 1/2/3 as to any other op's — nothing here
-    // is rebase/am-specific.
-    //
-    // NOTE: this is intentionally an allowlist, not a denylist, so an op that
-    // doesn't (yet) have app-level continue/abort support fails closed.
-    match crate::trust::open_repo(&path) {
-        Ok(repo) => {
-            let op = match detect_op(&repo) {
-                Ok(o) => o,
-                Err(e) => return ResolveResult::err(format!("cannot inspect repository state: {}", e.message())),
-            };
-            if op != "cherry-pick" && op != "merge" && op != "rebase" && op != "revert" && op != "stash" && op != "merge-squash" && op != "am" {
-                return ResolveResult::err(format!(
-                    "Not inside a cherry-pick, merge, rebase, revert, stash, squash-merge, or patch-apply conflict (repository state: {op}). \
-                     Resolve {op} conflicts with git on the command line."
-                ));
-            }
-        }
-        Err(e) => {
-            return ResolveResult::err(format!("cannot open repository: {}", e.message()))
-        }
+    if let Err(e) = ensure_resolvable_op(&path) {
+        return ResolveResult::err(e);
     }
 
     // 1) Write the chosen side into the working tree. `--` ends option parsing so
@@ -392,5 +393,300 @@ fn validate_path(p: &str) -> Result<(), String> {
     if p.chars().any(|c| c == '\0' || c == '\n' || c == '\r') {
         return Err("Path has an illegal NUL/newline character.".into());
     }
+    // ADVERSARIALLY-FOUND FIX: `p` should always be a repo-relative path
+    // sourced from git's own conflict index (see `path_of`), never
+    // caller-controlled — but that's an invariant, not something this
+    // function enforced. `resolve_conflict_file`'s write is entirely
+    // mediated by `git checkout -- <file>`, which git itself confines to
+    // the work tree as a pathspec (a bad path there is at worst a no-op);
+    // `resolve_conflict_hunks` writes via plain `std::fs::write` on
+    // `Path::new(&path).join(&file)` instead, which has NO such confinement
+    // — an absolute `p` replaces the joined base entirely (`Path::join`'s
+    // documented behavior), and a `..` component walks back out of it, so
+    // either would let a wrong/stale/malicious `file` argument write
+    // somewhere outside the repository. Rejecting both here protects every
+    // caller uniformly, not just the one that currently needs it.
+    if std::path::Path::new(p).is_absolute() {
+        return Err("Refusing an absolute path.".into());
+    }
+    if std::path::Path::new(p).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err("Refusing a path containing \"..\".".into());
+    }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Command: conflict_file_hunks  (READ — git2 index inspection + `git merge-file`)
+// ---------------------------------------------------------------------------
+
+/// One aligned region of a conflicted file: either shared, unconflicted
+/// `context` (identical text across all three stages, surrounding a real
+/// conflict), or a `conflict` region carrying each stage's own version of
+/// just that region. `context`/(`ours`,`base`,`theirs`) are populated
+/// according to `kind` — the other fields are `None`.
+#[derive(Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictHunk {
+    pub kind: String, // "context" | "conflict"
+    pub context: Option<String>,
+    pub ours: Option<String>,
+    pub base: Option<String>,
+    pub theirs: Option<String>,
+}
+
+/// Result of [`conflict_file_hunks`]. `binary` means at least one stage is a
+/// binary blob — `git merge-file` can't meaningfully line-diff that, so
+/// `hunks` is empty and the frontend falls back to whole-file
+/// Take-ours/Take-theirs (still available via [`resolve_conflict_file`],
+/// unchanged by any of this).
+#[derive(Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictFileHunks {
+    pub path: String,
+    pub hunks: Vec<ConflictHunk>,
+    pub binary: bool,
+}
+
+/// Aligned per-hunk view of one conflicted file, for the in-app resolution
+/// editor — as opposed to [`conflict_status`]'s whole-side-per-column view,
+/// which stays completely unchanged. Shells `git merge-file --diff3` on the
+/// three already-fetched stages (reusing git's own 3-way merge/diff
+/// algorithm to generate correct `<<<<<<</|||||||/=======/>>>>>>>` marker
+/// text, rather than reimplementing line-alignment from scratch) and parses
+/// that into structured hunks the frontend can render/edit per-region.
+/// JS: `invoke("conflict_file_hunks", { path, file })`.
+#[tauri::command]
+#[specta::specta]
+pub fn conflict_file_hunks(path: String, file: String) -> Result<ConflictFileHunks, String> {
+    if let Err(e) = validate_path(&file) {
+        return Err(e);
+    }
+    let repo = crate::trust::open_repo(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+    let index = repo.index().map_err(|e| e.message().to_string())?;
+    // conflict_get errors (rather than returning None) when the path has no
+    // conflict entry — not a "cannot inspect the repo" failure, just "there's
+    // nothing to fetch hunks for", so it gets the same user-facing message as
+    // the (structurally impossible in practice, but still handled) empty case.
+    let conflict = match index.conflict_get(std::path::Path::new(&file)) {
+        Ok(c) => c,
+        Err(_) => return Err(format!("{file} is not conflicted.")),
+    };
+
+    let (ours, ours_binary) = stage_full_text(&repo, conflict.our.as_ref());
+    let (base, base_binary) = stage_full_text(&repo, conflict.ancestor.as_ref());
+    let (theirs, theirs_binary) = stage_full_text(&repo, conflict.their.as_ref());
+    if ours_binary || base_binary || theirs_binary {
+        return Ok(ConflictFileHunks { path: file, hunks: Vec::new(), binary: true });
+    }
+
+    let scratch = scratch_dir(&repo);
+    if let Err(e) = std::fs::create_dir_all(&scratch) {
+        return Err(format!("cannot create scratch dir: {e}"));
+    }
+    let ours_path = scratch.join("ours");
+    let base_path = scratch.join("base");
+    let theirs_path = scratch.join("theirs");
+    let write_result = std::fs::write(&ours_path, &ours)
+        .and_then(|_| std::fs::write(&base_path, &base))
+        .and_then(|_| std::fs::write(&theirs_path, &theirs));
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_dir_all(&scratch);
+        return Err(format!("cannot write scratch files: {e}"));
+    }
+
+    let result = safety::run_git(
+        &path,
+        &[
+            "merge-file",
+            "--diff3",
+            "-p",
+            "-L",
+            "ours",
+            "-L",
+            "base",
+            "-L",
+            "theirs",
+            &ours_path.to_string_lossy(),
+            &base_path.to_string_lossy(),
+            &theirs_path.to_string_lossy(),
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&scratch); // best-effort cleanup either way
+
+    let out = result?;
+    // Exit 0 = clean (no conflicting region at all — rare, e.g. both sides
+    // changed identically), 1 = conflicts found (the expected/normal case),
+    // 2+ = merge-file itself couldn't run (bad input, not "there's a conflict").
+    if out.code != 0 && out.code != 1 {
+        return Err(if !out.stderr.is_empty() { out.stderr } else { format!("git merge-file exited with status {}", out.code) });
+    }
+
+    Ok(ConflictFileHunks { path: file, hunks: parse_diff3_hunks(&out.stdout)?, binary: false })
+}
+
+/// One merge stage's FULL blob content for the hunk editor. Deliberately NOT
+/// `stage_text` (display-only, capped to [`CAP_LINES`] for the read-only
+/// three-way-diff view): `conflict_file_hunks` feeds this to `git merge-file`
+/// and `resolve_conflict_hunks` later writes the user's edited version
+/// straight back to the working tree, so capping here would silently
+/// discard real file content past the cap the moment the user saves.
+/// Returns `(text, is_binary)` in one blob lookup — folding the binary check
+/// and the content read into a single `find_blob` instead of two separate
+/// passes over the same blob.
+fn stage_full_text(repo: &Repository, entry: Option<&IndexEntry>) -> (String, bool) {
+    let Some(entry) = entry else { return (String::new(), false) };
+    let Ok(blob) = repo.find_blob(entry.id) else { return (String::new(), false) };
+    if blob.is_binary() {
+        (String::new(), true)
+    } else {
+        (String::from_utf8_lossy(blob.content()).into_owned(), false)
+    }
+}
+
+/// `<git-dir>/gitgui/conflict-merge-file/` — reuses the existing
+/// `<git-dir>/gitgui/` sidecar convention already established for
+/// `workdir.rs`'s `discard-backup/` and `git_rebase.rs`'s `rebase-todo/`
+/// (see that module's own `todo_dir` comment), rather than
+/// `std::env::temp_dir()` — keeps it repo-scoped, inspectable, and cleaned
+/// up the same way. Fixed filenames (ours/base/theirs) are fine: this
+/// scratch space is written, read, and removed within one synchronous
+/// command call, never left around between calls.
+fn scratch_dir(repo: &Repository) -> std::path::PathBuf {
+    repo.path().join("gitgui").join("conflict-merge-file")
+}
+
+/// Parse `git merge-file --diff3 -L ours -L base -L theirs -p`'s output into
+/// aligned hunks. The three `-L` labels make the marker lines unambiguous
+/// (`<<<<<<< ours`, `||||||| base`, `>>>>>>> theirs`) instead of needing to
+/// tolerate whatever text git would otherwise substitute there (the temp
+/// file's own path). `.lines()` (not `.split('\n')`) so a CRLF-checked-out
+/// file's `\r` doesn't leak into every reconstructed line.
+///
+/// KNOWN LIMITATION: reassembling matched lines with a trailing `\n` after
+/// each one means a file whose very last line had NO trailing newline gains
+/// one once resolved — a cosmetic, EOF-only newline-normalization edge case
+/// judged not worth the extra bookkeeping this app's other line-based tools
+/// (e.g. workdir.rs's hunk staging) don't attempt either.
+fn parse_diff3_hunks(text: &str) -> Result<Vec<ConflictHunk>, String> {
+    #[derive(PartialEq)]
+    enum St {
+        Context,
+        Ours,
+        Base,
+        Theirs,
+    }
+    let mut st = St::Context;
+    let mut hunks = Vec::new();
+    let mut context = String::new();
+    let mut ours = String::new();
+    let mut base = String::new();
+    let mut theirs = String::new();
+
+    for line in text.lines() {
+        // Guarded on `st == St::Context`, like the other three marker checks
+        // below are each guarded on THEIR expected preceding state: without
+        // this, a conflicted file whose OWN content happens to contain a
+        // literal "<<<<<<< ours" line (plausible in anything documenting or
+        // testing git conflict markers) would reset the parser mid-hunk and
+        // silently discard whatever text had already accumulated for it.
+        if line == "<<<<<<< ours" && st == St::Context {
+            if !context.is_empty() {
+                hunks.push(ConflictHunk::context(std::mem::take(&mut context)));
+            }
+            st = St::Ours;
+            continue;
+        }
+        if line == "||||||| base" && st == St::Ours {
+            st = St::Base;
+            continue;
+        }
+        if line == "=======" && (st == St::Ours || st == St::Base) {
+            st = St::Theirs;
+            continue;
+        }
+        if line == ">>>>>>> theirs" && st == St::Theirs {
+            hunks.push(ConflictHunk::conflict(std::mem::take(&mut ours), std::mem::take(&mut base), std::mem::take(&mut theirs)));
+            st = St::Context;
+            continue;
+        }
+        let buf = match st {
+            St::Context => &mut context,
+            St::Ours => &mut ours,
+            St::Base => &mut base,
+            St::Theirs => &mut theirs,
+        };
+        buf.push_str(line);
+        buf.push('\n');
+    }
+    // An unterminated hunk (EOF reached without a closing ">>>>>>> theirs")
+    // means the output didn't parse the way this function expects — surface
+    // that honestly rather than silently dropping the accumulated
+    // ours/base/theirs text, which a caller could otherwise save over the
+    // real file content.
+    if st != St::Context {
+        return Err("could not parse this file's conflict markers — an unterminated conflict region was found.".into());
+    }
+    if !context.is_empty() {
+        hunks.push(ConflictHunk::context(context));
+    }
+    Ok(hunks)
+}
+
+impl ConflictHunk {
+    fn context(text: String) -> Self {
+        Self { kind: "context".into(), context: Some(text), ours: None, base: None, theirs: None }
+    }
+    fn conflict(ours: String, base: String, theirs: String) -> Self {
+        Self { kind: "conflict".into(), context: None, ours: Some(ours), base: Some(base), theirs: Some(theirs) }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Command: resolve_conflict_hunks  (WRITE — write assembled text + git add)
+// ---------------------------------------------------------------------------
+
+/// Write the frontend's already-assembled final resolution (joined from its
+/// own hunk choices/edits — see [`conflict_file_hunks`]) straight to the
+/// working tree, then stage it. The hunk-editor counterpart to
+/// [`resolve_conflict_file`]: same finalize step (write + `git add`), just
+/// fed a caller-assembled string instead of a `--ours`/`--theirs` side.
+/// JS: `invoke("resolve_conflict_hunks", { path, file, resolvedContent })`.
+///
+/// No snapshot here — same reasoning as `resolve_conflict_file`: this only
+/// ever runs inside an already-snapshotted, already-in-progress operation.
+#[tauri::command]
+#[specta::specta]
+pub fn resolve_conflict_hunks(path: String, file: String, resolved_content: String) -> ResolveResult {
+    if let Err(e) = validate_path(&file) {
+        return ResolveResult::err(e);
+    }
+
+    if let Err(e) = ensure_resolvable_op(&path) {
+        return ResolveResult::err(e);
+    }
+
+    // 1) Write the assembled resolution into the working tree — same
+    //    workdir-relative-path-join convention as workdir.rs's own raw
+    //    filesystem writes (e.g. `backup_untracked_bytes`), `file` sourced
+    //    from git's own conflict index rather than raw untrusted input.
+    let full_path = std::path::Path::new(&path).join(&file);
+    if let Err(e) = std::fs::write(&full_path, &resolved_content) {
+        return ResolveResult::err(format!("cannot write {file}: {e}"));
+    }
+
+    // 2) Stage it — collapses stages 1/2/3 to a resolved stage 0, exactly
+    //    like resolve_conflict_file's own step 2.
+    match safety::run_git(&path, &["add", "--", &file]) {
+        Ok(o) if o.ok => {}
+        Ok(o) => return ResolveResult::fail(err_msg(&o), remaining_conflicts(&path)),
+        Err(e) => return ResolveResult::err(e),
+    }
+
+    let remaining = remaining_conflicts(&path);
+    let message = if remaining == 0 {
+        format!("Saved your resolution for {file}. All conflicts resolved — Continue to finish.")
+    } else {
+        format!("Saved your resolution for {file}. {remaining} file(s) still conflicted.")
+    };
+    ResolveResult { ok: true, remaining, message }
 }
