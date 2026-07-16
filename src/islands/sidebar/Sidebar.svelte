@@ -175,7 +175,7 @@
           }}
           oncontextmenu={(e) => {
             e.preventDefault();
-            if (!sidebarCtrl.busy) sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement);
+            if (!sidebarCtrl.busy) sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement, b.upstream);
           }}
         >
           <input
@@ -214,7 +214,7 @@
             disabled={sidebarCtrl.busy}
             onclick={(e) => {
               e.stopPropagation();
-              sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement);
+              sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement, b.upstream);
             }}>&#8942;</button
           >
         </div>
@@ -580,6 +580,9 @@
       <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.openMergeMenu(name, x, y); }}>Merge into current&#8230;</button>
       <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.rebaseOnto(name); }}>Rebase current branch onto here</button>
       <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.interactiveRebaseOnto(name); }}>Interactive rebase onto here&#8230;</button>
+    {/if}
+    {#if menu.upstream}
+      <button class="danger" onclick={() => { const name = menu.name; const upstream = menu.upstream as string; sidebarCtrl.closeMenu(); sidebarCtrl.resetToUpstream(name, upstream); }}>Reset to {menu.upstream}&#8230;</button>
     {/if}
     <button class="danger" disabled={menu.isCurrent} onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.deleteBranch(name); }}>Delete&#8230;</button>
   </div>

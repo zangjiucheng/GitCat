@@ -97,6 +97,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
         git_remote::fetch,
         git_remote::pull,
         git_remote::current_upstream,
+        // Hard-reset a local branch to match its configured upstream,
+        // discarding local commits/changes on it — the sidebar branch-row
+        // menu's "Reset to origin/…" action, gated behind the same
+        // armDanger typed-confirm as Delete branch (see sidebar.svelte.ts's
+        // resetToUpstream).
+        git_remote::reset_branch_to_upstream,
         git_remote::push,
         // The one sanctioned "push never forces" exception — see
         // git_remote.rs's module doc + force_push's own doc comment. The two

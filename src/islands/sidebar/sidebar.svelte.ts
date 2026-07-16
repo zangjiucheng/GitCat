@@ -125,7 +125,7 @@ const DEMO_SUBMODULES: SubmoduleInfo[] = [
   { name: "shared/proto", path: "shared/proto", absolutePath: "/demo/gitcat/shared/proto", url: "https://github.com/example/proto.git", status: "conflicted", headSha: "f60718a293a4b5c6d7e8f9012345678a1b2c3d4e", workdirSha: "0718a293a4b5c6d7e8f9012345678a1b2c3d4e5f" },
 ];
 
-export type BranchMenu = { name: string; isCurrent: boolean; x: number; y: number };
+export type BranchMenu = { name: string; isCurrent: boolean; upstream: string | null; x: number; y: number };
 // Tags never have an "isCurrent" concept (you don't "check out" a tag in this
 // app — see sidebarCtrl.deleteTag's own doc comment), so this is intentionally
 // a separate, smaller shape rather than reusing BranchMenu with a dummy field.
@@ -1468,14 +1468,75 @@ class SidebarState {
     }
   }
 
-  openMenu(name: string, isCurrent: boolean, anchor: HTMLElement) {
+  resetToUpstream(name: string, upstream: string) {
+    bridge.tama.set("danger");
+    bridge.tama.say("Resetting " + name + " to " + upstream + " — type the branch name to arm it. I pin its tip first.", 6000);
+    bridge.armDanger({
+      title: "Reset " + name + " to " + upstream,
+      steps: false,
+      desc: "This hard-resets the branch to match its upstream — any local commits or uncommitted changes on it are discarded. Its tip is pinned to a backup first, so the commits stay recoverable.",
+      lose:
+        "<h5>What happens</h5><ul><li>Moves local branch <code>" +
+        esc(name) +
+        "</code> to match <code>" +
+        esc(upstream) +
+        "</code></li><li>Discards any local-only commits" +
+        (name === this.head ? " AND uncommitted working-tree changes" : "") +
+        " on <code>" +
+        esc(name) +
+        "</code></li></ul>",
+      note:
+        ICON_BACKUP +
+        " I pin " +
+        name +
+        "'s current tip before resetting; ⌘Z restores it" +
+        (name === this.head ? "" : " (checking " + name + " back out first, since it may no longer be the current branch)") +
+        ".",
+      name,
+      confirmLabel: "Reset branch",
+      onConfirm: async () => {
+        await this.doResetToUpstream(name, upstream);
+      },
+    });
+  }
+
+  private async doResetToUpstream(name: string, upstream: string) {
+    if (!IN_TAURI) {
+      bridge.tama.set("celebrate");
+      bridge.tama.say("Reset " + name + " to " + upstream + " (demo).");
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.busyTarget = name;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Resetting " + name + " to " + upstream + "…");
+    try {
+      const res = await commands.resetBranchToUpstream(bridge.CUR_REPO as unknown as string, name);
+      if (res && res.ok) {
+        await bridge.reloadGraph(true);
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Reset " + name + " to " + upstream + ".", 4200);
+      } else {
+        bridge.tama.warn((res && res.message) || "Couldn't reset " + name + ".");
+      }
+    } catch (e) {
+      bridge.tama.warn("Reset failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  openMenu(name: string, isCurrent: boolean, anchor: HTMLElement, upstream: string | null = null) {
     this.tagMenu = null; // only one popover open at a time
     this.submoduleMenu = null;
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
     const r = anchor.getBoundingClientRect();
-    this.menu = { name, isCurrent, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
+    this.menu = { name, isCurrent, upstream, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
 
   closeMenu() {

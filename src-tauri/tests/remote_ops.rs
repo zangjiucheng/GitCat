@@ -6,7 +6,7 @@
 mod common;
 
 use common::TempRepo;
-use gitcat_lib::git_remote::{current_upstream, fetch, force_push, pull, push};
+use gitcat_lib::git_remote::{current_upstream, fetch, force_push, pull, push, reset_branch_to_upstream};
 
 /// A bare "origin" + a local clone of it (remote already configured, one
 /// commit already pushed) — the shared starting point for every test here.
@@ -294,6 +294,81 @@ fn force_push_refuses_a_branch_with_no_upstream_before_attempting_anything() {
     // applies regardless of `lease`.
     let res2 = force_push(local.path(), false);
     assert!(!res2.ok, "force_push(lease=false) must also refuse a branch with no upstream");
+}
+
+#[test]
+fn reset_current_branch_discards_local_commits_and_working_tree_changes() {
+    let (origin, local) = origin_and_clone("reset_current");
+    let upstream_tip = local.rev("HEAD").unwrap();
+
+    // Local diverges from origin: one committed change plus one uncommitted
+    // (dirty working-tree) change — `reset --hard` must discard both.
+    local.commit("f.txt", "local-only commit\n", "local commit");
+    std::fs::write(local.dir.join("f.txt"), "dirty uncommitted\n").expect("write dirty change");
+    assert!(!local.is_clean(), "sanity: working tree should be dirty before reset");
+
+    let res = reset_branch_to_upstream(local.path(), "main".to_string());
+    assert!(res.ok, "reset_branch_to_upstream failed: {}", res.message);
+    assert_eq!(local.rev("HEAD"), Some(upstream_tip.clone()), "HEAD should land exactly on origin/main's tip");
+    assert!(local.is_clean(), "reset --hard must discard the dirty working-tree change too");
+    assert_eq!(local.read("f.txt"), "0\n", "working tree content should match the reset-to commit, not the discarded ones");
+    assert!(res.backup_ref.is_some(), "resetting the current branch discards history, so it must snapshot first");
+
+    // The origin's remote-tracking ref itself must be untouched by all this.
+    assert_eq!(origin.rev("main"), Some(upstream_tip));
+}
+
+#[test]
+fn reset_non_current_branch_only_moves_the_ref_without_touching_working_tree() {
+    let (origin, local) = origin_and_clone("reset_non_current");
+
+    // A second local branch, tracking origin/main, that diverges from it —
+    // but we stay checked out on `main`, so `feature` is never the working
+    // copy's current branch.
+    local.must(&["branch", "feature", "--track", "origin/main"]);
+    let feature_local_tip = {
+        // Commit onto `feature` without checking it out, so the working
+        // tree (still on `main`) is never touched by this setup.
+        local.must(&["checkout", "-q", "feature"]);
+        let tip = local.commit("feat.txt", "feature-only\n", "feature commit");
+        local.must(&["checkout", "-q", "main"]);
+        tip
+    };
+    let upstream_tip = origin.rev("main").unwrap();
+    assert_ne!(feature_local_tip, upstream_tip, "sanity: feature must actually diverge from its upstream");
+
+    let before_current_head = local.rev("HEAD");
+    let res = reset_branch_to_upstream(local.path(), "feature".to_string());
+    assert!(res.ok, "reset_branch_to_upstream failed: {}", res.message);
+    assert_eq!(local.rev("refs/heads/feature"), Some(upstream_tip), "feature's ref should now match its upstream");
+    assert_eq!(local.current_branch(), "main", "resetting a non-current branch must never move HEAD off the checked-out branch");
+    assert_eq!(local.rev("HEAD"), before_current_head, "the currently checked-out branch's tip must be untouched");
+    assert!(local.is_clean(), "resetting a non-current branch must never touch the working tree");
+    assert!(res.backup_ref.is_some(), "still snapshots first, even for a non-current branch");
+}
+
+#[test]
+fn reset_refuses_a_branch_with_no_configured_upstream() {
+    let (_origin, local) = origin_and_clone("reset_no_upstream");
+    local.must(&["checkout", "-q", "-b", "orphan"]);
+    local.commit("o.txt", "0\n", "orphan commit");
+    // Deliberately never tracked/pushed.
+
+    let tip_before = local.rev("HEAD");
+    let res = reset_branch_to_upstream(local.path(), "orphan".to_string());
+    assert!(!res.ok, "reset must refuse a branch with no configured upstream");
+    assert!(res.message.contains("upstream"), "expected a clear no-upstream refusal, got: {}", res.message);
+    assert_eq!(local.rev("HEAD"), tip_before, "a refused reset must never move HEAD");
+    assert!(res.backup_ref.is_none(), "a refused reset (no mutation attempted) must not snapshot");
+}
+
+#[test]
+fn reset_refuses_a_nonexistent_branch() {
+    let (_origin, local) = origin_and_clone("reset_nonexistent");
+
+    let res = reset_branch_to_upstream(local.path(), "does-not-exist".to_string());
+    assert!(!res.ok, "reset must refuse a branch that doesn't exist locally");
+    assert!(res.backup_ref.is_none(), "a refused reset must not snapshot");
 }
 
 #[test]

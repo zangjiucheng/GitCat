@@ -142,6 +142,42 @@ fn validate_remote_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Own copy of `git_write.rs`'s `validate_branch_name` (same per-module-copy
+/// convention as `validate_remote_name`/`validate_tag_name` — see their own
+/// comments) — `reset_branch_to_upstream`'s `branch` is raw user input
+/// (unlike `pull`/`push`/`force_push`'s branch, which comes from
+/// `repo.head()` and is never independently validated), so it needs the
+/// identical flag-injection/name-validity guard `create_branch`/
+/// `delete_branch` apply.
+fn validate_branch_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("Branch name is empty.".into());
+    }
+    if name.starts_with('-') {
+        return Err(format!("Refusing a branch name that looks like a flag: {name:?}"));
+    }
+    for ch in name.chars() {
+        if ch.is_control() || ch == ' ' || ch == '\u{7f}' {
+            return Err(format!("Branch name has an illegal whitespace/control character: {name:?}"));
+        }
+        if matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\') {
+            return Err(format!("Branch name has an illegal character '{ch}': {name:?}"));
+        }
+    }
+    if name.contains("..")
+        || name.contains("@{")
+        || name.contains("//")
+        || name.starts_with('/')
+        || name.ends_with('/')
+        || name.ends_with('.')
+        || name.ends_with(".lock")
+        || name == "@"
+    {
+        return Err(format!("Not a valid branch name: {name:?}"));
+    }
+    Ok(())
+}
+
 /// Own copy of `git_tag.rs`'s `validate_tag_name` (same per-module-copy
 /// convention as `validate_remote_name` above, which is itself already a copy
 /// of `git_write.rs`'s `validate_branch_name`) — `push_tag`'s `name` is raw
@@ -266,6 +302,86 @@ pub fn current_upstream(path: String) -> Result<Option<String>, String> {
         .and_then(|b| b.upstream().ok())
         .and_then(|up| up.name().ok().flatten().map(|s| s.to_string()));
     Ok(upstream_name)
+}
+
+/// Hard-reset a LOCAL branch to exactly match its configured upstream
+/// (remote-tracking branch), discarding any local commits/changes on that
+/// branch — the "this branch is a mess, just make it match origin" escape
+/// hatch `pull`'s fast-forward-only refusal deliberately doesn't offer (see
+/// module doc: `pull` refuses rather than forces on divergence).
+///
+/// Unlike `pull`/`push`/`force_push` above (all current-branch-only),
+/// `branch` is explicit and works whether it's the CURRENTLY checked-out
+/// branch or not:
+/// - Current branch: `git reset --hard <upstream>` — moves HEAD, the index,
+///   AND the working tree (uncommitted changes on this branch are discarded
+///   too, exactly like a real `git reset --hard`).
+/// - Any other local branch: `git branch -f <branch> <upstream>` — force-
+///   moves just the branch ref itself; there's no working tree/index for a
+///   non-checked-out branch to reset, so nothing else is touched.
+///
+/// Snapshots first (same convention as `pull`): the branch's PREVIOUS tip is
+/// always recoverable via Undo, even though this command's whole point is to
+/// discard it from the branch's own history. Refuses up front (no mutation)
+/// if `branch` doesn't exist locally or has no configured upstream to reset
+/// to — there being nothing to reset to is treated the same as `pull`
+/// finding nothing to fast-forward.
+/// JS call: `invoke("reset_branch_to_upstream", { path, branch })`.
+#[tauri::command]
+#[specta::specta]
+pub fn reset_branch_to_upstream(path: String, branch: String) -> RemoteResult {
+    if let Err(e) = validate_branch_name(&branch) {
+        return RemoteResult::err(e);
+    }
+    let repo = match open_repo(&path) {
+        Ok(r) => r,
+        Err(w) => return w,
+    };
+    let local = match repo.find_branch(&branch, BranchType::Local) {
+        Ok(b) => b,
+        Err(_) => return RemoteResult::err(format!("No local branch named {branch:?}.")),
+    };
+    let upstream = match local.upstream() {
+        Ok(u) => u,
+        Err(_) => return RemoteResult::err(format!("{branch} has no configured upstream to reset to.")),
+    };
+    let upstream_name = match upstream.name() {
+        Ok(Some(n)) => n.to_string(),
+        _ => return RemoteResult::err(format!("{branch}'s upstream name isn't valid UTF-8.")),
+    };
+
+    let backup = match take_snapshot(&repo) {
+        Ok(b) => b,
+        Err(e) => return RemoteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+    };
+
+    let is_current = repo
+        .head()
+        .ok()
+        .filter(|h| h.is_branch())
+        .and_then(|h| h.shorthand().map(|s| s.to_string()))
+        .as_deref()
+        == Some(branch.as_str());
+
+    // Same `--end-of-options` placement `delete_branch`/`rename_branch` use
+    // for `git branch` in git_write.rs: the flag(s) come BEFORE the marker,
+    // never after — EMPIRICALLY VERIFIED (git 2.53.0) that `git branch
+    // --end-of-options -f <branch> <start>` misparses `-f` as a positional
+    // once it comes after the marker ("usage: git branch ..."); only
+    // `-f --end-of-options <branch> <start>` (flag first) works.
+    let out = if is_current {
+        run_git(&path, &["reset", "--hard", "--end-of-options", &upstream_name])
+    } else {
+        run_git(&path, &["branch", "-f", "--end-of-options", &branch, &upstream_name])
+    };
+    match out {
+        Ok(out) if out.ok => RemoteResult::ok(
+            format!("Reset {branch} to {upstream_name} (snapshot {}).", short_backup(&backup)),
+            Some(backup),
+        ),
+        Ok(out) => RemoteResult::err(git_error_message(&out)),
+        Err(e) => RemoteResult::err(e),
+    }
 }
 
 /// Push the current branch. Publishes to "origin" with `--set-upstream` when

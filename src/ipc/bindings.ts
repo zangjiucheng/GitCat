@@ -493,6 +493,34 @@ async currentUpstream(path: string) : Promise<Result<string | null, string>> {
 }
 },
 /**
+ * Hard-reset a LOCAL branch to exactly match its configured upstream
+ * (remote-tracking branch), discarding any local commits/changes on that
+ * branch — the "this branch is a mess, just make it match origin" escape
+ * hatch `pull`'s fast-forward-only refusal deliberately doesn't offer (see
+ * module doc: `pull` refuses rather than forces on divergence).
+ * 
+ * Unlike `pull`/`push`/`force_push` above (all current-branch-only),
+ * `branch` is explicit and works whether it's the CURRENTLY checked-out
+ * branch or not:
+ * - Current branch: `git reset --hard <upstream>` — moves HEAD, the index,
+ * AND the working tree (uncommitted changes on this branch are discarded
+ * too, exactly like a real `git reset --hard`).
+ * - Any other local branch: `git branch -f <branch> <upstream>` — force-
+ * moves just the branch ref itself; there's no working tree/index for a
+ * non-checked-out branch to reset, so nothing else is touched.
+ * 
+ * Snapshots first (same convention as `pull`): the branch's PREVIOUS tip is
+ * always recoverable via Undo, even though this command's whole point is to
+ * discard it from the branch's own history. Refuses up front (no mutation)
+ * if `branch` doesn't exist locally or has no configured upstream to reset
+ * to — there being nothing to reset to is treated the same as `pull`
+ * finding nothing to fast-forward.
+ * JS call: `invoke("reset_branch_to_upstream", { path, branch })`.
+ */
+async resetBranchToUpstream(path: string, branch: string) : Promise<RemoteResult> {
+    return await TAURI_INVOKE("reset_branch_to_upstream", { path, branch });
+},
+/**
  * Push the current branch. Publishes to "origin" with `--set-upstream` when
  * it has no configured upstream yet; otherwise a plain `git push`. Never
  * force-pushes — a non-fast-forward rejection surfaces git's own message.

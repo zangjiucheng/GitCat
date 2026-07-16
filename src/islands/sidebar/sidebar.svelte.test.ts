@@ -25,6 +25,7 @@ vi.mock("../../ipc/bindings", () => ({
     checkoutDiscard: vi.fn(),
     createBranch: vi.fn(),
     deleteBranch: vi.fn(),
+    resetBranchToUpstream: vi.fn(),
     createTag: vi.fn(),
     deleteTag: vi.fn(),
     pushTag: vi.fn(),
@@ -1153,7 +1154,7 @@ describe("openDirtyCheckoutMenu / closeDirtyCheckoutMenu (#34)", () => {
   });
 
   it("opening it closes an open branch menu, tag menu, submodule menu, and merge menu", () => {
-    sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
+    sidebarCtrl.menu = { name: "main", isCurrent: true, upstream: null, x: 0, y: 0 };
     sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
     sidebarCtrl.submoduleMenu = { path: "sub", status: "clean", absolutePath: "/repo/sub", x: 0, y: 0 };
     sidebarCtrl.mergeMenu = { name: "feature", x: 0, y: 0 };
@@ -1208,7 +1209,7 @@ describe("openCheckoutConfirm / closeCheckoutConfirm", () => {
   });
 
   it("opening it closes an open branch menu, tag menu, submodule menu, merge menu, and dirty-checkout chooser", () => {
-    sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
+    sidebarCtrl.menu = { name: "main", isCurrent: true, upstream: null, x: 0, y: 0 };
     sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
     sidebarCtrl.submoduleMenu = { path: "sub", status: "clean", absolutePath: "/repo/sub", x: 0, y: 0 };
     sidebarCtrl.mergeMenu = { name: "feature", x: 0, y: 0 };
@@ -1462,15 +1463,60 @@ describe("deleteBranch", () => {
   });
 });
 
+describe("resetToUpstream", () => {
+  it("arms the shared danger scrim with a reset-to-upstream context", () => {
+    sidebarCtrl.resetToUpstream("feature", "origin/feature");
+    expect(bridge.armDanger).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "feature", confirmLabel: "Reset branch", onConfirm: expect.any(Function) }),
+    );
+  });
+
+  it("onConfirm calls reset_branch_to_upstream and reloads on success", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.resetBranchToUpstream).mockResolvedValueOnce({ ok: true, message: "reset", backupRef: "refs/gitgui/backup/x" });
+    sidebarCtrl.resetToUpstream("feature", "origin/feature");
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+    expect(commands.resetBranchToUpstream).toHaveBeenCalledWith("/repo", "feature");
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
+  });
+
+  it("onConfirm warns and does not reload when the backend refuses", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.resetBranchToUpstream).mockResolvedValueOnce({ ok: false, message: "feature has no configured upstream to reset to.", backupRef: null });
+    sidebarCtrl.resetToUpstream("feature", "origin/feature");
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalledWith("feature has no configured upstream to reset to.");
+  });
+
+  it("demo mode: onConfirm never calls the backend", async () => {
+    mockInTauri = false;
+    sidebarCtrl.resetToUpstream("feature", "origin/feature");
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    await ctx.onConfirm();
+    expect(commands.resetBranchToUpstream).not.toHaveBeenCalled();
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("(demo)"));
+  });
+});
+
 describe("openMenu / closeMenu", () => {
   it("positions the menu clamped to the viewport width, from the anchor's rect", () => {
     const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
     sidebarCtrl.openMenu("feature", false, anchor);
-    expect(sidebarCtrl.menu).toEqual({ name: "feature", isCurrent: false, x: 10, y: 44 });
+    expect(sidebarCtrl.menu).toEqual({ name: "feature", isCurrent: false, upstream: null, x: 10, y: 44 });
+  });
+
+  it("captures the upstream shorthand passed in, at open-time", () => {
+    const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
+    sidebarCtrl.openMenu("feature", false, anchor, "origin/feature");
+    expect(sidebarCtrl.menu).toEqual({ name: "feature", isCurrent: false, upstream: "origin/feature", x: 10, y: 44 });
   });
 
   it("closeMenu clears it", () => {
-    sidebarCtrl.menu = { name: "x", isCurrent: false, x: 0, y: 0 };
+    sidebarCtrl.menu = { name: "x", isCurrent: false, upstream: null, x: 0, y: 0 };
     sidebarCtrl.closeMenu();
     expect(sidebarCtrl.menu).toBeNull();
   });
@@ -1504,7 +1550,7 @@ describe("openTagMenu / closeTagMenu", () => {
   });
 
   it("opening the tag menu closes an open branch menu", () => {
-    sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
+    sidebarCtrl.menu = { name: "main", isCurrent: true, upstream: null, x: 0, y: 0 };
     const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
     sidebarCtrl.openTagMenu("v1.0.0", anchor);
     expect(sidebarCtrl.menu).toBeNull();
@@ -1532,7 +1578,7 @@ describe("openSubmoduleMenu / closeSubmoduleMenu", () => {
   });
 
   it("opening the submodule menu closes an open branch menu and an open tag menu", () => {
-    sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
+    sidebarCtrl.menu = { name: "main", isCurrent: true, upstream: null, x: 0, y: 0 };
     sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
     const anchor = { getBoundingClientRect: () => ({ left: 10, bottom: 40 }) } as unknown as HTMLElement;
     sidebarCtrl.openSubmoduleMenu("sub", "clean", "/repo/sub", anchor);
@@ -1564,7 +1610,7 @@ describe("openMergeMenu / closeMergeMenu (#7)", () => {
   });
 
   it("opening the merge menu closes an open branch menu, tag menu, and submodule menu", () => {
-    sidebarCtrl.menu = { name: "feature", isCurrent: false, x: 0, y: 0 };
+    sidebarCtrl.menu = { name: "feature", isCurrent: false, upstream: null, x: 0, y: 0 };
     sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
     sidebarCtrl.submoduleMenu = { path: "sub", status: "clean", absolutePath: "/repo/sub", x: 0, y: 0 };
     sidebarCtrl.openMergeMenu("feature", 10, 44);
@@ -1774,7 +1820,7 @@ describe("setSnapshots / reset", () => {
   it("reset clears everything including an open menu, tag menu, submodule menu, merge menu, hasRepo, and submodules", () => {
     sidebarCtrl.locals = [{ name: "main", sha: "x", ahead: null, behind: null, upstream: null }];
     sidebarCtrl.head = "main";
-    sidebarCtrl.menu = { name: "main", isCurrent: true, x: 0, y: 0 };
+    sidebarCtrl.menu = { name: "main", isCurrent: true, upstream: null, x: 0, y: 0 };
     sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };
     sidebarCtrl.submoduleMenu = { path: "sub", status: "clean", absolutePath: "/repo/sub", x: 0, y: 0 };
     sidebarCtrl.mergeMenu = { name: "feature", x: 0, y: 0 };
