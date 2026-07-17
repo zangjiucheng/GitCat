@@ -518,6 +518,26 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tama-hero-img{width:190px;height:auto;filter:drop-shadow(0 8px 16px rgba(0,0,0,.20))}
 .modal-tama{flex:none;width:62px;height:80px;line-height:0}
 .modal-tama .tama-pic{width:100%;height:100%}
+/* Dev-mode indicator — top:52px sits just BELOW .topbar (46px tall) rather
+   than at true top:0, deliberately: the topbar's own left corner already
+   has the GitCat brand mark/repo-picker (see .brand above) right up
+   against the window edge, and this needs to be tellable apart at a
+   glance, not fought with for the same few pixels. position:fixed (not
+   part of .app's own grid) so it overlays everything regardless of which
+   panel is focused/collapsed. Shown only under `vite`/`tauri dev` — see the
+   `if(!import.meta.env.DEV)` toggle beside it (legacy/main.ts, next to the
+   existing #perf HUD's own identical dev-only gate) — never ships lit in a
+   real `tauri build`/`vite build`, which is the whole point: the user runs
+   a dev build and a packaged prod build side by side and needs an
+   unmistakable way to tell which window is which. */
+.dev-badge{position:fixed;top:52px;left:10px;z-index:500;display:flex;align-items:center;gap:5px;
+  padding:3px 9px;border-radius:var(--r-pill);pointer-events:none;
+  background:color-mix(in srgb,var(--warning) 20%,var(--bg));
+  border:1px solid color-mix(in srgb,var(--warning) 55%,var(--border));
+  color:var(--warning);font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.4px;
+  box-shadow:0 4px 12px rgba(20,14,6,.22)}
+.dev-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--warning);flex:none;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--warning) 25%,transparent)}
 .tama-cheer{position:fixed;right:20px;bottom:20px;z-index:320;display:flex;align-items:flex-end;gap:8px;
   padding:10px 15px 10px 8px;background:var(--panel);border:1px solid color-mix(in srgb,var(--success) 50%,var(--border));
   border-radius:18px;box-shadow:0 10px 30px rgba(20,14,6,.28),0 0 0 1px color-mix(in srgb,var(--success) 22%,transparent);
@@ -1616,6 +1636,15 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .rs-month-bar{width:100%;max-width:28px;border-radius:3px 3px 0 0;background:var(--accent);min-height:2px}
 .rs-month-label{font-size:9.5px;white-space:nowrap}
 </style>
+
+<!-- Dev-mode indicator — see .dev-badge's own CSS comment for why this sits
+     just below the topbar rather than at the literal top-left corner, and
+     why it's hidden by default here (JS reveals it only under
+     `vite`/`tauri dev` — see legacy/main.ts, beside the existing #perf
+     HUD's identical import.meta.env.DEV gate). display:none by default so
+     a build that somehow skips that JS (or runs with scripts disabled)
+     fails SAFE — never shows a dev badge it can't prove is warranted. -->
+<div class="dev-badge" id="devBadge" style="display:none" aria-hidden="true"><span class="dot"></span>DEV</div>
 
 <div class="app" id="app">
 

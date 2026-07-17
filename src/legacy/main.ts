@@ -1202,6 +1202,13 @@ $("#stressBtn").addEventListener("click",e=>{state.stress=!state.stress;e.target
 // chip sitting over the top-right corner of the graph in every release
 // build, with nothing inside it to explain why it was there.
 if(!import.meta.env.DEV) $("#perf").style.display="none";
+// #devBadge (top-left "DEV" pill, see its own index.html doc comment) is the
+// OPPOSITE default from #perf just above — display:none in the markup,
+// shown here only when true — a deliberate fail-safe: if this line never
+// ran at all (script error, disabled JS), a real `tauri build` never shows
+// a dev indicator it can't back up, where #perf's own "visible by default,
+// hidden here" would fail the OTHER way (a debug HUD stuck on in prod).
+if(import.meta.env.DEV) $("#devBadge").style.display="flex";
 
 /* ---- snapshot ribbon: recent ticks positioned by ACTUAL elapsed time,
    with a zoomable time window ----
