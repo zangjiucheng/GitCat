@@ -1056,8 +1056,15 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .btn.danger:not([disabled]):hover{background:color-mix(in srgb,var(--danger) 85%,#000)}
 .resolver .modal-head{background:color-mix(in srgb,var(--warning) 10%,var(--panel))}
 .resolver .modal-head .tama{filter:drop-shadow(0 0 6px color-mix(in srgb,var(--warning) 55%,transparent))}
-.three-way{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:var(--r-panel);overflow:hidden;font-family:var(--mono);font-size:11px}
-.tw-col{background:var(--bg)} .tw-col h6{margin:0;padding:5px 8px;background:var(--elevated);font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-family:var(--ui)}
+/* Ours/Theirs — the top, read-only reference row of the redesigned conflict
+   view (see .cf-content's own comment below for the full 2-row shape). Used
+   to be a 3-column ours/base/theirs grid taking the WHOLE content area;
+   base was dropped from the always-visible row (still readable via each
+   hunk's own context lines in .cf-result below) so ours/theirs — the two
+   sides actually being chosen between — each get real width instead of a
+   cramped third of it. */
+.cf-compare{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:var(--r-panel);overflow:hidden;font-family:var(--mono);font-size:11px;flex:0 0 200px;min-height:0}
+.tw-col{background:var(--bg);overflow:auto} .tw-col h6{margin:0;padding:5px 8px;background:var(--elevated);font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-family:var(--ui)}
 .tw-col .ln{padding:2px 8px}
 .tw-col.ours .ln{background:color-mix(in srgb,var(--accent2) 10%,transparent)}
 .tw-col.theirs .ln{background:color-mix(in srgb,var(--accent) 10%,transparent)}
@@ -1111,14 +1118,25 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cf-take{display:flex;gap:6px;flex:none}
 .cf-take .btn{padding:4px 11px;font-size:12px}
 .cf-remain{font-size:12px}
-#cfThree{flex:1;min-height:0;overflow:auto}
+/* #cfThree/.cf-content — the redesigned conflict-file view: a fixed-ish
+   .cf-compare row up top (Ours/Theirs, read-only reference) and .cf-result
+   below it taking whatever's left, instead of one flat 3-column grid. Own
+   scroll delegated to the two children (.cf-compare's .tw-col panels,
+   .cf-result itself) rather than this wrapper, so the action bar above and
+   Result's own header stay pinned while only the panel CONTENTS scroll. */
+#cfThree{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;overflow:hidden}
 .tw-col .ln code{white-space:pre-wrap;word-break:break-word}
-/* In-app hunk-level resolution editor (resolver.svelte.ts's editMode) — a
-   single column replacing the three-way ours/base/theirs grid for the
-   currently selected file, not a new modal. Shares #cfThree's own
-   flex/overflow above, so it scrolls exactly like the read-only view
-   it replaces. */
-.cf-edit{grid-column:1/4;display:flex;flex-direction:column;padding:8px;gap:2px}
+/* Always-visible hunk-level resolution editor (resolver.svelte.ts's
+   loadHunks() — auto-fetched per file, no separate "Edit resolution" toggle
+   anymore) — the bottom row of #cfThree, taking whatever height .cf-compare
+   above it doesn't use. */
+.cf-result{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:var(--r-panel);padding:8px;background:var(--bg)}
+.cf-result-head{display:flex;align-items:center;justify-content:space-between;flex:none}
+.cf-result-head h6{margin:0;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-family:var(--ui)}
+.cf-result-head .btn{padding:4px 11px;font-size:12px}
+.cf-edit-loading{display:flex;align-items:center;gap:6px;padding:14px;color:var(--muted);font-size:12px}
+.cf-all-resolved{padding:14px;font-size:12px}
+.cf-edit{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:2px}
 .cf-edit-context{margin:0;padding:2px 6px;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:pre-wrap;word-break:break-word}
 .cf-edit-conflict{border:1px solid color-mix(in srgb,var(--warning) 45%,var(--border));border-radius:var(--r-control);
   background:color-mix(in srgb,var(--warning) 6%,transparent);padding:6px;margin:4px 0}

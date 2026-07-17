@@ -324,12 +324,15 @@ class ResolverState {
   // ── in-app hunk-level resolution editor (additive to take()'s whole-file
   // ours/theirs and resolveWithExternalTool()'s external-mergetool handoff
   // above — see conflict.rs's own conflict_file_hunks/resolve_conflict_hunks
-  // doc comments) — a per-selected-file mode, not a separate modal: opening
-  // it swaps the 3-column read-only view for an editable one; `select()`
-  // below closes it whenever the user switches to a DIFFERENT file, since
-  // `editHunks`/`editValues` are only ever valid for whichever file they were
-  // fetched for.
-  editMode = $state(false);
+  // doc comments) — NOT a toggled mode anymore (there used to be an
+  // "editMode" flag + an explicit "Edit resolution" button swapping the
+  // 3-column read-only view for this one): the result panel is always
+  // visible now, so `loadHunks()` (below) fetches it automatically the
+  // instant a file becomes `current` — every place that changes `selected`
+  // (select(), refresh(), and each demo path) triggers it, instead of
+  // requiring a click first. `editHunks`/`editValues` are only ever valid
+  // for whichever file they were fetched for; `clearHunks()` (below) resets
+  // them whenever the selection moves on.
   editLoading = $state(false);
   editBinary = $state(false);
   editHunks = $state<ConflictHunk[]>([]);
@@ -427,15 +430,10 @@ class ResolverState {
   }
 
   select(path: string) {
-    // ADVERSARIALLY-FOUND FIX: refusing to switch files while a hunk fetch is
-    // in flight (editLoading) closes the race openEditMode() guards against
-    // below — without this, switching files mid-fetch left `editMode` false
-    // (so this closeEditMode() call was a no-op) while the OLD file's fetch
-    // was still pending, and its result would later land against whichever
-    // file the user had switched to by then.
-    if (this.editLoading) return;
-    if (path !== this.selected) this.closeEditMode();
+    if (path === this.selected) return;
     this.selected = path;
+    this.clearHunks();
+    void this.loadHunks();
   }
 
   private reset() {
@@ -443,7 +441,7 @@ class ResolverState {
     this.selected = null;
     this.remaining = new Set();
     this.editing = false;
-    this.closeEditMode();
+    this.clearHunks();
   }
   close() {
     this.open = false;
@@ -861,8 +859,16 @@ class ResolverState {
     }
     this.files = files;
     this.remaining = new Set(files.map((f) => f.path));
+    const prevSelected = this.selected;
     if (this.selected == null || !this.remaining.has(this.selected)) {
       this.selected = files.length ? files[0].path : null;
+    }
+    // Only (re)fetch when the selection actually moved on — a refresh that
+    // leaves the same file selected (e.g. a DIFFERENT file in the list just
+    // got resolved) has no reason to redo an unchanged file's own hunk fetch.
+    if (this.selected !== prevSelected) {
+      this.clearHunks();
+      void this.loadHunks();
     }
   }
 
@@ -873,7 +879,9 @@ class ResolverState {
     if (this.demo) {
       this.remaining = new Set([...this.remaining].filter((p) => p !== f.path));
       const nx = this.files.find((x) => this.remaining.has(x.path));
-      if (nx) this.selected = nx.path;
+      this.selected = nx?.path ?? null;
+      this.clearHunks();
+      void this.loadHunks();
       bridge.tama.say("Took " + side + " for " + f.path + " (demo).");
       return;
     }
@@ -907,7 +915,9 @@ class ResolverState {
     if (this.demo) {
       this.remaining = new Set([...this.remaining].filter((p) => p !== f.path));
       const nx = this.files.find((x) => this.remaining.has(x.path));
-      if (nx) this.selected = nx.path;
+      this.selected = nx?.path ?? null;
+      this.clearHunks();
+      void this.loadHunks();
       bridge.tama.say("Resolved " + f.path + " with the external tool (demo).");
       return;
     }
@@ -929,11 +939,14 @@ class ResolverState {
 
   // ── in-app hunk-level resolution editor ─────────────────────────────────
 
-  // Fetch the selected file's aligned hunks and swap the 3-column read-only
-  // view for the editable one. A binary conflict (r.data.binary) still opens
-  // — Resolver.svelte shows a plain "binary file" notice with no hunks
-  // instead of an empty editor, rather than silently refusing to open.
-  async openEditMode() {
+  // Fetch the current file's aligned hunks for the always-visible Result
+  // panel. A binary conflict (r.data.binary) still "loads" — Resolver.svelte
+  // shows a plain "binary file" notice with no hunks instead of an empty
+  // editor, rather than silently refusing. Called automatically by
+  // select()/refresh()/every demo path that moves `selected` — see this
+  // class's own doc comment on why there's no more explicit open/close
+  // toggle for this.
+  private async loadHunks() {
     const f = this.current;
     if (!f) return;
     if (this.demo) {
@@ -941,11 +954,10 @@ class ResolverState {
       // resolveWithExternalTool() above — the demo FAKE conflict has no
       // real context/conflict split to offer (it's static canned data, not
       // a real diff3 merge), so the whole file is treated as one conflict
-      // hunk, which is enough to preview the editor's own layout.
+      // hunk, which is enough to preview the Result panel's own layout.
       this.editBinary = false;
       this.editHunks = [{ kind: "conflict", context: null, ours: f.ours, base: f.base, theirs: f.theirs }];
       this.editValues = [f.ours];
-      this.editMode = true;
       return;
     }
     this.editLoading = true;
@@ -954,10 +966,9 @@ class ResolverState {
     this.editBinary = false;
     try {
       const r = await commands.conflictFileHunks(this.repo, f.path);
-      // ADVERSARIALLY-FOUND FIX: select() now refuses to run while
-      // editLoading is true (see its own comment), which already closes this
-      // race in practice — this is a second, independent guard in case some
-      // other future path ever moves `selected` during the await.
+      // Guards against the selection having moved on to a DIFFERENT file
+      // while this fetch was still in flight — its result would otherwise
+      // land against whichever file is current by the time it resolves.
       if (this.current?.path !== f.path) return;
       if (r.status !== "ok") {
         bridge.tama.warn(r.error || "Could not load this file's conflict hunks.");
@@ -969,7 +980,6 @@ class ResolverState {
       // starts as "ours" — an arbitrary but reasonable starting point,
       // freely replaceable via useSide() or direct typing either way.
       this.editValues = r.data.hunks.map((h) => (h.kind === "context" ? (h.context ?? "") : (h.ours ?? "")));
-      this.editMode = true;
     } catch (e) {
       bridge.tama.warn("Could not load this file's conflict hunks — " + e);
     } finally {
@@ -977,11 +987,11 @@ class ResolverState {
     }
   }
 
-  closeEditMode() {
-    this.editMode = false;
+  private clearHunks() {
     this.editHunks = [];
     this.editValues = [];
     this.editBinary = false;
+    this.editLoading = false;
   }
 
   // Quick-fill a conflict hunk's own text from one whole side — the textarea
@@ -1015,8 +1025,9 @@ class ResolverState {
     if (this.demo) {
       this.remaining = new Set([...this.remaining].filter((p) => p !== f.path));
       const nx = this.files.find((x) => this.remaining.has(x.path));
-      if (nx) this.selected = nx.path;
-      this.closeEditMode();
+      this.selected = nx?.path ?? null;
+      this.clearHunks();
+      void this.loadHunks();
       bridge.tama.say("Saved your edited resolution for " + f.path + " (demo).");
       return;
     }
@@ -1027,7 +1038,7 @@ class ResolverState {
     try {
       const r = await commands.resolveConflictHunks(this.repo, f.path, content);
       if (!r.ok) bridge.tama.warn(r.message || "Could not save your resolution for " + f.path);
-      else this.closeEditMode();
+      else this.clearHunks();
     } catch (e) {
       bridge.tama.warn("Save failed — " + e);
       return;
@@ -1317,6 +1328,7 @@ class ResolverState {
     this.files = FAKE.map((f) => ({ ...f }));
     this.selected = FAKE[0].path;
     this.remaining = new Set([FAKE[0].path]);
+    void this.loadHunks();
     bridge.tama.event("mutation.caution", { count: 1 });
     this.open = true;
   }

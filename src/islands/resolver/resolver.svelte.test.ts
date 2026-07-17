@@ -142,7 +142,6 @@ function resetResolver() {
   resolver.op = "cherry-pick";
   resolver.dirtyBlock = null;
   resolver.dirtyBlockStuck = null;
-  resolver.editMode = false;
   resolver.editLoading = false;
   resolver.editBinary = false;
   resolver.editHunks = [];
@@ -1257,12 +1256,17 @@ describe("in-app hunk-level resolution editor", () => {
     return { path: FILE_A.path, binary: false, hunks: [], ...partial };
   }
 
-  describe("openEditMode", () => {
-    it("fetches hunks for the current file and enters edit mode, seeding conflict hunks from ours", async () => {
+  // loadHunks() itself is now private — it auto-fires whenever the selection
+  // changes (select(), refresh(), every demo path — see resolver.svelte.ts's
+  // own doc comment on why there's no more explicit open/close toggle for
+  // this), so these tests drive it through select()/openDemo(), the public
+  // entry points, instead of calling it directly.
+  describe("select() auto-loads hunks for the newly-current file", () => {
+    it("fetches hunks for the selected file, seeding conflict hunks from ours", async () => {
       resolver.repo = "repo1";
       resolver.demo = false;
       resolver.files = [FILE_A];
-      resolver.selected = FILE_A.path;
+      resolver.selected = null;
       resolver.remaining = new Set([FILE_A.path]);
       vi.mocked(commands.conflictFileHunks).mockResolvedValueOnce(
         ok(
@@ -1275,72 +1279,69 @@ describe("in-app hunk-level resolution editor", () => {
         ),
       );
 
-      await resolver.openEditMode();
+      resolver.select(FILE_A.path);
+      await vi.waitFor(() => expect(resolver.editHunks).toHaveLength(2));
 
       expect(commands.conflictFileHunks).toHaveBeenCalledWith("repo1", FILE_A.path);
-      expect(resolver.editMode).toBe(true);
       expect(resolver.editBinary).toBe(false);
-      expect(resolver.editHunks).toHaveLength(2);
       // context seeds from its own fixed text; the conflict hunk seeds from "ours".
       expect(resolver.editValues).toEqual(["shared line\n", "ours text\n"]);
     });
 
-    it("a binary conflict opens with editBinary=true and no hunks, instead of refusing to open", async () => {
+    it("a binary conflict loads with editBinary=true and no hunks, instead of refusing to load", async () => {
       resolver.repo = "repo1";
       resolver.files = [FILE_A];
-      resolver.selected = FILE_A.path;
+      resolver.selected = null;
       resolver.remaining = new Set([FILE_A.path]);
       vi.mocked(commands.conflictFileHunks).mockResolvedValueOnce(ok(fileHunks({ binary: true, hunks: [] })));
 
-      await resolver.openEditMode();
+      resolver.select(FILE_A.path);
+      await vi.waitFor(() => expect(resolver.editBinary).toBe(true));
 
-      expect(resolver.editMode).toBe(true);
-      expect(resolver.editBinary).toBe(true);
       expect(resolver.editHunks).toHaveLength(0);
     });
 
-    it("a backend error surfaces via Tama and does not enter edit mode", async () => {
+    it("a backend error surfaces via Tama and leaves no hunks loaded", async () => {
+      resolver.repo = "repo1";
+      resolver.files = [FILE_A];
+      resolver.selected = null;
+      resolver.remaining = new Set([FILE_A.path]);
+      vi.mocked(commands.conflictFileHunks).mockResolvedValueOnce(err("a.ts is not conflicted."));
+
+      resolver.select(FILE_A.path);
+      await vi.waitFor(() => expect(bridge.tama.warn).toHaveBeenCalledWith("a.ts is not conflicted."));
+
+      expect(resolver.editHunks).toHaveLength(0);
+    });
+
+    it("is a no-op (no fetch) when selecting the ALREADY-selected file", async () => {
       resolver.repo = "repo1";
       resolver.files = [FILE_A];
       resolver.selected = FILE_A.path;
       resolver.remaining = new Set([FILE_A.path]);
-      vi.mocked(commands.conflictFileHunks).mockResolvedValueOnce(err("a.ts is not conflicted."));
 
-      await resolver.openEditMode();
-
-      expect(resolver.editMode).toBe(false);
-      expect(bridge.tama.warn).toHaveBeenCalledWith("a.ts is not conflicted.");
-    });
-
-    it("is a no-op when there is no selected file", async () => {
-      resolver.selected = null;
-
-      await resolver.openEditMode();
+      resolver.select(FILE_A.path);
+      await Promise.resolve();
 
       expect(commands.conflictFileHunks).not.toHaveBeenCalled();
-      expect(resolver.editMode).toBe(false);
     });
 
-    it("demo mode: simulates a single conflict hunk from the canned FAKE data, no IPC call", async () => {
+    it("demo mode: openDemo() simulates a single conflict hunk from the canned FAKE data, no IPC call", () => {
       resolver.openDemo("sha");
       const f = resolver.files[0];
 
-      await resolver.openEditMode();
-
       expect(commands.conflictFileHunks).not.toHaveBeenCalled();
-      expect(resolver.editMode).toBe(true);
       expect(resolver.editBinary).toBe(false);
       expect(resolver.editHunks).toEqual([{ kind: "conflict", context: null, ours: f.ours, base: f.base, theirs: f.theirs }]);
       expect(resolver.editValues).toEqual([f.ours]);
     });
 
-    // ADVERSARIALLY-FOUND FIX: a second, independent guard (on top of
-    // select()'s own editLoading refusal) for the case some other future
-    // path moves `selected` during the await.
+    // A second, independent guard (loadHunks()'s own path check) for the
+    // case some other future path moves `selected` during the await.
     it("discards a stale fetch result if the selected file changed while it was in flight", async () => {
       resolver.repo = "repo1";
       resolver.files = [FILE_A, FILE_B];
-      resolver.selected = FILE_A.path;
+      resolver.selected = null;
       resolver.remaining = new Set([FILE_A.path, FILE_B.path]);
       let resolveFetch!: (v: Awaited<ReturnType<typeof commands.conflictFileHunks>>) => void;
       vi.mocked(commands.conflictFileHunks).mockReturnValueOnce(
@@ -1349,16 +1350,16 @@ describe("in-app hunk-level resolution editor", () => {
         }),
       );
 
-      const pending = resolver.openEditMode();
+      resolver.select(FILE_A.path);
       // Simulate `selected` moving during the await (bypassing select()'s own
-      // guard directly, to prove THIS guard is independent of it).
+      // early-out directly, to prove THIS guard is independent of it).
       resolver.selected = FILE_B.path;
       resolveFetch(
         ok(fileHunks({ hunks: [{ kind: "conflict", context: null, ours: "A ours\n", base: "A base\n", theirs: "A theirs\n" }] })),
       );
-      await pending;
+      await Promise.resolve();
+      await Promise.resolve();
 
-      expect(resolver.editMode).toBe(false);
       expect(resolver.editHunks).toHaveLength(0);
     });
   });
@@ -1398,65 +1399,39 @@ describe("in-app hunk-level resolution editor", () => {
     });
   });
 
-  describe("closeEditMode", () => {
-    it("clears edit-mode state back to its defaults", () => {
-      resolver.editMode = true;
-      resolver.editBinary = true;
-      resolver.editHunks = [{ kind: "context", context: "x", ours: null, base: null, theirs: null }];
-      resolver.editValues = ["x"];
-
-      resolver.closeEditMode();
-
-      expect(resolver.editMode).toBe(false);
-      expect(resolver.editBinary).toBe(false);
-      expect(resolver.editHunks).toHaveLength(0);
-      expect(resolver.editValues).toHaveLength(0);
-    });
-  });
-
-  describe("select — switching files exits edit mode", () => {
-    it("closes edit mode when selecting a DIFFERENT file", () => {
+  describe("select — switching files reloads hunks", () => {
+    it("clears the OLD file's hunks immediately when selecting a DIFFERENT file", () => {
       resolver.files = [FILE_A, FILE_B];
       resolver.selected = FILE_A.path;
-      resolver.editMode = true;
       resolver.editHunks = [{ kind: "context", context: "x", ours: null, base: null, theirs: null }];
 
       resolver.select(FILE_B.path);
 
       expect(resolver.selected).toBe(FILE_B.path);
-      expect(resolver.editMode).toBe(false);
+      // clearHunks() runs synchronously before the new file's async fetch
+      // even starts, so the OLD file's hunks are gone right away — no flash
+      // of stale content while the new fetch is in flight.
       expect(resolver.editHunks).toHaveLength(0);
     });
 
-    it("re-selecting the SAME file leaves edit mode untouched", () => {
+    it("re-selecting the SAME file is a no-op — leaves its hunks untouched", () => {
       resolver.files = [FILE_A];
       resolver.selected = FILE_A.path;
-      resolver.editMode = true;
       resolver.editHunks = [{ kind: "context", context: "x", ours: null, base: null, theirs: null }];
 
       resolver.select(FILE_A.path);
 
-      expect(resolver.editMode).toBe(true);
       expect(resolver.editHunks).toHaveLength(1);
     });
 
-    // ADVERSARIALLY-FOUND FIX: switching files while a hunk fetch is in
-    // flight used to leave the OLD file's fetch result landing against
-    // whichever file the user had switched to by then.
-    it("refuses to switch files while a hunk fetch is in flight (editLoading)", () => {
+    // Switching files WHILE a hunk fetch is still in flight for the old one
+    // is allowed now (no more blocking guard) — loadHunks()'s own path check
+    // (see the "discards a stale fetch result" test above) is what keeps the
+    // old fetch's eventual result from landing against the new file.
+    it("switching files is never refused, even mid-fetch", () => {
       resolver.files = [FILE_A, FILE_B];
       resolver.selected = FILE_A.path;
       resolver.editLoading = true;
-
-      resolver.select(FILE_B.path);
-
-      expect(resolver.selected).toBe(FILE_A.path); // unchanged — the switch was refused
-    });
-
-    it("switching files works normally again once editLoading clears", () => {
-      resolver.files = [FILE_A, FILE_B];
-      resolver.selected = FILE_A.path;
-      resolver.editLoading = false;
 
       resolver.select(FILE_B.path);
 
@@ -1465,13 +1440,12 @@ describe("in-app hunk-level resolution editor", () => {
   });
 
   describe("saveEditResolution", () => {
-    it("saves the joined text, exits edit mode, and re-pulls authoritative conflict state on success", async () => {
+    it("saves the joined text, clears its hunks, and re-pulls authoritative conflict state on success", async () => {
       resolver.repo = "repo1";
       resolver.demo = false;
       resolver.files = [FILE_A, FILE_B];
       resolver.selected = FILE_A.path;
       resolver.remaining = new Set([FILE_A.path, FILE_B.path]);
-      resolver.editMode = true;
       resolver.editHunks = [{ kind: "conflict", context: null, ours: "ours\n", base: "base\n", theirs: "theirs\n" }];
       resolver.editValues = ["hand-resolved\n"];
 
@@ -1485,18 +1459,16 @@ describe("in-app hunk-level resolution editor", () => {
       await resolver.saveEditResolution();
 
       expect(commands.resolveConflictHunks).toHaveBeenCalledWith("repo1", FILE_A.path, "hand-resolved\n");
-      expect(resolver.editMode).toBe(false);
       expect(resolver.files).toEqual([FILE_B]);
       expect(resolver.remaining.has(FILE_A.path)).toBe(false);
     });
 
-    it("a backend failure surfaces via Tama and LEAVES edit mode open so the user doesn't lose their draft", async () => {
+    it("a backend failure surfaces via Tama and PRESERVES the draft (editValues untouched) so it isn't lost", async () => {
       resolver.repo = "repo1";
       resolver.demo = false;
       resolver.files = [FILE_A];
       resolver.selected = FILE_A.path;
       resolver.remaining = new Set([FILE_A.path]);
-      resolver.editMode = true;
       resolver.editValues = ["hand-resolved\n"];
 
       vi.mocked(commands.resolveConflictHunks).mockResolvedValueOnce({
@@ -1509,7 +1481,6 @@ describe("in-app hunk-level resolution editor", () => {
       await resolver.saveEditResolution();
 
       expect(bridge.tama.warn).toHaveBeenCalledWith("cannot write a.ts: permission denied");
-      expect(resolver.editMode).toBe(true);
       expect(resolver.editValues).toEqual(["hand-resolved\n"]);
     });
 
@@ -1537,12 +1508,12 @@ describe("in-app hunk-level resolution editor", () => {
     it("demo mode: mutates local state only, no IPC call", () => {
       resolver.openDemo("sha");
       const path = resolver.files[0].path;
-      resolver.editMode = true;
 
       resolver.saveEditResolution();
 
       expect(resolver.remaining.has(path)).toBe(false);
-      expect(resolver.editMode).toBe(false);
+      // Only one FAKE file — nothing left to advance to, so hunks clear.
+      expect(resolver.editHunks).toHaveLength(0);
       expect(commands.resolveConflictHunks).not.toHaveBeenCalled();
       expect(bridge.tama.say).toHaveBeenCalled();
     });

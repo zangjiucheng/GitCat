@@ -78,15 +78,10 @@
             {/each}
           </div>
           <div class="cf-main">
-            <div class="cf-actions">
-              <span class="cf-cur">{resolver.current?.path ?? ""}</span>
-              <span class="cf-take">
-                {#if resolver.editMode}
-                  <button class="btn ghost" disabled={resolver.busy} onclick={() => resolver.closeEditMode()}>Cancel</button>
-                  <button class="btn" disabled={resolver.busy || resolver.editBinary} onclick={() => resolver.saveEditResolution()}
-                    >{#if resolver.activeAction === "editSave"}<span class="spinner"></span> Saving…{:else}Save resolution{/if}</button
-                  >
-                {:else}
+            {#if resolver.current}
+              <div class="cf-actions">
+                <span class="cf-cur">{resolver.current.path}</span>
+                <span class="cf-take">
                   <button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("ours")}
                     >{#if resolver.activeAction === "ours"}<span class="spinner"></span> Taking…{:else}Take ours{/if}</button
                   ><button class="btn" disabled={!resolver.currentLive || resolver.busy} onclick={() => resolver.take("theirs")}
@@ -96,54 +91,55 @@
                     disabled={!resolver.currentLive || resolver.busy}
                     onclick={() => resolver.resolveWithExternalTool()}
                     >{#if resolver.activeAction === "tool"}<span class="spinner"></span> Resolving…{:else}Resolve with tool{/if}</button
-                  ><button
-                    class="btn ghost"
-                    disabled={!resolver.currentLive || resolver.busy || resolver.editLoading}
-                    onclick={() => resolver.openEditMode()}
-                    >{#if resolver.editLoading}<span class="spinner"></span> Loading…{:else}Edit resolution{/if}</button
                   >
-                {/if}
-              </span>
-            </div>
-            <div class="three-way" id="cfThree">
-              {#if resolver.editMode}
-                {#if resolver.editBinary}
-                  <div class="tw-col" style="grid-column:1/4;padding:14px">
-                    <span class="mut">This file is binary — use Take ours/theirs or Resolve with tool instead.</span>
-                  </div>
-                {:else}
-                  <div class="cf-edit">
-                    {#each resolver.editHunks as h, i}
-                      {#if h.kind === "context"}
-                        <pre class="cf-edit-context">{h.context}</pre>
-                      {:else}
-                        <div class="cf-edit-conflict">
-                          <div class="cf-edit-conflict-actions">
-                            <button class="btn ghost" onclick={() => resolver.useSide(i, "ours")}>Use ours</button>
-                            <button class="btn ghost" onclick={() => resolver.useSide(i, "theirs")}>Use theirs</button>
-                          </div>
-                          <textarea
-                            class="cf-edit-textarea"
-                            spellcheck="false"
-                            value={resolver.editValues[i]}
-                            oninput={(e) => resolver.setEditValue(i, (e.target as HTMLTextAreaElement).value)}
-                          ></textarea>
-                        </div>
-                      {/if}
-                    {/each}
-                  </div>
-                {/if}
-              {:else if resolver.current}
-                {@const lang = langFor(resolver.current.path)}
-                {@render col("ours", "Ours (HEAD)", resolver.current.ours, lang)}
-                {@render col("", "Base", resolver.current.base, lang)}
-                {@render col("theirs", "Theirs (picked)", resolver.current.theirs, lang)}
-              {:else}
-                <div class="tw-col" style="grid-column:1/4;padding:14px">
-                  <span class="mut">All files resolved — press Continue &amp; commit.</span>
+                </span>
+              </div>
+              {@const lang = langFor(resolver.current.path)}
+              <div class="cf-content" id="cfThree">
+                <div class="cf-compare">
+                  {@render col("ours", "Ours (HEAD)", resolver.current.ours, lang)}
+                  {@render col("theirs", "Theirs (picked)", resolver.current.theirs, lang)}
                 </div>
-              {/if}
-            </div>
+                <div class="cf-result">
+                  <div class="cf-result-head">
+                    <h6>Result</h6>
+                    <button class="btn" disabled={resolver.busy || resolver.editBinary || resolver.editLoading} onclick={() => resolver.saveEditResolution()}
+                      >{#if resolver.activeAction === "editSave"}<span class="spinner"></span> Saving…{:else}Save resolution{/if}</button
+                    >
+                  </div>
+                  {#if resolver.editLoading}
+                    <div class="cf-edit-loading"><span class="spinner"></span> Loading…</div>
+                  {:else if resolver.editBinary}
+                    <div class="cf-edit-loading"><span class="mut">This file is binary — use Take ours/theirs or Resolve with tool instead.</span></div>
+                  {:else}
+                    <div class="cf-edit">
+                      {#each resolver.editHunks as h, i}
+                        {#if h.kind === "context"}
+                          <pre class="cf-edit-context">{h.context}</pre>
+                        {:else}
+                          <div class="cf-edit-conflict">
+                            <div class="cf-edit-conflict-actions">
+                              <button class="btn ghost" onclick={() => resolver.useSide(i, "ours")}>Use ours</button>
+                              <button class="btn ghost" onclick={() => resolver.useSide(i, "theirs")}>Use theirs</button>
+                            </div>
+                            <textarea
+                              class="cf-edit-textarea"
+                              spellcheck="false"
+                              value={resolver.editValues[i]}
+                              oninput={(e) => resolver.setEditValue(i, (e.target as HTMLTextAreaElement).value)}
+                            ></textarea>
+                          </div>
+                        {/if}
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {:else}
+              <div class="cf-all-resolved">
+                <span class="mut">All files resolved — press Continue &amp; commit.</span>
+              </div>
+            {/if}
           </div>
         </div>
       {/if}
