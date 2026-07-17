@@ -420,6 +420,14 @@ if (IN_TAURI) {
   // backend's file-watcher reports an external git-dir change.
   w.__TAURI__?.event.listen("repo-changed", refreshFromExternalChange);
 
+  // Streaming graph load: legacy/main.ts's own startGraphStream() kicks off
+  // the backend walk (src-tauri/src/commands.rs's stream_graph) and returns
+  // almost instantly; every actual slice of data arrives here instead,
+  // forwarded straight to onGraphBatch() (bridge.ts's own doc comment has
+  // the full protocol — generation-based staleness filtering, incremental
+  // BACKEND/G growth, the "done" final-settle step).
+  w.__TAURI__?.event.listen("graph-batch", (e: { payload: unknown }) => bridge.onGraphBatch(e.payload));
+
   // Silent startup update probe — delayed so it never competes with the
   // repo-load/graph-layout work a cold launch is already doing. `check(true)`
   // settles quietly back to "idle" on "up to date"/error (see its own doc

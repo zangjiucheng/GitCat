@@ -1,16 +1,21 @@
 //! Graph read + layout (model after examples/graphcheck.rs).
 //!
 //! Builds a small temp repo with a linear run, a diverging branch, and a merge
-//! commit, then drives `gitcat_lib::commands::build_graph` (the non-#[tauri::
-//! command] entry point `load_graph` wraps) and asserts the row count, that a
-//! merge commit is flagged, that sha/subject round-trip, and that the swimlane
-//! layout never assigns the same lane to two active lines within one gap.
+//! commit, then drives `gitcat_lib::commands::build_graph` (the batch entry
+//! point) and `gitcat_lib::commands::stream_graph_core` (the streaming entry
+//! point `load_graph` now actually uses — see commands.rs's own doc comment
+//! on why it's split out testable, no `AppHandle` needed, exactly like
+//! `watch.rs`'s `start_watching`/`git_bisect.rs`'s `run_bisect`), and asserts
+//! the row count, that a merge commit is flagged, that sha/subject
+//! round-trip, and that the swimlane layout never assigns the same lane to
+//! two active lines within one gap.
 
 mod common;
 
 use std::collections::HashSet;
 
-use gitcat_lib::commands::build_graph;
+use gitcat_lib::commands::{build_graph, stream_graph_core};
+use gitcat_lib::model::GraphBatch;
 use common::short;
 
 /// Topology built here:
@@ -254,4 +259,184 @@ fn hidden_branch_chip_is_dropped_even_though_its_commit_remains_reachable_via_a_
         "the 'feature' chip must be dropped when feature isn't in the visible set, even though its commit is still shown: {:?}",
         feature_tip_row.refs.iter().map(|r| (&r.n, &r.t)).collect::<Vec<_>>()
     );
+}
+
+// ---------------------------------------------------------------------------
+// Streaming (stream_graph_core) — commands.rs's testable core, no AppHandle
+// needed. `load_graph` itself just wires this to real GraphLoadState/app.emit.
+// ---------------------------------------------------------------------------
+
+/// Concatenate every batch's rows/lane/color/merge, and reconstruct a CSR
+/// `gap_start` index from each row's own `gap_counts` entry — the exact
+/// inverse of what a real frontend listener does incrementally (see
+/// legacy/main.ts's own "graph-batch" handler), used here just to compare
+/// against `build_graph`'s own one-shot CSR output.
+struct Reconstructed {
+    rows: Vec<gitcat_lib::model::CommitMeta>,
+    lane: Vec<i16>,
+    color: Vec<u8>,
+    merge: Vec<u8>,
+    gap_start: Vec<i32>,
+    gap_top: Vec<i16>,
+    gap_bot: Vec<i16>,
+    gap_color: Vec<u8>,
+    lane_count: usize,
+}
+
+fn reconstruct(batches: &[GraphBatch]) -> Reconstructed {
+    let mut rows = Vec::new();
+    let mut lane = Vec::new();
+    let mut color = Vec::new();
+    let mut merge = Vec::new();
+    let mut gap_start = vec![0i32];
+    let mut gap_top = Vec::new();
+    let mut gap_bot = Vec::new();
+    let mut gap_color = Vec::new();
+    let mut lane_count = 0usize;
+
+    for b in batches {
+        rows.extend(b.rows.iter().cloned());
+        lane.extend(&b.lane);
+        color.extend(&b.color);
+        merge.extend(&b.merge);
+        lane_count = lane_count.max(b.lane_count);
+
+        let mut top_idx = gap_top.len() as i32;
+        for &count in &b.gap_counts {
+            top_idx += count;
+            gap_start.push(top_idx);
+        }
+        gap_top.extend(&b.gap_top);
+        gap_bot.extend(&b.gap_bot);
+        gap_color.extend(&b.gap_color);
+    }
+
+    Reconstructed { rows, lane, color, merge, gap_start, gap_top, gap_bot, gap_color, lane_count }
+}
+
+#[test]
+fn stream_graph_core_with_a_small_batch_size_reconstructs_the_same_graph_as_build_graph() {
+    let (repo, _) = build_repo();
+    let path = repo.path();
+
+    let expected = build_graph(&path, 50_000, None, None).expect("build_graph failed");
+
+    // batch_size=2 against a 5-commit repo forces 3 batches (2, 2, 1) — real
+    // multi-batch behavior, not just the trivial single-batch case.
+    let mut batches: Vec<GraphBatch> = Vec::new();
+    stream_graph_core(&path, None, None, 1, 2, usize::MAX, || false, |b| batches.push(b));
+
+    assert!(batches.len() >= 2, "batch_size=2 on 5 commits should force multiple batches, got {}", batches.len());
+    for (i, b) in batches.iter().enumerate() {
+        assert_eq!(b.done, i == batches.len() - 1, "only the LAST batch should be marked done");
+        assert_eq!(b.generation, 1);
+    }
+    assert!(batches.last().unwrap().error.is_none());
+    assert!(!batches.last().unwrap().truncated, "a complete walk under max_commits must not report truncated");
+
+    let got = reconstruct(&batches);
+    assert_eq!(got.lane, expected.lane);
+    assert_eq!(got.color, expected.color);
+    assert_eq!(got.merge, expected.merge);
+    assert_eq!(got.gap_start, expected.gap_start);
+    assert_eq!(got.gap_top, expected.gap_top);
+    assert_eq!(got.gap_bot, expected.gap_bot);
+    assert_eq!(got.gap_color, expected.gap_color);
+    assert_eq!(got.lane_count, expected.lane_count);
+    assert_eq!(got.rows.len(), expected.rows.len());
+    for (g, e) in got.rows.iter().zip(expected.rows.iter()) {
+        assert_eq!(g.sha, e.sha);
+        assert_eq!(g.subject, e.subject);
+        assert_eq!(g.merge, e.merge);
+    }
+}
+
+#[test]
+fn stream_graph_core_stops_early_and_never_marks_done_once_cancelled() {
+    let (repo, _) = build_repo(); // 5 commits
+    let path = repo.path();
+
+    let mut batches: Vec<GraphBatch> = Vec::new();
+    let mut seen = 0usize;
+    stream_graph_core(
+        &path,
+        None,
+        None,
+        7,
+        1, // batch_size=1: emits after every single commit, so cancellation mid-walk is observable
+        usize::MAX,
+        || {
+            seen += 1;
+            seen > 2 // cancel after letting 2 commits through
+        },
+        |b| batches.push(b),
+    );
+
+    assert!(!batches.is_empty(), "some batches should have been emitted before cancellation");
+    assert!(
+        batches.iter().map(|b| b.rows.len()).sum::<usize>() < 5,
+        "a cancelled walk must not deliver the full 5-commit history"
+    );
+    assert!(batches.iter().all(|b| !b.done), "a superseded/cancelled walk must never mark a batch done");
+    assert!(batches.iter().all(|b| b.generation == 7));
+}
+
+#[test]
+fn stream_graph_core_a_bad_path_still_emits_one_final_batch_carrying_the_error() {
+    let mut batches: Vec<GraphBatch> = Vec::new();
+    stream_graph_core("/no/such/path/at/all", None, None, 1, 100, usize::MAX, || false, |b| batches.push(b));
+
+    assert_eq!(batches.len(), 1, "a bad path should still produce exactly one terminal batch");
+    let b = &batches[0];
+    assert!(b.done);
+    assert!(b.rows.is_empty());
+    assert!(b.error.is_some(), "the open failure must be surfaced, not silently swallowed");
+}
+
+#[test]
+fn stream_graph_core_never_called_with_should_cancel_true_from_the_start_emits_nothing() {
+    let (repo, _) = build_repo();
+    let mut batches: Vec<GraphBatch> = Vec::new();
+    stream_graph_core(&repo.path(), None, None, 1, 100, usize::MAX, || true, |b| batches.push(b));
+    assert!(batches.is_empty(), "an already-superseded generation must never emit anything, not even an empty done batch");
+}
+
+#[test]
+fn stream_graph_core_hitting_max_commits_stops_early_and_marks_the_final_batch_truncated() {
+    let (repo, _) = build_repo(); // 5 commits
+    let path = repo.path();
+
+    let mut batches: Vec<GraphBatch> = Vec::new();
+    // max_commits=3 on a 5-commit repo: must stop well short of the real 5,
+    // and unlike cancellation (see
+    // stream_graph_core_stops_early_and_never_marks_done_once_cancelled above)
+    // this DOES still emit a final done batch — it's a real stopping point the
+    // frontend needs to know about, not a superseded walk quietly winding
+    // down. Expect max_commits+1 rows, not max_commits exactly: the ceiling
+    // check runs BEFORE a commit's own push() (so it can't cut off a commit
+    // already in flight), but the one-row lag (a row's trailing gap is only
+    // known once the NEXT commit is processed — see LayoutBuilder's own doc
+    // comment) means the row already sitting in `pending` when the ceiling
+    // trips still gets flushed as the walk's own "last row" — one harmless
+    // extra row past the nominal cap, not a real budget violation for a
+    // memory backstop.
+    stream_graph_core(&path, None, None, 1, 100, 3, || false, |b| batches.push(b));
+
+    assert_eq!(batches.len(), 1, "small enough to fit in one batch");
+    let b = &batches[0];
+    assert!(b.done, "hitting max_commits is a real stop, not a supersede — must still mark done");
+    assert!(b.truncated, "must be flagged truncated so the frontend doesn't mistake this for a complete history");
+    assert!(b.error.is_none(), "truncation isn't a walk error");
+    assert_eq!(b.rows.len(), 4, "stops at max_commits+1 rows (see comment above), well short of the repo's real 5");
+}
+
+#[test]
+fn stream_graph_core_a_complete_walk_under_max_commits_is_never_flagged_truncated() {
+    let (repo, _) = build_repo(); // 5 commits
+    let mut batches: Vec<GraphBatch> = Vec::new();
+    stream_graph_core(&repo.path(), None, None, 1, 100, 5, || false, |b| batches.push(b));
+    let b = batches.last().expect("at least one batch");
+    assert!(b.done);
+    assert!(!b.truncated, "reaching max_commits EXACTLY as the walk naturally ends is a complete finish, not a cap");
+    assert_eq!(b.rows.len(), 5);
 }

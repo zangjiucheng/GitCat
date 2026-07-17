@@ -75,7 +75,7 @@ pub struct TrackedRepo {
 /// remote fully visible (or vice versa) is a normal, expected combination —
 /// see `git_read::read_repo`'s own doc comment for exactly how each side is
 /// applied to the revwalk independently.
-#[derive(Serialize, Deserialize, Clone, specta::Type)]
+#[derive(Serialize, Deserialize, Clone, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct VisibleBranches {
     pub local: Option<Vec<String>>,

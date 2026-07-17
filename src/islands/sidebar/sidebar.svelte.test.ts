@@ -314,6 +314,30 @@ describe("branch visibility", () => {
     expect(sidebarCtrl.visibleLocal).toEqual(["main", "unmerged-no-upstream"]);
   });
 
+  it("recomputeAutoVisibility: recomputing to the SAME set a second time skips persist/reload entirely (regression — this used to loop forever, since reloadGraph's own tail re-triggers this exact method in auto mode)", async () => {
+    mockInTauri = true;
+    sidebarCtrl.head = "main";
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main" },
+      { name: "topic", sha: "b", ahead: null, behind: null, upstream: null },
+    ];
+    vi.mocked(commands.branchMergeStatus).mockResolvedValue(ok({ defaultBranch: "main", merged: [] }));
+
+    await sidebarCtrl.recomputeAutoVisibility("/repo");
+    expect(sidebarCtrl.visibleLocal).toEqual(["main", "topic"]);
+    expect(commands.setVisibleBranches).toHaveBeenCalledTimes(1);
+    expect(bridge.reloadGraph).toHaveBeenCalledTimes(1);
+
+    // Nothing about the repo changed — this is exactly what happens when
+    // reloadGraph's own tail calls sidebarCtrl.refresh() -> recomputeAutoVisibility
+    // again right after the call above. Must be a no-op, not another
+    // persist+reload (which would itself trigger another refresh, forever).
+    await sidebarCtrl.recomputeAutoVisibility("/repo");
+    expect(sidebarCtrl.visibleLocal).toEqual(["main", "topic"]);
+    expect(commands.setVisibleBranches).toHaveBeenCalledTimes(1);
+    expect(bridge.reloadGraph).toHaveBeenCalledTimes(1);
+  });
+
   it("toggleAutoMode: turning it off is a full reset, same as showAllBranches", async () => {
     mockInTauri = true;
     sidebarCtrl.autoMode = true;

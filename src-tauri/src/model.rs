@@ -7,7 +7,7 @@
 use serde::Serialize;
 
 /// One author/committer identity. `t` is a unix timestamp; the frontend formats it.
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, Clone, specta::Type)]
 pub struct Person {
     pub n: String, // name
     pub e: String, // email
@@ -15,14 +15,14 @@ pub struct Person {
 }
 
 /// A ref chip pointing at a commit. `t` is one of: head | branch | remote | tag.
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, Clone, specta::Type)]
 pub struct RefChip {
     pub n: String, // short label, e.g. "main", "origin/main", "v0.3.0"
     pub t: String, // kind
 }
 
 /// Per-commit metadata (one entry per row, row = index).
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, Clone, specta::Type)]
 pub struct CommitMeta {
     pub sha: String,     // short hash (7 chars)
     pub subject: String, // first line of the message
@@ -108,4 +108,54 @@ pub struct GraphData {
     pub lane_count: usize, // high-water lane count (max graph width)
     pub layout_ms: f64,    // layout time, for the perf HUD / M0 benchmark
     pub read_ms: f64,      // git read time
+}
+
+/// One incremental slice of a streaming graph load — see
+/// `commands::stream_graph`'s own doc comment for the full protocol this is
+/// part of. Emitted over the `"graph-batch"` Tauri event (not returned from
+/// `load_graph` itself, which only hands back the `generation` this and
+/// every sibling batch for the SAME load carry, so the frontend can drop any
+/// batch belonging to a since-superseded load).
+///
+/// `rows`/`lane`/`color`/`merge` are this batch's NEW rows only (append,
+/// don't replace) — same "one entry per row" shape as `GraphData`'s own
+/// fields, just a slice of the whole instead of the whole. Edges are
+/// similarly incremental: `gap_counts[i]` is how many of THIS batch's
+/// `gap_top`/`gap_bot`/`gap_color` entries belong to `rows[i]`'s own
+/// trailing gap (0 for a row whose trailing gap isn't finalized yet — always
+/// true for the very last row of every batch except the truly final one, see
+/// `stream_graph`'s one-row lag) — letting the frontend rebuild its own
+/// running `gapStart` CSR index by accumulating `gap_counts` alongside
+/// `rows`, without this event ever transmitting `gapStart` itself.
+#[derive(Serialize, Clone, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphBatch {
+    pub generation: u64,
+    pub rows: Vec<CommitMeta>,
+    pub lane: Vec<i16>,
+    pub color: Vec<u8>,
+    pub merge: Vec<u8>,
+    pub gap_counts: Vec<i32>,
+    pub gap_top: Vec<i16>,
+    pub gap_bot: Vec<i16>,
+    pub gap_color: Vec<u8>,
+    pub ncol: u8,
+    pub lane_count: usize, // running high-water lane count, so far
+    pub total_so_far: usize,
+    pub done: bool, // true only on the batch that ends the walk (exhausted, hit MAX_LIVE_COMMITS, or the walk itself errored)
+    pub elapsed_ms: f64, // wall-clock since this load started — read+layout are now fully interleaved, so there's no longer a meaningful separate read_ms/layout_ms split to report
+    /// Set only on the final (`done: true`) batch, only when the walk itself
+    /// failed partway (e.g. mid-walk corruption) rather than completing or
+    /// being superseded — a superseded generation never emits a final batch
+    /// at all (see `stream_graph`), so this is never populated for that case.
+    pub error: Option<String>,
+    /// Set only on the final (`done: true`) batch, only when the walk stopped
+    /// specifically because it hit `commands::MAX_LIVE_COMMITS` — distinct
+    /// from `error` (this isn't a failure, the walk just has more history
+    /// than the app is willing to hold in memory) and distinct from a
+    /// genuinely complete walk, which reaches `done: true` with this false.
+    /// The frontend uses this to tell the user their history was capped
+    /// rather than letting a truncated load quietly look identical to a
+    /// complete one.
+    pub truncated: bool,
 }

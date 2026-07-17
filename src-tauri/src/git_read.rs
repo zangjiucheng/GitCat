@@ -22,10 +22,21 @@ pub struct RepoRead {
     pub refs: HashMap<String, Vec<RefChip>>,
 }
 
-/// Walk up to `limit` commits reachable from all branches + HEAD, most-recent
-/// first — or, when `visible_local`/`visible_remote` are `Some`, only from
-/// the NAMED local/remote branches + HEAD (the current branch always stays
-/// reachable regardless of the filter — see [`push_head`]'s own call below).
+/// Walk commits reachable from all branches + HEAD, most-recent first — or,
+/// when `visible_local`/`visible_remote` are `Some`, only from the NAMED
+/// local/remote branches + HEAD (the current branch always stays reachable
+/// regardless of the filter — see [`push_head`]'s own call below). Drives
+/// `on_commit` once per commit as the revwalk produces it, INSTEAD of
+/// collecting a `Vec` up front — the streaming graph-load command
+/// (`commands::stream_graph`) interleaves layout and batch emission with the
+/// walk itself this way, rather than paying the full walk's latency before
+/// anything can be shown. Returning `false` from `on_commit` stops the walk
+/// early (a cap, or a superseded/cancelled load — see `GraphLoadState`).
+/// `on_commit`'s second argument is the SAME ref-chips map this function
+/// itself returns at the end (built once, upfront, before the walk even
+/// starts) — passed in too so a per-commit streaming caller (`commands::
+/// stream_graph`) can look up `refs.get(&sha)` inline while building each
+/// row's `CommitMeta`, without waiting for the whole walk to finish first.
 ///
 /// `visible_local`/`visible_remote` are INDEPENDENT, each its own `None`
 /// ("no filter for this kind — walk every branch of it, today's default") or
@@ -35,12 +46,12 @@ pub struct RepoRead {
 /// legitimate, expected combination, not an edge case.
 ///
 /// [`push_head`]: git2::Revwalk::push_head
-pub fn read_repo(
+pub fn walk_repo(
     path: &str,
-    limit: usize,
     visible_local: Option<&[String]>,
     visible_remote: Option<&[String]>,
-) -> Result<RepoRead, git2::Error> {
+    mut on_commit: impl FnMut(RawCommit, &HashMap<String, Vec<RefChip>>) -> bool,
+) -> Result<HashMap<String, Vec<RefChip>>, git2::Error> {
     let repo = crate::trust::open_repo(path)?;
 
     // --- ref chips: map each commit oid to the refs pointing at it ---
@@ -81,13 +92,12 @@ pub fn read_repo(
     // from the) visible set.
     let _ = walk.push_head();
 
-    let mut commits = Vec::with_capacity(limit.min(4096));
     for oid in walk {
         let oid = oid?;
         let c = repo.find_commit(oid)?;
         let a = c.author();
         let cm = c.committer();
-        commits.push(RawCommit {
+        let raw = RawCommit {
             id: oid,
             parents: c.parent_ids().collect(),
             subject: c.summary().unwrap_or("").to_string(),
@@ -101,12 +111,31 @@ pub fn read_repo(
                 cm.email().unwrap_or("").to_string(),
                 cm.when().seconds(),
             ),
-        });
-        if commits.len() >= limit {
+        };
+        if !on_commit(raw, &refs) {
             break;
         }
     }
 
+    Ok(refs)
+}
+
+/// Collect up to `limit` commits into a `Vec` — the pre-streaming shape,
+/// reimplemented as a thin wrapper over [`walk_repo`] so every existing
+/// caller/test keeps working unchanged. Prefer `walk_repo` directly for new
+/// code that can process commits as they arrive instead of waiting for the
+/// whole (capped) walk to finish.
+pub fn read_repo(
+    path: &str,
+    limit: usize,
+    visible_local: Option<&[String]>,
+    visible_remote: Option<&[String]>,
+) -> Result<RepoRead, git2::Error> {
+    let mut commits = Vec::with_capacity(limit.min(4096));
+    let refs = walk_repo(path, visible_local, visible_remote, |c, _refs| {
+        commits.push(c);
+        commits.len() < limit
+    })?;
     Ok(RepoRead { commits, refs })
 }
 

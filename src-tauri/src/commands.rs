@@ -1,14 +1,16 @@
 //! Tauri commands exposed to the frontend.
 
-use std::time::Instant;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use git2::{Delta, DiffFindOptions, DiffOptions, Patch};
 use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, State, Wry};
 
-use crate::git_read::read_repo;
-use crate::layout::{layout, NCOL};
+use crate::git_read::{read_repo, walk_repo};
+use crate::layout::{layout, LayoutBuilder, NCOL};
 use crate::model::{
-    CommitDetail, CommitMeta, DiffHunkRow, DiffLineRow, FileChange, GraphData, Person,
+    CommitDetail, CommitMeta, DiffHunkRow, DiffLineRow, FileChange, GraphBatch, GraphData, Person,
 };
 
 /// Static app metadata for the custom About panel — the same `PackageInfo`
@@ -46,24 +48,353 @@ pub fn get_app_info(app: tauri::AppHandle<tauri::Wry>) -> AppInfo {
 const MAX_FILES: usize = 40;
 const MAX_LINES_PER_FILE: usize = 2000;
 
-/// Default cap so a giant repo can't hang the UI on first load (M0 target: 10k < 1s).
-const DEFAULT_LIMIT: usize = 50_000;
+/// How many commits accumulate before one `"graph-batch"` event fires — small
+/// enough that the first batch (the newest, most-relevant commits) arrives
+/// almost instantly regardless of total repo size, large enough not to spam
+/// hundreds of thousands of tiny IPC events on a genuinely huge repo.
+const BATCH_SIZE: usize = 1000;
+/// Secondary flush trigger, alongside `BATCH_SIZE`'s row-count one: a row's
+/// OWN gap-segment count scales with how many lanes are simultaneously
+/// active where it falls in history, not with row count at all — a repo with
+/// genuinely wide/complex branching (many long-lived branches left
+/// unfiltered — e.g. auto-visibility mode deliberately never restricts
+/// `visible_remote`, see `sidebar.svelte.ts`'s `recomputeAutoVisibility`) can
+/// produce far more than `BATCH_SIZE` gap segments within a single 1000-row
+/// window. Capping the PAYLOAD size this way, independent of row count, keeps
+/// a single "graph-batch" event from growing pathologically large during a
+/// wide stretch of history.
+///
+/// ADVERSARIALLY-FOUND FIX: this used to be 20,000 — chosen back when the
+/// frontend appended each batch's gap arrays with `arr.push(...payload)`
+/// (a JS argument-count-limited spread, since fixed to a plain loop, see
+/// `legacy/main.ts`'s `appendAll`). With that limit gone, 20,000 was needless
+/// and actively harmful: a real widely-branched repo (hundreds of
+/// simultaneously open lanes, e.g. every unfiltered remote branch) hit this
+/// cap almost every commit, flushing batches of ~15-20 ROWS instead of
+/// `BATCH_SIZE`'s intended 1000 — tens of thousands of extra "graph-batch"
+/// IPC round-trips (each with its own fixed JS-side event-dispatch/redraw
+/// overhead) for the exact same total data, which is what made a genuinely
+/// large, widely-branched repo feel like it never finished loading. Raised
+/// 10x — still keeps any one payload to a few MB, comfortably local-IPC-sized
+/// — so a wide stretch of history batches at roughly ~150-200 rows instead of
+/// ~15-20.
+const MAX_GAP_SEGMENTS_PER_BATCH: usize = 200_000;
+/// Floor on the gap between two consecutive "graph-batch" emissions for the
+/// SAME load, enforced in [`stream_graph`] (not [`stream_graph_core`] itself
+/// — see that function's own doc comment on why the split keeps this out of
+/// the fast, deterministic unit tests). On a fast machine walking a real,
+/// widely-branched repo, `stream_graph_core` can fill a full batch (either
+/// `BATCH_SIZE` rows or `MAX_GAP_SEGMENTS_PER_BATCH` gap segments) in well
+/// under a millisecond — nothing stops it from emitting dozens of events per
+/// frame. Each individual event is cheap on the frontend, but many of them
+/// arriving back-to-back can occupy the WebView's main thread long enough
+/// that the separate requestAnimationFrame loop never gets a turn until the
+/// whole burst drains, which is what made the canvas look frozen/blank while
+/// the walk raced ahead of what the UI could actually show (see
+/// `legacy/main.ts`'s own `onGraphBatch` doc comment for the frontend half of
+/// this fix — a throttled explicit `draw()` call). Sleeping the REMAINDER of
+/// this interval (not an unconditional fixed sleep) after every intermediate
+/// batch caps the background walk's own emission rate — and therefore both
+/// its IPC/serialization overhead and the main thread's event-processing
+/// load — to roughly what one frame can absorb, without slowing down a walk
+/// that's naturally producing batches slower than this anyway (the common
+/// case for most real repos, where a batch takes longer than one frame to
+/// accumulate in the first place). Never applied to the final (`done`) batch,
+/// since delaying "loading is complete" serves no purpose.
+const MIN_BATCH_INTERVAL: Duration = Duration::from_millis(8);
+/// Caps how many commits stay resident in the frontend's live buffer, unlike
+/// the old `DEFAULT_LIMIT` (50,000) this replaces, which silently truncated
+/// EVERY real repo's history at that point regardless of size — streaming
+/// means the cost of a large history is paid incrementally/lazily instead of
+/// all at once up front, so there's no reason to cap depth for ordinary repos
+/// the way that old default did.
+///
+/// This one's a genuine memory backstop, not a UX default: `legacy/main.ts`'s
+/// `BACKEND` keeps every streamed row (and, for a widely-branched repo, WAY
+/// more gap segments than rows — see `MAX_GAP_SEGMENTS_PER_BATCH`'s own doc
+/// comment) resident in the WebView's memory for the lifetime of the repo
+/// being open, with no eviction — an unbounded walk against a truly enormous
+/// or pathologically wide repo (a many-million-commit synthetic stress case,
+/// or real history with an extreme concurrently-open-lane stretch) could
+/// otherwise grow that buffer into the hundreds of MB to low GB range. Half a
+/// million commits comfortably covers real-world history depth (for
+/// reference, a full CPython checkout across every maintenance branch is
+/// ~150,000 commits) while keeping worst-case memory bounded. Unlike a
+/// genuine walk error, hitting this is surfaced to the user as `truncated`
+/// (see `GraphBatch`'s own doc comment) rather than silently looking like a
+/// complete, ordinary finish.
+const MAX_LIVE_COMMITS: usize = 500_000;
 
-/// Tauri command wrapper — see [`build_graph`]. `app` is Tauri-injected (not
-/// part of the JS-facing call args, same as `repo_registry::list_tracked_repos`'s
-/// own `AppHandle` parameter) and used ONLY to look up this repo's persisted
-/// branch-visibility filter (`repo_registry::visible_branches_for`) before
-/// building the graph — see that function's own doc comment for why the
-/// lookup lives here rather than requiring the frontend to fetch-then-pass
-/// it on every call.
+/// Guards a streaming `load_graph` load against a since-superseded call —
+/// switching repos, closing one, or a manual refresh all call `load_graph`
+/// again with a NEW caller-supplied `request_id` (see `load_graph`'s own doc
+/// comment for why the caller, not this state, owns id generation), and each
+/// call's `accept()` overwrites `generation` so any still-running background
+/// walk for an OLDER id notices at its next per-commit check (see
+/// `stream_graph`) and stops on its own — no explicit cancel round-trip
+/// needed, unlike `git_bisect::BisectRunState`'s own cancel flag (this
+/// codebase's closest precedent for a long-running background op guarded by
+/// atomics with progress delivered via `app.emit(...)`). One load in flight
+/// at a time per app, mirroring `watch::WatchState`'s "one thing active at a
+/// time" scope.
+#[derive(Default)]
+pub struct GraphLoadState {
+    generation: AtomicU64,
+}
+
+impl GraphLoadState {
+    fn accept(&self, request_id: u64) {
+        self.generation.store(request_id, Ordering::SeqCst);
+    }
+    fn is_current(&self, gen: u64) -> bool {
+        self.generation.load(Ordering::SeqCst) == gen
+    }
+}
+
+/// Start a STREAMING graph load and return almost immediately — the actual
+/// data arrives entirely via `"graph-batch"` events (see [`stream_graph`]),
+/// not this command's own return value. Replaces the old "one big blocking
+/// call, capped at 50,000 commits" design: a huge repo used to make the user
+/// wait out the entire (capped) walk before anything painted; now the newest
+/// commits stream in almost instantly and the rest continues in the
+/// background, with no cap on total history depth short of the memory-bounded
+/// backstop (see [`MAX_LIVE_COMMITS`]'s own doc comment).
+///
+/// `request_id` is CALLER-supplied (a simple monotonic counter on the
+/// frontend — see `legacy/main.ts`'s `startGraphStream`), not generated here,
+/// specifically so the caller can record "this is the generation I'm now
+/// expecting" SYNCHRONOUSLY, before ever awaiting this command's own return.
+/// ADVERSARIALLY-FOUND BUG this fixes: with a server-generated id (the
+/// original design), the frontend only learned its own generation once this
+/// command's IPC round-trip finished — but the spawned background walk below
+/// starts running (on a separate OS thread) immediately after
+/// `state.accept()`, and can emit its first `"graph-batch"` event before that
+/// round-trip completes. The frontend's stale-batch filter would then reject
+/// that very first (and possibly several more) batches as belonging to a
+/// generation it hadn't recorded yet — the exact reason "Loading repository…"
+/// could keep showing well past when real data had actually started arriving.
+///
+/// Still fails fast and synchronously for the common "bad path" case (same
+/// as the old blocking command did) by opening the repo once, off-thread,
+/// before ever spawning the background walk — a repo that opens fine here
+/// but somehow fails mid-walk (rare) is instead surfaced via a final
+/// `GraphBatch.error`, since by that point this command has already returned.
 #[tauri::command]
 #[specta::specta]
-pub async fn load_graph(app: tauri::AppHandle<tauri::Wry>, path: String, limit: Option<usize>) -> Result<GraphData, String> {
-    crate::blocking::run_blocking(move || {
-        let vb = crate::repo_registry::visible_branches_for(&app, &path)?;
-        build_graph(&path, limit.unwrap_or(DEFAULT_LIMIT), vb.local.as_deref(), vb.remote.as_deref())
-    })
-    .await
+pub async fn load_graph(app: AppHandle<Wry>, state: State<'_, GraphLoadState>, path: String, request_id: u64) -> Result<(), String> {
+    // Accepted SYNCHRONOUSLY, before the probe below even starts — any batch
+    // the spawned walk emits from this point on will already match.
+    state.accept(request_id);
+    let probe_path = path.clone();
+    crate::blocking::run_blocking(move || crate::trust::open_repo(&probe_path).map(|_| ()))
+        .await
+        .map_err(|e| format!("cannot open repository: {}", e.message()))?;
+
+    let app2 = app.clone();
+    // NOT awaited: spawn_blocking's returned JoinHandle, simply dropped here,
+    // keeps the task running to completion detached — the same
+    // `run_blocking` primitive `blocking.rs` already wraps for every other
+    // repo-touching command, just not awaited this one time. This is what
+    // lets `load_graph` return here almost immediately while the real walk
+    // continues in the background, purely via emitted events.
+    tauri::async_runtime::spawn_blocking(move || stream_graph(&app2, request_id, &path));
+    Ok(())
+}
+
+/// The walk+layout+emit loop itself, run off-thread (see [`load_graph`]'s own
+/// doc comment) — looks up [`GraphLoadState`]/branch-visibility itself via
+/// `app.state()`/`repo_registry::visible_branches_for` rather than receiving
+/// them as parameters, since this runs detached from the command that
+/// spawned it.
+///
+/// Interleaves [`crate::git_read::walk_repo`]'s revwalk with a
+/// [`LayoutBuilder`], buffering up to [`BATCH_SIZE`] rows before emitting a
+/// `"graph-batch"` event — WITH A ONE-ROW LAG: a row's own trailing gap is
+/// only known once the NEXT commit is processed (`LayoutBuilder::push`'s own
+/// doc comment), so each row is held in `pending` until the following
+/// `push()` call reveals its gap, then moved into the batch. The very last
+/// row's trailing gap is empty (nothing below the last row — matches
+/// `layout()`'s own indexing) and is flushed once the walk itself ends.
+///
+/// Thin `AppHandle`-aware shell around [`stream_graph_core`] — looks up
+/// [`GraphLoadState`]/branch-visibility itself (rather than receiving them as
+/// parameters, since this runs detached from the command that spawned it)
+/// and wires `should_cancel`/`on_batch` to the real state/`app.emit`. Split
+/// this way so the actual walk/batch/cancellation logic is directly
+/// unit-testable without a real `AppHandle` — mirrors `watch.rs`'s
+/// `start_watching`/`watch_repo` split and `git_bisect.rs`'s
+/// `run_bisect`/`bisect_run_start` split (see `tests/graph.rs`).
+fn stream_graph(app: &AppHandle<Wry>, gen: u64, path: &str) {
+    let state = app.state::<GraphLoadState>();
+    if !state.is_current(gen) {
+        return; // superseded before this task even got scheduled — skip the vb lookup/walk-setup entirely
+    }
+    // A branch-visibility-filter lookup failure degrades to "no filter" (walk
+    // everything) rather than aborting the whole load — the filter is a
+    // convenience, not a correctness requirement, and `path` has ALREADY been
+    // confirmed to open fine by `load_graph`'s own synchronous probe.
+    let vb = crate::repo_registry::visible_branches_for(app, path).unwrap_or_default();
+
+    // See MIN_BATCH_INTERVAL's own doc comment — throttles the walk's own
+    // emission rate so it can never flood the frontend's main thread faster
+    // than roughly one batch per frame, regardless of how fast this machine
+    // can walk+layout a wide/dense stretch of history.
+    let mut last_emit = Instant::now();
+    stream_graph_core(
+        path,
+        vb.local.as_deref(),
+        vb.remote.as_deref(),
+        gen,
+        BATCH_SIZE,
+        MAX_LIVE_COMMITS,
+        || !state.is_current(gen),
+        |batch| {
+            let done = batch.done;
+            let _ = app.emit("graph-batch", batch);
+            if !done {
+                let elapsed = last_emit.elapsed();
+                if elapsed < MIN_BATCH_INTERVAL {
+                    std::thread::sleep(MIN_BATCH_INTERVAL - elapsed);
+                }
+            }
+            last_emit = Instant::now();
+        },
+    );
+}
+
+/// Checks `should_cancel()` before processing every commit: once it flips
+/// true (a newer `load_graph` call superseded this one), the walk just stops
+/// and this function returns WITHOUT ever calling `on_batch` with
+/// `done: true` — any batch already delivered is separately filtered out
+/// client-side by its `generation` not matching whatever the frontend is
+/// currently expecting, so a stale walk winding down never corrupts a newer
+/// one's in-progress graph.
+pub fn stream_graph_core(
+    path: &str,
+    visible_local: Option<&[String]>,
+    visible_remote: Option<&[String]>,
+    generation: u64,
+    batch_size: usize,
+    max_commits: usize,
+    mut should_cancel: impl FnMut() -> bool,
+    mut on_batch: impl FnMut(GraphBatch),
+) {
+    let t0 = Instant::now();
+    let mut builder = LayoutBuilder::new();
+    let mut total = 0usize;
+    // Set once the walk stops because it hit MAX_LIVE_COMMITS specifically —
+    // as opposed to a genuine natural finish or a should_cancel() supersede —
+    // so the final batch can tell the frontend "there's more, this was capped"
+    // rather than looking like an ordinary complete load.
+    let mut hit_ceiling = false;
+
+    let mut b_rows: Vec<CommitMeta> = Vec::with_capacity(batch_size);
+    let mut b_lane: Vec<i16> = Vec::with_capacity(batch_size);
+    let mut b_color: Vec<u8> = Vec::with_capacity(batch_size);
+    let mut b_merge: Vec<u8> = Vec::with_capacity(batch_size);
+    let mut b_gap_counts: Vec<i32> = Vec::with_capacity(batch_size);
+    let mut b_gap_top: Vec<i16> = Vec::new();
+    let mut b_gap_bot: Vec<i16> = Vec::new();
+    let mut b_gap_color: Vec<u8> = Vec::new();
+    // The most recently pushed row's own (meta, lane, color, merge) — held
+    // back exactly one step, see this function's own doc comment.
+    let mut pending: Option<(CommitMeta, i16, u8, u8)> = None;
+
+    macro_rules! flush {
+        ($done:expr, $error:expr, $truncated:expr) => {
+            if !b_rows.is_empty() || $done {
+                on_batch(GraphBatch {
+                    generation,
+                    rows: std::mem::take(&mut b_rows),
+                    lane: std::mem::take(&mut b_lane),
+                    color: std::mem::take(&mut b_color),
+                    merge: std::mem::take(&mut b_merge),
+                    gap_counts: std::mem::take(&mut b_gap_counts),
+                    gap_top: std::mem::take(&mut b_gap_top),
+                    gap_bot: std::mem::take(&mut b_gap_bot),
+                    gap_color: std::mem::take(&mut b_gap_color),
+                    ncol: NCOL,
+                    lane_count: builder.lane_count(),
+                    total_so_far: total,
+                    done: $done,
+                    truncated: $truncated,
+                    elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0,
+                    error: $error,
+                });
+            }
+        };
+    }
+
+    let result = walk_repo(path, visible_local, visible_remote, |raw, refs| {
+        if should_cancel() {
+            return false;
+        }
+        if total >= max_commits {
+            hit_ceiling = true;
+            return false;
+        }
+
+        let sha = raw.id.to_string();
+        let short_sha = sha[..7.min(sha.len())].to_string();
+        let row_refs = refs.get(&sha).cloned().unwrap_or_default();
+        let out = builder.push(&raw);
+
+        // `out.gap_segments` belongs to the PREVIOUS row (whatever is
+        // currently in `pending`) — see this function's own doc comment.
+        if let Some((pm, pl, pc, pmg)) = pending.take() {
+            b_rows.push(pm);
+            b_lane.push(pl);
+            b_color.push(pc);
+            b_merge.push(pmg);
+            b_gap_counts.push(out.gap_segments.len() as i32);
+            for &(t, bt, col) in &out.gap_segments {
+                b_gap_top.push(t);
+                b_gap_bot.push(bt);
+                b_gap_color.push(col);
+            }
+            total += 1;
+        }
+
+        pending = Some((
+            CommitMeta {
+                sha: short_sha,
+                subject: raw.subject.clone(),
+                an: Person { n: raw.author.0.clone(), e: raw.author.1.clone(), t: raw.author.2 },
+                cm: Person { n: raw.committer.0.clone(), e: raw.committer.1.clone(), t: raw.committer.2 },
+                refs: row_refs,
+                merge: out.merge == 1,
+            },
+            out.lane,
+            out.color,
+            out.merge,
+        ));
+
+        if b_rows.len() >= batch_size || b_gap_top.len() >= MAX_GAP_SEGMENTS_PER_BATCH {
+            flush!(false, None, false);
+        }
+
+        true
+    });
+
+    // A superseded generation stops silently here — never emits a final
+    // batch, matching this function's own doc comment.
+    if should_cancel() {
+        return;
+    }
+
+    // The last row's own trailing gap is empty (nothing below it) — matches
+    // `layout()`'s own indexing exactly.
+    if let Some((pm, pl, pc, pmg)) = pending.take() {
+        b_rows.push(pm);
+        b_lane.push(pl);
+        b_color.push(pc);
+        b_merge.push(pmg);
+        b_gap_counts.push(0);
+        total += 1;
+    }
+
+    let error = result.err().map(|e| e.message().to_string());
+    flush!(true, error, hit_ceiling);
 }
 
 /// Open `path`, walk its commits, lay out the swimlane graph, and return the

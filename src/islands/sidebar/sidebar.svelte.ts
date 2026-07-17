@@ -537,9 +537,33 @@ class SidebarState {
         console.error("branch_merge_status", e);
       }
     }
-    this.visibleLocal = this.locals
+    const nextLocal = this.locals
       .filter((b) => b.name === this.head || (b.ahead ?? 0) > 0 || (mergedInto !== null ? !mergedInto.has(b.name) : b.upstream === null))
       .map((b) => b.name);
+
+    // ADVERSARIALLY-FOUND FIX: persistVisibleBranches always reloads the
+    // graph (bridge.reloadGraph), and reloadGraph's own tail always calls
+    // sidebarCtrl.refresh() again — which, in auto mode, calls straight back
+    // into this method. Recomputing to the EXACT SAME set (the overwhelming
+    // common case: nothing in the repo actually changed between one refresh
+    // and the echo refresh reloadGraph itself triggers) used to still
+    // unconditionally persist+reload anyway, so refresh -> recompute ->
+    // persist -> reload -> refresh never terminated. Under the old blocking
+    // load_graph this just looked like "auto mode is a bit slow" (each spin
+    // paid for one whole synchronous walk); once load_graph started
+    // returning almost immediately (see commands.rs's streaming rewrite),
+    // the SAME loop span fast enough to pin the generation counter climbing
+    // forever with the graph never able to render a single batch — a repo
+    // with auto mode on could never finish loading at all. Comparing against
+    // the PREVIOUS set and bailing out when nothing actually changed is what
+    // breaks the cycle: the echo call computes the identical set and stops
+    // here instead of persisting/reloading again.
+    const prevLocal = this.visibleLocal;
+    const sameLocal = prevLocal !== null && prevLocal.length === nextLocal.length && nextLocal.every((n) => prevLocal.includes(n));
+    const sameRemote = this.visibleRemote === null; // this method always wants remote=null
+    if (sameLocal && sameRemote) return;
+
+    this.visibleLocal = nextLocal;
     this.visibleRemote = null;
     await this.persistVisibleBranches(repo);
   }

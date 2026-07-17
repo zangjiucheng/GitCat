@@ -86,6 +86,11 @@ export {
   // localStorage per frame), same live-re-export safety as applyThemeMode
   // above (hoisted `function`, no TDZ risk).
   setGraphShowAllTags,
+  // "graph-batch" event handler — src/main.ts's own event listener forwards
+  // every batch here (mirrors "repo-changed"/refreshFromExternalChange's own
+  // shape). Hoisted `function`, no TDZ risk (same reasoning as
+  // openRepo/pickRepo above).
+  onGraphBatch,
   // Submodule navigation stack: enterSubmodule(absolutePath) pushes the
   // current repo then opens the submodule via openRepo above;
   // goBackToParent() pops and reopens the popped path. NAV_STACK is the

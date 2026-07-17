@@ -276,6 +276,17 @@ fn specta_builder() -> Builder<tauri::Wry> {
         terminal::terminal_resize,
         terminal::terminal_kill,
     ])
+    // `GraphBatch` is never a command's own parameter/return type — it's ONLY
+    // ever emitted over the raw `"graph-batch"` event (see
+    // commands::stream_graph / src/legacy/main.ts's own listener), matching
+    // this codebase's established raw-emit/raw-listen convention (watch.rs's
+    // "repo-changed", git_bisect.rs's "bisect-run-progress") rather than
+    // tauri-specta's own typed `Event` derive/`collect_events!` mechanism,
+    // which isn't used anywhere else here. Without this explicit `.typ()`
+    // call the type would never get exported to bindings.ts at all, since
+    // specta only walks types reachable from a REGISTERED command's own
+    // signature by default.
+    .typ::<model::GraphBatch>()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -307,6 +318,7 @@ pub fn run() {
         .manage(watch::WatchState::default())
         .manage(git_bisect::BisectRunState::default())
         .manage(terminal::TerminalRegistry::default())
+        .manage(commands::GraphLoadState::default())
         // invoke_handler is the tauri-specta equivalent of generate_handler! —
         // command runtime behavior (Ok resolves / Err rejects) is unchanged.
         .invoke_handler(builder.invoke_handler())

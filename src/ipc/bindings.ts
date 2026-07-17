@@ -7,17 +7,38 @@
 
 export const commands = {
 /**
- * Tauri command wrapper — see [`build_graph`]. `app` is Tauri-injected (not
- * part of the JS-facing call args, same as `repo_registry::list_tracked_repos`'s
- * own `AppHandle` parameter) and used ONLY to look up this repo's persisted
- * branch-visibility filter (`repo_registry::visible_branches_for`) before
- * building the graph — see that function's own doc comment for why the
- * lookup lives here rather than requiring the frontend to fetch-then-pass
- * it on every call.
+ * Start a STREAMING graph load and return almost immediately — the actual
+ * data arrives entirely via `"graph-batch"` events (see [`stream_graph`]),
+ * not this command's own return value. Replaces the old "one big blocking
+ * call, capped at 50,000 commits" design: a huge repo used to make the user
+ * wait out the entire (capped) walk before anything painted; now the newest
+ * commits stream in almost instantly and the rest continues in the
+ * background, with no cap on total history depth short of the memory-bounded
+ * backstop (see [`MAX_LIVE_COMMITS`]'s own doc comment).
+ * 
+ * `request_id` is CALLER-supplied (a simple monotonic counter on the
+ * frontend — see `legacy/main.ts`'s `startGraphStream`), not generated here,
+ * specifically so the caller can record "this is the generation I'm now
+ * expecting" SYNCHRONOUSLY, before ever awaiting this command's own return.
+ * ADVERSARIALLY-FOUND BUG this fixes: with a server-generated id (the
+ * original design), the frontend only learned its own generation once this
+ * command's IPC round-trip finished — but the spawned background walk below
+ * starts running (on a separate OS thread) immediately after
+ * `state.accept()`, and can emit its first `"graph-batch"` event before that
+ * round-trip completes. The frontend's stale-batch filter would then reject
+ * that very first (and possibly several more) batches as belonging to a
+ * generation it hadn't recorded yet — the exact reason "Loading repository…"
+ * could keep showing well past when real data had actually started arriving.
+ * 
+ * Still fails fast and synchronously for the common "bad path" case (same
+ * as the old blocking command did) by opening the repo once, off-thread,
+ * before ever spawning the background walk — a repo that opens fine here
+ * but somehow fails mid-walk (rare) is instead surfaced via a final
+ * `GraphBatch.error`, since by that point this command has already returned.
  */
-async loadGraph(path: string, limit: number | null) : Promise<Result<GraphData, string>> {
+async loadGraph(path: string, requestId: number) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("load_graph", { path, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("load_graph", { path, requestId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2140,14 +2161,43 @@ configured: boolean;
  */
 local: boolean }
 /**
- * The full graph payload. Rows are in reverse-chronological/topological order
- * (child before parent). `lane`/`color`/`merge` are one-per-row.
+ * One incremental slice of a streaming graph load — see
+ * `commands::stream_graph`'s own doc comment for the full protocol this is
+ * part of. Emitted over the `"graph-batch"` Tauri event (not returned from
+ * `load_graph` itself, which only hands back the `generation` this and
+ * every sibling batch for the SAME load carry, so the frontend can drop any
+ * batch belonging to a since-superseded load).
  * 
- * Edges are stored CSR-style: `gap g` is the band between row g and row g+1;
- * `gapStart[g]..gapStart[g+1]` indexes into `gapTop`/`gapBot`/`gapColor`, each
- * entry a line segment {top lane @row g, bottom lane @row g+1, colour index}.
+ * `rows`/`lane`/`color`/`merge` are this batch's NEW rows only (append,
+ * don't replace) — same "one entry per row" shape as `GraphData`'s own
+ * fields, just a slice of the whole instead of the whole. Edges are
+ * similarly incremental: `gap_counts[i]` is how many of THIS batch's
+ * `gap_top`/`gap_bot`/`gap_color` entries belong to `rows[i]`'s own
+ * trailing gap (0 for a row whose trailing gap isn't finalized yet — always
+ * true for the very last row of every batch except the truly final one, see
+ * `stream_graph`'s one-row lag) — letting the frontend rebuild its own
+ * running `gapStart` CSR index by accumulating `gap_counts` alongside
+ * `rows`, without this event ever transmitting `gapStart` itself.
  */
-export type GraphData = { n: number; lane: number[]; color: number[]; merge: number[]; gapStart: number[]; gapTop: number[]; gapBot: number[]; gapColor: number[]; rows: CommitMeta[]; ncol: number; laneCount: number; layoutMs: number; readMs: number }
+export type GraphBatch = { generation: number; rows: CommitMeta[]; lane: number[]; color: number[]; merge: number[]; gapCounts: number[]; gapTop: number[]; gapBot: number[]; gapColor: number[]; ncol: number; laneCount: number; totalSoFar: number; done: boolean; elapsedMs: number; 
+/**
+ * Set only on the final (`done: true`) batch, only when the walk itself
+ * failed partway (e.g. mid-walk corruption) rather than completing or
+ * being superseded — a superseded generation never emits a final batch
+ * at all (see `stream_graph`), so this is never populated for that case.
+ */
+error: string | null; 
+/**
+ * Set only on the final (`done: true`) batch, only when the walk stopped
+ * specifically because it hit `commands::MAX_LIVE_COMMITS` — distinct
+ * from `error` (this isn't a failure, the walk just has more history
+ * than the app is willing to hold in memory) and distinct from a
+ * genuinely complete walk, which reaches `done: true` with this false.
+ * The frontend uses this to tell the user their history was capped
+ * rather than letting a truncated load quietly look identical to a
+ * complete one.
+ */
+truncated: boolean }
 /**
  * One hunk's selection. `header` is `DiffHunkRow::header` byte-for-byte, as
  * last fetched by `workdir_file_diff` — the anchor this module re-verifies

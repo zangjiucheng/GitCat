@@ -73,8 +73,9 @@ use crate::model::Person;
 /// Cap on returned history entries. Duplicated (own constant, not shared —
 /// see blame.rs's MAX_BLAME_LINES / commands.rs's MAX_FILES precedent) rather
 /// than an app-wide shared value. A single file's own touching-commit count
-/// is normally far smaller than the whole-repo graph's own 50_000 (commands::
-/// DEFAULT_LIMIT): even a churn-heavy CHANGELOG.md in a decade-old, huge repo
+/// is normally far smaller than a whole-repo revwalk (which has no fixed cap
+/// at all — `commands::stream_graph` streams incrementally instead of
+/// capping): even a churn-heavy CHANGELOG.md in a decade-old, huge repo
 /// rarely exceeds a few hundred to low thousands of touching commits. 2000
 /// leaves comfortable headroom for that pathological case while still
 /// bounding the `--follow` walk (whose per-candidate rename-similarity cost

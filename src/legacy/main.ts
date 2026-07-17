@@ -47,6 +47,11 @@ function readTheme(){
   if(typeof dirty!=="undefined")dirty=true;
 }
 const PADX=18, ROW_H_BASE=26, LANE_W_BASE=14, DOT_R_BASE=4.6;
+// Right-edge gutter reserved for the sha (was the ONLY thing living there —
+// hence the old bare "96") plus the author-name preview added alongside it
+// (see draw()'s row loop / authorOf() above): 96 for the sha itself, 8px gap,
+// 100px budget for the (truncated) author name.
+const AUTHOR_GUTTER=96+8+100;
 
 /* ============================================================
    2) SYNTHETIC DAG — Structure-of-Arrays, seeded & deterministic.
@@ -55,10 +60,31 @@ const PADX=18, ROW_H_BASE=26, LANE_W_BASE=14, DOT_R_BASE=4.6;
       O(visible rows), never O(N). This is the M0 perf story.
    ============================================================ */
 let G=null;
-/* When running inside Tauri, BACKEND holds the real GraphData from Rust; when
-   null (e.g. opened in a plain browser for design work) the synthetic generator
-   below is used instead, so this file works in both places. */
+/* When running inside Tauri, BACKEND holds the real graph payload from Rust —
+   grown incrementally as "graph-batch" events stream in (see
+   startGraphStream()/onGraphBatch() below), never one big blob from a single
+   load_graph response anymore; when null (e.g. opened in a plain browser for
+   design work) the synthetic generator below is used instead, so this file
+   works in both places. */
 let BACKEND=null;
+// The request id (THIS file's own monotonic counter — see
+// startGraphStream()'s own doc comment for why it's caller-owned, not
+// server-generated) for whichever stream is CURRENTLY meant to be populating
+// BACKEND. A batch whose own `generation` doesn't match this is stale
+// (superseded by a later startGraphStream() call — repo switch, manual
+// refresh, a "repo-changed" reload) and must be silently dropped rather than
+// corrupting the graph that's actually current.
+let graphGeneration=0;
+// Set by reloadGraph() when it wants the previously-selected row/pinned
+// workdir row restored once the CURRENT stream finishes (see
+// onGraphBatch()'s own `done` handling) — a fresh openRepo() never sets this,
+// since there's nothing to restore on a brand new open.
+let pendingReselect=null;
+// Last time onGraphBatch() forced a real (not just dirty-flagged) draw() —
+// see its own doc comment on why a throttled explicit draw is needed to keep
+// the canvas painting incrementally during a burst of rapid "graph-batch"
+// events, instead of only catching up once the burst quiets down.
+let lastForcedDrawAt=0;
 export let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it — exported (live binding) for the Svelte islands via bridge.ts
 const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
 const tinvoke = (cmd, args={}) => window.__TAURI__.core.invoke(cmd, args);
@@ -72,6 +98,15 @@ function hhex(r){ if(BACKEND)return BACKEND.rows[r]?BACKEND.rows[r].sha:"";
   let h=(Math.imul(r^0x9e3779b9,2654435761))>>>0;return("0000000"+h.toString(16)).slice(-7);}
 function msgOf(r){ if(BACKEND)return BACKEND.rows[r]?BACKEND.rows[r].subject:"";
   return r===0?"Head of main — you are here":MSGS[(Math.imul(r,2246822519)>>>4)%MSGS.length];}
+// Author name preview next to each row's own sha (see draw()'s row loop) —
+// same dual-mode "real BACKEND field, or a synthetic deterministic pick"
+// shape as hhex/msgOf above. AUTHORS itself is declared further down this
+// file (a `const`, not hoisted) — safe to reference here anyway since this
+// function's BODY only actually runs from draw()'s row loop, well after the
+// whole module (AUTHORS included) has finished evaluating; same reasoning
+// this file's own bridge.ts already documents for its live re-exports.
+function authorOf(r){ if(BACKEND)return BACKEND.rows[r]?BACKEND.rows[r].an.n:"";
+  return AUTHORS[(Math.imul(r,2654435761)>>>5)%AUTHORS.length].n;}
 function fakeAgo(r){const m=r*2+3;return m<60?m+"m":m<1440?Math.floor(m/60)+"h":Math.floor(m/1440)+"d";}
 
 function generateGraph(N){
@@ -239,12 +274,26 @@ function draw(){
     if(showAllTags&&G.allRefs){ const list=G.allRefs[r]; for(let i=0;i<list.length;i++) cx=drawChip(cx,y,list[i].label,list[i].kind)+8; }
     else { const ref=G.refs[r]; if(ref) cx=drawChip(cx,y,ref.label,ref.kind)+8; }
     if(rowH>=15){
+      // Reserve room for BOTH the author preview and the sha (AUTHOR_GUTTER
+      // below) — previously only the sha itself (96px) was reserved, so
+      // adding the author name here without widening this would have let a
+      // long commit message visually collide with it.
       ctx.font=Math.round(12.5*Math.min(1.25,layout.zoom))+"px "+FONT_UI; ctx.fillStyle=theme.text; ctx.textAlign="left";
-      let s=msgOf(r); const maxw=W-cx-96;
+      let s=msgOf(r); const maxw=W-cx-AUTHOR_GUTTER;
       if(ctx.measureText(s).width>maxw){while(s.length>4&&ctx.measureText(s+"…").width>maxw)s=s.slice(0,-1);s+="…";}
       ctx.fillText(s,cx,y);
       ctx.fillStyle=theme.muted; ctx.textAlign="right"; ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px ui-monospace,monospace";
-      ctx.fillText(hhex(r),W-14,y); ctx.textAlign="left";
+      const sha=hhex(r), shaW=ctx.measureText(sha).width;
+      // Author preview — right next to the sha, so who wrote a commit is
+      // visible at a glance without opening its detail panel. Own (slightly
+      // larger, UI-font-not-mono) style so it doesn't read as part of the
+      // hash itself; truncated the same way the message above is.
+      ctx.font=Math.round(11*Math.min(1.2,layout.zoom))+"px "+FONT_UI;
+      let a=authorOf(r); const maxAuthorW=AUTHOR_GUTTER-96-8;
+      if(ctx.measureText(a).width>maxAuthorW){while(a.length>1&&ctx.measureText(a+"…").width>maxAuthorW)a=a.slice(0,-1);a+="…";}
+      ctx.fillText(a,W-14-shaW-8,y);
+      ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px ui-monospace,monospace";
+      ctx.fillText(sha,W-14,y); ctx.textAlign="left";
     }
     ctx.globalAlpha=1;
   }
@@ -1133,23 +1182,59 @@ function tick(now){
 /* ============================================================
    11) BOOT
    ============================================================ */
+// Shared by loadGraph()'s real-repo branch AND onGraphBatch() below (streaming
+// growth) — builds the canvas's own `G` shape from whatever `BACKEND` (the
+// SoA payload the Rust side sends, real field names) currently holds. Pulled
+// out so growing G on every streaming batch doesn't duplicate this refs/
+// allRefs-mapping logic. snapRows/snapTs stay empty here exactly like the
+// single call site this replaces always left them (see this repo's own
+// history: real snapshot coverage was never wired onto the canvas — only
+// generateGraph()'s synthetic demo path ever populates them).
+// One backend RefChip ({n,t}) -> the canvas's own chip shape.
+function toChip(rc){ return {label:rc.n, kind:(rc.t==="tag"?"tag":rc.t==="head"?"head":rc.t==="remote"?"remote":"branch")}; }
+// ADVERSARIALLY-FOUND FIX: onGraphBatch() used to append each batch's arrays
+// via `dst.push(...src)` — spreading `src` into individual call arguments.
+// `rows`/`lane`/`color`/`merge` are always exactly `batch_size` long (safe),
+// but a batch's gap-segment count (gapTop/gapBot/gapColor) is NOT capped by
+// batch_size — it scales with how many lanes are simultaneously active where
+// that batch falls in history, which for a repo with genuinely wide/complex
+// branching (many long-lived branches — e.g. a real checkout of CPython, not
+// the linear synthetic repos this was benchmarked against) can run into the
+// tens of thousands PER BATCH. Spreading an array that large into a function
+// call hits JS engines' own argument-count limit and throws ("Maximum call
+// stack size exceeded" or similar) — silently crashing onGraphBatch mid-
+// batch, before BACKEND/G ever get updated and before `dirty` is ever set,
+// which is exactly consistent with "Loading repository…" never clearing: the
+// very first wide batch could crash before the canvas ever gets real data.
+// A plain loop has no such limit regardless of array size.
+function appendAll(dst, src){ for(let i=0;i<src.length;i++) dst.push(src[i]); }
+// g.refs/g.allRefs are ALREADY fully populated by the time this runs — see
+// startGraphStream() (seeds them empty) / onGraphBatch() (appends only the
+// NEW rows' chips per batch) — never recomputed here from g.rows.
+//
+// ADVERSARIALLY-FOUND FIX: this used to re-derive refs/allRefs from g.rows
+// via a full .map() on EVERY call, including every single streaming batch —
+// harmless for the one-shot old design, but for a streaming 100k+-commit
+// repo (e.g. a real checkout of CPython) that turned "grow G by one more
+// batch" into "re-map the ENTIRE row list so far," making the total cost
+// across ~100 batches roughly QUADRATIC (batch 1 remaps 1k rows, batch 50
+// remaps 50k, batch 100 remaps 100k) — slower overall than the old single
+// O(n) pass, not faster. allRefs: every ref on the row, not just the first —
+// the backend already collects all of them (row.refs is a full Vec<RefChip>,
+// see git_read.rs's collect_refs). Kept as a SEPARATE field (not a shape
+// change to refs itself) since detail.svelte.ts/cmdk.svelte.ts's own G.refs
+// fallback paths (no-BACKEND synthetic data only) still expect refs'
+// original one-object-or-null shape.
+function buildGFromBackend(g){
+  return {N:g.n, commitLane:g.lane, commitColor:g.color, isMerge:g.merge,
+     gapStart:g.gapStart, gapTop:g.gapTop, gapBot:g.gapBot, gapColor:g.gapColor, refs:g.refs, allRefs:g.allRefs, snapRows:[], snapTs:{}};
+}
 function loadGraph(N){
   resize(); // ensure the canvas matches the current wrap size (cold Tauri windows can report 0×0 at boot)
   const t0=performance.now(); let NN, ms;
-  if(BACKEND){ const g=BACKEND;
-    const chip=rc=>({label:rc.n, kind:(rc.t==="tag"?"tag":rc.t==="head"?"head":rc.t==="remote"?"remote":"branch")});
-    const refs=g.rows.map(row=> row.refs.length ? chip(row.refs[0]) : null);
-    // allRefs: every ref on the row, not just the first — the backend
-    // already collects all of them (row.refs is a full Vec<RefChip>, see
-    // git_read.rs's collect_refs), refs above just never used to look past
-    // index 0. Kept as a SEPARATE field (not a shape change to refs itself)
-    // since detail.svelte.ts/cmdk.svelte.ts's own G.refs fallback paths
-    // (no-BACKEND synthetic data only) still expect refs' original
-    // one-object-or-null shape.
-    const allRefs=g.rows.map(row=> row.refs.map(chip));
-    G={N:g.n, commitLane:g.lane, commitColor:g.color, isMerge:g.merge,
-       gapStart:g.gapStart, gapTop:g.gapTop, gapBot:g.gapBot, gapColor:g.gapColor, refs, allRefs, snapRows:[], snapTs:{}};
-    NN=g.n; ms=g.readMs+g.layoutMs;
+  if(BACKEND){
+    G=buildGFromBackend(BACKEND);
+    NN=BACKEND.n; ms=performance.now()-t0;
   } else { G=generateGraph(N); NN=N; ms=performance.now()-t0; }
   state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
   bisectDrawerCtrl.clearLocalMarks();
@@ -1160,6 +1245,148 @@ function loadGraph(N){
 /* ============================================================
    12) REAL REPOSITORY (Tauri): open a repo -> Rust load_graph
    ============================================================ */
+// Kick off a STREAMING graph load for `path` — load_graph itself now returns
+// almost immediately with just a generation id (see src-tauri/src/commands.rs's
+// own doc comment on why: the old design walked/laid-out/serialized the WHOLE,
+// 50,000-commit-capped history before responding at all). Resets BACKEND to an
+// empty-but-valid shape (same field names load_graph's old one-shot response
+// used) so loadGraph(0) right after this still works unchanged, and bumps
+// graphGeneration so onGraphBatch() below can tell this stream's batches apart
+// from whatever a still-winding-down PREVIOUS stream might still deliver.
+// ADVERSARIALLY-FOUND FIX: load_graph used to generate its OWN generation id
+// server-side and hand it back as this command's return value — but the
+// background walk it spawns starts running (on a separate OS thread)
+// immediately, and can emit its very FIRST "graph-batch" event before this
+// command's own IPC round-trip even finishes. graphGeneration was only ever
+// set here AFTER `await tinvoke(...)` resolved, so that first event (the one
+// specifically responsible for hiding the "Loading repository…" overlay —
+// see onGraphBatch's own doc comment) would arrive while graphGeneration
+// still held the PREVIOUS repo's id, get rejected as stale, and the overlay
+// would keep spinning well past when real data had actually started
+// streaming in. Now this file owns the id (a simple monotonic counter) and
+// records it SYNCHRONOUSLY, before the `await` even starts, so no event can
+// ever arrive "too early" relative to it.
+let graphRequestSeq=0;
+async function startGraphStream(path){
+  const myGen = ++graphRequestSeq;
+  graphGeneration = myGen;
+  BACKEND = { n:0, lane:[], color:[], merge:[], gapStart:[0], gapTop:[], gapBot:[], gapColor:[], rows:[], refs:[], allRefs:[], ncol:7, laneCount:0 };
+  await tinvoke("load_graph", { path, requestId: myGen });
+  return myGen;
+}
+// "graph-batch" event handler (registered once in src/main.ts, mirroring its
+// own "repo-changed" listener) — grows BACKEND/G with one incremental slice
+// at a time as the backend's revwalk+layout produces it, instead of the old
+// "wait for one giant response, then populate everything at once" shape.
+//
+// G is REASSIGNED (a new object) on every batch, never mutated in place —
+// load-bearing, not just style: cmdk.svelte.ts's own search-index cache
+// (`show()`'s `cacheG !== bridge.G` check) only rebuilds when G's object
+// REFERENCE changes, so an in-place mutation here would make ⌘K permanently
+// stop discovering any commit that streamed in after the first time it was
+// ever opened.
+//
+// G.N is kept in EXACT lockstep with how many rows/lane/color/merge entries
+// are actually present after each batch — never ahead of them. draw()'s own
+// per-row indexing (G.commitLane[r] etc.) is NOT null-safe the way
+// hhex()/msgOf()/authorOf() are (see those functions' own doc comments): an
+// out-of-range read silently draws nothing (NaN canvas coordinates), so this
+// invariant is what keeps that indexing safe by construction rather than
+// needing new bounds checks sprinkled through draw() itself.
+function onGraphBatch(payload){
+  if(!payload || payload.generation!==graphGeneration || !BACKEND) return; // stale/superseded — ignore
+
+  // ADVERSARIALLY-FOUND FIX: the "Loading repository…" overlay used to only
+  // hide in openRepo()'s own `finally`, which doesn't run until its ENTIRE
+  // tail finishes — sidebarCtrl.refresh, Safety.refresh, bisectCtrl.probeOnOpen,
+  // AND repoSummaryCtrl.maybeAutoShow (which, on a repo's first-ever open, runs
+  // its OWN separate blocking git-log walk, up to 20,000 commits). Streaming
+  // load_graph itself didn't help this overlay at all — it just made the
+  // canvas underneath it start filling in faster while the spinner stayed up
+  // regardless, for a real large repo (e.g. CPython's own history) easily
+  // outlasting the graph load itself. The overlay's actual job is just "the
+  // canvas has nothing current to show yet" — true from the empty
+  // loadGraph(0) right after startGraphStream() until THIS, the first real
+  // batch, arrives; hiding it here (not in openRepo()'s finally, which still
+  // hides it too, as a fallback for the open-FAILED path where no batch ever
+  // arrives at all) is what actually fixes the perceived wait.
+  const graphLoading=$("#graphLoading");
+  if(graphLoading) graphLoading.style.display="none";
+
+  appendAll(BACKEND.rows, payload.rows);
+  appendAll(BACKEND.lane, payload.lane);
+  appendAll(BACKEND.color, payload.color);
+  appendAll(BACKEND.merge, payload.merge);
+  // Incrementally append THIS batch's own refs/allRefs chips — O(batch size),
+  // not O(total rows so far). See buildGFromBackend's own doc comment for why
+  // that distinction is exactly what keeps a big streamed repo's total cost
+  // linear instead of quadratic.
+  for(const row of payload.rows){
+    BACKEND.refs.push(row.refs.length ? toChip(row.refs[0]) : null);
+    BACKEND.allRefs.push(row.refs.map(toChip));
+  }
+  // Rebuild the running CSR gapStart index from this batch's own per-row
+  // gapCounts — the wire protocol never transmits gapStart itself (see
+  // model.rs's own GraphBatch doc comment), only enough to reconstruct it
+  // incrementally, the same way this loop's cumulative sum works.
+  let idx=BACKEND.gapTop.length;
+  for(const count of payload.gapCounts){ idx+=count; BACKEND.gapStart.push(idx); }
+  appendAll(BACKEND.gapTop, payload.gapTop);
+  appendAll(BACKEND.gapBot, payload.gapBot);
+  appendAll(BACKEND.gapColor, payload.gapColor);
+  BACKEND.n = BACKEND.rows.length;
+  BACKEND.ncol = payload.ncol;
+  BACKEND.laneCount = payload.laneCount;
+
+  G=buildGFromBackend(BACKEND);
+  recomputeLayout(); // grows contentH/maxScroll to match the now-larger G.N
+  detailCtrl.showHero(BACKEND.n, payload.elapsedMs); // live-updating "N commits laid out in M ms"
+  dirty=true;
+  // ADVERSARIALLY-FOUND FIX: a real repo with a wide/dense stretch of history
+  // (many simultaneously open branch lanes) can have the backend emit dozens
+  // of "graph-batch" events within a handful of milliseconds — each one
+  // individually cheap, but back-to-back IPC event dispatches can occupy the
+  // main thread long enough that the separate requestAnimationFrame loop
+  // (tick(), which is what actually notices `dirty` and calls draw()) never
+  // gets a turn until the whole burst drains. The user-visible result: the
+  // canvas stays on whatever it last painted (often still blank, right after
+  // the loading overlay's own hide) for the ENTIRE burst, then the fully-
+  // streamed graph pops in all at once once things quiet down — instead of
+  // growing visibly, incrementally, the way each individual batch arriving
+  // should look. Forcing a real (not just dirty-flagged) draw() here, but
+  // throttled to roughly one per frame, guarantees the canvas keeps actually
+  // painting DURING a burst rather than only after it, without redundantly
+  // redrawing far more often than the display can even show.
+  const __now=performance.now();
+  if(payload.done || __now-lastForcedDrawAt>=16){ lastForcedDrawAt=__now; draw(); dirty=false; }
+
+  if(payload.done){
+    if(payload.error){ Tama.warn("Loading history stopped early — "+payload.error,5000); }
+    // Distinct from a genuine walk error (above) — the walk didn't fail, it
+    // just has more history than commands.rs's MAX_LIVE_COMMITS is willing
+    // to hold in memory at once. Surfacing this explicitly matters: without
+    // it, a capped load looks byte-for-byte identical to a real "that's the
+    // whole history" finish, silently hiding the fact that older commits
+    // past this point aren't loaded (and won't be found by search/⌘K/jump-
+    // to-commit either).
+    else if(payload.truncated){ Tama.set("curious"); Tama.warn("Loaded the most recent "+BACKEND.n.toLocaleString()+" commits — this repo's history is even longer, capped here to limit memory usage.",6500); }
+    else { Tama.set("curious"); Tama.say("Loaded "+BACKEND.n.toLocaleString()+" commits in "+payload.elapsedMs.toFixed(0)+" ms. にゃ〜",4200); }
+    if(pendingReselect){
+      if(pendingReselect.sha){
+        const row=BACKEND.rows.findIndex(r=>r.sha===pendingReselect.sha);
+        // Center within the scrollable viewport BELOW the pinned header
+        // (view.cssH-bandH()), not the full canvas height — see bandH()'s comment.
+        if(row>=0){ select(row); state.scrollTarget=clampScroll(row*layout.rowH-(view.cssH-bandH())/2); dirty=true; }
+      } else if(pendingReselect.workdir){ selectWorkdir(); }
+      pendingReselect=null;
+    }
+  } else if(BACKEND.n<=(payload.rows.length)){
+    // First batch of a fresh stream — a lighter-weight "still going" hint
+    // than the final toast above, so a big repo doesn't look hung between
+    // "Loading…" and "Loaded" while the rest streams in.
+    Tama.set("thinking"); Tama.say("Loading history… "+BACKEND.n.toLocaleString()+" so far…",4200);
+  }
+}
 // Last path segment of an absolute repo path, for display only (e.g. the
 // ".repo-pick" folder-name label, and the "← Back to <parent repo name>"
 // affordance below) — the ONE place this trimming/splitting happens, reused
@@ -1201,20 +1428,15 @@ async function openRepo(path){
   if(graphLoading) graphLoading.style.display="";
   Tama.set("thinking");
   try{
-    const g = await tinvoke("load_graph", { path });
-    // A large repo's response is tens of MB of JSON text; parsing it to get
-    // here is unavoidably synchronous (the invoke Promise only resolves once
-    // `g` already exists as a live object — nothing after `await` can move
-    // that cost off-thread). What CAN be fixed: everything from here through
-    // loadGraph(g.n) below used to run as one more uninterrupted synchronous
-    // stretch with no `await` in between, so the browser never got a single
-    // paint — not even the spinner/Tama "thinking" state already showing —
-    // until it was ALL done. A double-rAF forces one real paint first (the
-    // standard "wait for the next paint to actually commit" pattern — a
-    // single rAF can still land in the same batched frame as what follows
-    // it) so a big repo visibly shows it's working instead of looking hung.
-    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-    BACKEND = g; CUR_REPO = path;
+    // load_graph itself now returns almost instantly (a generation id, not
+    // the whole graph — see startGraphStream()'s own doc comment); the OLD
+    // double-rAF forced-paint hack here existed specifically to keep the
+    // browser from looking hung during the ONE giant, unavoidably-synchronous
+    // stretch that response used to require — there's no such stretch left
+    // to paint around now that the real data arrives in small streamed
+    // batches instead of one big blob.
+    await startGraphStream(path);
+    CUR_REPO = path;
     // Switching repos must close the pinned "Uncommitted changes" panel (if
     // open) FIRST — its file list belongs to whichever repo was open when
     // select() last populated it. Left open here, it would keep showing the
@@ -1235,7 +1457,12 @@ async function openRepo(path){
     // Undoes bootEmpty()'s own hide — a no-op unless the repo being opened
     // right now was reached via closeRepo() first.
     const bp=$(".branch-pill"); if(bp) bp.style.display="";
-    loadGraph(g.n);
+    // BACKEND is still empty at this point (startGraphStream() just reset
+    // it) — this paints the canvas's OWN empty/reset state immediately;
+    // onGraphBatch() (registered in src/main.ts) takes over from here as
+    // "graph-batch" events stream in, growing BACKEND/G and eventually
+    // showing the "Loaded N commits…" toast itself once the walk finishes.
+    loadGraph(0);
     await sidebarCtrl.refresh(CUR_REPO);
     await Safety.refresh();
     // Live refresh: watch this repo's git-dir for changes made outside the
@@ -1252,8 +1479,6 @@ async function openRepo(path){
     // failure (e.g. a read-only app config dir) must never block opening the
     // repo itself.
     tinvoke("track_repo_opened",{path}).catch(e=>console.error("track_repo_opened",e));
-    Tama.set("curious"); // a fresh repo just loaded — she's curious what's in it
-    Tama.say("Loaded "+g.n.toLocaleString()+" commits in "+(g.readMs+g.layoutMs).toFixed(0)+" ms. にゃ〜",4200);
     // Runs after loadGraph() (which resets the local bisect row-model) so a
     // recovered live bisect's canvas cues aren't immediately wiped out; and
     // after the "Loaded N commits" toast so a recovery notice (if any) is the
@@ -1380,13 +1605,16 @@ async function reloadGraph(preserveRow){
       // instead of trying (and failing) to find it in BACKEND.rows below.
       const keepWorkdir = nextPreserveRow && state.selectedRow===-2;
       try{
-        const g=await tinvoke("load_graph",{path:CUR_REPO});
-        BACKEND=g; loadGraph(g.n);
-        if(keepSha){ const row=BACKEND.rows.findIndex(r=>r.sha===keepSha);
-          // Center within the scrollable viewport BELOW the pinned header
-          // (view.cssH-bandH()), not the full canvas height — see bandH()'s comment.
-          if(row>=0){ select(row); state.scrollTarget=clampScroll(row*layout.rowH-(view.cssH-bandH())/2); dirty=true; } }
-        else if(keepWorkdir){ selectWorkdir(); }
+        // Same streaming load openRepo() itself now uses (see
+        // startGraphStream()'s own doc comment) — loadGraph(0) here resets to
+        // the now-empty BACKEND/selection exactly like a fresh open would;
+        // re-selecting keepSha/keepWorkdir has to wait until the stream
+        // actually finishes (the previously-selected commit might be deep in
+        // history, not necessarily in the very first batch), so it's handed
+        // to onGraphBatch() via pendingReselect instead of done inline here.
+        await startGraphStream(CUR_REPO);
+        loadGraph(0);
+        pendingReselect = keepSha ? {sha:keepSha} : (keepWorkdir ? {workdir:true} : null);
         await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
       }catch(e){ Tama.warn("Reload failed — "+e); console.error(e); }
       if(!reloadGraphPending) break;
@@ -1456,6 +1684,17 @@ async function pickRepo(){
 function bootEmpty(){
   BACKEND=null;
   CUR_REPO=null;
+  // Invalidates any still-in-flight "graph-batch" stream for whatever repo
+  // was just closed — unlike switching TO another repo (which naturally
+  // supersedes the old generation via startGraphStream()'s own NEW
+  // load_graph call), closing has no such follow-up call to piggyback on, so
+  // this locally forces onGraphBatch()'s own generation check to fail for
+  // any batch that arrives afterward instead of silently repopulating a
+  // "closed" repo's rows into the just-reset empty state below. -1 can never
+  // match a real backend-issued generation (GraphLoadState's counter starts
+  // at 1 and only ever increases).
+  graphGeneration=-1;
+  pendingReselect=null;
   Safety.snaps=[]; Safety.updateBadge();
   if(IN_TAURI) tinvoke("unwatch_repo").catch(e=>console.error("unwatch_repo",e));
   sidebarCtrl.reset();
@@ -1520,7 +1759,7 @@ function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, pickRepo, closeRepo, armDanger, updateBranchPill,
-  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags,
+  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
   // above for the full design) — enterSubmodule/goBackToParent are hoisted
   // `function` declarations, so no TDZ risk (same reasoning as
