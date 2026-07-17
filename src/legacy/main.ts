@@ -930,30 +930,80 @@ function highlight(src,lang){const rules=GRAMMARS[lang]||GRAMMARS.generic;let i=
 // --detail-w custom properties (see the .app rule); the canvas's own
 // ResizeObserver (below, on canvasWrap) already reacts to the resulting
 // width change, so no separate resize() call is needed here.
-function wireResizeHandle(handle,cssVar,min,max,fromRight){
+//
+// Collapse (added on top of the original resize-only behavior): dragging
+// PAST `min` no longer clamps flat — the panel keeps shrinking, live, down
+// to `railW`, so the user gets continuous visual feedback that they're now
+// collapsing it rather than just hitting a wall. Releasing decides the
+// RESTING state: past the halfway point between `min` and `railW`, it
+// snaps fully collapsed (panel content hidden via the `collapsed` class —
+// see index.html's own `.sidebar.collapsed`/`.detail.collapsed` rules);
+// short of halfway, it snaps back out to `min` instead of resting at some
+// in-between width nothing else in this app ever produces. Once collapsed,
+// the handle itself — now stretched by CSS to fill the whole (railW-wide)
+// panel and showing a chevron — IS the reopen affordance: a plain click
+// (tracked via `dragged`, same "did the pointer actually move" signal
+// index.html's own hint text promises) restores `lastExpandedW`, the most
+// recent width the panel actually rested at before collapsing.
+function wireResizeHandle(handle,cssVar,min,max,fromRight,railW){
   if(!handle) return;
-  let startX=0,startW=0;
   const root=document.documentElement;
+  let startX=0,startW=0,dragged=false,collapsed=false;
+  let lastExpandedW=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||min;
+  const collapseAt=(min+railW)/2;
+  function setCollapsed(v){
+    collapsed=v;
+    handle.parentElement.classList.toggle("collapsed",v);
+    handle.title=v?"Click to expand":"Drag to resize — drag past the edge to collapse";
+  }
   function onMove(e){
-    const dx=e.clientX-startX, raw=fromRight?startW-dx:startW+dx;
-    root.style.setProperty(cssVar, Math.max(min,Math.min(max,raw))+"px");
+    const dx=e.clientX-startX;
+    if(Math.abs(dx)>3) dragged=true;
+    const raw=fromRight?startW-dx:startW+dx;
+    const clamped=Math.max(railW,Math.min(max,raw));
+    root.style.setProperty(cssVar, clamped+"px");
+    setCollapsed(clamped<min);
   }
   function onUp(){
     document.removeEventListener("pointermove",onMove);
     document.removeEventListener("pointerup",onUp);
     handle.classList.remove("active"); root.classList.remove("resizing");
+    if(!dragged){
+      // A plain click, no drag at all: only meaningful while collapsed
+      // (reopen); a click on an already-expanded handle is a no-op, same as
+      // today.
+      if(collapsed){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
+      return;
+    }
+    const cur=parseFloat(getComputedStyle(root).getPropertyValue(cssVar));
+    if(cur<min){
+      if(cur<=collapseAt){ setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
+      else { setCollapsed(false); root.style.setProperty(cssVar, min+"px"); lastExpandedW=min; }
+    } else {
+      lastExpandedW=cur;
+    }
   }
-  handle.addEventListener("pointerdown",e=>{
-    e.preventDefault();
-    startX=e.clientX;
+  function beginDrag(startClientX){
+    startX=startClientX; dragged=false;
     startW=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||handle.parentElement.getBoundingClientRect().width;
     handle.classList.add("active"); root.classList.add("resizing");
     document.addEventListener("pointermove",onMove);
     document.addEventListener("pointerup",onUp);
+  }
+  handle.addEventListener("pointerdown",e=>{ e.preventDefault(); beginDrag(e.clientX); });
+  // Keyboard equivalent of the reopen-by-click path above — the handle is a
+  // real (tabindex="0" role="button") focusable control (see index.html),
+  // not just a drag target, so Enter/Space should work exactly like a plain
+  // click: reopen if collapsed, no-op otherwise. Never generates a live
+  // resize — dragged stays true so onUp's resize branch is never entered.
+  handle.addEventListener("keydown",e=>{
+    if(e.key!=="Enter"&&e.key!==" ") return;
+    e.preventDefault();
+    if(collapsed){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
   });
 }
-wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false);
-wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true);
+wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28);
+wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true,28);
 
 // theme
 function applyTheme(name){ document.documentElement.setAttribute("data-theme",name); readTheme(); saveSettings({themeMode:name}); }
