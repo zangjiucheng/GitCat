@@ -62,7 +62,7 @@ function err(error: string): { status: "error"; error: string } {
 }
 
 function branch(partial: Partial<LocalBranch>): LocalBranch {
-  return { name: "b", sha: "0".repeat(40), ahead: null, behind: null, upstream: null, ...partial };
+  return { name: "b", sha: "0".repeat(40), ahead: null, behind: null, upstream: null, lastCommitTime: 0, ...partial };
 }
 
 function refList(partial: Partial<RefList>): RefList {

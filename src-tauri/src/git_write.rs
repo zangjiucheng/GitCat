@@ -84,6 +84,13 @@ pub struct LocalBranch {
     pub ahead: Option<usize>,
     pub behind: Option<usize>,
     pub upstream: Option<String>,
+    /// This branch tip's own commit time (unix seconds) — sidebar.svelte.ts's
+    /// `recomputeAutoVisibility` uses this to also hide a STALE unmerged
+    /// branch (e.g. an old, no-longer-actively-touched release/maintenance
+    /// line — "merged into default" never becomes true for those by design,
+    /// since they're permanently parallel to default, not ahead of it) that
+    /// the merge-status check alone can't identify.
+    pub last_commit_time: i64,
 }
 
 /// A remote-tracking branch or a tag: just a name and the commit it resolves to.
@@ -315,10 +322,11 @@ fn list_refs_inner(path: &str) -> Result<RefList, git2::Error> {
             Some(n) => n.to_string(),
             None => continue, // non-UTF8 branch name -> skip
         };
-        let oid = match branch.get().peel_to_commit() {
-            Ok(c) => c.id(),
+        let commit = match branch.get().peel_to_commit() {
+            Ok(c) => c,
             Err(_) => continue,
         };
+        let oid = commit.id();
         let sha = oid.to_string();
         match btype {
             BranchType::Local => {
@@ -334,7 +342,14 @@ fn list_refs_inner(path: &str) -> Result<RefList, git2::Error> {
                     .and_then(|uc| repo.graph_ahead_behind(oid, uc.id()).ok())
                     .map(|(a, b)| (Some(a), Some(b)))
                     .unwrap_or((None, None));
-                locals.push(LocalBranch { name, sha, ahead, behind, upstream: upstream_name });
+                locals.push(LocalBranch {
+                    name,
+                    sha,
+                    ahead,
+                    behind,
+                    upstream: upstream_name,
+                    last_commit_time: commit.time().seconds(),
+                });
             }
             BranchType::Remote => {
                 if name.ends_with("/HEAD") {

@@ -29,6 +29,25 @@ fn list_refs_reports_current_branch_and_tip() {
     assert_eq!(refs.locals[0].behind, None);
 }
 
+/// Regression/coverage test for `LocalBranch.last_commit_time` — added so
+/// sidebar.svelte.ts's Auto-mode filter can also hide a STALE unmerged
+/// branch (see that field's own doc comment). TempRepo::commit fixes
+/// GIT_AUTHOR_DATE/GIT_COMMITTER_DATE to a constant ("2026-01-01T00:00:00Z",
+/// see common/mod.rs) specifically so this is a deterministic, exact-value
+/// assertion rather than a loose "is it roughly now" sanity check.
+#[test]
+fn list_refs_reports_the_branch_tips_own_commit_time() {
+    let repo = TempRepo::init("branch_ops_commit_time");
+    repo.commit("f.txt", "0\n", "c0");
+    let path = repo.path();
+
+    let refs = tauri::async_runtime::block_on(list_refs(path)).expect("list_refs failed");
+    assert_eq!(refs.locals.len(), 1);
+    // 2026-01-01T00:00:00Z in unix seconds — every TempRepo commit shares
+    // this fixed author/committer date (see common/mod.rs's own doc comment).
+    assert_eq!(refs.locals[0].last_commit_time, 1_767_225_600);
+}
+
 /// Regression/coverage test for `LocalBranch.upstream` (the topbar branch
 /// pill's hover-detail field): a branch WITH a configured upstream reports
 /// that upstream's own full shorthand (e.g. "origin/main"), alongside

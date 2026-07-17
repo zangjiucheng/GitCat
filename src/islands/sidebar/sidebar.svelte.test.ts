@@ -18,6 +18,13 @@ vi.mock("../../ipc/env", () => ({
   },
 }));
 
+// A "just committed" timestamp for LocalBranch fixtures that don't care about
+// staleness (see recomputeAutoVisibility's own STALE_DAYS doc comment) — a
+// single shared constant (not a fresh Date.now() at each call site) so two
+// fixtures built at slightly different moments still compare equal under
+// toEqual.
+const NOW = Date.now() / 1000;
+
 vi.mock("../../ipc/bindings", () => ({
   commands: {
     listRefs: vi.fn(),
@@ -140,13 +147,13 @@ describe("refresh", () => {
     vi.mocked(commands.listRefs).mockResolvedValueOnce(
       ok({
         head: "main",
-        locals: [{ name: "main", sha: "abc1234", ahead: 1, behind: 0, upstream: "origin/main" }],
+        locals: [{ name: "main", sha: "abc1234", ahead: 1, behind: 0, upstream: "origin/main", lastCommitTime: NOW }],
         remotes: [{ name: "origin/main", sha: "abc1234" }],
         tags: [{ name: "v1.0.0", sha: "abc1234" }],
       }),
     );
     await sidebarCtrl.refresh("/repo");
-    expect(sidebarCtrl.locals).toEqual([{ name: "main", sha: "abc1234", ahead: 1, behind: 0, upstream: "origin/main" }]);
+    expect(sidebarCtrl.locals).toEqual([{ name: "main", sha: "abc1234", ahead: 1, behind: 0, upstream: "origin/main", lastCommitTime: NOW }]);
     expect(sidebarCtrl.head).toBe("main");
     expect(sidebarCtrl.hasRepo).toBe(true);
     expect(bridge.updateBranchPill).toHaveBeenCalledWith("main", sidebarCtrl.locals);
@@ -183,9 +190,9 @@ describe("refresh", () => {
       ok({
         head: "main",
         locals: [
-          { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main" },
-          { name: "feature", sha: "b", ahead: 2, behind: 0, upstream: "origin/feature" },
-          { name: "merged-done", sha: "c", ahead: 0, behind: 0, upstream: "origin/merged-done" },
+          { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main", lastCommitTime: NOW },
+          { name: "feature", sha: "b", ahead: 2, behind: 0, upstream: "origin/feature", lastCommitTime: NOW },
+          { name: "merged-done", sha: "c", ahead: 0, behind: 0, upstream: "origin/merged-done", lastCommitTime: NOW },
         ],
         remotes: [],
         tags: [],
@@ -231,8 +238,8 @@ describe("branch visibility", () => {
   it("toggleBranchVisible: first toggle (hiding one) seeds from the full current list, not empty", async () => {
     mockInTauri = true;
     sidebarCtrl.locals = [
-      { name: "main", sha: "a", ahead: null, behind: null, upstream: null },
-      { name: "dev", sha: "b", ahead: null, behind: null, upstream: null },
+      { name: "main", sha: "a", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+      { name: "dev", sha: "b", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
     ];
     sidebarCtrl.visibleLocal = null; // unfiltered
     await sidebarCtrl.toggleBranchVisible("/repo", "local", "dev");
@@ -244,7 +251,7 @@ describe("branch visibility", () => {
   it("toggleBranchVisible: a manual toggle turns auto mode off (grabbing the wheel exits autopilot)", async () => {
     mockInTauri = true;
     sidebarCtrl.autoMode = true;
-    sidebarCtrl.locals = [{ name: "main", sha: "a", ahead: null, behind: null, upstream: null }];
+    sidebarCtrl.locals = [{ name: "main", sha: "a", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];
     sidebarCtrl.visibleLocal = ["main"];
     await sidebarCtrl.toggleBranchVisible("/repo", "local", "main");
     expect(sidebarCtrl.autoMode).toBe(false);
@@ -285,9 +292,9 @@ describe("branch visibility", () => {
     mockInTauri = true;
     sidebarCtrl.head = "main";
     sidebarCtrl.locals = [
-      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main" },
-      { name: "no-upstream", sha: "b", ahead: null, behind: null, upstream: null },
-      { name: "merged-and-pushed", sha: "c", ahead: 0, behind: 0, upstream: "origin/merged-and-pushed" },
+      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main", lastCommitTime: NOW },
+      { name: "no-upstream", sha: "b", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+      { name: "merged-and-pushed", sha: "c", ahead: 0, behind: 0, upstream: "origin/merged-and-pushed", lastCommitTime: NOW },
     ];
     vi.mocked(commands.branchMergeStatus).mockResolvedValueOnce(ok({ defaultBranch: "main", merged: ["merged-and-pushed"] }));
 
@@ -302,13 +309,13 @@ describe("branch visibility", () => {
     mockInTauri = true;
     sidebarCtrl.head = "main";
     sidebarCtrl.locals = [
-      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main" },
+      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main", lastCommitTime: NOW },
       // Never pushed at all (e.g. a local-only topic branch, or its remote
       // counterpart was deleted after a squash-merge) — upstream: null, but
       // it IS fully merged into main. Must be hidden just like a merged
       // branch that happens to have upstream tracking.
-      { name: "merged-no-upstream", sha: "b", ahead: null, behind: null, upstream: null },
-      { name: "unmerged-no-upstream", sha: "c", ahead: null, behind: null, upstream: null },
+      { name: "merged-no-upstream", sha: "b", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+      { name: "unmerged-no-upstream", sha: "c", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
     ];
     vi.mocked(commands.branchMergeStatus).mockResolvedValueOnce(ok({ defaultBranch: "main", merged: ["merged-no-upstream"] }));
 
@@ -321,8 +328,8 @@ describe("branch visibility", () => {
     mockInTauri = true;
     sidebarCtrl.head = "main";
     sidebarCtrl.locals = [
-      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main" },
-      { name: "topic", sha: "b", ahead: null, behind: null, upstream: null },
+      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main", lastCommitTime: NOW },
+      { name: "topic", sha: "b", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
     ];
     vi.mocked(commands.branchMergeStatus).mockResolvedValue(ok({ defaultBranch: "main", merged: [] }));
 
@@ -355,8 +362,8 @@ describe("branch visibility", () => {
     mockInTauri = true;
     sidebarCtrl.head = "main";
     sidebarCtrl.locals = [
-      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main" },
-      { name: "old-but-unresolved", sha: "b", ahead: 0, behind: 0, upstream: "origin/old-but-unresolved" },
+      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main", lastCommitTime: NOW },
+      { name: "old-but-unresolved", sha: "b", ahead: 0, behind: 0, upstream: "origin/old-but-unresolved", lastCommitTime: NOW },
     ];
     vi.mocked(commands.branchMergeStatus).mockResolvedValueOnce(ok({ defaultBranch: null, merged: [] }));
 
@@ -369,9 +376,9 @@ describe("branch visibility", () => {
     mockInTauri = false;
     sidebarCtrl.head = "main";
     sidebarCtrl.locals = [
-      { name: "main", sha: "a", ahead: 2, behind: null, upstream: "origin/main" },
-      { name: "feat/inline-diff", sha: "b", ahead: null, behind: 3, upstream: "origin/feat/inline-diff" },
-      { name: "fix/lane-cull", sha: "c", ahead: null, behind: null, upstream: null },
+      { name: "main", sha: "a", ahead: 2, behind: null, upstream: "origin/main", lastCommitTime: NOW },
+      { name: "feat/inline-diff", sha: "b", ahead: null, behind: 3, upstream: "origin/feat/inline-diff", lastCommitTime: NOW },
+      { name: "fix/lane-cull", sha: "c", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
     ];
     await sidebarCtrl.recomputeAutoVisibility("/repo");
     // main (current + ahead) and fix/lane-cull (no upstream) are kept;
@@ -383,9 +390,46 @@ describe("branch visibility", () => {
     expect(commands.branchMergeStatus).not.toHaveBeenCalled();
   });
 
+  it("recomputeAutoVisibility: a STALE unmerged branch is hidden (regression — a repo whose local branches are permanently-parallel release lines, e.g. cpython's 3.10/3.11/3.13 alongside main, never becomes 'merged into default' for ANY of them, so the merge-status check alone left almost everything visible forever)", async () => {
+    mockInTauri = true;
+    sidebarCtrl.head = "main";
+    const STALE_DAYS = 90;
+    const old = NOW - (STALE_DAYS + 1) * 86400;
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main", lastCommitTime: NOW },
+      // Neither merged nor pushed-ahead, and hasn't been touched in over 90
+      // days — exactly the "old release/maintenance branch nobody's actively
+      // working on" case this fix targets.
+      { name: "release/3.10", sha: "b", ahead: null, behind: null, upstream: null, lastCommitTime: old },
+      // Same unmerged/no-upstream shape, but recently touched — an actively
+      // maintained branch must NOT disappear just for having no upstream.
+      { name: "release/3.13", sha: "c", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+    ];
+    vi.mocked(commands.branchMergeStatus).mockResolvedValue(ok({ defaultBranch: "main", merged: [] }));
+
+    await sidebarCtrl.recomputeAutoVisibility("/repo");
+
+    expect(sidebarCtrl.visibleLocal).toEqual(["main", "release/3.13"]);
+  });
+
+  it("recomputeAutoVisibility: staleness never hides the current branch or one with unpushed commits", async () => {
+    mockInTauri = true;
+    sidebarCtrl.head = "main";
+    const old = NOW - 365 * 86400; // a year old
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main", lastCommitTime: old },
+      { name: "ancient-but-unpushed", sha: "b", ahead: 1, behind: 0, upstream: "origin/ancient-but-unpushed", lastCommitTime: old },
+    ];
+    vi.mocked(commands.branchMergeStatus).mockResolvedValue(ok({ defaultBranch: "main", merged: [] }));
+
+    await sidebarCtrl.recomputeAutoVisibility("/repo");
+
+    expect(sidebarCtrl.visibleLocal).toEqual(["main", "ancient-but-unpushed"]);
+  });
+
   it("design mode: toggling updates local state only, no IPC call, no graph reload", async () => {
     mockInTauri = false;
-    sidebarCtrl.locals = [{ name: "main", sha: "a", ahead: null, behind: null, upstream: null }];
+    sidebarCtrl.locals = [{ name: "main", sha: "a", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];
     sidebarCtrl.visibleLocal = null;
     await sidebarCtrl.toggleBranchVisible("/repo", "local", "main");
     expect(sidebarCtrl.visibleLocal).toEqual([]);
@@ -1122,7 +1166,7 @@ describe("checkoutRemote", () => {
 
   it("with an existing local branch of the same short name: switches to it instead of creating a duplicate", async () => {
     mockInTauri = true;
-    sidebarCtrl.locals = [{ name: "feature-x", sha: "a1", ahead: null, behind: null, upstream: null }];
+    sidebarCtrl.locals = [{ name: "feature-x", sha: "a1", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];
     vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [] });
     await sidebarCtrl.checkoutRemote("origin/feature-x");
     expect(commands.checkout).toHaveBeenCalledWith("/repo", "feature-x");
@@ -1158,7 +1202,7 @@ describe("checkoutRemote", () => {
 
   it("forwards the position through to checkout() when delegating to an existing local branch of the same short name", async () => {
     mockInTauri = true;
-    sidebarCtrl.locals = [{ name: "feature-x", sha: "a1", ahead: null, behind: null, upstream: null }];
+    sidebarCtrl.locals = [{ name: "feature-x", sha: "a1", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];
     vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "would be overwritten", backupRef: null, conflictingFiles: ["a.txt"] });
     await sidebarCtrl.checkoutRemote("origin/feature-x", { x: 5, y: 6 });
     expect(sidebarCtrl.dirtyCheckoutMenu).toEqual({ name: "feature-x", startPoint: null, files: ["a.txt"], x: 5, y: 6 });
@@ -1941,7 +1985,7 @@ describe("setSnapshots / reset", () => {
   });
 
   it("reset clears everything including an open menu, tag menu, submodule menu, merge menu, hasRepo, and submodules", () => {
-    sidebarCtrl.locals = [{ name: "main", sha: "x", ahead: null, behind: null, upstream: null }];
+    sidebarCtrl.locals = [{ name: "main", sha: "x", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];
     sidebarCtrl.head = "main";
     sidebarCtrl.menu = { name: "main", isCurrent: true, upstream: null, x: 0, y: 0 };
     sidebarCtrl.tagMenu = { name: "v1.0.0", x: 0, y: 0 };

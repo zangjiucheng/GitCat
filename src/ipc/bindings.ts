@@ -2265,7 +2265,16 @@ export type HunkSelection = { header: string; lines: SelectedLine[] }
  * what "ahead"/"behind" are actually relative TO (the topbar branch pill's
  * hover detail), not just show the bare numbers.
  */
-export type LocalBranch = { name: string; sha: string; ahead: number | null; behind: number | null; upstream: string | null }
+export type LocalBranch = { name: string; sha: string; ahead: number | null; behind: number | null; upstream: string | null; 
+/**
+ * This branch tip's own commit time (unix seconds) — sidebar.svelte.ts's
+ * `recomputeAutoVisibility` uses this to also hide a STALE unmerged
+ * branch (e.g. an old, no-longer-actively-touched release/maintenance
+ * line — "merged into default" never becomes true for those by design,
+ * since they're permanently parallel to default, not ahead of it) that
+ * the merge-status check alone can't identify.
+ */
+lastCommitTime: number }
 /**
  * Result of `merge_queue_status` — a plain read, mirrors git_bisect.rs's own
  * `BisectStatus`: always returns a value (`in_progress:false` + empty vecs

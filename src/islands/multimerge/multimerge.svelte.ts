@@ -74,9 +74,9 @@ export type MultiMergeStrategy = "auto" | "no-ff" | "ff-only";
 // DEMO_PLAN: a small canned branch list so the browser preview still shows a
 // populated picker without a real backend.
 const DEMO_BRANCHES: LocalBranch[] = [
-  { name: "feat/inline-diff", sha: "1111111111111111111111111111111111111111", ahead: 3, behind: 0, upstream: null },
-  { name: "fix/lane-cull", sha: "2222222222222222222222222222222222222222", ahead: 1, behind: 2, upstream: null },
-  { name: "release/0.3", sha: "3333333333333333333333333333333333333333", ahead: 5, behind: 0, upstream: null },
+  { name: "feat/inline-diff", sha: "1111111111111111111111111111111111111111", ahead: 3, behind: 0, upstream: null, lastCommitTime: Date.now() / 1000 - 3600 },
+  { name: "fix/lane-cull", sha: "2222222222222222222222222222222222222222", ahead: 1, behind: 2, upstream: null, lastCommitTime: Date.now() / 1000 - 86400 },
+  { name: "release/0.3", sha: "3333333333333333333333333333333333333333", ahead: 5, behind: 0, upstream: null, lastCommitTime: Date.now() / 1000 - 7 * 86400 },
 ];
 
 class MultiMergeState {

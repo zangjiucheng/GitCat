@@ -94,13 +94,33 @@ import { ICON_BACKUP, ICON_WARNING } from "../../legacy/icons";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
 import type { LocalBranch, SimpleRef, Snapshot, SubmoduleInfo } from "../../ipc/bindings";
 
+// A branch older than this (its own tip's last_commit_time) is hidden by
+// Auto mode's recomputeAutoVisibility, below, even when merge status can't
+// rule it "merged". Covers a real report ("Auto still shows almost all
+// branches") that the merge-status check alone can't fix: a repo whose local
+// branches are long-lived, INTENTIONALLY parallel release/maintenance lines
+// (e.g. "3.10"/"3.11"/"3.13" alongside "main" in a large real project) never
+// becomes "merged into default" for any of them — they're permanently
+// siblings of default, not ancestors of it, by design — so every one stayed
+// visible forever under the old merge-only heuristic regardless of whether
+// anyone was actually still touching it. 90 days is generous on purpose: a
+// maintenance branch legitimately going quiet between occasional
+// backport/security-fix commits shouldn't disappear just for resting.
+const STALE_DAYS = 90;
+
 // Demo data (design-mode only) — mirrors the static markup this replaces, so
 // the browser preview still shows a populated sidebar without a real repo.
+// lastCommitTime: fabricated relative to whenever the browser preview
+// happens to load (module-eval time is fine — this is cosmetic demo data,
+// never compared for real staleness the way a live repo's would be), spread
+// across recent-to-stale so recomputeAutoVisibility's own STALE_DAYS cutoff
+// (see its doc comment) has something real to demonstrate: release/0.3 here
+// is intentionally old enough to fall on the "hidden" side.
 const DEMO_LOCALS: LocalBranch[] = [
-  { name: "main", sha: "a1b2c3d", ahead: 2, behind: null, upstream: "origin/main" },
-  { name: "feat/inline-diff", sha: "b2c3d4e", ahead: null, behind: 3, upstream: "origin/feat/inline-diff" },
-  { name: "fix/lane-cull", sha: "c3d4e5f", ahead: null, behind: null, upstream: null },
-  { name: "release/0.3", sha: "d4e5f60", ahead: null, behind: null, upstream: null },
+  { name: "main", sha: "a1b2c3d", ahead: 2, behind: null, upstream: "origin/main", lastCommitTime: Date.now() / 1000 - 2 * 3600 },
+  { name: "feat/inline-diff", sha: "b2c3d4e", ahead: null, behind: 3, upstream: "origin/feat/inline-diff", lastCommitTime: Date.now() / 1000 - 5 * 86400 },
+  { name: "fix/lane-cull", sha: "c3d4e5f", ahead: null, behind: null, upstream: null, lastCommitTime: Date.now() / 1000 - 1 * 86400 },
+  { name: "release/0.3", sha: "d4e5f60", ahead: null, behind: null, upstream: null, lastCommitTime: Date.now() / 1000 - 200 * 86400 },
 ];
 const DEMO_REMOTES: SimpleRef[] = [
   { name: "origin/main", sha: "a1b2c3d" },
@@ -510,8 +530,9 @@ class SidebarState {
   // Current branch (always kept, same guarantee push_head() already gives
   // every OTHER filter path) + anything with unpushed commits (ahead of its
   // own upstream) + anything not yet merged into the repo's resolved default
-  // branch (branch_merge_status). Only ever writes visibleLocal — see
-  // autoMode's own doc comment for why remotes are left alone.
+  // branch (branch_merge_status) AND not stale (see STALE_DAYS above). Only
+  // ever writes visibleLocal — see autoMode's own doc comment for why
+  // remotes are left alone.
   //
   // "No upstream configured" is NOT by itself treated as "keep" once real
   // merge data is available — a branch with no upstream can still be fully
@@ -551,8 +572,14 @@ class SidebarState {
         console.error("branch_merge_status", e);
       }
     }
+    const staleCutoff = Date.now() / 1000 - STALE_DAYS * 86400;
     const nextLocal = this.locals
-      .filter((b) => b.name === this.head || (b.ahead ?? 0) > 0 || (mergedInto !== null ? !mergedInto.has(b.name) : b.upstream === null))
+      .filter(
+        (b) =>
+          b.name === this.head ||
+          (b.ahead ?? 0) > 0 ||
+          ((mergedInto !== null ? !mergedInto.has(b.name) : b.upstream === null) && b.lastCommitTime >= staleCutoff),
+      )
       .map((b) => b.name);
 
     // ADVERSARIALLY-FOUND FIX: persistVisibleBranches always reloads the
