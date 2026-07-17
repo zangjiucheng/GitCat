@@ -1062,7 +1062,18 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tw-col.ours .ln{background:color-mix(in srgb,var(--accent2) 10%,transparent)}
 .tw-col.theirs .ln{background:color-mix(in srgb,var(--accent) 10%,transparent)}
 .modal.resolver{width:min(880px,96vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column}
-.modal.resolver .modal-body{overflow:auto;flex:1}
+/* ADVERSARIALLY-FOUND FIX: #cfThree/.cf-files below used to be capped at a
+   fixed max-height:360px regardless of actual window size, wasting most of
+   this modal's own available height (up to calc(100vh - 48px), i.e. nearly
+   the full screen) on a cramped, separately-scrolling box — "the merge
+   window is small, can't see the full content" even on a tall display. This
+   modal-body now stretches its own content (.cf-layout) to fill whatever
+   height is actually available, so the three-way diff/file list grow with
+   the window instead of being stuck at a small constant; overflow:auto here
+   stays purely as the fallback for edit mode's own content shape, since
+   #cfThree/.cf-files now scroll internally on their own (see their own
+   updated rules) well before this outer one would ever need to. */
+.modal.resolver .modal-body{overflow:auto;flex:1;display:flex;flex-direction:column;min-height:0}
 .btn[disabled]{opacity:.42;cursor:not-allowed;box-shadow:none}
 /* Shared loading-state building block, applied consistently across every
    async operation in the app — most previously signaled "in progress" only
@@ -1075,8 +1086,15 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   animation:gc-spin .6s linear infinite;opacity:.75;vertical-align:-2px}
 .btn .spinner,.tb-btn .spinner{margin-right:1px}
 .resolver .modal-foot #conflictAbort{margin-right:auto}
-.cf-layout{display:grid;grid-template-columns:190px 1fr;gap:12px}
-.cf-files{display:flex;flex-direction:column;gap:2px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:var(--r-panel);padding:4px;background:var(--bg)}
+/* flex:1/min-height:0 (a flex item of the now-flex-column .modal-body above)
+   is what lets this actually grow to fill the modal's real available height
+   instead of just sizing to content — grid's own default
+   align-content/align-items (both compute to "stretch" for a grid container/
+   its items) then carries that full height down into the single implicit
+   row, and from there into .cf-files/.cf-main below, matching #cfThree's own
+   updated rule. */
+.cf-layout{display:grid;grid-template-columns:190px 1fr;gap:12px;flex:1;min-height:0}
+.cf-files{display:flex;flex-direction:column;gap:2px;min-height:0;overflow:auto;border:1px solid var(--border);border-radius:var(--r-panel);padding:4px;background:var(--bg)}
 .cf-file{display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:6px;cursor:pointer;font-size:12px}
 .cf-file:hover{background:var(--elevated)}
 .cf-file.sel{background:color-mix(in srgb,var(--accent) 16%,transparent)}
@@ -1087,18 +1105,18 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    blocks picking a DIFFERENT backup mid-restore. */
 .cf-files.busy{opacity:.55;pointer-events:none}
 .cf-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cf-main{min-width:0;display:flex;flex-direction:column;gap:8px}
-.cf-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.cf-main{min-width:0;min-height:0;display:flex;flex-direction:column;gap:8px}
+.cf-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex:none}
 .cf-cur{font-family:var(--mono);font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cf-take{display:flex;gap:6px;flex:none}
 .cf-take .btn{padding:4px 11px;font-size:12px}
 .cf-remain{font-size:12px}
-#cfThree{max-height:360px;overflow:auto}
+#cfThree{flex:1;min-height:0;overflow:auto}
 .tw-col .ln code{white-space:pre-wrap;word-break:break-word}
 /* In-app hunk-level resolution editor (resolver.svelte.ts's editMode) — a
    single column replacing the three-way ours/base/theirs grid for the
    currently selected file, not a new modal. Shares #cfThree's own
-   max-height/overflow above, so it scrolls exactly like the read-only view
+   flex/overflow above, so it scrolls exactly like the read-only view
    it replaces. */
 .cf-edit{grid-column:1/4;display:flex;flex-direction:column;padding:8px;gap:2px}
 .cf-edit-context{margin:0;padding:2px 6px;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:pre-wrap;word-break:break-word}
