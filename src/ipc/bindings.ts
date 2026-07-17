@@ -2018,7 +2018,15 @@ export type BranchMergeInfo = { defaultBranch: string | null;
 merged: string[] }
 export type ChurnFile = { path: string; touches: number }
 export type CodeSearchMatch = { path: string; line: number; text: string }
-export type CodeSearchResults = { matches: CodeSearchMatch[]; truncated: boolean }
+export type CodeSearchResults = { matches: CodeSearchMatch[]; truncated: boolean; 
+/**
+ * The full sha `at_commit` resolved to, when given — `None` for a
+ * working-tree search. Lets the frontend's `openHistory`/`openBlame`
+ * (codesearch.svelte.ts) pass a real sha to `blame_file`/`file_history`
+ * (both deliberately sha-only — see this module's own doc comment)
+ * instead of the raw typed "sha/ref" text `code_search` itself accepts.
+ */
+resolvedSha: string | null }
 /**
  * Full payload for the M1 commit detail panel: message + real diff tree.
  */

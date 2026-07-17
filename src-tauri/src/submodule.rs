@@ -205,7 +205,6 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -522,13 +521,12 @@ struct GitOut {
     stderr: String,
 }
 
+/// `init`/`update`/`add` genuinely touch a submodule's remote; `sync` only
+/// rewrites local config — but see `crate::wsl`'s own doc comment for why
+/// this module (like `git_remote.rs`) routes ALL of them through its
+/// WSL-aware builder rather than splitting this one helper in two.
 fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+    let output = crate::wsl::git_command(path, args).output().map_err(|e| format!("Could not run git: {e}"))?;
     Ok(GitOut {
         ok: output.status.success(),
         code: output.status.code(),

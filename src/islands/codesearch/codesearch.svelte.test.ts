@@ -42,6 +42,7 @@ function err(error: string): { status: "error"; error: string } {
 
 const RESULTS: CodeSearchResults = {
   truncated: false,
+  resolvedSha: null,
   matches: [
     { path: "src/a.ts", line: 10, text: "const sessionTtl = 3600;" },
     { path: "src/b.ts", line: 2, text: "export const RATE_LIMIT = 100;" },
@@ -223,12 +224,12 @@ describe("search — loading / error / empty-results states", () => {
   it("an ok response with zero matches is stored as an empty (not null) result", async () => {
     codeSearchCtrl.repo = "/repo";
     codeSearchCtrl.query = "no-such-token-anywhere";
-    vi.mocked(commands.codeSearch).mockResolvedValueOnce(ok({ truncated: false, matches: [] }));
+    vi.mocked(commands.codeSearch).mockResolvedValueOnce(ok({ truncated: false, resolvedSha: null, matches: [] }));
 
     await codeSearchCtrl.search();
 
     expect(codeSearchCtrl.error).toBe("");
-    expect(codeSearchCtrl.data).toEqual({ truncated: false, matches: [] });
+    expect(codeSearchCtrl.data).toEqual({ truncated: false, resolvedSha: null, matches: [] });
   });
 });
 
@@ -262,6 +263,41 @@ describe("openHistory / openBlame", () => {
 
     expect(codeSearchCtrl.open).toBe(false);
     expect(blameCtrl.openFor).toHaveBeenCalledWith("/repo", null, "src/b.ts", null);
+  });
+
+  // `atCommit` accepts any ref ("main", "HEAD~2", ...) since code_search.rs's
+  // own resolution moved to `revparse_single`, but `file_history`/
+  // `blame_file` stay sha-only — openHistory/openBlame must use the sha
+  // `data.resolvedSha` already resolved to, NOT the raw typed ref, or these
+  // would fail for exactly the input the search itself just accepted.
+  it("openHistory uses data.resolvedSha, not the raw typed ref, when they differ", () => {
+    codeSearchCtrl.repo = "/repo";
+    codeSearchCtrl.atCommit = "main";
+    codeSearchCtrl.data = { ...RESULTS, resolvedSha: "deadbeef" };
+
+    codeSearchCtrl.openHistory(RESULTS.matches[0]);
+
+    expect(fileHistoryCtrl.openFor).toHaveBeenCalledWith("/repo", "deadbeef", "src/a.ts");
+  });
+
+  it("openBlame uses data.resolvedSha, not the raw typed ref, when they differ", () => {
+    codeSearchCtrl.repo = "/repo";
+    codeSearchCtrl.atCommit = "HEAD~2";
+    codeSearchCtrl.data = { ...RESULTS, resolvedSha: "deadbeef" };
+
+    codeSearchCtrl.openBlame(RESULTS.matches[1]);
+
+    expect(blameCtrl.openFor).toHaveBeenCalledWith("/repo", "deadbeef", "src/b.ts", null);
+  });
+
+  it("falls back to the raw typed ref when data is null (e.g. before any search ran)", () => {
+    codeSearchCtrl.repo = "/repo";
+    codeSearchCtrl.atCommit = " abc123 ";
+    codeSearchCtrl.data = null;
+
+    codeSearchCtrl.openHistory(RESULTS.matches[0]);
+
+    expect(fileHistoryCtrl.openFor).toHaveBeenCalledWith("/repo", "abc123", "src/a.ts");
   });
 });
 

@@ -39,11 +39,17 @@
 //!   uncommitted edits and, via `--untracked` above, brand-new files) — this
 //!   matches searching "the code as it's currently checked out" more
 //!   literally than a frozen HEAD-tree read would.
-//! - Commit given → resolved via `repo.find_commit_by_prefix` (same
-//!   convention as `pickaxe.rs`/`file_history.rs` — a clean, consistent
-//!   error instead of git's own raw "ambiguous argument" message) → the
-//!   resolved full sha is passed as the tree-ish, which then prefixes every
-//!   output row with `<sha>:` (see parsing below).
+//! - Commit given → resolved via `repo.revparse_single` (a full revspec —
+//!   `HEAD`, a branch/tag name, `HEAD~2`, a sha/short-sha, ... — unlike
+//!   `pickaxe.rs`/`file_history.rs`/`blame.rs`'s own `at_commit`, which stays
+//!   sha-only by deliberate choice; see their own doc comments for why —
+//!   this one is typed free text from CodeSearch.svelte's own "sha/ref"
+//!   field, so it has to resolve everything `git rev-parse` itself would)
+//!   → the resolved full sha is passed as the tree-ish, which then prefixes
+//!   every output row with `<sha>:` (see parsing below), and is also handed
+//!   back to the frontend as `resolvedSha` — `openHistory`/`openBlame`
+//!   (codesearch.svelte.ts) reuse it instead of the raw typed text, since
+//!   `blame_file`/`file_history` themselves stay sha-only.
 //!
 //! **Output parsing**: with `-z`, each match is
 //! `<path>\0<line-number>\0<line text>\n`, or
@@ -90,6 +96,12 @@ pub struct CodeSearchMatch {
 pub struct CodeSearchResults {
     pub matches: Vec<CodeSearchMatch>,
     pub truncated: bool,
+    /// The full sha `at_commit` resolved to, when given — `None` for a
+    /// working-tree search. Lets the frontend's `openHistory`/`openBlame`
+    /// (codesearch.svelte.ts) pass a real sha to `blame_file`/`file_history`
+    /// (both deliberately sha-only — see this module's own doc comment)
+    /// instead of the raw typed "sha/ref" text `code_search` itself accepts.
+    pub resolved_sha: Option<String>,
 }
 
 /// Full-text search of `query` across `path`'s tracked files — the working
@@ -122,11 +134,20 @@ fn code_search_inner(
     // too) BEFORE any git invocation touches this path — see trust.rs.
     let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
 
+    // `revparse_single`, not `find_commit_by_prefix`: unlike blame.rs/
+    // file_history.rs/pickaxe.rs's own `at_commit` (always a real sha, fed
+    // from a graph row — see their own doc comments for why THEY
+    // deliberately stay sha-only), this one is typed free text — the UI's
+    // own placeholder promises "sha/ref" (CodeSearch.svelte), so "HEAD",
+    // a branch name, a tag, or "HEAD~2" must resolve here too, not just an
+    // exact/abbreviated oid. `revparse_single` is a strict superset of
+    // `find_commit_by_prefix` for this purpose (every sha prefix it accepted
+    // still resolves) plus everything `git rev-parse` itself understands.
     let sha: Option<String> = match at_commit {
         Some(rev) => {
-            let commit = repo
-                .find_commit_by_prefix(rev)
-                .map_err(|e| format!("Not a valid commit: {rev:?} ({})", e.message()))?;
+            let obj = repo.revparse_single(rev).map_err(|e| format!("Not a valid commit: {rev:?} ({})", e.message()))?;
+            let commit =
+                obj.peel_to_commit().map_err(|e| format!("Not a valid commit: {rev:?} ({})", e.message()))?;
             Some(commit.id().to_string())
         }
         None => None,
@@ -154,7 +175,9 @@ fn code_search_inner(
     let out = run_git(path, &args)?;
     match interpret_exit(out.ok, out.code, out.stdout.is_empty(), out.stderr.is_empty()) {
         ExitOutcome::Matches => {}
-        ExitOutcome::NoMatches => return Ok(CodeSearchResults { matches: Vec::new(), truncated: false }),
+        ExitOutcome::NoMatches => {
+            return Ok(CodeSearchResults { matches: Vec::new(), truncated: false, resolved_sha: sha });
+        }
         ExitOutcome::Error => return Err(git_msg(&out)),
     }
 
@@ -163,7 +186,7 @@ fn code_search_inner(
     if truncated {
         matches.truncate(MAX_CODE_SEARCH_MATCHES);
     }
-    Ok(CodeSearchResults { matches, truncated })
+    Ok(CodeSearchResults { matches, truncated, resolved_sha: sha })
 }
 
 // ---------------------------------------------------------------------------

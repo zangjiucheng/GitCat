@@ -60,8 +60,6 @@
 //! duplicate a type this module already owns for exactly this shape of
 //! operation — so it stays here instead, alongside `fetch`/`pull`/`push`.
 
-use std::process::Command;
-
 use git2::{BranchType, Repository};
 use serde::Serialize;
 
@@ -90,13 +88,13 @@ struct GitOut {
     stderr: String,
 }
 
+/// Every command in this module talks to a remote (even
+/// `reset_branch_to_upstream`, which only ever moves a branch to a ref
+/// `fetch` already learned about) — see `crate::wsl` for why that means
+/// EVERY call here goes through its WSL-aware routing, not just the ones
+/// that fetch/push over the network directly.
 fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+    let output = crate::wsl::git_command(path, args).output().map_err(|e| format!("Could not run git: {e}"))?;
     Ok(GitOut {
         ok: output.status.success(),
         code: output.status.code(),

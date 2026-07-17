@@ -36,6 +36,7 @@ pub mod terminal; // "Open Terminal": a real PTY-backed shell embedded in GitCat
 pub mod tool_settings; // backlog #12: external diff/merge tool settings + delegate entirely to `git difftool`/`git mergetool`
 pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious ownership"
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
+pub mod wsl; // routes git_remote.rs's/submodule.rs's network commands through wsl.exe on a WSL-path repo, so credentials resolve inside the distro
 
 use tauri::Manager;
 use tauri_specta::{collect_commands, Builder};

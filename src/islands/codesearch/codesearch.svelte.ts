@@ -30,6 +30,7 @@ import { blameCtrl } from "../blame/blame.svelte.ts";
 // populated result list without a real backend.
 const DEMO_RESULTS: CodeSearchResults = {
   truncated: false,
+  resolvedSha: null,
   matches: [
     { path: "src/auth/session.ts", line: 42, text: "  extendSessionTtl(session, RATE_LIMIT_WINDOW_MS);" },
     { path: "src/auth/session.ts", line: 88, text: "export function extendSessionTtl(session, ms) {" },
@@ -104,14 +105,24 @@ class CodeSearchState {
     }
   }
 
+  // `data.resolvedSha` (the sha `code_search` itself just resolved `atCommit`
+  // to — see code_search.rs's own doc comment) over the raw typed text:
+  // `atCommit` accepts any ref ("HEAD", a branch/tag name, "HEAD~2", ...),
+  // but `file_history`/`blame_file` stay sha-only by deliberate choice (see
+  // their own doc comments), so a non-sha `atCommit` would otherwise fail
+  // here even though the search itself just succeeded with it.
+  private resolvedAtCommit(): string | null {
+    return this.data?.resolvedSha ?? (this.atCommit.trim() || null);
+  }
+
   openHistory(m: CodeSearchMatch): void {
     this.close();
-    void fileHistoryCtrl.openFor(this.repo, this.atCommit.trim() || null, m.path);
+    void fileHistoryCtrl.openFor(this.repo, this.resolvedAtCommit(), m.path);
   }
 
   openBlame(m: CodeSearchMatch): void {
     this.close();
-    void blameCtrl.openFor(this.repo, this.atCommit.trim() || null, m.path, null);
+    void blameCtrl.openFor(this.repo, this.resolvedAtCommit(), m.path, null);
   }
 }
 
