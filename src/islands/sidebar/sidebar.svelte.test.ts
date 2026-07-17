@@ -29,6 +29,7 @@ vi.mock("../../ipc/bindings", () => ({
     createTag: vi.fn(),
     deleteTag: vi.fn(),
     pushTag: vi.fn(),
+    pushBranch: vi.fn(),
     stashSave: vi.fn(),
     stashList: vi.fn(),
     stashApply: vi.fn(),
@@ -85,6 +86,8 @@ function resetAll() {
   sidebarCtrl.mergeMenu = null;
   sidebarCtrl.dirtyCheckoutMenu = null;
   sidebarCtrl.checkoutConfirm = null;
+  sidebarCtrl.pushMenu = null;
+  sidebarCtrl.pushBranchInput = "";
   sidebarCtrl.newTagOpen = false;
   sidebarCtrl.newTagName = "";
   sidebarCtrl.newTagMessage = "";
@@ -1815,6 +1818,102 @@ describe("pushTag", () => {
     sidebarCtrl.busy = true;
     await sidebarCtrl.pushTag("v1.0.0");
     expect(commands.pushTag).not.toHaveBeenCalled();
+  });
+});
+
+describe("pushBranch", () => {
+  it("design mode is a cosmetic no-op with a toast", async () => {
+    mockInTauri = false;
+    const ok = await sidebarCtrl.pushBranch("feature", null);
+    expect(ok).toBe(true);
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("demo"));
+    expect(commands.pushBranch).not.toHaveBeenCalled();
+  });
+
+  it("real mode: pushes the named branch (not necessarily current) and cheers on success", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null });
+    const ok = await sidebarCtrl.pushBranch("feature", null);
+    expect(ok).toBe(true);
+    expect(commands.pushBranch).toHaveBeenCalledWith("/repo", "feature", null, null);
+    expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
+  });
+
+  it("real mode: passes a differently-named remote branch through", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null });
+    await sidebarCtrl.pushBranch("feature", "feature-review");
+    expect(commands.pushBranch).toHaveBeenCalledWith("/repo", "feature", null, "feature-review");
+  });
+
+  it("real mode: warns and returns false on failure", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: false, message: "rejected", backupRef: null });
+    const ok = await sidebarCtrl.pushBranch("feature", null);
+    expect(ok).toBe(false);
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("rejected"));
+  });
+
+  it("is re-entrancy locked while busy", async () => {
+    mockInTauri = true;
+    sidebarCtrl.busy = true;
+    const ok = await sidebarCtrl.pushBranch("feature", null);
+    expect(ok).toBe(false);
+    expect(commands.pushBranch).not.toHaveBeenCalled();
+  });
+});
+
+describe("push-to popover (openPushMenu / confirmPushMenu / cancelPushMenu)", () => {
+  it("openPushMenu closes every other popover and seeds an empty input", () => {
+    sidebarCtrl.menu = { name: "main", isCurrent: true, upstream: null, x: 0, y: 0 };
+    sidebarCtrl.pushBranchInput = "stale";
+    sidebarCtrl.openPushMenu("feature", 10, 20);
+    expect(sidebarCtrl.menu).toBeNull();
+    expect(sidebarCtrl.pushMenu).toEqual({ name: "feature", x: 10, y: 20 });
+    expect(sidebarCtrl.pushBranchInput).toBe("");
+  });
+
+  it("cancelPushMenu closes the popover without pushing", () => {
+    sidebarCtrl.openPushMenu("feature", 10, 20);
+    sidebarCtrl.pushBranchInput = "renamed";
+    sidebarCtrl.cancelPushMenu();
+    expect(sidebarCtrl.pushMenu).toBeNull();
+    expect(sidebarCtrl.pushBranchInput).toBe("");
+    expect(commands.pushBranch).not.toHaveBeenCalled();
+  });
+
+  it("confirmPushMenu with an empty input pushes under the SAME name and closes on success", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null });
+    sidebarCtrl.openPushMenu("feature", 10, 20);
+    await sidebarCtrl.confirmPushMenu();
+    expect(commands.pushBranch).toHaveBeenCalledWith("/repo", "feature", null, null);
+    expect(sidebarCtrl.pushMenu).toBeNull();
+  });
+
+  it("confirmPushMenu with typed text pushes under that remote branch name", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null });
+    sidebarCtrl.openPushMenu("feature", 10, 20);
+    sidebarCtrl.pushBranchInput = "  feature-review  ";
+    await sidebarCtrl.confirmPushMenu();
+    expect(commands.pushBranch).toHaveBeenCalledWith("/repo", "feature", null, "feature-review");
+  });
+
+  it("confirmPushMenu keeps the popover OPEN on failure so it can be retried", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: false, message: "rejected", backupRef: null });
+    sidebarCtrl.openPushMenu("feature", 10, 20);
+    sidebarCtrl.pushBranchInput = "feature-review";
+    await sidebarCtrl.confirmPushMenu();
+    expect(sidebarCtrl.pushMenu).toEqual({ name: "feature", x: 10, y: 20 });
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("rejected"));
+  });
+
+  it("confirmPushMenu is a no-op with nothing open", async () => {
+    sidebarCtrl.pushMenu = null;
+    await sidebarCtrl.confirmPushMenu();
+    expect(commands.pushBranch).not.toHaveBeenCalled();
   });
 });
 

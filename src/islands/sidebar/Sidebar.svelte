@@ -20,6 +20,8 @@
   let mergeMenuEl: HTMLDivElement | undefined = $state();
   let dirtyCheckoutMenuEl: HTMLDivElement | undefined = $state();
   let checkoutConfirmEl: HTMLDivElement | undefined = $state();
+  let pushMenuEl: HTMLDivElement | undefined = $state();
+  let pushBranchInputEl: HTMLInputElement | undefined = $state();
 
   function onWindowPointerdown(e: PointerEvent) {
     if (sidebarCtrl.menu && menuEl && !menuEl.contains(e.target as Node)) sidebarCtrl.closeMenu();
@@ -38,6 +40,9 @@
     if (sidebarCtrl.mergeMenu && mergeMenuEl && !mergeMenuEl.contains(e.target as Node)) sidebarCtrl.closeMergeMenu();
     if (sidebarCtrl.dirtyCheckoutMenu && dirtyCheckoutMenuEl && !dirtyCheckoutMenuEl.contains(e.target as Node)) sidebarCtrl.closeDirtyCheckoutMenu();
     if (sidebarCtrl.checkoutConfirm && checkoutConfirmEl && !checkoutConfirmEl.contains(e.target as Node)) sidebarCtrl.closeCheckoutConfirm();
+    // Outside-click cancels the "Push to…" form — same busy-blocked
+    // rationale as the New Branch/New Tag forms above.
+    if (sidebarCtrl.pushMenu && !sidebarCtrl.busy && pushMenuEl && !pushMenuEl.contains(e.target as Node)) sidebarCtrl.cancelPushMenu();
   }
 
   $effect(() => {
@@ -50,6 +55,10 @@
 
   $effect(() => {
     if (sidebarCtrl.newSubmoduleOpen) requestAnimationFrame(() => newSubmoduleEl?.focus());
+  });
+
+  $effect(() => {
+    if (sidebarCtrl.pushMenu) requestAnimationFrame(() => pushBranchInputEl?.focus());
   });
 
   function onNewBranchKeydown(e: KeyboardEvent) {
@@ -65,6 +74,11 @@
   function onNewSubmoduleKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") sidebarCtrl.confirmNewSubmodule();
     else if (e.key === "Escape" && !sidebarCtrl.busy) sidebarCtrl.cancelNewSubmodule();
+  }
+
+  function onPushBranchKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") sidebarCtrl.confirmPushMenu();
+    else if (e.key === "Escape" && !sidebarCtrl.busy) sidebarCtrl.cancelPushMenu();
   }
 
   // Safety Manager snapshots before every mutation, so a long session can
@@ -576,6 +590,14 @@
          island: `menu` above isn't a frozen snapshot, it re-derives from the
          live sidebarCtrl.menu state on each read. -->
     <button disabled={menu.isCurrent} onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.checkout(name, { x, y }); }}>Checkout</button>
+    <!-- Pushes THIS branch directly — no switching, unlike the topbar Push
+         button/doPush() which always targets whatever's checked out. Shown
+         for every branch (not gated by !menu.isCurrent, unlike the actions
+         below) since even the current branch benefits from a from-the-
+         sidebar push, e.g. while comparing several branches without
+         checking any of them out. -->
+    <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.pushBranch(name, null); }}>Push</button>
+    <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.openPushMenu(name, x, y); }}>Push to&#8230;</button>
     {#if !menu.isCurrent}
       <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.openMergeMenu(name, x, y); }}>Merge into current&#8230;</button>
       <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.rebaseOnto(name); }}>Rebase current branch onto here</button>
@@ -585,6 +607,29 @@
       <button class="danger" onclick={() => { const name = menu.name; const upstream = menu.upstream as string; sidebarCtrl.closeMenu(); sidebarCtrl.resetToUpstream(name, upstream); }}>Reset to {menu.upstream}&#8230;</button>
     {/if}
     <button class="danger" disabled={menu.isCurrent} onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.deleteBranch(name); }}>Delete&#8230;</button>
+  </div>
+{/if}
+
+{#if sidebarCtrl.pushMenu}
+  {@const pm = sidebarCtrl.pushMenu}
+  <div class="ref-pop cm-pop" bind:this={pushMenuEl} style="left:{pm.x}px;top:{pm.y}px">
+    <div class="cm-head"><span>Push <b>{pm.name}</b> to&#8230;</span></div>
+    <div class="nb-form" class:busy={sidebarCtrl.busy}>
+      <input
+        class="nb-input"
+        bind:this={pushBranchInputEl}
+        bind:value={sidebarCtrl.pushBranchInput}
+        placeholder={pm.name + " (same name)"}
+        spellcheck="false"
+        autocomplete="off"
+        disabled={sidebarCtrl.busy}
+        onkeydown={onPushBranchKeydown}
+      />
+      <div class="nb-row">
+        <span class="mut">Enter to push, Esc to cancel</span>
+        {#if sidebarCtrl.busy}<span class="spinner"></span>{/if}
+      </div>
+    </div>
   </div>
 {/if}
 

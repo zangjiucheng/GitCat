@@ -94,8 +94,8 @@
   </section>
   <section>
     <div class="who-split">
-      <div class="who" class:differ={c.differ}><h4>Author</h4><div class="nm">{c.an.n}</div><div class="em">{c.an.e}</div><div class="dt mono">{c.an.d}</div></div>
-      <div class="who" class:differ={c.differ}><h4>Committer</h4><div class="nm">{c.cm.n}</div><div class="em">{c.cm.e}</div><div class="dt mono">{c.cm.d}</div></div>
+      <div class="who" class:differ={c.differ}><h4>Author</h4><div class="nm">{c.an.n}</div><div class="em">{c.an.e}</div><div class="dt mono">{c.an.d}</div><div class="dt-abs mono">{c.an.abs}</div></div>
+      <div class="who" class:differ={c.differ}><h4>Committer</h4><div class="nm">{c.cm.n}</div><div class="em">{c.cm.e}</div><div class="dt mono">{c.cm.d}</div><div class="dt-abs mono">{c.cm.abs}</div></div>
     </div>
     {#if c.differ}
       <div class="mut" style="font-size:11px;margin-top:6px">&#9888; author &ne; committer (patch applied / rebased) &#8212; the teaching point cherry-pick &amp; rebase create.</div>

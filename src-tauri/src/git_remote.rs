@@ -559,3 +559,104 @@ pub fn push_tag(path: String, remote: Option<String>, name: String) -> RemoteRes
         Err(e) => RemoteResult::err(e),
     }
 }
+
+/// Push a SPECIFIC local branch — not necessarily HEAD/the checked-out one —
+/// without switching to it first, optionally under a DIFFERENT name on the
+/// remote side. Complements plain `push` above, which only ever resolves and
+/// pushes whatever branch HEAD currently sits on; the sidebar's per-branch
+/// "Push…" menu item calls this instead so publishing a branch never
+/// requires checking it out.
+///
+/// `branch` is raw user input (unlike `push`/`force_push`'s branch, which
+/// comes from `repo.head()` and is never independently validated — see
+/// `validate_branch_name`'s own doc comment), so both `branch` AND
+/// `remote_branch` (when given — also raw user input) get the same
+/// flag-injection/name-validity guard `create_branch`/`delete_branch`/
+/// `reset_branch_to_upstream` already apply.
+///
+/// `remote_branch` (when given) publishes to a DIFFERENT name on the remote
+/// than the local branch — a full `local:remote` refspec, same "qualify both
+/// sides explicitly, never a bare positional" reasoning `push_tag`'s own doc
+/// comment covers (`refs/heads/<branch>:refs/heads/<remote_branch>`, never
+/// just `<branch>`, so git can't fall back to scanning ref namespaces or
+/// deferring to `push.default`). Omitted, it defaults to the local branch's
+/// own name (`local:local`, same shape `push` already produces).
+///
+/// `remote` (when given) picks which remote to push to, same as `push_tag`.
+/// Omitted, it falls back to the branch's own configured upstream remote
+/// (never assumed to be "origin" — a branch can legitimately track any
+/// remote, mirroring `force_push`'s own `branch_upstream_remote` lookup), and
+/// only falls further back to "origin" when the branch has no upstream at
+/// all yet — matching plain `push`'s own first-publish default.
+///
+/// Upstream handling mirrors `push`: an already-tracked branch gets a bare
+/// `git push <remote> <refspec>`; an untracked one gets `--set-upstream
+/// <remote> <refspec>` so it comes away with the same upstream-tracking
+/// plain `push` would have given it from checked out — even when
+/// `remote_branch` differs from `branch`, `--set-upstream` correctly records
+/// the differently-named remote branch as what future plain pulls/pushes
+/// should track (empirically confirmed: `git push --set-upstream origin
+/// local:remote-name` sets `branch.local.merge` to `refs/heads/remote-name`,
+/// not `refs/heads/local`).
+///
+/// Never force-pushes — same "surface git's own rejection, never silently
+/// force" stance as every other push variant in this module.
+/// JS call: `invoke("push_branch", { path, branch, remote?, remoteBranch? })`.
+#[tauri::command]
+#[specta::specta]
+pub fn push_branch(path: String, branch: String, remote: Option<String>, remote_branch: Option<String>) -> RemoteResult {
+    if let Err(e) = validate_branch_name(&branch) {
+        return RemoteResult::err(e);
+    }
+    let remote_branch = match remote_branch {
+        Some(b) => {
+            if let Err(e) = validate_branch_name(&b) {
+                return RemoteResult::err(e);
+            }
+            b
+        }
+        None => branch.clone(),
+    };
+
+    let repo = match open_repo(&path) {
+        Ok(r) => r,
+        Err(w) => return w,
+    };
+    let local = match repo.find_branch(&branch, BranchType::Local) {
+        Ok(b) => b,
+        Err(_) => return RemoteResult::err(format!("No such local branch: {branch}")),
+    };
+    let has_upstream = local.upstream().is_ok();
+
+    let remote = match remote {
+        Some(r) => r,
+        None if has_upstream => match repo.branch_upstream_remote(&format!("refs/heads/{branch}")) {
+            Ok(buf) => buf.as_str().unwrap_or("origin").to_string(),
+            Err(_) => "origin".to_string(),
+        },
+        None => "origin".to_string(),
+    };
+    if let Err(e) = validate_remote_name(&remote) {
+        return RemoteResult::err(e);
+    }
+
+    let refspec = format!("refs/heads/{branch}:refs/heads/{remote_branch}");
+    let out = if has_upstream {
+        run_git(&path, &["push", "--end-of-options", &remote, &refspec])
+    } else {
+        run_git(&path, &["push", "--set-upstream", &remote, "--end-of-options", &refspec])
+    };
+    match out {
+        Ok(out) if out.ok => RemoteResult::ok(
+            if remote_branch == branch {
+                format!("Pushed {branch} to {remote}.")
+            } else {
+                format!("Pushed {branch} to {remote}/{remote_branch}.")
+            },
+            None,
+        ),
+        // e.g. "! [rejected] ... (non-fast-forward)" — never forced.
+        Ok(out) => RemoteResult::err(git_error_message(&out)),
+        Err(e) => RemoteResult::err(e),
+    }
+}

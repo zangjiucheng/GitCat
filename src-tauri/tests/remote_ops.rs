@@ -6,7 +6,7 @@
 mod common;
 
 use common::TempRepo;
-use gitcat_lib::git_remote::{current_upstream, fetch, force_push, pull, push, reset_branch_to_upstream};
+use gitcat_lib::git_remote::{current_upstream, fetch, force_push, pull, push, push_branch, reset_branch_to_upstream};
 
 /// A bare "origin" + a local clone of it (remote already configured, one
 /// commit already pushed) — the shared starting point for every test here.
@@ -380,4 +380,101 @@ fn current_upstream_is_none_on_detached_head() {
 
     let up = current_upstream(local.path()).expect("current_upstream should not error");
     assert_eq!(up, None, "a detached HEAD has no branch, so no upstream, either");
+}
+
+#[test]
+fn push_branch_publishes_a_non_checked_out_branch_without_switching() {
+    let (origin, local) = origin_and_clone("push_branch_no_switch");
+    local.must(&["branch", "feature"]); // NOT checked out — main stays current
+    let feature_tip = local.rev("refs/heads/feature").expect("feature branch should exist");
+    assert_eq!(local.current_branch(), "main", "sanity: still on main before pushing");
+    assert!(origin.rev("feature").is_none(), "nothing pushed yet");
+
+    let res = push_branch(local.path(), "feature".to_string(), None, None);
+    assert!(res.ok, "push_branch failed: {}", res.message);
+    assert_eq!(origin.rev("feature"), Some(feature_tip), "origin should now have feature at the same tip");
+    assert_eq!(local.current_branch(), "main", "push_branch must never switch the checked-out branch");
+}
+
+#[test]
+fn push_branch_can_publish_under_a_different_remote_name() {
+    let (origin, local) = origin_and_clone("push_branch_rename");
+    local.must(&["branch", "feature"]);
+    let feature_tip = local.rev("refs/heads/feature").expect("feature branch should exist");
+
+    let res = push_branch(local.path(), "feature".to_string(), None, Some("feature-review".to_string()));
+    assert!(res.ok, "push_branch failed: {}", res.message);
+    assert_eq!(origin.rev("feature-review"), Some(feature_tip), "origin should have the renamed branch");
+    assert!(origin.rev("feature").is_none(), "must not ALSO create a same-named branch on origin");
+}
+
+#[test]
+fn push_branch_sets_upstream_tracking_on_first_publish() {
+    let (_origin, local) = origin_and_clone("push_branch_upstream");
+    local.must(&["branch", "feature"]);
+
+    let res = push_branch(local.path(), "feature".to_string(), None, None);
+    assert!(res.ok, "push_branch failed: {}", res.message);
+
+    let (has_upstream, _, _) = local.git(&["rev-parse", "--abbrev-ref", "feature@{upstream}"]);
+    assert!(has_upstream, "push_branch with no existing upstream should set one via --set-upstream");
+}
+
+#[test]
+fn push_branch_set_upstream_tracks_the_renamed_remote_branch() {
+    let (_origin, local) = origin_and_clone("push_branch_upstream_renamed");
+    local.must(&["branch", "feature"]);
+
+    let res = push_branch(local.path(), "feature".to_string(), None, Some("feature-review".to_string()));
+    assert!(res.ok, "push_branch failed: {}", res.message);
+
+    let tracked = local.must(&["rev-parse", "--abbrev-ref", "feature@{upstream}"]);
+    assert_eq!(tracked, "origin/feature-review", "upstream must track the RENAMED remote branch, not the local name");
+}
+
+#[test]
+fn push_branch_rejects_a_nonexistent_local_branch() {
+    let (_origin, local) = origin_and_clone("push_branch_missing");
+    let res = push_branch(local.path(), "no-such-branch".to_string(), None, None);
+    assert!(!res.ok);
+    assert!(res.message.contains("no-such-branch"), "expected the missing branch name in the error, got: {}", res.message);
+}
+
+#[test]
+fn push_branch_rejects_a_branch_name_that_looks_like_a_flag() {
+    let (_origin, local) = origin_and_clone("push_branch_flag_branch");
+    let res = push_branch(local.path(), "--upload-pack=evil".to_string(), None, None);
+    assert!(!res.ok);
+    assert!(res.message.contains("flag"), "expected a flag-injection refusal, got: {}", res.message);
+}
+
+#[test]
+fn push_branch_rejects_a_remote_branch_name_that_looks_like_a_flag() {
+    let (_origin, local) = origin_and_clone("push_branch_flag_remote_branch");
+    local.must(&["branch", "feature"]);
+    let res = push_branch(local.path(), "feature".to_string(), None, Some("--upload-pack=evil".to_string()));
+    assert!(!res.ok);
+    assert!(res.message.contains("flag"), "expected a flag-injection refusal, got: {}", res.message);
+}
+
+#[test]
+fn push_branch_with_existing_upstream_pushes_new_commits() {
+    let (origin, local) = origin_and_clone("push_branch_existing");
+    local.must(&["checkout", "-q", "-b", "feature"]);
+    let feature_tip = local.commit("g.txt", "1\n", "feature commit");
+    local.must(&["push", "-q", "-u", "origin", "feature"]);
+    local.must(&["checkout", "-q", "main"]); // back to main, feature stays non-current
+
+    let new_tip = {
+        local.must(&["checkout", "-q", "feature"]);
+        let t = local.commit("h.txt", "2\n", "another feature commit");
+        local.must(&["checkout", "-q", "main"]);
+        t
+    };
+    assert_ne!(origin.rev("feature"), Some(new_tip.clone()), "sanity: origin doesn't have the new commit yet");
+
+    let res = push_branch(local.path(), "feature".to_string(), None, None);
+    assert!(res.ok, "push_branch failed: {}", res.message);
+    assert_eq!(origin.rev("feature"), Some(new_tip));
+    assert_ne!(feature_tip, origin.rev("feature").unwrap(), "sanity: origin actually moved past the first push");
 }

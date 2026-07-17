@@ -37,8 +37,8 @@ type CommitVM = {
   row: number;
   subject: string;
   sha: string;
-  an: { n: string; e: string; d: string };
-  cm: { n: string; e: string; d: string };
+  an: { n: string; e: string; d: string; abs: string };
+  cm: { n: string; e: string; d: string; abs: string };
   differ: boolean;
   gpg: "good" | "none" | "bad";
   refs: RefChip[];
@@ -146,8 +146,8 @@ class DetailState {
         row: r,
         subject: m.subject,
         sha: m.sha,
-        an: { n: m.an.n, e: m.an.e, d: bridge.relTime(m.an.t) },
-        cm: { n: m.cm.n, e: m.cm.e, d: bridge.relTime(m.cm.t) },
+        an: { n: m.an.n, e: m.an.e, d: bridge.relTime(m.an.t), abs: bridge.absTime(m.an.t) },
+        cm: { n: m.cm.n, e: m.cm.e, d: bridge.relTime(m.cm.t), abs: bridge.absTime(m.cm.t) },
         differ,
         gpg: "none",
         refs,
@@ -158,9 +158,14 @@ class DetailState {
     }
     const a = bridge.AUTHORS[(Math.imul(r, 2654435761) >>> 5) % bridge.AUTHORS.length];
     const rebased = (r % 7 === 0 && r > 0) || G.isMerge[r];
+    // fakeAgo(r) itself only returns a formatted "Xm/Xh/Xd" string, not a raw
+    // timestamp — this mirrors its own r*2+3-minutes-ago formula so an
+    // absolute date can be derived for the demo path too (see bridge.absTime,
+    // the real-mode counterpart just below).
+    const fakeEpoch = (rr: number) => Date.now() / 1000 - (rr * 2 + 3) * 60;
     const cm = rebased
-      ? { n: "GitCat (rebase)", e: "noreply@gitcat.dev", d: bridge.fakeAgo(Math.max(0, r - 2)) + " ago" }
-      : { n: a.n, e: a.e, d: bridge.fakeAgo(r) + " ago" };
+      ? { n: "GitCat (rebase)", e: "noreply@gitcat.dev", d: bridge.fakeAgo(Math.max(0, r - 2)) + " ago", abs: bridge.absTime(fakeEpoch(Math.max(0, r - 2))) }
+      : { n: a.n, e: a.e, d: bridge.fakeAgo(r) + " ago", abs: bridge.absTime(fakeEpoch(r)) };
     const gpg: "good" | "none" | "bad" = r % 11 === 0 ? "none" : (bridge.hhex(r).charCodeAt(1) & 7) === 0 ? "bad" : "good";
     const refs: RefChip[] = [];
     if (r === 0) refs.push({ n: "HEAD", t: "head" }, { n: "main", t: "head" });
@@ -172,7 +177,7 @@ class DetailState {
       row: r,
       subject: bridge.msgOf(r),
       sha: bridge.hhex(r),
-      an: { n: a.n, e: a.e, d: bridge.fakeAgo(r) + " ago" },
+      an: { n: a.n, e: a.e, d: bridge.fakeAgo(r) + " ago", abs: bridge.absTime(fakeEpoch(r)) },
       cm,
       differ: rebased,
       gpg,

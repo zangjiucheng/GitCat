@@ -613,6 +613,53 @@ async forcePush(path: string, lease: boolean) : Promise<RemoteResult> {
     return await TAURI_INVOKE("force_push", { path, lease });
 },
 /**
+ * Push a SPECIFIC local branch — not necessarily HEAD/the checked-out one —
+ * without switching to it first, optionally under a DIFFERENT name on the
+ * remote side. Complements plain `push` above, which only ever resolves and
+ * pushes whatever branch HEAD currently sits on; the sidebar's per-branch
+ * "Push…" menu item calls this instead so publishing a branch never
+ * requires checking it out.
+ * 
+ * `branch` is raw user input (unlike `push`/`force_push`'s branch, which
+ * comes from `repo.head()` and is never independently validated — see
+ * `validate_branch_name`'s own doc comment), so both `branch` AND
+ * `remote_branch` (when given — also raw user input) get the same
+ * flag-injection/name-validity guard `create_branch`/`delete_branch`/
+ * `reset_branch_to_upstream` already apply.
+ * 
+ * `remote_branch` (when given) publishes to a DIFFERENT name on the remote
+ * than the local branch — a full `local:remote` refspec, same "qualify both
+ * sides explicitly, never a bare positional" reasoning `push_tag`'s own doc
+ * comment covers (`refs/heads/<branch>:refs/heads/<remote_branch>`, never
+ * just `<branch>`, so git can't fall back to scanning ref namespaces or
+ * deferring to `push.default`). Omitted, it defaults to the local branch's
+ * own name (`local:local`, same shape `push` already produces).
+ * 
+ * `remote` (when given) picks which remote to push to, same as `push_tag`.
+ * Omitted, it falls back to the branch's own configured upstream remote
+ * (never assumed to be "origin" — a branch can legitimately track any
+ * remote, mirroring `force_push`'s own `branch_upstream_remote` lookup), and
+ * only falls further back to "origin" when the branch has no upstream at
+ * all yet — matching plain `push`'s own first-publish default.
+ * 
+ * Upstream handling mirrors `push`: an already-tracked branch gets a bare
+ * `git push <remote> <refspec>`; an untracked one gets `--set-upstream
+ * <remote> <refspec>` so it comes away with the same upstream-tracking
+ * plain `push` would have given it from checked out — even when
+ * `remote_branch` differs from `branch`, `--set-upstream` correctly records
+ * the differently-named remote branch as what future plain pulls/pushes
+ * should track (empirically confirmed: `git push --set-upstream origin
+ * local:remote-name` sets `branch.local.merge` to `refs/heads/remote-name`,
+ * not `refs/heads/local`).
+ * 
+ * Never force-pushes — same "surface git's own rejection, never silently
+ * force" stance as every other push variant in this module.
+ * JS call: `invoke("push_branch", { path, branch, remote?, remoteBranch? })`.
+ */
+async pushBranch(path: string, branch: string, remote: string | null, remoteBranch: string | null) : Promise<RemoteResult> {
+    return await TAURI_INVOKE("push_branch", { path, branch, remote, remoteBranch });
+},
+/**
  * List every configured remote (name + fetch url + distinct push url, if
  * any). Read-only (git2), mirrors list_refs/submodule_status's own
  * git2-for-reads + `Result<T, String>` convention.

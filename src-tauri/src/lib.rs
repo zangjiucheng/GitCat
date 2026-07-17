@@ -110,6 +110,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // Remote)" call this with lease:true/false respectively; the topbar
         // Push button/doPush() never does.
         git_remote::force_push,
+        // Push a specific local branch without checking it out first,
+        // optionally under a different name on the remote — the sidebar
+        // branch-row menu's "Push…" action; the topbar Push button/doPush()
+        // always targets the checked-out branch via plain `push` above.
+        git_remote::push_branch,
         // Remote CONFIG CRUD (add/rename/set-url/remove/list) — a distinct,
         // local-only concern from the network sync above; see
         // git_remote_manage.rs's own doc comment for why it's a separate module.

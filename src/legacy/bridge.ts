@@ -54,6 +54,10 @@ export {
   AUTHORS,
   fakeAgo,
   relTime,
+  // Absolute-date counterpart to relTime, above — see its own doc comment in
+  // legacy/main.ts (used by detail.svelte.ts's commitMeta() to show a real
+  // date alongside the relative "X ago" one).
+  absTime,
   // native folder-picker flow (the empty-state hero's "Open a repository…" button)
   pickRepo,
   // "Close Repository" (File menu, see src/main.ts's "menu-action" listener)

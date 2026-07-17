@@ -52,6 +52,12 @@ const PADX=18, ROW_H_BASE=26, LANE_W_BASE=14, DOT_R_BASE=4.6;
 // (see draw()'s row loop / authorOf() above): 96 for the sha itself, 8px gap,
 // 100px budget for the (truncated) author name.
 const AUTHOR_GUTTER=96+8+100;
+// Smallest width draw() will ever leave for the subject/chips column before
+// the right-anchored author/sha fields start — see draw()'s own comment on
+// clamping `tx` against it. Below this, text stops being legible anyway; the
+// point is bounding how far `tx` can be pushed by an extremely wide stretch
+// of history, not fitting more text in.
+const MIN_SUBJECT_W=40;
 
 /* ============================================================
    2) SYNTHETIC DAG — Structure-of-Arrays, seeded & deterministic.
@@ -92,6 +98,14 @@ let undoBusy=false;
 function relTime(t){ let s=Math.max(0,Math.floor(Date.now()/1000-t));
   if(s<60)return s+"s ago"; let m=(s/60)|0; if(m<60)return m+"m ago"; let h=(m/60)|0; if(h<24)return h+"h ago";
   let d=(h/24)|0; if(d<30)return d+"d ago"; let mo=(d/30)|0; if(mo<12)return mo+"mo ago"; return ((mo/12)|0)+"y ago"; }
+// Absolute counterpart to relTime() above — "X ago" alone doesn't answer
+// "which actual day/time was this", so the detail panel shows both side by
+// side (see detail.svelte.ts's commitMeta()). Viewer's local timezone/locale,
+// same as every other absolute-date spot in the app already does inline
+// (Sidebar.svelte/FilterRepo.svelte/Plumbing.svelte's `new
+// Date(ts*1000).toLocaleString()` tooltips) — this is just that same
+// convention pulled out somewhere shared, since detail.svelte.ts needs it too.
+function absTime(t){ return new Date(t*1000).toLocaleString(); }
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
 const MSGS=["Refactor lane allocator","Fix off-by-one in viewport cull","Add DPR-correct resize","Merge branch 'feat/snapshot-ui'","Cache typed arrays across frames","Throttle hover hit-test","Batch edges by lane colour","Seal backup ref before undo","Tidy scrollbar drag math","Bench: 10k in 0.7s","Curved merge edges","Pause mascot on interaction","WIP: comet trails","Guard filter-repo behind typed confirm","Reflow visible rows on rewind","Wire login form to API","Add rate limiting to token store","Extract swimlane module","Teach bisect to read BISECT_LOG","rerere: reuse recorded resolution"];
 function hhex(r){ if(BACKEND)return BACKEND.rows[r]?BACKEND.rows[r].sha:"";
@@ -150,7 +164,15 @@ function generateGraph(N){
   if(refs[40]) allRefs[40]=[refs[40],{label:"v0.2.9-rc1",kind:"tag"}];
   const snapRows=[]; const snapTs={};
   for(let r=6;r<N;r+=38+((r*97)%46)){snapRows.push(r);snapTs[r]=fakeAgo(r);}
-  return {N,commitLane,commitColor,isMerge,gapStart,gapTop,gapBot,gapColor,refs,allRefs,snapRows,snapTs};
+  // High-water mark of lane slots ever allocated — slotColor's length only
+  // ever grows (a freed slot, marked -1, gets REUSED via firstFree(), not
+  // shrunk away), same "running max, never decreases" property Rust's own
+  // LayoutBuilder.lane_count tracks for the real backend (see model.rs's
+  // GraphBatch.laneCount). recomputeLayout() reads this to size panning
+  // range — without it here, G.laneCount was undefined in design mode,
+  // turning state.maxPanX into NaN.
+  const laneCount=slotColor.length;
+  return {N,commitLane,commitColor,isMerge,gapStart,gapTop,gapBot,gapColor,refs,allRefs,snapRows,snapTs,laneCount};
 }
 
 /* ============================================================
@@ -158,7 +180,16 @@ function generateGraph(N){
    ============================================================ */
 const cv=$("#cv"), ctx=cv.getContext("2d"), wrap=$("#canvasWrap");
 const layout={zoom:1,rowH:ROW_H_BASE,laneW:LANE_W_BASE,dotR:DOT_R_BASE,chipFont:"11px "+FONT_UI,contentH:0};
-const state={scrollTop:0,scrollTarget:0,maxScroll:0,selectedRow:-1,hoverRow:-1,drag:null,pointerActive:false,isInteracting:false,stress:false,selectAlpha:0,hoverAlpha:0};
+// panX/panTarget/maxPanX: HORIZONTAL counterpart to scrollTop/scrollTarget/
+// maxScroll above — a repo with an extremely wide stretch of history (many
+// simultaneously open branch lanes, e.g. hundreds of concurrently active
+// lanes in a real large project's full history) can need far more width than
+// any real window has; without a way to pan sideways, lanes past the visible
+// edge were simply unreachable, AND (see draw()'s own comment on tx) forced
+// the subject/author/sha text into an ever-shrinking sliver until it
+// started rendering on top of itself. Same eased-toward-target tick()
+// treatment as scrollTop.
+const state={scrollTop:0,scrollTarget:0,maxScroll:0,panX:0,panTarget:0,maxPanX:0,selectedRow:-1,hoverRow:-1,drag:null,pointerActive:false,isInteracting:false,stress:false,selectAlpha:0,hoverAlpha:0};
 // Row-highlight fade: eased toward its target each tick() (see the
 // scrollTop lerp just below tick's own definition for the same recipe) so
 // selecting/hovering a row fades the tint in instead of snapping to full
@@ -170,8 +201,9 @@ const view={cssW:0,cssH:0,dpr:1};
 const perf={last:performance.now(),frames:0,accum:0,fps:0,lastDrawMs:0};
 let dirty=true, lastInteracting=false;
 const edgePaths=new Array(NCOL);
-const laneX=(l)=>PADX+l*layout.laneW;
+const laneX=(l)=>PADX+l*layout.laneW-state.panX;
 const clampScroll=(v)=>v<0?0:(v>state.maxScroll?state.maxScroll:v);
+const clampPan=(v)=>v<0?0:(v>state.maxPanX?state.maxPanX:v);
 
 function recomputeLayout(){
   const z=layout.zoom;
@@ -192,6 +224,16 @@ function recomputeLayout(){
   // safe — same reasoning as every other early call site.
   state.maxScroll=Math.max(0,layout.contentH+bandH()-view.cssH);
   state.scrollTarget=clampScroll(state.scrollTarget); state.scrollTop=clampScroll(state.scrollTop);
+  // How far right panning is allowed to go: enough that the single WIDEST
+  // lane seen anywhere in the whole loaded graph so far (G.laneCount — a
+  // running high-water mark, not just what's in the current scroll window)
+  // can be panned into view with the same left margin every other lane
+  // starts with, and exactly 0 (no panning at all, laneX(l)===PADX+l*laneW
+  // same as before this feature existed) whenever the graph is narrow enough
+  // to fit already — the overwhelmingly common case.
+  const widestLaneX=Math.max(0,((G?G.laneCount:0)-1))*layout.laneW;
+  state.maxPanX=Math.max(0,widestLaneX-(view.cssW-PADX*2));
+  state.panTarget=clampPan(state.panTarget); state.panX=clampPan(state.panX);
   dirty=true;
 }
 function resize(){
@@ -249,7 +291,19 @@ function draw(){
   for(let c=0;c<NCOL;c++){const p=edgePaths[c];if(p){ctx.strokeStyle=LANE_COLORS[c];ctx.stroke(p);}}
 
   for(let r=first;r<=last;r++) if(G.commitLane[r]>maxLane) maxLane=G.commitLane[r];
-  const tx=laneX(maxLane)+dotR+14;
+  // ADVERSARIALLY-FOUND FIX: an extremely wide stretch of history (many
+  // simultaneously open branch lanes — hundreds is plausible for a large
+  // real project's full history) used to push tx arbitrarily far right with
+  // nothing bounding it, so the subject text's own starting x could land
+  // PAST where the right-anchored author/sha fields begin — not just
+  // scrolled off-canvas (which panning above now fixes) but genuinely
+  // overlapping/garbling that fixed-position text every frame, for every row
+  // in view, any time the window happened to touch that wide a stretch.
+  // Clamping tx here keeps the subject column at least MIN_SUBJECT_W wide
+  // (worse to read at extreme widths, never overlapping) regardless of how
+  // far a lane actually extends — panning is how you reach/inspect lanes
+  // that wide, not by widening this column past the point of collision.
+  const tx=Math.min(laneX(maxLane)+dotR+14,W-AUTHOR_GUTTER-MIN_SUBJECT_W);
 
   ctx.textBaseline="middle"; ctx.font=layout.chipFont;
   for(let r=first;r<=last;r++){
@@ -300,6 +354,7 @@ function draw(){
   drawWorkdirBand();
   if(state.drag) drawDragGhost();
   drawScrollbar(st,H,W);
+  drawHScrollbar(H,W);
   perf.lastDrawMs=performance.now()-t0;
 }
 // The pinned "Uncommitted changes" row — a genuine fixed HEADER (bandH()
@@ -371,6 +426,19 @@ function drawScrollbar(st,H,W){ const g=scrollbarGeom(H,W); if(!g)return;
   ctx.fillStyle=theme.muted; ctx.globalAlpha=state.isInteracting?0.5:0.26;
   ctx.beginPath(); if(ctx.roundRect)ctx.roundRect(g.x,g.thumbY+2,g.w,g.thumbH-4,5);else ctx.rect(g.x,g.thumbY+2,g.w,g.thumbH-4);
   ctx.fill(); ctx.globalAlpha=1; }
+// Horizontal counterpart to scrollbarGeom/drawScrollbar above — purely a
+// visual "you can pan sideways, and here's roughly where you are" cue (see
+// state.panX's own doc comment for why panning exists at all); dragging it
+// directly isn't wired up since the empty-canvas click-drag gesture
+// (pointermove's `down.moved` branch) already pans horizontally exactly like
+// it already scrolled vertically, one drag covers both axes at once.
+function hScrollbarGeom(H,W){ if(state.maxPanX<=0) return null;
+  const totalW=W+state.maxPanX, SB_H=10, thumbW=Math.max(30,W*(W/totalW)), thumbX=(state.panX/state.maxPanX)*(W-thumbW);
+  return {y:H-SB_H-2,h:SB_H,thumbX,thumbW,W}; }
+function drawHScrollbar(H,W){ const g=hScrollbarGeom(H,W); if(!g)return;
+  ctx.fillStyle=theme.muted; ctx.globalAlpha=state.isInteracting?0.5:0.26;
+  ctx.beginPath(); if(ctx.roundRect)ctx.roundRect(g.thumbX+2,g.y,g.thumbW-4,g.h,5);else ctx.rect(g.thumbX+2,g.y,g.thumbW-4,g.h);
+  ctx.fill(); ctx.globalAlpha=1; }
 
 /* ============================================================
    5) HIT TEST — pure arithmetic, works at any commit count
@@ -408,8 +476,17 @@ function hitTest(mx,my){
 function rel(e){const r=cv.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top};}
 
 cv.addEventListener("wheel",(e)=>{
-  if(e.ctrlKey||e.metaKey){e.preventDefault();zoomAt(rel(e).y,-e.deltaY);}
-  else{e.preventDefault();state.scrollTarget=clampScroll(state.scrollTarget+e.deltaY);dirty=true;}
+  if(e.ctrlKey||e.metaKey){e.preventDefault();zoomAt(rel(e).y,-e.deltaY);return;}
+  // Horizontal pan (see state.panX's own doc comment) — a real trackpad's
+  // two-finger horizontal swipe reports as e.deltaX directly; a mouse wheel
+  // (or a trackpad that doesn't) reports the traditional "hold Shift to
+  // scroll sideways" gesture as e.shiftKey with the magnitude still on
+  // e.deltaY, so that's read as the pan delta instead whenever deltaX itself
+  // is ~0. Whichever axis actually has more magnitude wins, so a slightly
+  // diagonal vertical scroll never accidentally pans too.
+  const dx=(e.shiftKey&&Math.abs(e.deltaX)<1)?e.deltaY:e.deltaX;
+  if(Math.abs(dx)>Math.abs(e.deltaY)){e.preventDefault();state.panTarget=clampPan(state.panTarget+dx);dirty=true;return;}
+  e.preventDefault();state.scrollTarget=clampScroll(state.scrollTarget+e.deltaY);dirty=true;
 },{passive:false});
 function zoomAt(cy,dir){
   // Anchor on the content point under the cursor — same math as before, just
@@ -438,7 +515,7 @@ cv.addEventListener("pointerdown",(e)=>{
   cv.focus(); cv.setPointerCapture(e.pointerId); const p=rel(e), g=scrollbarGeom(view.cssH,view.cssW);
   state.pointerActive=true;
   if(g&&p.x>=g.x-4){sbDrag={grab:p.y-g.thumbY,thumbH:g.thumbH};return;}
-  down={x0:p.x,y0:p.y,st0:state.scrollTarget,hit:hitTest(p.x,p.y),moved:false};
+  down={x0:p.x,y0:p.y,st0:state.scrollTarget,panX0:state.panTarget,hit:hitTest(p.x,p.y),moved:false};
 });
 cv.addEventListener("pointermove",(e)=>{
   const p=rel(e);
@@ -455,7 +532,7 @@ cv.addEventListener("pointermove",(e)=>{
       const legal=isMerge?legalMerge(down.hit.row,tRow):legalPick(down.hit.row,tRow);
       state.drag={source:down.hit.row,x:p.x,y:p.y,target:tRow,legal:legal.ok,op:isMerge?"merge":"pick"};
       updateGhost(down.hit.row,tRow,legal,isMerge); dirty=true;
-    } else if(down.moved){ state.scrollTarget=clampScroll(down.st0-dy); dirty=true; }
+    } else if(down.moved){ state.scrollTarget=clampScroll(down.st0-dy); state.panTarget=clampPan(down.panX0-dx); dirty=true; }
     return;
   }
   const h=hitTest(p.x,p.y), nr=h?h.row:-1; if(nr!==state.hoverRow){state.hoverRow=nr;dirty=true;}
@@ -1161,6 +1238,8 @@ function tick(now){
   const dt=now-perf.last; perf.last=now;
   if(Math.abs(state.scrollTarget-state.scrollTop)>0.4){state.scrollTop+=(state.scrollTarget-state.scrollTop)*0.3;dirty=true;}
   else state.scrollTop=state.scrollTarget;
+  if(Math.abs(state.panTarget-state.panX)>0.4){state.panX+=(state.panTarget-state.panX)*0.3;dirty=true;}
+  else state.panX=state.panTarget;
   if(state.stress){state.scrollTarget+=9;if(state.scrollTarget>=state.maxScroll)state.scrollTarget=0;dirty=true;}
   const selTarget=state.selectedRow>=0?0.20:0, hovTarget=(state.hoverRow>=0&&state.hoverRow!==state.selectedRow)?0.08:0;
   if(REDUCE_MOTION){ state.selectAlpha=selTarget; state.hoverAlpha=hovTarget; }
@@ -1227,7 +1306,11 @@ function appendAll(dst, src){ for(let i=0;i<src.length;i++) dst.push(src[i]); }
 // original one-object-or-null shape.
 function buildGFromBackend(g){
   return {N:g.n, commitLane:g.lane, commitColor:g.color, isMerge:g.merge,
-     gapStart:g.gapStart, gapTop:g.gapTop, gapBot:g.gapBot, gapColor:g.gapColor, refs:g.refs, allRefs:g.allRefs, snapRows:[], snapTs:{}};
+     gapStart:g.gapStart, gapTop:g.gapTop, gapBot:g.gapBot, gapColor:g.gapColor, refs:g.refs, allRefs:g.allRefs, snapRows:[], snapTs:{},
+     // recomputeLayout() reads this to size horizontal panning range (see
+     // state.panX's own doc comment) — without it, G.laneCount was
+     // undefined for every real repo, turning state.maxPanX into NaN.
+     laneCount:g.laneCount};
 }
 function loadGraph(N){
   resize(); // ensure the canvas matches the current wrap size (cold Tauri windows can report 0×0 at boot)
@@ -1236,7 +1319,7 @@ function loadGraph(N){
     G=buildGFromBackend(BACKEND);
     NN=BACKEND.n; ms=performance.now()-t0;
   } else { G=generateGraph(N); NN=N; ms=performance.now()-t0; }
-  state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
+  state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0; state.panX=state.panTarget=0;
   bisectDrawerCtrl.clearLocalMarks();
   recomputeLayout(); positionTicks();
   detailCtrl.showHero(NN, ms);
@@ -1699,7 +1782,7 @@ function bootEmpty(){
   if(IN_TAURI) tinvoke("unwatch_repo").catch(e=>console.error("unwatch_repo",e));
   sidebarCtrl.reset();
   G={N:0,commitLane:[],commitColor:[],isMerge:[],gapStart:[0],gapTop:[],gapBot:[],gapColor:[],refs:[],snapRows:[],snapTs:{}};
-  state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0;
+  state.selectedRow=-1; state.hoverRow=-1; state.scrollTop=state.scrollTarget=0; state.panX=state.panTarget=0;
   bisectDrawerCtrl.clearLocalMarks();
   workdirCtrl.deselect(); // no repo open -> the pinned row can't be selected either
   recomputeLayout(); positionTicks();
@@ -1758,7 +1841,7 @@ const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>c
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, hhex, msgOf, AUTHORS,
-  fakeAgo, relTime, pickRepo, closeRepo, armDanger, updateBranchPill,
+  fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
   // above for the full design) — enterSubmodule/goBackToParent are hoisted

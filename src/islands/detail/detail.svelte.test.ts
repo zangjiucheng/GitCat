@@ -15,6 +15,7 @@ vi.mock("../../legacy/bridge", () => ({
   msgOf: (r: number) => "demo message " + r,
   fakeAgo: (r: number) => r + "m",
   relTime: (t: number) => t + "s ago",
+  absTime: (t: number) => t + "-abs",
   highlight: (src: string) => src,
   TAMA_IMG: { hero: "hero.png" },
   pickRepo: vi.fn(),

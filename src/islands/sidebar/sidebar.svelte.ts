@@ -146,6 +146,13 @@ export type SubmoduleMenu = { path: string; status: string; absolutePath: string
 // TagMenu above (no extra per-row info to capture beyond the branch name and
 // where to draw the popover).
 export type MergeMenu = { name: string; x: number; y: number };
+// "Push to…" popover, opened from the branch popover's own "Push to…"
+// button (see `openPushMenu`) — same shape/rationale as MergeMenu above; the
+// target remote branch name itself lives in `pushBranchInput` (a normal
+// bound `$state` string, not part of this type) rather than here, since it
+// needs to be a live-editable input value, not a snapshot captured at open
+// time the way `name`/`x`/`y` are.
+export type PushMenu = { name: string; x: number; y: number };
 // Backlog #34's dirty-tree resolution chooser — opened when `checkout`/
 // `checkoutRemote` hits git_write.rs's `checkout`/`create_branch` dirty-tree
 // collision (`WriteResult.conflictingFiles` non-empty) instead of just
@@ -322,6 +329,13 @@ class SidebarState {
   // (see `openMergeMenu`), and opening any of THOSE nulls this one back out
   // (see their own bodies below).
   mergeMenu = $state<MergeMenu | null>(null);
+  // "Push to…" popover — same "only one popover open at a time" invariant as
+  // menu/tagMenu/submoduleMenu/mergeMenu above (see `openPushMenu`, and every
+  // other open* method's own null-out of this one). pushBranchInput is the
+  // popover's own text field value: "" means "same name as the local branch"
+  // (see pushBranch's own doc comment), not yet typed into.
+  pushMenu = $state<PushMenu | null>(null);
+  pushBranchInput = $state("");
   // Backlog #34's dirty-tree resolution chooser — same "only one popover open
   // at a time" invariant as menu/tagMenu/submoduleMenu/mergeMenu above (see
   // openDirtyCheckoutMenu, and every other open* method's own null-out of
@@ -1076,6 +1090,7 @@ class SidebarState {
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
+    this.pushMenu = null;
     this.hasRepo = false;
   }
 
@@ -1559,12 +1574,100 @@ class SidebarState {
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
+    this.pushMenu = null;
     const r = anchor.getBoundingClientRect();
     this.menu = { name, isCurrent, upstream, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
 
   closeMenu() {
     this.menu = null;
+  }
+
+  // Push-to-a-different-remote-branch-name popover — a SECOND-level popover
+  // opened from inside the branch popover's own "Push to…" button, same
+  // "reuse that button's already-computed (x, y)" shape as openMergeMenu
+  // just below (the branch popover it lives in is about to be closed in the
+  // same click handler — see Sidebar.svelte). pushBranchInput starts empty
+  // (meaning "same name as the local branch" — see pushBranch's own doc
+  // comment), not pre-filled with `name`, so the common case (same name) is
+  // just leaving the field untouched, not clearing a pre-filled value first.
+  openPushMenu(name: string, x: number, y: number) {
+    this.menu = null; // only one popover open at a time
+    this.tagMenu = null;
+    this.submoduleMenu = null;
+    this.mergeMenu = null;
+    this.dirtyCheckoutMenu = null;
+    this.checkoutConfirm = null;
+    this.pushBranchInput = "";
+    this.pushMenu = { name, x: Math.min(x, window.innerWidth - 220), y };
+  }
+
+  // Cancel — no push attempted. Same name as cancelNewBranch/cancelNewTag,
+  // whose "outside-click / Escape closes the form, no request sent" shape
+  // this mirrors exactly (see onWindowPointerdown/onPushBranchKeydown in
+  // Sidebar.svelte).
+  cancelPushMenu() {
+    this.pushMenu = null;
+    this.pushBranchInput = "";
+  }
+
+  // Pushes `name` — NOT necessarily the checked-out branch, and never
+  // switches to it — optionally under a different name on the remote side
+  // (`remoteBranch`; the plain one-click "Push" button passes `null`, i.e.
+  // same name). Mirrors pushTag's own shape (busy/busyTarget, Tama
+  // messaging), not plain push() in legacy/main.ts — that one always targets
+  // whatever branch is currently checked out and has no notion of a
+  // differently-named remote branch. Returns whether it succeeded so
+  // confirmPushMenu (below) can decide whether to close its own popover —
+  // shared by both the simple one-click "Push" button (Sidebar.svelte calls
+  // this directly) and the "Push to…" form (via confirmPushMenu).
+  async pushBranch(name: string, remoteBranch: string | null): Promise<boolean> {
+    const target = remoteBranch && remoteBranch !== name ? `${name} to ${remoteBranch}` : name;
+    if (!IN_TAURI) {
+      bridge.tama.set("celebrate");
+      bridge.tama.say("Pushed " + target + " (demo).");
+      return true;
+    }
+    if (this.busy) return false;
+    this.busy = true;
+    this.busyTarget = name;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Pushing " + target + "…");
+    try {
+      const res = await commands.pushBranch(bridge.CUR_REPO as unknown as string, name, null, remoteBranch);
+      if (res && res.ok) {
+        bridge.tama.set("celebrate");
+        bridge.tama.say(res.message || "Pushed " + target + ".", 3200);
+        return true;
+      }
+      bridge.tama.warn((res && res.message) || "Couldn't push " + target + ".");
+      return false;
+    } catch (e) {
+      bridge.tama.warn("Push failed — " + e);
+      console.error(e);
+      return false;
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
+  // "Push to…" form's own submit — "" in the input means "same name as the
+  // local branch" (pushBranch's own null-means-same-name convention), not an
+  // error, unlike confirmNewBranch's empty-means-cancel. Keeps the popover
+  // OPEN (disabled/spinnered — see Sidebar.svelte) on failure so a rejected
+  // push (e.g. non-fast-forward) can be retried without re-typing, same
+  // retry-friendly shape confirmNewBranch/confirmNewTag already use; only
+  // closes on success.
+  async confirmPushMenu() {
+    if (!this.pushMenu || this.busy) return;
+    const name = this.pushMenu.name;
+    const remoteBranch = this.pushBranchInput.trim() || null;
+    const ok = await this.pushBranch(name, remoteBranch);
+    if (ok) {
+      this.pushMenu = null;
+      this.pushBranchInput = "";
+    }
   }
 
   // Backlog #7's strategy chooser — a SECOND-level popover opened from
@@ -1578,6 +1681,7 @@ class SidebarState {
     this.submoduleMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
+    this.pushMenu = null;
     this.mergeMenu = { name, x: Math.min(x, window.innerWidth - 220), y };
   }
 
@@ -1599,6 +1703,7 @@ class SidebarState {
     this.submoduleMenu = null;
     this.mergeMenu = null;
     this.checkoutConfirm = null;
+    this.pushMenu = null;
     this.dirtyCheckoutMenu = { name, startPoint, files, x: Math.min(x, window.innerWidth - 260), y };
   }
 
@@ -1616,6 +1721,7 @@ class SidebarState {
     this.submoduleMenu = null;
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
+    this.pushMenu = null;
     this.checkoutConfirm = { name, remote, x: Math.min(x, window.innerWidth - 200), y };
   }
 
@@ -1797,6 +1903,7 @@ class SidebarState {
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
+    this.pushMenu = null;
     const r = anchor.getBoundingClientRect();
     this.tagMenu = { name, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
@@ -1811,6 +1918,7 @@ class SidebarState {
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
+    this.pushMenu = null;
     const r = anchor.getBoundingClientRect();
     this.submoduleMenu = { path, status, absolutePath, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
   }
