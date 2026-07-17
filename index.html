@@ -668,24 +668,76 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tree .st.M{color:var(--warning)} .tree .st.A{color:var(--success)} .tree .st.D{color:var(--danger)}
 .diffview{font-family:var(--mono);font-size:11.5px;line-height:1.55;background:var(--bg);border:1px solid var(--border);
   border-radius:var(--r-panel);overflow:auto;max-height:320px;margin-top:2px}
-.diff-file-h{position:sticky;top:0;background:var(--elevated);border-bottom:1px solid var(--border);padding:5px 10px;font-weight:600;font-size:11px;color:var(--muted);z-index:1}
-/* width:fit-content;min-width:100% — without an explicit width, this
-   block-level flex row defaults to its scroll container's own VISIBLE
-   width (not the full scrollable content width `white-space:pre`'s
-   non-wrapping text creates), so its background stopped exactly at the
-   edge of the first screenful: scrolling .diffview right at all moved past
-   a colored row into painted-but-uncolored overflow. fit-content lets a
-   long line's own row grow to cover its full (unwrappable) text width;
-   min-width:100% keeps a short line's row filling the container exactly
-   like before, so nothing regresses for the common unscrolled case. */
-.diff-line{display:flex;white-space:pre;padding-right:8px;width:fit-content;min-width:100%}
-.diff-line .ln{flex:none;width:34px;text-align:right;padding-right:8px;color:var(--muted);opacity:.6;user-select:none}
-.diff-line .mk{flex:none;width:14px;text-align:center;user-select:none}
+/* left:0 (not just top:0) — same reasoning as .diff-line .ln's own sticky
+   fix below: without it, this header's OWN file-path text scrolls out of
+   view horizontally just like the line numbers used to, losing "which
+   file am I looking at" exactly when scrolled right to read a long line. */
+.diff-file-h{position:sticky;top:0;left:0;background:var(--elevated);border-bottom:1px solid var(--border);padding:5px 10px;font-weight:600;font-size:11px;color:var(--muted);z-index:1}
+/* .diff-rows wraps every .diff-line as ONE shrink-wrapped block (Detail.svelte/
+   Workdir.svelte both add this wrapper around their {#each} of rows) —
+   width:fit-content here grows ONE box to the width of its widest CHILD's
+   content (the longest line in the whole diff); min-width:100% keeps it at
+   least filling .diffview's own visible width for a short diff, exactly like
+   the OLD approach below used to. The difference that actually matters:
+   .diff-line itself is now width:100% — 100% of THIS wrapper, i.e. the
+   SAME final width for every row, long or short, not each row computing
+   its own independent fit-content size. That distinction is BUG FIX,
+   not styling — see .diff-line .ln's own doc comment for why this
+   discovery. */
+.diff-rows{width:fit-content;min-width:100%}
+.diff-line{display:flex;white-space:pre;padding-right:8px;width:100%}
+/* position:sticky;left — BUG FIX: scrolling .diffview right to read a long
+   line used to carry the line-number/+-marker columns away with it (they're
+   the FIRST cells in the row's own flex layout, same as everything else) —
+   past even a modest scroll offset, EVERY visible row (not just the long
+   one) loses its line number/mark AND has its own text start mid-word,
+   since one shared horizontal scroll position applies to every row
+   regardless of that row's own length. Pinning these two columns to the
+   left edge of the viewport (not the row) keeps them visible at any scroll
+   position, matching how every other diff viewer (VS Code, GitHub, …)
+   keeps line numbers pinned during horizontal scroll. `background` on each
+   is required, not decorative: without an OPAQUE backing, the scrolled-
+   under code text of whatever the sticky cell is now covering would show
+   through it. Mixed against `--bg` (not `transparent`, unlike the row's own
+   background below) specifically so the result is fully opaque while still
+   matching each row TYPE's own visual color exactly.
+
+   position:sticky alone was NOT enough, though — empirically found (via
+   getBoundingClientRect() on a scrolled-right SHORT row's .ln/.sel/.mk)
+   that they'd render squeezed/overlapping instead of tiled cleanly, but
+   ONLY on a row shorter than the widest line in the diff. Root cause: each
+   .diff-line used to independently compute its OWN `width:fit-content;
+   min-width:100%` — a SHORT row (say 150px of real content) still ends up
+   only ~313px wide (.diffview's own visible client width, from
+   min-width:100%), while the LONGEST row in the same diff can be 591px
+   wide. A sticky element's stuck position is bounded by its OWN row's
+   right edge, not the scroll container's — so once scrolled past a short
+   row's 313px-wide box, its sticky .ln/.sel/.mk have nowhere left to sit
+   within that row and get compressed into whatever sliver remains. Fixed
+   by giving EVERY row the SAME width instead: `.diff-rows` (wrapping the
+   whole `{#each}` of rows) shrink-wraps to the widest row's content ONCE,
+   and each `.diff-line` is `width:100%` of THAT shared wrapper — so every
+   row, short or long, ends up exactly as wide as the longest one, and
+   sticky positioning has full room on every row. */
+.diff-line .ln{flex:none;width:34px;text-align:right;padding-right:8px;color:var(--muted);opacity:.6;user-select:none;
+  position:sticky;left:0;background:var(--bg);z-index:1}
+/* left:34px is Detail.svelte's own layout (.ln then .mk, nothing between) —
+   Workdir.svelte's hunk-staging rows additionally have a `.sel` checkbox
+   BETWEEN them (`.ln`/`.sel`/`.mk`, see the "Hunk/line-level staging"
+   block below), so `.sel + .mk` there shifts to left:50px (34px + `.sel`'s
+   own 16px) to sit right after `.sel`'s sticky position instead of
+   overlapping it. */
+.diff-line .mk{flex:none;width:14px;text-align:center;user-select:none;
+  position:sticky;left:34px;background:var(--bg);z-index:1}
+.diff-line .sel+.mk{left:50px}
 .diff-line code{white-space:pre}
 .diff-line.hunk{background:color-mix(in srgb,var(--accent2) 12%,transparent);color:var(--muted)}
+.diff-line.hunk .ln,.diff-line.hunk .sel,.diff-line.hunk .mk{background:color-mix(in srgb,var(--accent2) 12%,var(--bg))}
 .diff-line.add{background:color-mix(in srgb,var(--success) 12%,transparent)}
+.diff-line.add .ln,.diff-line.add .sel,.diff-line.add .mk{background:color-mix(in srgb,var(--success) 12%,var(--bg))}
 .diff-line.add .mk{color:var(--success)}
 .diff-line.del{background:color-mix(in srgb,var(--danger) 12%,transparent)}
+.diff-line.del .ln,.diff-line.del .sel,.diff-line.del .mk{background:color-mix(in srgb,var(--danger) 12%,var(--bg))}
 .diff-line.del .mk{color:var(--danger)}
 .tok-key{color:var(--accent);font-weight:600} .tok-str{color:var(--success)} .tok-num{color:var(--accent2)}
 .tok-com{color:var(--muted);font-style:italic} .tok-fn{color:var(--l2)} .tok-punc{color:var(--muted)}
@@ -721,7 +773,18 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .wd-file .st[data-status="T"]{color:var(--accent2)}
 .wd-file .st[data-status="?"]{color:var(--accent)}
 .wd-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wd-act{flex:none;width:22px;height:22px;display:grid;place-items:center;border-radius:5px;border:1px solid transparent;
+/* padding:0 is load-bearing, not cosmetic — BUG FIX: `button` (line 62's
+   reset) never touches padding/border, so Chrome's own default `<button>`
+   padding (1px 6px) was still in effect here; combined with box-sizing:
+   border-box (line 58) that ATE INTO this 22px square's own content-box
+   (leaving less width than the 14px icon needs), the icon overflowed that
+   shrunk content-box and grid's place-items:center ended up centering it 3px
+   off from the button's actual visual center — empirically confirmed via
+   getBoundingClientRect() on both the button and its icon: 7px inset on one
+   side, 1px on the other before this fix; exactly 4px/4px (truly centered)
+   after. Same fix applied below to `.bisect-panel-head .x`/`.term-x` — same
+   "fixed-size grid-centered icon button" shape, same missing reset. */
+.wd-act{flex:none;width:22px;height:22px;padding:0;display:grid;place-items:center;border-radius:5px;border:1px solid transparent;
   background:transparent;color:var(--muted);font-size:13px;line-height:1}
 .wd-act:hover:not([disabled]){background:var(--panel);border-color:var(--border);color:var(--text)}
 .wd-act.danger:hover:not([disabled]){color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,transparent)}
@@ -753,11 +816,20 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 
 /* Hunk/line-level staging (git add -p equivalent) — extends .diffview/
    .diff-line above with a per-line checkbox gutter and per-hunk/selected-
-   lines mini toolbars. `.sel` sits between `.ln` and `.mk`, same narrow
-   fixed-width-column convention as those two. */
-.diff-line .sel{flex:none;width:16px;display:flex;align-items:center;justify-content:center}
+   lines mini toolbars. `.sel` sits between `.ln` and `.mk`, same sticky-
+   left-column treatment as those two (see the "BUG FIX" comment on `.ln`
+   above) — without it, scrolling right to read a long line would ALSO
+   scroll a checked line's checkbox out of reach, undoing the whole point of
+   letting you stage/discard individual lines while reading them. */
+.diff-line .sel{flex:none;width:16px;display:flex;align-items:center;justify-content:center;
+  position:sticky;left:34px;background:var(--bg);z-index:1}
 .diff-line .sel input[type="checkbox"]{width:11px;height:11px;margin:0;cursor:pointer}
-.diff-line.selected{box-shadow:inset 2px 0 0 var(--accent)}
+/* Targets `.ln` (sticky, pinned to the viewport's left edge), not the whole
+   row: `.diff-line` itself is `width:fit-content`, so a selected LONG line's
+   own box extends far past the viewport — a box-shadow on the row draws at
+   THAT far-off left edge, not the visible one, so it'd disappear the moment
+   you scroll right to read the very line it's marking as selected. */
+.diff-line.selected .ln{box-shadow:inset 2px 0 0 var(--accent)}
 .wd-hunk-act{margin-left:auto;display:flex;gap:4px;flex:none}
 .wd-hunk-act button{font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;border:1px solid var(--border);
   background:var(--elevated);color:var(--text)}
@@ -944,7 +1016,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   opacity:0;visibility:hidden;transform:translateY(8px);transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s}
 .bisect-panel.on{opacity:1;visibility:visible;transform:none;transition:opacity .18s ease,transform .18s ease}
 .bisect-panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-weight:600}
-.bisect-panel-head .x{width:22px;height:22px;display:grid;place-items:center;border-radius:6px;
+.bisect-panel-head .x{width:22px;height:22px;padding:0;display:grid;place-items:center;border-radius:6px;
   border:1px solid var(--border);background:var(--elevated);color:var(--muted)}
 .bisect-panel-head .x:hover{border-color:var(--muted);color:var(--text)}
 
@@ -973,7 +1045,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .term-btn{font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;border:1px solid var(--border);
   background:var(--elevated);color:var(--text)}
 .term-btn:hover{border-color:var(--muted)}
-.term-x{margin-left:auto;width:22px;height:22px;flex:none;display:grid;place-items:center;border-radius:6px;
+.term-x{margin-left:auto;width:22px;height:22px;padding:0;flex:none;display:grid;place-items:center;border-radius:6px;
   border:1px solid var(--border);background:var(--elevated);color:var(--muted)}
 .term-x:hover{border-color:var(--muted);color:var(--text)}
 .term-body{flex:1;position:relative;min-height:0}

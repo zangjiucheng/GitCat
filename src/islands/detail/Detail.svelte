@@ -16,6 +16,27 @@
   // their own (they animate via inline styles, not CSS the reduced-motion
   // media query in index.html can override), so this needs its own check.
   const REDUCE_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // BUG FIX: #diffview is a static element (only its CHILDREN are swapped by
+  // the {#if diffLoading}/{#each diffRows} below) — switching to a different
+  // file within the SAME commit reuses that same DOM node, so the browser
+  // keeps whatever scrollLeft/scrollTop it already had from the PREVIOUS
+  // file's diff. A long line you'd scrolled right to read, or a long diff
+  // you'd scrolled down into, then silently carried over onto the next
+  // file's diff too — hiding its line-number/mark columns and its own
+  // topmost rows behind the stale offset, reading as truncated/missing
+  // content rather than "just scrolled". (Switching COMMITS doesn't have
+  // this problem: the whole block above is wrapped in {#key c.sha}, which
+  // destroys and recreates #diffview from scratch on every commit change —
+  // this effect only needed for the same-commit, different-file case.)
+  let diffviewEl = $state<HTMLDivElement | undefined>(undefined);
+  $effect(() => {
+    detailCtrl.selectedFile;
+    if (diffviewEl) {
+      diffviewEl.scrollLeft = 0;
+      diffviewEl.scrollTop = 0;
+    }
+  });
 </script>
 
 {#if workdirCtrl.selected}
@@ -146,20 +167,22 @@
   </section>
   <section>
     <h4 class="d-lab">Diff</h4>
-    <div class="diffview" id="diffview">
+    <div class="diffview" id="diffview" bind:this={diffviewEl}>
       {#if detailCtrl.diffLoading}
         <div class="diff-file-h mut"><span class="spinner"></span> loading diff&#8230;</div>
       {:else}
         <div class="diff-file-h">{detailCtrl.diffHeader}</div>
-        {#each detailCtrl.diffRows as row}
-          {#if row.kind === "hunk"}
-            <div class="diff-line hunk"><span class="ln"></span><span class="mk"></span><code>{row.text}</code></div>
-          {:else if row.kind === "note"}
-            <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{row.text}</code></div>
-          {:else}
-            <div class="diff-line {row.cls}"><span class="ln">{row.ln}</span><span class="mk">{row.mk}</span><code>{@html row.html}</code></div>
-          {/if}
-        {/each}
+        <div class="diff-rows">
+          {#each detailCtrl.diffRows as row}
+            {#if row.kind === "hunk"}
+              <div class="diff-line hunk"><span class="ln"></span><span class="mk"></span><code>{row.text}</code></div>
+            {:else if row.kind === "note"}
+              <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{row.text}</code></div>
+            {:else}
+              <div class="diff-line {row.cls}"><span class="ln">{row.ln}</span><span class="mk">{row.mk}</span><code>{@html row.html}</code></div>
+            {/if}
+          {/each}
+        </div>
       {/if}
     </div>
   </section>

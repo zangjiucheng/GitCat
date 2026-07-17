@@ -325,8 +325,17 @@ function draw(){
     else if(r===state.hoverRow){ctx.beginPath();ctx.arc(x,y,dotR+2.6,0,TAU);ctx.strokeStyle=theme.muted;ctx.lineWidth=1;ctx.stroke();}
     if(bisectDrawerCtrl.cur!=null&&r===bisectDrawerCtrl.cur&&r!==state.selectedRow){ctx.beginPath();ctx.arc(x,y,dotR+3.4,0,TAU);ctx.strokeStyle=theme.accent;ctx.lineWidth=2;ctx.stroke();}
     let cx=tx; ctx.font=layout.chipFont;
-    if(showAllTags&&G.allRefs){ const list=G.allRefs[r]; for(let i=0;i<list.length;i++) cx=drawChip(cx,y,list[i].label,list[i].kind)+8; }
-    else { const ref=G.refs[r]; if(ref) cx=drawChip(cx,y,ref.label,ref.kind)+8; }
+    // BUG FIX: a long tag/branch label (or, with "show every tag" on, several
+    // chained onto one commit) used to draw at its full natural width with
+    // nothing bounding cx afterward — same overlap class the tx-clamp above
+    // already fixes for wide lane stretches, just triggered by chip content
+    // instead of lane count. chipLimit mirrors tx's own reservation (leave at
+    // least MIN_SUBJECT_W for the subject column before the author/sha
+    // gutter starts) — drawChip now truncates a chip that would cross it, and
+    // the loop below stops adding MORE chips once there's no room left at all.
+    const chipLimit=W-AUTHOR_GUTTER-MIN_SUBJECT_W;
+    if(showAllTags&&G.allRefs){ const list=G.allRefs[r]; for(let i=0;i<list.length&&cx<chipLimit;i++) cx=drawChip(cx,y,list[i].label,list[i].kind,chipLimit-cx)+8; }
+    else { const ref=G.refs[r]; if(ref&&cx<chipLimit) cx=drawChip(cx,y,ref.label,ref.kind,chipLimit-cx)+8; }
     if(rowH>=15){
       // Reserve room for BOTH the author preview and the sha (AUTHOR_GUTTER
       // below) — previously only the sha itself (96px) was reserved, so
@@ -400,14 +409,30 @@ function drawWorkdirBand(){
   ctx.strokeStyle=theme.border; ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(0,rowH+0.5); ctx.lineTo(W,rowH+0.5); ctx.stroke();
 }
-function drawChip(x,y,label,kind){
+// `maxWidth`, when given, caps the WHOLE chip (label + padding) — a label
+// that would exceed it is shrunk to fit with a trailing "…", same shrink-one-
+// char-at-a-time-and-remeasure approach the subject/author text below
+// already use. `maxWidth<=pad*2+8` means there's no usable room at all
+// (not even a one-char label plus ellipsis would read as anything but a
+// sliver) — draws nothing and returns `x` unchanged rather than a garbled chip.
+function drawChip(x,y,label,kind,maxWidth){
   const col=kind==="branch"?LANE_COLORS[0]:kind==="tag"?theme.accent2||"#7FB6A6":theme.accent;
   ctx.font=layout.chipFont;
-  const pad=6, w=ctx.measureText(label).width+pad*2, h=Math.round(15*Math.min(1.25,layout.zoom));
+  const pad=6;
+  if(maxWidth!=null&&maxWidth<=pad*2+8) return x;
+  let text=label;
+  if(maxWidth!=null){
+    const textMax=maxWidth-pad*2;
+    if(ctx.measureText(text).width>textMax){
+      while(text.length>1&&ctx.measureText(text+"…").width>textMax) text=text.slice(0,-1);
+      text+="…";
+    }
+  }
+  const w=ctx.measureText(text).width+pad*2, h=Math.round(15*Math.min(1.25,layout.zoom));
   ctx.beginPath(); if(ctx.roundRect)ctx.roundRect(x,y-h/2,w,h,4);else ctx.rect(x,y-h/2,w,h);
   ctx.fillStyle=col; ctx.globalAlpha=kind==="head"?0.92:0.16; ctx.fill(); ctx.globalAlpha=1;
   ctx.lineWidth=1; ctx.strokeStyle=col; ctx.stroke();
-  ctx.fillStyle=kind==="head"?theme.bg:col; ctx.textAlign="left"; ctx.fillText(label,x+pad,y+0.5);
+  ctx.fillStyle=kind==="head"?theme.bg:col; ctx.textAlign="left"; ctx.fillText(text,x+pad,y+0.5);
   return x+w;
 }
 function drawDragGhost(){
