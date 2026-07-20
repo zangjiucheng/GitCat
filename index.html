@@ -707,7 +707,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    fix below: without it, this header's OWN file-path text scrolls out of
    view horizontally just like the line numbers used to, losing "which
    file am I looking at" exactly when scrolled right to read a long line. */
-.diff-file-h{position:sticky;top:0;left:0;background:var(--elevated);border-bottom:1px solid var(--border);padding:5px 10px;font-weight:600;font-size:11px;color:var(--muted);z-index:1}
+.diff-file-h{position:sticky;top:0;left:0;background:var(--elevated);border-bottom:1px solid var(--border);padding:5px 10px;font-weight:600;font-size:11px;color:var(--muted);z-index:1;
+  display:flex;align-items:center;justify-content:space-between;gap:8px}
+.diff-file-h-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 /* .diff-rows wraps every .diff-line as ONE shrink-wrapped block (Detail.svelte/
    Workdir.svelte both add this wrapper around their {#each} of rows) —
    width:fit-content here grows ONE box to the width of its widest CHILD's
@@ -776,6 +778,20 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .diff-line.del .mk{color:var(--danger)}
 .tok-key{color:var(--accent);font-weight:600} .tok-str{color:var(--success)} .tok-num{color:var(--accent2)}
 .tok-com{color:var(--muted);font-style:italic} .tok-fn{color:var(--l2)} .tok-punc{color:var(--muted)}
+
+/* ============================== EXPANDED DIFF (full-page popup) ==============================
+   Detail.svelte's embedded .diffview above is capped at max-height:320px —
+   fine for a glance, cramped for a real changeset. The expand button in
+   .diff-file-h opens this instead: same .modal.blame-style near-fullscreen
+   sizing as the Blame/rebase-plan viewers, with the SAME detailCtrl.tree/
+   diffHeader/diffRows the embedded view already renders (no separate
+   controller or re-fetch) — a file list down the left (reuses .tree/dirNode
+   verbatim) so switching files doesn't require closing it first. */
+.modal.diffx{width:min(1200px,96vw);height:88vh;display:flex;flex-direction:column}
+.diffx-head-main h3{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.modal.diffx .modal-body{flex:1;min-height:0;overflow:hidden;padding:0;display:flex}
+.diffx-files{flex:none;width:280px;margin-top:0;overflow:auto;border-right:1px solid var(--border);padding:10px}
+.diffx-diff{flex:1;min-width:0;min-height:0;max-height:none;border:0;border-radius:0}
 
 /* ============================== WORKDIR (staging + commit + stash) ==============================
    Renders in the SAME #detail slot as the sections above, swapped in by

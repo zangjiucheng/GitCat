@@ -117,13 +117,25 @@ class DetailState {
   selectedFile = $state<string | null>(null);
   diffHeader = $state("");
   diffRows = $state<DiffRow[]>([]);
+  // Full-page diff popup (see Detail.svelte's expand button in .diff-file-h)
+  // — reads the SAME diffHeader/diffRows/tree above, so there's nothing to
+  // sync: the modal just renders bigger, not different, content.
+  diffExpanded = $state(false);
   // Which file-tree row's Blame/History click is mid-`plumbingInspect`
   // (deleted-file rows only — see blameFile()/historyFile()'s own doc
   // comment) — lets the row swap those two buttons for a spinner instead of
   // showing nothing while that extra round trip is in flight.
   resolvingDeletedFileFor = $state<string | null>(null);
 
-  private curChanged: FileEntry[] = [];
+  // $state (not a plain field): `tree` below is a getter over this, and it's
+  // now read from TWO template call sites (the embedded file list and the
+  // expanded-diff modal's copy — see Detail.svelte). A plain field only
+  // "worked" for the first call site by accident, piggybacking on the
+  // sibling `{#if treeLoading}` branch switch to force a re-evaluation; the
+  // second call site has no such guard and rendered a permanently-stale
+  // (usually empty, since loadCommitDetail fills this in asynchronously)
+  // snapshot with no way to react to the real update landing.
+  private curChanged = $state<FileEntry[]>([]);
   private curDiffs: Record<string, DiffFile> = {};
   private detailSeq = 0;
   // What deselect() (clicking empty canvas space) should restore — the
@@ -454,6 +466,15 @@ class DetailState {
     void externalToolsCtrl.openDiff(repo, f.p, false, c.sha + "^", c.sha);
   }
 
+  expandDiff() {
+    if (!this.commit) return;
+    this.diffExpanded = true;
+  }
+
+  collapseDiff() {
+    this.diffExpanded = false;
+  }
+
   copySha() {
     if (!this.commit) return;
     copyToClipboard(this.commit.sha);
@@ -498,12 +519,14 @@ class DetailState {
     this.lastHero = { n, ms };
     this.commit = null;
     this.hero = { kind: "loaded", n, ms };
+    this.diffExpanded = false;
   }
 
   showEmpty() {
     this.lastHero = null;
     this.commit = null;
     this.hero = { kind: "empty" };
+    this.diffExpanded = false;
   }
 
   // Clicking empty canvas space (no commit under the pointer) while a commit
@@ -514,6 +537,7 @@ class DetailState {
   deselect() {
     this.commit = null;
     this.hero = this.lastHero ? { kind: "loaded", ...this.lastHero } : { kind: "empty" };
+    this.diffExpanded = false;
   }
 }
 

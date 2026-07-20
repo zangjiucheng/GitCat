@@ -10,6 +10,7 @@
   import Eye from "@lucide/svelte/icons/eye";
   import History from "@lucide/svelte/icons/history";
   import ExternalLink from "@lucide/svelte/icons/external-link";
+  import Maximize2 from "@lucide/svelte/icons/maximize-2";
 
   // Matches TamaMascot's own `this.reduced` check (src/legacy/main.ts) —
   // Svelte's transition: directives don't honor prefers-reduced-motion on
@@ -37,7 +38,26 @@
       diffviewEl.scrollTop = 0;
     }
   });
+
+  // Second copy of the same reset, for the expanded-diff modal's own
+  // .diffview instance (see the expand button in .diff-file-h below) — a
+  // separate DOM node with its own independent scrollLeft/scrollTop, so it
+  // needs its own bind:this/effect pair rather than sharing diffviewEl's.
+  let diffviewExpandedEl = $state<HTMLDivElement | undefined>(undefined);
+  $effect(() => {
+    detailCtrl.selectedFile;
+    if (diffviewExpandedEl) {
+      diffviewExpandedEl.scrollLeft = 0;
+      diffviewExpandedEl.scrollTop = 0;
+    }
+  });
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && detailCtrl.diffExpanded) detailCtrl.collapseDiff();
+  }
 </script>
+
+<svelte:window on:keydown={onKeydown} />
 
 {#if workdirCtrl.selected}
   <Workdir />
@@ -171,24 +191,68 @@
       {#if detailCtrl.diffLoading}
         <div class="diff-file-h mut"><span class="spinner"></span> loading diff&#8230;</div>
       {:else}
-        <div class="diff-file-h">{detailCtrl.diffHeader}</div>
-        <div class="diff-rows">
-          {#each detailCtrl.diffRows as row}
-            {#if row.kind === "hunk"}
-              <div class="diff-line hunk"><span class="ln"></span><span class="mk"></span><code>{row.text}</code></div>
-            {:else if row.kind === "note"}
-              <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{row.text}</code></div>
-            {:else}
-              <div class="diff-line {row.cls}"><span class="ln">{row.ln}</span><span class="mk">{row.mk}</span><code>{@html row.html}</code></div>
-            {/if}
-          {/each}
+        <div class="diff-file-h">
+          <span class="diff-file-h-name">{detailCtrl.diffHeader}</span>
+          <button class="wd-act" title="Expand diff" aria-label="Expand diff to full page" onclick={() => detailCtrl.expandDiff()}>
+            <Maximize2 class="ico" size={13} aria-hidden="true" />
+          </button>
         </div>
+        <div class="diff-rows">{@render diffLineRows()}</div>
       {/if}
     </div>
   </section>
   </div>
   {/key}
+
+  <!-- Full-page diff popup — same detailCtrl.diffHeader/diffRows/tree the
+       embedded .diffview above renders, just laid out at near-fullscreen
+       size (see .modal.diffx's own doc comment in index.html) so a real
+       changeset isn't stuck reading through .diffview's cramped 320px cap. -->
+  <div class="scrim" class:on={detailCtrl.diffExpanded}>
+    <div class="modal diffx">
+      <div class="modal-head">
+        <div class="diffx-head-main">
+          <h3>{c.subject}</h3>
+          <p>commit <span class="mono">{c.sha.slice(0, 7)}</span></p>
+        </div>
+      </div>
+      <div class="modal-body diffx-body">
+        <div class="diffx-files tree" data-vimnav-list>
+          {#if detailCtrl.treeLoading}
+            <div class="mut" style="padding:6px 4px"><span class="spinner"></span> loading files&#8230;</div>
+          {:else if !detailCtrl.tree.files.length && !Object.keys(detailCtrl.tree.dirs).length}
+            <div class="mut" style="padding:6px 4px">no file changes</div>
+          {:else}
+            {@render dirNode(detailCtrl.tree)}
+          {/if}
+        </div>
+        <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
+          {#if detailCtrl.diffLoading}
+            <div class="diff-file-h mut"><span class="spinner"></span> loading diff&#8230;</div>
+          {:else}
+            <div class="diff-file-h"><span class="diff-file-h-name">{detailCtrl.diffHeader}</span></div>
+            <div class="diff-rows">{@render diffLineRows()}</div>
+          {/if}
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" onclick={() => detailCtrl.collapseDiff()}>Close</button>
+      </div>
+    </div>
+  </div>
 {/if}
+
+{#snippet diffLineRows()}
+  {#each detailCtrl.diffRows as row}
+    {#if row.kind === "hunk"}
+      <div class="diff-line hunk"><span class="ln"></span><span class="mk"></span><code>{row.text}</code></div>
+    {:else if row.kind === "note"}
+      <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{row.text}</code></div>
+    {:else}
+      <div class="diff-line {row.cls}"><span class="ln">{row.ln}</span><span class="mk">{row.mk}</span><code>{@html row.html}</code></div>
+    {/if}
+  {/each}
+{/snippet}
 
 {#snippet dirNode(node: TreeDir)}
   {#each Object.entries(node.dirs) as [name, child]}
