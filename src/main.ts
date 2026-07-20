@@ -61,6 +61,7 @@ import Sidebar from "./islands/sidebar/Sidebar.svelte";
 import { sidebarCtrl } from "./islands/sidebar/sidebar.svelte.ts";
 import { IN_TAURI } from "./ipc/env";
 import * as bridge from "./legacy/bridge";
+import { commands } from "./ipc/bindings";
 
 mount(Resolver, { target: document.body });
 mount(CommitMenu, { target: document.body });
@@ -265,6 +266,47 @@ async function refreshFromExternalChange() {
   } finally {
     repoChangeReloadInFlight = false;
   }
+}
+
+// Backup for watch.rs's OS-level file watcher — real-world file-watching
+// (FSEvents/inotify) has known environment-specific failure modes that have
+// nothing to do with this app's own logic (a packaged build lacking a
+// filesystem-watch permission grant, a signing/sandboxing quirk, an unusual
+// filesystem) where the watcher can silently never fire even though the repo
+// itself is perfectly readable — confirmed via `watch.rs`'s own real
+// filesystem-level test suite that the watch MECHANISM is correct in
+// isolation, which only sharpens how much an environment-specific gap
+// explains a report of "manual refresh works, automatic never happens".
+// Polls the SAME cheap, no-walk read the multi-repo dashboard already uses
+// per tracked repo (branch/head-sha/dirty/conflicted — never a full graph
+// load) and, whenever that snapshot differs from the last one seen, calls
+// the exact same refreshFromExternalChange() the real watcher calls — so the
+// two mechanisms share one definition of "changed" and can never disagree;
+// whichever notices first wins, the other's own next check just finds
+// nothing new. `pollSnapshot` resets to null whenever no repo is open (or
+// between polls that land on a different repo than they started against, if
+// the user switches repos faster than POLL_MS) so neither a stale snapshot
+// nor the very first poll for a freshly-opened repo is ever mistaken for a
+// real external change.
+const POLL_MS = 4000;
+let pollSnapshot: string | null = null;
+if (IN_TAURI) {
+  setInterval(async () => {
+    if (!bridge.CUR_REPO) {
+      pollSnapshot = null;
+      return;
+    }
+    const path = bridge.CUR_REPO as unknown as string;
+    try {
+      const res = await commands.dashboardRepoStatus(path);
+      if (res.status !== "ok" || bridge.CUR_REPO !== path) return; // repo closed/switched mid-request
+      const snap = `${res.data.branch}|${res.data.headSha}|${res.data.dirty}|${res.data.conflicted}`;
+      if (pollSnapshot !== null && pollSnapshot !== snap) void refreshFromExternalChange();
+      pollSnapshot = snap;
+    } catch {
+      // best-effort, same as watch_repo — a transient poll failure just tries again next tick
+    }
+  }, POLL_MS);
 }
 
 // Manual refresh (topbar button) — the explicit escape hatch for exactly

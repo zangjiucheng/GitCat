@@ -1677,8 +1677,15 @@ async function openRepo(path){
     // Live refresh: watch this repo's git-dir for changes made outside the
     // app (terminal commits, another tool, a background fetch) — see
     // src-tauri/src/watch.rs. Best-effort: a watch failure shouldn't block
-    // opening the repo, the app still works fine without live refresh.
-    tinvoke("watch_repo",{path}).catch(e=>console.error("watch_repo",e));
+    // opening the repo, the app still works fine (just without live
+    // refresh — the manual Refresh button still forces the same resync).
+    // Was console.error-only — a failure here was otherwise invisible unless
+    // someone happened to have DevTools open, so live-refresh-not-working
+    // reports had no way to distinguish "the watch never armed at all" (a
+    // real, surfaced error) from "it armed fine but genuinely saw no fs
+    // events" (silent either way, but now at least ONE of the two classes
+    // is no longer silent).
+    tinvoke("watch_repo",{path}).catch(e=>{ Tama.warn("Live refresh couldn't start for this repo — "+e); console.error("watch_repo",e); });
     // Multi-repo dashboard (backlog #11): auto-track whichever repo was just
     // opened (real open OR submodule nav OR the setup wizard's finish() —
     // every one of them funnels through this one openRepo() success path) so
