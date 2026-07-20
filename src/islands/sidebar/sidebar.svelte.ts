@@ -512,6 +512,21 @@ class SidebarState {
     await this.persistVisibleBranches(repo);
   }
 
+  // Mirrors showAllBranches — the other direction of the same bulk action,
+  // for quickly clearing a cluttered graph down to just the current branch
+  // (always shown regardless of the filter — see push_head()'s own
+  // guarantee, and the current-branch checkbox's own `disabled` in
+  // Sidebar.svelte) before hand-picking a few more. `[]` (not `null`) for
+  // both: `null` means "no filter, show everything" (isBranchVisible's own
+  // doc comment) — an empty array is the one representation that actually
+  // means "none of this kind".
+  async hideAllBranches(repo: string): Promise<void> {
+    this.autoMode = false;
+    this.visibleLocal = [];
+    this.visibleRemote = [];
+    await this.persistVisibleBranches(repo);
+  }
+
   // Tools-menu-adjacent entry point (the sidebar's own "Auto" pill) — turns
   // auto mode on (computing+persisting a filter immediately, not waiting for
   // the next refresh) or off (same full reset as showAllBranches, since

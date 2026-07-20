@@ -288,6 +288,28 @@ describe("branch visibility", () => {
     expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
   });
 
+  it("hideAllBranches sets both sets to [] (not null) AND turns off auto mode, and persists", async () => {
+    mockInTauri = true;
+    sidebarCtrl.autoMode = true;
+    sidebarCtrl.visibleLocal = null;
+    sidebarCtrl.visibleRemote = ["origin/main"];
+    await sidebarCtrl.hideAllBranches("/repo");
+    expect(sidebarCtrl.autoMode).toBe(false);
+    // [] (not null) is load-bearing — isBranchVisible treats null as "no
+    // filter, show everything" and only an empty array as "show nothing".
+    expect(sidebarCtrl.visibleLocal).toEqual([]);
+    expect(sidebarCtrl.visibleRemote).toEqual([]);
+    expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", false, [], []);
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+  });
+
+  it("hideAllBranches makes isBranchVisible false for every branch", async () => {
+    mockInTauri = true;
+    sidebarCtrl.locals = [{ name: "main", sha: "a", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];
+    await sidebarCtrl.hideAllBranches("/repo");
+    expect(sidebarCtrl.isBranchVisible("local", "main")).toBe(false);
+  });
+
   it("toggleAutoMode: turning it on recomputes+persists immediately (current branch + unpushed + unmerged kept)", async () => {
     mockInTauri = true;
     sidebarCtrl.head = "main";

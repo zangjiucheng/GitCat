@@ -162,6 +162,7 @@
     {#if sidebarCtrl.isFiltering}
       <button class="show-all" onclick={() => sidebarCtrl.showAllBranches(bridge.CUR_REPO as unknown as string)}>Show all branches</button>
     {/if}
+    <button class="show-all" title="Hide every branch except the current one, then pick a few back in" onclick={() => sidebarCtrl.hideAllBranches(bridge.CUR_REPO as unknown as string)}>Hide all branches</button>
   </div>
 </div>
 <div class="ref-scroll" id="refScroll" data-vimnav-list>
