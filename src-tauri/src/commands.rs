@@ -454,10 +454,17 @@ pub fn build_graph(
 /// Tauri command: return the full message + real changed-file tree + diff hunks
 /// for a single commit. Diffs the commit tree against its FIRST parent (empty
 /// tree for a root commit; first parent for a merge). Read-only.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s doc comment,
+/// that runs INLINE on Tauri's main thread. This opens the repo, diffs two
+/// trees, and can generate patches + line-by-line hunks for dozens of files,
+/// so clicking a commit with a large diff froze the whole window (not just
+/// the detail panel) until the diff finished. `async fn` + `run_blocking`
+/// moves the work onto Tauri's blocking-task thread pool instead.
 #[tauri::command]
 #[specta::specta]
-pub fn commit_detail(path: String, sha: String) -> Result<CommitDetail, String> {
-    commit_detail_inner(&path, &sha).map_err(|e| e.message().to_string())
+pub async fn commit_detail(path: String, sha: String) -> Result<CommitDetail, String> {
+    crate::blocking::run_blocking(move || commit_detail_inner(&path, &sha).map_err(|e| e.message().to_string())).await
 }
 
 fn commit_detail_inner(path: &str, sha: &str) -> Result<CommitDetail, git2::Error> {
@@ -644,10 +651,17 @@ fn commit_detail_inner(path: &str, sha: &str) -> Result<CommitDetail, git2::Erro
 /// ancestors stop being recognized as ancestors", not a hang.
 ///
 /// JS: `commands.ancestorsOf(path, sha)`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s doc comment,
+/// that runs INLINE on Tauri's main thread. This opens the repo and walks
+/// the full ancestor chain from `sha` (up to `MAX_LIVE_COMMITS`), so on a
+/// repo with a long history starting a drag froze the entire window, not
+/// just the drag gesture, until the walk finished. `async fn` + `run_blocking`
+/// moves the walk onto Tauri's blocking-task thread pool instead.
 #[tauri::command]
 #[specta::specta]
-pub fn ancestors_of(path: String, sha: String) -> Result<Vec<String>, String> {
-    ancestors_of_inner(&path, &sha).map_err(|e| e.message().to_string())
+pub async fn ancestors_of(path: String, sha: String) -> Result<Vec<String>, String> {
+    crate::blocking::run_blocking(move || ancestors_of_inner(&path, &sha).map_err(|e| e.message().to_string())).await
 }
 
 fn ancestors_of_inner(path: &str, sha: &str) -> Result<Vec<String>, git2::Error> {

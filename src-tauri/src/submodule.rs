@@ -581,19 +581,31 @@ fn validate_submodule_path(p: &str) -> Result<(), String> {
 /// clone of the superproject, or one manually `rm -rf`'d — both read as
 /// "not-initialized" in `submodule_status`); use `submodule_update` with
 /// `init:true` instead to fold both steps into one call.
+///
+/// BUG FIX: was a plain (non-async) `fn`. Its body shells out to `git
+/// submodule init` via `run_git` (a `Command::new` spawn + wait for the
+/// process to exit), which — like every other blocking git call in this
+/// codebase — previously ran INLINE on Tauri's main thread and froze the
+/// whole app window for however long that process took, not just this row's
+/// init action. `async fn` + `run_blocking` moves the call onto Tauri's
+/// blocking-task thread pool, matching `dashboard_repo_status`/
+/// `workdir_status`'s established fix.
 /// JS call: `invoke("submodule_init", { path, submodulePath })`.
 #[tauri::command]
 #[specta::specta]
-pub fn submodule_init(path: String, submodule_path: String) -> WriteResult {
-    if let Err(e) = validate_submodule_path(&submodule_path) {
-        return err_result(e);
-    }
-    match run_git(&path, &["submodule", "init", "--", &submodule_path]) {
-        Ok(out) if out.ok => ok_result(format!("Initialized submodule {submodule_path}."), None),
-        // e.g. "fatal: no submodule mapping found in .gitmodules for path '<path>'"
-        Ok(out) => err_result(git_error_message(&out)),
-        Err(e) => err_result(e),
-    }
+pub async fn submodule_init(path: String, submodule_path: String) -> WriteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_submodule_path(&submodule_path) {
+            return err_result(e);
+        }
+        match run_git(&path, &["submodule", "init", "--", &submodule_path]) {
+            Ok(out) if out.ok => ok_result(format!("Initialized submodule {submodule_path}."), None),
+            // e.g. "fatal: no submodule mapping found in .gitmodules for path '<path>'"
+            Ok(out) => err_result(git_error_message(&out)),
+            Err(e) => err_result(e),
+        }
+    })
+    .await
 }
 
 /// Clone/checkout submodule(s) to the commit(s) the superproject's index
@@ -626,39 +638,53 @@ pub fn submodule_init(path: String, submodule_path: String) -> WriteResult {
 /// one real risk a snapshot might otherwise exist to cover — clobbering
 /// uncommitted submodule changes — is already prevented by git's own refusal
 /// above, not by anything a superproject-level snapshot could restore anyway.
+///
+/// BUG FIX: was a plain (non-async) `fn`. This is the command most worth
+/// fixing in the whole file — its body shells out to `git submodule update`
+/// (via `run_git`/`Command::new`), which genuinely clones/fetches the
+/// submodule's remote whenever the commit the superproject tracks isn't
+/// already present locally, so the process this spawns can legitimately run
+/// for network-bound seconds. Left as a plain `fn`, that entire duration ran
+/// INLINE on Tauri's main thread and froze the whole app window, not just
+/// this row's update action. `async fn` + `run_blocking` moves it onto
+/// Tauri's blocking-task thread pool, matching `dashboard_repo_status`/
+/// `workdir_status`'s established fix.
 /// JS call: `invoke("submodule_update", { path, submodulePath?, recursive, init })`.
 #[tauri::command]
 #[specta::specta]
-pub fn submodule_update(path: String, submodule_path: Option<String>, recursive: bool, init: bool) -> WriteResult {
-    if let Some(p) = &submodule_path {
-        if let Err(e) = validate_submodule_path(p) {
-            return err_result(e);
+pub async fn submodule_update(path: String, submodule_path: Option<String>, recursive: bool, init: bool) -> WriteResult {
+    crate::blocking::run_blocking(move || {
+        if let Some(p) = &submodule_path {
+            if let Err(e) = validate_submodule_path(p) {
+                return err_result(e);
+            }
         }
-    }
-    let mut args: Vec<&str> = vec!["submodule", "update"];
-    if init {
-        args.push("--init");
-    }
-    if recursive {
-        args.push("--recursive");
-    }
-    if let Some(p) = &submodule_path {
-        args.push("--");
-        args.push(p.as_str());
-    }
-    match run_git(&path, &args) {
-        Ok(out) if out.ok => ok_result(
-            match &submodule_path {
-                Some(p) => format!("Updated submodule {p}."),
-                None => "Updated all submodules.".to_string(),
-            },
-            None,
-        ),
-        // e.g. "error: Your local changes to the following files would be
-        // overwritten by checkout ... Aborting" — never forced, surfaced verbatim.
-        Ok(out) => err_result(git_error_message(&out)),
-        Err(e) => err_result(e),
-    }
+        let mut args: Vec<&str> = vec!["submodule", "update"];
+        if init {
+            args.push("--init");
+        }
+        if recursive {
+            args.push("--recursive");
+        }
+        if let Some(p) = &submodule_path {
+            args.push("--");
+            args.push(p.as_str());
+        }
+        match run_git(&path, &args) {
+            Ok(out) if out.ok => ok_result(
+                match &submodule_path {
+                    Some(p) => format!("Updated submodule {p}."),
+                    None => "Updated all submodules.".to_string(),
+                },
+                None,
+            ),
+            // e.g. "error: Your local changes to the following files would be
+            // overwritten by checkout ... Aborting" — never forced, surfaced verbatim.
+            Ok(out) => err_result(git_error_message(&out)),
+            Err(e) => err_result(e),
+        }
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -745,51 +771,64 @@ fn validate_branch_name(name: &str) -> Result<(), String> {
 ///
 /// No snapshot — see module doc comment (purely additive, identical
 /// reasoning to `create_branch`/`create_tag`).
+///
+/// BUG FIX: was a plain (non-async) `fn`. Its body shells out to `git
+/// submodule add` (via `run_git`/`Command::new`), which genuinely clones the
+/// remote at `repository_url` — a real network fetch, exactly like
+/// `submodule_update`'s own case, and one of the two commands in this file
+/// that matter most for this fix. Left as a plain `fn`, that whole clone ran
+/// INLINE on Tauri's main thread and froze the entire app window for as long
+/// as it took, not just this "Add submodule" action. `async fn` +
+/// `run_blocking` moves it onto Tauri's blocking-task thread pool, matching
+/// `dashboard_repo_status`/`workdir_status`'s established fix.
 /// JS call: `invoke("submodule_add", { path, repositoryUrl, submodulePath, branch? })`.
 #[tauri::command]
 #[specta::specta]
-pub fn submodule_add(
+pub async fn submodule_add(
     path: String,
     repository_url: String,
     submodule_path: String,
     branch: Option<String>,
 ) -> WriteResult {
-    if let Err(e) = validate_repository_url(&repository_url) {
-        return err_result(e);
-    }
-    if let Err(e) = validate_submodule_path(&submodule_path) {
-        return err_result(e);
-    }
-    if let Some(b) = &branch {
-        if let Err(e) = validate_branch_name(b) {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_repository_url(&repository_url) {
             return err_result(e);
         }
-    }
+        if let Err(e) = validate_submodule_path(&submodule_path) {
+            return err_result(e);
+        }
+        if let Some(b) = &branch {
+            if let Err(e) = validate_branch_name(b) {
+                return err_result(e);
+            }
+        }
 
-    let mut args: Vec<&str> = vec!["submodule", "add"];
-    if let Some(b) = &branch {
-        args.push("-b");
-        args.push(b.as_str());
-    }
-    // Bare `--`, NOT `--end-of-options` — see module doc comment.
-    args.push("--");
-    args.push(&repository_url);
-    args.push(&submodule_path);
+        let mut args: Vec<&str> = vec!["submodule", "add"];
+        if let Some(b) = &branch {
+            args.push("-b");
+            args.push(b.as_str());
+        }
+        // Bare `--`, NOT `--end-of-options` — see module doc comment.
+        args.push("--");
+        args.push(&repository_url);
+        args.push(&submodule_path);
 
-    match run_git(&path, &args) {
-        Ok(out) if out.ok => ok_result(
-            match &branch {
-                Some(b) => format!("Added submodule {submodule_path} (branch {b})."),
-                None => format!("Added submodule {submodule_path}."),
-            },
-            None,
-        ),
-        // e.g. "fatal: '<path>' already exists in the index" / "fatal:
-        // '<path>' already exists and is not a valid git repo" — see module
-        // doc comment for why no pre-check duplicates this.
-        Ok(out) => err_result(git_error_message(&out)),
-        Err(e) => err_result(e),
-    }
+        match run_git(&path, &args) {
+            Ok(out) if out.ok => ok_result(
+                match &branch {
+                    Some(b) => format!("Added submodule {submodule_path} (branch {b})."),
+                    None => format!("Added submodule {submodule_path}."),
+                },
+                None,
+            ),
+            // e.g. "fatal: '<path>' already exists in the index" / "fatal:
+            // '<path>' already exists and is not a valid git repo" — see module
+            // doc comment for why no pre-check duplicates this.
+            Ok(out) => err_result(git_error_message(&out)),
+            Err(e) => err_result(e),
+        }
+    })
+    .await
 }
 
 /// Rewrite the superproject's OWN `.git/config` entries for submodule(s)'
@@ -809,35 +848,47 @@ pub fn submodule_add(
 ///
 /// No snapshot: only ever rewrites `.git/config` — no ref moves, no index/
 /// workdir change, nothing history-affecting for Undo to protect.
+///
+/// BUG FIX: was a plain (non-async) `fn`. Its body shells out to `git
+/// submodule sync` via `run_git`/`Command::new` — a local config rewrite, not
+/// a network call, but like every other subprocess spawn in this file it
+/// previously ran INLINE on Tauri's main thread and froze the whole app
+/// window for however long that process took, not just this row's sync
+/// action. `async fn` + `run_blocking` moves it onto Tauri's blocking-task
+/// thread pool, matching `dashboard_repo_status`/`workdir_status`'s
+/// established fix.
 /// JS call: `invoke("submodule_sync", { path, submodulePath?, recursive })`.
 #[tauri::command]
 #[specta::specta]
-pub fn submodule_sync(path: String, submodule_path: Option<String>, recursive: bool) -> WriteResult {
-    if let Some(p) = &submodule_path {
-        if let Err(e) = validate_submodule_path(p) {
-            return err_result(e);
+pub async fn submodule_sync(path: String, submodule_path: Option<String>, recursive: bool) -> WriteResult {
+    crate::blocking::run_blocking(move || {
+        if let Some(p) = &submodule_path {
+            if let Err(e) = validate_submodule_path(p) {
+                return err_result(e);
+            }
         }
-    }
-    let mut args: Vec<&str> = vec!["submodule", "sync"];
-    if recursive {
-        args.push("--recursive");
-    }
-    if let Some(p) = &submodule_path {
-        // Bare `--`, NOT `--end-of-options` — see module doc comment.
-        args.push("--");
-        args.push(p.as_str());
-    }
-    match run_git(&path, &args) {
-        Ok(out) if out.ok => ok_result(
-            match &submodule_path {
-                Some(p) => format!("Synced submodule {p}."),
-                None => "Synced all submodules.".to_string(),
-            },
-            None,
-        ),
-        Ok(out) => err_result(git_error_message(&out)),
-        Err(e) => err_result(e),
-    }
+        let mut args: Vec<&str> = vec!["submodule", "sync"];
+        if recursive {
+            args.push("--recursive");
+        }
+        if let Some(p) = &submodule_path {
+            // Bare `--`, NOT `--end-of-options` — see module doc comment.
+            args.push("--");
+            args.push(p.as_str());
+        }
+        match run_git(&path, &args) {
+            Ok(out) if out.ok => ok_result(
+                match &submodule_path {
+                    Some(p) => format!("Synced submodule {p}."),
+                    None => "Synced all submodules.".to_string(),
+                },
+                None,
+            ),
+            Ok(out) => err_result(git_error_message(&out)),
+            Err(e) => err_result(e),
+        }
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -1299,50 +1350,63 @@ fn backup_submodule_dirty_content(repo: &Repository, submodule_path: &str) -> Re
 /// — keep pointing at it").
 ///
 /// No Safety-Manager snapshot — see this section's doc comment.
+///
+/// BUG FIX: was a plain (non-async) `fn`. Its `force:true` path opens the
+/// repo and walks the submodule's own tree with git2
+/// (`backup_submodule_dirty_content`), and either path shells out to `git
+/// submodule deinit` via `run_git`/`Command::new` — both the git2 walk and
+/// the subprocess spawn previously ran INLINE on Tauri's main thread and
+/// froze the whole app window for however long they took, not just this
+/// row's deinit action. `async fn` + `run_blocking` moves the whole body onto
+/// Tauri's blocking-task thread pool, matching `dashboard_repo_status`/
+/// `workdir_status`'s established fix.
 /// JS call: `invoke("submodule_deinit", { path, submodulePath, force })`.
 #[tauri::command]
 #[specta::specta]
-pub fn submodule_deinit(path: String, submodule_path: String, force: bool) -> SubmoduleRemovalResult {
-    if let Err(e) = validate_submodule_path(&submodule_path) {
-        return err_removal(e);
-    }
-
-    if !force {
-        return match run_git(&path, &["submodule", "deinit", "--", &submodule_path]) {
-            Ok(out) if out.ok => ok_removal(format!("Deinitialized submodule {submodule_path}."), None),
-            // e.g. "fatal: Submodule work tree '<path>' contains local
-            // modifications; use '-f' to discard them" (dirty tree OR a
-            // merge-conflicted gitlink — see this section's doc comment) —
-            // never forced, surfaced verbatim.
-            Ok(out) => err_removal(git_error_message(&out)),
-            Err(e) => err_removal(e),
-        };
-    }
-
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return err_removal(format!("Cannot open repository: {}", e.message())),
-    };
-    let backup_patch = match backup_submodule_dirty_content(&repo, &submodule_path) {
-        Ok(p) => p,
-        Err(e) => {
-            return err_removal(format!(
-                "Could not back up {submodule_path}'s own uncommitted changes before force-deiniting, refusing: {e}"
-            ))
+pub async fn submodule_deinit(path: String, submodule_path: String, force: bool) -> SubmoduleRemovalResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_submodule_path(&submodule_path) {
+            return err_removal(e);
         }
-    };
 
-    match run_git(&path, &["submodule", "deinit", "-f", "--", &submodule_path]) {
-        Ok(out) if out.ok => ok_removal(
-            match &backup_patch {
-                Some(b) => format!("Deinitialized submodule {submodule_path} (backup: {b})."),
-                None => format!("Deinitialized submodule {submodule_path}."),
-            },
-            backup_patch,
-        ),
-        Ok(out) => err_removal_with_backup(git_error_message(&out), backup_patch),
-        Err(e) => err_removal_with_backup(e, backup_patch),
-    }
+        if !force {
+            return match run_git(&path, &["submodule", "deinit", "--", &submodule_path]) {
+                Ok(out) if out.ok => ok_removal(format!("Deinitialized submodule {submodule_path}."), None),
+                // e.g. "fatal: Submodule work tree '<path>' contains local
+                // modifications; use '-f' to discard them" (dirty tree OR a
+                // merge-conflicted gitlink — see this section's doc comment) —
+                // never forced, surfaced verbatim.
+                Ok(out) => err_removal(git_error_message(&out)),
+                Err(e) => err_removal(e),
+            };
+        }
+
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return err_removal(format!("Cannot open repository: {}", e.message())),
+        };
+        let backup_patch = match backup_submodule_dirty_content(&repo, &submodule_path) {
+            Ok(p) => p,
+            Err(e) => {
+                return err_removal(format!(
+                    "Could not back up {submodule_path}'s own uncommitted changes before force-deiniting, refusing: {e}"
+                ))
+            }
+        };
+
+        match run_git(&path, &["submodule", "deinit", "-f", "--", &submodule_path]) {
+            Ok(out) if out.ok => ok_removal(
+                match &backup_patch {
+                    Some(b) => format!("Deinitialized submodule {submodule_path} (backup: {b})."),
+                    None => format!("Deinitialized submodule {submodule_path}."),
+                },
+                backup_patch,
+            ),
+            Ok(out) => err_removal_with_backup(git_error_message(&out), backup_patch),
+            Err(e) => err_removal_with_backup(e, backup_patch),
+        }
+    })
+    .await
 }
 
 /// Remove a submodule from the repository entirely: clear+unregister it (same
@@ -1364,74 +1428,86 @@ pub fn submodule_deinit(path: String, submodule_path: String, force: bool) -> Su
 /// via the existing `workdir.rs::commit`.
 ///
 /// No Safety-Manager snapshot — see this section's doc comment.
+///
+/// BUG FIX: was a plain (non-async) `fn`. Its body opens the repo and walks
+/// the submodule's own tree with git2 (`backup_submodule_dirty_content`) and
+/// then shells out to git TWICE (`submodule deinit -f`, then `rm -f`) via
+/// `run_git`/`Command::new` — all of that previously ran INLINE on Tauri's
+/// main thread and froze the whole app window for however long it took, not
+/// just this row's remove action. `async fn` + `run_blocking` moves the whole
+/// body onto Tauri's blocking-task thread pool, matching
+/// `dashboard_repo_status`/`workdir_status`'s established fix.
 /// JS call: `invoke("submodule_remove", { path, submodulePath })`.
 #[tauri::command]
 #[specta::specta]
-pub fn submodule_remove(path: String, submodule_path: String) -> SubmoduleRemovalResult {
-    if let Err(e) = validate_submodule_path(&submodule_path) {
-        return err_removal(e);
-    }
-
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return err_removal(format!("Cannot open repository: {}", e.message())),
-    };
-
-    // Resolved BEFORE any mutation — see `resolve_submodule_name`'s doc
-    // comment for why this can't be done afterward.
-    let name = resolve_submodule_name(&repo, &submodule_path);
-
-    let backup_patch = match backup_submodule_dirty_content(&repo, &submodule_path) {
-        Ok(p) => p,
-        Err(e) => {
-            return err_removal(format!(
-                "Could not back up {submodule_path}'s own uncommitted changes before removing, refusing: {e}"
-            ))
+pub async fn submodule_remove(path: String, submodule_path: String) -> SubmoduleRemovalResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_submodule_path(&submodule_path) {
+            return err_removal(e);
         }
-    };
 
-    if let Err(msg) = match run_git(&path, &["submodule", "deinit", "-f", "--", &submodule_path]) {
-        Ok(out) if out.ok => Ok(()),
-        Ok(out) => Err(git_error_message(&out)),
-        Err(e) => Err(e),
-    } {
-        return err_removal_with_backup(msg, backup_patch);
-    }
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return err_removal(format!("Cannot open repository: {}", e.message())),
+        };
 
-    match run_git(&path, &["rm", "-f", "--", &submodule_path]) {
-        Ok(out) if out.ok => {
-            // Defensive fallback for a git version whose `git rm` does NOT
-            // auto-strip `.gitmodules` (this codebase's own git 2.53.0 does —
-            // see this section's doc comment — so this is expected to be a
-            // no-op on the version this was verified against, but keeps the
-            // command correct — and, per BUG-3's fix, HONEST about failures —
-            // on any installed git or filesystem condition (e.g. .gitmodules
-            // temporarily unwritable) that leaves the section behind).
-            if let Some(name) = &name {
-                if let Err(msg) = ensure_gitmodules_section_removed(&path, name) {
-                    // The gitlink itself IS already staged as deleted at this
-                    // point (git rm -f above succeeded) — say so, rather than
-                    // letting a caller believe NOTHING happened.
-                    return err_removal_with_backup(
-                        format!(
-                            "{submodule_path}'s gitlink was staged for removal, but {msg}. Run `git status` to see \
-                             the partial state before retrying"
-                        ),
-                        backup_patch,
-                    );
-                }
+        // Resolved BEFORE any mutation — see `resolve_submodule_name`'s doc
+        // comment for why this can't be done afterward.
+        let name = resolve_submodule_name(&repo, &submodule_path);
+
+        let backup_patch = match backup_submodule_dirty_content(&repo, &submodule_path) {
+            Ok(p) => p,
+            Err(e) => {
+                return err_removal(format!(
+                    "Could not back up {submodule_path}'s own uncommitted changes before removing, refusing: {e}"
+                ))
             }
-            ok_removal(
-                match &backup_patch {
-                    Some(b) => format!("Removed submodule {submodule_path} (backup: {b})."),
-                    None => format!("Removed submodule {submodule_path}."),
-                },
-                backup_patch,
-            )
+        };
+
+        if let Err(msg) = match run_git(&path, &["submodule", "deinit", "-f", "--", &submodule_path]) {
+            Ok(out) if out.ok => Ok(()),
+            Ok(out) => Err(git_error_message(&out)),
+            Err(e) => Err(e),
+        } {
+            return err_removal_with_backup(msg, backup_patch);
         }
-        Ok(out) => err_removal_with_backup(git_error_message(&out), backup_patch),
-        Err(e) => err_removal_with_backup(e, backup_patch),
-    }
+
+        match run_git(&path, &["rm", "-f", "--", &submodule_path]) {
+            Ok(out) if out.ok => {
+                // Defensive fallback for a git version whose `git rm` does NOT
+                // auto-strip `.gitmodules` (this codebase's own git 2.53.0 does —
+                // see this section's doc comment — so this is expected to be a
+                // no-op on the version this was verified against, but keeps the
+                // command correct — and, per BUG-3's fix, HONEST about failures —
+                // on any installed git or filesystem condition (e.g. .gitmodules
+                // temporarily unwritable) that leaves the section behind).
+                if let Some(name) = &name {
+                    if let Err(msg) = ensure_gitmodules_section_removed(&path, name) {
+                        // The gitlink itself IS already staged as deleted at this
+                        // point (git rm -f above succeeded) — say so, rather than
+                        // letting a caller believe NOTHING happened.
+                        return err_removal_with_backup(
+                            format!(
+                                "{submodule_path}'s gitlink was staged for removal, but {msg}. Run `git status` to see \
+                                 the partial state before retrying"
+                            ),
+                            backup_patch,
+                        );
+                    }
+                }
+                ok_removal(
+                    match &backup_patch {
+                        Some(b) => format!("Removed submodule {submodule_path} (backup: {b})."),
+                        None => format!("Removed submodule {submodule_path}."),
+                    },
+                    backup_patch,
+                )
+            }
+            Ok(out) => err_removal_with_backup(git_error_message(&out), backup_patch),
+            Err(e) => err_removal_with_backup(e, backup_patch),
+        }
+    })
+    .await
 }
 
 /// Fallback for `submodule_remove`: if `.gitmodules` STILL has a

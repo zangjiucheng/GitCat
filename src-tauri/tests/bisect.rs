@@ -69,7 +69,7 @@ fn converge(repo: &TempRepo, k: Oid, git2repo: &Repository, skip_mode: bool) -> 
     let mut did_skip = false;
 
     for step in 0..60 {
-        let st: BisectStatus = bisect_status(path.clone());
+        let st: BisectStatus = tauri::async_runtime::block_on(bisect_status(path.clone()));
         assert!(st.in_progress, "status should be in-progress at loop top: {}", st.message);
         assert!(st.first_bad.is_none(), "status should be running (no firstBad yet) at loop top");
 
@@ -91,7 +91,7 @@ fn converge(repo: &TempRepo, k: Oid, git2repo: &Repository, skip_mode: bool) -> 
             "good"
         };
 
-        let m: BisectStatus = bisect_mark(path.clone(), term.to_string());
+        let m: BisectStatus = tauri::async_runtime::block_on(bisect_mark(path.clone(), term.to_string()));
         assert!(m.ok, "bisect_mark {term} failed: {}", m.message);
         if let Some(fb) = m.first_bad {
             return fb.sha;
@@ -111,7 +111,7 @@ fn bisect_converges_to_first_bad_commit() {
     assert_eq!(orig_head, head, "sanity: HEAD should be the final commit");
     let k_short = short(k);
 
-    let start: BisectStatus = bisect_start(path.clone(), head.to_string(), vec![root.to_string()]);
+    let start: BisectStatus = tauri::async_runtime::block_on(bisect_start(path.clone(), head.to_string(), vec![root.to_string()]));
     assert!(start.ok, "bisect_start failed: {}", start.message);
     assert!(start.in_progress);
     assert!(start.first_bad.is_none());
@@ -121,7 +121,7 @@ fn bisect_converges_to_first_bad_commit() {
     let fb = converge(&repo, k, &git2repo, false);
     assert_eq!(fb, k_short, "FIRST-BAD MISMATCH: bisect reported {fb}, expected K {k_short}");
 
-    let reset: BisectStatus = bisect_reset(path.clone());
+    let reset: BisectStatus = tauri::async_runtime::block_on(bisect_reset(path.clone()));
     assert!(reset.ok, "bisect_reset failed: {}", reset.message);
     assert!(!reset.in_progress);
 
@@ -142,13 +142,13 @@ fn bisect_skip_tracks_checked_out_head_not_stale_bisect_rev() {
     let git2repo = repo.open();
     let k_short = short(k);
 
-    let start: BisectStatus = bisect_start(path.clone(), head.to_string(), vec![root.to_string()]);
+    let start: BisectStatus = tauri::async_runtime::block_on(bisect_start(path.clone(), head.to_string(), vec![root.to_string()]));
     assert!(start.ok, "bisect_start failed: {}", start.message);
 
     let fb = converge(&repo, k, &git2repo, true);
     assert_eq!(fb, k_short, "skip-mode FIRST-BAD MISMATCH: got {fb}, expected K {k_short}");
 
-    let reset: BisectStatus = bisect_reset(path.clone());
+    let reset: BisectStatus = tauri::async_runtime::block_on(bisect_reset(path.clone()));
     assert!(reset.ok, "bisect_reset failed: {}", reset.message);
     assert!(!reset.in_progress);
 }
@@ -168,7 +168,7 @@ fn bisect_run_converges_via_scripted_good_bad_command() {
     let path = repo.path();
     let k_short = short(k);
 
-    let start: BisectStatus = bisect_start(path.clone(), head.to_string(), vec![root.to_string()]);
+    let start: BisectStatus = tauri::async_runtime::block_on(bisect_start(path.clone(), head.to_string(), vec![root.to_string()]));
     assert!(start.ok, "bisect_start failed: {}", start.message);
 
     // Deterministic stand-in for a real regression test: "good" (exit 0) iff
@@ -191,7 +191,7 @@ fn bisect_run_converges_via_scripted_good_bad_command() {
     );
     assert!(progress_calls >= 1, "on_progress should fire at least once as steps are applied");
 
-    let reset: BisectStatus = bisect_reset(path.clone());
+    let reset: BisectStatus = tauri::async_runtime::block_on(bisect_reset(path.clone()));
     assert!(reset.ok, "bisect_reset failed: {}", reset.message);
     assert!(!reset.in_progress);
     assert!(repo.is_clean(), "working tree dirty after reset");
@@ -204,7 +204,7 @@ fn bisect_run_handles_a_skip_exit_code_and_still_converges() {
     let path = repo.path();
     let k_short = short(k);
 
-    let start: BisectStatus = bisect_start(path.clone(), head.to_string(), vec![root.to_string()]);
+    let start: BisectStatus = tauri::async_runtime::block_on(bisect_start(path.clone(), head.to_string(), vec![root.to_string()]));
     assert!(start.ok, "bisect_start failed: {}", start.message);
 
     // K itself is ALWAYS correctly reported bad (never skipped) so convergence
@@ -236,7 +236,7 @@ fn bisect_run_handles_a_skip_exit_code_and_still_converges() {
         "the exit-125/skip branch should have been exercised at least once"
     );
 
-    let reset: BisectStatus = bisect_reset(path.clone());
+    let reset: BisectStatus = tauri::async_runtime::block_on(bisect_reset(path.clone()));
     assert!(reset.ok, "bisect_reset failed: {}", reset.message);
 }
 
@@ -247,9 +247,9 @@ fn bisect_run_aborts_cleanly_on_exit_126_or_127_and_leaves_session_resumable() {
         let (repo, _branch, root, _k, head) = build_repo(&format!("bisect_run_abort_{bad_exit_code}"));
         let path = repo.path();
 
-        let start: BisectStatus = bisect_start(path.clone(), head.to_string(), vec![root.to_string()]);
+        let start: BisectStatus = tauri::async_runtime::block_on(bisect_start(path.clone(), head.to_string(), vec![root.to_string()]));
         assert!(start.ok, "bisect_start failed: {}", start.message);
-        let before = bisect_status(path.clone());
+        let before = tauri::async_runtime::block_on(bisect_status(path.clone()));
         assert!(before.in_progress);
 
         let result: BisectStatus = run_bisect(&path, &format!("exit {bad_exit_code}"), || false, |_| {
@@ -268,7 +268,7 @@ fn bisect_run_aborts_cleanly_on_exit_126_or_127_and_leaves_session_resumable() {
 
         // The bisect session itself must be untouched by the abort — same
         // current commit, still in progress, still resumable both ways.
-        let after = bisect_status(path.clone());
+        let after = tauri::async_runtime::block_on(bisect_status(path.clone()));
         assert!(after.in_progress, "bisect session should still be in progress after an abort");
         assert_eq!(
             after.current.as_ref().map(|c| c.sha.as_str()),
@@ -276,10 +276,10 @@ fn bisect_run_aborts_cleanly_on_exit_126_or_127_and_leaves_session_resumable() {
             "an aborted step must not have moved the checked-out commit"
         );
 
-        let m: BisectStatus = bisect_mark(path.clone(), "good".to_string());
+        let m: BisectStatus = tauri::async_runtime::block_on(bisect_mark(path.clone(), "good".to_string()));
         assert!(m.ok, "bisect should still be resumable via manual marking after an abort: {}", m.message);
 
-        let reset: BisectStatus = bisect_reset(path.clone());
+        let reset: BisectStatus = tauri::async_runtime::block_on(bisect_reset(path.clone()));
         assert!(reset.ok, "bisect_reset should still work cleanly after an abort: {}", reset.message);
     }
 }
@@ -309,7 +309,7 @@ fn bisect_run_cancel_stops_the_loop_before_convergence() {
     let (repo, _branch, root, _k, head) = build_repo("bisect_run_cancel");
     let path = repo.path();
 
-    let start: BisectStatus = bisect_start(path.clone(), head.to_string(), vec![root.to_string()]);
+    let start: BisectStatus = tauri::async_runtime::block_on(bisect_start(path.clone(), head.to_string(), vec![root.to_string()]));
     assert!(start.ok, "bisect_start failed: {}", start.message);
 
     // On its FIRST invocation only, the script touches a marker file (the
@@ -352,10 +352,10 @@ fn bisect_run_cancel_stops_the_loop_before_convergence() {
     );
     assert!(steps_applied <= 1, "cancellation should stop the loop right after the in-flight step, got {steps_applied} steps");
 
-    let status = bisect_status(path.clone());
+    let status = tauri::async_runtime::block_on(bisect_status(path.clone()));
     assert!(status.in_progress, "bisect session should still be in progress after a cancelled run");
 
-    let reset: BisectStatus = bisect_reset(path.clone());
+    let reset: BisectStatus = tauri::async_runtime::block_on(bisect_reset(path.clone()));
     assert!(reset.ok, "bisect_reset failed: {}", reset.message);
 }
 
@@ -377,7 +377,7 @@ fn bisect_run_start_refuses_a_second_concurrent_call_while_one_is_in_flight() {
     let (repo, _branch, root, _k, head) = build_repo("bisect_run_mutex");
     let path = repo.path();
 
-    let start: BisectStatus = bisect_start(path.clone(), head.to_string(), vec![root.to_string()]);
+    let start: BisectStatus = tauri::async_runtime::block_on(bisect_start(path.clone(), head.to_string(), vec![root.to_string()]));
     assert!(start.ok, "bisect_start failed: {}", start.message);
 
     let state = Arc::new(BisectRunState::default());
@@ -417,7 +417,7 @@ fn bisect_run_start_refuses_a_second_concurrent_call_while_one_is_in_flight() {
         .expect("the first call should have been allowed to claim the guard and actually run");
     assert!(first_result.ok, "first run should have completed normally: {}", first_result.message);
 
-    let reset: BisectStatus = bisect_reset(path.clone());
+    let reset: BisectStatus = tauri::async_runtime::block_on(bisect_reset(path.clone()));
     assert!(reset.ok, "bisect_reset failed: {}", reset.message);
     // bisect_start refuses on a dirty working tree, and the marker file the
     // test command touched is untracked — clean it up before restarting.
@@ -427,12 +427,12 @@ fn bisect_run_start_refuses_a_second_concurrent_call_while_one_is_in_flight() {
     // now-non-concurrent call (against a fresh bisect session) must be
     // allowed through normally, not permanently locked out by a guard that
     // leaked from the first run.
-    let restart: BisectStatus = bisect_start(path.clone(), head.to_string(), vec![root.to_string()]);
+    let restart: BisectStatus = tauri::async_runtime::block_on(bisect_start(path.clone(), head.to_string(), vec![root.to_string()]));
     assert!(restart.ok, "bisect_start (second session) failed: {}", restart.message);
     let third = try_run_bisect(&state, &path, "test ! -f bug.txt", || false, |_| {});
     let third_result = third.expect("the guard must be released after the first run finishes, allowing a later call through");
     assert!(third_result.ok, "the released-guard run should complete normally: {}", third_result.message);
 
-    let reset2: BisectStatus = bisect_reset(path.clone());
+    let reset2: BisectStatus = tauri::async_runtime::block_on(bisect_reset(path.clone()));
     assert!(reset2.ok, "bisect_reset (second session) failed: {}", reset2.message);
 }

@@ -78,7 +78,7 @@ fn churn_ranks_files_by_touch_count_desc() {
     repo.commit("warm.txt", "v1\n", "c3: touch warm.txt");
     repo.commit("hot.txt", "v3\n", "c4: touch hot.txt a third time");
 
-    let summary = repo_summary(repo.path()).expect("repo_summary should succeed");
+    let summary = tauri::async_runtime::block_on(repo_summary(repo.path())).expect("repo_summary should succeed");
     assert_eq!(summary.total_commits, 4);
     assert!(!summary.truncated);
     assert_eq!(summary.churn[0].path, "hot.txt");
@@ -102,7 +102,7 @@ fn contributors_ranked_desc_and_bus_factor_is_the_dominant_single_author() {
     let c3 = commit_with(&git_repo, Some(c2), &[("a.txt", "3")], "three", "Ada", "ada@x.com", now - 3);
     let _c4 = commit_with(&git_repo, Some(c3), &[("a.txt", "4")], "four", "Bob", "bob@x.com", now - 4);
 
-    let summary = repo_summary(repo.path()).expect("repo_summary should succeed");
+    let summary = tauri::async_runtime::block_on(repo_summary(repo.path())).expect("repo_summary should succeed");
     assert_eq!(summary.total_commits, 4);
     assert_eq!(summary.contributors[0].name, "Ada");
     assert_eq!(summary.contributors[0].commits, 3);
@@ -123,7 +123,7 @@ fn bus_factor_needs_more_than_one_contributor_when_evenly_split() {
     let c3 = commit_with(&git_repo, Some(c2), &[("a.txt", "3")], "three", "Cid", "cid@x.com", now - 3);
     let _c4 = commit_with(&git_repo, Some(c3), &[("a.txt", "4")], "four", "Dee", "dee@x.com", now - 4);
 
-    let summary = repo_summary(repo.path()).expect("repo_summary should succeed");
+    let summary = tauri::async_runtime::block_on(repo_summary(repo.path())).expect("repo_summary should succeed");
     assert_eq!(summary.total_commits, 4);
     assert_eq!(summary.bus_factor, 2, "2 of 4 equal contributors are needed to reach 50%");
 }
@@ -150,7 +150,7 @@ fn monthly_activity_buckets_into_distinct_chronological_months() {
     let c3 = commit_with(&git_repo, Some(c2), &[("a.txt", "3")], "three", "Ada", "ada@x.com", now - 10 * DAY);
     let _c4 = commit_with(&git_repo, Some(c3), &[("a.txt", "3b")], "three-again", "Ada", "ada@x.com", now - 10 * DAY + 1);
 
-    let summary = repo_summary(repo.path()).expect("repo_summary should succeed");
+    let summary = tauri::async_runtime::block_on(repo_summary(repo.path())).expect("repo_summary should succeed");
     assert_eq!(summary.total_commits, 4);
     assert_eq!(summary.monthly.len(), 3, "expected 3 distinct months, got: {:?}", summary.monthly.iter().map(|m| &m.month).collect::<Vec<_>>());
     // chronological order, and the last bucket (c3+c4) must have merged to 2.
@@ -173,7 +173,7 @@ fn problem_areas_counts_a_real_git_revert_and_clusters_fix_commits_per_file() {
     let to_revert = repo.commit("a.txt", "v4\n", "Fix yet another bug in a.txt");
     repo.must(&["revert", "--no-edit", &to_revert]);
 
-    let summary = repo_summary(repo.path()).expect("repo_summary should succeed");
+    let summary = tauri::async_runtime::block_on(repo_summary(repo.path())).expect("repo_summary should succeed");
     assert_eq!(summary.total_commits, 5);
     assert_eq!(summary.problem_areas.total_commits, 5);
     // git's own auto-generated revert subject starts with `Revert "` — the
@@ -195,7 +195,7 @@ fn problem_areas_filters_out_a_file_below_the_min_touches_threshold() {
     let repo = TempRepo::init("summary_problem_areas_min_touches");
     repo.commit("once.txt", "v1\n", "Fix a one-off bug");
 
-    let summary = repo_summary(repo.path()).expect("repo_summary should succeed");
+    let summary = tauri::async_runtime::block_on(repo_summary(repo.path())).expect("repo_summary should succeed");
     assert!(summary.problem_areas.files.is_empty(), "a file touched only once must be filtered out");
 }
 
@@ -215,7 +215,7 @@ fn since_window_excludes_commits_older_than_the_churn_window() {
     // Inside the window.
     let _recent = commit_with(&git_repo, Some(old), &[("new.txt", "1")], "recent commit", "Ada", "ada@x.com", now - 5 * DAY);
 
-    let summary = repo_summary(repo.path()).expect("repo_summary should succeed");
+    let summary = tauri::async_runtime::block_on(repo_summary(repo.path())).expect("repo_summary should succeed");
     assert_eq!(summary.total_commits, 1, "the 400-day-old commit must be excluded by --since");
     assert!(summary.churn.iter().any(|f| f.path == "new.txt"));
     assert!(!summary.churn.iter().any(|f| f.path == "old.txt"), "old.txt belongs only to the excluded commit");
@@ -228,7 +228,7 @@ fn since_window_excludes_commits_older_than_the_churn_window() {
 #[test]
 fn empty_unborn_repo_returns_a_zeroed_summary_not_an_error() {
     let repo = TempRepo::init("summary_empty_repo");
-    let summary = repo_summary(repo.path()).expect("an empty repo must be Ok, not Err");
+    let summary = tauri::async_runtime::block_on(repo_summary(repo.path())).expect("an empty repo must be Ok, not Err");
     assert_eq!(summary.total_commits, 0);
     assert!(summary.churn.is_empty());
     assert!(summary.contributors.is_empty());
@@ -239,7 +239,7 @@ fn empty_unborn_repo_returns_a_zeroed_summary_not_an_error() {
 
 #[test]
 fn invalid_repo_path_is_a_clean_err() {
-    let err = must_err(repo_summary("/no/such/path/at/all".to_string()), "nonexistent repo path must be Err");
+    let err = must_err(tauri::async_runtime::block_on(repo_summary("/no/such/path/at/all".to_string())), "nonexistent repo path must be Err");
     assert!(!err.is_empty());
 }
 
@@ -257,7 +257,7 @@ fn renamed_file_is_counted_as_two_separate_churn_entries_not_merged() {
     repo.must(&["mv", "old.txt", "new.txt"]);
     repo.must(&["commit", "-q", "--no-verify", "-m", "c2: rename old.txt to new.txt"]);
 
-    let summary = repo_summary(repo.path()).expect("repo_summary should succeed");
+    let summary = tauri::async_runtime::block_on(repo_summary(repo.path())).expect("repo_summary should succeed");
     assert_eq!(summary.total_commits, 2);
     let old_touches = summary.churn.iter().find(|f| f.path == "old.txt").map(|f| f.touches);
     let new_touches = summary.churn.iter().find(|f| f.path == "new.txt").map(|f| f.touches);

@@ -156,11 +156,22 @@ fn empty_summary() -> RepoSummary {
 /// repo (no commits yet) returns a zeroed summary, not an error — matches
 /// `dashboard.rs`'s own "empty repo is a normal state" convention.
 ///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s doc comment,
+/// that runs INLINE on Tauri's main thread, freezing the whole app window for
+/// as long as the call takes. This command shells out to a single `git log`
+/// walking up to [`MAX_SUMMARY_COMMITS`] commits with a `--name-only` block
+/// per commit, which on a large/old repo can take real seconds — and it's
+/// invoked on first-open of every repo (see `repo_registry::
+/// claim_repo_summary_first_open`), so that stall lands right when the app
+/// first shows a repo. `async fn` + `run_blocking` moves the walk onto
+/// Tauri's blocking-task thread pool, matching `dashboard_repo_status`'s own
+/// established fix.
+///
 /// JS: `commands.repoSummary(path)`.
 #[tauri::command]
 #[specta::specta]
-pub fn repo_summary(path: String) -> Result<RepoSummary, String> {
-    repo_summary_inner(&path)
+pub async fn repo_summary(path: String) -> Result<RepoSummary, String> {
+    crate::blocking::run_blocking(move || repo_summary_inner(&path)).await
 }
 
 fn repo_summary_inner(path: &str) -> Result<RepoSummary, String> {

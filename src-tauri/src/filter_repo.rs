@@ -316,9 +316,18 @@ fn backup(repo: &Repository, path: &str) -> Result<BackupManifest, String> {
 // ---------------------------------------------------------------------------
 
 /// Read-only preview shown before the user commits to running filter-repo.
+/// Its `commit_count`/`touched_commits` numbers come from `git rev-list
+/// --count`, a full history walk shelled out via `Command::new`, so its cost
+/// scales with total repo size just like the mutating commands below — run
+/// as a plain sync fn this would freeze the whole window while the wizard's
+/// preview step merely counts commits.
 #[tauri::command]
 #[specta::specta]
-pub fn filter_repo_preview(path: String, paths: Vec<String>, invert: bool) -> Result<FilterRepoPreview, String> {
+pub async fn filter_repo_preview(path: String, paths: Vec<String>, invert: bool) -> Result<FilterRepoPreview, String> {
+    crate::blocking::run_blocking(move || filter_repo_preview_inner(path, paths, invert)).await
+}
+
+fn filter_repo_preview_inner(path: String, paths: Vec<String>, invert: bool) -> Result<FilterRepoPreview, String> {
     let repo = open(&path)?;
     let available = filter_repo_available(&path);
     let current_branch = {
@@ -365,10 +374,19 @@ pub fn filter_repo_list_backups(path: String) -> Result<Vec<FilterRepoBackupInfo
 }
 
 /// Run `git filter-repo` against the given scope, after a mandatory verified
-/// backup. Plain-struct failure model — see module docs.
+/// backup. Plain-struct failure model — see module docs. This is the single
+/// most important conversion in this module: it shells out to `git bundle
+/// create --all`/`bundle verify` and then `git filter-repo` itself, which
+/// rewrites EVERY commit in the selected history — on a real repo that can
+/// run for minutes, and as a plain sync fn it would freeze the entire GitCat
+/// window, not just the wizard, for the whole duration.
 #[tauri::command]
 #[specta::specta]
-pub fn filter_repo_run(path: String, paths: Vec<String>, invert: bool) -> FilterRepoResult {
+pub async fn filter_repo_run(path: String, paths: Vec<String>, invert: bool) -> FilterRepoResult {
+    crate::blocking::run_blocking(move || filter_repo_run_inner(path, paths, invert)).await
+}
+
+fn filter_repo_run_inner(path: String, paths: Vec<String>, invert: bool) -> FilterRepoResult {
     let repo = match open(&path) {
         Ok(r) => r,
         Err(e) => return FilterRepoResult::error(e),
@@ -470,10 +488,17 @@ pub fn filter_repo_run(path: String, paths: Vec<String>, invert: bool) -> Filter
 /// Restore every ref namespace a previous backup captured. Pins any
 /// at-risk CURRENT tip under `refs/gitgui/deleted/*` first (data-safety,
 /// mirrors safety::undo's pre-move pinning) so nothing is silently orphaned
-/// even if the user regrets the restore itself.
+/// even if the user regrets the restore itself. Restoring re-fetches every
+/// recorded ref out of the backup bundle and runs `git reset --hard`, all via
+/// `Command::new` — a cost that scales with repo/ref count, so this must stay
+/// off the main thread exactly like `filter_repo_run`.
 #[tauri::command]
 #[specta::specta]
-pub fn filter_repo_restore(path: String, backup_id: String) -> FilterRepoResult {
+pub async fn filter_repo_restore(path: String, backup_id: String) -> FilterRepoResult {
+    crate::blocking::run_blocking(move || filter_repo_restore_inner(path, backup_id)).await
+}
+
+fn filter_repo_restore_inner(path: String, backup_id: String) -> FilterRepoResult {
     let repo = match open(&path) {
         Ok(r) => r,
         Err(e) => return FilterRepoResult::error(e),

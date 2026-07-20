@@ -51,6 +51,15 @@
 //! `watch_repo`, so it's directly unit-testable without a real
 //! AppHandle/State — as is the run/claim/release wrapper `try_run_bisect`
 //! (see tests/bisect.rs).
+//!
+//! MAIN-THREAD BLOCKING (see blocking.rs): `bisect_start`, `bisect_mark`,
+//! `bisect_status`, `bisect_reset`, and `bisect_run_start` all either open the
+//! repo with git2 or shell out to `git`/an arbitrary test command, so every
+//! one of them is now an `async fn` routed through `crate::blocking::run_blocking`
+//! rather than a plain sync `fn` that would run inline on Tauri's main thread.
+//! `bisect_run_cancel` is the one exception — it only flips an in-memory
+//! `AtomicBool` on `BisectRunState`, no repo/subprocess access at all — so it
+//! deliberately stays a plain sync `fn`.
 
 use std::fs;
 use std::process::{Command, ExitStatus};
@@ -58,7 +67,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use git2::Repository;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State, Wry};
+use tauri::{AppHandle, Emitter, Manager, State, Wry};
 
 #[derive(Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -347,76 +356,72 @@ fn read_status(repo: &Repository, path: &str) -> BisectStatus {
 
 /// Start a bisect between a known-bad and one-or-more known-good commits.
 /// Snapshots FIRST. JS: invoke("bisect_start", { path, bad, good: [sha,…] }).
+///
+/// Opens the repo with git2, takes a full safety snapshot, then shells out
+/// several `git bisect start/bad/good` invocations in sequence — as a plain
+/// sync command every one of those steps ran inline on Tauri's main thread,
+/// freezing the whole app window (not just the bisect panel) until the last
+/// one finished. `async fn` + `run_blocking` moves the whole sequence onto
+/// Tauri's blocking-task thread pool instead.
 #[tauri::command]
 #[specta::specta]
-pub fn bisect_start(path: String, bad: String, good: Vec<String>) -> BisectStatus {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
-    };
+pub async fn bisect_start(path: String, bad: String, good: Vec<String>) -> BisectStatus {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
+        };
 
-    if in_progress(&repo) {
-        let mut s = read_status(&repo, &path);
-        s.ok = false;
-        s.message = "A bisect is already in progress — reset it before starting a new one.".into();
-        return s;
-    }
-    if good.is_empty() {
-        return BisectStatus::refused("Select at least one known-good commit to bisect between.");
-    }
-
-    match git(&path, &["status", "--porcelain"]) {
-        Ok(o) if !o.ok => {
-            return BisectStatus::refused(format!(
-                "Cannot verify the working tree is clean, refusing to bisect: {}",
-                o.stderr
-            ))
+        if in_progress(&repo) {
+            let mut s = read_status(&repo, &path);
+            s.ok = false;
+            s.message = "A bisect is already in progress — reset it before starting a new one.".into();
+            return s;
         }
-        Ok(o) if !o.stdout.is_empty() => {
-            return BisectStatus::refused(
-                "Working tree has uncommitted changes — commit or stash before bisecting.",
-            )
+        if good.is_empty() {
+            return BisectStatus::refused("Select at least one known-good commit to bisect between.");
         }
-        Ok(_) => {}
-        Err(e) => return BisectStatus::refused(e),
-    }
 
-    let bad_oid = match canonical_oid(&repo, &bad) {
-        Ok(o) => o,
-        Err(e) => return BisectStatus::refused(e),
-    };
-    let mut good_oids: Vec<String> = Vec::with_capacity(good.len());
-    for g in &good {
-        match canonical_oid(&repo, g) {
-            Ok(o) => good_oids.push(o),
+        match git(&path, &["status", "--porcelain"]) {
+            Ok(o) if !o.ok => {
+                return BisectStatus::refused(format!(
+                    "Cannot verify the working tree is clean, refusing to bisect: {}",
+                    o.stderr
+                ))
+            }
+            Ok(o) if !o.stdout.is_empty() => {
+                return BisectStatus::refused(
+                    "Working tree has uncommitted changes — commit or stash before bisecting.",
+                )
+            }
+            Ok(_) => {}
             Err(e) => return BisectStatus::refused(e),
         }
-    }
 
-    // Snapshot FIRST — never mutate without a pre-op backup. Abort if it fails.
-    let backup = match crate::safety::snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return BisectStatus::refused(format!("Safety snapshot failed, aborting: {e}")),
-    };
+        let bad_oid = match canonical_oid(&repo, &bad) {
+            Ok(o) => o,
+            Err(e) => return BisectStatus::refused(e),
+        };
+        let mut good_oids: Vec<String> = Vec::with_capacity(good.len());
+        for g in &good {
+            match canonical_oid(&repo, g) {
+                Ok(o) => good_oids.push(o),
+                Err(e) => return BisectStatus::refused(e),
+            }
+        }
 
-    match git(&path, &["bisect", "start"]) {
-        Ok(o) if o.ok => {}
-        Ok(o) => return BisectStatus::refused(git_msg(&o)),
-        Err(e) => return BisectStatus::refused(e),
-    }
-    match git(&path, &["bisect", "bad", &bad_oid]) {
-        Ok(o) if o.ok => {}
-        Ok(o) => {
-            let _ = git(&path, &["bisect", "reset"]);
-            return BisectStatus::refused(git_msg(&o));
+        // Snapshot FIRST — never mutate without a pre-op backup. Abort if it fails.
+        let backup = match crate::safety::snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return BisectStatus::refused(format!("Safety snapshot failed, aborting: {e}")),
+        };
+
+        match git(&path, &["bisect", "start"]) {
+            Ok(o) if o.ok => {}
+            Ok(o) => return BisectStatus::refused(git_msg(&o)),
+            Err(e) => return BisectStatus::refused(e),
         }
-        Err(e) => {
-            let _ = git(&path, &["bisect", "reset"]);
-            return BisectStatus::refused(e);
-        }
-    }
-    for oid in &good_oids {
-        match git(&path, &["bisect", "good", oid]) {
+        match git(&path, &["bisect", "bad", &bad_oid]) {
             Ok(o) if o.ok => {}
             Ok(o) => {
                 let _ = git(&path, &["bisect", "reset"]);
@@ -427,16 +432,30 @@ pub fn bisect_start(path: String, bad: String, good: Vec<String>) -> BisectStatu
                 return BisectStatus::refused(e);
             }
         }
-    }
+        for oid in &good_oids {
+            match git(&path, &["bisect", "good", oid]) {
+                Ok(o) if o.ok => {}
+                Ok(o) => {
+                    let _ = git(&path, &["bisect", "reset"]);
+                    return BisectStatus::refused(git_msg(&o));
+                }
+                Err(e) => {
+                    let _ = git(&path, &["bisect", "reset"]);
+                    return BisectStatus::refused(e);
+                }
+            }
+        }
 
-    let mut status = read_status(&repo, &path);
-    status.backup_ref = Some(backup.clone());
-    status.message = format!(
-        "{} · snapshot {}.",
-        status.message.trim_end_matches('.'),
-        short_backup(&backup)
-    );
-    status
+        let mut status = read_status(&repo, &path);
+        status.backup_ref = Some(backup.clone());
+        status.message = format!(
+            "{} · snapshot {}.",
+            status.message.trim_end_matches('.'),
+            short_backup(&backup)
+        );
+        status
+    })
+    .await
 }
 
 /// Apply one good/bad/skip determination to the currently checked-out
@@ -464,85 +483,109 @@ fn apply_mark(repo: &Repository, path: &str, subcmd: &str) -> BisectStatus {
 
 /// Mark the checked-out midpoint (HEAD) good/bad/skip. No snapshot.
 /// JS: invoke("bisect_mark", { path, term }) where term ∈ {good,bad,skip}.
+///
+/// Opens the repo with git2 and shells out `git bisect good|bad|skip`, which
+/// also checks out the next midpoint — a real checkout, not just a ref
+/// update. As a plain sync command that checkout ran on Tauri's main thread,
+/// so every mark click froze the whole window for as long as it took.
+/// `async fn` + `run_blocking` moves it onto Tauri's blocking-task pool.
 #[tauri::command]
 #[specta::specta]
-pub fn bisect_mark(path: String, term: String) -> BisectStatus {
-    let subcmd = match term.as_str() {
-        "good" | "bad" | "skip" => term.as_str(),
-        other => {
-            return BisectStatus::refused(format!(
-                "Unknown mark {other:?} (expected \"good\", \"bad\", or \"skip\")."
-            ))
+pub async fn bisect_mark(path: String, term: String) -> BisectStatus {
+    crate::blocking::run_blocking(move || {
+        let subcmd = match term.as_str() {
+            "good" | "bad" | "skip" => term.as_str(),
+            other => {
+                return BisectStatus::refused(format!(
+                    "Unknown mark {other:?} (expected \"good\", \"bad\", or \"skip\")."
+                ))
+            }
+        };
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
+        };
+        if !in_progress(&repo) {
+            return BisectStatus::refused("No bisect in progress — start one first.");
         }
-    };
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
-    };
-    if !in_progress(&repo) {
-        return BisectStatus::refused("No bisect in progress — start one first.");
-    }
 
-    apply_mark(&repo, &path, subcmd)
+        apply_mark(&repo, &path, subcmd)
+    })
+    .await
 }
 
 /// Read-only bisect status (also serves as `bisect log`). Never mutates.
 /// JS: invoke("bisect_status", { path }).
+///
+/// `read_status` opens the repo with git2 and shells out several `git bisect
+/// log`/`for-each-ref`/`rev-list` calls to assemble it. This command is
+/// polled by the UI after every action, so as a plain sync fn each poll ran
+/// inline on Tauri's main thread — `async fn` + `run_blocking` keeps those
+/// repeated subprocess calls off it.
 #[tauri::command]
 #[specta::specta]
-pub fn bisect_status(path: String) -> BisectStatus {
-    match crate::trust::open_repo(&path) {
+pub async fn bisect_status(path: String) -> BisectStatus {
+    crate::blocking::run_blocking(move || match crate::trust::open_repo(&path) {
         Ok(repo) => read_status(&repo, &path),
         Err(e) => BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
-    }
+    })
+    .await
 }
 
 /// End the bisect and restore the original HEAD/branch. Escape hatch: NO
 /// snapshot; idempotent. JS: invoke("bisect_reset", { path }).
+///
+/// Shells out `git bisect reset`, which checks out the original HEAD/branch
+/// again — a real checkout of potentially any size, run inline on Tauri's
+/// main thread as a plain sync fn and freezing the whole window for its
+/// duration. `async fn` + `run_blocking` moves it to Tauri's blocking pool.
 #[tauri::command]
 #[specta::specta]
-pub fn bisect_reset(path: String) -> BisectStatus {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
-    };
-    if !in_progress(&repo) {
-        return BisectStatus::idle("No bisect in progress.");
-    }
+pub async fn bisect_reset(path: String) -> BisectStatus {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
+        };
+        if !in_progress(&repo) {
+            return BisectStatus::idle("No bisect in progress.");
+        }
 
-    let restored = fs::read_to_string(repo.path().join("BISECT_START"))
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(|s| {
-            if s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-                short(&s)
-            } else {
+        let restored = fs::read_to_string(repo.path().join("BISECT_START"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                if s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+                    short(&s)
+                } else {
+                    s
+                }
+            });
+
+        match git(&path, &["bisect", "reset"]) {
+            Ok(o) if o.ok => {
+                let message = match restored {
+                    Some(r) => format!("Bisect ended — back on {r}."),
+                    None => "Bisect ended.".to_string(),
+                };
+                BisectStatus::idle(message)
+            }
+            Ok(o) => {
+                let mut s = read_status(&repo, &path);
+                s.ok = false;
+                s.message = git_msg(&o);
                 s
             }
-        });
-
-    match git(&path, &["bisect", "reset"]) {
-        Ok(o) if o.ok => {
-            let message = match restored {
-                Some(r) => format!("Bisect ended — back on {r}."),
-                None => "Bisect ended.".to_string(),
-            };
-            BisectStatus::idle(message)
+            Err(e) => {
+                let mut s = read_status(&repo, &path);
+                s.ok = false;
+                s.message = e;
+                s
+            }
         }
-        Ok(o) => {
-            let mut s = read_status(&repo, &path);
-            s.ok = false;
-            s.message = git_msg(&o);
-            s
-        }
-        Err(e) => {
-            let mut s = read_status(&repo, &path);
-            s.ok = false;
-            s.message = e;
-            s
-        }
-    }
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -777,42 +820,63 @@ pub fn try_run_bisect(
 /// already picked bad+good and clicked Start. Refuses cleanly (no run
 /// attempted) if another automated run is already in flight for this app —
 /// see `try_run_bisect`.
+///
+/// This is the worst offender of the plain-`fn`-blocks-the-main-thread bug in
+/// this file: `run_bisect` loops running an arbitrary caller-supplied test
+/// command and shelling out `git bisect good/bad/skip` after every run, for
+/// as long as it takes to converge — real test suites can take minutes. As a
+/// plain sync command, that whole loop ran inline on Tauri's main thread, so
+/// the entire app window sat frozen for the full duration of an automated
+/// run. `async fn` + `run_blocking` moves the loop onto Tauri's blocking-task
+/// thread pool; `BisectRunState` is now looked up via `app.state()` from
+/// inside that pool (mirrors `commands.rs`'s `stream_graph` doing the same
+/// for `GraphLoadState`) rather than taken as a `State` parameter, since a
+/// borrowed `State<'_, T>` can't be moved into the `'static` closure
+/// `run_blocking` requires.
 /// JS: invoke("bisect_run_start", { path, command }).
 #[tauri::command]
 #[specta::specta]
-pub fn bisect_run_start(app: AppHandle<Wry>, state: State<BisectRunState>, path: String, command: String) -> BisectStatus {
-    let outcome = try_run_bisect(
-        &state,
-        &path,
-        &command,
-        || state.is_cancelled(),
-        |status| {
-            let _ = app.emit("bisect-run-progress", status);
-        },
-    );
-    match outcome {
-        Some(result) => result,
-        None => match Repository::open(&path) {
-            // Report the ACTUAL current status (mirrors bisect_start's own
-            // already-in-progress handling) rather than a blank refusal, so
-            // the frontend's canvas cues stay accurate even though this
-            // particular call was refused.
-            Ok(repo) => {
-                let mut s = read_status(&repo, &path);
-                s.ok = false;
-                s.message =
-                    "An automated bisect run is already in progress — cancel it before starting another.".into();
-                s
-            }
-            Err(e) => BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
-        },
-    }
+pub async fn bisect_run_start(app: AppHandle<Wry>, path: String, command: String) -> BisectStatus {
+    crate::blocking::run_blocking(move || {
+        let state = app.state::<BisectRunState>();
+        let outcome = try_run_bisect(
+            &state,
+            &path,
+            &command,
+            || state.is_cancelled(),
+            |status| {
+                let _ = app.emit("bisect-run-progress", status);
+            },
+        );
+        match outcome {
+            Some(result) => result,
+            None => match Repository::open(&path) {
+                // Report the ACTUAL current status (mirrors bisect_start's own
+                // already-in-progress handling) rather than a blank refusal, so
+                // the frontend's canvas cues stay accurate even though this
+                // particular call was refused.
+                Ok(repo) => {
+                    let mut s = read_status(&repo, &path);
+                    s.ok = false;
+                    s.message =
+                        "An automated bisect run is already in progress — cancel it before starting another.".into();
+                    s
+                }
+                Err(e) => BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
+            },
+        }
+    })
+    .await
 }
 
 /// Request that an in-flight `bisect_run_start` loop stop before its next
 /// step. Always callable (mirrors `bisect_reset`'s "must always be able to
 /// run" escape-hatch spirit), though this only sets a flag rather than
 /// mutating repo state. JS: invoke("bisect_run_cancel").
+///
+/// Deliberately left as a plain sync `fn`: it touches only an in-memory
+/// `AtomicBool` on `BisectRunState`, with no git2/subprocess/filesystem
+/// access, so there is nothing here that could block the main thread.
 #[tauri::command]
 #[specta::specta]
 pub fn bisect_run_cancel(state: State<BisectRunState>) -> Result<(), String> {

@@ -126,7 +126,7 @@ fn ancestors_of_a_branch_tip_excludes_a_divergent_sibling_on_another_branch() {
     let (repo, [c0, c1, c2, c3, c4]) = build_repo();
     let path = repo.path();
 
-    let ancestors_of_c3 = ancestors_of(path.clone(), c3.clone()).expect("ancestors_of failed");
+    let ancestors_of_c3 = tauri::async_runtime::block_on(ancestors_of(path.clone(), c3.clone())).expect("ancestors_of failed");
     let short_c2 = short(&c2);
     assert!(
         !ancestors_of_c3.contains(&short_c2),
@@ -142,7 +142,7 @@ fn ancestors_of_a_branch_tip_excludes_a_divergent_sibling_on_another_branch() {
 
     // The merge commit c4, on the other hand, genuinely descends from BOTH
     // branches — c2 legitimately IS one of its ancestors.
-    let ancestors_of_c4 = ancestors_of(path.clone(), c4.clone()).expect("ancestors_of failed");
+    let ancestors_of_c4 = tauri::async_runtime::block_on(ancestors_of(path.clone(), c4.clone())).expect("ancestors_of failed");
     assert!(
         ancestors_of_c4.contains(&short_c2),
         "c2 must be a real ancestor of the merge commit c4, got {ancestors_of_c4:?}"

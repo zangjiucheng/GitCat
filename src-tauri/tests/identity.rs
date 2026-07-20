@@ -53,7 +53,7 @@ fn get_git_identity_reports_the_repo_local_identity_temprepo_already_sets() {
     let path = repo.path();
 
     // TempRepo::init already sets a repo-local identity (see common/mod.rs).
-    let id = get_git_identity(path).expect("get_git_identity failed");
+    let id = tauri::async_runtime::block_on(get_git_identity(path)).expect("get_git_identity failed");
     assert!(id.configured);
     assert!(id.local, "both fields are set locally — this must read as a local override");
     assert_eq!(id.name.as_deref(), Some("GitCat Test"));
@@ -72,7 +72,7 @@ fn get_git_identity_falls_back_to_the_real_global_identity_when_local_is_unset()
     let global_name = real_global("user.name");
     let global_email = real_global("user.email");
 
-    let id = get_git_identity(path).expect("get_git_identity failed");
+    let id = tauri::async_runtime::block_on(get_git_identity(path)).expect("get_git_identity failed");
     assert!(!id.local, "nothing is set locally anymore");
     assert_eq!(id.name, global_name, "with no local override, the effective name must be exactly the real global one");
     assert_eq!(id.email, global_email, "with no local override, the effective email must be exactly the real global one");
@@ -85,7 +85,7 @@ fn get_git_identity_mixes_a_partial_local_override_with_the_real_global_identity
     repo.must(&["config", "--local", "--unset", "user.email"]);
     let path = repo.path();
 
-    let id = get_git_identity(path).expect("get_git_identity failed");
+    let id = tauri::async_runtime::block_on(get_git_identity(path)).expect("get_git_identity failed");
     let global_email = real_global("user.email");
 
     // Name is unaffected — it's still set locally, wins regardless of global.
@@ -108,7 +108,7 @@ fn get_git_identity_errors_on_a_path_that_is_not_a_repository() {
     ));
     std::fs::create_dir_all(&dir).expect("mkdir scratch dir");
 
-    let result = get_git_identity(dir.to_string_lossy().to_string());
+    let result = tauri::async_runtime::block_on(get_git_identity(dir.to_string_lossy().to_string()));
     assert!(result.is_err(), "a non-repository path must error");
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -125,11 +125,11 @@ fn set_git_identity_writes_local_config_and_never_touches_the_real_global_config
     let global_name_before = real_global("user.name");
     let global_email_before = real_global("user.email");
 
-    let res = set_git_identity(
+    let res = tauri::async_runtime::block_on(set_git_identity(
         path.clone(),
         "Setup Wizard Test User".to_string(),
         "setup-wizard-test@example.invalid".to_string(),
-    );
+    ));
     assert!(res.ok, "set_git_identity failed: {}", res.message);
 
     // (a) the value landed in THIS repo's local config.
@@ -139,7 +139,7 @@ fn set_git_identity_writes_local_config_and_never_touches_the_real_global_config
     assert_eq!(local_email.trim(), "setup-wizard-test@example.invalid");
 
     // Cross-check via get_git_identity too.
-    let id = get_git_identity(path).expect("get_git_identity failed");
+    let id = tauri::async_runtime::block_on(get_git_identity(path)).expect("get_git_identity failed");
     assert!(id.configured);
     assert!(id.local, "just wrote both fields locally");
     assert_eq!(id.name.as_deref(), Some("Setup Wizard Test User"));
@@ -158,10 +158,10 @@ fn set_git_identity_rejects_empty_name_or_email() {
     let repo = TempRepo::init("identity_empty");
     let path = repo.path();
 
-    let res = set_git_identity(path.clone(), "  ".to_string(), "a@b.c".to_string());
+    let res = tauri::async_runtime::block_on(set_git_identity(path.clone(), "  ".to_string(), "a@b.c".to_string()));
     assert!(!res.ok, "blank name must be rejected");
 
-    let res = set_git_identity(path, "A".to_string(), "  ".to_string());
+    let res = tauri::async_runtime::block_on(set_git_identity(path, "A".to_string(), "  ".to_string()));
     assert!(!res.ok, "blank email must be rejected");
 }
 
@@ -177,11 +177,11 @@ fn set_git_identity_errors_on_a_path_that_is_not_a_repository() {
     ));
     std::fs::create_dir_all(&dir).expect("mkdir scratch dir");
 
-    let res = set_git_identity(
+    let res = tauri::async_runtime::block_on(set_git_identity(
         dir.to_string_lossy().to_string(),
         "A".to_string(),
         "a@b.c".to_string(),
-    );
+    ));
     assert!(!res.ok, "a non-repository path must fail, not panic");
 
     let _ = std::fs::remove_dir_all(&dir);

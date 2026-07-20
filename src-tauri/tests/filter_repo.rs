@@ -33,7 +33,7 @@ fn preview_reports_real_counts() {
     let repo = build_repo("fr_preview");
     let path = repo.path();
 
-    let preview = filter_repo_preview(path.clone(), vec!["secret.txt".to_string()], false)
+    let preview = tauri::async_runtime::block_on(filter_repo_preview(path.clone(), vec!["secret.txt".to_string()], false))
         .expect("filter_repo_preview failed");
 
     assert!(preview.available, "git-filter-repo should be detected as available on this machine");
@@ -54,7 +54,7 @@ fn run_removes_path_from_history_and_restore_recovers_every_ref() {
     assert_eq!(repo.current_branch(), "main");
 
     // ---- run ---------------------------------------------------------
-    let result = filter_repo_run(path.clone(), vec!["secret.txt".to_string()], true);
+    let result = tauri::async_runtime::block_on(filter_repo_run(path.clone(), vec!["secret.txt".to_string()], true));
     assert!(result.ok, "filter_repo_run failed: {}", result.message);
     assert!(result.backup_bundle.is_some(), "a backup bundle path should be reported");
     assert_eq!(result.commits_before, Some(4));
@@ -81,7 +81,7 @@ fn run_removes_path_from_history_and_restore_recovers_every_ref() {
     assert!(backup.ref_count >= 3, "backup should have captured at least main/sidework/v1, got {}", backup.ref_count);
 
     // ---- restore ---------------------------------------------------------
-    let restore = filter_repo_restore(path.clone(), backup.id.clone());
+    let restore = tauri::async_runtime::block_on(filter_repo_restore(path.clone(), backup.id.clone()));
     assert!(restore.ok, "filter_repo_restore failed: {}", restore.message);
 
     // EVERY original ref must be back to its EXACT pre-rewrite sha — not just
@@ -118,7 +118,7 @@ fn restore_never_touches_a_branch_created_after_the_backup() {
     // Back up (on main) without ever running filter-repo itself — the bug
     // lives in backup()'s ref parsing + restore()'s replay, not in filter-repo
     // proper, so a bare run_removes-nothing round trip already exercises it.
-    let result = filter_repo_run(path.clone(), vec!["secret.txt".to_string()], true);
+    let result = tauri::async_runtime::block_on(filter_repo_run(path.clone(), vec!["secret.txt".to_string()], true));
     assert!(result.ok, "filter_repo_run failed: {}", result.message);
     let backups = filter_repo_list_backups(path.clone()).expect("filter_repo_list_backups failed");
     let backup_id = backups[0].id.clone();
@@ -128,7 +128,7 @@ fn restore_never_touches_a_branch_created_after_the_backup() {
     let feature_sha = repo.commit("feature.txt", "new work\n", "feature: add feature.txt");
     assert_eq!(repo.current_branch(), "feature");
 
-    let restore = filter_repo_restore(path.clone(), backup_id);
+    let restore = tauri::async_runtime::block_on(filter_repo_restore(path.clone(), backup_id));
     assert!(restore.ok, "filter_repo_restore failed: {}", restore.message);
 
     // The never-backed-up branch must be COMPLETELY untouched — same sha,
@@ -148,7 +148,7 @@ fn run_refuses_on_dirty_tree() {
     let path = repo.path();
     std::fs::write(repo.dir.join("keep.txt"), "dirty, uncommitted\n").unwrap();
 
-    let result = filter_repo_run(path.clone(), vec!["secret.txt".to_string()], true);
+    let result = tauri::async_runtime::block_on(filter_repo_run(path.clone(), vec!["secret.txt".to_string()], true));
     assert!(!result.ok, "filter_repo_run should refuse on a dirty tree");
     assert!(
         result.message.to_lowercase().contains("uncommitted") || result.message.to_lowercase().contains("clean"),
@@ -167,10 +167,10 @@ fn run_refuses_on_empty_scope() {
     let repo = build_repo("fr_empty_scope");
     let path = repo.path();
 
-    let result = filter_repo_run(path.clone(), vec![], false);
+    let result = tauri::async_runtime::block_on(filter_repo_run(path.clone(), vec![], false));
     assert!(!result.ok, "filter_repo_run should refuse an empty path scope");
 
-    let result2 = filter_repo_run(path.clone(), vec!["".to_string()], false);
+    let result2 = tauri::async_runtime::block_on(filter_repo_run(path.clone(), vec!["".to_string()], false));
     assert!(!result2.ok, "filter_repo_run should refuse an empty-string path entry");
 }
 

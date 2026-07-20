@@ -628,7 +628,7 @@ fn submodule_init_registers_url_without_cloning() {
     assert_eq!(rows_before.len(), 1);
     assert_eq!(rows_before[0].status, "not-initialized");
 
-    let result = submodule_init(clone.path(), "sub".to_string());
+    let result = tauri::async_runtime::block_on(submodule_init(clone.path(), "sub".to_string()));
     assert!(result.ok, "submodule_init failed: {}", result.message);
     assert!(result.backup_ref.is_none(), "submodule_init must never snapshot (see module doc comment)");
 
@@ -667,7 +667,7 @@ fn submodule_update_with_init_clones_and_checks_out_never_initialized_submodule(
 
     // init:true folds registration + clone + checkout into this one call —
     // no prior submodule_init needed.
-    let result = submodule_update(clone.path(), Some("sub".to_string()), false, true);
+    let result = tauri::async_runtime::block_on(submodule_update(clone.path(), Some("sub".to_string()), false, true));
     assert!(result.ok, "submodule_update failed: {}", result.message);
     assert!(result.backup_ref.is_none(), "submodule_update must never snapshot (see module doc comment)");
 
@@ -708,7 +708,7 @@ fn submodule_update_recursive_handles_nested_submodule_of_a_submodule() {
 
     // recursive:true must init+clone+checkout "sub" AND recurse into "sub" to
     // do the same for ITS OWN "nested" submodule, in one call.
-    let result = submodule_update(clone.path(), Some("sub".to_string()), true, true);
+    let result = tauri::async_runtime::block_on(submodule_update(clone.path(), Some("sub".to_string()), true, true));
     assert!(result.ok, "submodule_update (recursive) failed: {}", result.message);
 
     let nested_file = PathBuf::from(clone.path()).join("sub").join("nested").join("gc.txt");
@@ -746,7 +746,7 @@ fn submodule_update_without_recursive_leaves_the_nested_submodule_uninitialized(
 
     let clone = FreshClone::of(&parent, "submodule_nonrecursive");
 
-    let result = submodule_update(clone.path(), Some("sub".to_string()), false, true);
+    let result = tauri::async_runtime::block_on(submodule_update(clone.path(), Some("sub".to_string()), false, true));
     assert!(result.ok, "submodule_update (non-recursive) failed: {}", result.message);
 
     // "sub" itself was cloned+checked out...
@@ -795,7 +795,7 @@ fn submodule_update_refuses_over_dirty_submodule_and_keeps_local_changes() {
     // EMPIRICALLY VERIFIED (see submodule.rs's module doc comment): real
     // git's own default refuses a checkout that would clobber this edit —
     // submodule_update must surface that refusal, not force past it.
-    let result = submodule_update(parent.path(), Some("sub".to_string()), false, false);
+    let result = tauri::async_runtime::block_on(submodule_update(parent.path(), Some("sub".to_string()), false, false));
     assert!(!result.ok, "expected submodule_update to refuse over a dirty submodule, got ok: {}", result.message);
     assert!(
         result.message.contains("overwritten") || result.message.contains("local changes"),
@@ -834,7 +834,7 @@ fn submodule_update_all_updates_multiple_submodules_in_one_call() {
 
     // submodule_path: None => update EVERY registered submodule, no path
     // restriction — the bulk "Update all" action.
-    let result = submodule_update(clone.path(), None, false, true);
+    let result = tauri::async_runtime::block_on(submodule_update(clone.path(), None, false, true));
     assert!(result.ok, "submodule_update (all) failed: {}", result.message);
 
     let rows_after = tauri::async_runtime::block_on(submodule_status(clone.path())).expect("submodule_status failed");
@@ -872,7 +872,7 @@ fn submodule_add_clones_new_submodule_and_it_is_immediately_clean() {
     let parent = TempRepo::init("submodule_add_parent");
     let _p0 = parent.commit("root.txt", "root\n", "p0");
 
-    let result = submodule_add(parent.path(), child.path(), "sub".to_string(), None);
+    let result = tauri::async_runtime::block_on(submodule_add(parent.path(), child.path(), "sub".to_string(), None));
     assert!(result.ok, "submodule_add failed: {}", result.message);
     assert!(result.backup_ref.is_none(), "submodule_add must never snapshot (see module doc comment)");
 
@@ -919,7 +919,7 @@ fn submodule_add_with_branch_checks_out_that_branch_not_the_default() {
     let parent = TempRepo::init("submodule_add_branch_parent");
     let _p0 = parent.commit("root.txt", "root\n", "p0");
 
-    let result = submodule_add(parent.path(), child.path(), "sub".to_string(), Some("feature".to_string()));
+    let result = tauri::async_runtime::block_on(submodule_add(parent.path(), child.path(), "sub".to_string(), Some("feature".to_string())));
     assert!(result.ok, "submodule_add (with branch) failed: {}", result.message);
 
     // The submodule's own checked-out branch is "feature", NOT the child
@@ -951,7 +951,7 @@ fn submodule_add_refuses_cleanly_for_a_colliding_path() {
     // submodule at.
     let _existing = parent.commit("existing.txt", "not a submodule\n", "add existing file");
 
-    let result = submodule_add(parent.path(), child.path(), "existing.txt".to_string(), None);
+    let result = tauri::async_runtime::block_on(submodule_add(parent.path(), child.path(), "existing.txt".to_string(), None));
     assert!(!result.ok, "expected submodule_add to refuse a colliding path, got ok: {}", result.message);
     assert!(result.backup_ref.is_none());
     // EMPIRICALLY VERIFIED (git 2.53, see submodule.rs's module doc comment):
@@ -988,7 +988,7 @@ fn submodule_add_refuses_a_path_traversal_target() {
     let parent = TempRepo::init("submodule_add_traversal_parent");
     let _p0 = parent.commit("root.txt", "root\n", "p0");
 
-    let result = submodule_add(parent.path(), child.path(), "../../etc/evil".to_string(), None);
+    let result = tauri::async_runtime::block_on(submodule_add(parent.path(), child.path(), "../../etc/evil".to_string(), None));
     assert!(!result.ok, "expected submodule_add to refuse a path-traversal target, got ok: {}", result.message);
     assert!(result.backup_ref.is_none());
     assert!(
@@ -1026,7 +1026,7 @@ fn submodule_sync_rewrites_git_config_url_after_gitmodules_is_hand_edited() {
     let (_, url_still_stale, _) = parent.git(&["config", "--get", "submodule.sub.url"]);
     assert_eq!(url_still_stale, child.path(), ".git/config must still be stale before sync runs");
 
-    let result = submodule_sync(parent.path(), Some("sub".to_string()), false);
+    let result = tauri::async_runtime::block_on(submodule_sync(parent.path(), Some("sub".to_string()), false));
     assert!(result.ok, "submodule_sync failed: {}", result.message);
     assert!(result.backup_ref.is_none(), "submodule_sync must never snapshot (see module doc comment)");
 
@@ -1067,7 +1067,7 @@ fn submodule_sync_with_no_path_syncs_every_registered_submodule_in_one_call() {
 
     // submodule_path: None => sync EVERY registered submodule, no path
     // restriction — mirrors submodule_update's own None-means-all convention.
-    let result = submodule_sync(parent.path(), None, false);
+    let result = tauri::async_runtime::block_on(submodule_sync(parent.path(), None, false));
     assert!(result.ok, "submodule_sync (all) failed: {}", result.message);
 
     let (_, a_after, _) = parent.git(&["config", "--get", "submodule.subA.url"]);
@@ -1097,7 +1097,7 @@ fn submodule_deinit_clears_workdir_and_survives_in_git_modules() {
     let _p0 = parent.commit("root.txt", "root\n", "p0");
     add_submodule(&parent, &child, "sub");
 
-    let result = submodule_deinit(parent.path(), "sub".to_string(), false);
+    let result = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub".to_string(), false));
     assert!(result.ok, "submodule_deinit failed: {}", result.message);
     assert!(result.backup_ref.is_none(), "submodule_deinit must never snapshot");
     assert!(result.backup_patch.is_none(), "a clean deinit must never write a backup");
@@ -1132,7 +1132,7 @@ fn submodule_deinit_without_force_refuses_on_dirty_submodule_and_keeps_content()
     std::fs::write(parent.dir.join("sub").join("f.txt"), "dirty edit\n").expect("write dirty edit");
     std::fs::write(parent.dir.join("sub").join("untracked.txt"), "new file\n").expect("write untracked file");
 
-    let result = submodule_deinit(parent.path(), "sub".to_string(), false);
+    let result = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub".to_string(), false));
     assert!(!result.ok, "expected submodule_deinit to refuse a dirty submodule without force");
     assert!(
         result.message.contains("local modifications") && result.message.contains("use '-f'"),
@@ -1166,7 +1166,7 @@ fn submodule_deinit_with_force_backs_up_dirty_content_then_clears() {
     // A genuinely untracked file.
     std::fs::write(parent.dir.join("sub").join("untracked.txt"), "new file\n").expect("write untracked file");
 
-    let result = submodule_deinit(parent.path(), "sub".to_string(), true);
+    let result = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub".to_string(), true));
     assert!(result.ok, "submodule_deinit (force) failed: {}", result.message);
     let backup_rel = result.backup_patch.clone().expect("expected a backup_patch for a dirty force-deinit");
     assert!(backup_rel.starts_with("gitgui/submodule-backup/"), "unexpected backup path: {backup_rel:?}");
@@ -1191,9 +1191,9 @@ fn submodule_deinit_with_force_backs_up_dirty_content_then_clears() {
     // sub to its tracked commit (nothing above was ever committed, so this is
     // still c0b's content), then applying BOTH backed-up patches must bring
     // back the exact discarded content, byte for byte.
-    let init_result = submodule_init(parent.path(), "sub".to_string());
+    let init_result = tauri::async_runtime::block_on(submodule_init(parent.path(), "sub".to_string()));
     assert!(init_result.ok, "submodule_init failed: {}", init_result.message);
-    let update_result = submodule_update(parent.path(), Some("sub".to_string()), false, false);
+    let update_result = tauri::async_runtime::block_on(submodule_update(parent.path(), Some("sub".to_string()), false, false));
     assert!(update_result.ok, "submodule_update failed: {}", update_result.message);
     assert_eq!(parent.read("sub/f.txt"), "hello\n", "restored checkout should be back at HEAD's content");
     assert_eq!(parent.read("sub/g.txt"), "g0\n", "restored checkout should be back at HEAD's content");
@@ -1225,7 +1225,7 @@ fn submodule_deinit_with_force_on_a_clean_submodule_skips_backup() {
     let _p0 = parent.commit("root.txt", "root\n", "p0");
     add_submodule(&parent, &child, "sub");
 
-    let result = submodule_deinit(parent.path(), "sub".to_string(), true);
+    let result = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub".to_string(), true));
     assert!(result.ok, "submodule_deinit (force, clean) failed: {}", result.message);
     assert!(result.backup_patch.is_none(), "a clean submodule must not get a backup even under force");
 
@@ -1247,7 +1247,7 @@ fn submodule_deinit_recovers_offline_via_init_and_update() {
     let _p0 = parent.commit("root.txt", "root\n", "p0");
     add_submodule(&parent, &child, "sub");
 
-    let result = submodule_deinit(parent.path(), "sub".to_string(), false);
+    let result = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub".to_string(), false));
     assert!(result.ok, "submodule_deinit failed: {}", result.message);
 
     assert!(
@@ -1262,12 +1262,12 @@ fn submodule_deinit_recovers_offline_via_init_and_update() {
 
     // init re-registers the (now-unreachable) url from .gitmodules — this
     // never dereferences the url, so it succeeds regardless.
-    let init_result = submodule_init(parent.path(), "sub".to_string());
+    let init_result = tauri::async_runtime::block_on(submodule_init(parent.path(), "sub".to_string()));
     assert!(init_result.ok, "submodule_init failed: {}", init_result.message);
 
     // update restores the checkout straight from .git/modules/sub — ZERO
     // network/file access to the (now-gone) original source.
-    let update_result = submodule_update(parent.path(), Some("sub".to_string()), false, false);
+    let update_result = tauri::async_runtime::block_on(submodule_update(parent.path(), Some("sub".to_string()), false, false));
     assert!(update_result.ok, "submodule_update failed (offline recovery): {}", update_result.message);
 
     assert_eq!(
@@ -1288,10 +1288,10 @@ fn submodule_deinit_is_idempotent_on_an_already_deinited_submodule() {
     let _p0 = parent.commit("root.txt", "root\n", "p0");
     add_submodule(&parent, &child, "sub");
 
-    let first = submodule_deinit(parent.path(), "sub".to_string(), false);
+    let first = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub".to_string(), false));
     assert!(first.ok, "first deinit failed: {}", first.message);
 
-    let second = submodule_deinit(parent.path(), "sub".to_string(), false);
+    let second = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub".to_string(), false));
     assert!(second.ok, "second (repeat) deinit must also succeed (idempotent no-op): {}", second.message);
 }
 
@@ -1325,7 +1325,7 @@ fn submodule_deinit_on_conflicted_gitlink_refuses_without_force_even_with_clean_
     let (sub_ok, sub_status, _) = parent.git(&["-C", "sub", "status", "--porcelain"]);
     assert!(sub_ok && sub_status.is_empty(), "expected the submodule's own tree to be clean: {sub_status:?}");
 
-    let result = submodule_deinit(parent.path(), "sub".to_string(), false);
+    let result = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub".to_string(), false));
     assert!(!result.ok, "expected deinit to refuse on a conflicted gitlink even without force");
     assert!(
         result.message.contains("local modifications") && result.message.contains("use '-f'"),
@@ -1346,7 +1346,7 @@ fn submodule_remove_leaves_clean_staged_status_with_no_stray_directory() {
 
     let head_before = parent.rev("HEAD");
 
-    let result = submodule_remove(parent.path(), "sub".to_string());
+    let result = tauri::async_runtime::block_on(submodule_remove(parent.path(), "sub".to_string()));
     assert!(result.ok, "submodule_remove failed: {}", result.message);
     assert!(result.backup_patch.is_none(), "a clean submodule must not get a backup on remove");
     assert!(result.backup_ref.is_none());
@@ -1379,7 +1379,7 @@ fn submodule_remove_backs_up_dirty_content_before_removing() {
     std::fs::write(parent.dir.join("sub").join("f.txt"), "dirty edit\n").expect("write dirty edit");
     std::fs::write(parent.dir.join("sub").join("untracked.txt"), "new file\n").expect("write untracked file");
 
-    let result = submodule_remove(parent.path(), "sub".to_string());
+    let result = tauri::async_runtime::block_on(submodule_remove(parent.path(), "sub".to_string()));
     assert!(result.ok, "submodule_remove (dirty) failed: {}", result.message);
     let backup_rel = result.backup_patch.clone().expect("expected a backup_patch for a dirty remove");
 
@@ -1416,7 +1416,7 @@ fn submodule_remove_strips_only_the_matching_gitmodules_section_with_multiple_su
     add_submodule(&parent, &child_a, "subA");
     add_submodule(&parent, &child_b, "subB");
 
-    let result = submodule_remove(parent.path(), "subA".to_string());
+    let result = tauri::async_runtime::block_on(submodule_remove(parent.path(), "subA".to_string()));
     assert!(result.ok, "submodule_remove failed: {}", result.message);
 
     let gitmodules = parent.read(".gitmodules");
@@ -1454,7 +1454,7 @@ fn submodule_remove_handles_a_registered_name_different_from_its_path() {
     let gitmodules_before = parent.read(".gitmodules");
     assert!(gitmodules_before.contains("[submodule \"customname\"]"), "unexpected .gitmodules: {gitmodules_before:?}");
 
-    let result = submodule_remove(parent.path(), "sub".to_string());
+    let result = tauri::async_runtime::block_on(submodule_remove(parent.path(), "sub".to_string()));
     assert!(result.ok, "submodule_remove failed: {}", result.message);
 
     let gitmodules_after = parent.read(".gitmodules");
@@ -1495,7 +1495,7 @@ fn submodule_remove_on_conflicted_gitlink_resolves_that_one_conflict() {
     assert!(so.contains("CONFLICT"), "expected a real submodule conflict, got: {so:?}");
     assert!(parent.open().index().unwrap().has_conflicts(), "expected the index to carry the unresolved gitlink");
 
-    let result = submodule_remove(parent.path(), "sub".to_string());
+    let result = tauri::async_runtime::block_on(submodule_remove(parent.path(), "sub".to_string()));
     assert!(result.ok, "submodule_remove should resolve the conflicted gitlink: {}", result.message);
 
     assert!(
@@ -1521,7 +1521,7 @@ fn submodule_remove_never_snapshots() {
     let _p0 = parent.commit("root.txt", "root\n", "p0");
     add_submodule(&parent, &child, "sub");
 
-    let result = submodule_remove(parent.path(), "sub".to_string());
+    let result = tauri::async_runtime::block_on(submodule_remove(parent.path(), "sub".to_string()));
     assert!(result.ok, "submodule_remove failed: {}", result.message);
     assert!(result.backup_ref.is_none(), "submodule_remove must never take a Safety-Manager ref snapshot");
 }
@@ -1531,19 +1531,19 @@ fn submodule_deinit_and_remove_reject_flag_like_or_control_char_paths() {
     let parent = TempRepo::init("submodule_deinit_remove_validate_parent");
     let _p0 = parent.commit("root.txt", "root\n", "p0");
 
-    let deinit_flag = submodule_deinit(parent.path(), "--force".to_string(), false);
+    let deinit_flag = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "--force".to_string(), false));
     assert!(!deinit_flag.ok, "expected a flag-like path to be rejected");
     assert!(deinit_flag.backup_patch.is_none());
 
-    let deinit_control = submodule_deinit(parent.path(), "sub\u{7}".to_string(), true);
+    let deinit_control = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub\u{7}".to_string(), true));
     assert!(!deinit_control.ok, "expected a control-char path to be rejected");
     assert!(deinit_control.backup_patch.is_none());
 
-    let remove_flag = submodule_remove(parent.path(), "-x".to_string());
+    let remove_flag = tauri::async_runtime::block_on(submodule_remove(parent.path(), "-x".to_string()));
     assert!(!remove_flag.ok, "expected a flag-like path to be rejected");
     assert!(remove_flag.backup_patch.is_none());
 
-    let remove_control = submodule_remove(parent.path(), "sub\ncontrol".to_string());
+    let remove_control = tauri::async_runtime::block_on(submodule_remove(parent.path(), "sub\ncontrol".to_string()));
     assert!(!remove_control.ok, "expected a control-char path to be rejected");
     assert!(remove_control.backup_patch.is_none());
 }
@@ -1586,7 +1586,7 @@ fn bug1_force_deinit_refuses_when_submodule_repo_unreadable_but_workdir_has_cont
     std::fs::write(parent.dir.join("sub").join(".git"), "garbage not a gitfile\n")
         .expect("corrupt the submodule's own .git pointer");
 
-    let result = submodule_deinit(parent.path(), "sub".to_string(), true);
+    let result = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub".to_string(), true));
     assert!(
         !result.ok,
         "expected force-deinit to REFUSE when the submodule's own repo can't be opened but its workdir has \
@@ -1620,7 +1620,7 @@ fn bug1_force_deinit_still_proceeds_when_the_unreadable_submodule_dir_is_genuine
     let clone = FreshClone::of(&parent, "submodule_bug1_neg");
     assert!(std::fs::read_dir(PathBuf::from(clone.path()).join("sub")).unwrap().next().is_none());
 
-    let result = submodule_deinit(clone.path(), "sub".to_string(), true);
+    let result = tauri::async_runtime::block_on(submodule_deinit(clone.path(), "sub".to_string(), true));
     assert!(result.ok, "a genuinely empty/never-checked-out submodule must not be refused: {}", result.message);
     assert!(result.backup_patch.is_none(), "nothing to back up for a never-checked-out submodule");
 }
@@ -1652,7 +1652,7 @@ fn bug2_force_deinit_refuses_when_a_nested_submodule_of_a_submodule_is_dirty() {
     // "sub" is cloned+checked out by add_submodule, but its OWN "nested"
     // submodule is NOT (`git submodule add` never recurses) — init+update it
     // recursively first so there's something real to dirty.
-    let update_result = submodule_update(parent.path(), Some("sub".to_string()), true, true);
+    let update_result = tauri::async_runtime::block_on(submodule_update(parent.path(), Some("sub".to_string()), true, true));
     assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
     assert_eq!(parent.read("sub/nested/gc.txt"), "grandchild\n");
 
@@ -1661,7 +1661,7 @@ fn bug2_force_deinit_refuses_when_a_nested_submodule_of_a_submodule_is_dirty() {
     std::fs::write(parent.dir.join("sub").join("nested").join("gc.txt"), "important nested uncommitted work\n")
         .expect("write nested submodule's own uncommitted edit");
 
-    let result = submodule_deinit(parent.path(), "sub".to_string(), true);
+    let result = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub".to_string(), true));
     assert!(
         !result.ok,
         "expected force-deinit of 'sub' to REFUSE because its OWN nested submodule 'nested' is dirty, got ok: {}",
@@ -1698,7 +1698,7 @@ fn bug2_remove_refuses_when_a_nested_submodule_of_a_submodule_is_dirty() {
     let _p0 = parent.commit("root.txt", "root\n", "p0");
     add_submodule(&parent, &mid, "sub");
 
-    let update_result = submodule_update(parent.path(), Some("sub".to_string()), true, true);
+    let update_result = tauri::async_runtime::block_on(submodule_update(parent.path(), Some("sub".to_string()), true, true));
     assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
 
     std::fs::write(parent.dir.join("sub").join("nested").join("gc.txt"), "important nested uncommitted work\n")
@@ -1710,7 +1710,7 @@ fn bug2_remove_refuses_when_a_nested_submodule_of_a_submodule_is_dirty() {
     // something submodule_remove is expected to change either way.
     let (_, status_before, _) = parent.git(&["status", "--porcelain"]);
 
-    let result = submodule_remove(parent.path(), "sub".to_string());
+    let result = tauri::async_runtime::block_on(submodule_remove(parent.path(), "sub".to_string()));
     assert!(!result.ok, "expected submodule_remove to REFUSE because sub's own nested submodule is dirty");
     assert!(result.message.contains("nested"), "expected the refusal to name the dirty nested submodule: {:?}", result.message);
     assert!(result.backup_patch.is_none());
@@ -1752,7 +1752,7 @@ fn bug3_remove_propagates_a_failed_gitmodules_fallback_instead_of_reporting_ok()
     perms.set_mode(0o555);
     std::fs::set_permissions(&parent.dir, perms).expect("chmod repo root read-only");
 
-    let result = submodule_remove(parent.path(), "vendor/sub".to_string());
+    let result = tauri::async_runtime::block_on(submodule_remove(parent.path(), "vendor/sub".to_string()));
 
     // Restore perms UNCONDITIONALLY (before any assertion) so TempRepo's own
     // Drop cleanup can still remove the dir even if an assertion below panics.
@@ -1794,7 +1794,7 @@ fn bug4_force_deinit_backs_up_a_dangling_symlinks_target_instead_of_refusing() {
     std::os::unix::fs::symlink("this-target-does-not-exist", parent.dir.join("sub").join("dangling-link"))
         .expect("create a dangling symlink inside the submodule");
 
-    let result = submodule_deinit(parent.path(), "sub".to_string(), true);
+    let result = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub".to_string(), true));
     assert!(
         result.ok,
         "expected a dangling symlink to NOT block an otherwise-safe force-deinit, got: {}",
@@ -1849,7 +1849,7 @@ fn bug5_force_deinit_backs_up_gitignored_files_that_deinit_f_actually_wipes() {
     let (_, sub_status, _) = parent.git(&["-C", "sub", "status", "--porcelain", "--ignored"]);
     assert!(sub_status.contains("ignored-secret.env"), "expected the file to show up as ignored: {sub_status:?}");
 
-    let result = submodule_deinit(parent.path(), "sub".to_string(), true);
+    let result = tauri::async_runtime::block_on(submodule_deinit(parent.path(), "sub".to_string(), true));
     assert!(result.ok, "submodule_deinit (force) failed: {}", result.message);
     let backup_rel = result
         .backup_patch
@@ -1895,7 +1895,7 @@ fn bug6_submodule_status_reports_removed_not_clean_after_submodule_remove_stages
     let _p0 = parent.commit("root.txt", "root\n", "p0");
     add_submodule(&parent, &child, "sub");
 
-    let remove_result = submodule_remove(parent.path(), "sub".to_string());
+    let remove_result = tauri::async_runtime::block_on(submodule_remove(parent.path(), "sub".to_string()));
     assert!(remove_result.ok, "submodule_remove failed: {}", remove_result.message);
 
     let rows = tauri::async_runtime::block_on(submodule_status(parent.path())).expect("submodule_status failed");
@@ -1966,7 +1966,7 @@ fn submodule_status_on_cyclic_nested_submodule_terminates_cleanly_instead_of_cra
     // "nested" submodule is NOT (`git submodule add` never recurses) — init +
     // update it recursively first so there is a real, normal nested-submodule
     // checkout to corrupt.
-    let update_result = submodule_update(parent.path(), Some("sub".to_string()), true, true);
+    let update_result = tauri::async_runtime::block_on(submodule_update(parent.path(), Some("sub".to_string()), true, true));
     assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
     assert_eq!(parent.read("sub/nested/gc.txt"), "grandchild\n");
 

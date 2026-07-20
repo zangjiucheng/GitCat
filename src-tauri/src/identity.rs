@@ -54,16 +54,27 @@ pub struct GitIdentity {
 /// JS: `commands.getGitIdentity(path)` -> `Promise<Result<GitIdentity,string>>`.
 /// Fails only if `path` isn't a git repository at all (used by the setup
 /// wizard as its directory-validation step, doubling as the identity check).
+///
+/// BUG FIX: was a plain (non-async) `fn` — it opens the repo via `git2` and
+/// then shells out to `git config --get` up to four times (local/global x
+/// name/email) via `safety::run_git`, waiting on each subprocess in turn. Run
+/// synchronously, all of that happened inline on Tauri's MAIN thread, so the
+/// setup wizard's directory-validation step (and every Settings panel open)
+/// froze the whole window for as long as those four spawns took, not just
+/// this one read. `async fn` + `run_blocking` moves it off that thread.
 #[tauri::command]
 #[specta::specta]
-pub fn get_git_identity(path: String) -> Result<GitIdentity, String> {
-    crate::trust::open_repo(&path)
-        .map_err(|e| format!("That doesn't look like a git repository — {}", e.message()))?;
-    let local_name = read_scoped(&path, "user.name", "--local");
-    let local_email = read_scoped(&path, "user.email", "--local");
-    let global_name = read_scoped(&path, "user.name", "--global");
-    let global_email = read_scoped(&path, "user.email", "--global");
-    Ok(resolve(local_name, local_email, global_name, global_email))
+pub async fn get_git_identity(path: String) -> Result<GitIdentity, String> {
+    crate::blocking::run_blocking(move || {
+        crate::trust::open_repo(&path)
+            .map_err(|e| format!("That doesn't look like a git repository — {}", e.message()))?;
+        let local_name = read_scoped(&path, "user.name", "--local");
+        let local_email = read_scoped(&path, "user.email", "--local");
+        let global_name = read_scoped(&path, "user.name", "--global");
+        let global_email = read_scoped(&path, "user.email", "--global");
+        Ok(resolve(local_name, local_email, global_name, global_email))
+    })
+    .await
 }
 
 /// Pure merge logic, no I/O — independently testable (see module tests
@@ -102,39 +113,49 @@ fn read_scoped(path: &str, key: &str, scope: &str) -> Option<String> {
 /// local config (never `--global`). Non-destructive metadata, no ref/history
 /// touched, so — per the safety-model convention used by rerere_set_enabled —
 /// this does NOT take a Safety Manager snapshot first.
+///
+/// BUG FIX: was a plain (non-async) `fn` — it opens the repo via `git2` and
+/// then shells out to `git config --local` up to twice (name, email) via
+/// `safety::run_git`, blocking on each subprocess. Left synchronous, that
+/// wait ran inline on Tauri's MAIN thread, freezing the whole window for the
+/// duration of every identity save from the setup wizard or Settings, not
+/// just that one field. `async fn` + `run_blocking` moves it off that thread.
 #[tauri::command]
 #[specta::specta]
-pub fn set_git_identity(path: String, name: String, email: String) -> WriteResult {
-    if let Err(e) = crate::trust::open_repo(&path) {
-        return WriteResult {
-            ok: false,
-            message: format!("Cannot open repository: {}", e.message()),
+pub async fn set_git_identity(path: String, name: String, email: String) -> WriteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = crate::trust::open_repo(&path) {
+            return WriteResult {
+                ok: false,
+                message: format!("Cannot open repository: {}", e.message()),
+                backup_ref: None,
+                conflicting_files: Vec::new(),
+            };
+        }
+        let name = name.trim();
+        let email = email.trim();
+        if name.is_empty() || email.is_empty() {
+            return WriteResult {
+                ok: false,
+                message: "Name and email must not be empty.".to_string(),
+                backup_ref: None,
+                conflicting_files: Vec::new(),
+            };
+        }
+        if let Err(msg) = write_local(&path, "user.name", name) {
+            return WriteResult { ok: false, message: msg, backup_ref: None, conflicting_files: Vec::new() };
+        }
+        if let Err(msg) = write_local(&path, "user.email", email) {
+            return WriteResult { ok: false, message: msg, backup_ref: None, conflicting_files: Vec::new() };
+        }
+        WriteResult {
+            ok: true,
+            message: format!("Set identity for this repository: {name} <{email}>."),
             backup_ref: None,
             conflicting_files: Vec::new(),
-        };
-    }
-    let name = name.trim();
-    let email = email.trim();
-    if name.is_empty() || email.is_empty() {
-        return WriteResult {
-            ok: false,
-            message: "Name and email must not be empty.".to_string(),
-            backup_ref: None,
-            conflicting_files: Vec::new(),
-        };
-    }
-    if let Err(msg) = write_local(&path, "user.name", name) {
-        return WriteResult { ok: false, message: msg, backup_ref: None, conflicting_files: Vec::new() };
-    }
-    if let Err(msg) = write_local(&path, "user.email", email) {
-        return WriteResult { ok: false, message: msg, backup_ref: None, conflicting_files: Vec::new() };
-    }
-    WriteResult {
-        ok: true,
-        message: format!("Set identity for this repository: {name} <{email}>."),
-        backup_ref: None,
-        conflicting_files: Vec::new(),
-    }
+        }
+    })
+    .await
 }
 
 fn write_local(path: &str, key: &str, value: &str) -> Result<(), String> {

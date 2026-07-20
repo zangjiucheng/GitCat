@@ -113,10 +113,20 @@ fn open_pty_shell(path: &str) -> Result<TerminalSession, String> {
 
 /// JS: `commands.terminalSpawn(path)`. Returns the new session's id, which
 /// every other command below takes to address it.
+///
+/// BUG FIX: was a plain (non-async) `fn` — `open_pty_shell` calls
+/// `trust::open_repo` before ever touching a PTY, the same git2 `Repository::
+/// open` (and, on a dubious-ownership WSL/UNC path, the same subprocess
+/// `safety::run_git` fallback) every other read command's fix already had to
+/// account for, so opening the terminal drawer could stall the whole window
+/// for as long as that open takes. `async fn` + `run_blocking` moves the
+/// spawn itself onto Tauri's blocking-task thread pool, matching `watch_repo`'s
+/// own established shape for a command that also needs `State` after the
+/// blocking part completes.
 #[tauri::command]
 #[specta::specta]
-pub fn terminal_spawn(app: AppHandle<Wry>, registry: State<TerminalRegistry>, path: String) -> Result<String, String> {
-    let session = open_pty_shell(&path)?;
+pub async fn terminal_spawn(app: AppHandle<Wry>, registry: State<'_, TerminalRegistry>, path: String) -> Result<String, String> {
+    let session = crate::blocking::run_blocking(move || open_pty_shell(&path)).await?;
     let mut reader = session.master.try_clone_reader().map_err(|e| e.to_string())?;
     let id = format!("term-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
 

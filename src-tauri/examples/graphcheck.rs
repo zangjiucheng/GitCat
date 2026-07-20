@@ -16,7 +16,7 @@ fn main() {
     // `graphcheck <repo> detail <sha>` -> dump the commit_detail JSON for one commit.
     if std::env::args().nth(2).as_deref() == Some("detail") {
         let sha = std::env::args().nth(3).expect("usage: graphcheck <repo> detail <sha>");
-        let d = commit_detail(path.clone(), sha).expect("commit_detail failed");
+        let d = tauri::async_runtime::block_on(commit_detail(path.clone(), sha)).expect("commit_detail failed");
         eprintln!("files: {}  +{}/-{}  truncated={}", d.files_changed, d.additions, d.deletions, d.truncated);
         println!("{}", serde_json::to_string(&d).expect("serialize"));
         return;
