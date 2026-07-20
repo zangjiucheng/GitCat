@@ -25,8 +25,8 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 
 **Core graph + history**
 
-- Fast commit graph (git2 read + a hand-tuned Rust swimlane layout) on a virtualized canvas — smooth even on large repos
-- Full commit detail panel: author/committer split, GPG status, diffstat, file tree, syntax-highlighted diff
+- Fast commit graph (git2 read + a hand-tuned Rust swimlane layout), streamed onto a virtualized canvas — no hard cap on history depth, newest commits paint almost instantly, smooth even on huge repos
+- Full commit detail panel: author/committer split, GPG status, diffstat, file tree, syntax-highlighted diff that can expand to a full-page view
 - ⌘K command palette — fuzzy search across commits and refs
 - Vim-style keyboard navigation — `j`/`k`, `gg`/`G`, Ctrl-D/Ctrl-U, and `/` to search
 - Per-file history with rename-following, like `git log --follow` — a renamed file's history continues seamlessly under its old path
@@ -41,11 +41,13 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 **Everyday git, made safe**
 
 - Sidebar: branches / remotes / tags / snapshots, resizable, with a branch context menu
+- Branch visibility filter — hide/show branches individually, "Hide all branches" for a clean slate, or flip on **Auto** to always show just the current branch plus anything with unpushed or unmerged work (auto-hides stale branches too)
+- Live refresh — picks up changes made outside GitCat (a terminal commit, another tool, a background fetch) on its own, with a manual Refresh button as a backup
 - Checkout a local branch, or a remote one — checking out `origin/feature-x` creates and switches to a local tracking branch automatically
 - Checkout dirty-tree resolution — when checking out would overwrite local changes, a chooser offers 3 modes in increasing order of risk: stash/switch/reapply, stash/switch/leave stashed (recoverable via Manage Stash), or force switch and discard your changes (genuinely irreversible, gated behind a typed danger-confirm)
 - New Branch lets you pick the start point (any local/remote ref), not just HEAD
 - Tags: create, delete, and push
-- Fetch / Pull / Push, from the top bar or the native Repository menu — Pull offers an explicit merge-or-rebase strategy choice and follows your configured upstream automatically; force push / force-with-lease are gated behind the same danger-confirm flow as other irreversible actions
+- Fetch / Pull / Push, from the top bar or the native Repository menu — Pull offers an explicit merge-or-rebase strategy choice and follows your configured upstream automatically; push a non-current branch or to a differently-named remote branch from the sidebar; force push / force-with-lease are gated behind the same danger-confirm flow as other irreversible actions
 - "Manage Remotes" dialog — add / edit / rename / remove
 - "Open Terminal" — drop into a real terminal at the repo's root when you need a raw shell, from the Tools menu/⌘K
 - Drag-and-drop cherry-pick and merge (shift-drag) onto HEAD, or right-click a commit row for cherry-pick / merge / revert — all backed by a real 3-way conflict resolver
@@ -72,6 +74,7 @@ GitCat is a desktop Git GUI built around one idea: every operation that touches 
 - "Close Repository" — an in-app way back to the empty state
 - In-app `.gitignore` / `.mailmap` editors
 - A real native app menu (File / Repository / Edit / View / Tools / Window / Help) and About panel, not just a default OS stub
+- Works with repos on a WSL path (`\\wsl.localhost\<distro>\...`) — remote operations route through the distro's own git, so credentials resolve correctly instead of against Windows'
 - Dark theme by default (light available via the toggle)
 - Eight Tama expressions wired into every relevant moment across the app — Reflog Rescue, Dangling-Object Recovery, Plumbing, Pickaxe Search, and the Interactive Rebase planner all get mascot art, and filter-repo/conflict resolution shows a "thinking" face during real work instead of freezing on one expression the whole time
 

@@ -4,8 +4,8 @@ GitCat is built around one idea: every operation that touches your history shoul
 
 ## Core graph + history
 
-- **Fast commit graph** — reads via [git2](https://github.com/rust-lang/git2-rs), laid out by a hand-tuned Rust swimlane algorithm, and rendered on a virtualized canvas. Stays smooth even on repos with tens of thousands of commits, since only the visible rows are ever drawn.
-- **Full commit detail panel** — author/committer split (so you can actually tell a rebase or cherry-pick apart from the original commit), GPG signature status, diffstat, a file tree, and a syntax-highlighted diff.
+- **Fast commit graph** — reads via [git2](https://github.com/rust-lang/git2-rs), laid out by a hand-tuned Rust swimlane algorithm, and streamed onto a virtualized canvas. No hard cap on history depth: the newest commits paint almost instantly while the rest of a very large history streams in behind them, and only the visible rows are ever drawn, so it stays smooth on repos with hundreds of thousands of commits.
+- **Full commit detail panel** — author/committer split (so you can actually tell a rebase or cherry-pick apart from the original commit), GPG signature status, diffstat, a file tree, and a syntax-highlighted diff that can expand to a full-page view (with its own file list) for reading a real changeset comfortably.
 - **⌘K command palette** — fuzzy search across every loaded commit and ref, plus quick actions for Bisect, Reflog, Rerere, and Plumbing without leaving the keyboard.
 - **Vim-style keyboard navigation** — `j`/`k` to move a row at a time, `gg`/`G` to jump to the top or bottom of the graph, `Ctrl-D`/`Ctrl-U` to page through it, and `/` to search, all without touching the mouse.
 - **git blame** — a line-annotation view with per-hunk attribution (commit SHA and author), an ignore-whitespace toggle, and it follows the file's rename history automatically.
@@ -15,10 +15,12 @@ GitCat is built around one idea: every operation that touches your history shoul
 ## Everyday git, made safe
 
 - A resizable sidebar listing branches, remotes, tags, and snapshots, with a branch context menu for the usual operations.
+- **Branch visibility filter** — hide/show branches individually to declutter a busy graph, "Hide all branches" to start from a clean slate before hand-picking a few, or flip on **Auto** to always show just the current branch plus anything with unpushed or unmerged work (and auto-hide branches that have gone stale).
+- **Live refresh** — the graph and working-directory view pick up changes made outside GitCat (a terminal commit, another tool, a background fetch) on their own; a manual Refresh button is always there too if you ever want to force it.
 - **Tags** — create, delete, and push tags right from the sidebar, no terminal needed.
 - Checkout a local branch, or a remote one directly — checking out `origin/feature-x` creates and switches to a local tracking branch automatically, the way most people expect it to work.
 - **New Branch** lets you pick the start point from any local or remote ref, not just HEAD.
-- Fetch / Pull / Push, from the top bar or the native Repository menu — Pull asks you to choose merge or rebase explicitly, following your configured upstream automatically, so it never silently picks a strategy behind your back.
+- Fetch / Pull / Push, from the top bar or the native Repository menu — Pull asks you to choose merge or rebase explicitly, following your configured upstream automatically, so it never silently picks a strategy behind your back. Push a non-current branch, or push to a differently-named remote branch, right from the sidebar.
 - **Manage Remotes** — add, edit, rename, and remove remotes from a dedicated dialog instead of hand-editing `.git/config`.
 - **Open Terminal** — drop into a real terminal at the repo's root when you need a raw shell, from the Tools menu/⌘K.
 - **Revert** is a first-class operation alongside cherry-pick and merge, not a workaround — right-click a commit to revert it, backed by the same 3-way conflict resolver when it doesn't apply cleanly.
@@ -54,6 +56,7 @@ GitCat is built around one idea: every operation that touches your history shoul
 - **Close Repository** — an in-app way back to the empty state, no need to quit and relaunch just to point GitCat at a different repo.
 - **Repositories dashboard** — track the repos you use often and jump between them without hunting for the folder each time; reachable from the Tools menu even when no repo is currently open.
 - A real native app menu (File / Repository / Edit / View / Tools / Window / Help) and About panel — not just a default OS stub.
+- **Works with repos on a WSL path** (`\\wsl.localhost\<distro>\...`) — remote operations (fetch/pull/push, submodules) route through the distro's own git, so credentials resolve the way they would inside WSL itself, not against Windows'.
 - A **Tools** menu (and matching ⌘K actions) for Bisect, Reflog, Rerere, Plumbing, Manage Remotes, Pickaxe search, External Tools, Dangling Commits recovery, Repo file editors, and Patch export/apply, each opening on demand instead of sitting in a permanent panel.
 - **Repo file editors** — view and edit `.gitignore` and `.mailmap` right inside GitCat, no dropping to a terminal or another editor required.
 - Dark theme by default, with a light theme one click away.
