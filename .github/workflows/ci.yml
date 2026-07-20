@@ -88,6 +88,24 @@ jobs:
       - name: Test
         run: cargo test
 
+      # tests/perf_graph.rs already ran once as part of the plain `cargo
+      # test` above (Cargo auto-discovers every tests/*.rs file) — this
+      # SEPARATE, redundant re-run exists purely for VISIBILITY: its own
+      # named step in the Actions UI, and --nocapture so the actual timing
+      # numbers land in the log even on success (skimmable over time to
+      # notice a repo creeping slower well before it trips the — deliberately
+      # generous — failure threshold). See perf_graph.rs's own doc comment
+      # for why this exists at all: a WSL-specific version of this exact bug
+      # class (a working-tree status scan stalling 185+ SECONDS on a repo
+      # with a Linux symlink, reached over the \\wsl.localhost\ bridge —
+      # see src/wsl.rs) shipped and went unnoticed until a real large repo
+      # surfaced it manually; this is the general, CI-reliable, non-WSL
+      # layer of protection against that whole bug CLASS recurring.
+      # --test-threads=1 so the three tests' own eprintln! timing lines
+      # print in a stable, non-interleaved order.
+      - name: Performance regression tests
+        run: cargo test --test perf_graph -- --nocapture --test-threads=1
+
       - name: Build examples
         run: cargo build --examples --locked
 
