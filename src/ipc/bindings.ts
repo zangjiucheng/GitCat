@@ -58,6 +58,42 @@ async commitDetail(path: string, sha: string) : Promise<Result<CommitDetail, str
 }
 },
 /**
+ * Every commit reachable from `sha` by walking parent edges (`sha` itself
+ * included) as short (7-char) hashes — matching `CommitMeta.sha`'s own
+ * truncation, so the frontend can test membership directly against
+ * `BACKEND.rows[r].sha` with no extra sha<->row lookup structure needed.
+ * 
+ * Exists for one reason: legacy/main.ts's cherry-pick/merge drag-legality
+ * check (`legalPick`/`legalMerge`) used to approximate "is the drop target
+ * an ancestor of the dragged commit" as "does the target have a larger row
+ * index" — a fine guess on one unbranched line, but wrong across branches:
+ * row order interleaves every branch by time/topology, so a commit on a
+ * totally unrelated branch can easily sit at a larger row index than the
+ * source WITHOUT being its ancestor at all, silently rejecting one of the
+ * most common real cherry-pick uses (taking a commit onto a different
+ * branch) whenever the target happened to land lower on screen.
+ * 
+ * A live drag re-checks legality every frame for every VISIBLE row (see
+ * `draw()`'s own `legalPick`/`legalMerge` call in main.ts) — far too hot a
+ * path for a per-hover IPC round trip — so this is called once, when the
+ * drag STARTS, and the result cached client-side as a `Set` for the rest of
+ * that one gesture's synchronous per-frame checks.
+ * 
+ * Capped at `MAX_LIVE_COMMITS`, the same pathological-repo backstop
+ * `stream_graph_core` uses — a truncated result degrades to "very deep
+ * ancestors stop being recognized as ancestors", not a hang.
+ * 
+ * JS: `commands.ancestorsOf(path, sha)`.
+ */
+async ancestorsOf(path: string, sha: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ancestors_of", { path, sha }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.getAppInfo()`. No repo/path needed — this is pure static
  * build-time metadata (Cargo.toml's `[package]` table), never `Err`.
  */

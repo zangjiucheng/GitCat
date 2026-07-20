@@ -14,7 +14,7 @@ mod common;
 
 use std::collections::HashSet;
 
-use gitcat_lib::commands::{build_graph, stream_graph_core};
+use gitcat_lib::commands::{ancestors_of, build_graph, stream_graph_core};
 use gitcat_lib::model::GraphBatch;
 use common::short;
 
@@ -112,6 +112,40 @@ fn multi_kind_ref_chips_on_one_commit_sort_tag_before_head_before_branch_before_
         vec!["tag", "head", "branch", "remote"],
         "ref chips on one commit must sort tag -> head -> branch -> remote, got {:?}",
         row.refs.iter().map(|r| (&r.n, &r.t)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ancestors_of_a_branch_tip_excludes_a_divergent_sibling_on_another_branch() {
+    // Regression test for the exact bug legalPick/legalMerge's old row-index
+    // approximation had: build_repo()'s c3 (on main) and c2 (on feature) are
+    // DIVERGENT siblings — neither is the other's ancestor — but c2 was
+    // committed first, so in newest-first row order c3 (younger) sits at a
+    // SMALLER row index than c2. The old `tgt > src` check would have
+    // wrongly flagged c2 as "an ancestor" of c3 for exactly this reason.
+    let (repo, [c0, c1, c2, c3, c4]) = build_repo();
+    let path = repo.path();
+
+    let ancestors_of_c3 = ancestors_of(path.clone(), c3.clone()).expect("ancestors_of failed");
+    let short_c2 = short(&c2);
+    assert!(
+        !ancestors_of_c3.contains(&short_c2),
+        "c2 (a divergent sibling on another branch) must NOT be reported as an ancestor of c3, got {ancestors_of_c3:?}"
+    );
+    // c3's real ancestors: itself, c1, c0.
+    for real_ancestor in [&c3, &c1, &c0] {
+        assert!(
+            ancestors_of_c3.contains(&short(real_ancestor)),
+            "expected {real_ancestor} (shortened) among c3's ancestors, got {ancestors_of_c3:?}"
+        );
+    }
+
+    // The merge commit c4, on the other hand, genuinely descends from BOTH
+    // branches — c2 legitimately IS one of its ancestors.
+    let ancestors_of_c4 = ancestors_of(path.clone(), c4.clone()).expect("ancestors_of failed");
+    assert!(
+        ancestors_of_c4.contains(&short_c2),
+        "c2 must be a real ancestor of the merge commit c4, got {ancestors_of_c4:?}"
     );
 }
 

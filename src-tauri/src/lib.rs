@@ -48,6 +48,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::load_graph,
         commands::commit_detail,
+        commands::ancestors_of,
         commands::get_app_info,
         // Safety Manager (snapshot / list / global undo)
         safety::create_snapshot,

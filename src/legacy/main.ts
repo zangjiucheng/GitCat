@@ -541,6 +541,12 @@ cv.addEventListener("pointerdown",(e)=>{
   state.pointerActive=true;
   if(g&&p.x>=g.x-4){sbDrag={grab:p.y-g.thumbY,thumbH:g.thumbH};return;}
   down={x0:p.x,y0:p.y,st0:state.scrollTarget,panX0:state.panTarget,hit:hitTest(p.x,p.y),moved:false};
+  // Fire the real-ancestor-set fetch as early as possible (see
+  // primeDragAncestors' own doc comment) — pointerdown, not the first
+  // pointermove past the drag threshold, so it has the most possible time to
+  // land before legalPick/legalMerge's first per-frame check actually needs
+  // it. Harmless if this press never turns into a real drag (a plain click).
+  if(down.hit&&down.hit.onDot) primeDragAncestors(down.hit.row);
 });
 cv.addEventListener("pointermove",(e)=>{
   const p=rel(e);
@@ -621,9 +627,48 @@ cv.addEventListener("keydown",(e)=>{
   else return; e.preventDefault(); dirty=true;
 });
 
-/* cherry-pick legality: dropping onto an ancestor (older row, same reachable
-   line) is illegal. Approximation for the demo: a target strictly BELOW the
-   source (larger row index) reads as an ancestor -> reject; onto itself -> reject. */
+// Real ancestor set for the currently-dragged commit — see isAncestorTarget's
+// own doc comment for why this exists (row-index alone can't tell "ancestor"
+// from "just happens to sit lower on screen" across branches) and
+// primeDragAncestors' for how/when it's populated. `shas:null` means "no real
+// answer yet for this source row" (fetch still in flight, failed, or — in
+// design-mode preview — never coming at all, no real backend to ask).
+let dragAncestors={srcRow:null,shas:null};
+// Called ONCE per drag gesture, at pointerdown (see the "pointerdown"
+// listener below) — NOT per-hover-frame, since legalPick/legalMerge run
+// every frame for every visible row while a drag is active (see draw()'s own
+// call site) and a live drag can't afford an IPC round trip that often.
+// Resets `shas` to null immediately so any legality check before the fetch
+// lands correctly falls back to the approximation for the (possibly new)
+// source row, rather than briefly reusing a previous drag's stale answer.
+function primeDragAncestors(srcRow){
+  dragAncestors={srcRow,shas:null};
+  if(!IN_TAURI||!CUR_REPO) return; // design-mode preview: no real backend to ask, stays on the approximation forever
+  const srcSha=(BACKEND&&BACKEND.rows[srcRow])?BACKEND.rows[srcRow].sha:hhex(srcRow);
+  commands.ancestorsOf(CUR_REPO,srcSha).then(res=>{
+    if(dragAncestors.srcRow!==srcRow) return; // superseded by a newer drag before this landed
+    if(res.status==="ok") dragAncestors={srcRow,shas:new Set(res.data)};
+  }).catch(()=>{}); // best-effort — a failed fetch just keeps the approximation, same as "not loaded yet"
+}
+// Is `tgt` an ancestor of `src` (illegal drop target for both cherry-pick and
+// merge)? Uses the real, precomputed set from primeDragAncestors when it's
+// ready for this exact source row; otherwise falls back to the OLD
+// approximation (a target strictly BELOW the source — larger row index —
+// reads as an ancestor). That approximation is exactly right on a single
+// unbranched line, but wrong in general: row order interleaves EVERY branch
+// by time/topology, so a commit on a totally unrelated branch can easily
+// sit at a larger row index than the source without being its ancestor at
+// all — silently rejecting one of the most common real cherry-pick/merge
+// uses (taking a commit onto a different branch) whenever the target
+// happened to land lower on screen. The fallback only covers the brief
+// window before the real set arrives (or design-mode preview, forever).
+function isAncestorTarget(src,tgt){
+  if(dragAncestors.srcRow===src&&dragAncestors.shas){
+    const tgtSha=(BACKEND&&BACKEND.rows[tgt])?BACKEND.rows[tgt].sha:hhex(tgt);
+    return dragAncestors.shas.has(tgtSha);
+  }
+  return tgt>src;
+}
 // `resolver.busy` check comes first in both: without it, a second drag could
 // start (and show a fully "legal" green ghost, and animate a drop) while a
 // PRIOR pick/merge was still resolving — resolver.startPick/startMerge would
@@ -636,19 +681,18 @@ function legalPick(src,tgt){
   if(tgt==null) return {ok:false,why:"drop on a commit"};
   if(tgt===src) return {ok:false,why:"onto itself"};
   if(G&&G.isMerge&&G.isMerge[src]) return {ok:false,why:"can't cherry-pick a merge"};
-  if(tgt>src) return {ok:false,why:"target is an ancestor"};
+  if(isAncestorTarget(src,tgt)) return {ok:false,why:"target is an ancestor"};
   return {ok:true,why:"→ "+hhex(tgt)};
 }
-/* merge legality: mirrors legalPick's spirit (same row-order approximation,
-   dropping onto an ancestor or onto itself is illegal) — but unlike
-   cherry-pick, merging a merge commit's tip is perfectly legal, so there is
-   no isMerge(src) rejection here. */
+/* merge legality: mirrors legalPick's spirit (dropping onto an ancestor or
+   onto itself is illegal) — but unlike cherry-pick, merging a merge commit's
+   tip is perfectly legal, so there is no isMerge(src) rejection here. */
 function legalMerge(src,tgt){
   if(resolver.busy) return {ok:false,why:"a pick/merge is already in progress"};
   if(tgt===-2) return {ok:false,why:"drop on a commit, not the working tree"};
   if(tgt==null) return {ok:false,why:"drop on a commit"};
   if(tgt===src) return {ok:false,why:"onto itself"};
-  if(tgt>src) return {ok:false,why:"target is an ancestor"};
+  if(isAncestorTarget(src,tgt)) return {ok:false,why:"target is an ancestor"};
   return {ok:true,why:"⇄ "+hhex(tgt)};
 }
 let ghostEl=null;

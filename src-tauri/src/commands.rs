@@ -618,6 +618,51 @@ fn commit_detail_inner(path: &str, sha: &str) -> Result<CommitDetail, git2::Erro
     })
 }
 
+/// Every commit reachable from `sha` by walking parent edges (`sha` itself
+/// included) as short (7-char) hashes — matching `CommitMeta.sha`'s own
+/// truncation, so the frontend can test membership directly against
+/// `BACKEND.rows[r].sha` with no extra sha<->row lookup structure needed.
+///
+/// Exists for one reason: legacy/main.ts's cherry-pick/merge drag-legality
+/// check (`legalPick`/`legalMerge`) used to approximate "is the drop target
+/// an ancestor of the dragged commit" as "does the target have a larger row
+/// index" — a fine guess on one unbranched line, but wrong across branches:
+/// row order interleaves every branch by time/topology, so a commit on a
+/// totally unrelated branch can easily sit at a larger row index than the
+/// source WITHOUT being its ancestor at all, silently rejecting one of the
+/// most common real cherry-pick uses (taking a commit onto a different
+/// branch) whenever the target happened to land lower on screen.
+///
+/// A live drag re-checks legality every frame for every VISIBLE row (see
+/// `draw()`'s own `legalPick`/`legalMerge` call in main.ts) — far too hot a
+/// path for a per-hover IPC round trip — so this is called once, when the
+/// drag STARTS, and the result cached client-side as a `Set` for the rest of
+/// that one gesture's synchronous per-frame checks.
+///
+/// Capped at `MAX_LIVE_COMMITS`, the same pathological-repo backstop
+/// `stream_graph_core` uses — a truncated result degrades to "very deep
+/// ancestors stop being recognized as ancestors", not a hang.
+///
+/// JS: `commands.ancestorsOf(path, sha)`.
+#[tauri::command]
+#[specta::specta]
+pub fn ancestors_of(path: String, sha: String) -> Result<Vec<String>, String> {
+    ancestors_of_inner(&path, &sha).map_err(|e| e.message().to_string())
+}
+
+fn ancestors_of_inner(path: &str, sha: &str) -> Result<Vec<String>, git2::Error> {
+    let repo = crate::trust::open_repo(path)?;
+    let start = repo.find_commit_by_prefix(sha)?;
+
+    let mut walk = repo.revwalk()?;
+    walk.push(start.id())?;
+    walk.set_sorting(git2::Sort::TOPOLOGICAL)?; // pure reachability — skip the costlier default time-sort
+
+    walk.take(MAX_LIVE_COMMITS)
+        .map(|oid| oid.map(|o| { let s = o.to_string(); s[..7.min(s.len())].to_string() }))
+        .collect()
+}
+
 /// libgit2 delta status -> the one-letter code the frontend tree renders.
 fn status_char(status: Delta) -> &'static str {
     match status {
