@@ -326,9 +326,17 @@ fn literal_pathspec(file: &str) -> String {
     format!(":(literal){file}")
 }
 
+// BUG FIX: every call site in this module used to open the repo via plain
+// `Repository::open`/this helper, bypassing `crate::trust::open_repo`'s
+// auto-trust retry entirely — the ONE place that's supposed to open a
+// `Repository` for every module in this codebase (see trust.rs's own doc
+// comment). A FRESH, never-before-trusted WSL repo would fail every single
+// workdir_status/stage/commit/etc. call with libgit2's raw "dubious
+// ownership" error until some OTHER command (e.g. the graph load) happened
+// to auto-trust it first — this module's own commands never did that
+// themselves.
 fn open_repo(path: &str) -> Result<Repository, WorkdirResult> {
-    Repository::open(path)
-        .map_err(|e| WorkdirResult::err(format!("Cannot open repository: {}", e.message())))
+    crate::trust::open_repo(path).map_err(|e| WorkdirResult::err(format!("Cannot open repository: {}", e.message())))
 }
 
 // ---------------------------------------------------------------------------
@@ -383,81 +391,117 @@ pub fn workdir_status(path: String) -> Result<WorkdirStatus, String> {
 }
 
 fn workdir_status_inner(path: &str) -> Result<WorkdirStatus, git2::Error> {
-    let repo = Repository::open(path)?;
+    let repo = crate::trust::open_repo(path)?;
 
-    let mut opts = StatusOptions::new();
-    opts.include_untracked(true)
-        .recurse_untracked_dirs(true)
-        .renames_head_to_index(true)
-        .renames_index_to_workdir(true);
-    let statuses = repo.statuses(Some(&mut opts))?;
-
-    let mut staged: Vec<WorkdirEntry> = Vec::new();
-    let mut unstaged: Vec<WorkdirEntry> = Vec::new();
-    let mut conflicted = 0usize;
-
-    const INDEX_MASK: Status = Status::from_bits_truncate(
-        Status::INDEX_NEW.bits()
-            | Status::INDEX_MODIFIED.bits()
-            | Status::INDEX_DELETED.bits()
-            | Status::INDEX_RENAMED.bits()
-            | Status::INDEX_TYPECHANGE.bits(),
-    );
-    const WT_MASK: Status = Status::from_bits_truncate(
-        Status::WT_NEW.bits()
-            | Status::WT_MODIFIED.bits()
-            | Status::WT_DELETED.bits()
-            | Status::WT_RENAMED.bits()
-            | Status::WT_TYPECHANGE.bits(),
-    );
-
-    for entry in statuses.iter() {
-        let status = entry.status();
-        if status.is_conflicted() {
-            conflicted += 1;
-            continue;
-        }
-        if status.is_ignored() {
-            continue;
-        }
-
-        if status.intersects(INDEX_MASK) {
-            if let Some(delta) = entry.head_to_index() {
-                let (path, old_path) = entry_paths(&delta);
-                let s = if status.is_index_new() {
-                    "A"
-                } else if status.is_index_deleted() {
-                    "D"
-                } else if status.is_index_renamed() {
-                    "R"
-                } else if status.is_index_typechange() {
-                    "T"
-                } else {
-                    "M"
-                };
-                staged.push(WorkdirEntry { path, old_path, status: s.to_string() });
+    // BUG FIX: `repo.statuses()` below — libgit2 walking the working tree
+    // over the `\\wsl.localhost\` bridge — EMPIRICALLY MEASURED at 185+
+    // seconds, EVERY call, against a real repo containing just 4 Linux
+    // symlinks (a fresh CPython clone); `crate::wsl::wsl_status` resolves
+    // the identical query in under a second by running `git status` through
+    // the distro's own git instead — see its own doc comment for why. `None`
+    // for a non-WSL path (the overwhelmingly common case): git2 stays
+    // exactly as before, completely untouched.
+    let (staged, unstaged, conflicted) = match crate::wsl::wsl_status(path) {
+        Some(Ok(entries)) => {
+            let mut staged = Vec::new();
+            let mut unstaged = Vec::new();
+            let mut conflicted = 0usize;
+            for entry in entries {
+                match entry {
+                    crate::wsl::StatusEntry::Unmerged { .. } => conflicted += 1,
+                    crate::wsl::StatusEntry::Untracked { path } => {
+                        unstaged.push(WorkdirEntry { path, old_path: None, status: "?".to_string() });
+                    }
+                    crate::wsl::StatusEntry::Change { path, orig_path, staged: s, unstaged: u } => {
+                        if let Some(s) = s {
+                            staged.push(WorkdirEntry { path: path.clone(), old_path: orig_path.clone(), status: s.to_string() });
+                        }
+                        if let Some(u) = u {
+                            unstaged.push(WorkdirEntry { path, old_path: orig_path, status: u.to_string() });
+                        }
+                    }
+                }
             }
+            (staged, unstaged, conflicted)
         }
-        if status.intersects(WT_MASK) {
-            if let Some(delta) = entry.index_to_workdir() {
-                let (path, old_path) = entry_paths(&delta);
-                // WT_NEW with no index entry -> untracked, git's own "?" symbol
-                // (never "A" — that would look like a staged new file).
-                let s = if status.is_wt_new() {
-                    "?"
-                } else if status.is_wt_deleted() {
-                    "D"
-                } else if status.is_wt_renamed() {
-                    "R"
-                } else if status.is_wt_typechange() {
-                    "T"
-                } else {
-                    "M"
-                };
-                unstaged.push(WorkdirEntry { path, old_path, status: s.to_string() });
+        Some(Err(msg)) => return Err(git2::Error::from_str(&msg)),
+        None => {
+            let mut opts = StatusOptions::new();
+            opts.include_untracked(true)
+                .recurse_untracked_dirs(true)
+                .renames_head_to_index(true)
+                .renames_index_to_workdir(true);
+            let statuses = repo.statuses(Some(&mut opts))?;
+
+            let mut staged: Vec<WorkdirEntry> = Vec::new();
+            let mut unstaged: Vec<WorkdirEntry> = Vec::new();
+            let mut conflicted = 0usize;
+
+            const INDEX_MASK: Status = Status::from_bits_truncate(
+                Status::INDEX_NEW.bits()
+                    | Status::INDEX_MODIFIED.bits()
+                    | Status::INDEX_DELETED.bits()
+                    | Status::INDEX_RENAMED.bits()
+                    | Status::INDEX_TYPECHANGE.bits(),
+            );
+            const WT_MASK: Status = Status::from_bits_truncate(
+                Status::WT_NEW.bits()
+                    | Status::WT_MODIFIED.bits()
+                    | Status::WT_DELETED.bits()
+                    | Status::WT_RENAMED.bits()
+                    | Status::WT_TYPECHANGE.bits(),
+            );
+
+            for entry in statuses.iter() {
+                let status = entry.status();
+                if status.is_conflicted() {
+                    conflicted += 1;
+                    continue;
+                }
+                if status.is_ignored() {
+                    continue;
+                }
+
+                if status.intersects(INDEX_MASK) {
+                    if let Some(delta) = entry.head_to_index() {
+                        let (path, old_path) = entry_paths(&delta);
+                        let s = if status.is_index_new() {
+                            "A"
+                        } else if status.is_index_deleted() {
+                            "D"
+                        } else if status.is_index_renamed() {
+                            "R"
+                        } else if status.is_index_typechange() {
+                            "T"
+                        } else {
+                            "M"
+                        };
+                        staged.push(WorkdirEntry { path, old_path, status: s.to_string() });
+                    }
+                }
+                if status.intersects(WT_MASK) {
+                    if let Some(delta) = entry.index_to_workdir() {
+                        let (path, old_path) = entry_paths(&delta);
+                        // WT_NEW with no index entry -> untracked, git's own "?" symbol
+                        // (never "A" — that would look like a staged new file).
+                        let s = if status.is_wt_new() {
+                            "?"
+                        } else if status.is_wt_deleted() {
+                            "D"
+                        } else if status.is_wt_renamed() {
+                            "R"
+                        } else if status.is_wt_typechange() {
+                            "T"
+                        } else {
+                            "M"
+                        };
+                        unstaged.push(WorkdirEntry { path, old_path, status: s.to_string() });
+                    }
+                }
             }
+            (staged, unstaged, conflicted)
         }
-    }
+    };
 
     let branch = match repo.head() {
         Ok(h) if h.is_branch() => h.shorthand().map(|s| s.to_string()),
@@ -496,7 +540,7 @@ pub fn workdir_file_diff(path: String, file: String, staged: bool) -> Result<Fil
 }
 
 fn workdir_file_diff_inner(path: &str, file: &str, staged: bool) -> Result<FileChange, String> {
-    let repo = Repository::open(path).map_err(|e| format!("Cannot open repository: {}", e.message()))?;
+    let repo = crate::trust::open_repo(path).map_err(|e| format!("Cannot open repository: {}", e.message()))?;
 
     // NO `DiffOptions::pathspec` here — EMPIRICALLY VERIFIED that libgit2's
     // own pathspec matcher (unlike the git CLI's) has no `:(literal)` magic
@@ -2221,7 +2265,7 @@ impl StashResolveResult {
 #[tauri::command]
 #[specta::specta]
 pub fn stash_conflict_abort(path: String) -> StashResolveResult {
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return StashResolveResult::error(format!("Cannot open repository: {}", e.message())),
     };
@@ -2277,7 +2321,7 @@ pub fn stash_conflict_abort(path: String) -> StashResolveResult {
 #[tauri::command]
 #[specta::specta]
 pub fn stash_conflict_continue(path: String) -> StashResolveResult {
-    let repo = match Repository::open(&path) {
+    let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return StashResolveResult::error(format!("Cannot open repository: {}", e.message())),
     };

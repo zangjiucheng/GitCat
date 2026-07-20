@@ -42,12 +42,21 @@
 //!   accepting `"main"` (not just a sha prefix) works the same over a WSL
 //!   repo as it does locally (see `code_search.rs`'s own doc comment for the
 //!   `revparse_single` fix this covers).
+//! - `workdir_status_and_dashboard_status_stay_fast_on_a_repo_with_a_symlink`
+//!   — regression test for the WORST bug this app has shipped with: a
+//!   working tree containing even one Linux symlink made `workdir_status`/
+//!   `dashboard_repo_status` (both built on `git2::Repository::statuses()`)
+//!   stall for 185+ SECONDS, EVERY call, reached over the
+//!   `\\wsl.localhost\` bridge — empirically measured against a real
+//!   ~1000-commit repo (a fresh CPython clone) with 4 symlinks. See
+//!   `src/wsl.rs`'s own `wsl_status` doc comment for the full writeup and
+//!   the `git status --porcelain=v2` route around it.
 
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gitcat_lib::{code_search, git_remote, trust};
+use gitcat_lib::{code_search, dashboard, git_remote, trust, workdir};
 
 /// The first registered WSL distro's name, or `None` if WSL isn't installed
 /// / no distro is registered at all. `wsl.exe -l -q` (quiet: names only, one
@@ -310,6 +319,47 @@ fn code_search_resolves_a_ref_not_just_a_sha_on_a_wsl_repo() {
 
     let bad = code_search::code_search(path.clone(), "hello".to_string(), false, Some("not-a-real-ref".to_string()));
     assert!(bad.is_err(), "a genuinely invalid ref must still error cleanly, not panic or silently succeed");
+
+    untrust(&path);
+}
+
+#[test]
+#[ignore]
+fn workdir_status_and_dashboard_status_stay_fast_on_a_repo_with_a_symlink() {
+    let distro = skip_without_wsl!();
+    let repo = WslTempRepo::init(&distro, "symlink");
+    let path = repo.unc_path();
+
+    // The one thing this test exists to add: a real Linux symlink, committed
+    // (not just working-tree-only) so BOTH the head-to-index and
+    // index-to-workdir sides of a status scan have to walk past it — exactly
+    // what made the original git2-based scan stall for 185+ seconds.
+    WslTempRepo::wsl_setup(
+        &distro,
+        &format!(
+            "set -e; cd '{p}'; ln -s f.txt link.txt; git add link.txt; git commit -q -m 'add a symlink'",
+            p = repo.linux_path
+        ),
+    );
+
+    // Generous relative to the sub-2-second times actually measured (see
+    // src/wsl.rs's wsl_status doc comment) but still two orders of magnitude
+    // under the 185-second bug this guards against -- a real hang/stall
+    // trips this long before anyone's patience does.
+    const MAX: std::time::Duration = std::time::Duration::from_secs(30);
+
+    let t0 = std::time::Instant::now();
+    let status = workdir::workdir_status(path.clone()).expect("workdir_status must succeed on a repo containing a symlink, not hang or error");
+    assert!(t0.elapsed() < MAX, "workdir_status took {:?} (>= {MAX:?}) on a repo with one symlink -- the bug this test guards against", t0.elapsed());
+    assert!(status.staged.is_empty(), "freshly committed, working tree should be clean: {} staged entries", status.staged.len());
+    assert!(status.unstaged.is_empty(), "freshly committed, working tree should be clean: {} unstaged entries", status.unstaged.len());
+    assert_eq!(status.conflicted, 0);
+
+    let t1 = std::time::Instant::now();
+    let dash = dashboard::dashboard_repo_status(path.clone()).expect("dashboard_repo_status must succeed on a repo containing a symlink, not hang or error");
+    assert!(t1.elapsed() < MAX, "dashboard_repo_status took {:?} (>= {MAX:?}) on a repo with one symlink -- the bug this test guards against", t1.elapsed());
+    assert!(!dash.dirty, "freshly committed, working tree should be clean");
+    assert_eq!(dash.conflicted, 0);
 
     untrust(&path);
 }

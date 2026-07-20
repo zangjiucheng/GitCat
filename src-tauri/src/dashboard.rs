@@ -70,11 +70,29 @@ fn dashboard_repo_status_inner(path: &str) -> Result<DashboardRepoStatus, git2::
             None => (None, None, None),
         };
 
-    let mut opts = StatusOptions::new();
-    opts.include_untracked(true).recurse_untracked_dirs(true); // same cheap, non-walking read as workdir_status
-    let statuses = repo.statuses(Some(&mut opts))?;
-    let conflicted = statuses.iter().filter(|e| e.status().is_conflicted()).count();
-    let dirty = statuses.iter().any(|e| !e.status().is_ignored());
+    // BUG FIX: `Repository::statuses()` below — libgit2 walking the working
+    // tree over the `\\wsl.localhost\` bridge — EMPIRICALLY MEASURED at
+    // 185+ seconds, EVERY call, against a real repo containing just 4 Linux
+    // symlinks (a fresh CPython clone); `crate::wsl::wsl_status` resolves
+    // the identical query in under a second by running `git status` through
+    // the distro's own git instead — see its own doc comment for why. `None`
+    // for a non-WSL path (the overwhelmingly common case): git2 stays
+    // exactly as before, completely untouched.
+    let (dirty, conflicted) = match crate::wsl::wsl_status(path) {
+        Some(Ok(entries)) => {
+            let conflicted = entries.iter().filter(|e| matches!(e, crate::wsl::StatusEntry::Unmerged { .. })).count();
+            (!entries.is_empty(), conflicted)
+        }
+        Some(Err(msg)) => return Err(git2::Error::from_str(&msg)),
+        None => {
+            let mut opts = StatusOptions::new();
+            opts.include_untracked(true).recurse_untracked_dirs(true); // same cheap, non-walking read as workdir_status
+            let statuses = repo.statuses(Some(&mut opts))?;
+            let conflicted = statuses.iter().filter(|e| e.status().is_conflicted()).count();
+            let dirty = statuses.iter().any(|e| !e.status().is_ignored());
+            (dirty, conflicted)
+        }
+    };
 
     Ok(DashboardRepoStatus {
         branch,

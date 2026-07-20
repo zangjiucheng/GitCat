@@ -60,7 +60,7 @@ use std::process::{Command, Stdio};
 /// The host segment is matched case-insensitively (Windows UNC hosts are
 /// case-insensitive); the distro name and Linux path are kept exactly as
 /// given — Linux paths ARE case-sensitive.
-fn wsl_target(path: &str) -> Option<(String, String)> {
+pub fn wsl_target(path: &str) -> Option<(String, String)> {
     let forward = path.replace('\\', "/");
     let mut segments = forward.split('/').filter(|s| !s.is_empty());
     let host = segments.next()?;
@@ -132,6 +132,135 @@ pub fn git_command(path: &str, args: &[&str]) -> Command {
     };
     cmd.stdin(Stdio::null());
     cmd
+}
+
+/// One `git status --porcelain=v2` entry, normalized to this app's own
+/// status-letter vocabulary ('A'/'M'/'D'/'R'/'T' — see `workdir.rs`'s
+/// `WorkdirEntry`/`commands.rs`'s `status_char`, this module's own copy of
+/// the same fold-copies-into-renames convention those already use for
+/// `Delta::Copied`).
+pub enum StatusEntry {
+    /// An ordinary or renamed/copied change. `staged`/`unstaged` are the
+    /// mapped status letter for that side, `None` when unchanged on that
+    /// side (a `Change` is always non-`None` on at least one side — that's
+    /// what makes it a change at all). `orig_path` is `Some` only for a
+    /// rename/copy (record type `2`).
+    Change { path: String, orig_path: Option<String>, staged: Option<char>, unstaged: Option<char> },
+    Unmerged { path: String },
+    Untracked { path: String },
+}
+
+fn map_status_char(c: char) -> char {
+    match c {
+        'A' => 'A',
+        'D' => 'D',
+        'T' => 'T',
+        // This app's own status vocabulary has no separate "copied" code —
+        // same fold `commands.rs`'s `status_char` already applies to
+        // `Delta::Copied`, so a copy (record type `2`, X or Y == 'C') reads
+        // exactly like a rename here, not as a distinct third case.
+        'R' | 'C' => 'R',
+        // 'M', plus a defensive fallback for anything this porcelain
+        // version doesn't otherwise produce (unrecognized future git
+        // output should read as "changed", never silently vanish).
+        _ => 'M',
+    }
+}
+
+/// Parse `git status --porcelain=v2 -z` output into [`StatusEntry`]s.
+/// EMPIRICALLY VERIFIED byte-for-byte against real `git status --porcelain=v2
+/// -z` output (od -c) for a staged rename, an unstaged untracked file, and a
+/// merge conflict — see this function's own field-count comments; not
+/// assumed from the format's prose documentation alone. `-z` makes every
+/// record NUL-terminated (never newline), and — the one easy-to-miss part —
+/// a record-type-`2` (rename/copy) record's `origPath` is its own SEPARATE
+/// NUL-terminated token immediately after the record itself, not
+/// tab-appended onto the same one the way the non-`-z` format works.
+pub fn parse_status_porcelain_v2(raw: &str) -> Vec<StatusEntry> {
+    let mut tokens = raw.split('\0').filter(|t| !t.is_empty());
+    let mut out = Vec::new();
+    while let Some(tok) = tokens.next() {
+        let mut head = tok.splitn(2, ' ');
+        let kind = head.next().unwrap_or("");
+        let rest = head.next().unwrap_or("");
+        match kind {
+            // `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>` — 7 fields before path.
+            "1" => {
+                let parts: Vec<&str> = rest.splitn(8, ' ').collect();
+                if parts.len() < 8 {
+                    continue;
+                }
+                let mut xy = parts[0].chars();
+                let (x, y) = (xy.next().unwrap_or('.'), xy.next().unwrap_or('.'));
+                out.push(StatusEntry::Change {
+                    path: parts[7].to_string(),
+                    orig_path: None,
+                    staged: (x != '.').then(|| map_status_char(x)),
+                    unstaged: (y != '.').then(|| map_status_char(y)),
+                });
+            }
+            // `2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>` (8 fields
+            // before path) then a SEPARATE NUL-terminated `origPath` token.
+            "2" => {
+                let parts: Vec<&str> = rest.splitn(9, ' ').collect();
+                if parts.len() < 9 {
+                    continue;
+                }
+                let mut xy = parts[0].chars();
+                let (x, y) = (xy.next().unwrap_or('.'), xy.next().unwrap_or('.'));
+                let orig_path = tokens.next().unwrap_or("").to_string();
+                out.push(StatusEntry::Change {
+                    path: parts[8].to_string(),
+                    orig_path: Some(orig_path),
+                    staged: (x != '.').then(|| map_status_char(x)),
+                    unstaged: (y != '.').then(|| map_status_char(y)),
+                });
+            }
+            // `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>` — 9 fields before path.
+            "u" => {
+                let parts: Vec<&str> = rest.splitn(10, ' ').collect();
+                if parts.len() < 10 {
+                    continue;
+                }
+                out.push(StatusEntry::Unmerged { path: parts[9].to_string() });
+            }
+            "?" => out.push(StatusEntry::Untracked { path: rest.to_string() }),
+            // "!" (ignored — never requested, see wsl_status's own flags) or any
+            // unrecognized future record type: skip rather than misparse.
+            _ => {}
+        }
+    }
+    out
+}
+
+/// For a WSL-path repo ONLY, runs `git status --porcelain=v2 -z
+/// --untracked-files=all --find-renames` via the distro's own git (see
+/// module doc — same `-e`/`--exec` injection-safety model `git_command`
+/// already provides) and parses it. `None` when `path` isn't a WSL path at
+/// all — every caller keeps using git2 unchanged in that case; git2's own
+/// `Repository::statuses()` is fine (fast, correct) there.
+///
+/// This exists specifically to route AROUND a libgit2 problem, not a
+/// credential one like `git_command`'s own reason for existing:
+/// EMPIRICALLY CONFIRMED against a real ~1000-commit repo (a fresh CPython
+/// clone) containing just 4 Linux symlinks — `Repository::statuses()`
+/// (`dashboard.rs`/`workdir.rs`'s status read) took 185+ SECONDS, on EVERY
+/// call, not just a cold first one — while `git status` via this function
+/// on the exact same repo resolves in under a second. libgit2, running as a
+/// WINDOWS process, appears to badly mishandle a Linux symlink reached
+/// over the `\\wsl.localhost\` 9P bridge (its own error, when it doesn't
+/// just stall: "could not find '<target>' to open" — Windows' own I/O layer
+/// failing to resolve the symlink's target through that bridge at all); the
+/// distro's own git, walking its OWN native filesystem, has no such
+/// problem.
+pub fn wsl_status(path: &str) -> Option<Result<Vec<StatusEntry>, String>> {
+    wsl_target(path)?;
+    let out = git_command(path, &["status", "--porcelain=v2", "-z", "--untracked-files=all", "--find-renames"]).output();
+    Some(match out {
+        Ok(o) if o.status.success() => Ok(parse_status_porcelain_v2(&String::from_utf8_lossy(&o.stdout))),
+        Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        Err(e) => Err(format!("Could not run git: {e}")),
+    })
 }
 
 #[cfg(test)]
@@ -220,5 +349,88 @@ mod tests {
         assert_eq!(cmd.get_program(), "git");
         let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
         assert_eq!(args, vec!["-C", r"C:\Users\me\repo", "fetch", "--all"]);
+    }
+
+    // Fixtures below use simplified placeholder hashes ("hashH"/"hashI"/...)
+    // rather than real 40-hex-char shas — only the FIELD COUNT/POSITION and
+    // NUL placement matter to the parser, and THOSE were empirically
+    // verified byte-for-byte (`od -c`) against real `git status
+    // --porcelain=v2 -z` output for each of the three record shapes below
+    // (an ordinary staged-add + unstaged-delete + untracked file; a staged
+    // rename; a merge conflict) — see parse_status_porcelain_v2's own doc
+    // comment.
+
+    #[test]
+    fn parses_ordinary_staged_unstaged_and_untracked() {
+        let raw = "1 A. N... 000000 100644 100644 hashH hashI new-name.txt\0\
+                    1 .D N... 100644 100644 000000 hashH hashI old-name.txt\0\
+                    ? new-file.txt\0";
+        let entries = parse_status_porcelain_v2(raw);
+        assert_eq!(entries.len(), 3);
+        match &entries[0] {
+            StatusEntry::Change { path, orig_path, staged, unstaged } => {
+                assert_eq!(path, "new-name.txt");
+                assert_eq!(orig_path, &None);
+                assert_eq!(staged, &Some('A'));
+                assert_eq!(unstaged, &None);
+            }
+            _ => panic!("expected a Change entry"),
+        }
+        match &entries[1] {
+            StatusEntry::Change { path, staged, unstaged, .. } => {
+                assert_eq!(path, "old-name.txt");
+                assert_eq!(staged, &None);
+                assert_eq!(unstaged, &Some('D'));
+            }
+            _ => panic!("expected a Change entry"),
+        }
+        match &entries[2] {
+            StatusEntry::Untracked { path } => assert_eq!(path, "new-file.txt"),
+            _ => panic!("expected an Untracked entry"),
+        }
+    }
+
+    #[test]
+    fn parses_a_staged_rename_including_its_separately_nul_terminated_orig_path() {
+        let raw = "2 R. N... 100644 100644 100644 hashH hashI R100 renamed.txt\0big.txt\0";
+        let entries = parse_status_porcelain_v2(raw);
+        assert_eq!(entries.len(), 1);
+        match &entries[0] {
+            StatusEntry::Change { path, orig_path, staged, unstaged } => {
+                assert_eq!(path, "renamed.txt");
+                assert_eq!(orig_path.as_deref(), Some("big.txt"));
+                assert_eq!(staged, &Some('R'));
+                assert_eq!(unstaged, &None);
+            }
+            _ => panic!("expected a Change entry"),
+        }
+    }
+
+    #[test]
+    fn parses_a_merge_conflict_as_unmerged() {
+        let raw = "u UU N... 100644 100644 100644 100644 hash1 hash2 hash3 f.txt\0";
+        let entries = parse_status_porcelain_v2(raw);
+        assert_eq!(entries.len(), 1);
+        match &entries[0] {
+            StatusEntry::Unmerged { path } => assert_eq!(path, "f.txt"),
+            _ => panic!("expected an Unmerged entry"),
+        }
+    }
+
+    #[test]
+    fn a_copy_folds_into_the_same_r_status_a_rename_uses() {
+        // This app's own status vocabulary has no separate "copied" code —
+        // see map_status_char's own doc comment.
+        let raw = "2 C. N... 100644 100644 100644 hashH hashI C100 copy.txt\0original.txt\0";
+        let entries = parse_status_porcelain_v2(raw);
+        match &entries[0] {
+            StatusEntry::Change { staged, .. } => assert_eq!(staged, &Some('R')),
+            _ => panic!("expected a Change entry"),
+        }
+    }
+
+    #[test]
+    fn empty_input_parses_to_no_entries() {
+        assert!(parse_status_porcelain_v2("").is_empty());
     }
 }
