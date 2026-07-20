@@ -15,6 +15,10 @@ pub struct Person {
 }
 
 /// A ref chip pointing at a commit. `t` is one of: head | branch | remote | tag.
+/// When a commit has more than one, `git_read::collect_refs` returns them
+/// pre-sorted tag -> head -> branch -> remote — every consumer (the canvas's
+/// primary/all-refs chips, the detail panel, ⌘K's ref index) renders this
+/// order as-is rather than re-sorting itself.
 #[derive(Serialize, Clone, specta::Type)]
 pub struct RefChip {
     pub n: String, // short label, e.g. "main", "origin/main", "v0.3.0"

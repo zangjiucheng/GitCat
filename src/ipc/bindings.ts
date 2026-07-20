@@ -2452,6 +2452,10 @@ backupRef: string | null;
 blockedByLocalChanges: boolean }
 /**
  * A ref chip pointing at a commit. `t` is one of: head | branch | remote | tag.
+ * When a commit has more than one, `git_read::collect_refs` returns them
+ * pre-sorted tag -> head -> branch -> remote — every consumer (the canvas's
+ * primary/all-refs chips, the detail panel, ⌘K's ref index) renders this
+ * order as-is rather than re-sorting itself.
  */
 export type RefChip = { n: string; t: string }
 /**

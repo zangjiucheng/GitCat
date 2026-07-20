@@ -196,7 +196,33 @@ fn collect_refs(repo: &Repository) -> HashMap<String, Vec<RefChip>> {
                 .push(RefChip { n: label, t: kind });
         }
     }
+
+    // Every downstream consumer (the canvas's "primary" chip — refs[0] — and
+    // its "all tags" chip row, the detail panel's ref-chip list, and ⌘K's ref
+    // index) trusts THIS order and never re-sorts on its own — see this
+    // function's own doc note in the module header. Without an explicit sort
+    // here, a commit with multiple refs came out in `Repository::references`'s
+    // own iteration order (roughly alphabetical by full refname), which is an
+    // accident of libgit2, not a meaningful priority. Sorted once, here, so
+    // every consumer gets it for free: tag, then the checked-out branch
+    // ("head"), then any other local branch, then remote-tracking refs.
+    // `sort_by_key` is stable — multiple refs of the same kind (e.g. two
+    // tags) keep their original relative order rather than shuffling.
+    for chips in map.values_mut() {
+        chips.sort_by_key(|c| ref_kind_priority(&c.t));
+    }
+
     map
+}
+
+fn ref_kind_priority(kind: &str) -> u8 {
+    match kind {
+        "tag" => 0,
+        "head" => 1,
+        "branch" => 2,
+        "remote" => 3,
+        _ => 4,
+    }
 }
 
 fn classify_ref(full: &str, head_name: Option<&str>) -> (String, String) {

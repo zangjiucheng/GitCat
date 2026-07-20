@@ -89,6 +89,33 @@ fn graph_row_count_and_merge_flag() {
 }
 
 #[test]
+fn multi_kind_ref_chips_on_one_commit_sort_tag_before_head_before_branch_before_remote() {
+    let repo = common::TempRepo::init("multiref");
+    let c0 = repo.commit("f.txt", "0\n", "c0 root");
+    // A second local branch, NOT checked out, pointing at the same commit as
+    // HEAD (main) — its chip must come out as "branch", distinct from main's
+    // own "head" chip.
+    repo.must(&["branch", "also-local", &c0]);
+    // A tag on the same commit.
+    repo.must(&["tag", "v1.0", &c0]);
+    // A remote-tracking ref, same commit — read_repo only looks at the ref
+    // itself, no real configured remote needed (see
+    // local_and_remote_filters_apply_independently above for the same trick).
+    repo.must(&["update-ref", "refs/remotes/origin/main", &c0]);
+
+    let g = build_graph(&repo.path(), 50_000, None, None).expect("build_graph failed");
+    let row = g.rows.iter().find(|r| r.sha == short(&c0)).expect("commit must have a row");
+
+    let kinds: Vec<&str> = row.refs.iter().map(|r| r.t.as_str()).collect();
+    assert_eq!(
+        kinds,
+        vec!["tag", "head", "branch", "remote"],
+        "ref chips on one commit must sort tag -> head -> branch -> remote, got {:?}",
+        row.refs.iter().map(|r| (&r.n, &r.t)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn graph_layout_has_no_impossible_lane_overlaps() {
     let (repo, _) = build_repo();
     let path = repo.path();
