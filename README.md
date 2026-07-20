@@ -21,6 +21,21 @@ Tauri 2 + Rust + Svelte 5, with a clean neutral canvas (white / charcoal-dark, c
 
 GitCat is a desktop Git GUI built around one idea: every operation that touches your history should be reversible. A **Safety Manager** snapshots your repo before every mutation, so a global Undo (⌘Z) is always one keystroke away — and Undo is itself undoable.
 
+## Meet Tama
+
+<p align="center">
+  <img src="design/assets/optimized/tama_hero.webp" width="110" alt="Tama waving hello" />
+  <img src="design/assets/optimized/tama_curious.webp" width="110" alt="Tama curious" />
+  <img src="design/assets/optimized/tama_thinking.webp" width="110" alt="Tama thinking" />
+  <img src="design/assets/optimized/tama_confident.webp" width="110" alt="Tama confident" />
+  <img src="design/assets/optimized/tama_happy.webp" width="110" alt="Tama celebrating" />
+  <img src="design/assets/optimized/tama_alarm.webp" width="110" alt="Tama alarmed" />
+  <img src="design/assets/optimized/tama_shocked.webp" width="110" alt="Tama shocked" />
+  <img src="design/assets/optimized/tama_sleep.webp" width="110" alt="Tama napping" />
+</p>
+
+Tama is GitCat's Safety Manager, not a mascot bolted on for cuteness — the one pinning a snapshot before every mutation. Eight expressions are wired into real moments across the app: curious while you search, thinking hard mid-rebase, genuinely alarmed right before something irreversible, and celebrating once it's safely done.
+
 ## Features
 
 **Core graph + history**
