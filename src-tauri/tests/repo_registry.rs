@@ -7,7 +7,7 @@
 //! the same load/save code those commands call, just addressed by a plain
 //! `&Path` instead of `app.path().app_config_dir()`.
 
-use gitcat_lib::repo_registry::{load_from, normalize, save_to, TrackedRepo};
+use gitcat_lib::repo_registry::{load_from, normalize, save_to, sort_by_recency, TrackedRepo};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -227,6 +227,60 @@ fn an_untracked_repo_has_no_row_at_all_which_is_the_same_as_no_filter() {
     let reg = TempRegistry::new("visible_untracked");
     let repos = load_from(&reg.file()).unwrap();
     assert!(repos.iter().find(|r| r.path == "/tmp/never-tracked-anywhere").is_none());
+}
+
+#[test]
+fn sort_by_recency_orders_most_recently_opened_first() {
+    // Regression test: the dashboard's recent-repos list must reflect
+    // most-recently-opened order, not on-disk insertion order. The on-disk
+    // file itself stays in insertion order (sort_by_recency is applied at
+    // each command's own return point, not inside load_from/save_to) — this
+    // asserts the sort helper's own ordering contract directly, mirroring
+    // how the #[tauri::command]s apply it to whatever load_from returns.
+    let repos = vec![
+        TrackedRepo { path: "/tmp/oldest".into(), last_opened_at: Some(100), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None, auto_branch_visibility: false },
+        TrackedRepo { path: "/tmp/never-opened".into(), last_opened_at: None, repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None, auto_branch_visibility: false },
+        TrackedRepo { path: "/tmp/newest".into(), last_opened_at: Some(300), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None, auto_branch_visibility: false },
+        TrackedRepo { path: "/tmp/middle".into(), last_opened_at: Some(200), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None, auto_branch_visibility: false },
+    ];
+
+    let sorted = sort_by_recency(repos);
+    let order: Vec<&str> = sorted.iter().map(|r| r.path.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["/tmp/newest", "/tmp/middle", "/tmp/oldest", "/tmp/never-opened"],
+        "must be most-recently-opened first, with never-opened (None) repos last"
+    );
+}
+
+#[test]
+fn reopening_an_older_repo_moves_it_back_to_the_front() {
+    // Simulates the exact sequence a user hits in practice: open A, then B
+    // (B now most recent), then re-open A — A must move back to the front,
+    // not stay stuck behind B just because it was inserted first on disk.
+    let reg = TempRegistry::new("reopen_bumps_to_front");
+    let file = reg.file();
+
+    fn track_opened(file: &PathBuf, path: &str, now: i64) -> Vec<TrackedRepo> {
+        let mut repos = load_from(file).unwrap();
+        match repos.iter_mut().find(|r| r.path == path) {
+            Some(r) => r.last_opened_at = Some(now),
+            None => repos.push(TrackedRepo { path: path.into(), last_opened_at: Some(now), repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None, auto_branch_visibility: false }),
+        }
+        save_to(file, &repos).unwrap();
+        sort_by_recency(repos)
+    }
+
+    let after_a = track_opened(&file, "/tmp/repo-a", 100);
+    assert_eq!(after_a[0].path, "/tmp/repo-a");
+
+    let after_b = track_opened(&file, "/tmp/repo-b", 200);
+    assert_eq!(after_b[0].path, "/tmp/repo-b", "b was opened more recently, must lead");
+    assert_eq!(after_b[1].path, "/tmp/repo-a");
+
+    let after_a_again = track_opened(&file, "/tmp/repo-a", 300);
+    assert_eq!(after_a_again[0].path, "/tmp/repo-a", "re-opening a must bump it back to the front, not leave it stuck behind b");
+    assert_eq!(after_a_again[1].path, "/tmp/repo-b");
 }
 
 #[test]

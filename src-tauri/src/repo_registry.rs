@@ -201,11 +201,33 @@ pub fn normalize(path: &str) -> String {
         .unwrap_or_else(|_| path.to_string())
 }
 
+/// Most-recently-opened first (`last_opened_at` descending). A repo that's
+/// only ever been manually added via "+ Add repository…" and never actually
+/// opened (`None`) sorts after every repo that HAS been opened — there's no
+/// "used" timestamp to rank it by. `sort_by` (stable), not
+/// `sort_unstable_by`: two repos tied on the same timestamp (or both `None`)
+/// keep their existing relative order instead of shuffling on every refresh.
+///
+/// Applied at each command's own return point below, NOT inside `load_from`
+/// — `load_from`/`save_to` are the pure persistence layer (see this module's
+/// own doc comment on why they're `pub` and directly integration-tested
+/// against a raw `&Path`); ordering for display is a presentation concern of
+/// the `#[tauri::command]` API surface, not the on-disk file, which stays in
+/// natural insertion order.
+///
+/// `pub` for the same integration-testability reason as [`load_from`]/
+/// [`save_to`]/[`normalize`] — a plain integration test has no real
+/// `AppHandle` to call `list_tracked_repos`/etc. through directly.
+pub fn sort_by_recency(mut repos: Vec<TrackedRepo>) -> Vec<TrackedRepo> {
+    repos.sort_by(|x, y| y.last_opened_at.cmp(&x.last_opened_at));
+    repos
+}
+
 /// JS: `commands.listTrackedRepos()`.
 #[tauri::command]
 #[specta::specta]
 pub fn list_tracked_repos(app: AppHandle<Wry>) -> Result<Vec<TrackedRepo>, String> {
-    load_from(&registry_path(&app)?)
+    Ok(sort_by_recency(load_from(&registry_path(&app)?)?))
 }
 
 /// Manual "+ Add repository…" (dashboard). No-ops (doesn't duplicate) if
@@ -227,7 +249,7 @@ pub fn add_tracked_repo(app: AppHandle<Wry>, path: String) -> Result<Vec<Tracked
         });
         save_to(&registry, &repos)?;
     }
-    Ok(repos)
+    Ok(sort_by_recency(repos))
 }
 
 /// Dashboard row's "Remove from list" — removes from the TRACKED LIST only,
@@ -241,7 +263,7 @@ pub fn remove_tracked_repo(app: AppHandle<Wry>, path: String) -> Result<Vec<Trac
     let mut repos = load_from(&registry)?;
     repos.retain(|r| r.path != norm);
     save_to(&registry, &repos)?;
-    Ok(repos)
+    Ok(sort_by_recency(repos))
 }
 
 /// Fire-and-forget hook called from `openRepo()`'s success path
@@ -270,7 +292,7 @@ pub fn track_repo_opened(app: AppHandle<Wry>, path: String) -> Result<Vec<Tracke
         }),
     }
     save_to(&registry, &repos)?;
-    Ok(repos)
+    Ok(sort_by_recency(repos))
 }
 
 /// Atomically checks-and-marks whether `path`'s one-time auto-shown
