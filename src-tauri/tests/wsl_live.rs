@@ -348,15 +348,22 @@ fn workdir_status_and_dashboard_status_stay_fast_on_a_repo_with_a_symlink() {
     // trips this long before anyone's patience does.
     const MAX: std::time::Duration = std::time::Duration::from_secs(30);
 
+    // Both commands are `async fn` (run off the main thread via
+    // crate::blocking::run_blocking — see their own doc comments for the
+    // separate main-thread-freeze bug that fixed) — block_on here is this
+    // codebase's own established way to drive one synchronously from a
+    // plain #[test] fn, same as e.g. tests/branch_ops.rs's own calls.
     let t0 = std::time::Instant::now();
-    let status = workdir::workdir_status(path.clone()).expect("workdir_status must succeed on a repo containing a symlink, not hang or error");
+    let status = tauri::async_runtime::block_on(workdir::workdir_status(path.clone()))
+        .expect("workdir_status must succeed on a repo containing a symlink, not hang or error");
     assert!(t0.elapsed() < MAX, "workdir_status took {:?} (>= {MAX:?}) on a repo with one symlink -- the bug this test guards against", t0.elapsed());
     assert!(status.staged.is_empty(), "freshly committed, working tree should be clean: {} staged entries", status.staged.len());
     assert!(status.unstaged.is_empty(), "freshly committed, working tree should be clean: {} unstaged entries", status.unstaged.len());
     assert_eq!(status.conflicted, 0);
 
     let t1 = std::time::Instant::now();
-    let dash = dashboard::dashboard_repo_status(path.clone()).expect("dashboard_repo_status must succeed on a repo containing a symlink, not hang or error");
+    let dash = tauri::async_runtime::block_on(dashboard::dashboard_repo_status(path.clone()))
+        .expect("dashboard_repo_status must succeed on a repo containing a symlink, not hang or error");
     assert!(t1.elapsed() < MAX, "dashboard_repo_status took {:?} (>= {MAX:?}) on a repo with one symlink -- the bug this test guards against", t1.elapsed());
     assert!(!dash.dirty, "freshly committed, working tree should be clean");
     assert_eq!(dash.conflicted, 0);

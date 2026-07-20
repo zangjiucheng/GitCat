@@ -32,10 +32,25 @@ pub struct DashboardRepoStatus {
 }
 
 /// JS: `commands.dashboardRepoStatus(path)`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+/// comment, that runs INLINE on Tauri's main thread, freezing the whole app
+/// (not just this row) for as long as the call takes. Sub-second for a
+/// normal repo, but the Dashboard modal calls this for EVERY tracked repo
+/// in parallel on open — a cold `wsl.exe` interop launch (`crate::wsl::
+/// wsl_status`'s WSL-aware fast path, itself a fix for a much worse
+/// libgit2 stall — see this module's own earlier doc comment) still takes
+/// real seconds, and that "parallel" `Promise.allSettled` fan-out on the
+/// frontend is cosmetic: every one of those IPC calls actually serializes
+/// on the SAME blocked main thread here, so opening the modal with even a
+/// couple of tracked WSL repos froze the entire window until all of them
+/// finished. `async fn` + `run_blocking` moves the actual work onto Tauri's
+/// blocking-task thread pool, matching `list_refs`'s own established
+/// pattern — the frontend's parallel fan-out is now genuinely parallel.
 #[tauri::command]
 #[specta::specta]
-pub fn dashboard_repo_status(path: String) -> Result<DashboardRepoStatus, String> {
-    dashboard_repo_status_inner(&path).map_err(|e| e.message().to_string())
+pub async fn dashboard_repo_status(path: String) -> Result<DashboardRepoStatus, String> {
+    crate::blocking::run_blocking(move || dashboard_repo_status_inner(&path).map_err(|e| e.message().to_string())).await
 }
 
 fn dashboard_repo_status_inner(path: &str) -> Result<DashboardRepoStatus, git2::Error> {

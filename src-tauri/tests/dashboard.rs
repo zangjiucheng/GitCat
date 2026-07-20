@@ -11,7 +11,7 @@ use gitcat_lib::dashboard::dashboard_repo_status;
 
 #[test]
 fn bad_path_reports_a_clean_error_not_a_crash() {
-    let result = dashboard_repo_status("/definitely/not/a/repo/anywhere/at/all".into());
+    let result = tauri::async_runtime::block_on(dashboard_repo_status("/definitely/not/a/repo/anywhere/at/all".into()));
     assert!(result.is_err(), "a non-repo path should surface Err, not panic or Ok");
 }
 
@@ -21,7 +21,7 @@ fn clean_repo_reports_branch_and_no_dirty_no_conflicts() {
     let c0 = repo.commit("f.txt", "0\n", "c0");
     let path = repo.path();
 
-    let status = dashboard_repo_status(path).expect("dashboard_repo_status failed");
+    let status = tauri::async_runtime::block_on(dashboard_repo_status(path)).expect("dashboard_repo_status failed");
     assert_eq!(status.branch.as_deref(), Some("main"));
     assert!(!status.detached);
     assert!(!status.dirty, "freshly committed repo should be clean");
@@ -41,7 +41,7 @@ fn dirty_working_tree_is_reported_dirty() {
 
     // Modify without committing.
     std::fs::write(repo.dir.join("f.txt"), "uncommitted change\n").unwrap();
-    let status = dashboard_repo_status(path.clone()).expect("dashboard_repo_status failed");
+    let status = tauri::async_runtime::block_on(dashboard_repo_status(path.clone())).expect("dashboard_repo_status failed");
     assert!(status.dirty, "a modified-but-uncommitted file must report dirty:true");
     assert_eq!(status.conflicted, 0);
 
@@ -49,7 +49,7 @@ fn dirty_working_tree_is_reported_dirty() {
     let repo2 = TempRepo::init("dashboard_dirty_untracked");
     let _c0b = repo2.commit("g.txt", "0\n", "c0");
     std::fs::write(repo2.dir.join("new.txt"), "hi\n").unwrap();
-    let status2 = dashboard_repo_status(repo2.path()).expect("dashboard_repo_status failed");
+    let status2 = tauri::async_runtime::block_on(dashboard_repo_status(repo2.path())).expect("dashboard_repo_status failed");
     assert!(status2.dirty, "an untracked file must also report dirty:true");
 }
 
@@ -58,7 +58,7 @@ fn unborn_repo_has_no_branch_head_or_commit_info() {
     let repo = TempRepo::init("dashboard_unborn");
     let path = repo.path();
 
-    let status = dashboard_repo_status(path).expect("dashboard_repo_status failed");
+    let status = tauri::async_runtime::block_on(dashboard_repo_status(path)).expect("dashboard_repo_status failed");
     // No commits yet: HEAD is unborn. libgit2's repo.head() fails on an unborn
     // repo, so branch/detached/head_sha/last_subject/last_commit_time are all
     // the "nothing to report" defaults, not a crash.
@@ -78,7 +78,7 @@ fn detached_head_is_reported_detached_with_no_branch_name() {
     repo.must(&["checkout", "-q", &c0]);
     let path = repo.path();
 
-    let status = dashboard_repo_status(path).expect("dashboard_repo_status failed");
+    let status = tauri::async_runtime::block_on(dashboard_repo_status(path)).expect("dashboard_repo_status failed");
     assert!(status.detached);
     assert_eq!(status.branch, None);
     assert_eq!(status.head_sha.as_deref(), Some(common::short(&c0).as_str()));
@@ -97,7 +97,7 @@ fn ahead_behind_and_diverged_are_computed_against_the_upstream_only() {
 
     // Ahead by one: commit locally, don't push.
     let _c1 = repo.commit("f.txt", "1\n", "c1");
-    let status = dashboard_repo_status(repo.path()).expect("dashboard_repo_status failed");
+    let status = tauri::async_runtime::block_on(dashboard_repo_status(repo.path())).expect("dashboard_repo_status failed");
     assert_eq!(status.ahead, Some(1));
     assert_eq!(status.behind, Some(0));
 
@@ -153,7 +153,7 @@ fn ahead_behind_and_diverged_are_computed_against_the_upstream_only() {
     // push) so both sides have diverged from their shared base (c1).
     let _c2 = repo.commit("f.txt", "2-local-only\n", "c2");
     repo.must(&["fetch", "-q", "origin"]); // learn about the remote's new tip, don't merge
-    let diverged = dashboard_repo_status(repo.path()).expect("dashboard_repo_status failed");
+    let diverged = tauri::async_runtime::block_on(dashboard_repo_status(repo.path())).expect("dashboard_repo_status failed");
     assert_eq!(diverged.ahead, Some(1), "one local-only commit (c2) not on origin/main");
     assert_eq!(diverged.behind, Some(1), "one remote-only commit not yet merged locally");
 
@@ -215,7 +215,7 @@ fn behind_only_is_computed_when_local_has_not_moved() {
     assert!(push_out.status.success());
 
     repo.must(&["fetch", "-q", "origin"]);
-    let status = dashboard_repo_status(repo.path()).expect("dashboard_repo_status failed");
+    let status = tauri::async_runtime::block_on(dashboard_repo_status(repo.path())).expect("dashboard_repo_status failed");
     assert_eq!(status.ahead, Some(0));
     assert_eq!(status.behind, Some(1));
 
@@ -234,7 +234,7 @@ fn stays_cheap_against_a_repo_with_many_commits_no_revwalk() {
     let path = repo.path();
 
     let start = std::time::Instant::now();
-    let status = dashboard_repo_status(path).expect("dashboard_repo_status failed");
+    let status = tauri::async_runtime::block_on(dashboard_repo_status(path)).expect("dashboard_repo_status failed");
     let elapsed = start.elapsed();
 
     assert!(status.branch.is_some());

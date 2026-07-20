@@ -384,10 +384,20 @@ fn guess_lang(path: &str) -> String {
 /// Tauri command: full working-tree/index status for the pinned "Uncommitted
 /// changes" row + staging panel. Read-only (git2).
 /// JS: `invoke("workdir_status", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — see `dashboard_repo_status`'s own
+/// identical fix (`dashboard.rs`) for the full writeup: a non-async
+/// `#[tauri::command]` runs inline on Tauri's MAIN thread, freezing the
+/// whole app for as long as the call takes, not just this one status read.
+/// This is called every time a repo is opened (the pinned "Uncommitted
+/// changes" row), so a WSL repo's `wsl.exe` interop launch (this function's
+/// own `crate::wsl::wsl_status` fast path) blocked the entire window on
+/// every open, not just this read. `async fn` + `run_blocking` matches
+/// `list_refs`'s own established pattern.
 #[tauri::command]
 #[specta::specta]
-pub fn workdir_status(path: String) -> Result<WorkdirStatus, String> {
-    workdir_status_inner(&path).map_err(|e| e.message().to_string())
+pub async fn workdir_status(path: String) -> Result<WorkdirStatus, String> {
+    crate::blocking::run_blocking(move || workdir_status_inner(&path).map_err(|e| e.message().to_string())).await
 }
 
 fn workdir_status_inner(path: &str) -> Result<WorkdirStatus, git2::Error> {

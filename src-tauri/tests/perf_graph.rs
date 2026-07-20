@@ -132,7 +132,7 @@ fn workdir_status_stays_fast_on_a_large_synthetic_history() {
     seed_large_history(&repo);
 
     let t0 = Instant::now();
-    let status = workdir::workdir_status(repo.path()).expect("workdir_status should succeed");
+    let status = tauri::async_runtime::block_on(workdir::workdir_status(repo.path())).expect("workdir_status should succeed");
     let elapsed = t0.elapsed();
 
     assert!(status.staged.is_empty(), "freshly checked-out history should be clean: {} staged entries", status.staged.len());
@@ -152,7 +152,8 @@ fn dashboard_repo_status_stays_fast_on_a_large_synthetic_history() {
     seed_large_history(&repo);
 
     let t0 = Instant::now();
-    let status = dashboard::dashboard_repo_status(repo.path()).expect("dashboard_repo_status should succeed");
+    let status =
+        tauri::async_runtime::block_on(dashboard::dashboard_repo_status(repo.path())).expect("dashboard_repo_status should succeed");
     let elapsed = t0.elapsed();
 
     assert!(!status.dirty, "freshly checked-out history should be clean");

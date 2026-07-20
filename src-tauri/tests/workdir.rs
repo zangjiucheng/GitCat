@@ -34,7 +34,7 @@ fn workdir_status_reports_staged_unstaged_and_untracked() {
     // A new file, untracked.
     std::fs::write(repo.dir.join("untracked.txt"), "new\n").unwrap();
 
-    let status = workdir_status(path).expect("workdir_status failed");
+    let status = tauri::async_runtime::block_on(workdir_status(path)).expect("workdir_status failed");
     assert_eq!(status.conflicted, 0);
     assert!(!status.has_stash);
     assert_eq!(status.branch.as_deref(), Some("main"));
@@ -65,7 +65,7 @@ fn stage_file_and_unstage_file_round_trip_takes_no_snapshot() {
     assert!(staged.ok, "stage_file failed: {}", staged.message);
     assert!(staged.backup_ref.is_none(), "stage_file must not snapshot");
 
-    let status = workdir_status(path.clone()).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path.clone())).unwrap();
     assert_eq!(status.staged.len(), 1);
     assert_eq!(status.staged[0].path, "f.txt");
     assert_eq!(status.staged[0].status, "M");
@@ -75,7 +75,7 @@ fn stage_file_and_unstage_file_round_trip_takes_no_snapshot() {
     assert!(unstaged.ok, "unstage_file failed: {}", unstaged.message);
     assert!(unstaged.backup_ref.is_none(), "unstage_file must not snapshot");
 
-    let status = workdir_status(path.clone()).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path.clone())).unwrap();
     assert!(status.staged.is_empty());
     assert_eq!(status.unstaged.len(), 1);
     assert_eq!(status.unstaged[0].path, "f.txt");
@@ -101,7 +101,7 @@ fn stage_all_stages_every_unstaged_and_untracked_path() {
     assert!(res.ok, "stage_all failed: {}", res.message);
     assert!(res.backup_ref.is_none(), "stage_all must not snapshot");
 
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert!(status.unstaged.is_empty());
     assert_eq!(status.staged.len(), 3);
 }
@@ -169,7 +169,7 @@ fn discard_file_untracked_directory_backs_up_the_tree_and_removes_it() {
     std::fs::write(nested.join("file.txt"), "top-level content\n").unwrap();
     std::fs::write(nested.join("sub/nested.txt"), "nested content\n").unwrap();
 
-    let status = workdir_status(path.clone()).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path.clone())).unwrap();
     assert_eq!(status.unstaged.len(), 1, "the nested repo should show as ONE untracked entry");
     let entry_path = status.unstaged[0].path.clone();
     assert_eq!(status.unstaged[0].status, "?");
@@ -425,7 +425,7 @@ fn stage_file_with_glob_metacharacters_stages_only_the_exact_file() {
     let res = stage_file(path.clone(), "test[1].txt".into());
     assert!(res.ok, "stage_file failed: {}", res.message);
 
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     let staged_paths: Vec<&str> = status.staged.iter().map(|e| e.path.as_str()).collect();
     assert_eq!(staged_paths, vec!["test[1].txt"], "must stage exactly the requested file, not a glob-matched decoy");
     assert!(
@@ -677,7 +677,7 @@ fn discard_file_reverses_an_unstaged_rename() {
 
     // Rename ON DISK ONLY — never staged (no `git mv`, no `git add`).
     std::fs::rename(repo.dir.join("old.txt"), repo.dir.join("new.txt")).unwrap();
-    let status = workdir_status(path.clone()).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path.clone())).unwrap();
     assert_eq!(status.unstaged.len(), 1);
     assert_eq!(status.unstaged[0].path, "new.txt");
     assert_eq!(status.unstaged[0].status, "R");
@@ -714,7 +714,7 @@ fn stage_file_accepts_a_tab_containing_filename() {
     let res = stage_file(path.clone(), name.into());
     assert!(res.ok, "a tab-containing filename must be accepted (matches conflict.rs::validate_path), got: {}", res.message);
 
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert!(status.staged.iter().any(|e| e.path == name), "the tab-named file should be staged");
 }
 
@@ -782,7 +782,7 @@ fn stage_lines_stages_only_the_selected_line_pair_leaving_the_other_modification
     assert!(repo.read("f.txt").contains("b2"));
     assert!(repo.read("f.txt").contains("b4"));
 
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert_eq!(status.staged.len(), 1, "line 2's change should be staged");
     assert_eq!(status.staged[0].path, "f.txt");
     assert_eq!(status.staged[0].status, "M");
@@ -819,7 +819,7 @@ fn unstage_lines_unstages_only_the_selected_line_pair_leaving_the_other_staged()
     assert!(repo.read("f.txt").contains("b2"));
     assert!(repo.read("f.txt").contains("b4"));
 
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert_eq!(status.staged.len(), 1, "line 4's change should still be staged");
     assert_eq!(status.staged[0].path, "f.txt");
     assert_eq!(status.unstaged.len(), 1, "line 2's change should be unstaged again");
@@ -853,7 +853,7 @@ fn discard_lines_discards_only_the_selected_line_pair_and_backs_up_the_whole_fil
     let indexed = repo.must(&["show", ":f.txt"]);
     assert!(indexed.contains("a2") && indexed.contains("a4"), "index should be untouched: {indexed}");
 
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert!(status.staged.is_empty());
     assert_eq!(status.unstaged.len(), 1, "line 4's surviving edit should still show as unstaged");
     assert_eq!(status.unstaged[0].path, "f.txt");
@@ -888,7 +888,7 @@ fn stage_lines_on_a_brand_new_untracked_file_stages_only_the_selected_added_line
     // The working tree copy is untouched — all four lines still present.
     assert_eq!(repo.read("new.txt"), "one\ntwo\nthree\nfour\n");
 
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert_eq!(status.staged.len(), 1);
     assert_eq!(status.staged[0].path, "new.txt");
     assert_eq!(status.staged[0].status, "A", "the file is new to HEAD, so it's still an ADD even though only partially staged");
@@ -914,7 +914,7 @@ fn stage_lines_on_a_brand_new_untracked_file_with_every_line_selected_stages_the
     let indexed = repo.must(&["show", ":new.txt"]);
     assert_eq!(indexed, "one\ntwo");
 
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert_eq!(status.staged.len(), 1);
     assert_eq!(status.staged[0].path, "new.txt");
     assert_eq!(status.staged[0].status, "A");
@@ -943,7 +943,7 @@ fn stage_lines_on_a_fully_deleted_tracked_file_can_partially_restage_as_a_modifi
     let indexed = repo.must(&["show", ":d.txt"]);
     assert_eq!(indexed, orig[2..].concat().trim_end(), "index should keep lines 3..10, only 1-2 removed");
 
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert_eq!(status.staged.len(), 1);
     assert_eq!(status.staged[0].path, "d.txt");
     assert_eq!(status.staged[0].status, "M", "a PARTIAL delete leaves the file present -> modification, not D");
@@ -975,7 +975,7 @@ fn stage_lines_refuses_the_whole_request_when_a_hunk_header_no_longer_matches() 
     );
 
     // Nothing should have been staged.
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert!(status.staged.is_empty(), "a refused request must not partially apply");
 }
 
@@ -1063,7 +1063,7 @@ fn stage_lines_refuses_a_partial_selection_of_a_final_no_trailing_newline_line()
 
     // Nothing was touched — no corruption, no partial stage.
     assert_eq!(repo.read("f.txt"), "a1\na2\na3-changed");
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert!(status.staged.is_empty(), "refused request must not have staged anything");
 }
 
@@ -1100,7 +1100,7 @@ fn unstage_lines_can_partially_unstage_a_fully_staged_new_file() {
     // The working tree is untouched by unstage — all four lines remain.
     assert_eq!(repo.read("new.txt"), "n1\nn2\nn3\nn4\n");
 
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert_eq!(status.staged.len(), 1, "n1/n3 should still be staged as (a smaller) new file");
     assert_eq!(status.staged[0].path, "new.txt");
     assert_eq!(status.unstaged.len(), 1, "n2/n4 should now show as unstaged additions");
@@ -1129,7 +1129,7 @@ fn unstage_lines_on_a_renamed_and_modified_file_preserves_the_rename() {
     repo.must(&["add", "-A"]);
 
     // Confirm the setup is really a detected rename before testing anything.
-    let pre_status = workdir_status(path.clone()).unwrap();
+    let pre_status = tauri::async_runtime::block_on(workdir_status(path.clone())).unwrap();
     assert_eq!(pre_status.staged.len(), 1);
     assert_eq!(pre_status.staged[0].path, "new.txt");
     assert_eq!(pre_status.staged[0].status, "R");
@@ -1153,7 +1153,7 @@ fn unstage_lines_on_a_renamed_and_modified_file_preserves_the_rename() {
     assert!(indexed.contains("a2"), "line 2's edit should now be unstaged (back to a2 in the index):\n{indexed}");
     assert!(indexed.contains("b4"), "line 4's edit should remain staged:\n{indexed}");
 
-    let status = workdir_status(path).unwrap();
+    let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert_eq!(status.staged.len(), 1, "the (still-renamed) file should still show one staged entry");
     assert_eq!(status.staged[0].path, "new.txt");
     assert_eq!(status.staged[0].status, "R", "git's own similarity detection should still call this a rename");

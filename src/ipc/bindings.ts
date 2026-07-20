@@ -295,6 +295,16 @@ async pushTag(path: string, remote: string | null, name: string) : Promise<Remot
  * Tauri command: full working-tree/index status for the pinned "Uncommitted
  * changes" row + staging panel. Read-only (git2).
  * JS: `invoke("workdir_status", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — see `dashboard_repo_status`'s own
+ * identical fix (`dashboard.rs`) for the full writeup: a non-async
+ * `#[tauri::command]` runs inline on Tauri's MAIN thread, freezing the
+ * whole app for as long as the call takes, not just this one status read.
+ * This is called every time a repo is opened (the pinned "Uncommitted
+ * changes" row), so a WSL repo's `wsl.exe` interop launch (this function's
+ * own `crate::wsl::wsl_status` fast path) blocked the entire window on
+ * every open, not just this read. `async fn` + `run_blocking` matches
+ * `list_refs`'s own established pattern.
  */
 async workdirStatus(path: string) : Promise<Result<WorkdirStatus, string>> {
     try {
@@ -1746,6 +1756,21 @@ async trackRepoOpened(path: string) : Promise<Result<TrackedRepo[], string>> {
 },
 /**
  * JS: `commands.dashboardRepoStatus(path)`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+ * comment, that runs INLINE on Tauri's main thread, freezing the whole app
+ * (not just this row) for as long as the call takes. Sub-second for a
+ * normal repo, but the Dashboard modal calls this for EVERY tracked repo
+ * in parallel on open — a cold `wsl.exe` interop launch (`crate::wsl::
+ * wsl_status`'s WSL-aware fast path, itself a fix for a much worse
+ * libgit2 stall — see this module's own earlier doc comment) still takes
+ * real seconds, and that "parallel" `Promise.allSettled` fan-out on the
+ * frontend is cosmetic: every one of those IPC calls actually serializes
+ * on the SAME blocked main thread here, so opening the modal with even a
+ * couple of tracked WSL repos froze the entire window until all of them
+ * finished. `async fn` + `run_blocking` moves the actual work onto Tauri's
+ * blocking-task thread pool, matching `list_refs`'s own established
+ * pattern — the frontend's parallel fan-out is now genuinely parallel.
  */
 async dashboardRepoStatus(path: string) : Promise<Result<DashboardRepoStatus, string>> {
     try {
