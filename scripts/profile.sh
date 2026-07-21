@@ -31,8 +31,25 @@ for arg in "$@"; do
   esac
 done
 
-if ! command -v samply >/dev/null 2>&1; then
-  echo "error: samply isn't on PATH — install it once with:" >&2
+# `command -v` alone is fragile right after a fresh `cargo install`: Windows
+# environment-variable updates don't propagate to an already-running shell
+# (or anything IT spawns, like this script under pnpm), only to a genuinely
+# new process tree — restarting a terminal window/tab often isn't enough if
+# it's just a new tab in an already-running terminal app, since that app's
+# own cached environment is what gets inherited either way. Rather than
+# rely on the caller's PATH being fresh, fall back to the one place `cargo
+# install` (with no --root override) always puts it, on every platform.
+SAMPLY="$(command -v samply 2>/dev/null || true)"
+if [ -z "$SAMPLY" ]; then
+  for candidate in "$HOME/.cargo/bin/samply" "$HOME/.cargo/bin/samply.exe"; do
+    if [ -x "$candidate" ]; then
+      SAMPLY="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$SAMPLY" ]; then
+  echo "error: samply isn't on PATH and isn't at ~/.cargo/bin either — install it once with:" >&2
   echo "  cargo install --locked samply" >&2
   exit 1
 fi
@@ -50,6 +67,6 @@ if [ ! -f "$BIN" ]; then
   BIN="$SRC_TAURI/target/profiling/gitcat"
 fi
 
-echo "Recording with samply -a $BIN $*"
+echo "Recording with $SAMPLY -a $BIN $*"
 echo "(close the GitCat window when you're done to end the recording)" >&2
-exec samply record -a "$BIN" "$@"
+exec "$SAMPLY" record -a "$BIN" "$@"
