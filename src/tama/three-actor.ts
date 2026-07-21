@@ -303,18 +303,19 @@ class Tama3DActor implements TamaActor {
     let bodyX = breathe;
     let bodyY = 0;
     let bodyZ = -breathe * 0.5;
-    let leftShoulderZ = 0;
-    let rightShoulderZ = 0;
-    // The imported MMD bind pose is an A-pose. Start every state from arms
-    // hanging close to the body, then opt individual gestures back in.
-    let leftArmZ = -0.34;
-    let rightArmZ = 0.34;
+    // Relax the imported MMD A-pose at both joints. Moving only the upper-arm
+    // bone leaves the sleeve/shoulder flared, so a small mirrored shoulder drop
+    // is paired with a stronger upper-arm rotation toward the body.
+    let leftShoulderZ = -0.12;
+    let rightShoulderZ = 0.12;
+    let leftArmZ = -0.56;
+    let rightArmZ = 0.56;
     let leftArmX = 0;
     let rightArmX = 0;
-    // The forearms also inherit the A-pose fan-out. Fold them slightly back
-    // toward the hips so relaxed hands land beside the skirt, not outboard.
-    let leftElbowZ = -0.48;
-    let rightElbowZ = 0.48;
+    // Keep relaxed elbows almost straight. The old large mirrored bend moved
+    // the hands inward, but visibly kicked both elbows away from the torso.
+    let leftElbowZ = -0.06;
+    let rightElbowZ = 0.06;
     let leftWristX = 0;
     let rightWristX = 0;
     let leftWristY = 0;
