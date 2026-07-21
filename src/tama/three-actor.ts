@@ -283,82 +283,155 @@ class Tama3DActor implements TamaActor {
     let rightShoulderZ = 0;
     let leftArmZ = 0;
     let rightArmZ = 0;
-    let leftElbowX = 0;
-    let rightElbowX = 0;
+    let leftArmX = 0;
+    let rightArmX = 0;
     let leftElbowZ = 0;
     let rightElbowZ = 0;
+    let leftWristX = 0;
+    let rightWristX = 0;
     let leftWristY = 0;
     let rightWristY = 0;
+    let leftWristZ = 0;
+    let rightWristZ = 0;
     let lift = Math.sin(time * 1.8) * 0.004;
     let sway = 0;
 
-    if (this.state === "sleep") {
-      headX += 0.24;
-      headZ += 0.16;
-      bodyX += 0.08;
-      leftArmZ = 0.12;
-      rightArmZ = -0.12;
-      lift = -0.012;
-    } else if (this.state === "thinking") {
-      headZ -= 0.13;
-      headY += 0.12;
-      rightArmZ = 0.48;
-      rightElbowX = -0.72;
-      rightWristY = -0.2;
-    } else if (this.state === "warn") {
-      headX -= 0.08;
-      headZ += Math.sin(time * 7) * 0.035;
-      leftArmZ = -0.34;
-      rightArmZ = 0.34;
-      leftElbowX = rightElbowX = -0.28;
-    } else if (this.state === "danger") {
-      headY += Math.sin(time * 14) * 0.06;
-      leftArmZ = -(0.66 + Math.sin(time * 11) * 0.08);
-      rightArmZ = 0.66 + Math.sin(time * 11 + 1.4) * 0.08;
-      leftElbowX = rightElbowX = -0.48;
-      sway = Math.sin(time * 16) * 0.012;
-    } else if (this.state === "celebrate") {
-      leftArmZ = -(0.68 + Math.sin(time * 5) * 0.12);
-      rightArmZ = 0.68 + Math.sin(time * 5 + 1.2) * 0.12;
-      leftElbowX = rightElbowX = -0.32;
-      headZ += Math.sin(time * 3) * 0.05;
-      lift = Math.max(0, Math.sin(time * 4)) * 0.035;
-    } else if (this.state === "greeting") {
-      rightArmZ = 0.7;
-      rightElbowX = -0.58;
-      rightWristY = Math.sin(time * 6) * 0.34;
-      leftArmZ = -0.08;
-      headZ -= 0.045;
-    } else if (this.state === "rescue") {
-      rightArmZ = 0.58;
-      rightElbowX = -0.24;
-      leftArmZ = -0.16;
-      bodyZ = -0.06;
-      headZ -= 0.055;
-    } else if (this.state === "confused") {
-      headZ += 0.16 + Math.sin(time * 2.4) * 0.025;
-      leftShoulderZ = -0.13;
-      rightShoulderZ = 0.13;
-      leftArmZ = -0.28;
-      rightArmZ = 0.28;
-      leftElbowZ = -0.2;
-      rightElbowZ = 0.2;
-    } else if (this.state === "syncing") {
-      headX += 0.06;
-      leftArmZ = -0.26;
-      rightArmZ = 0.26;
-      leftElbowX = -0.42 + Math.sin(time * 5) * 0.12;
-      rightElbowX = -0.42 + Math.sin(time * 5 + Math.PI) * 0.12;
-      bodyY = Math.sin(time * 2.5) * 0.018;
-    } else if (this.state === "curious") {
-      headZ -= 0.1;
-      leftArmZ = -0.16;
-      leftElbowX = -0.32;
-    } else if (this.state === "hint") {
-      headZ -= 0.12;
-      rightArmZ = 0.38;
-      rightElbowX = -0.46;
-      rightWristY = 0.18 + Math.sin(time * 3) * 0.08;
+    // This model uses an MMD rig whose arms point diagonally down from the
+    // shoulders. Raising them therefore needs mirrored Z rotations: positive
+    // on the model's left, negative on its right. Elbows also bend visibly on
+    // Z; the old X-only bends mostly moved the forearm in depth and made the
+    // poses look unchanged (or anatomically wrong) from the front camera.
+    switch (this.state) {
+      case "idle":
+        headZ += Math.sin(time * 0.75) * 0.012;
+        break;
+      case "sleep":
+        // Bowed head and fully relaxed arms; a compact crop reads this more
+        // naturally than forcing the long MMD forearms into a fake fold.
+        headX += 0.3;
+        headZ += 0.11;
+        bodyX += 0.1;
+        leftArmZ = -0.05;
+        rightArmZ = 0.05;
+        leftWristZ = 0.08;
+        rightWristZ = -0.08;
+        lift = -0.012;
+        break;
+      case "hint":
+        // One arm presents the useful direction while the other stays open.
+        headZ -= 0.1;
+        headY += 0.08;
+        leftArmZ = 0.82;
+        leftElbowZ = -0.12;
+        leftWristZ = -0.16 + Math.sin(time * 3) * 0.05;
+        rightArmZ = -0.04;
+        break;
+      case "thinking":
+        // Right hand at the cheek, with the other arm supporting it.
+        headZ -= 0.11;
+        headY += 0.12;
+        rightArmZ = -0.64;
+        rightElbowZ = -2.08;
+        rightWristZ = -0.3;
+        leftArmZ = 0.02;
+        leftElbowZ = 3.0;
+        leftWristZ = 0.12;
+        break;
+      case "warn":
+        // A readable stop/recoil silhouette rather than two lowered arms.
+        headX -= 0.07;
+        headZ += Math.sin(time * 7) * 0.025;
+        leftArmZ = 0.38;
+        rightArmZ = -0.38;
+        leftElbowZ = 1.92;
+        rightElbowZ = -1.92;
+        leftWristX = rightWristX = -0.2;
+        bodyX -= 0.035;
+        break;
+      case "danger": {
+        // Hands up near the face plus a small panic shake.
+        const panic = Math.sin(time * 11) * 0.07;
+        headY += Math.sin(time * 14) * 0.045;
+        leftArmZ = 0.72 + panic;
+        rightArmZ = -0.72 - panic;
+        leftElbowZ = 2.14;
+        rightElbowZ = -2.14;
+        leftWristZ = 0.22;
+        rightWristZ = -0.22;
+        sway = Math.sin(time * 16) * 0.01;
+        break;
+      }
+      case "celebrate": {
+        // Both hands clearly overhead, with a buoyant bounce.
+        const cheer = Math.sin(time * 5) * 0.08;
+        leftShoulderZ = 0.08;
+        rightShoulderZ = -0.08;
+        leftArmZ = 1.38 + cheer;
+        rightArmZ = -1.38 - cheer;
+        leftElbowZ = -0.32;
+        rightElbowZ = 0.32;
+        leftWristZ = 0.12;
+        rightWristZ = -0.12;
+        headZ += Math.sin(time * 3) * 0.035;
+        lift = Math.max(0, Math.sin(time * 4)) * 0.035;
+        break;
+      }
+      case "rescue":
+        // Open, steady reach: right hand offers help, left arm balances.
+        rightArmX = -0.22;
+        rightArmZ = -0.34;
+        rightElbowZ = 0.34;
+        rightWristX = -0.24;
+        leftArmZ = 0.18;
+        leftElbowZ = -0.42;
+        bodyZ = -0.045;
+        headZ -= 0.045;
+        break;
+      case "confused":
+        // Mirrored outward forearms make an unmistakable shrug.
+        headZ += 0.15 + Math.sin(time * 2.4) * 0.02;
+        leftShoulderZ = -0.08;
+        rightShoulderZ = 0.08;
+        leftArmZ = 0.18;
+        rightArmZ = -0.18;
+        leftElbowZ = 0.72;
+        rightElbowZ = -0.72;
+        leftWristZ = -0.2;
+        rightWristZ = 0.2;
+        break;
+      case "curious":
+        // A gentle full-body lean; relaxed arms keep it distinct from the
+        // hand-to-face thinking pose.
+        headZ -= 0.12;
+        headY -= 0.05;
+        leftArmX = 0.12;
+        rightArmX = -0.08;
+        leftArmZ = -0.04;
+        rightArmZ = 0.04;
+        bodyZ = 0.018;
+        break;
+      case "syncing": {
+        // Alternating compact "working" motions in front of the torso.
+        const work = Math.sin(time * 5) * 0.1;
+        headX += 0.055;
+        leftArmZ = 0.08;
+        rightArmZ = -0.08;
+        leftElbowZ = 2.95 + work;
+        rightElbowZ = -2.95 + work;
+        leftWristY = work * 0.7;
+        rightWristY = -work * 0.7;
+        bodyY = Math.sin(time * 2.5) * 0.018;
+        break;
+      }
+      case "greeting":
+        // Right forearm upright and wrist waving side-to-side.
+        rightArmZ = -0.9;
+        rightElbowZ = -2.02;
+        rightWristZ = -0.18 + Math.sin(time * 6) * 0.24;
+        rightWristY = Math.sin(time * 6) * 0.12;
+        leftArmZ = 0.04;
+        headZ -= 0.045;
+        break;
     }
 
     const gestureAge = performance.now() - this.gestureStarted;
@@ -375,12 +448,12 @@ class Tama3DActor implements TamaActor {
     apply(this.rig.upperBody, bodyX, bodyY, bodyZ);
     apply(this.rig.leftShoulder, 0, 0, leftShoulderZ);
     apply(this.rig.rightShoulder, 0, 0, rightShoulderZ);
-    apply(this.rig.leftArm, 0, 0, leftArmZ);
-    apply(this.rig.rightArm, 0, 0, rightArmZ);
-    apply(this.rig.leftElbow, leftElbowX, 0, leftElbowZ);
-    apply(this.rig.rightElbow, rightElbowX, 0, rightElbowZ);
-    apply(this.rig.leftWrist, 0, leftWristY, 0);
-    apply(this.rig.rightWrist, 0, rightWristY, 0);
+    apply(this.rig.leftArm, leftArmX, 0, leftArmZ);
+    apply(this.rig.rightArm, rightArmX, 0, rightArmZ);
+    apply(this.rig.leftElbow, 0, 0, leftElbowZ);
+    apply(this.rig.rightElbow, 0, 0, rightElbowZ);
+    apply(this.rig.leftWrist, leftWristX, leftWristY, leftWristZ);
+    apply(this.rig.rightWrist, rightWristX, rightWristY, rightWristZ);
     apply(this.rig.tail, 0, Math.sin(time * 2.4) * 0.14, Math.sin(time * 1.7) * 0.06);
     if (this.model) {
       this.model.position.x = THREE.MathUtils.lerp(this.model.position.x, this.baseModelPosition.x + sway, smooth);
