@@ -321,10 +321,6 @@ fn submodule_status_inner(path: &str) -> Result<Vec<SubmoduleInfo>, git2::Error>
         let status = match check_submodule_safe_for_status(&sm, &sm_path, &mut visited) {
             Err(_reason) => "unreadable".to_string(),
             Ok(()) => {
-                // submodule_status() wants the registered name, not the path
-                // (they're usually equal, but name is the documented lookup
-                // key).
-                let bits = repo.submodule_status(&name, SubmoduleIgnore::None)?;
                 // Checked BEFORE the bit-derived classification: a merge-conflicted
                 // gitlink entry doesn't reliably set any `SubmoduleStatus` bit (see
                 // the module doc comment), so every bit-derived arm would otherwise
@@ -332,7 +328,36 @@ fn submodule_status_inner(path: &str) -> Result<Vec<SubmoduleInfo>, git2::Error>
                 // at this exact path.
                 if submodule_conflicted(&repo, &sm_path)? {
                     "conflicted".to_string()
+                } else if crate::wsl::wsl_target(path).is_some() {
+                    // BUG FIX: `repo.submodule_status()` below does an
+                    // index-vs-workdir diff of the SUBMODULE's own checked-out
+                    // tree — the exact same class of libgit2-over-the-9P-bridge
+                    // stall (a Linux symlink inside that working tree,
+                    // reached via `\\wsl.localhost\...`) already fixed for the
+                    // top-level repo's own status scan (see `wsl_status`'s own
+                    // doc comment: 185+ SECONDS, confirmed against a real
+                    // repo) — but this call site never checked for a WSL path
+                    // at all, and fires unconditionally on every repo open via
+                    // the sidebar's `refreshSubmodules()`, which `openRepo`
+                    // awaits directly. Reconstructed from cheaper signals
+                    // instead: `head_sha`/`workdir_sha` (already read above,
+                    // a plain OID comparison, no workdir walk) covers
+                    // not-initialized/out-of-date; `wsl_status()` on the
+                    // submodule's OWN absolute path (its working tree is just
+                    // another ordinary git working tree, so the exact same
+                    // git-CLI-inside-the-distro fast path applies verbatim)
+                    // covers dirty/clean. Does NOT replicate `INDEX_DELETED`
+                    // ("removed" — the SUPERPROJECT's own index dropping this
+                    // gitlink entry, unrelated to the submodule's own working
+                    // tree) — an accepted, rare edge case against the
+                    // alternative of an indefinite hang on every affected
+                    // WSL repo's every open.
+                    classify_status_wsl(&absolute_path, head_sha.as_deref(), workdir_sha.as_deref())
                 } else {
+                    // submodule_status() wants the registered name, not the
+                    // path (they're usually equal, but name is the documented
+                    // lookup key).
+                    let bits = repo.submodule_status(&name, SubmoduleIgnore::None)?;
                     classify_status(bits)
                 }
             }
@@ -411,6 +436,35 @@ fn classify_status(bits: git2::SubmoduleStatus) -> String {
         "dirty".to_string()
     } else {
         "clean".to_string()
+    }
+}
+
+/// WSL-safe replacement for `classify_status(repo.submodule_status(...))` —
+/// used only when the submodule's own absolute path lives on a WSL UNC
+/// mount, see `submodule_status_inner`'s own call-site comment for the full
+/// rationale. Deliberately doesn't call `repo.submodule_status()` at all;
+/// `head_sha`/`workdir_sha` are the same plain OID reads
+/// `submodule_status_inner` already computes for every submodule regardless
+/// (`sm.head_id()`/`sm.workdir_id()` — no workdir walk), and `wsl_status`
+/// works against ANY absolute path, not just a top-level repo's own — a
+/// submodule's checked-out tree is just another ordinary git working tree.
+fn classify_status_wsl(absolute_path: &str, head_sha: Option<&str>, workdir_sha: Option<&str>) -> String {
+    if workdir_sha.is_none() {
+        return "not-initialized".to_string();
+    }
+    if workdir_sha != head_sha {
+        return "out-of-date".to_string();
+    }
+    match crate::wsl::wsl_status(absolute_path) {
+        Some(Ok(entries)) if !entries.is_empty() => "dirty".to_string(),
+        // Both a clean scan (Some(Ok(empty))) and a scan that itself failed
+        // (Some(Err)/None, e.g. a transient wsl.exe interop hiccup) fall back
+        // to "clean" here — a submodule-internal status-scan failure must
+        // not propagate an error that would blank out every OTHER
+        // submodule's otherwise-successfully-computed status in the same
+        // listing (this function's own return type has no error case to
+        // surface one through anyway).
+        _ => "clean".to_string(),
     }
 }
 
@@ -1903,6 +1957,40 @@ fn check_safe_to_recurse(
             "{full_path}'s repository path could not be resolved ({e}) — refusing to recurse into it in case of a \
              cyclic submodule reference"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // classify_status_wsl's not-initialized/out-of-date branches are pure
+    // OID comparisons (no I/O at all) — fully testable without a real WSL
+    // environment. Its "dirty" branch depends on `wsl_status()` actually
+    // running `git status` inside a real distro, which isn't reproducible
+    // in a unit test; a non-WSL-formatted `absolute_path` here makes
+    // `wsl_status()` itself return `None` (see its own doc comment — "None
+    // when path isn't a WSL path at all"), exercising this function's
+    // graceful fallback-to-clean for that case instead, which is exactly
+    // the same code path a real `wsl.exe` hiccup (a transient interop
+    // failure) would also take.
+    #[test]
+    fn classify_status_wsl_reports_not_initialized_when_never_cloned() {
+        assert_eq!(classify_status_wsl("/any/path", None, None), "not-initialized");
+        assert_eq!(classify_status_wsl("/any/path", Some("abc123"), None), "not-initialized");
+    }
+
+    #[test]
+    fn classify_status_wsl_reports_out_of_date_when_workdir_and_head_diverge() {
+        assert_eq!(classify_status_wsl("/any/path", Some("abc123"), Some("def456")), "out-of-date");
+    }
+
+    #[test]
+    fn classify_status_wsl_falls_back_to_clean_when_oids_match_and_the_path_is_not_actually_wsl() {
+        // Same OID both places (not out-of-date, not uninitialized) — falls
+        // through to the wsl_status() call, which returns None for a
+        // non-WSL-formatted path, landing on the graceful "clean" fallback.
+        assert_eq!(classify_status_wsl("/any/path", Some("abc123"), Some("abc123")), "clean");
     }
 }
 
