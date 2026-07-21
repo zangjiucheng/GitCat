@@ -34,3 +34,14 @@ notify-debouncer-mini = "0.7.0"
 portable-pty = "0.9"
 base64 = "0.22"
 
+# Dev-only profiling/inspection (see run()'s own doc comment in lib.rs for
+# the full rationale) — compiled in unconditionally like any other
+# dependency, but only ever INITIALIZED behind #[cfg(debug_assertions)], so
+# neither opens its diagnostic port nor adds tracing overhead in a release
+# build. `tokio`'s "tracing" feature is what actually lets console-subscriber
+# see task events at all — tauri's own async_runtime already runs on a real
+# tokio::runtime::Runtime, so this unifies with (not duplicates) that.
+tauri-plugin-devtools = "2.1.0"
+console-subscriber = "0.5"
+tokio = { version = "1", features = ["tracing"] }
+

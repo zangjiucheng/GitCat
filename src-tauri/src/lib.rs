@@ -313,7 +313,46 @@ pub fn run() {
             .header("// @ts-nocheck\n"), "../src/ipc/bindings.ts")
         .expect("failed to export typescript bindings");
 
-    tauri::Builder::default()
+    // `mut` is only ever reassigned inside the debug_assertions block below —
+    // genuinely unused in a release build, where that block doesn't compile
+    // at all. #[allow] rather than restructuring around it: the alternative
+    // (two full separate builder chains) would duplicate every `.plugin()`/
+    // `.manage()` call below across both branches for one conditional line.
+    #[allow(unused_mut)]
+    let mut app_builder = tauri::Builder::default();
+    // Dev-only profiling/inspection, never shipped in a release build. Pick
+    // EXACTLY ONE of the two, never both: both tauri-plugin-devtools and
+    // console-subscriber (tokio-console) try to install the process-global
+    // tracing dispatcher, and only one can ever win — confirmed via a real
+    // crash ("a global default trace dispatcher has already been set") when
+    // both ran; tauri-plugin-devtools's own init()/try_init() doc comment
+    // says outright it "will panic ... if another library has already
+    // initialized a global tracing subscriber". Both also open an
+    // unauthenticated local diagnostic port and add real per-task tracing
+    // overhead, hence #[cfg(debug_assertions)] gating either from ever
+    // running in a release build at all.
+    //
+    //   - default (no env var): tauri-plugin-devtools (CrabNebula) — a GUI
+    //     inspector, viewed via the separate CrabNebula DevTools desktop app.
+    //   - GITCAT_TOKIO_CONSOLE=1: console-subscriber (tokio-console) — a raw
+    //     async-task inspector for everything routed through
+    //     tauri::async_runtime (confirmed backed by a real
+    //     tokio::runtime::Runtime, so this sees genuine task data, including
+    //     every run_blocking/spawn_blocking call), viewed via the separate
+    //     `tokio-console` CLI (`cargo install tokio-console`), connecting to
+    //     the default 127.0.0.1:6669 gRPC endpoint. Requires building with
+    //     `RUSTFLAGS="--cfg tokio_unstable"` (see .cargo/config.toml) or this
+    //     subscriber sees no task events at all.
+    #[cfg(debug_assertions)]
+    {
+        if std::env::var_os("GITCAT_TOKIO_CONSOLE").is_some() {
+            console_subscriber::init();
+        } else {
+            app_builder = app_builder.plugin(tauri_plugin_devtools::init());
+        }
+    }
+
+    app_builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         // Updater: checks the GitHub Release matching this build's `latest.json`
