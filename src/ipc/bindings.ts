@@ -48,6 +48,13 @@ async loadGraph(path: string, requestId: number) : Promise<Result<null, string>>
  * Tauri command: return the full message + real changed-file tree + diff hunks
  * for a single commit. Diffs the commit tree against its FIRST parent (empty
  * tree for a root commit; first parent for a merge). Read-only.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s doc comment,
+ * that runs INLINE on Tauri's main thread. This opens the repo, diffs two
+ * trees, and can generate patches + line-by-line hunks for dozens of files,
+ * so clicking a commit with a large diff froze the whole window (not just
+ * the detail panel) until the diff finished. `async fn` + `run_blocking`
+ * moves the work onto Tauri's blocking-task thread pool instead.
  */
 async commitDetail(path: string, sha: string) : Promise<Result<CommitDetail, string>> {
     try {
@@ -84,6 +91,13 @@ async commitDetail(path: string, sha: string) : Promise<Result<CommitDetail, str
  * ancestors stop being recognized as ancestors", not a hang.
  * 
  * JS: `commands.ancestorsOf(path, sha)`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s doc comment,
+ * that runs INLINE on Tauri's main thread. This opens the repo and walks
+ * the full ancestor chain from `sha` (up to `MAX_LIVE_COMMITS`), so on a
+ * repo with a long history starting a drag froze the entire window, not
+ * just the drag gesture, until the walk finished. `async fn` + `run_blocking`
+ * moves the walk onto Tauri's blocking-task thread pool instead.
  */
 async ancestorsOf(path: string, sha: string) : Promise<Result<string[], string>> {
     try {
@@ -100,6 +114,19 @@ async ancestorsOf(path: string, sha: string) : Promise<Result<string[], string>>
 async getAppInfo() : Promise<AppInfo> {
     return await TAURI_INVOKE("get_app_info");
 },
+/**
+ * Tauri command: pin the current HEAD under a fresh backup ref before a
+ * mutation. JS: `invoke("create_snapshot", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it opens the repo (`crate::trust::
+ * open_repo`, whose WSL/UNC auto-trust retry can itself shell out) and then
+ * creates a ref and re-walks every `refs/gitgui/backup/*` ref via git2, all
+ * inline on Tauri's main thread. This runs before EVERY mutating command in
+ * the app, so any slowness here (a cold WSL trust probe, a repo with many
+ * prior snapshots) froze the whole window right before the user's action
+ * even started. `async fn` + `run_blocking` moves it onto Tauri's
+ * blocking-task thread pool, matching `workdir_status`'s established fix.
+ */
 async createSnapshot(path: string) : Promise<Result<Snapshot, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("create_snapshot", { path }) };
@@ -108,6 +135,17 @@ async createSnapshot(path: string) : Promise<Result<Snapshot, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: list every backup snapshot, newest first, for the Snapshot
+ * ribbon. JS: `invoke("list_snapshots", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it opens the repo and walks
+ * `refs/gitgui/backup/*` via git2, peeling each ref to a commit for its
+ * sha/subject. Cheap for a small ref set but still inline on Tauri's main
+ * thread, and the auto-trust open alone can stall on a WSL/UNC path — same
+ * class of freeze as `dashboard_repo_status`. `async fn` + `run_blocking`
+ * moves the read onto Tauri's blocking-task thread pool.
+ */
 async listSnapshots(path: string) : Promise<Result<Snapshot[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_snapshots", { path }) };
@@ -116,6 +154,19 @@ async listSnapshots(path: string) : Promise<Result<Snapshot[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: global Undo (⌘Z) — rewind HEAD/current branch to the
+ * newest snapshot. JS: `invoke("undo_last", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — `undo()` opens the repo via git2
+ * AND shells out to the real `git` binary repeatedly (`status --porcelain`,
+ * `update-ref` per branch, `symbolic-ref`, and a `reset --hard` that
+ * rewrites the whole working tree), waiting on every subprocess inline on
+ * Tauri's main thread. `reset --hard` alone scales with repo/working-tree
+ * size, so this was one of the worst possible commands to run on the UI
+ * thread. `async fn` + `run_blocking` moves the entire sequence onto
+ * Tauri's blocking-task thread pool.
+ */
 async undoLast(path: string) : Promise<Result<UndoResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("undo_last", { path }) };
@@ -245,6 +296,14 @@ async renameBranch(path: string, from: string, to: string) : Promise<WriteResult
  * lightweight (`git tag <name> [<target>]`). No snapshot — see module doc
  * comment for why creating a tag needs none.
  * JS call: `invoke("create_tag", { path, name, target?, message? })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — its body shells out to a real
+ * `git tag` subprocess via [`run_git`] and blocks the calling thread until
+ * that process exits. As a plain `#[tauri::command]` this ran inline on
+ * Tauri's main thread, freezing the entire app window (not just the tag
+ * dialog) for as long as the subprocess took. `async fn` + `run_blocking`
+ * moves that wait onto Tauri's blocking-task thread pool, matching
+ * `workdir.rs`'s `stage_file` fix for the identical shape of bug.
  */
 async createTag(path: string, name: string, target: string | null, message: string | null) : Promise<WriteResult> {
     return await TAURI_INVOKE("create_tag", { path, name, target, message });
@@ -256,6 +315,14 @@ async createTag(path: string, name: string, target: string | null, message: stri
  * success message names the pinned ref directly and is explicit that
  * recovery is NOT via the global Undo (⌘Z) button.
  * JS call: `invoke("delete_tag", { path, name })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it opens the repo and reads/writes
+ * refs through git2 (`find_reference`, `pin_deleted_tag`'s `repo.reference`)
+ * AND shells out to a `git tag -d` subprocess via [`run_git`], all inline on
+ * Tauri's main thread. Every one of those steps blocked the whole app
+ * window for as long as it took, not just this delete. `async fn` +
+ * `run_blocking` moves the entire body onto Tauri's blocking-task thread
+ * pool, matching `dashboard_repo_status`/`workdir_status`'s established fix.
  */
 async deleteTag(path: string, name: string) : Promise<WriteResult> {
     return await TAURI_INVOKE("delete_tag", { path, name });
@@ -287,6 +354,13 @@ async deleteTag(path: string, name: string) : Promise<WriteResult> {
  * (`:refs/tags/<name>`) so the remote-side ref this creates/updates is
  * never left for git to infer either.
  * JS call: `invoke("push_tag", { path, remote?, name })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+ * comment, that runs INLINE on Tauri's main thread. It shells out to
+ * `git push` over the network (no git2 involved at all, but that doesn't
+ * matter — `Command::new`/subprocess waits block just as hard as libgit2
+ * calls), so any latency talking to the remote froze the whole window.
+ * `async fn` + `run_blocking` moves it onto Tauri's blocking-task thread pool.
  */
 async pushTag(path: string, remote: string | null, name: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("push_tag", { path, remote, name });
@@ -319,6 +393,14 @@ async workdirStatus(path: string) : Promise<Result<WorkdirStatus, string>> {
  * vs HEAD) or the unstaged side (workdir vs index). Reuses `model::FileChange`
  * verbatim so the frontend's diff viewer can share `Detail.svelte`'s markup.
  * JS: `invoke("workdir_file_diff", { path, file, staged })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — see `workdir_status`'s identical
+ * fix for the full writeup. This opens the repo and builds a whole-tree
+ * git2 diff (optionally widened to untracked content) just to pull one
+ * file's hunks out of it, so it ran inline on Tauri's main thread and froze
+ * the entire window for as long as that diff took, every time a file was
+ * selected in the staging panel. `async fn` + `run_blocking` moves it onto
+ * Tauri's blocking-task thread pool.
  */
 async workdirFileDiff(path: string, file: string, staged: boolean) : Promise<Result<FileChange, string>> {
     try {
@@ -331,6 +413,12 @@ async workdirFileDiff(path: string, file: string, staged: boolean) : Promise<Res
 /**
  * Stage one file's full state (new/modified/deleted) with a single explicit
  * pathspec. JS: `invoke("stage_file", { path, file })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it shells out to `git add` and
+ * blocks on it inline on Tauri's main thread, freezing the whole window for
+ * as long as that subprocess takes (same class of stall `workdir_status`
+ * was fixed for). `async fn` + `run_blocking` moves the wait onto Tauri's
+ * blocking-task thread pool.
  */
 async stageFile(path: string, file: string) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("stage_file", { path, file });
@@ -338,6 +426,11 @@ async stageFile(path: string, file: string) : Promise<WorkdirResult> {
 /**
  * Unstage one file (`git restore --staged`), leaving the working tree as-is.
  * JS: `invoke("unstage_file", { path, file })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — same as `stage_file` above, it
+ * shells out to `git restore` and blocked Tauri's main thread on that
+ * subprocess for as long as it ran. `async fn` + `run_blocking` moves the
+ * wait onto Tauri's blocking-task thread pool.
  */
 async unstageFile(path: string, file: string) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("unstage_file", { path, file });
@@ -345,6 +438,12 @@ async unstageFile(path: string, file: string) : Promise<WorkdirResult> {
 /**
  * Stage every unstaged/untracked path (`git add -A`).
  * JS: `invoke("stage_all", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — shells out to `git add -A` over
+ * the WHOLE working tree and blocks on it inline on Tauri's main thread, so
+ * a large repo's add froze the entire window, not just the staging panel.
+ * `async fn` + `run_blocking` moves the wait onto Tauri's blocking-task
+ * thread pool.
  */
 async stageAll(path: string) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("stage_all", { path });
@@ -363,6 +462,14 @@ async stageAll(path: string) : Promise<WorkdirResult> {
  * typed-confirm gate before this is ever invoked — this command itself does
  * not prompt.
  * JS: `invoke("discard_file", { path, file, untracked })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it opens the repo and reads it via
+ * git2 (rename detection, a full patch build for the backup) AND shells out
+ * to `git restore`/`git clean`, all inline on Tauri's main thread. Being
+ * destructive, this also has to finish its content backup before it ever
+ * touches the working tree, which only makes the blocking window longer.
+ * `async fn` + `run_blocking` moves the whole body onto Tauri's
+ * blocking-task thread pool, matching `workdir_status`'s own fix.
  */
 async discardFile(path: string, file: string, untracked: boolean) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("discard_file", { path, file, untracked });
@@ -370,6 +477,12 @@ async discardFile(path: string, file: string, untracked: boolean) : Promise<Work
 /**
  * Stage only the selected `+`/`-` lines (whole hunks or a subset) out of a
  * file's CURRENT unstaged diff. JS: `invoke("stage_lines", { path, file, hunks })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — `apply_selected_lines` opens the
+ * repo, re-reads a fresh git2 diff to validate the request, and shells out
+ * to `git apply`, all inline on Tauri's main thread. `async fn` +
+ * `run_blocking` moves it onto Tauri's blocking-task thread pool, matching
+ * `workdir_status`'s own fix.
  */
 async stageLines(path: string, file: string, hunks: HunkSelection[]) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("stage_lines", { path, file, hunks });
@@ -377,6 +490,11 @@ async stageLines(path: string, file: string, hunks: HunkSelection[]) : Promise<W
 /**
  * Unstage only the selected `+`/`-` lines out of a file's CURRENT staged
  * diff (HEAD vs index). JS: `invoke("unstage_lines", { path, file, hunks })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — same underlying `apply_selected_lines`
+ * call as `stage_lines` above (fresh git2 diff read + a `git apply`
+ * subprocess), so it carried the identical main-thread stall. `async fn` +
+ * `run_blocking` moves it onto Tauri's blocking-task thread pool.
  */
 async unstageLines(path: string, file: string, hunks: HunkSelection[]) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("unstage_lines", { path, file, hunks });
@@ -387,6 +505,12 @@ async unstageLines(path: string, file: string, hunks: HunkSelection[]) : Promise
  * discipline as `discard_file`. The caller (frontend controller) is
  * responsible for a typed-confirm gate before this is ever invoked, exactly
  * like `discard_file`. JS: `invoke("discard_lines", { path, file, hunks })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — same underlying `apply_selected_lines`
+ * call as `stage_lines`/`unstage_lines`, plus a content backup before the
+ * `git apply -R`, so it blocked Tauri's main thread for even longer than
+ * those two. `async fn` + `run_blocking` moves it onto Tauri's blocking-task
+ * thread pool.
  */
 async discardLines(path: string, file: string, hunks: HunkSelection[]) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("discard_lines", { path, file, hunks });
@@ -400,6 +524,14 @@ async discardLines(path: string, file: string, hunks: HunkSelection[]) : Promise
  * Otherwise -> `-m <message>`. Nothing preemptively re-checks "is anything
  * staged" — a refusal ("nothing to commit") surfaces verbatim from git.
  * JS: `invoke("commit", { path, message, amend })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it opens the repo via git2 to
+ * take the pre-commit safety snapshot, then shells out to `git commit` and
+ * waits for it (needed for `commit.gpgsign`, see module doc comment), so a
+ * slow commit hook or a GPG signing prompt blocked the ENTIRE window, not
+ * just the commit panel. `async fn` + `run_blocking` moves the whole body
+ * onto Tauri's blocking-task thread pool, matching `workdir_status`'s own
+ * fix.
  */
 async commit(path: string, message: string | null, amend: boolean | null) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("commit", { path, message, amend });
@@ -408,6 +540,13 @@ async commit(path: string, message: string | null, amend: boolean | null) : Prom
  * Tauri command: list stash entries, newest first, via
  * `git stash list --format=%gd\x01%H\x01%gs` (libgit2 has no stash API).
  * JS: `invoke("stash_list", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it shells out to a real `git`
+ * subprocess and blocks waiting for it to exit, which ran that wait inline
+ * on Tauri's main thread and froze the whole window for as long as the
+ * subprocess took (worse on a WSL/UNC-bridged repo, same class of stall as
+ * `workdir_status`'s own fix). `async fn` + `run_blocking` moves the wait
+ * onto Tauri's blocking-task thread pool.
  */
 async stashList(path: string) : Promise<Result<StashEntry[], string>> {
     try {
@@ -420,6 +559,12 @@ async stashList(path: string) : Promise<Result<StashEntry[], string>> {
 /**
  * `git stash push [-u] [-m <message>]`. Snapshots FIRST.
  * JS: `invoke("stash_save", { path, message, includeUntracked })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — opens the repo via git2 for the
+ * pre-stash safety snapshot, then shells out to `git stash push` and waits
+ * for it, both inline on Tauri's main thread. `async fn` + `run_blocking`
+ * moves the whole body onto Tauri's blocking-task thread pool, matching
+ * `workdir_status`'s own fix.
  */
 async stashSave(path: string, message: string | null, includeUntracked: boolean | null) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("stash_save", { path, message, includeUntracked });
@@ -432,6 +577,13 @@ async stashSave(path: string, message: string | null, includeUntracked: boolean 
  * acting on a different entry if the stash list changed since (e.g. an
  * external `git stash` command). JS: `invoke("stash_apply", { path, index,
  * expectedSha })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — its `apply_or_pop` helper opens
+ * the repo, takes a git2 safety snapshot, and shells out to `git stash
+ * apply`/`pop`, all inline on Tauri's main thread; a conflicted apply also
+ * re-reads unmerged paths via another subprocess before returning. `async
+ * fn` + `run_blocking` moves it onto Tauri's blocking-task thread pool,
+ * matching `workdir_status`'s own fix.
  */
 async stashApply(path: string, index: number, expectedSha: string | null) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("stash_apply", { path, index, expectedSha });
@@ -440,6 +592,11 @@ async stashApply(path: string, index: number, expectedSha: string | null) : Prom
  * `git stash pop stash@{index}`. On a conflict, git leaves the stash entry in
  * place (only a clean pop drops it). `expected_sha`: see [`stash_apply`].
  * JS: `invoke("stash_pop", { path, index, expectedSha })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — same shared `apply_or_pop` body as
+ * `stash_apply` above (git2 snapshot + a `git stash pop` subprocess), so it
+ * carried the identical main-thread stall. `async fn` + `run_blocking`
+ * moves it onto Tauri's blocking-task thread pool.
  */
 async stashPop(path: string, index: number, expectedSha: string | null) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("stash_pop", { path, index, expectedSha });
@@ -454,6 +611,12 @@ async stashPop(path: string, index: number, expectedSha: string | null) : Promis
  * that pin honestly in `dropped_stash_ref`/`message` instead of implying
  * the generic Undo button restores it. `expected_sha`: see [`stash_apply`].
  * JS: `invoke("stash_drop", { path, index, expectedSha })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — opens the repo via git2 for the
+ * pre-drop safety snapshot and the dropped-stash pin (`repo.reference`),
+ * then shells out to `git stash drop`, all inline on Tauri's main thread.
+ * `async fn` + `run_blocking` moves the whole body onto Tauri's
+ * blocking-task thread pool, matching `workdir_status`'s own fix.
  */
 async stashDrop(path: string, index: number, expectedSha: string | null) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("stash_drop", { path, index, expectedSha });
@@ -479,6 +642,12 @@ async stashDrop(path: string, index: number, expectedSha: string | null) : Promi
  * — that is `stash_conflict_abort`/`stash_conflict_continue`'s job (a stash
  * conflict is never a "just re-stash it" situation).
  * JS: `invoke("stash_undo_apply", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — opens the repo via git2 for the
+ * pre-undo safety snapshot and shells out to `git status`/`git stash push`,
+ * both waited on inline on Tauri's main thread. `async fn` + `run_blocking`
+ * moves the whole body onto Tauri's blocking-task thread pool, matching
+ * `workdir_status`'s own fix.
  */
 async stashUndoApply(path: string) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("stash_undo_apply", { path });
@@ -500,6 +669,12 @@ async stashUndoApply(path: string) : Promise<WorkdirResult> {
  * an op that (unlike merge/rebase) is explicitly designed to run on top of a
  * dirty tree.
  * JS: `invoke("stash_conflict_abort", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — opens the repo via git2 and then
+ * shells out to `git rev-parse`/`git reset --hard`, both waited on inline
+ * on Tauri's main thread. `async fn` + `run_blocking` moves the whole body
+ * onto Tauri's blocking-task thread pool, matching `workdir_status`'s own
+ * fix.
  */
 async stashConflictAbort(path: string) : Promise<StashResolveResult> {
     return await TAURI_INVOKE("stash_conflict_abort", { path });
@@ -518,6 +693,12 @@ async stashConflictAbort(path: string) : Promise<StashResolveResult> {
  * the conflict) rather than blindly dropping whatever now sits at that
  * index.
  * JS: `invoke("stash_conflict_continue", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — opens the repo via git2 and then
+ * shells out repeatedly (`unmerged_files`'s `git diff`, `current_stash_sha`'s
+ * `git rev-parse`, `git stash drop`), all waited on inline on Tauri's main
+ * thread. `async fn` + `run_blocking` moves the whole body onto Tauri's
+ * blocking-task thread pool, matching `workdir_status`'s own fix.
  */
 async stashConflictContinue(path: string) : Promise<StashResolveResult> {
     return await TAURI_INVOKE("stash_conflict_continue", { path });
@@ -527,6 +708,14 @@ async stashConflictContinue(path: string) : Promise<StashResolveResult> {
  * omitted, it fetches every configured remote (`--all`). Always `--prune`s
  * stale remote-tracking branches that no longer exist on the remote.
  * JS call: `invoke("fetch", { path, remote? })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+ * comment, that runs INLINE on Tauri's main thread. This one shells out to
+ * `git fetch`, a real network call that can take anywhere from under a
+ * second to minutes depending on the remote and how much history changed,
+ * so the whole app window (redraws, every other command's IPC) froze for
+ * the entire fetch. `async fn` + `run_blocking` moves it onto Tauri's
+ * blocking-task thread pool.
  */
 async fetch(path: string, remote: string | null) : Promise<RemoteResult> {
     return await TAURI_INVOKE("fetch", { path, remote });
@@ -536,6 +725,13 @@ async fetch(path: string, remote: string | null) : Promise<RemoteResult> {
  * Refuses (git's own message) rather than merging/rebasing on divergence —
  * see module doc for why.
  * JS call: `invoke("pull", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+ * comment, that runs INLINE on Tauri's main thread. `open_repo`/
+ * `take_snapshot` are git2 calls and `git pull --ff-only` is a real network
+ * fetch-then-merge, so together this could block the whole window for
+ * however long the remote takes to answer. `async fn` + `run_blocking`
+ * moves the whole body onto Tauri's blocking-task thread pool.
  */
 async pull(path: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("pull", { path });
@@ -550,6 +746,13 @@ async pull(path: string) : Promise<RemoteResult> {
  * included). Pure read (git2 only): no mutation, no snapshot — nothing here
  * can leave the repo in a different state.
  * JS call: `invoke("current_upstream", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+ * comment, that runs INLINE on Tauri's main thread. It's a pure read with no
+ * network involved, but `trust::open_repo`/`find_branch` still go through
+ * git2 and, for a WSL/UNC path, can stall on the filesystem bridge exactly
+ * like the already-fixed `dashboard_repo_status`/`workdir_status` reads did.
+ * `async fn` + `run_blocking` keeps it off the main thread regardless.
  */
 async currentUpstream(path: string) : Promise<Result<string | null, string>> {
     try {
@@ -583,6 +786,13 @@ async currentUpstream(path: string) : Promise<Result<string | null, string>> {
  * to — there being nothing to reset to is treated the same as `pull`
  * finding nothing to fast-forward.
  * JS call: `invoke("reset_branch_to_upstream", { path, branch })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+ * comment, that runs INLINE on Tauri's main thread. It opens the repo and
+ * snapshots via git2, then shells out to `git reset --hard`/`git branch -f`,
+ * which for a large working tree or a WSL/UNC path can take real time to
+ * touch every file. `async fn` + `run_blocking` moves the whole body onto
+ * Tauri's blocking-task thread pool so it can't freeze the window.
  */
 async resetBranchToUpstream(path: string, branch: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("reset_branch_to_upstream", { path, branch });
@@ -592,6 +802,13 @@ async resetBranchToUpstream(path: string, branch: string) : Promise<RemoteResult
  * it has no configured upstream yet; otherwise a plain `git push`. Never
  * force-pushes — a non-fast-forward rejection surfaces git's own message.
  * JS call: `invoke("push", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+ * comment, that runs INLINE on Tauri's main thread. `git push` is a real
+ * network round-trip that can take anywhere from under a second to a long
+ * time on a slow connection or large history, freezing the entire app
+ * window for the duration. `async fn` + `run_blocking` moves the whole body
+ * onto Tauri's blocking-task thread pool.
  */
 async push(path: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("push", { path });
@@ -654,6 +871,13 @@ async push(path: string) : Promise<RemoteResult> {
  * positionals from being misread as flags, mirroring `push_tag`'s own
  * `<remote> <refspec>` shape below.
  * JS call: `invoke("force_push", { path, lease })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+ * comment, that runs INLINE on Tauri's main thread. Like plain `push`, this
+ * is a real network round-trip (`git push --force[-with-lease]`), so any
+ * latency to the remote froze the entire app window, not just the confirm
+ * dialog that triggered it. `async fn` + `run_blocking` moves the whole body
+ * onto Tauri's blocking-task thread pool.
  */
 async forcePush(path: string, lease: boolean) : Promise<RemoteResult> {
     return await TAURI_INVOKE("force_push", { path, lease });
@@ -701,6 +925,13 @@ async forcePush(path: string, lease: boolean) : Promise<RemoteResult> {
  * Never force-pushes — same "surface git's own rejection, never silently
  * force" stance as every other push variant in this module.
  * JS call: `invoke("push_branch", { path, branch, remote?, remoteBranch? })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+ * comment, that runs INLINE on Tauri's main thread. It opens the repo via
+ * git2 and then shells out to `git push` over the network, so — same as
+ * `push`/`force_push` — any latency reaching the remote froze the entire
+ * app window for the duration. `async fn` + `run_blocking` moves the whole
+ * body onto Tauri's blocking-task thread pool.
  */
 async pushBranch(path: string, branch: string, remote: string | null, remoteBranch: string | null) : Promise<RemoteResult> {
     return await TAURI_INVOKE("push_branch", { path, branch, remote, remoteBranch });
@@ -710,6 +941,14 @@ async pushBranch(path: string, branch: string, remote: string | null, remoteBran
  * any). Read-only (git2), mirrors list_refs/submodule_status's own
  * git2-for-reads + `Result<T, String>` convention.
  * JS call: `invoke("list_remotes", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s doc comment,
+ * that runs INLINE on Tauri's main thread. This opens the repository and
+ * walks its configured remotes via git2, which for a WSL/UNC-bridged repo
+ * can be the same kind of multi-second-or-worse stall `dashboard_repo_status`
+ * and `workdir_status` were already fixed for, freezing the entire app
+ * window for as long as it takes. `async fn` + `run_blocking` moves the work
+ * onto Tauri's blocking-task thread pool, matching that established pattern.
  */
 async listRemotes(path: string) : Promise<Result<RemoteEntry[], string>> {
     try {
@@ -723,6 +962,14 @@ async listRemotes(path: string) : Promise<Result<RemoteEntry[], string>> {
  * Add a new remote (`git remote add`). Refuses a duplicate name via git's
  * own error rather than a pre-check (see module doc comment for why).
  * JS call: `invoke("add_remote", { path, name, url })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it shells out to a real `git`
+ * subprocess (`Command::new("git")`) and blocks waiting for it to exit,
+ * which ran inline on Tauri's main thread and froze the entire app window
+ * for as long as that subprocess took, not just this dialog. `async fn` +
+ * `run_blocking` moves the wait onto Tauri's blocking-task thread pool,
+ * matching `workdir_status`'s own established fix for the identical class
+ * of stall.
  */
 async addRemote(path: string, name: string, url: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("add_remote", { path, name, url });
@@ -732,6 +979,12 @@ async addRemote(path: string, name: string, url: string) : Promise<RemoteResult>
  * behavior: also renames every refs/remotes/<old>/* tracking ref to
  * refs/remotes/<new>/* — nothing extra needed here for that.
  * JS call: `invoke("rename_remote", { path, oldName, newName })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — same as `add_remote` above, it
+ * shells out to `git remote rename` and blocks Tauri's main thread on that
+ * subprocess (which, for a remote with many tracking refs to rewrite, is
+ * not instant) for as long as it runs. `async fn` + `run_blocking` moves the
+ * wait onto Tauri's blocking-task thread pool.
  */
 async renameRemote(path: string, oldName: string, newName: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("rename_remote", { path, oldName, newName });
@@ -741,6 +994,12 @@ async renameRemote(path: string, oldName: string, newName: string) : Promise<Rem
  * add/edit/rename/remove; there is no separate edit_remote command since
  * editing IS changing the URL (or renaming, via rename_remote above).
  * JS call: `invoke("set_remote_url", { path, name, url })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — same as `add_remote` above, it
+ * shells out to `git remote set-url` and blocks Tauri's main thread on that
+ * subprocess for as long as it runs, freezing the whole app window rather
+ * than just this dialog. `async fn` + `run_blocking` moves the wait onto
+ * Tauri's blocking-task thread pool.
  */
 async setRemoteUrl(path: string, name: string, url: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("set_remote_url", { path, name, url });
@@ -752,6 +1011,12 @@ async setRemoteUrl(path: string, name: string, url: string) : Promise<RemoteResu
  * why there is deliberately no undo net here — the frontend MUST confirm
  * before calling this.
  * JS call: `invoke("remove_remote", { path, name })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — same as `add_remote` above, it
+ * shells out to `git remote remove` (which also has to delete every one of
+ * that remote's tracking refs) and blocks Tauri's main thread on that
+ * subprocess for as long as it runs. `async fn` + `run_blocking` moves the
+ * wait onto Tauri's blocking-task thread pool.
  */
 async removeRemote(path: string, name: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("remove_remote", { path, name });
@@ -759,6 +1024,16 @@ async removeRemote(path: string, name: string) : Promise<RemoteResult> {
 /**
  * Report the in-progress operation and the conflicted files (with all three
  * merge stages). Read-only. JS: `invoke("conflict_status", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s doc comment,
+ * that runs INLINE on Tauri's main thread. Its body opens the repo with
+ * git2, walks index conflict entries, and calls `find_blob` for every stage
+ * of every conflicted file, so on a large conflicted merge (many files
+ * and/or large blobs) this call alone can freeze the whole window; the
+ * resolver polls this on every load and after every per-file resolution, so
+ * the stall is not a one-off. `async fn` + `run_blocking` moves the git2
+ * work onto Tauri's blocking-task thread pool, matching `workdir_status`'s
+ * established pattern.
  */
 async conflictStatus(path: string) : Promise<Result<ConflictStatus, string>> {
     try {
@@ -776,6 +1051,14 @@ async conflictStatus(path: string) : Promise<Result<ConflictStatus, string>> {
  * 
  * No snapshot here — see the module doc: the enclosing op was snapshotted and
  * its `--abort` restores everything.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — its body opens the repo with git2
+ * (`ensure_resolvable_op`) and shells out to `git checkout`/`git add`/`git
+ * diff` (via `safety::run_git`), each of which forks a real subprocess and
+ * waits for it to exit. Any one of those on the main thread freezes the
+ * whole app window for as long as the checkout/add/diff takes, not just the
+ * row being resolved. `async fn` + `run_blocking` moves it off the main
+ * thread, matching `dashboard_repo_status`'s established pattern.
  */
 async resolveConflictFile(path: string, file: string, side: string) : Promise<ResolveResult> {
     return await TAURI_INVOKE("resolve_conflict_file", { path, file, side });
@@ -789,6 +1072,15 @@ async resolveConflictFile(path: string, file: string, side: string) : Promise<Re
  * text, rather than reimplementing line-alignment from scratch) and parses
  * that into structured hunks the frontend can render/edit per-region.
  * JS: `invoke("conflict_file_hunks", { path, file })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — its body opens the repo with git2,
+ * reads blobs for all three conflict stages, writes them to scratch files,
+ * and then shells out to `git merge-file` (a real subprocess it waits on) to
+ * compute the 3-way diff. That subprocess wait, plus the blob/filesystem
+ * I/O around it, ran inline on Tauri's main thread and froze the whole
+ * window for as long as it took. `async fn` + `run_blocking` moves all of it
+ * onto Tauri's blocking-task thread pool, matching this file's other fixed
+ * commands.
  */
 async conflictFileHunks(path: string, file: string) : Promise<Result<ConflictFileHunks, string>> {
     try {
@@ -808,6 +1100,14 @@ async conflictFileHunks(path: string, file: string) : Promise<Result<ConflictFil
  * 
  * No snapshot here — same reasoning as `resolve_conflict_file`: this only
  * ever runs inside an already-snapshotted, already-in-progress operation.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — its body opens the repo with git2
+ * (`ensure_resolvable_op`), writes the resolved file to the working tree,
+ * and shells out to `git add` and `git diff` (via `safety::run_git`), each
+ * spawning and waiting on a real subprocess. Running that inline on Tauri's
+ * main thread froze the whole app window for as long as those calls took.
+ * `async fn` + `run_blocking` moves it off the main thread, matching this
+ * file's other fixed commands.
  */
 async resolveConflictHunks(path: string, file: string, resolvedContent: string) : Promise<ResolveResult> {
     return await TAURI_INVOKE("resolve_conflict_hunks", { path, file, resolvedContent });
@@ -823,6 +1123,12 @@ async resolveConflictHunks(path: string, file: string, resolvedContent: string) 
  * failure.
  * 
  * JS: `invoke("cherry_pick", { path, sha, recordOrigin? })`.
+ * 
+ * Runs on Tauri's blocking-task pool, not inline: this opens the repo with
+ * git2 and then shells out to `git cherry-pick`, which for a real commit can
+ * touch every file the patch spans and run pre-commit/commit-msg hooks — a
+ * plain sync `fn` here would freeze the whole app window for however long
+ * that takes, not just the cherry-pick UI.
  */
 async cherryPick(path: string, sha: string, recordOrigin: boolean | null) : Promise<PickResult> {
     return await TAURI_INVOKE("cherry_pick", { path, sha, recordOrigin });
@@ -836,6 +1142,11 @@ async cherryPick(path: string, sha: string, recordOrigin: boolean | null) : Prom
  * remain unresolved, or `empty` if the resolution left no net change.
  * 
  * JS: `invoke("cherry_pick_continue", { path })`.
+ * 
+ * Runs on Tauri's blocking-task pool, not inline: this opens the repo with
+ * git2, snapshots it, and shells out to `git cherry-pick --continue`, which
+ * finalizes the commit and can invoke hooks — a plain sync `fn` would freeze
+ * the whole app window until that subprocess exits.
  */
 async cherryPickContinue(path: string) : Promise<PickResult> {
     return await TAURI_INVOKE("cherry_pick_continue", { path });
@@ -847,6 +1158,11 @@ async cherryPickContinue(path: string) : Promise<PickResult> {
  * the user's way out). Idempotent: "nothing in progress" is a benign success.
  * 
  * JS: `invoke("cherry_pick_abort", { path })`.
+ * 
+ * Runs on Tauri's blocking-task pool, not inline: this opens the repo with
+ * git2 and shells out to `git cherry-pick --abort`, which walks the index
+ * and working tree back to the pre-pick state — a plain sync `fn` would
+ * freeze the whole app window for the duration of that reset.
  */
 async cherryPickAbort(path: string) : Promise<PickResult> {
     return await TAURI_INVOKE("cherry_pick_abort", { path });
@@ -873,6 +1189,12 @@ async cherryPickAbort(path: string) : Promise<PickResult> {
  * a failure.
  * 
  * JS: `invoke("merge_start", { path, sha, strategy })`.
+ * 
+ * Opens the repo with git2 and, via `merge_one`, shells out to `git merge`
+ * itself — a real merge of arbitrary size (tree diffing, working-tree
+ * checkout, possibly a conflict). As a plain sync fn that ran inline on
+ * Tauri's main thread, freezing the whole window for as long as the merge
+ * took. `async fn` + `run_blocking` moves it to Tauri's blocking-task pool.
  */
 async mergeStart(path: string, sha: string, strategy: string | null) : Promise<MergeResult> {
     return await TAURI_INVOKE("merge_start", { path, sha, strategy });
@@ -886,6 +1208,12 @@ async mergeStart(path: string, sha: string, strategy: string | null) : Promise<M
  * conflicts remain unresolved.
  * 
  * JS: `invoke("merge_continue", { path })`.
+ * 
+ * Opens the repo with git2, shells out to `git rev-parse` to name the
+ * in-progress merge, then to `git merge --continue` itself — which finishes
+ * the merge and may run hooks, all real subprocess work whose cost scales
+ * with the repo/commit. As a plain sync fn this ran inline on Tauri's main
+ * thread, freezing the whole window; `async fn` + `run_blocking` fixes that.
  */
 async mergeContinue(path: string) : Promise<MergeResult> {
     return await TAURI_INVOKE("merge_continue", { path });
@@ -897,6 +1225,12 @@ async mergeContinue(path: string) : Promise<MergeResult> {
  * the user's way out). Idempotent: "nothing in progress" is a benign success.
  * 
  * JS: `invoke("merge_abort", { path })`.
+ * 
+ * Opens the repo with git2 and, via `merge_abort_impl`, shells out to
+ * `git merge --abort`, which checks out the pre-merge tree — a real
+ * checkout whose cost scales with the working tree's size. Run inline on
+ * Tauri's main thread as a plain sync fn this froze the whole window for
+ * the duration; `async fn` + `run_blocking` moves it off that thread.
  */
 async mergeAbort(path: string) : Promise<MergeResult> {
     return await TAURI_INVOKE("merge_abort", { path });
@@ -908,6 +1242,13 @@ async mergeAbort(path: string) : Promise<MergeResult> {
  * previous unresolved squash, …) — see `other_op_in_progress`'s doc comment.
  * 
  * JS: `invoke("merge_squash", { path, sha })`.
+ * 
+ * Opens the repo with git2, then shells out to `git merge --squash` — a
+ * real merge computation (tree diffing, index staging, possibly a
+ * conflict) whose cost scales with the diff being squashed in. As a plain
+ * sync fn this ran inline on Tauri's main thread, freezing the whole
+ * window for as long as the squash took; `async fn` + `run_blocking` moves
+ * it to Tauri's blocking-task pool.
  */
 async mergeSquash(path: string, sha: string) : Promise<MergeSquashResult> {
     return await TAURI_INVOKE("merge_squash", { path, sha });
@@ -919,6 +1260,12 @@ async mergeSquash(path: string, sha: string) : Promise<MergeSquashResult> {
  * `--abort` of its own.
  * 
  * JS: `invoke("merge_squash_abort", { path })`.
+ * 
+ * Opens the repo with git2 and shells out to `git rev-parse` then
+ * `git reset --hard` — the latter a real working-tree checkout whose cost
+ * scales with the tree's size. As a plain sync fn this ran inline on
+ * Tauri's main thread, freezing the whole window; `async fn` +
+ * `run_blocking` moves it to Tauri's blocking-task pool.
  */
 async mergeSquashAbort(path: string) : Promise<MergeSquashResult> {
     return await TAURI_INVOKE("merge_squash_abort", { path });
@@ -935,6 +1282,12 @@ async mergeSquashAbort(path: string) : Promise<MergeSquashResult> {
  * mutation).
  * 
  * JS: `invoke("merge_squash_continue", { path })`.
+ * 
+ * Opens the repo with git2 and shells out to `git diff --name-only
+ * --diff-filter=U` (via `unmerged_files`) to check whether every conflict
+ * is really resolved — a status read whose cost scales with the size of
+ * the diff/index being checked. As a plain sync fn this ran inline on
+ * Tauri's main thread; `async fn` + `run_blocking` moves it off it.
  */
 async mergeSquashContinue(path: string) : Promise<MergeSquashResult> {
     return await TAURI_INVOKE("merge_squash_continue", { path });
@@ -984,6 +1337,12 @@ async mergeSquashContinue(path: string) : Promise<MergeSquashResult> {
  * always a real merge commit once there's more than one.
  * 
  * JS: `invoke("merge_start_multi", { path, shas, mode, strategy })`.
+ * 
+ * Opens the repo with git2 and, via `merge_octopus`/`merge_one`, shells out
+ * to a real `git merge` (possibly across many branches at once, in octopus
+ * mode) — tree diffing and a working-tree checkout whose cost scales with
+ * the repo. As a plain sync fn this ran inline on Tauri's main thread,
+ * freezing the whole window; `async fn` + `run_blocking` fixes that.
  */
 async mergeStartMulti(path: string, shas: string[], mode: string, strategy: string | null) : Promise<MergeResult> {
     return await TAURI_INVOKE("merge_start_multi", { path, shas, mode, strategy });
@@ -1015,6 +1374,12 @@ async mergeStartMulti(path: string, shas: string[], mode: string, strategy: stri
  * "the previous attempt never actually happened".
  * 
  * JS: `invoke("merge_queue_continue", { path })`.
+ * 
+ * Opens the repo with git2, checks unmerged state via `git diff
+ * --name-only --diff-filter=U`, and — to advance the queue — shells out to
+ * a real `git merge` via `merge_one`, whose cost scales with the branch
+ * being merged. As a plain sync fn this ran inline on Tauri's main thread,
+ * freezing the whole window; `async fn` + `run_blocking` fixes that.
  */
 async mergeQueueContinue(path: string) : Promise<MergeResult> {
     return await TAURI_INVOKE("merge_queue_continue", { path });
@@ -1033,6 +1398,12 @@ async mergeQueueContinue(path: string) : Promise<MergeResult> {
  * rely on the snapshot as their only safety net, by design).
  * 
  * JS: `invoke("merge_queue_abort", { path })`.
+ * 
+ * Opens the repo with git2 and, when the current step is still mid-merge,
+ * shells out via `merge_abort_impl` to `git merge --abort` — a real
+ * working-tree checkout whose cost scales with the tree's size. As a plain
+ * sync fn this ran inline on Tauri's main thread, freezing the whole
+ * window; `async fn` + `run_blocking` moves it to Tauri's blocking pool.
  */
 async mergeQueueAbort(path: string) : Promise<MergeResult> {
     return await TAURI_INVOKE("merge_queue_abort", { path });
@@ -1043,6 +1414,12 @@ async mergeQueueAbort(path: string) : Promise<MergeResult> {
  * check).
  * 
  * JS: `invoke("merge_queue_status", { path })`.
+ * 
+ * Opens the repo with git2 (mirrors `bisect_status`'s own precedent: a
+ * repo-open, even for a small sidecar read, still goes through git2 and is
+ * polled repeatedly — after every queue step and on repo-open recovery).
+ * `async fn` + `run_blocking` keeps that off Tauri's main thread, matching
+ * every other command in this module rather than being the one exception.
  */
 async mergeQueueStatus(path: string) : Promise<MergeQueueStatus> {
     return await TAURI_INVOKE("merge_queue_status", { path });
@@ -1059,6 +1436,13 @@ async mergeQueueStatus(path: string) : Promise<MergeQueueStatus> {
  * a failure.
  * 
  * JS: `invoke("rebase_start", { path, onto })`.
+ * 
+ * Opens the repo and takes a safety snapshot with git2, then shells out to
+ * the git CLI to replay every commit in the range — both steps scale with
+ * history/working-tree size. As a plain sync command this ran inline on
+ * Tauri's main thread, freezing the whole app window (not just the rebase
+ * panel) for as long as the rebase took; `async fn` + `run_blocking` moves
+ * it onto Tauri's blocking-task thread pool instead.
  */
 async rebaseStart(path: string, onto: string) : Promise<RebaseResult> {
     return await TAURI_INVOKE("rebase_start", { path, onto });
@@ -1075,6 +1459,12 @@ async rebaseStart(path: string, onto: string) : Promise<RebaseResult> {
  * commit in the sequence (empirically verified, see tests/rebase.rs).
  * 
  * JS: `invoke("rebase_continue", { path })`.
+ * 
+ * Opens the repo and shells out `git rebase --continue`, which can itself
+ * replay one or more further commits before stopping again — a call whose
+ * cost scales with how much of the sequence is left. As a plain sync
+ * command this blocked the whole app window on Tauri's main thread for as
+ * long as that replay took; `run_blocking` moves it off the main thread.
  */
 async rebaseContinue(path: string) : Promise<RebaseResult> {
     return await TAURI_INVOKE("rebase_continue", { path });
@@ -1090,6 +1480,11 @@ async rebaseContinue(path: string) : Promise<RebaseResult> {
  * conflicting commit (empirically verified, see tests/rebase.rs).
  * 
  * JS: `invoke("rebase_skip", { path })`.
+ * 
+ * Opens the repo and shells out `git rebase --skip`, which — like
+ * `--continue` — can replay further commits before stopping again, a cost
+ * that scales with the remaining sequence. Previously ran inline on Tauri's
+ * main thread, freezing the whole window; `run_blocking` moves it off.
  */
 async rebaseSkip(path: string) : Promise<RebaseResult> {
     return await TAURI_INVOKE("rebase_skip", { path });
@@ -1101,6 +1496,12 @@ async rebaseSkip(path: string) : Promise<RebaseResult> {
  * the user's way out). Idempotent: "nothing in progress" is a benign success.
  * 
  * JS: `invoke("rebase_abort", { path })`.
+ * 
+ * Opens the repo with git2 and shells out `git rebase --abort`, which
+ * restores the working tree/index to the pre-rebase snapshot — an operation
+ * whose cost scales with how much of the rebase had progressed. As a plain
+ * sync command this ran inline on Tauri's main thread, freezing the whole
+ * app window; `run_blocking` moves it onto the blocking-task thread pool.
  */
 async rebaseAbort(path: string) : Promise<RebaseResult> {
     return await TAURI_INVOKE("rebase_abort", { path });
@@ -1114,6 +1515,11 @@ async rebaseAbort(path: string) : Promise<RebaseResult> {
  * touches the sequencer).
  * 
  * JS: `invoke("rebase_interactive_plan", { path, onto })`.
+ * 
+ * Opens the repo and revwalks the full `onto..HEAD` range with git2, a cost
+ * that grows with the branch's history — as a plain sync command that walk
+ * ran inline on Tauri's main thread, freezing the whole app window while it
+ * computed. `run_blocking` moves it onto Tauri's blocking-task thread pool.
  */
 async rebaseInteractivePlan(path: string, onto: string) : Promise<Result<PlanCommit[], string>> {
     try {
@@ -1155,6 +1561,12 @@ async rebaseInteractivePlan(path: string, onto: string) : Promise<Result<PlanCom
  * [`classify`] linear rebase uses (now including the "editing" branch).
  * 
  * JS: `invoke("rebase_interactive_start", { path, onto, todo })`.
+ * 
+ * Opens the repo, revwalks the commit range, and takes a safety snapshot
+ * with git2, then shells out to the git CLI to replay the whole precomputed
+ * todo — all three scale with history/working-tree size. As a plain sync
+ * command this ran inline on Tauri's main thread, freezing the whole app
+ * window for as long as the replay took; `run_blocking` moves it off.
  */
 async rebaseInteractiveStart(path: string, onto: string, todo: TodoItem[]) : Promise<RebaseResult> {
     return await TAURI_INVOKE("rebase_interactive_start", { path, onto, todo });
@@ -1170,6 +1582,15 @@ async rebaseInteractiveStart(path: string, onto: string, todo: TodoItem[]) : Pro
  * a failure.
  * 
  * JS: `invoke("revert_start", { path, sha, signoff? })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it opens the repo and reads state
+ * via git2 AND shells out to `git revert`, waiting on that subprocess to
+ * exit, all inline on Tauri's main thread. A revert can take real time
+ * (large trees, a merge-heavy inverse patch) and it also snapshots first
+ * (its own git2 walk), so the whole app window froze for the entire
+ * operation, not just this command. `async fn` + `run_blocking` moves the
+ * whole body onto Tauri's blocking-task thread pool, matching
+ * `workdir_status`'s established fix.
  */
 async revertStart(path: string, sha: string, signoff: boolean | null) : Promise<RevertResult> {
     return await TAURI_INVOKE("revert_start", { path, sha, signoff });
@@ -1183,6 +1604,15 @@ async revertStart(path: string, sha: string, signoff: boolean | null) : Promise<
  * conflicts remain unresolved.
  * 
  * JS: `invoke("revert_continue", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — same class of stall as
+ * `revert_start`: it opens the repo via git2, reads `REVERT_HEAD`, takes
+ * another pre-commit snapshot, and shells out to `git revert --continue`,
+ * blocking on that subprocess inline on Tauri's main thread. Since this is
+ * the very command the conflict resolver calls after every resolve, it
+ * froze the whole window right when the user was in the middle of
+ * unblocking a conflict. `async fn` + `run_blocking` moves the wait onto
+ * Tauri's blocking-task thread pool.
  */
 async revertContinue(path: string) : Promise<RevertResult> {
     return await TAURI_INVOKE("revert_continue", { path });
@@ -1194,6 +1624,14 @@ async revertContinue(path: string) : Promise<RevertResult> {
  * the user's way out). Idempotent: "nothing in progress" is a benign success.
  * 
  * JS: `invoke("revert_abort", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it opens the repo via git2 and
+ * shells out to `git revert --abort`, blocking on that subprocess inline on
+ * Tauri's main thread for as long as git takes to restore the pre-revert
+ * state. Being the escape hatch that must always be reachable even under a
+ * bad conflict, it's especially bad for this one to also freeze the window
+ * while it runs. `async fn` + `run_blocking` moves the wait onto Tauri's
+ * blocking-task thread pool.
  */
 async revertAbort(path: string) : Promise<RevertResult> {
     return await TAURI_INVOKE("revert_abort", { path });
@@ -1211,6 +1649,14 @@ async revertAbort(path: string) : Promise<RevertResult> {
  * commit-menu action for a merge.
  * 
  * JS: `invoke("export_patch", { path, from, to, dest })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`. Its body opens the repository via
+ * `crate::trust::open_repo`, resolves revisions and drives a git2 revwalk,
+ * then shells out to `git format-patch` via `Command::new` — all of that
+ * used to run inline on Tauri's main thread, so exporting a large revision
+ * range froze the entire app window (redraws, every other IPC command) for
+ * as long as the git2/subprocess work took. Wrapped in `run_blocking` so it
+ * now runs on Tauri's blocking-task thread pool instead.
  */
 async exportPatch(path: string, from: string | null, to: string, dest: string) : Promise<ExportPatchResult> {
     return await TAURI_INVOKE("export_patch", { path, from, to, dest });
@@ -1228,6 +1674,13 @@ async exportPatch(path: string, from: string | null, to: string, dest: string) :
  * checks `repo.state() != Clean` broadly, not just this module's own kind).
  * 
  * JS: `invoke("apply_patch", { path, patchFilePath })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`. Its body opens the repository,
+ * takes a safety snapshot (its own git2 commit/ref work), and shells out to
+ * `git am --3way` via `Command::new` — a real merge that can take a while on
+ * a big multi-commit mailbox. All of that used to run inline on Tauri's main
+ * thread, freezing the whole app window for the duration of the apply.
+ * Wrapped in `run_blocking` to move it onto the blocking-task thread pool.
  */
 async applyPatch(path: string, patchFilePath: string) : Promise<ApplyPatchResult> {
     return await TAURI_INVOKE("apply_patch", { path, patchFilePath });
@@ -1241,6 +1694,12 @@ async applyPatch(path: string, patchFilePath: string) : Promise<ApplyPatchResult
  * doc).
  * 
  * JS: `invoke("am_continue", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`. It opens the repository via git2,
+ * takes a best-effort safety snapshot, and shells out to `git am --continue`
+ * via `Command::new` — which can itself run hooks/finish applying a
+ * patch. All of that used to run inline on the main thread, freezing the
+ * whole app window for its duration. Wrapped in `run_blocking`.
  */
 async amContinue(path: string) : Promise<ApplyPatchResult> {
     return await TAURI_INVOKE("am_continue", { path });
@@ -1253,6 +1712,12 @@ async amContinue(path: string) : Promise<ApplyPatchResult> {
  * applies here unchanged).
  * 
  * JS: `invoke("am_skip", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`. Same shape as `am_continue`: opens
+ * the repository via git2, takes a best-effort snapshot, and shells out to
+ * `git am --skip` via `Command::new`, which may itself need to apply the
+ * NEXT patch in the mailbox before returning. That used to block the main
+ * thread for the whole call. Wrapped in `run_blocking`.
  */
 async amSkip(path: string) : Promise<ApplyPatchResult> {
     return await TAURI_INVOKE("am_skip", { path });
@@ -1263,6 +1728,12 @@ async amSkip(path: string) : Promise<ApplyPatchResult> {
  * escape hatch must ALWAYS run" discipline as `rebase_abort`. Idempotent.
  * 
  * JS: `invoke("am_abort", { path })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`. It opens the repository via git2
+ * and shells out to `git am --abort` via `Command::new`, which has to
+ * restore the working tree and index back to the pre-am HEAD — real
+ * filesystem/git2 work that used to run inline on the main thread and
+ * freeze the app window for its duration. Wrapped in `run_blocking`.
  */
 async amAbort(path: string) : Promise<ApplyPatchResult> {
     return await TAURI_INVOKE("am_abort", { path });
@@ -1270,6 +1741,13 @@ async amAbort(path: string) : Promise<ApplyPatchResult> {
 /**
  * Start a bisect between a known-bad and one-or-more known-good commits.
  * Snapshots FIRST. JS: invoke("bisect_start", { path, bad, good: [sha,…] }).
+ * 
+ * Opens the repo with git2, takes a full safety snapshot, then shells out
+ * several `git bisect start/bad/good` invocations in sequence — as a plain
+ * sync command every one of those steps ran inline on Tauri's main thread,
+ * freezing the whole app window (not just the bisect panel) until the last
+ * one finished. `async fn` + `run_blocking` moves the whole sequence onto
+ * Tauri's blocking-task thread pool instead.
  */
 async bisectStart(path: string, bad: string, good: string[]) : Promise<BisectStatus> {
     return await TAURI_INVOKE("bisect_start", { path, bad, good });
@@ -1277,6 +1755,12 @@ async bisectStart(path: string, bad: string, good: string[]) : Promise<BisectSta
 /**
  * Mark the checked-out midpoint (HEAD) good/bad/skip. No snapshot.
  * JS: invoke("bisect_mark", { path, term }) where term ∈ {good,bad,skip}.
+ * 
+ * Opens the repo with git2 and shells out `git bisect good|bad|skip`, which
+ * also checks out the next midpoint — a real checkout, not just a ref
+ * update. As a plain sync command that checkout ran on Tauri's main thread,
+ * so every mark click froze the whole window for as long as it took.
+ * `async fn` + `run_blocking` moves it onto Tauri's blocking-task pool.
  */
 async bisectMark(path: string, term: string) : Promise<BisectStatus> {
     return await TAURI_INVOKE("bisect_mark", { path, term });
@@ -1284,6 +1768,12 @@ async bisectMark(path: string, term: string) : Promise<BisectStatus> {
 /**
  * Read-only bisect status (also serves as `bisect log`). Never mutates.
  * JS: invoke("bisect_status", { path }).
+ * 
+ * `read_status` opens the repo with git2 and shells out several `git bisect
+ * log`/`for-each-ref`/`rev-list` calls to assemble it. This command is
+ * polled by the UI after every action, so as a plain sync fn each poll ran
+ * inline on Tauri's main thread — `async fn` + `run_blocking` keeps those
+ * repeated subprocess calls off it.
  */
 async bisectStatus(path: string) : Promise<BisectStatus> {
     return await TAURI_INVOKE("bisect_status", { path });
@@ -1291,6 +1781,11 @@ async bisectStatus(path: string) : Promise<BisectStatus> {
 /**
  * End the bisect and restore the original HEAD/branch. Escape hatch: NO
  * snapshot; idempotent. JS: invoke("bisect_reset", { path }).
+ * 
+ * Shells out `git bisect reset`, which checks out the original HEAD/branch
+ * again — a real checkout of potentially any size, run inline on Tauri's
+ * main thread as a plain sync fn and freezing the whole window for its
+ * duration. `async fn` + `run_blocking` moves it to Tauri's blocking pool.
  */
 async bisectReset(path: string) : Promise<BisectStatus> {
     return await TAURI_INVOKE("bisect_reset", { path });
@@ -1303,6 +1798,19 @@ async bisectReset(path: string) : Promise<BisectStatus> {
  * already picked bad+good and clicked Start. Refuses cleanly (no run
  * attempted) if another automated run is already in flight for this app —
  * see `try_run_bisect`.
+ * 
+ * This is the worst offender of the plain-`fn`-blocks-the-main-thread bug in
+ * this file: `run_bisect` loops running an arbitrary caller-supplied test
+ * command and shelling out `git bisect good/bad/skip` after every run, for
+ * as long as it takes to converge — real test suites can take minutes. As a
+ * plain sync command, that whole loop ran inline on Tauri's main thread, so
+ * the entire app window sat frozen for the full duration of an automated
+ * run. `async fn` + `run_blocking` moves the loop onto Tauri's blocking-task
+ * thread pool; `BisectRunState` is now looked up via `app.state()` from
+ * inside that pool (mirrors `commands.rs`'s `stream_graph` doing the same
+ * for `GraphLoadState`) rather than taken as a `State` parameter, since a
+ * borrowed `State<'_, T>` can't be moved into the `'static` closure
+ * `run_blocking` requires.
  * JS: invoke("bisect_run_start", { path, command }).
  */
 async bisectRunStart(path: string, command: string) : Promise<BisectStatus> {
@@ -1313,6 +1821,10 @@ async bisectRunStart(path: string, command: string) : Promise<BisectStatus> {
  * step. Always callable (mirrors `bisect_reset`'s "must always be able to
  * run" escape-hatch spirit), though this only sets a flag rather than
  * mutating repo state. JS: invoke("bisect_run_cancel").
+ * 
+ * Deliberately left as a plain sync `fn`: it touches only an in-memory
+ * `AtomicBool` on `BisectRunState`, with no git2/subprocess/filesystem
+ * access, so there is nothing here that could block the main thread.
  */
 async bisectRunCancel() : Promise<Result<null, string>> {
     try {
@@ -1326,6 +1838,15 @@ async bisectRunCancel() : Promise<Result<null, string>> {
  * Read HEAD's reflog, newest first. Read-only (git2).
  * 
  * JS: `commands.reflog(path)` -> `Result<ReflogEntry[], string>`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — see `dashboard_repo_status`'s own
+ * identical fix (`dashboard.rs`) for the full writeup. `open()` opens a
+ * git2 `Repository` and `read_reflog()` walks HEAD's reflog, both of which
+ * ran INLINE on Tauri's main thread when this was a plain sync command,
+ * freezing the whole app window for the duration of the call — not just
+ * the reflog panel that triggered it. `async fn` + `run_blocking` moves
+ * that work onto Tauri's blocking-task thread pool, matching `list_refs`'s
+ * established pattern.
  */
 async reflog(path: string) : Promise<Result<ReflogEntry[], string>> {
     try {
@@ -1350,6 +1871,16 @@ async reflog(path: string) : Promise<Result<ReflogEntry[], string>> {
  * must never silently land on the wrong commit).
  * 
  * JS: `commands.reflogRestore(path, index)` -> `UndoResult`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — see `dashboard_repo_status`'s own
+ * identical fix (`dashboard.rs`) for the full writeup. This command opens
+ * a git2 `Repository`, snapshots it, and — most costly — shells out to the
+ * git CLI twice (`status --porcelain` for the dirty-tree guard, then
+ * `reset --hard` for the actual mutation) via `safety::run_git`, each a
+ * blocking child-process wait. Run inline, any one of those stalls froze
+ * the entire app window, not just the reflog panel doing the restore.
+ * `async fn` + `run_blocking` moves that work onto Tauri's blocking-task
+ * thread pool, matching `list_refs`'s established pattern.
  */
 async reflogRestore(path: string, index: number) : Promise<UndoResult> {
     return await TAURI_INVOKE("reflog_restore", { path, index });
@@ -1360,6 +1891,18 @@ async reflogRestore(path: string, index: number) : Promise<UndoResult> {
  * iteration, not chronological). Read-only.
  * 
  * JS: `commands.danglingCommits(path)` -> `Result<DanglingCommits, string>`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — a `#[tauri::command]` in that
+ * shape runs INLINE on Tauri's main thread, the same thread driving the
+ * window's event loop and every other command's IPC delivery. This
+ * command's body both opens the repo with git2 AND shells out to `git
+ * fsck --dangling --no-reflogs`, which (per the module doc above) always
+ * walks the ENTIRE object database with no way to bound the walk — on a
+ * large/old repo that stalls for real seconds and freezes the whole app
+ * window, not just this recovery panel. `async fn` + `run_blocking` moves
+ * that work onto Tauri's blocking-task thread pool, matching
+ * `repo_summary`'s own established fix for the same shape (inner already
+ * returns `Result<T, String>`, so no extra `map_err` is needed here).
  */
 async danglingCommits(path: string) : Promise<Result<DanglingCommits, string>> {
     try {
@@ -1370,7 +1913,14 @@ async danglingCommits(path: string) : Promise<Result<DanglingCommits, string>> {
 }
 },
 /**
- * JS: `invoke("rerere_status", { path })`.
+ * Opens the repo via git2 (a real disk hit, worse over a network/WSL
+ * bridge path) and then shells out to the `git` CLI up to three separate
+ * times (`config --get`, `rerere status`, `rerere remaining`), each an
+ * out-of-process spawn-and-wait. Run inline on a plain `fn` this blocks
+ * Tauri's main thread — and therefore the whole app window — for the sum of
+ * all four calls; routed through [`crate::blocking::run_blocking`] it runs
+ * on the blocking-task thread pool instead. JS: `invoke("rerere_status", {
+ * path })`.
  */
 async rerereStatus(path: string) : Promise<Result<RerereStatus, string>> {
     try {
@@ -1381,8 +1931,14 @@ async rerereStatus(path: string) : Promise<Result<RerereStatus, string>> {
 }
 },
 /**
- * Toggle `rerere.enabled` for THIS repository only (never `--global`). JS:
- * `invoke("rerere_set_enabled", { path, enabled })`.
+ * Opens the repo via git2 as an existence check, then shells out to `git
+ * config` (another out-of-process spawn-and-wait) to write the value. Same
+ * blocking shape as [`rerere_status`] above, just for the write side — a
+ * plain `fn` here would stall the main thread (and the whole window) until
+ * that subprocess exits, so this routes through
+ * [`crate::blocking::run_blocking`] instead. Toggle `rerere.enabled` for
+ * THIS repository only (never `--global`). JS: `invoke("rerere_set_enabled",
+ * { path, enabled })`.
  */
 async rerereSetEnabled(path: string, enabled: boolean) : Promise<WriteResult> {
     return await TAURI_INVOKE("rerere_set_enabled", { path, enabled });
@@ -1391,6 +1947,15 @@ async rerereSetEnabled(path: string, enabled: boolean) : Promise<WriteResult> {
  * Resolve `rev` (sha / short-sha / branch / tag / `HEAD~2` / `HEAD^{tree}` /
  * … — ordinary git rev syntax) and report a detail view of whatever object it
  * names. JS: `invoke("plumbing_inspect", { path, rev })`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it opens the repository via git2
+ * and calls `revparse_single`, which for a `HEAD~N`/tree/tag walk has to
+ * read and parse objects off disk, all inline on Tauri's main thread. That
+ * froze the entire app window for as long as the resolve+peel took, not
+ * just this playground panel, especially over a WSL/UNC-bridged repo where
+ * each object read pays cross-filesystem latency. `async fn` + `run_blocking`
+ * moves the work onto Tauri's blocking-task thread pool, matching
+ * `workdir_status`'s own fix.
  */
 async plumbingInspect(path: string, rev: string) : Promise<Result<PlumbingObject, string>> {
     try {
@@ -1407,6 +1972,15 @@ async plumbingInspect(path: string, rev: string) : Promise<Result<PlumbingObject
  * the target commit, or a directory-shaped path.
  * 
  * JS: `commands.blameFile(path, file, atCommit, ignoreWhitespace)`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s doc comment,
+ * that runs INLINE on Tauri's main thread, freezing the whole app window for
+ * as long as the call takes, not just the Blame modal that triggered it.
+ * The body below opens the repo via git2, walks its tree to load the blob,
+ * and then runs a full `git2::Repository::blame_file` walk — a cost that
+ * scales with the file's revision history and can take real time on a large
+ * or long-lived file/repo. `async fn` + `run_blocking` moves that walk onto
+ * Tauri's blocking-task thread pool, matching `workdir_status`'s own fix.
  */
 async blameFile(path: string, file: string, atCommit: string | null, ignoreWhitespace: boolean) : Promise<Result<FileBlame, string>> {
     try {
@@ -1423,6 +1997,16 @@ async blameFile(path: string, file: string, atCommit: string | null, ignoreWhite
  * a path absent from the target commit's tree or a directory-shaped path.
  * 
  * JS: `commands.fileHistory(path, file, atCommit)`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`, so it ran INLINE on Tauri's main
+ * thread (see `blocking.rs`'s doc comment) — its body opens the repo and
+ * walks its tree via git2, then shells out to `git log --follow`, a whole
+ * history walk over `Command::new` (see this module's own "why shell out"
+ * doc comment above) that gets slower the longer/more-renamed a file's past
+ * is. Either half of that stalls the entire app window, not just the File
+ * History panel, for as long as the call takes. `async fn` + `run_blocking`
+ * moves the actual work onto Tauri's blocking-task thread pool, matching
+ * `dashboard_repo_status`/`workdir_status`'s own established pattern.
  */
 async fileHistory(path: string, file: string, atCommit: string | null) : Promise<Result<FileHistory, string>> {
     try {
@@ -1442,6 +2026,18 @@ async fileHistory(path: string, file: string, atCommit: string | null) : Promise
  * `file`. Read-only.
  * 
  * JS: `commands.pickaxeSearch(path, query, mode, regex, allRefs, file, atCommit)`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+ * comment, that runs INLINE on Tauri's main thread. This command's body
+ * shells out to `git log -S`/`-G` over the FULL revision history (optionally
+ * every ref, via `--all`) and additionally opens the repo with git2 to
+ * resolve `at_commit`/HEAD — on a large or old repo, or a common token that
+ * matches thousands of commits, that walk is exactly the kind of cost that
+ * scales with repo size `blocking.rs` warns about, and it froze the entire
+ * app window (not just the pickaxe search panel) for as long as it ran.
+ * `async fn` + `run_blocking` moves the work onto Tauri's blocking-task
+ * thread pool, matching `dashboard_repo_status`/`workdir_status`'s already
+ * established fix.
  */
 async pickaxeSearch(path: string, query: string, mode: string, regex: boolean, allRefs: boolean, file: string | null, atCommit: string | null) : Promise<Result<PickaxeResults, string>> {
     try {
@@ -1457,6 +2053,15 @@ async pickaxeSearch(path: string, query: string, mode: string, regex: boolean, a
  * commit's own tree otherwise. Read-only.
  * 
  * JS: `commands.codeSearch(path, query, caseSensitive, atCommit)`.
+ * 
+ * This command's body opens the repo via `crate::trust::open_repo` and, when
+ * `at_commit` is given, resolves it with `repo.revparse_single` — both git2
+ * calls — and then shells out to `git grep` via `Command::new`/`.output()`,
+ * which blocks synchronously until the child process exits. As a plain
+ * (non-async) `fn` this ran inline on Tauri's main thread, so a slow rev
+ * resolution or a `git grep` scan over a large/slow (e.g. network-mounted)
+ * working tree would freeze the whole app window; routing it through
+ * `crate::blocking::run_blocking` moves that work off the main thread.
  */
 async codeSearch(path: string, query: string, caseSensitive: boolean, atCommit: string | null) : Promise<Result<CodeSearchResults, string>> {
     try {
@@ -1468,6 +2073,11 @@ async codeSearch(path: string, query: string, caseSensitive: boolean, atCommit: 
 },
 /**
  * Read-only preview shown before the user commits to running filter-repo.
+ * Its `commit_count`/`touched_commits` numbers come from `git rev-list
+ * --count`, a full history walk shelled out via `Command::new`, so its cost
+ * scales with total repo size just like the mutating commands below — run
+ * as a plain sync fn this would freeze the whole window while the wizard's
+ * preview step merely counts commits.
  */
 async filterRepoPreview(path: string, paths: string[], invert: boolean) : Promise<Result<FilterRepoPreview, string>> {
     try {
@@ -1479,7 +2089,12 @@ async filterRepoPreview(path: string, paths: string[], invert: boolean) : Promis
 },
 /**
  * Run `git filter-repo` against the given scope, after a mandatory verified
- * backup. Plain-struct failure model — see module docs.
+ * backup. Plain-struct failure model — see module docs. This is the single
+ * most important conversion in this module: it shells out to `git bundle
+ * create --all`/`bundle verify` and then `git filter-repo` itself, which
+ * rewrites EVERY commit in the selected history — on a real repo that can
+ * run for minutes, and as a plain sync fn it would freeze the entire GitCat
+ * window, not just the wizard, for the whole duration.
  */
 async filterRepoRun(path: string, paths: string[], invert: boolean) : Promise<FilterRepoResult> {
     return await TAURI_INVOKE("filter_repo_run", { path, paths, invert });
@@ -1488,7 +2103,10 @@ async filterRepoRun(path: string, paths: string[], invert: boolean) : Promise<Fi
  * Restore every ref namespace a previous backup captured. Pins any
  * at-risk CURRENT tip under `refs/gitgui/deleted/*` first (data-safety,
  * mirrors safety::undo's pre-move pinning) so nothing is silently orphaned
- * even if the user regrets the restore itself.
+ * even if the user regrets the restore itself. Restoring re-fetches every
+ * recorded ref out of the backup bundle and runs `git reset --hard`, all via
+ * `Command::new` — a cost that scales with repo/ref count, so this must stay
+ * off the main thread exactly like `filter_repo_run`.
  */
 async filterRepoRestore(path: string, backupId: string) : Promise<FilterRepoResult> {
     return await TAURI_INVOKE("filter_repo_restore", { path, backupId });
@@ -1508,6 +2126,14 @@ async filterRepoListBackups(path: string) : Promise<Result<FilterRepoBackupInfo[
  * JS: `commands.getGitIdentity(path)` -> `Promise<Result<GitIdentity,string>>`.
  * Fails only if `path` isn't a git repository at all (used by the setup
  * wizard as its directory-validation step, doubling as the identity check).
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it opens the repo via `git2` and
+ * then shells out to `git config --get` up to four times (local/global x
+ * name/email) via `safety::run_git`, waiting on each subprocess in turn. Run
+ * synchronously, all of that happened inline on Tauri's MAIN thread, so the
+ * setup wizard's directory-validation step (and every Settings panel open)
+ * froze the whole window for as long as those four spawns took, not just
+ * this one read. `async fn` + `run_blocking` moves it off that thread.
  */
 async getGitIdentity(path: string) : Promise<Result<GitIdentity, string>> {
     try {
@@ -1523,6 +2149,13 @@ async getGitIdentity(path: string) : Promise<Result<GitIdentity, string>> {
  * local config (never `--global`). Non-destructive metadata, no ref/history
  * touched, so — per the safety-model convention used by rerere_set_enabled —
  * this does NOT take a Safety Manager snapshot first.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — it opens the repo via `git2` and
+ * then shells out to `git config --local` up to twice (name, email) via
+ * `safety::run_git`, blocking on each subprocess. Left synchronous, that
+ * wait ran inline on Tauri's MAIN thread, freezing the whole window for the
+ * duration of every identity save from the setup wizard or Settings, not
+ * just that one field. `async fn` + `run_blocking` moves it off that thread.
  */
 async setGitIdentity(path: string, name: string, email: string) : Promise<WriteResult> {
     return await TAURI_INVOKE("set_git_identity", { path, name, email });
@@ -1533,6 +2166,14 @@ async setGitIdentity(path: string, name: string, email: string) : Promise<WriteR
  * BOTH `--local` and `--global` (2 subprocess calls per key), used both for
  * the curated fields (`core.autocrlf`, `pull.rebase`, ...) and to re-read a
  * single key right after an Advanced-section save.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — like `identity::get_git_identity`,
+ * it opens the repo via `git2` and then shells out to `git config --get`
+ * twice per key via `safety::run_git`, waiting on each subprocess. Run
+ * synchronously, all of that happened inline on Tauri's MAIN thread,
+ * freezing the whole window for as long as every Settings-panel-open git
+ * config read took, not just this one call. `async fn` + `run_blocking`
+ * moves it off that thread.
  */
 async getGitConfigValues(path: string, keys: string[]) : Promise<Result<ConfigEntry[], string>> {
     try {
@@ -1548,6 +2189,11 @@ async getGitConfigValues(path: string, keys: string[]) : Promise<Result<ConfigEn
  * initial listing — `git config <scope> --list -z` (NUL-terminated records,
  * each `key\nvalue`) so a value containing its own newline can never be
  * misparsed as a record boundary the way naive line-splitting would.
+ * 
+ * BUG FIX: was never a sync command in the first place (new in this batch)
+ * — written `async fn` + `run_blocking` from the start, matching every
+ * other repo-touching command fixed this session, rather than introducing a
+ * new instance of the same main-thread-freeze bug on day one.
  */
 async listGitConfigEntries(path: string, scope: ConfigScope) : Promise<Result<RawConfigEntry[], string>> {
     try {
@@ -1562,11 +2208,30 @@ async listGitConfigEntries(path: string, scope: ConfigScope) : Promise<Result<Ra
  * `Promise<WriteResult>` (never rejects; `ok:false` + message on failure,
  * same non-`Result` contract as `identity::set_git_identity`).
  * `value: null` unsets the key AT THAT SCOPE (`git config --unset`) rather
- * than writing an empty string.
+ * than writing an empty string. Non-destructive metadata, no ref/history
+ * touched, so — per the safety-model convention `rerere_set_enabled`/
+ * `set_git_identity` already established — this does NOT take a Safety
+ * Manager snapshot first.
+ * 
+ * BUG FIX: was never a sync command in the first place (new in this batch)
+ * — written `async fn` + `run_blocking` from the start.
  */
 async setGitConfigValue(path: string, key: string, value: string | null, scope: ConfigScope) : Promise<WriteResult> {
     return await TAURI_INVOKE("set_git_config_value", { path, key, value, scope });
 },
+/**
+ * BUG FIX: was a plain (non-async) `fn` — `start_watching` calls
+ * `trust::open_repo`, the same git2 `Repository::open` (and, on a
+ * dubious-ownership WSL/UNC path, the same subprocess fallback) every other
+ * read command's fix already had to account for, so arming the watcher on
+ * repo-open could stall the whole window for as long as that open takes.
+ * `async fn` + `run_blocking` moves just the `start_watching` call onto
+ * Tauri's blocking-task thread pool; `state` is still updated on the main
+ * thread afterward since a borrowed `State<'_, T>` can't be moved into the
+ * `'static` closure `run_blocking` requires — mirrors `terminal_spawn`'s own
+ * shape for a command that also needs `State` after the blocking part
+ * completes.
+ */
 async watchRepo(path: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("watch_repo", { path }) };
@@ -1599,6 +2264,15 @@ async submoduleStatus(path: string) : Promise<Result<SubmoduleInfo[], string>> {
  * clone of the superproject, or one manually `rm -rf`'d — both read as
  * "not-initialized" in `submodule_status`); use `submodule_update` with
  * `init:true` instead to fold both steps into one call.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`. Its body shells out to `git
+ * submodule init` via `run_git` (a `Command::new` spawn + wait for the
+ * process to exit), which — like every other blocking git call in this
+ * codebase — previously ran INLINE on Tauri's main thread and froze the
+ * whole app window for however long that process took, not just this row's
+ * init action. `async fn` + `run_blocking` moves the call onto Tauri's
+ * blocking-task thread pool, matching `dashboard_repo_status`/
+ * `workdir_status`'s established fix.
  * JS call: `invoke("submodule_init", { path, submodulePath })`.
  */
 async submoduleInit(path: string, submodulePath: string) : Promise<WriteResult> {
@@ -1635,6 +2309,17 @@ async submoduleInit(path: string, submodulePath: string) : Promise<WriteResult> 
  * one real risk a snapshot might otherwise exist to cover — clobbering
  * uncommitted submodule changes — is already prevented by git's own refusal
  * above, not by anything a superproject-level snapshot could restore anyway.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`. This is the command most worth
+ * fixing in the whole file — its body shells out to `git submodule update`
+ * (via `run_git`/`Command::new`), which genuinely clones/fetches the
+ * submodule's remote whenever the commit the superproject tracks isn't
+ * already present locally, so the process this spawns can legitimately run
+ * for network-bound seconds. Left as a plain `fn`, that entire duration ran
+ * INLINE on Tauri's main thread and froze the whole app window, not just
+ * this row's update action. `async fn` + `run_blocking` moves it onto
+ * Tauri's blocking-task thread pool, matching `dashboard_repo_status`/
+ * `workdir_status`'s established fix.
  * JS call: `invoke("submodule_update", { path, submodulePath?, recursive, init })`.
  */
 async submoduleUpdate(path: string, submodulePath: string | null, recursive: boolean, init: boolean) : Promise<WriteResult> {
@@ -1658,6 +2343,16 @@ async submoduleUpdate(path: string, submodulePath: string | null, recursive: boo
  * 
  * No snapshot — see module doc comment (purely additive, identical
  * reasoning to `create_branch`/`create_tag`).
+ * 
+ * BUG FIX: was a plain (non-async) `fn`. Its body shells out to `git
+ * submodule add` (via `run_git`/`Command::new`), which genuinely clones the
+ * remote at `repository_url` — a real network fetch, exactly like
+ * `submodule_update`'s own case, and one of the two commands in this file
+ * that matter most for this fix. Left as a plain `fn`, that whole clone ran
+ * INLINE on Tauri's main thread and froze the entire app window for as long
+ * as it took, not just this "Add submodule" action. `async fn` +
+ * `run_blocking` moves it onto Tauri's blocking-task thread pool, matching
+ * `dashboard_repo_status`/`workdir_status`'s established fix.
  * JS call: `invoke("submodule_add", { path, repositoryUrl, submodulePath, branch? })`.
  */
 async submoduleAdd(path: string, repositoryUrl: string, submodulePath: string, branch: string | null) : Promise<WriteResult> {
@@ -1681,6 +2376,15 @@ async submoduleAdd(path: string, repositoryUrl: string, submodulePath: string, b
  * 
  * No snapshot: only ever rewrites `.git/config` — no ref moves, no index/
  * workdir change, nothing history-affecting for Undo to protect.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`. Its body shells out to `git
+ * submodule sync` via `run_git`/`Command::new` — a local config rewrite, not
+ * a network call, but like every other subprocess spawn in this file it
+ * previously ran INLINE on Tauri's main thread and froze the whole app
+ * window for however long that process took, not just this row's sync
+ * action. `async fn` + `run_blocking` moves it onto Tauri's blocking-task
+ * thread pool, matching `dashboard_repo_status`/`workdir_status`'s
+ * established fix.
  * JS call: `invoke("submodule_sync", { path, submodulePath?, recursive })`.
  */
 async submoduleSync(path: string, submodulePath: string | null, recursive: boolean) : Promise<WriteResult> {
@@ -1715,6 +2419,16 @@ async submoduleSync(path: string, submodulePath: string | null, recursive: boole
  * — keep pointing at it").
  * 
  * No Safety-Manager snapshot — see this section's doc comment.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`. Its `force:true` path opens the
+ * repo and walks the submodule's own tree with git2
+ * (`backup_submodule_dirty_content`), and either path shells out to `git
+ * submodule deinit` via `run_git`/`Command::new` — both the git2 walk and
+ * the subprocess spawn previously ran INLINE on Tauri's main thread and
+ * froze the whole app window for however long they took, not just this
+ * row's deinit action. `async fn` + `run_blocking` moves the whole body onto
+ * Tauri's blocking-task thread pool, matching `dashboard_repo_status`/
+ * `workdir_status`'s established fix.
  * JS call: `invoke("submodule_deinit", { path, submodulePath, force })`.
  */
 async submoduleDeinit(path: string, submodulePath: string, force: boolean) : Promise<SubmoduleRemovalResult> {
@@ -1740,6 +2454,15 @@ async submoduleDeinit(path: string, submodulePath: string, force: boolean) : Pro
  * via the existing `workdir.rs::commit`.
  * 
  * No Safety-Manager snapshot — see this section's doc comment.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`. Its body opens the repo and walks
+ * the submodule's own tree with git2 (`backup_submodule_dirty_content`) and
+ * then shells out to git TWICE (`submodule deinit -f`, then `rm -f`) via
+ * `run_git`/`Command::new` — all of that previously ran INLINE on Tauri's
+ * main thread and froze the whole app window for however long it took, not
+ * just this row's remove action. `async fn` + `run_blocking` moves the whole
+ * body onto Tauri's blocking-task thread pool, matching
+ * `dashboard_repo_status`/`workdir_status`'s established fix.
  * JS call: `invoke("submodule_remove", { path, submodulePath })`.
  */
 async submoduleRemove(path: string, submodulePath: string) : Promise<SubmoduleRemovalResult> {
@@ -1860,6 +2583,17 @@ async claimRepoSummaryFirstOpen(path: string) : Promise<Result<boolean, string>>
  * repo (no commits yet) returns a zeroed summary, not an error — matches
  * `dashboard.rs`'s own "empty repo is a normal state" convention.
  * 
+ * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s doc comment,
+ * that runs INLINE on Tauri's main thread, freezing the whole app window for
+ * as long as the call takes. This command shells out to a single `git log`
+ * walking up to [`MAX_SUMMARY_COMMITS`] commits with a `--name-only` block
+ * per commit, which on a large/old repo can take real seconds — and it's
+ * invoked on first-open of every repo (see `repo_registry::
+ * claim_repo_summary_first_open`), so that stall lands right when the app
+ * first shows a repo. `async fn` + `run_blocking` moves the walk onto
+ * Tauri's blocking-task thread pool, matching `dashboard_repo_status`'s own
+ * established fix.
+ * 
  * JS: `commands.repoSummary(path)`.
  */
 async repoSummary(path: string) : Promise<Result<RepoSummary, string>> {
@@ -1938,6 +2672,15 @@ async setToolSettings(diffTool: ExternalTool | null, mergeTool: ExternalTool | n
  * clear stderr) but this command never inspects that exit code — the user
  * gets no in-app error, only whatever a dev-mode terminal shows. Mitigated
  * by the settings modal's own hint text, not solved here.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — `open_diff_tool_inner` opens the
+ * repository with git2 (`crate::trust::open_repo`) before it ever spawns the
+ * external tool, and on a WSL/UNC path that open can itself stall for real
+ * seconds (the same class of stall `dashboard_repo_status`/`workdir_status`
+ * were fixed for). Even though the spawn itself is fire-and-forget, that
+ * leading git2 open still ran inline on Tauri's main thread, freezing the
+ * whole app window for its duration. `async fn` + `run_blocking` moves the
+ * whole body onto Tauri's blocking-task thread pool.
  */
 async openDiffTool(path: string, file: string, staged: boolean, fromRev: string | null, toRev: string | null) : Promise<Result<null, string>> {
     try {
@@ -1952,6 +2695,18 @@ async openDiffTool(path: string, file: string, staged: boolean, fromRev: string 
  * mergetool subprocess (needs the outcome). Returns `conflict::ResolveResult`
  * directly (reused, not duplicated — same `{ok, remaining, message}` shape
  * and same non-`Result` "never rejects" contract as `resolve_conflict_file`).
+ * 
+ * BUG FIX: was a plain (non-async) `fn`, and of every command fixed in this
+ * pass this is the worst instance of the bug: `resolve_conflict_with_
+ * external_tool_inner` runs `git mergetool` via `safety::run_git`'s
+ * `Command::output`, which blocks until that subprocess exits — and that
+ * subprocess is an interactive GUI diff/merge tool the USER is actively
+ * editing in, with no timeout, so the wait is unbounded and entirely at the
+ * user's own pace (seconds to however long they take to finish resolving).
+ * As a plain sync command this froze the entire app window — not just the
+ * conflict panel — for that whole open-ended duration. `async fn` +
+ * `run_blocking` moves the wait onto Tauri's blocking-task thread pool so
+ * the rest of the app stays responsive while the external tool is open.
  */
 async resolveConflictWithExternalTool(path: string, file: string) : Promise<ResolveResult> {
     return await TAURI_INVOKE("resolve_conflict_with_external_tool", { path, file });
@@ -1960,6 +2715,14 @@ async resolveConflictWithExternalTool(path: string, file: string) : Promise<Reso
  * Read `file_name`'s current content (repo-root only). Missing file => `Ok("")`,
  * never an error — see module doc comment.
  * JS: `commands.readRepoFile(path, fileName)` -> `Result<string, string>`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`. Its body calls `open` -> `crate::trust::open_repo`,
+ * which does a git2 `Repository::open` and, on the dubious-ownership retry path, shells out
+ * to `git config --global --add safe.directory` twice via `safety::run_git` before retrying —
+ * real blocking work on a slow, network, or WSL-bridged path. A plain `fn` `#[tauri::command]`
+ * runs that inline on Tauri's main thread, freezing the whole app window (not just this
+ * editor pane) for as long as it takes. `async fn` + `run_blocking` matches
+ * `dashboard_repo_status`'s/`workdir_status`'s own established fix.
  */
 async readRepoFile(path: string, fileName: string) : Promise<Result<string, string>> {
     try {
@@ -1972,6 +2735,12 @@ async readRepoFile(path: string, fileName: string) : Promise<Result<string, stri
 /**
  * Overwrite `file_name` with `content` verbatim (repo-root only).
  * JS: `commands.writeRepoFile(path, fileName, content)` -> `RepoFileResult`.
+ * 
+ * BUG FIX: was a plain (non-async) `fn`, for the identical reason as `read_repo_file`
+ * above — it opens the repo through the same `open` -> `crate::trust::open_repo` path,
+ * which can block on a git2 `Repository::open` plus (on the ownership-retry path) a
+ * synchronous `git config --global` subprocess call. `async fn` + `run_blocking` keeps
+ * that off Tauri's main thread the same way.
  */
 async writeRepoFile(path: string, fileName: string, content: string) : Promise<RepoFileResult> {
     return await TAURI_INVOKE("write_repo_file", { path, fileName, content });
@@ -1979,6 +2748,16 @@ async writeRepoFile(path: string, fileName: string, content: string) : Promise<R
 /**
  * JS: `commands.terminalSpawn(path)`. Returns the new session's id, which
  * every other command below takes to address it.
+ * 
+ * BUG FIX: was a plain (non-async) `fn` — `open_pty_shell` calls
+ * `trust::open_repo` before ever touching a PTY, the same git2 `Repository::
+ * open` (and, on a dubious-ownership WSL/UNC path, the same subprocess
+ * `safety::run_git` fallback) every other read command's fix already had to
+ * account for, so opening the terminal drawer could stall the whole window
+ * for as long as that open takes. `async fn` + `run_blocking` moves the
+ * spawn itself onto Tauri's blocking-task thread pool, matching `watch_repo`'s
+ * own established shape for a command that also needs `State` after the
+ * blocking part completes.
  */
 async terminalSpawn(path: string) : Promise<Result<string, string>> {
     try {
@@ -2143,7 +2922,7 @@ export type CommitObject = { sha: string; shortSha: string; author: PlumbingPers
  * result — same shape/naming spirit as `identity::GitIdentity`, generalized
  * from two hardcoded fields to an arbitrary caller-supplied key.
  */
-export type ConfigEntry = { key: string; local: string | null; global: string | null;
+export type ConfigEntry = { key: string; local: string | null; global: string | null; 
 /**
  * `local` if set, else `global`, else `None` — identical per-key
  * fallback to `identity::resolve`'s own name/email handling.
