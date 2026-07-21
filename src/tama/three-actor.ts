@@ -311,8 +311,10 @@ class Tama3DActor implements TamaActor {
     let rightArmZ = 0.34;
     let leftArmX = 0;
     let rightArmX = 0;
-    let leftElbowZ = 0;
-    let rightElbowZ = 0;
+    // The forearms also inherit the A-pose fan-out. Fold them slightly back
+    // toward the hips so relaxed hands land beside the skirt, not outboard.
+    let leftElbowZ = -0.48;
+    let rightElbowZ = 0.48;
     let leftWristX = 0;
     let rightWristX = 0;
     let leftWristY = 0;
