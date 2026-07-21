@@ -100,6 +100,7 @@ use git2::{Delta, DiffFindOptions, DiffOptions, FileMode, Patch, Repository, Sta
 use serde::{Deserialize, Serialize};
 
 use crate::model::{DiffHunkRow, DiffLineRow, FileChange};
+use crate::procutil::NoConsoleWindowExt;
 
 /// Per-file line cap for [`workdir_file_diff`], identical to commands.rs's own
 /// `MAX_LINES_PER_FILE` — kept as a private copy rather than a shared const
@@ -236,6 +237,7 @@ struct Out {
 
 fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     let mut cmd = Command::new("git");
+    cmd.no_console_window();
     cmd.arg("-C").arg(path).args(args);
     if no_editor {
         cmd.env("GIT_EDITOR", "true").env("GIT_SEQUENCE_EDITOR", "true");
@@ -1762,6 +1764,7 @@ fn build_sub_patch(
 /// contract as every other mutation in this module.
 fn git_apply_stdin(path: &str, args: &[&str], patch: &str) -> Result<Out, String> {
     let mut cmd = Command::new("git");
+    cmd.no_console_window();
     cmd.arg("-C").arg(path).args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("Could not run git: {e}"))?;
     child

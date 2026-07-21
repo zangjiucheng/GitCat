@@ -27,6 +27,8 @@ use std::process::Command;
 use git2::{BranchType, Repository};
 use serde::Serialize;
 
+use crate::procutil::NoConsoleWindowExt;
+
 // ---------------------------------------------------------------------------
 // Payloads
 // ---------------------------------------------------------------------------
@@ -146,6 +148,7 @@ struct GitOut {
 /// forwarded stderr also becomes locale-stable, a deliberate strengthening.
 fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
     let output = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)

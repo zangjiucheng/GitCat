@@ -93,6 +93,7 @@
 use serde::Serialize;
 
 use crate::model::Person;
+use crate::procutil::NoConsoleWindowExt;
 
 /// Defense-in-depth cap on the returned list — see module doc; not expected
 /// to ever bind (dangling commits are inherently a small set).
@@ -212,6 +213,7 @@ struct Out {
 /// could silently produce zero parsed rows with no error at all.
 fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
     let o = std::process::Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)

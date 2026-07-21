@@ -26,6 +26,7 @@ pub mod model;
 pub mod patch; // format-patch export + git am --3way apply (with am's own continue/skip/abort)
 pub mod pickaxe; // pickaxe / diff-content search: git log -S/-G across (a subset of) history
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
+pub mod procutil; // suppresses the console window Windows flashes open per subprocess spawn
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod repo_files; // backlog #14 (final item): .gitignore/.mailmap in-app editors — allow-listed repo-root file read/write
 pub mod repo_registry; // backlog #11: app-level tracked-repos JSON persistence

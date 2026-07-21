@@ -51,6 +51,8 @@
 
 use std::process::{Command, Stdio};
 
+use crate::procutil::NoConsoleWindowExt;
+
 /// `path` -> `(distro, linux_path)` when `path` is a WSL UNC path, checking
 /// both the modern `wsl.localhost` host and the legacy `wsl$` alias, and
 /// both slash directions (Tauri's own file-picker dialog and this app's
@@ -131,6 +133,7 @@ pub fn git_command(path: &str, args: &[&str]) -> Command {
         }
     };
     cmd.stdin(Stdio::null());
+    cmd.no_console_window();
     cmd
 }
 

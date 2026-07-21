@@ -27,6 +27,8 @@ use std::process::Command;
 use git2::Repository;
 use serde::Serialize;
 
+use crate::procutil::NoConsoleWindowExt;
+
 // ---------------------------------------------------------------------------
 // Payload
 // ---------------------------------------------------------------------------
@@ -105,6 +107,7 @@ struct Out {
 /// (otherwise a headless app would hang). Returns `Err` only if git can't spawn.
 fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     let mut cmd = Command::new("git");
+    cmd.no_console_window();
     cmd.arg("-C").arg(path).args(args);
     if no_editor {
         cmd.env("GIT_EDITOR", "true")

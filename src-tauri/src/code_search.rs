@@ -78,6 +78,8 @@
 use serde::Serialize;
 use std::process::Command;
 
+use crate::procutil::NoConsoleWindowExt;
+
 /// Cap on returned matches — same value as `pickaxe::MAX_PICKAXE_MATCHES`/
 /// `file_history::MAX_HISTORY_COMMITS`, though (per module doc) enforced
 /// post-hoc rather than via `--max-count`.
@@ -276,6 +278,7 @@ struct Out {
 
 fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
     let o = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)

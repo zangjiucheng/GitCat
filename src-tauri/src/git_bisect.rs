@@ -69,6 +69,8 @@ use git2::Repository;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, Wry};
 
+use crate::procutil::NoConsoleWindowExt;
+
 #[derive(Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitInfo {
@@ -126,6 +128,7 @@ struct Out {
 /// the pager disabled. Returns `Err` only when git can't be spawned.
 fn git(path: &str, args: &[&str]) -> Result<Out, String> {
     let o = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)
@@ -710,6 +713,11 @@ fn run_test_command(path: &str, command: &str) -> Result<ExitStatus, String> {
         c.arg("-c").arg(command);
         c
     };
+    // `git bisect run` iterates this command automatically, often many
+    // times in a row with no manual interaction expected — a console window
+    // flashing open/closed on every single step (Windows only; `cmd`'s own
+    // console) is exactly the kind of noise this should stay quiet through.
+    cmd.no_console_window();
     cmd.current_dir(path);
     cmd.status().map_err(|e| format!("Could not run the test command: {e}"))
 }

@@ -26,6 +26,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use git2::Repository;
 use serde::Serialize;
 
+use crate::procutil::NoConsoleWindowExt;
+
 const BACKUP_GLOB: &str = "refs/gitgui/backup/*";
 const BACKUP_PREFIX: &str = "refs/gitgui/backup/";
 
@@ -54,6 +56,7 @@ pub struct GitOut {
 /// so callers can surface git's own stderr instead of turning it into a panic.
 pub fn run_git(repo: &str, args: &[&str]) -> Result<GitOut, String> {
     let out = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(repo)
         .args(args)
