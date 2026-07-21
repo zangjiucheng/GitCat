@@ -24,6 +24,8 @@ export interface Tama3DDebugActor extends TamaActor {
 
 type Rig = {
   head: THREE.Object3D | null;
+  leftEye: THREE.Object3D | null;
+  rightEye: THREE.Object3D | null;
   neck: THREE.Object3D | null;
   upperBody: THREE.Object3D | null;
   lowerBody: THREE.Object3D | null;
@@ -70,6 +72,8 @@ class Tama3DActor implements TamaActor {
   private debugMarker: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> | null = null;
   private rig: Rig = {
     head: null,
+    leftEye: null,
+    rightEye: null,
     neck: null,
     upperBody: null,
     lowerBody: null,
@@ -92,6 +96,7 @@ class Tama3DActor implements TamaActor {
     rightTail: [],
   };
   private baseRotations = new Map<THREE.Object3D, THREE.Euler>();
+  private baseScales = new Map<THREE.Object3D, THREE.Vector3>();
   private baseModelPosition = new THREE.Vector3();
 
   constructor(options: ThreeActorOptions) {
@@ -302,6 +307,8 @@ class Tama3DActor implements TamaActor {
       names.map((name) => model.getObjectByName(name)).filter((bone): bone is THREE.Object3D => Boolean(bone));
     this.rig = {
       head: find("頭", "头", "Head"),
+      leftEye: find("左目", "LeftEye"),
+      rightEye: find("右目", "RightEye"),
       neck: find("首", "Neck"),
       upperBody: find("上半身2", "上半身", "UpperBody"),
       lowerBody: find("下半身", "LowerBody"),
@@ -334,13 +341,17 @@ class Tama3DActor implements TamaActor {
     for (const value of Object.values(this.rig)) {
       const bones = Array.isArray(value) ? value : [value];
       for (const bone of bones) {
-        if (bone) this.baseRotations.set(bone, bone.rotation.clone());
+        if (bone) {
+          this.baseRotations.set(bone, bone.rotation.clone());
+          this.baseScales.set(bone, bone.scale.clone());
+        }
       }
     }
     if (this.debugEnabled) {
       model.traverse((object) => {
         if (object.type === "Bone" && !this.baseRotations.has(object)) {
           this.baseRotations.set(object, object.rotation.clone());
+          this.baseScales.set(object, object.scale.clone());
         }
       });
     }
@@ -358,7 +369,7 @@ class Tama3DActor implements TamaActor {
     this.camera.right = halfWidth;
     this.camera.top = halfHeight;
     this.camera.bottom = -halfHeight;
-    this.camera.zoom = 1.26;
+    this.camera.zoom = this.debugEnabled ? 0.9 : 1.26;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
   }
@@ -418,12 +429,17 @@ class Tama3DActor implements TamaActor {
     let rightWristY = 0;
     let leftWristZ = 0;
     let rightWristZ = 0;
-    // A relaxed hand is never perfectly flat. Keep a subtle living curl in
-    // all states, then open or close the fingers for individual gestures.
-    let leftFingerCurl = 0.16 + Math.sin(time * 1.15) * 0.018;
-    let rightFingerCurl = 0.16 + Math.sin(time * 1.15 + 0.8) * 0.018;
+    // Finger curl is deliberately shallow: these MMD fingers share world-like
+    // axes, so large Z rotations make the chains cross through one another.
+    let leftFingerCurl = 0.08;
+    let rightFingerCurl = 0.08;
     let leftFingerRipple = 0;
     let rightFingerRipple = 0;
+    let leftFingerSpread = 0;
+    let rightFingerSpread = 0;
+    const blink = Math.pow(Math.max(0, Math.sin(time * 0.72)), 42);
+    let leftEyeOpen = 1 - blink * 0.92;
+    let rightEyeOpen = 1 - blink * 0.92;
     let lift = Math.sin(time * 1.8) * 0.004;
     let sway = 0;
     let lowerBodyZ = 0;
@@ -466,6 +482,8 @@ class Tama3DActor implements TamaActor {
         leftTailZ = 0.2;
         rightTailZ = -0.2;
         lift = -0.012;
+        leftEyeOpen = 0.045;
+        rightEyeOpen = 0.045;
         break;
       case "hint":
         // One ear locks onto the target before a restrained presenting paw.
@@ -473,10 +491,10 @@ class Tama3DActor implements TamaActor {
         headY += 0.08;
         leftArmZ = 0.28;
         leftElbowZ = 1.8;
-        leftWristY = 1.05;
-        leftWristZ = -0.16 + Math.sin(time * 3) * 0.05;
-        leftFingerCurl = 0.5 + Math.sin(time * 3) * 0.08;
-        leftFingerRipple = 0.035;
+        leftWristY = 0.82;
+        leftWristZ = -0.04 + Math.sin(time * 3) * 0.035;
+        leftFingerCurl = 0.16 + Math.sin(time * 3) * 0.025;
+        leftFingerRipple = 0.015;
         leftEarZ = 0.08;
         rightEarZ = 0.02;
         tailBaseY = Math.sin(time * 2.2) * 0.13;
@@ -485,14 +503,17 @@ class Tama3DActor implements TamaActor {
         break;
       case "thinking":
         // Asymmetric ears and a slow tail tip sell concentration; only one
-        // hand supports the cheek instead of both arms forming a big pose.
-        headZ -= 0.11;
-        headY += 0.12;
-        rightArmZ = -0.5;
-        rightElbowZ = -2.02;
-        rightWristY = -1.05;
-        rightWristZ = 0.3;
-        rightFingerCurl = 0.42;
+        // hand sits under the chin instead of floating beside the cheek.
+        headX += 0.035;
+        headZ -= 0.08;
+        headY += 0.08;
+        rightArmZ = 0.2;
+        rightElbowZ = -1.55;
+        rightWristY = -0.55;
+        rightWristZ = 0.04;
+        rightFingerCurl = 0.12;
+        leftEyeOpen = 0.82;
+        rightEyeOpen = 0.9;
         leftEarZ = -0.14;
         rightEarZ = -0.02;
         tailBaseY = Math.sin(time * 0.85) * 0.045;
@@ -506,8 +527,10 @@ class Tama3DActor implements TamaActor {
         leftArmZ = 0.3;
         leftElbowZ = 1.82;
         leftWristX = -0.2;
-        leftWristY = 1.05;
-        leftFingerCurl = 0.04;
+        leftWristY = 0.82;
+        leftFingerCurl = 0;
+        leftFingerSpread = 0.22;
+        leftEyeOpen = rightEyeOpen = 1.08;
         bodyX -= 0.035;
         leftEarZ = -0.25;
         rightEarZ = 0.25;
@@ -524,12 +547,15 @@ class Tama3DActor implements TamaActor {
         rightArmZ = -0.55 - panic * 0.4;
         leftElbowZ = 2.14;
         rightElbowZ = -2.14;
-        leftWristY = 1.05;
-        rightWristY = -1.05;
-        leftWristZ = -0.22;
-        rightWristZ = 0.22;
-        leftFingerCurl = 0.7;
-        rightFingerCurl = 0.7;
+        leftWristY = 0.82;
+        rightWristY = -0.82;
+        leftWristZ = -0.04;
+        rightWristZ = 0.04;
+        leftFingerCurl = 0.14;
+        rightFingerCurl = 0.14;
+        leftFingerSpread = 0.06;
+        rightFingerSpread = 0.06;
+        leftEyeOpen = rightEyeOpen = 1.14;
         leftEarZ = -0.32 + panic * 0.2;
         rightEarZ = 0.32 - panic * 0.2;
         tailBaseY = Math.sin(time * 8.5) * 0.22;
@@ -539,21 +565,21 @@ class Tama3DActor implements TamaActor {
         break;
       }
       case "celebrate": {
-        // Hands become compact cat paws by the cheeks; ears perk and both
-        // tails wag broadly in opposite phases.
+        // Open hands by the cheeks; ears perk and both tails wag broadly.
         const cheer = Math.sin(time * 5) * 0.045;
         leftArmZ = 0.4 + cheer;
         rightArmZ = -0.4 - cheer;
         leftElbowZ = 2.02;
         rightElbowZ = -2.02;
-        leftWristY = 1.05;
-        rightWristY = -1.05;
-        leftWristZ = -0.22;
-        rightWristZ = 0.22;
-        leftFingerCurl = 0.76 + Math.sin(time * 5) * 0.05;
-        rightFingerCurl = 0.76 - Math.sin(time * 5) * 0.05;
-        leftFingerRipple = 0.035;
-        rightFingerRipple = 0.035;
+        leftWristY = 0.82;
+        rightWristY = -0.82;
+        leftWristZ = -0.03;
+        rightWristZ = 0.03;
+        leftFingerCurl = 0;
+        rightFingerCurl = 0;
+        leftFingerSpread = 0.38;
+        rightFingerSpread = 0.38;
+        leftEyeOpen = rightEyeOpen = 0.82;
         leftEarZ = 0.08;
         rightEarZ = -0.08;
         tailBaseY = Math.sin(time * 4.2) * 0.2;
@@ -569,7 +595,8 @@ class Tama3DActor implements TamaActor {
         rightArmZ = -0.16;
         rightElbowZ = 0.18;
         rightWristX = -0.18;
-        rightFingerCurl = 0.05;
+        rightFingerCurl = 0;
+        rightFingerSpread = 0.18;
         leftArmZ = -0.25;
         bodyZ = -0.045;
         headZ -= 0.045;
@@ -581,6 +608,8 @@ class Tama3DActor implements TamaActor {
       case "confused":
         // One ear up, one ear out, and mismatched tails form the question.
         headZ += 0.15 + Math.sin(time * 2.4) * 0.02;
+        leftEyeOpen = 0.82;
+        rightEyeOpen = 1.08;
         leftEarZ = 0.1;
         rightEarZ = 0.24;
         tailBaseZ = 0.08;
@@ -604,18 +633,21 @@ class Tama3DActor implements TamaActor {
         rightTailY = Math.sin(time * 1.7 + 0.8) * 0.08;
         break;
       case "syncing": {
-        // Focused ears and metronomic tails carry the working rhythm; hands
-        // stay compact in front instead of pumping up and down.
+        // Focused ears and metronomic tails carry the working rhythm. Elbows
+        // remain bent well short of 180 degrees so forearms stay distinct.
         const work = Math.sin(time * 5) * 0.06;
         headX += 0.055;
-        leftArmZ = -0.18;
-        rightArmZ = 0.18;
-        leftElbowZ = 2.9;
-        rightElbowZ = -2.9;
-        leftWristY = work * 0.7;
-        rightWristY = -work * 0.7;
-        leftFingerCurl = 0.52 + work;
-        rightFingerCurl = 0.52 - work;
+        leftArmZ = 0.06;
+        rightArmZ = -0.06;
+        leftElbowZ = 2.4;
+        rightElbowZ = -2.4;
+        leftWristY = 0.4 + work * 0.25;
+        rightWristY = -0.4 - work * 0.25;
+        leftWristZ = -0.04;
+        rightWristZ = 0.04;
+        leftFingerCurl = 0.13 + work * 0.3;
+        rightFingerCurl = 0.13 - work * 0.3;
+        leftEyeOpen = rightEyeOpen = 0.88;
         leftEarZ = -0.03;
         rightEarZ = 0.03;
         tailBaseY = Math.sin(time * 3.2) * 0.12;
@@ -625,13 +657,15 @@ class Tama3DActor implements TamaActor {
         break;
       }
       case "greeting":
-        // A small wave is supported by one ear flick and friendly twin tails.
+        // Wave side-to-side in screen space. Wrist Y stays fixed so the palm
+        // does not repeatedly flip toward and away from the camera.
         rightArmZ = -0.66;
         rightElbowZ = -2.02;
-        rightWristY = -1.05 + Math.sin(time * 6) * 0.08;
-        rightWristZ = 0.18 + Math.sin(time * 6) * 0.2;
-        rightFingerCurl = 0.28 + Math.sin(time * 6) * 0.22;
-        rightFingerRipple = 0.14;
+        rightWristY = -0.8;
+        rightWristZ = Math.sin(time * 5.2) * 0.3;
+        rightFingerCurl = 0.02;
+        rightFingerSpread = 0.24;
+        rightFingerRipple = 0.025;
         rightEarZ = -Math.pow(Math.max(0, Math.sin(time * 1.4)), 10) * 0.12;
         tailBaseY = Math.sin(time * 2.4) * 0.16;
         leftTailY = Math.sin(time * 2.8) * 0.14;
@@ -661,28 +695,79 @@ class Tama3DActor implements TamaActor {
     apply(this.rig.rightElbow, 0, 0, rightElbowZ);
     apply(this.rig.leftWrist, leftWristX, leftWristY, leftWristZ);
     apply(this.rig.rightWrist, rightWristX, rightWristY, rightWristZ);
-    const applyFingers = (bones: THREE.Object3D[], curl: number, ripple: number, mirror: number): void => {
-      const jointStrength = [0.55, 0.78, 0.68];
+    if (
+      this.state === "thinking" &&
+      this.model &&
+      this.rig.head &&
+      this.rig.rightArm &&
+      this.rig.rightElbow &&
+      this.rig.rightWrist
+    ) {
+      const modelHeight = Number(this.camera?.userData.modelHeight) || 1;
+      const target = this.rig.head.getWorldPosition(new THREE.Vector3());
+      target.x -= modelHeight * 0.005;
+      target.y += modelHeight * 0.015;
+      target.z += modelHeight * 0.035;
+      const effectorPosition = new THREE.Vector3();
+      const jointPosition = new THREE.Vector3();
+      const solveJoint = (joint: THREE.Object3D): void => {
+        this.model?.updateMatrixWorld(true);
+        joint.getWorldPosition(jointPosition);
+        this.rig.rightWrist?.getWorldPosition(effectorPosition);
+        const toEffectorX = effectorPosition.x - jointPosition.x;
+        const toEffectorY = effectorPosition.y - jointPosition.y;
+        const toTargetX = target.x - jointPosition.x;
+        const toTargetY = target.y - jointPosition.y;
+        const cross = toEffectorX * toTargetY - toEffectorY * toTargetX;
+        const dot = toEffectorX * toTargetX + toEffectorY * toTargetY;
+        joint.rotation.z += THREE.MathUtils.clamp(Math.atan2(cross, dot), -0.65, 0.65);
+      };
+      for (let iteration = 0; iteration < 4; iteration += 1) {
+        solveJoint(this.rig.rightElbow);
+        solveJoint(this.rig.rightArm);
+      }
+    }
+    const applyFingers = (
+      bones: THREE.Object3D[],
+      curl: number,
+      ripple: number,
+      spread: number,
+      mirror: number,
+    ): void => {
+      const jointStrength = [0.42, 0.7, 0.58];
+      const spreadPattern = [-0.75, -0.22, 0.24, 0.72];
       bones.forEach((bone, index) => {
         const finger = Math.floor(index / 3);
+        const joint = index % 3;
         const staggeredCurl = curl + Math.sin(time * 6 + finger * 0.7) * ripple;
         const amount = staggeredCurl * jointStrength[index % 3];
-        // The MMD finger bones are aligned mostly in screen space. Their
-        // visible curl is therefore primarily local Z and mirrored per hand;
-        // using X as the main axis fans the fingers outward after wrist twist.
-        apply(bone, amount * 0.12, 0, -mirror * amount * 0.72);
+        // Curl on local X to move each chain through the palm plane without
+        // crossing neighboring fingers. Only the root receives a small,
+        // per-finger Z fan so an open hand reads as four distinct fingers.
+        const fingerSpread = joint === 0 ? mirror * spreadPattern[finger] * spread : 0;
+        apply(bone, amount, 0, fingerSpread);
       });
     };
     const applyThumb = (bones: THREE.Object3D[], curl: number, mirror: number): void => {
       bones.forEach((bone, index) => {
-        const amount = curl * (index === 0 ? 0.38 : 0.62);
-        apply(bone, amount * 0.22, mirror * amount * 0.12, -mirror * amount * 0.48);
+        const amount = curl * (index === 0 ? 0.28 : 0.5);
+        apply(bone, amount, mirror * amount * 0.1, 0);
       });
     };
-    applyFingers(this.rig.leftFingers, leftFingerCurl, leftFingerRipple, -1);
-    applyFingers(this.rig.rightFingers, rightFingerCurl, rightFingerRipple, 1);
+    applyFingers(this.rig.leftFingers, leftFingerCurl, leftFingerRipple, leftFingerSpread, -1);
+    applyFingers(this.rig.rightFingers, rightFingerCurl, rightFingerRipple, rightFingerSpread, 1);
     applyThumb(this.rig.leftThumb, leftFingerCurl, -1);
     applyThumb(this.rig.rightThumb, rightFingerCurl, 1);
+    const applyEyeOpen = (eye: THREE.Object3D | null, openness: number): void => {
+      if (!eye) return;
+      const base = this.baseScales.get(eye);
+      if (!base) return;
+      eye.scale.x = THREE.MathUtils.lerp(eye.scale.x, base.x, smooth);
+      eye.scale.y = THREE.MathUtils.lerp(eye.scale.y, base.y * openness, smooth);
+      eye.scale.z = THREE.MathUtils.lerp(eye.scale.z, base.z, smooth);
+    };
+    applyEyeOpen(this.rig.leftEye, leftEyeOpen);
+    applyEyeOpen(this.rig.rightEye, rightEyeOpen);
     const applyChain = (bones: THREE.Object3D[], x: number, y: number, z: number): void => {
       bones.forEach((bone, index) => {
         const falloff = Math.pow(0.62, index);
