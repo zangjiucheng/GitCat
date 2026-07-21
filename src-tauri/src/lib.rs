@@ -332,7 +332,11 @@ pub fn run() {
     // overhead, hence #[cfg(debug_assertions)] gating either from ever
     // running in a release build at all.
     //
-    //   - default (no env var): tauri-plugin-devtools (CrabNebula) — a GUI
+    //   - default (neither env var set): NEITHER runs — an ordinary `pnpm
+    //     tauri dev` stays a plain, lightweight dev build with no extra
+    //     console spam, diagnostic port, or tracing overhead. Both tools are
+    //     genuinely opt-in, not "on unless you know to turn them off".
+    //   - GITCAT_DEVTOOLS=1: tauri-plugin-devtools (CrabNebula) — a GUI
     //     inspector, viewed via the separate CrabNebula DevTools desktop app.
     //   - GITCAT_TOKIO_CONSOLE=1: console-subscriber (tokio-console) — a raw
     //     async-task inspector for everything routed through
@@ -343,11 +347,15 @@ pub fn run() {
     //     the default 127.0.0.1:6669 gRPC endpoint. Requires building with
     //     `RUSTFLAGS="--cfg tokio_unstable"` (see .cargo/config.toml) or this
     //     subscriber sees no task events at all.
+    //   - both set: GITCAT_TOKIO_CONSOLE wins — they can't run together at
+    //     all (both try to install the process-global tracing dispatcher;
+    //     confirmed via a real startup panic when both ran), so one has to
+    //     take priority rather than leaving that case undefined.
     #[cfg(debug_assertions)]
     {
         if std::env::var_os("GITCAT_TOKIO_CONSOLE").is_some() {
             console_subscriber::init();
-        } else {
+        } else if std::env::var_os("GITCAT_DEVTOOLS").is_some() {
             app_builder = app_builder.plugin(tauri_plugin_devtools::init());
         }
     }
