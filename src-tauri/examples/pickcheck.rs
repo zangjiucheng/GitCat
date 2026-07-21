@@ -13,25 +13,25 @@ fn main() {
     let sha = std::env::args().nth(2).unwrap_or_default();
     match std::env::args().nth(3).as_deref() {
         Some("status") => {
-            println!("conflict_status -> {}", j(&conflict_status(p).unwrap()));
+            println!("conflict_status -> {}", j(&tauri::async_runtime::block_on(conflict_status(p)).unwrap()));
             return;
         }
         Some("abort") => {
-            println!("cherry_pick     -> {}", j(&cherry_pick(p.clone(), sha, Some(true))));
-            println!("abort           -> {}", j(&cherry_pick_abort(p)));
+            println!("cherry_pick     -> {}", j(&tauri::async_runtime::block_on(cherry_pick(p.clone(), sha, Some(true)))));
+            println!("abort           -> {}", j(&tauri::async_runtime::block_on(cherry_pick_abort(p))));
             return;
         }
         _ => {}
     }
     // full conflict -> resolve(theirs) -> continue flow
-    println!("cherry_pick     -> {}", j(&cherry_pick(p.clone(), sha, Some(true))));
-    let st = conflict_status(p.clone()).unwrap();
+    println!("cherry_pick     -> {}", j(&tauri::async_runtime::block_on(cherry_pick(p.clone(), sha, Some(true)))));
+    let st = tauri::async_runtime::block_on(conflict_status(p.clone())).unwrap();
     println!("conflict_status -> {}", j(&st));
     if let Some(f) = st.files.first() {
         println!(
             "resolve theirs  -> {}",
-            j(&resolve_conflict_file(p.clone(), f.path.clone(), "theirs".into()))
+            j(&tauri::async_runtime::block_on(resolve_conflict_file(p.clone(), f.path.clone(), "theirs".into())))
         );
     }
-    println!("continue        -> {}", j(&cherry_pick_continue(p)));
+    println!("continue        -> {}", j(&tauri::async_runtime::block_on(cherry_pick_continue(p))));
 }

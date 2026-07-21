@@ -39,7 +39,7 @@ fn fetch_updates_remote_tracking_refs_without_touching_local_head() {
     let head_before = local.rev("HEAD");
     assert_ne!(local.rev("refs/remotes/origin/main"), Some(new_tip.clone()));
 
-    let res = fetch(local.path(), None);
+    let res = tauri::async_runtime::block_on(fetch(local.path(), None));
     assert!(res.ok, "fetch failed: {}", res.message);
     assert_eq!(local.rev("refs/remotes/origin/main"), Some(new_tip));
     assert_eq!(local.rev("HEAD"), head_before, "fetch must never move local HEAD");
@@ -49,7 +49,7 @@ fn fetch_updates_remote_tracking_refs_without_touching_local_head() {
 #[test]
 fn fetch_named_remote_validates_the_name() {
     let (_origin, local) = origin_and_clone("fetch_validate");
-    let res = fetch(local.path(), Some("--upload-pack=evil".to_string()));
+    let res = tauri::async_runtime::block_on(fetch(local.path(), Some("--upload-pack=evil".to_string())));
     assert!(!res.ok);
     assert!(res.message.contains("flag"), "expected a flag-injection refusal, got: {}", res.message);
 }
@@ -61,7 +61,7 @@ fn pull_fast_forwards_and_snapshots_first() {
     let new_tip = other.commit("g.txt", "1\n", "c1");
     other.must(&["push", "-q", "origin", "main"]);
 
-    let res = pull(local.path());
+    let res = tauri::async_runtime::block_on(pull(local.path()));
     assert!(res.ok, "pull failed: {}", res.message);
     assert_eq!(local.rev("HEAD"), Some(new_tip));
     assert!(res.backup_ref.is_some(), "pull moves local HEAD, so it must snapshot first");
@@ -77,7 +77,7 @@ fn pull_refuses_to_merge_on_divergence_ff_only() {
     // Local now has an UNPUSHED commit of its own -> the two histories diverge.
     let local_tip = local.commit("h.txt", "local\n", "my commit");
 
-    let res = pull(local.path());
+    let res = tauri::async_runtime::block_on(pull(local.path()));
     assert!(!res.ok, "a diverged ff-only pull must be refused, not silently merged");
     assert_eq!(local.rev("HEAD"), Some(local_tip), "a refused pull must leave HEAD untouched");
     assert!(local.is_clean(), "a refused ff-only pull must never leave a conflict/merge in progress");
@@ -91,7 +91,7 @@ fn push_publishes_a_branch_with_no_upstream_to_origin() {
     local.must(&["remote", "add", "origin", &origin.path()]);
 
     assert!(local.rev("refs/remotes/origin/main").is_none(), "nothing pushed yet");
-    let res = push(local.path());
+    let res = tauri::async_runtime::block_on(push(local.path()));
     assert!(res.ok, "push failed: {}", res.message);
     assert_eq!(origin.rev("main"), local.rev("HEAD"), "origin's bare main should now match local HEAD");
 
@@ -104,7 +104,7 @@ fn push_with_existing_upstream_does_not_need_set_upstream_again() {
     let (origin, local) = origin_and_clone("push_existing");
     let new_tip = local.commit("g.txt", "1\n", "c1");
 
-    let res = push(local.path());
+    let res = tauri::async_runtime::block_on(push(local.path()));
     assert!(res.ok, "push failed: {}", res.message);
     assert_eq!(origin.rev("main"), Some(new_tip));
 }
@@ -118,7 +118,7 @@ fn push_rejects_a_non_fast_forward_without_forcing() {
 
     // local is now BEHIND origin — its push should be rejected, not forced.
     local.commit("h.txt", "1\n", "diverged commit");
-    let res = push(local.path());
+    let res = tauri::async_runtime::block_on(push(local.path()));
     assert!(!res.ok, "a non-fast-forward push must be rejected");
     assert_eq!(origin.rev("main"), Some(their_tip), "a rejected push must never overwrite origin");
 }
@@ -128,7 +128,7 @@ fn current_upstream_reports_the_configured_shorthand() {
     // origin_and_clone already leaves `local`'s main tracking origin/main
     // (via `push -u`), so this is the "has an upstream" case for free.
     let (_origin, local) = origin_and_clone("current_upstream_configured");
-    let up = current_upstream(local.path()).expect("current_upstream should not error");
+    let up = tauri::async_runtime::block_on(current_upstream(local.path())).expect("current_upstream should not error");
     assert_eq!(up.as_deref(), Some("origin/main"), "expected the shorthand tracking-ref name");
 }
 
@@ -140,7 +140,7 @@ fn current_upstream_is_none_when_branch_has_no_upstream() {
     local.must(&["remote", "add", "origin", &origin.path()]);
     // Deliberately never pushed / never `--set-upstream`'d.
 
-    let up = current_upstream(local.path()).expect("current_upstream should not error");
+    let up = tauri::async_runtime::block_on(current_upstream(local.path())).expect("current_upstream should not error");
     assert_eq!(up, None, "a branch with no configured upstream must report None, not an error");
 }
 
@@ -166,7 +166,7 @@ fn force_push_lease_succeeds_after_a_local_rebase_amend() {
     let rewritten_tip = amend_last_commit(&local, "1 reworded\n", "c1 (amended)");
     assert_ne!(rewritten_tip, pushed_tip, "amend must actually rewrite the commit");
 
-    let res = force_push(local.path(), true);
+    let res = tauri::async_runtime::block_on(force_push(local.path(), true));
     assert!(res.ok, "force_push(lease=true) should succeed: {}", res.message);
     assert_eq!(origin.rev("main"), Some(rewritten_tip), "origin should now hold the rewritten history");
     assert!(res.backup_ref.is_none(), "force_push never snapshots — nothing local changes");
@@ -189,7 +189,7 @@ fn force_push_lease_is_rejected_when_remote_moved_since_last_fetch() {
     let rewritten_tip = amend_last_commit(&local, "1 reworded\n", "c1 (amended)");
     assert_ne!(rewritten_tip, pushed_tip);
 
-    let res = force_push(local.path(), true);
+    let res = tauri::async_runtime::block_on(force_push(local.path(), true));
     assert!(!res.ok, "force_push(lease=true) must be rejected, not silently forced, when the remote moved");
     assert_eq!(origin.rev("main"), Some(theirs_tip), "a rejected --force-with-lease must never touch origin");
 }
@@ -209,7 +209,7 @@ fn force_push_without_lease_overrides_remote_changes_unconditionally() {
     let rewritten_tip = amend_last_commit(&local, "1 reworded\n", "c1 (amended)");
     assert_ne!(rewritten_tip, pushed_tip);
 
-    let res = force_push(local.path(), false);
+    let res = tauri::async_runtime::block_on(force_push(local.path(), false));
     assert!(res.ok, "force_push(lease=false) should succeed even when the remote moved: {}", res.message);
     assert_eq!(
         origin.rev("main"),
@@ -263,7 +263,7 @@ fn force_push_is_confined_to_the_current_branch_even_under_push_default_matching
     // itself would have succeeded.
     local.must(&["config", "push.default", "matching"]);
 
-    let res = force_push(local.path(), true);
+    let res = tauri::async_runtime::block_on(force_push(local.path(), true));
     assert!(res.ok, "force_push(lease=true) on main alone should succeed: {}", res.message);
     assert_eq!(origin.rev("main"), Some(rewritten_tip), "origin's main should hold the rewritten history");
     assert_eq!(
@@ -281,7 +281,7 @@ fn force_push_refuses_a_branch_with_no_upstream_before_attempting_anything() {
     local.must(&["remote", "add", "origin", &origin.path()]);
     // Deliberately never pushed / never `--set-upstream`'d.
 
-    let res = force_push(local.path(), true);
+    let res = tauri::async_runtime::block_on(force_push(local.path(), true));
     assert!(!res.ok, "force_push must refuse a branch with no upstream");
     assert!(
         res.message.contains("upstream"),
@@ -292,7 +292,7 @@ fn force_push_refuses_a_branch_with_no_upstream_before_attempting_anything() {
 
     // Same refusal for the raw-force variant too — the no-upstream guard
     // applies regardless of `lease`.
-    let res2 = force_push(local.path(), false);
+    let res2 = tauri::async_runtime::block_on(force_push(local.path(), false));
     assert!(!res2.ok, "force_push(lease=false) must also refuse a branch with no upstream");
 }
 
@@ -307,7 +307,7 @@ fn reset_current_branch_discards_local_commits_and_working_tree_changes() {
     std::fs::write(local.dir.join("f.txt"), "dirty uncommitted\n").expect("write dirty change");
     assert!(!local.is_clean(), "sanity: working tree should be dirty before reset");
 
-    let res = reset_branch_to_upstream(local.path(), "main".to_string());
+    let res = tauri::async_runtime::block_on(reset_branch_to_upstream(local.path(), "main".to_string()));
     assert!(res.ok, "reset_branch_to_upstream failed: {}", res.message);
     assert_eq!(local.rev("HEAD"), Some(upstream_tip.clone()), "HEAD should land exactly on origin/main's tip");
     assert!(local.is_clean(), "reset --hard must discard the dirty working-tree change too");
@@ -338,7 +338,7 @@ fn reset_non_current_branch_only_moves_the_ref_without_touching_working_tree() {
     assert_ne!(feature_local_tip, upstream_tip, "sanity: feature must actually diverge from its upstream");
 
     let before_current_head = local.rev("HEAD");
-    let res = reset_branch_to_upstream(local.path(), "feature".to_string());
+    let res = tauri::async_runtime::block_on(reset_branch_to_upstream(local.path(), "feature".to_string()));
     assert!(res.ok, "reset_branch_to_upstream failed: {}", res.message);
     assert_eq!(local.rev("refs/heads/feature"), Some(upstream_tip), "feature's ref should now match its upstream");
     assert_eq!(local.current_branch(), "main", "resetting a non-current branch must never move HEAD off the checked-out branch");
@@ -355,7 +355,7 @@ fn reset_refuses_a_branch_with_no_configured_upstream() {
     // Deliberately never tracked/pushed.
 
     let tip_before = local.rev("HEAD");
-    let res = reset_branch_to_upstream(local.path(), "orphan".to_string());
+    let res = tauri::async_runtime::block_on(reset_branch_to_upstream(local.path(), "orphan".to_string()));
     assert!(!res.ok, "reset must refuse a branch with no configured upstream");
     assert!(res.message.contains("upstream"), "expected a clear no-upstream refusal, got: {}", res.message);
     assert_eq!(local.rev("HEAD"), tip_before, "a refused reset must never move HEAD");
@@ -366,7 +366,7 @@ fn reset_refuses_a_branch_with_no_configured_upstream() {
 fn reset_refuses_a_nonexistent_branch() {
     let (_origin, local) = origin_and_clone("reset_nonexistent");
 
-    let res = reset_branch_to_upstream(local.path(), "does-not-exist".to_string());
+    let res = tauri::async_runtime::block_on(reset_branch_to_upstream(local.path(), "does-not-exist".to_string()));
     assert!(!res.ok, "reset must refuse a branch that doesn't exist locally");
     assert!(res.backup_ref.is_none(), "a refused reset must not snapshot");
 }
@@ -378,7 +378,7 @@ fn current_upstream_is_none_on_detached_head() {
     local.must(&["checkout", "-q", &head_sha]);
     assert_eq!(local.current_branch(), "", "sanity: HEAD should now be detached");
 
-    let up = current_upstream(local.path()).expect("current_upstream should not error");
+    let up = tauri::async_runtime::block_on(current_upstream(local.path())).expect("current_upstream should not error");
     assert_eq!(up, None, "a detached HEAD has no branch, so no upstream, either");
 }
 
@@ -390,7 +390,7 @@ fn push_branch_publishes_a_non_checked_out_branch_without_switching() {
     assert_eq!(local.current_branch(), "main", "sanity: still on main before pushing");
     assert!(origin.rev("feature").is_none(), "nothing pushed yet");
 
-    let res = push_branch(local.path(), "feature".to_string(), None, None);
+    let res = tauri::async_runtime::block_on(push_branch(local.path(), "feature".to_string(), None, None));
     assert!(res.ok, "push_branch failed: {}", res.message);
     assert_eq!(origin.rev("feature"), Some(feature_tip), "origin should now have feature at the same tip");
     assert_eq!(local.current_branch(), "main", "push_branch must never switch the checked-out branch");
@@ -402,7 +402,7 @@ fn push_branch_can_publish_under_a_different_remote_name() {
     local.must(&["branch", "feature"]);
     let feature_tip = local.rev("refs/heads/feature").expect("feature branch should exist");
 
-    let res = push_branch(local.path(), "feature".to_string(), None, Some("feature-review".to_string()));
+    let res = tauri::async_runtime::block_on(push_branch(local.path(), "feature".to_string(), None, Some("feature-review".to_string())));
     assert!(res.ok, "push_branch failed: {}", res.message);
     assert_eq!(origin.rev("feature-review"), Some(feature_tip), "origin should have the renamed branch");
     assert!(origin.rev("feature").is_none(), "must not ALSO create a same-named branch on origin");
@@ -413,7 +413,7 @@ fn push_branch_sets_upstream_tracking_on_first_publish() {
     let (_origin, local) = origin_and_clone("push_branch_upstream");
     local.must(&["branch", "feature"]);
 
-    let res = push_branch(local.path(), "feature".to_string(), None, None);
+    let res = tauri::async_runtime::block_on(push_branch(local.path(), "feature".to_string(), None, None));
     assert!(res.ok, "push_branch failed: {}", res.message);
 
     let (has_upstream, _, _) = local.git(&["rev-parse", "--abbrev-ref", "feature@{upstream}"]);
@@ -425,7 +425,7 @@ fn push_branch_set_upstream_tracks_the_renamed_remote_branch() {
     let (_origin, local) = origin_and_clone("push_branch_upstream_renamed");
     local.must(&["branch", "feature"]);
 
-    let res = push_branch(local.path(), "feature".to_string(), None, Some("feature-review".to_string()));
+    let res = tauri::async_runtime::block_on(push_branch(local.path(), "feature".to_string(), None, Some("feature-review".to_string())));
     assert!(res.ok, "push_branch failed: {}", res.message);
 
     let tracked = local.must(&["rev-parse", "--abbrev-ref", "feature@{upstream}"]);
@@ -435,7 +435,7 @@ fn push_branch_set_upstream_tracks_the_renamed_remote_branch() {
 #[test]
 fn push_branch_rejects_a_nonexistent_local_branch() {
     let (_origin, local) = origin_and_clone("push_branch_missing");
-    let res = push_branch(local.path(), "no-such-branch".to_string(), None, None);
+    let res = tauri::async_runtime::block_on(push_branch(local.path(), "no-such-branch".to_string(), None, None));
     assert!(!res.ok);
     assert!(res.message.contains("no-such-branch"), "expected the missing branch name in the error, got: {}", res.message);
 }
@@ -443,7 +443,7 @@ fn push_branch_rejects_a_nonexistent_local_branch() {
 #[test]
 fn push_branch_rejects_a_branch_name_that_looks_like_a_flag() {
     let (_origin, local) = origin_and_clone("push_branch_flag_branch");
-    let res = push_branch(local.path(), "--upload-pack=evil".to_string(), None, None);
+    let res = tauri::async_runtime::block_on(push_branch(local.path(), "--upload-pack=evil".to_string(), None, None));
     assert!(!res.ok);
     assert!(res.message.contains("flag"), "expected a flag-injection refusal, got: {}", res.message);
 }
@@ -452,7 +452,7 @@ fn push_branch_rejects_a_branch_name_that_looks_like_a_flag() {
 fn push_branch_rejects_a_remote_branch_name_that_looks_like_a_flag() {
     let (_origin, local) = origin_and_clone("push_branch_flag_remote_branch");
     local.must(&["branch", "feature"]);
-    let res = push_branch(local.path(), "feature".to_string(), None, Some("--upload-pack=evil".to_string()));
+    let res = tauri::async_runtime::block_on(push_branch(local.path(), "feature".to_string(), None, Some("--upload-pack=evil".to_string())));
     assert!(!res.ok);
     assert!(res.message.contains("flag"), "expected a flag-injection refusal, got: {}", res.message);
 }
@@ -473,7 +473,7 @@ fn push_branch_with_existing_upstream_pushes_new_commits() {
     };
     assert_ne!(origin.rev("feature"), Some(new_tip.clone()), "sanity: origin doesn't have the new commit yet");
 
-    let res = push_branch(local.path(), "feature".to_string(), None, None);
+    let res = tauri::async_runtime::block_on(push_branch(local.path(), "feature".to_string(), None, None));
     assert!(res.ok, "push_branch failed: {}", res.message);
     assert_eq!(origin.rev("feature"), Some(new_tip));
     assert_ne!(feature_tip, origin.rev("feature").unwrap(), "sanity: origin actually moved past the first push");

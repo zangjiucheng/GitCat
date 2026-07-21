@@ -256,10 +256,10 @@ fn git_remote_fetch_and_push_route_through_the_wsl_distros_own_git() {
     let (ok, _, err) = repo.wsl_git(&["remote", "add", "origin", &bare.linux_path]);
     assert!(ok, "fixture setup (remote add) failed: {err}");
 
-    let fetch_result = git_remote::fetch(path.clone(), Some("origin".to_string()));
+    let fetch_result = tauri::async_runtime::block_on(git_remote::fetch(path.clone(), Some("origin".to_string())));
     assert!(fetch_result.ok, "fetch should route through wsl and succeed: {}", fetch_result.message);
 
-    let push_result = git_remote::push(path.clone());
+    let push_result = tauri::async_runtime::block_on(git_remote::push(path.clone()));
     assert!(push_result.ok, "push should route through wsl and succeed: {}", push_result.message);
 
     // Prove it actually landed on the "remote" (not a silent success).
@@ -285,7 +285,7 @@ fn push_branch_with_shell_metacharacters_is_not_reinterpreted_by_wsl_exe() {
     let (ok, _, err) = repo.wsl_git(&["branch", branch]);
     assert!(ok, "fixture setup (branch create) failed: {err}");
 
-    let result = git_remote::push_branch(path.clone(), branch.to_string(), None, None);
+    let result = tauri::async_runtime::block_on(git_remote::push_branch(path.clone(), branch.to_string(), None, None));
     assert!(result.ok, "push_branch should succeed: {}", result.message);
 
     let (ok, out, err) = bare.wsl_git(&["branch", "-a"]);
@@ -308,7 +308,8 @@ fn code_search_resolves_a_ref_not_just_a_sha_on_a_wsl_repo() {
     let path = repo.unc_path();
 
     for rev in ["HEAD", "main", "HEAD~0"] {
-        let result = code_search::code_search(path.clone(), "hello".to_string(), false, Some(rev.to_string()));
+        let result =
+            tauri::async_runtime::block_on(code_search::code_search(path.clone(), "hello".to_string(), false, Some(rev.to_string())));
         match result {
             Ok(res) => {
                 assert_eq!(res.matches.len(), 1, "expected exactly 1 match searching at {rev:?}, got {} matches", res.matches.len())
@@ -317,7 +318,12 @@ fn code_search_resolves_a_ref_not_just_a_sha_on_a_wsl_repo() {
         }
     }
 
-    let bad = code_search::code_search(path.clone(), "hello".to_string(), false, Some("not-a-real-ref".to_string()));
+    let bad = tauri::async_runtime::block_on(code_search::code_search(
+        path.clone(),
+        "hello".to_string(),
+        false,
+        Some("not-a-real-ref".to_string()),
+    ));
     assert!(bad.is_err(), "a genuinely invalid ref must still error cleanly, not panic or silently succeed");
 
     untrust(&path);

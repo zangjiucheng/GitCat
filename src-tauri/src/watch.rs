@@ -88,13 +88,27 @@ pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Resu
     Ok(debouncer)
 }
 
+/// BUG FIX: was a plain (non-async) `fn` — `start_watching` calls
+/// `trust::open_repo`, the same git2 `Repository::open` (and, on a
+/// dubious-ownership WSL/UNC path, the same subprocess fallback) every other
+/// read command's fix already had to account for, so arming the watcher on
+/// repo-open could stall the whole window for as long as that open takes.
+/// `async fn` + `run_blocking` moves just the `start_watching` call onto
+/// Tauri's blocking-task thread pool; `state` is still updated on the main
+/// thread afterward since a borrowed `State<'_, T>` can't be moved into the
+/// `'static` closure `run_blocking` requires — mirrors `terminal_spawn`'s own
+/// shape for a command that also needs `State` after the blocking part
+/// completes.
 #[tauri::command]
 #[specta::specta]
-pub fn watch_repo(app: AppHandle<Wry>, state: State<WatchState>, path: String) -> Result<(), String> {
+pub async fn watch_repo(app: AppHandle<Wry>, state: State<'_, WatchState>, path: String) -> Result<(), String> {
     let handle = app.clone();
-    let debouncer = start_watching(&path, move || {
-        let _ = handle.emit("repo-changed", ());
-    })?;
+    let debouncer = crate::blocking::run_blocking(move || {
+        start_watching(&path, move || {
+            let _ = handle.emit("repo-changed", ());
+        })
+    })
+    .await?;
     *state.0.lock().unwrap() = Some(debouncer);
     Ok(())
 }

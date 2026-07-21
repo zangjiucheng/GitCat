@@ -105,9 +105,22 @@ pub enum PlumbingObject {
 /// Resolve `rev` (sha / short-sha / branch / tag / `HEAD~2` / `HEAD^{tree}` /
 /// … — ordinary git rev syntax) and report a detail view of whatever object it
 /// names. JS: `invoke("plumbing_inspect", { path, rev })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — it opens the repository via git2
+/// and calls `revparse_single`, which for a `HEAD~N`/tree/tag walk has to
+/// read and parse objects off disk, all inline on Tauri's main thread. That
+/// froze the entire app window for as long as the resolve+peel took, not
+/// just this playground panel, especially over a WSL/UNC-bridged repo where
+/// each object read pays cross-filesystem latency. `async fn` + `run_blocking`
+/// moves the work onto Tauri's blocking-task thread pool, matching
+/// `workdir_status`'s own fix.
 #[tauri::command]
 #[specta::specta]
-pub fn plumbing_inspect(path: String, rev: String) -> Result<PlumbingObject, String> {
+pub async fn plumbing_inspect(path: String, rev: String) -> Result<PlumbingObject, String> {
+    crate::blocking::run_blocking(move || plumbing_inspect_inner(path, rev)).await
+}
+
+fn plumbing_inspect_inner(path: String, rev: String) -> Result<PlumbingObject, String> {
     // Local-validation-first (SYNTHESIS FIX vs. the reviewed draft, which
     // opened the repo before this check — this order matches this fn's own
     // doc/contract that an empty rev never touches git2 at all, and gives a

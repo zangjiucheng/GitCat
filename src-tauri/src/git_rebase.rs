@@ -650,63 +650,73 @@ fn classify(
 /// a failure.
 ///
 /// JS: `invoke("rebase_start", { path, onto })`.
+///
+/// Opens the repo and takes a safety snapshot with git2, then shells out to
+/// the git CLI to replay every commit in the range — both steps scale with
+/// history/working-tree size. As a plain sync command this ran inline on
+/// Tauri's main thread, freezing the whole app window (not just the rebase
+/// panel) for as long as the rebase took; `async fn` + `run_blocking` moves
+/// it onto Tauri's blocking-task thread pool instead.
 #[tauri::command]
 #[specta::specta]
-pub fn rebase_start(path: String, onto: String) -> RebaseResult {
-    if let Err(e) = validate_rev(&onto) {
-        return RebaseResult::error(e);
-    }
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-
-    // Refuse to stack a new rebase on top of an unfinished one.
-    if in_progress(&repo) {
-        return RebaseResult::error("A rebase is already in progress — resolve or abort it first.");
-    }
-
-    // Snapshot FIRST — never mutate without a pre-op backup. If it fails, abort.
-    let backup = match crate::safety::snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return RebaseResult::error(format!("Safety snapshot failed, aborting: {e}")),
-    };
-
-    // git rebase --no-autostash --end-of-options <onto>
-    //
-    // --no-autostash is explicit, not incidental: with an ambient
-    // `rebase.autoStash=true` in the user's global gitconfig, a dirty tree
-    // that collides with the rebase doesn't refuse up front — git silently
-    // stashes it, rebases, and re-applies the stash. If THAT reapply itself
-    // conflicts, git still exits 0 (the rebase's own sequencer state is
-    // gone), so `classify()` below (which checks unmerged_files
-    // unconditionally, not gated on in_progress) reports a normal
-    // "conflict" and opens the Resolver — but `rebase_continue`/
-    // `rebase_skip`/`rebase_abort` all gate on `in_progress()` first and
-    // find the rebase already concluded: continue/skip then error ("no
-    // rebase in progress") and abort falsely reports "clean", silently
-    // leaving real conflict markers in the working tree with the user's
-    // original edit stranded in `stash@{0}`. Passing --no-autostash makes
-    // the dirty-tree case refuse up front instead, matching this module's
-    // own "never leave the tree in a misleading state" contract —
-    // independent of what the user's global gitconfig happens to set.
-    let args: Vec<&str> = vec!["rebase", "--no-autostash", "--end-of-options", &onto];
-
-    let out = match git(&path, &args, true) {
-        Ok(o) => o,
-        Err(e) => {
-            return RebaseResult {
-                ok: false,
-                state: "error".into(),
-                conflicted_files: Vec::new(),
-                message: e,
-                backup_ref: Some(backup),
-                blocked_by_local_changes: false,
-            }
+pub async fn rebase_start(path: String, onto: String) -> RebaseResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_rev(&onto) {
+            return RebaseResult::error(e);
         }
-    };
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
+        };
 
-    classify(&repo, &path, &out, Some(backup), &onto)
+        // Refuse to stack a new rebase on top of an unfinished one.
+        if in_progress(&repo) {
+            return RebaseResult::error("A rebase is already in progress — resolve or abort it first.");
+        }
+
+        // Snapshot FIRST — never mutate without a pre-op backup. If it fails, abort.
+        let backup = match crate::safety::snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return RebaseResult::error(format!("Safety snapshot failed, aborting: {e}")),
+        };
+
+        // git rebase --no-autostash --end-of-options <onto>
+        //
+        // --no-autostash is explicit, not incidental: with an ambient
+        // `rebase.autoStash=true` in the user's global gitconfig, a dirty tree
+        // that collides with the rebase doesn't refuse up front — git silently
+        // stashes it, rebases, and re-applies the stash. If THAT reapply itself
+        // conflicts, git still exits 0 (the rebase's own sequencer state is
+        // gone), so `classify()` below (which checks unmerged_files
+        // unconditionally, not gated on in_progress) reports a normal
+        // "conflict" and opens the Resolver — but `rebase_continue`/
+        // `rebase_skip`/`rebase_abort` all gate on `in_progress()` first and
+        // find the rebase already concluded: continue/skip then error ("no
+        // rebase in progress") and abort falsely reports "clean", silently
+        // leaving real conflict markers in the working tree with the user's
+        // original edit stranded in `stash@{0}`. Passing --no-autostash makes
+        // the dirty-tree case refuse up front instead, matching this module's
+        // own "never leave the tree in a misleading state" contract —
+        // independent of what the user's global gitconfig happens to set.
+        let args: Vec<&str> = vec!["rebase", "--no-autostash", "--end-of-options", &onto];
+
+        let out = match git(&path, &args, true) {
+            Ok(o) => o,
+            Err(e) => {
+                return RebaseResult {
+                    ok: false,
+                    state: "error".into(),
+                    conflicted_files: Vec::new(),
+                    message: e,
+                    backup_ref: Some(backup),
+                    blocked_by_local_changes: false,
+                }
+            }
+        };
+
+        classify(&repo, &path, &out, Some(backup), &onto)
+    })
+    .await
 }
 
 /// Continue an in-progress rebase after the user resolved the conflict (files
@@ -720,39 +730,48 @@ pub fn rebase_start(path: String, onto: String) -> RebaseResult {
 /// commit in the sequence (empirically verified, see tests/rebase.rs).
 ///
 /// JS: `invoke("rebase_continue", { path })`.
+///
+/// Opens the repo and shells out `git rebase --continue`, which can itself
+/// replay one or more further commits before stopping again — a call whose
+/// cost scales with how much of the sequence is left. As a plain sync
+/// command this blocked the whole app window on Tauri's main thread for as
+/// long as that replay took; `run_blocking` moves it off the main thread.
 #[tauri::command]
 #[specta::specta]
-pub fn rebase_continue(path: String) -> RebaseResult {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-    if !in_progress(&repo) {
-        return RebaseResult::error("No rebase in progress to continue.");
-    }
-
-    // Name the target (for messages) while the sequencer's `onto` file exists.
-    let label = onto_label(&repo, &path);
-
-    // Snapshot the pre-commit state. Best-effort: continue must remain
-    // possible even if it can't run.
-    let backup = crate::safety::snapshot(&repo).ok();
-
-    let out = match git(&path, &["rebase", "--continue"], true) {
-        Ok(o) => o,
-        Err(e) => {
-            return RebaseResult {
-                ok: false,
-                state: "error".into(),
-                conflicted_files: Vec::new(),
-                message: e,
-                backup_ref: backup,
-                blocked_by_local_changes: false,
-            }
+pub async fn rebase_continue(path: String) -> RebaseResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
+        };
+        if !in_progress(&repo) {
+            return RebaseResult::error("No rebase in progress to continue.");
         }
-    };
 
-    classify(&repo, &path, &out, backup, &label)
+        // Name the target (for messages) while the sequencer's `onto` file exists.
+        let label = onto_label(&repo, &path);
+
+        // Snapshot the pre-commit state. Best-effort: continue must remain
+        // possible even if it can't run.
+        let backup = crate::safety::snapshot(&repo).ok();
+
+        let out = match git(&path, &["rebase", "--continue"], true) {
+            Ok(o) => o,
+            Err(e) => {
+                return RebaseResult {
+                    ok: false,
+                    state: "error".into(),
+                    conflicted_files: Vec::new(),
+                    message: e,
+                    backup_ref: backup,
+                    blocked_by_local_changes: false,
+                }
+            }
+        };
+
+        classify(&repo, &path, &out, backup, &label)
+    })
+    .await
 }
 
 /// Skip the commit the rebase is currently stopped on — DROPS it from the
@@ -765,43 +784,51 @@ pub fn rebase_continue(path: String) -> RebaseResult {
 /// conflicting commit (empirically verified, see tests/rebase.rs).
 ///
 /// JS: `invoke("rebase_skip", { path })`.
+///
+/// Opens the repo and shells out `git rebase --skip`, which — like
+/// `--continue` — can replay further commits before stopping again, a cost
+/// that scales with the remaining sequence. Previously ran inline on Tauri's
+/// main thread, freezing the whole window; `run_blocking` moves it off.
 #[tauri::command]
 #[specta::specta]
-pub fn rebase_skip(path: String) -> RebaseResult {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-    if !in_progress(&repo) {
-        return RebaseResult::error("No rebase in progress to skip a commit from.");
-    }
-
-    let dropped = stopped_label(&repo, &path);
-    let label = onto_label(&repo, &path);
-
-    // Best-effort snapshot before dropping a commit's changes — mirrors
-    // rebase_continue (never blocks Skip if it fails).
-    let backup = crate::safety::snapshot(&repo).ok();
-
-    let out = match git(&path, &["rebase", "--skip"], true) {
-        Ok(o) => o,
-        Err(e) => {
-            return RebaseResult {
-                ok: false,
-                state: "error".into(),
-                conflicted_files: Vec::new(),
-                message: e,
-                backup_ref: backup,
-                blocked_by_local_changes: false,
-            }
+pub async fn rebase_skip(path: String) -> RebaseResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
+        };
+        if !in_progress(&repo) {
+            return RebaseResult::error("No rebase in progress to skip a commit from.");
         }
-    };
 
-    let mut result = classify(&repo, &path, &out, backup, &label);
-    if result.state == "clean" {
-        result.message = format!("Skipped {dropped} — {}", result.message);
-    }
-    result
+        let dropped = stopped_label(&repo, &path);
+        let label = onto_label(&repo, &path);
+
+        // Best-effort snapshot before dropping a commit's changes — mirrors
+        // rebase_continue (never blocks Skip if it fails).
+        let backup = crate::safety::snapshot(&repo).ok();
+
+        let out = match git(&path, &["rebase", "--skip"], true) {
+            Ok(o) => o,
+            Err(e) => {
+                return RebaseResult {
+                    ok: false,
+                    state: "error".into(),
+                    conflicted_files: Vec::new(),
+                    message: e,
+                    backup_ref: backup,
+                    blocked_by_local_changes: false,
+                }
+            }
+        };
+
+        let mut result = classify(&repo, &path, &out, backup, &label);
+        if result.state == "clean" {
+            result.message = format!("Skipped {dropped} — {}", result.message);
+        }
+        result
+    })
+    .await
 }
 
 /// Abort an in-progress rebase: `git rebase --abort` restores the pre-rebase
@@ -810,35 +837,44 @@ pub fn rebase_skip(path: String) -> RebaseResult {
 /// the user's way out). Idempotent: "nothing in progress" is a benign success.
 ///
 /// JS: `invoke("rebase_abort", { path })`.
+///
+/// Opens the repo with git2 and shells out `git rebase --abort`, which
+/// restores the working tree/index to the pre-rebase snapshot — an operation
+/// whose cost scales with how much of the rebase had progressed. As a plain
+/// sync command this ran inline on Tauri's main thread, freezing the whole
+/// app window; `run_blocking` moves it onto the blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn rebase_abort(path: String) -> RebaseResult {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-    if !in_progress(&repo) {
-        return RebaseResult {
-            ok: true,
-            state: "clean".into(),
-            conflicted_files: Vec::new(),
-            message: "No rebase in progress.".into(),
-            backup_ref: None,
-            blocked_by_local_changes: false,
+pub async fn rebase_abort(path: String) -> RebaseResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
         };
-    }
-    match git(&path, &["rebase", "--abort"], false) {
-        Ok(o) if o.ok => RebaseResult {
-            ok: true,
-            state: "clean".into(),
-            conflicted_files: Vec::new(),
-            message: "Rebase aborted — back to the pre-rebase state.".into(),
-            backup_ref: None,
-            blocked_by_local_changes: false,
-        },
-        Ok(o) => RebaseResult::error(git_msg(&o)),
-        Err(e) => RebaseResult::error(e),
-    }
+        if !in_progress(&repo) {
+            return RebaseResult {
+                ok: true,
+                state: "clean".into(),
+                conflicted_files: Vec::new(),
+                message: "No rebase in progress.".into(),
+                backup_ref: None,
+                blocked_by_local_changes: false,
+            };
+        }
+        match git(&path, &["rebase", "--abort"], false) {
+            Ok(o) if o.ok => RebaseResult {
+                ok: true,
+                state: "clean".into(),
+                conflicted_files: Vec::new(),
+                message: "Rebase aborted — back to the pre-rebase state.".into(),
+                backup_ref: None,
+                blocked_by_local_changes: false,
+            },
+            Ok(o) => RebaseResult::error(git_msg(&o)),
+            Err(e) => RebaseResult::error(e),
+        }
+    })
+    .await
 }
 
 /// List the commits an interactive-rebase planner can show/edit: every
@@ -849,15 +885,23 @@ pub fn rebase_abort(path: String) -> RebaseResult {
 /// touches the sequencer).
 ///
 /// JS: `invoke("rebase_interactive_plan", { path, onto })`.
+///
+/// Opens the repo and revwalks the full `onto..HEAD` range with git2, a cost
+/// that grows with the branch's history — as a plain sync command that walk
+/// ran inline on Tauri's main thread, freezing the whole app window while it
+/// computed. `run_blocking` moves it onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn rebase_interactive_plan(path: String, onto: String) -> Result<Vec<PlanCommit>, String> {
-    validate_rev(&onto)?;
-    let repo = Repository::open(&path)
-        .map_err(|e| format!("Cannot open repository: {}", e.message()))?;
-    let onto_oid = resolve_oid(&repo, &onto)?;
-    let oids = commit_range(&repo, onto_oid)?;
-    plan_commits(&repo, &oids)
+pub async fn rebase_interactive_plan(path: String, onto: String) -> Result<Vec<PlanCommit>, String> {
+    crate::blocking::run_blocking(move || {
+        validate_rev(&onto)?;
+        let repo = Repository::open(&path)
+            .map_err(|e| format!("Cannot open repository: {}", e.message()))?;
+        let onto_oid = resolve_oid(&repo, &onto)?;
+        let oids = commit_range(&repo, onto_oid)?;
+        plan_commits(&repo, &oids)
+    })
+    .await
 }
 
 /// Run a planned interactive rebase: reorder/pick/squash/fixup/drop/edit,
@@ -891,139 +935,148 @@ pub fn rebase_interactive_plan(path: String, onto: String) -> Result<Vec<PlanCom
 /// [`classify`] linear rebase uses (now including the "editing" branch).
 ///
 /// JS: `invoke("rebase_interactive_start", { path, onto, todo })`.
+///
+/// Opens the repo, revwalks the commit range, and takes a safety snapshot
+/// with git2, then shells out to the git CLI to replay the whole precomputed
+/// todo — all three scale with history/working-tree size. As a plain sync
+/// command this ran inline on Tauri's main thread, freezing the whole app
+/// window for as long as the replay took; `run_blocking` moves it off.
 #[tauri::command]
 #[specta::specta]
-pub fn rebase_interactive_start(path: String, onto: String, todo: Vec<TodoItem>) -> RebaseResult {
-    if let Err(e) = validate_rev(&onto) {
-        return RebaseResult::error(e);
-    }
-    let repo = match Repository::open(&path) {
-        Ok(r) => r,
-        Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-
-    // Refuse to stack an interactive rebase on top of an unfinished op of any kind.
-    if in_progress(&repo) {
-        return RebaseResult::error("A rebase is already in progress — resolve or abort it first.");
-    }
-
-    let onto_oid = match resolve_oid(&repo, &onto) {
-        Ok(oid) => oid,
-        Err(e) => return RebaseResult::error(e),
-    };
-
-    // Re-derive the authoritative range — never trust the caller's todo shape.
-    let fresh = match commit_range(&repo, onto_oid) {
-        Ok(v) => v,
-        Err(e) => return RebaseResult::error(e),
-    };
-
-    if todo.is_empty() {
-        return RebaseResult::error("Nothing to rebase — no commits between HEAD and the target.");
-    }
-    for item in &todo {
-        if let Err(e) = validate_rev(&item.sha) {
+pub async fn rebase_interactive_start(path: String, onto: String, todo: Vec<TodoItem>) -> RebaseResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_rev(&onto) {
             return RebaseResult::error(e);
         }
-        if !TODO_ACTIONS.contains(&item.action.as_str()) {
-            return RebaseResult::error(format!("Unknown rebase action: {:?}", item.action));
+        let repo = match Repository::open(&path) {
+            Ok(r) => r,
+            Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
+        };
+
+        // Refuse to stack an interactive rebase on top of an unfinished op of any kind.
+        if in_progress(&repo) {
+            return RebaseResult::error("A rebase is already in progress — resolve or abort it first.");
         }
-    }
-    if matches!(todo[0].action.as_str(), "squash" | "fixup") {
-        return RebaseResult::error(
-            "The first commit in the plan can't be squash/fixup — nothing precedes it to combine into.",
+
+        let onto_oid = match resolve_oid(&repo, &onto) {
+            Ok(oid) => oid,
+            Err(e) => return RebaseResult::error(e),
+        };
+
+        // Re-derive the authoritative range — never trust the caller's todo shape.
+        let fresh = match commit_range(&repo, onto_oid) {
+            Ok(v) => v,
+            Err(e) => return RebaseResult::error(e),
+        };
+
+        if todo.is_empty() {
+            return RebaseResult::error("Nothing to rebase — no commits between HEAD and the target.");
+        }
+        for item in &todo {
+            if let Err(e) = validate_rev(&item.sha) {
+                return RebaseResult::error(e);
+            }
+            if !TODO_ACTIONS.contains(&item.action.as_str()) {
+                return RebaseResult::error(format!("Unknown rebase action: {:?}", item.action));
+            }
+        }
+        if matches!(todo[0].action.as_str(), "squash" | "fixup") {
+            return RebaseResult::error(
+                "The first commit in the plan can't be squash/fixup — nothing precedes it to combine into.",
+            );
+        }
+        let fresh_shas: HashSet<String> = fresh.iter().map(Oid::to_string).collect();
+        let todo_shas: HashSet<String> = todo.iter().map(|t| t.sha.clone()).collect();
+        // Set-equality alone is NOT enough: a todo with a duplicate sha (one row
+        // deduped away) can pass set-equality while still being a different shape
+        // than the authoritative range — e.g. fresh=[A,B,C] but
+        // todo=[(A,pick),(B,pick),(B,squash),(C,pick)] (4 rows) dedups to the same
+        // {A,B,C} set. That would silently double-process B (once as "pick", once
+        // as "squash" into itself) while A and B never each get their correct
+        // distinct one-line treatment — a malformed todo git could turn into a
+        // confusing sequencer stop `classify()` has no clean branch for. The
+        // length check below catches exactly this: `todo` must have exactly one
+        // row per fresh commit, no more, no fewer.
+        if todo.len() != fresh.len() || todo_shas != fresh_shas {
+            return RebaseResult::error(
+                "This plan is out of date with the repository — refresh and try again.",
+            );
+        }
+
+        // Snapshot FIRST — never mutate without a pre-op backup.
+        let backup = match crate::safety::snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return RebaseResult::error(format!("Safety snapshot failed, aborting: {e}")),
+        };
+
+        let todo_text = match build_todo_text(&repo, &todo) {
+            Ok(t) => t,
+            Err(e) => {
+                return RebaseResult {
+                    ok: false,
+                    state: "error".into(),
+                    conflicted_files: Vec::new(),
+                    message: e,
+                    backup_ref: Some(backup),
+                    blocked_by_local_changes: false,
+                }
+            }
+        };
+        let todo_path = match write_precomputed_todo(&repo, &todo_text) {
+            Ok(p) => p,
+            Err(e) => {
+                return RebaseResult {
+                    ok: false,
+                    state: "error".into(),
+                    conflicted_files: Vec::new(),
+                    message: e,
+                    backup_ref: Some(backup),
+                    blocked_by_local_changes: false,
+                }
+            }
+        };
+
+        // Pass the ALREADY-RESOLVED `onto_oid` here — never the raw `onto` string.
+        // `onto` (e.g. a branch name like "main") would otherwise be re-resolved
+        // by this freshly spawned `git` process at whatever moment IT starts up,
+        // independently of the `onto_oid` the validation above already reasoned
+        // about. If `onto` moved between the validation step above and this
+        // invocation (a narrow but real TOCTOU window — another process/window
+        // fast-forwarded or reset the branch), that re-resolution would rebase
+        // onto a DIFFERENT target than the one the todo was just validated
+        // against. Using the resolved oid's full hex string pins the actual
+        // invocation to exactly the commit that was validated — EMPIRICALLY
+        // VERIFIED (git 2.53.0) that `--end-of-options <full-oid>` behaves
+        // identically to a branch name here (git accepts any revision in this
+        // position; there is nothing branch-name-specific about how `-i` uses it).
+        let onto_oid_str = onto_oid.to_string();
+        let seq_editor = format!("cp {}", shell_single_quote(&todo_path.to_string_lossy()));
+        let out = git_with_env(
+            &path,
+            &["rebase", "-i", "--end-of-options", &onto_oid_str],
+            &[("GIT_SEQUENCE_EDITOR", seq_editor.as_str()), ("GIT_EDITOR", "true")],
         );
-    }
-    let fresh_shas: HashSet<String> = fresh.iter().map(Oid::to_string).collect();
-    let todo_shas: HashSet<String> = todo.iter().map(|t| t.sha.clone()).collect();
-    // Set-equality alone is NOT enough: a todo with a duplicate sha (one row
-    // deduped away) can pass set-equality while still being a different shape
-    // than the authoritative range — e.g. fresh=[A,B,C] but
-    // todo=[(A,pick),(B,pick),(B,squash),(C,pick)] (4 rows) dedups to the same
-    // {A,B,C} set. That would silently double-process B (once as "pick", once
-    // as "squash" into itself) while A and B never each get their correct
-    // distinct one-line treatment — a malformed todo git could turn into a
-    // confusing sequencer stop `classify()` has no clean branch for. The
-    // length check below catches exactly this: `todo` must have exactly one
-    // row per fresh commit, no more, no fewer.
-    if todo.len() != fresh.len() || todo_shas != fresh_shas {
-        return RebaseResult::error(
-            "This plan is out of date with the repository — refresh and try again.",
-        );
-    }
+        // Best-effort cleanup, always — git has already copied the content into
+        // .git/rebase-merge/git-rebase-todo by the time this invocation returns.
+        let _ = fs::remove_file(&todo_path);
 
-    // Snapshot FIRST — never mutate without a pre-op backup.
-    let backup = match crate::safety::snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return RebaseResult::error(format!("Safety snapshot failed, aborting: {e}")),
-    };
-
-    let todo_text = match build_todo_text(&repo, &todo) {
-        Ok(t) => t,
-        Err(e) => {
-            return RebaseResult {
-                ok: false,
-                state: "error".into(),
-                conflicted_files: Vec::new(),
-                message: e,
-                backup_ref: Some(backup),
-                blocked_by_local_changes: false,
+        let out = match out {
+            Ok(o) => o,
+            Err(e) => {
+                return RebaseResult {
+                    ok: false,
+                    state: "error".into(),
+                    conflicted_files: Vec::new(),
+                    message: e,
+                    backup_ref: Some(backup),
+                    blocked_by_local_changes: false,
+                }
             }
-        }
-    };
-    let todo_path = match write_precomputed_todo(&repo, &todo_text) {
-        Ok(p) => p,
-        Err(e) => {
-            return RebaseResult {
-                ok: false,
-                state: "error".into(),
-                conflicted_files: Vec::new(),
-                message: e,
-                backup_ref: Some(backup),
-                blocked_by_local_changes: false,
-            }
-        }
-    };
+        };
 
-    // Pass the ALREADY-RESOLVED `onto_oid` here — never the raw `onto` string.
-    // `onto` (e.g. a branch name like "main") would otherwise be re-resolved
-    // by this freshly spawned `git` process at whatever moment IT starts up,
-    // independently of the `onto_oid` the validation above already reasoned
-    // about. If `onto` moved between the validation step above and this
-    // invocation (a narrow but real TOCTOU window — another process/window
-    // fast-forwarded or reset the branch), that re-resolution would rebase
-    // onto a DIFFERENT target than the one the todo was just validated
-    // against. Using the resolved oid's full hex string pins the actual
-    // invocation to exactly the commit that was validated — EMPIRICALLY
-    // VERIFIED (git 2.53.0) that `--end-of-options <full-oid>` behaves
-    // identically to a branch name here (git accepts any revision in this
-    // position; there is nothing branch-name-specific about how `-i` uses it).
-    let onto_oid_str = onto_oid.to_string();
-    let seq_editor = format!("cp {}", shell_single_quote(&todo_path.to_string_lossy()));
-    let out = git_with_env(
-        &path,
-        &["rebase", "-i", "--end-of-options", &onto_oid_str],
-        &[("GIT_SEQUENCE_EDITOR", seq_editor.as_str()), ("GIT_EDITOR", "true")],
-    );
-    // Best-effort cleanup, always — git has already copied the content into
-    // .git/rebase-merge/git-rebase-todo by the time this invocation returns.
-    let _ = fs::remove_file(&todo_path);
-
-    let out = match out {
-        Ok(o) => o,
-        Err(e) => {
-            return RebaseResult {
-                ok: false,
-                state: "error".into(),
-                conflicted_files: Vec::new(),
-                message: e,
-                backup_ref: Some(backup),
-                blocked_by_local_changes: false,
-            }
-        }
-    };
-
-    classify(&repo, &path, &out, Some(backup), &onto)
+        classify(&repo, &path, &out, Some(backup), &onto)
+    })
+    .await
 }
 
 /// A short, human label for the rebase target (read from

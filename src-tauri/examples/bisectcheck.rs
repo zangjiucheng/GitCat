@@ -118,7 +118,7 @@ fn main() {
     eprintln!("mode          {}", if skip_mode { "skip" } else { "good/bad" });
 
     // ---- start: bad = HEAD, good = [root] ----
-    let start: BisectStatus = bisect_start(path.clone(), head.to_string(), vec![root.to_string()]);
+    let start: BisectStatus = tauri::async_runtime::block_on(bisect_start(path.clone(), head.to_string(), vec![root.to_string()]));
     println!("bisect_start  -> {}", j(&start));
     assert!(start.ok, "bisect_start failed: {}", start.message);
     assert!(start.in_progress, "start should leave us in-progress");
@@ -133,7 +133,7 @@ fn main() {
     let mut first_bad: Option<String> = None;
 
     for step in 0..60 {
-        let st: BisectStatus = bisect_status(path.clone());
+        let st: BisectStatus = tauri::async_runtime::block_on(bisect_status(path.clone()));
         println!("bisect_status -> {}", j(&st));
         assert!(st.in_progress, "status should be in-progress at loop top: {}", st.message);
         assert!(st.first_bad.is_none(), "status should be running (no firstBad yet) at loop top");
@@ -157,7 +157,7 @@ fn main() {
         };
         eprintln!("  step {step}: current {cur_short} -> {term}");
 
-        let m: BisectStatus = bisect_mark(path.clone(), term.to_string());
+        let m: BisectStatus = tauri::async_runtime::block_on(bisect_mark(path.clone(), term.to_string()));
         println!("bisect_mark   -> {}", j(&m));
         assert!(m.ok, "bisect_mark {term} failed: {}", m.message);
         if let Some(fb) = m.first_bad {
@@ -172,7 +172,7 @@ fn main() {
     eprintln!("PASS: first bad == K ({k_short})");
 
     // ---- reset: ASSERT full recovery ----
-    let reset: BisectStatus = bisect_reset(path.clone());
+    let reset: BisectStatus = tauri::async_runtime::block_on(bisect_reset(path.clone()));
     println!("bisect_reset  -> {}", j(&reset));
     assert!(reset.ok, "bisect_reset failed: {}", reset.message);
     assert!(!reset.in_progress, "reset should leave inProgress false");

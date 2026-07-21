@@ -102,15 +102,27 @@ pub struct FileBlame {
 /// the target commit, or a directory-shaped path.
 ///
 /// JS: `commands.blameFile(path, file, atCommit, ignoreWhitespace)`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s doc comment,
+/// that runs INLINE on Tauri's main thread, freezing the whole app window for
+/// as long as the call takes, not just the Blame modal that triggered it.
+/// The body below opens the repo via git2, walks its tree to load the blob,
+/// and then runs a full `git2::Repository::blame_file` walk — a cost that
+/// scales with the file's revision history and can take real time on a large
+/// or long-lived file/repo. `async fn` + `run_blocking` moves that walk onto
+/// Tauri's blocking-task thread pool, matching `workdir_status`'s own fix.
 #[tauri::command]
 #[specta::specta]
-pub fn blame_file(
+pub async fn blame_file(
     path: String,
     file: String,
     at_commit: Option<String>,
     ignore_whitespace: bool,
 ) -> Result<FileBlame, String> {
-    blame_file_inner(&path, &file, at_commit.as_deref(), ignore_whitespace)
+    crate::blocking::run_blocking(move || {
+        blame_file_inner(&path, &file, at_commit.as_deref(), ignore_whitespace)
+    })
+    .await
 }
 
 /// Mixes git2 errors and custom refusal strings, so (matching

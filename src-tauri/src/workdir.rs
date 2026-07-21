@@ -542,11 +542,22 @@ fn entry_paths(delta: &git2::DiffDelta) -> (String, Option<String>) {
 /// vs HEAD) or the unstaged side (workdir vs index). Reuses `model::FileChange`
 /// verbatim so the frontend's diff viewer can share `Detail.svelte`'s markup.
 /// JS: `invoke("workdir_file_diff", { path, file, staged })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — see `workdir_status`'s identical
+/// fix for the full writeup. This opens the repo and builds a whole-tree
+/// git2 diff (optionally widened to untracked content) just to pull one
+/// file's hunks out of it, so it ran inline on Tauri's main thread and froze
+/// the entire window for as long as that diff took, every time a file was
+/// selected in the staging panel. `async fn` + `run_blocking` moves it onto
+/// Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn workdir_file_diff(path: String, file: String, staged: bool) -> Result<FileChange, String> {
-    validate_pathspec(&file)?;
-    workdir_file_diff_inner(&path, &file, staged)
+pub async fn workdir_file_diff(path: String, file: String, staged: bool) -> Result<FileChange, String> {
+    crate::blocking::run_blocking(move || {
+        validate_pathspec(&file)?;
+        workdir_file_diff_inner(&path, &file, staged)
+    })
+    .await
 }
 
 fn workdir_file_diff_inner(path: &str, file: &str, staged: bool) -> Result<FileChange, String> {
@@ -695,27 +706,37 @@ fn workdir_file_diff_inner(path: &str, file: &str, staged: bool) -> Result<FileC
 /// Tauri command: list stash entries, newest first, via
 /// `git stash list --format=%gd\x01%H\x01%gs` (libgit2 has no stash API).
 /// JS: `invoke("stash_list", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — it shells out to a real `git`
+/// subprocess and blocks waiting for it to exit, which ran that wait inline
+/// on Tauri's main thread and froze the whole window for as long as the
+/// subprocess took (worse on a WSL/UNC-bridged repo, same class of stall as
+/// `workdir_status`'s own fix). `async fn` + `run_blocking` moves the wait
+/// onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn stash_list(path: String) -> Result<Vec<StashEntry>, String> {
-    let out = git(&path, &["stash", "list", "--format=%gd%x01%H%x01%gs"], false)?;
-    if !out.ok {
-        return Err(git_msg(&out));
-    }
-    let mut entries = Vec::new();
-    for line in out.stdout.lines() {
-        if line.is_empty() {
-            continue;
+pub async fn stash_list(path: String) -> Result<Vec<StashEntry>, String> {
+    crate::blocking::run_blocking(move || {
+        let out = git(&path, &["stash", "list", "--format=%gd%x01%H%x01%gs"], false)?;
+        if !out.ok {
+            return Err(git_msg(&out));
         }
-        let mut parts = line.splitn(3, '\u{1}');
-        let gd = parts.next().unwrap_or("");
-        let sha = parts.next().unwrap_or("").to_string();
-        let message = parts.next().unwrap_or("").to_string();
-        let index = stash_index(gd);
-        let branch = parse_stash_branch(&message);
-        entries.push(StashEntry { index, sha: short_sha(&sha), branch, message });
-    }
-    Ok(entries)
+        let mut entries = Vec::new();
+        for line in out.stdout.lines() {
+            if line.is_empty() {
+                continue;
+            }
+            let mut parts = line.splitn(3, '\u{1}');
+            let gd = parts.next().unwrap_or("");
+            let sha = parts.next().unwrap_or("").to_string();
+            let message = parts.next().unwrap_or("").to_string();
+            let index = stash_index(gd);
+            let branch = parse_stash_branch(&message);
+            entries.push(StashEntry { index, sha: short_sha(&sha), branch, message });
+        }
+        Ok(entries)
+    })
+    .await
 }
 
 /// Parse the `{N}` out of a `stash@{N}` reflog selector; `0` on anything
@@ -748,46 +769,70 @@ fn short_sha(sha: &str) -> String {
 
 /// Stage one file's full state (new/modified/deleted) with a single explicit
 /// pathspec. JS: `invoke("stage_file", { path, file })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — it shells out to `git add` and
+/// blocks on it inline on Tauri's main thread, freezing the whole window for
+/// as long as that subprocess takes (same class of stall `workdir_status`
+/// was fixed for). `async fn` + `run_blocking` moves the wait onto Tauri's
+/// blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn stage_file(path: String, file: String) -> WorkdirResult {
-    if let Err(e) = validate_pathspec(&file) {
-        return WorkdirResult::err(e);
-    }
-    let spec = literal_pathspec(&file);
-    match git(&path, &["add", "-A", "--", &spec], false) {
-        Ok(out) if out.ok => WorkdirResult::ok(format!("Staged {file}."), None),
-        Ok(out) => WorkdirResult::err(git_msg(&out)),
-        Err(e) => WorkdirResult::err(e),
-    }
+pub async fn stage_file(path: String, file: String) -> WorkdirResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_pathspec(&file) {
+            return WorkdirResult::err(e);
+        }
+        let spec = literal_pathspec(&file);
+        match git(&path, &["add", "-A", "--", &spec], false) {
+            Ok(out) if out.ok => WorkdirResult::ok(format!("Staged {file}."), None),
+            Ok(out) => WorkdirResult::err(git_msg(&out)),
+            Err(e) => WorkdirResult::err(e),
+        }
+    })
+    .await
 }
 
 /// Unstage one file (`git restore --staged`), leaving the working tree as-is.
 /// JS: `invoke("unstage_file", { path, file })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — same as `stage_file` above, it
+/// shells out to `git restore` and blocked Tauri's main thread on that
+/// subprocess for as long as it ran. `async fn` + `run_blocking` moves the
+/// wait onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn unstage_file(path: String, file: String) -> WorkdirResult {
-    if let Err(e) = validate_pathspec(&file) {
-        return WorkdirResult::err(e);
-    }
-    let spec = literal_pathspec(&file);
-    match git(&path, &["restore", "--staged", "--", &spec], false) {
-        Ok(out) if out.ok => WorkdirResult::ok(format!("Unstaged {file}."), None),
-        Ok(out) => WorkdirResult::err(git_msg(&out)),
-        Err(e) => WorkdirResult::err(e),
-    }
+pub async fn unstage_file(path: String, file: String) -> WorkdirResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_pathspec(&file) {
+            return WorkdirResult::err(e);
+        }
+        let spec = literal_pathspec(&file);
+        match git(&path, &["restore", "--staged", "--", &spec], false) {
+            Ok(out) if out.ok => WorkdirResult::ok(format!("Unstaged {file}."), None),
+            Ok(out) => WorkdirResult::err(git_msg(&out)),
+            Err(e) => WorkdirResult::err(e),
+        }
+    })
+    .await
 }
 
 /// Stage every unstaged/untracked path (`git add -A`).
 /// JS: `invoke("stage_all", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — shells out to `git add -A` over
+/// the WHOLE working tree and blocks on it inline on Tauri's main thread, so
+/// a large repo's add froze the entire window, not just the staging panel.
+/// `async fn` + `run_blocking` moves the wait onto Tauri's blocking-task
+/// thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn stage_all(path: String) -> WorkdirResult {
-    match git(&path, &["add", "-A"], false) {
+pub async fn stage_all(path: String) -> WorkdirResult {
+    crate::blocking::run_blocking(move || match git(&path, &["add", "-A"], false) {
         Ok(out) if out.ok => WorkdirResult::ok("Staged all changes.", None),
         Ok(out) => WorkdirResult::err(git_msg(&out)),
         Err(e) => WorkdirResult::err(e),
-    }
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -1044,78 +1089,89 @@ fn discard_unstaged_rename(path: &str, repo: &Repository, old_path: &str, new_pa
 /// typed-confirm gate before this is ever invoked — this command itself does
 /// not prompt.
 /// JS: `invoke("discard_file", { path, file, untracked })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — it opens the repo and reads it via
+/// git2 (rename detection, a full patch build for the backup) AND shells out
+/// to `git restore`/`git clean`, all inline on Tauri's main thread. Being
+/// destructive, this also has to finish its content backup before it ever
+/// touches the working tree, which only makes the blocking window longer.
+/// `async fn` + `run_blocking` moves the whole body onto Tauri's
+/// blocking-task thread pool, matching `workdir_status`'s own fix.
 #[tauri::command]
 #[specta::specta]
-pub fn discard_file(path: String, file: String, untracked: bool) -> WorkdirResult {
-    if let Err(e) = validate_pathspec(&file) {
-        return WorkdirResult::err(e);
-    }
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-
-    if !untracked {
-        if let Some(old_path) = unstaged_rename_old_path(&repo, &file) {
-            return discard_unstaged_rename(&path, &repo, &old_path, &file);
+pub async fn discard_file(path: String, file: String, untracked: bool) -> WorkdirResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_pathspec(&file) {
+            return WorkdirResult::err(e);
         }
-    }
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
 
-    let backup_patch = if untracked {
-        backup_untracked_bytes(&repo, &path, &file)
-    } else {
-        backup_tracked_patch(&repo, &file, false)
-    };
-    let backup_patch = match backup_patch {
-        Ok(p) => p,
-        Err(e) => return WorkdirResult::err(format!("Could not back up {file} before discarding, refusing: {e}")),
-    };
+        if !untracked {
+            if let Some(old_path) = unstaged_rename_old_path(&repo, &file) {
+                return discard_unstaged_rename(&path, &repo, &old_path, &file);
+            }
+        }
 
-    let spec = literal_pathspec(&file);
-    // `-d` matters now that the backup above can cover a directory: `git
-    // clean -f` alone silently leaves untracked DIRECTORIES in place (`-d` is
-    // what tells it to remove those, not just untracked files). A SECOND `-f`
-    // matters too, specifically for a directory containing its own nested
-    // `.git` (an orphaned submodule checkout is exactly this shape) — git
-    // silently refuses to remove one of those unless force is given TWICE,
-    // an extra, distinct safety gate on top of `-d` (EMPIRICALLY VERIFIED:
-    // `-f -d` alone leaves it in place with no error, no output). Safe to
-    // pass unconditionally: it's already been backed up above, and `-f -f`
-    // is a no-op for a plain file or an ordinary untracked directory.
-    let result = if untracked {
-        git(&path, &["clean", "-f", "-f", "-d", "--", &spec], false)
-    } else {
-        git(&path, &["restore", "--worktree", "--", &spec], false)
-    };
+        let backup_patch = if untracked {
+            backup_untracked_bytes(&repo, &path, &file)
+        } else {
+            backup_tracked_patch(&repo, &file, false)
+        };
+        let backup_patch = match backup_patch {
+            Ok(p) => p,
+            Err(e) => return WorkdirResult::err(format!("Could not back up {file} before discarding, refusing: {e}")),
+        };
 
-    match result {
-        Ok(out) if out.ok => WorkdirResult {
-            ok: true,
-            message: format!("Discarded changes to {file} (backup: {backup_patch})."),
-            conflicted_files: Vec::new(),
-            backup_ref: None,
-            backup_patch: Some(backup_patch),
-            dropped_stash_ref: None,
-        },
-        // The backup was already written even though the mutation itself
-        // failed — keep pointing at it so nothing is orphaned/unexplained.
-        Ok(out) => WorkdirResult {
-            ok: false,
-            message: git_msg(&out),
-            conflicted_files: Vec::new(),
-            backup_ref: None,
-            backup_patch: Some(backup_patch),
-            dropped_stash_ref: None,
-        },
-        Err(e) => WorkdirResult {
-            ok: false,
-            message: e,
-            conflicted_files: Vec::new(),
-            backup_ref: None,
-            backup_patch: Some(backup_patch),
-            dropped_stash_ref: None,
-        },
-    }
+        let spec = literal_pathspec(&file);
+        // `-d` matters now that the backup above can cover a directory: `git
+        // clean -f` alone silently leaves untracked DIRECTORIES in place (`-d` is
+        // what tells it to remove those, not just untracked files). A SECOND `-f`
+        // matters too, specifically for a directory containing its own nested
+        // `.git` (an orphaned submodule checkout is exactly this shape) — git
+        // silently refuses to remove one of those unless force is given TWICE,
+        // an extra, distinct safety gate on top of `-d` (EMPIRICALLY VERIFIED:
+        // `-f -d` alone leaves it in place with no error, no output). Safe to
+        // pass unconditionally: it's already been backed up above, and `-f -f`
+        // is a no-op for a plain file or an ordinary untracked directory.
+        let result = if untracked {
+            git(&path, &["clean", "-f", "-f", "-d", "--", &spec], false)
+        } else {
+            git(&path, &["restore", "--worktree", "--", &spec], false)
+        };
+
+        match result {
+            Ok(out) if out.ok => WorkdirResult {
+                ok: true,
+                message: format!("Discarded changes to {file} (backup: {backup_patch})."),
+                conflicted_files: Vec::new(),
+                backup_ref: None,
+                backup_patch: Some(backup_patch),
+                dropped_stash_ref: None,
+            },
+            // The backup was already written even though the mutation itself
+            // failed — keep pointing at it so nothing is orphaned/unexplained.
+            Ok(out) => WorkdirResult {
+                ok: false,
+                message: git_msg(&out),
+                conflicted_files: Vec::new(),
+                backup_ref: None,
+                backup_patch: Some(backup_patch),
+                dropped_stash_ref: None,
+            },
+            Err(e) => WorkdirResult {
+                ok: false,
+                message: e,
+                conflicted_files: Vec::new(),
+                backup_ref: None,
+                backup_patch: Some(backup_patch),
+                dropped_stash_ref: None,
+            },
+        }
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -1173,18 +1229,29 @@ enum LineOpDirection {
 
 /// Stage only the selected `+`/`-` lines (whole hunks or a subset) out of a
 /// file's CURRENT unstaged diff. JS: `invoke("stage_lines", { path, file, hunks })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — `apply_selected_lines` opens the
+/// repo, re-reads a fresh git2 diff to validate the request, and shells out
+/// to `git apply`, all inline on Tauri's main thread. `async fn` +
+/// `run_blocking` moves it onto Tauri's blocking-task thread pool, matching
+/// `workdir_status`'s own fix.
 #[tauri::command]
 #[specta::specta]
-pub fn stage_lines(path: String, file: String, hunks: Vec<HunkSelection>) -> WorkdirResult {
-    apply_selected_lines(&path, &file, &hunks, LineOpDirection::Stage)
+pub async fn stage_lines(path: String, file: String, hunks: Vec<HunkSelection>) -> WorkdirResult {
+    crate::blocking::run_blocking(move || apply_selected_lines(&path, &file, &hunks, LineOpDirection::Stage)).await
 }
 
 /// Unstage only the selected `+`/`-` lines out of a file's CURRENT staged
 /// diff (HEAD vs index). JS: `invoke("unstage_lines", { path, file, hunks })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — same underlying `apply_selected_lines`
+/// call as `stage_lines` above (fresh git2 diff read + a `git apply`
+/// subprocess), so it carried the identical main-thread stall. `async fn` +
+/// `run_blocking` moves it onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn unstage_lines(path: String, file: String, hunks: Vec<HunkSelection>) -> WorkdirResult {
-    apply_selected_lines(&path, &file, &hunks, LineOpDirection::Unstage)
+pub async fn unstage_lines(path: String, file: String, hunks: Vec<HunkSelection>) -> WorkdirResult {
+    crate::blocking::run_blocking(move || apply_selected_lines(&path, &file, &hunks, LineOpDirection::Unstage)).await
 }
 
 /// Discard (from the working tree) only the selected `+`/`-` lines out of a
@@ -1192,10 +1259,16 @@ pub fn unstage_lines(path: String, file: String, hunks: Vec<HunkSelection>) -> W
 /// discipline as `discard_file`. The caller (frontend controller) is
 /// responsible for a typed-confirm gate before this is ever invoked, exactly
 /// like `discard_file`. JS: `invoke("discard_lines", { path, file, hunks })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — same underlying `apply_selected_lines`
+/// call as `stage_lines`/`unstage_lines`, plus a content backup before the
+/// `git apply -R`, so it blocked Tauri's main thread for even longer than
+/// those two. `async fn` + `run_blocking` moves it onto Tauri's blocking-task
+/// thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn discard_lines(path: String, file: String, hunks: Vec<HunkSelection>) -> WorkdirResult {
-    apply_selected_lines(&path, &file, &hunks, LineOpDirection::Discard)
+pub async fn discard_lines(path: String, file: String, hunks: Vec<HunkSelection>) -> WorkdirResult {
+    crate::blocking::run_blocking(move || apply_selected_lines(&path, &file, &hunks, LineOpDirection::Discard)).await
 }
 
 /// One line inside a hunk, as read straight off the fresh `git2::Patch` — the
@@ -1834,50 +1907,61 @@ fn apply_selected_lines(path: &str, file: &str, hunks: &[HunkSelection], dir: Li
 /// Otherwise -> `-m <message>`. Nothing preemptively re-checks "is anything
 /// staged" — a refusal ("nothing to commit") surfaces verbatim from git.
 /// JS: `invoke("commit", { path, message, amend })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — it opens the repo via git2 to
+/// take the pre-commit safety snapshot, then shells out to `git commit` and
+/// waits for it (needed for `commit.gpgsign`, see module doc comment), so a
+/// slow commit hook or a GPG signing prompt blocked the ENTIRE window, not
+/// just the commit panel. `async fn` + `run_blocking` moves the whole body
+/// onto Tauri's blocking-task thread pool, matching `workdir_status`'s own
+/// fix.
 #[tauri::command]
 #[specta::specta]
-pub fn commit(path: String, message: Option<String>, amend: Option<bool>) -> WorkdirResult {
-    let is_amend = amend.unwrap_or(false);
-    let msg = message.unwrap_or_default();
-    let msg_empty = msg.trim().is_empty();
+pub async fn commit(path: String, message: Option<String>, amend: Option<bool>) -> WorkdirResult {
+    crate::blocking::run_blocking(move || {
+        let is_amend = amend.unwrap_or(false);
+        let msg = message.unwrap_or_default();
+        let msg_empty = msg.trim().is_empty();
 
-    if !is_amend && msg_empty {
-        return WorkdirResult::err("Commit message is empty.");
-    }
+        if !is_amend && msg_empty {
+            return WorkdirResult::err("Commit message is empty.");
+        }
 
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    let backup = match crate::safety::snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
-    };
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        let backup = match crate::safety::snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        };
 
-    let mut args: Vec<&str> = vec!["commit"];
-    if is_amend {
-        args.push("--amend");
-        if msg_empty {
-            args.push("--no-edit");
+        let mut args: Vec<&str> = vec!["commit"];
+        if is_amend {
+            args.push("--amend");
+            if msg_empty {
+                args.push("--no-edit");
+            } else {
+                args.push("-m");
+                args.push(&msg);
+            }
         } else {
             args.push("-m");
             args.push(&msg);
         }
-    } else {
-        args.push("-m");
-        args.push(&msg);
-    }
 
-    // GIT_EDITOR=true set defensively (mirrors git_merge.rs's `no_editor`)
-    // even though -m/--no-edit should already avoid invoking one.
-    match git(&path, &args, true) {
-        Ok(out) if out.ok => WorkdirResult::ok(
-            format!("{} (snapshot {}).", if is_amend { "Amended commit" } else { "Committed" }, short_backup(&backup)),
-            Some(backup),
-        ),
-        Ok(out) => WorkdirResult::err_with_backup(git_msg(&out), Some(backup)),
-        Err(e) => WorkdirResult::err_with_backup(e, Some(backup)),
-    }
+        // GIT_EDITOR=true set defensively (mirrors git_merge.rs's `no_editor`)
+        // even though -m/--no-edit should already avoid invoking one.
+        match git(&path, &args, true) {
+            Ok(out) if out.ok => WorkdirResult::ok(
+                format!("{} (snapshot {}).", if is_amend { "Amended commit" } else { "Committed" }, short_backup(&backup)),
+                Some(backup),
+            ),
+            Ok(out) => WorkdirResult::err_with_backup(git_msg(&out), Some(backup)),
+            Err(e) => WorkdirResult::err_with_backup(e, Some(backup)),
+        }
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -1886,42 +1970,51 @@ pub fn commit(path: String, message: Option<String>, amend: Option<bool>) -> Wor
 
 /// `git stash push [-u] [-m <message>]`. Snapshots FIRST.
 /// JS: `invoke("stash_save", { path, message, includeUntracked })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — opens the repo via git2 for the
+/// pre-stash safety snapshot, then shells out to `git stash push` and waits
+/// for it, both inline on Tauri's main thread. `async fn` + `run_blocking`
+/// moves the whole body onto Tauri's blocking-task thread pool, matching
+/// `workdir_status`'s own fix.
 #[tauri::command]
 #[specta::specta]
-pub fn stash_save(path: String, message: Option<String>, include_untracked: Option<bool>) -> WorkdirResult {
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    let backup = match crate::safety::snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
-    };
+pub async fn stash_save(path: String, message: Option<String>, include_untracked: Option<bool>) -> WorkdirResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        let backup = match crate::safety::snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        };
 
-    let mut args: Vec<&str> = vec!["stash", "push"];
-    if include_untracked.unwrap_or(false) {
-        args.push("-u");
-    }
-    let has_msg = message.as_deref().map(|m| !m.trim().is_empty()).unwrap_or(false);
-    if has_msg {
-        args.push("-m");
-        args.push(message.as_deref().unwrap());
-    }
-
-    match git(&path, &args, true) {
-        Ok(out) if out.ok => {
-            let blob = format!("{} {}", out.stdout, out.stderr).to_lowercase();
-            if blob.contains("no local changes to save") {
-                return WorkdirResult::err_with_backup(
-                    "Nothing to stash — the working tree is clean.",
-                    Some(backup),
-                );
-            }
-            WorkdirResult::ok(format!("Stashed changes (snapshot {}).", short_backup(&backup)), Some(backup))
+        let mut args: Vec<&str> = vec!["stash", "push"];
+        if include_untracked.unwrap_or(false) {
+            args.push("-u");
         }
-        Ok(out) => WorkdirResult::err_with_backup(git_msg(&out), Some(backup)),
-        Err(e) => WorkdirResult::err_with_backup(e, Some(backup)),
-    }
+        let has_msg = message.as_deref().map(|m| !m.trim().is_empty()).unwrap_or(false);
+        if has_msg {
+            args.push("-m");
+            args.push(message.as_deref().unwrap());
+        }
+
+        match git(&path, &args, true) {
+            Ok(out) if out.ok => {
+                let blob = format!("{} {}", out.stdout, out.stderr).to_lowercase();
+                if blob.contains("no local changes to save") {
+                    return WorkdirResult::err_with_backup(
+                        "Nothing to stash — the working tree is clean.",
+                        Some(backup),
+                    );
+                }
+                WorkdirResult::ok(format!("Stashed changes (snapshot {}).", short_backup(&backup)), Some(backup))
+            }
+            Ok(out) => WorkdirResult::err_with_backup(git_msg(&out), Some(backup)),
+            Err(e) => WorkdirResult::err_with_backup(e, Some(backup)),
+        }
+    })
+    .await
 }
 
 /// `stash@{index}`'s CURRENT commit sha (full, untruncated), or `None` if it
@@ -2125,19 +2218,31 @@ fn apply_or_pop(path: &str, index: usize, pop: bool, expected_sha: Option<String
 /// acting on a different entry if the stash list changed since (e.g. an
 /// external `git stash` command). JS: `invoke("stash_apply", { path, index,
 /// expectedSha })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — its `apply_or_pop` helper opens
+/// the repo, takes a git2 safety snapshot, and shells out to `git stash
+/// apply`/`pop`, all inline on Tauri's main thread; a conflicted apply also
+/// re-reads unmerged paths via another subprocess before returning. `async
+/// fn` + `run_blocking` moves it onto Tauri's blocking-task thread pool,
+/// matching `workdir_status`'s own fix.
 #[tauri::command]
 #[specta::specta]
-pub fn stash_apply(path: String, index: usize, expected_sha: Option<String>) -> WorkdirResult {
-    apply_or_pop(&path, index, false, expected_sha)
+pub async fn stash_apply(path: String, index: usize, expected_sha: Option<String>) -> WorkdirResult {
+    crate::blocking::run_blocking(move || apply_or_pop(&path, index, false, expected_sha)).await
 }
 
 /// `git stash pop stash@{index}`. On a conflict, git leaves the stash entry in
 /// place (only a clean pop drops it). `expected_sha`: see [`stash_apply`].
 /// JS: `invoke("stash_pop", { path, index, expectedSha })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — same shared `apply_or_pop` body as
+/// `stash_apply` above (git2 snapshot + a `git stash pop` subprocess), so it
+/// carried the identical main-thread stall. `async fn` + `run_blocking`
+/// moves it onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn stash_pop(path: String, index: usize, expected_sha: Option<String>) -> WorkdirResult {
-    apply_or_pop(&path, index, true, expected_sha)
+pub async fn stash_pop(path: String, index: usize, expected_sha: Option<String>) -> WorkdirResult {
+    crate::blocking::run_blocking(move || apply_or_pop(&path, index, true, expected_sha)).await
 }
 
 /// Pin a dropped stash's own commit under a dedicated ref namespace
@@ -2177,52 +2282,61 @@ fn pin_dropped_stash(repo: &Repository, path: &str, stash_ref: &str) -> Result<S
 /// that pin honestly in `dropped_stash_ref`/`message` instead of implying
 /// the generic Undo button restores it. `expected_sha`: see [`stash_apply`].
 /// JS: `invoke("stash_drop", { path, index, expectedSha })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — opens the repo via git2 for the
+/// pre-drop safety snapshot and the dropped-stash pin (`repo.reference`),
+/// then shells out to `git stash drop`, all inline on Tauri's main thread.
+/// `async fn` + `run_blocking` moves the whole body onto Tauri's
+/// blocking-task thread pool, matching `workdir_status`'s own fix.
 #[tauri::command]
 #[specta::specta]
-pub fn stash_drop(path: String, index: usize, expected_sha: Option<String>) -> WorkdirResult {
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    if let Err(e) = check_stash_identity(&path, index, &expected_sha) {
-        return WorkdirResult::err(e);
-    }
-    let backup = match crate::safety::snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
-    };
-
-    let stash_ref = format!("stash@{{{index}}}");
-
-    // Back up the STASH's own content BEFORE dropping it — see doc comment.
-    // Refuse (never drop unbacked-up) if we can't even pin it.
-    let stash_pin = match pin_dropped_stash(&repo, &path, &stash_ref) {
-        Ok(r) => r,
-        Err(e) => {
-            return WorkdirResult::err_with_backup(
-                format!("Refusing to drop {stash_ref} — could not back it up first: {e}"),
-                Some(backup),
-            )
+pub async fn stash_drop(path: String, index: usize, expected_sha: Option<String>) -> WorkdirResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        if let Err(e) = check_stash_identity(&path, index, &expected_sha) {
+            return WorkdirResult::err(e);
         }
-    };
+        let backup = match crate::safety::snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        };
 
-    match git(&path, &["stash", "drop", &stash_ref], false) {
-        Ok(out) if out.ok => WorkdirResult {
-            ok: true,
-            message: format!(
-                "Dropped {stash_ref} (HEAD snapshot {}). Its content is pinned and recoverable — \
-                 NOT via the global Undo (that only rewinds HEAD/branches, which a stash drop never \
-                 touches): run `git stash apply {stash_pin}` to get it back.",
-                short_backup(&backup)
-            ),
-            conflicted_files: Vec::new(),
-            backup_ref: Some(backup),
-            backup_patch: None,
-            dropped_stash_ref: Some(stash_pin),
-        },
-        Ok(out) => WorkdirResult::err_with_backup(git_msg(&out), Some(backup)),
-        Err(e) => WorkdirResult::err_with_backup(e, Some(backup)),
-    }
+        let stash_ref = format!("stash@{{{index}}}");
+
+        // Back up the STASH's own content BEFORE dropping it — see doc comment.
+        // Refuse (never drop unbacked-up) if we can't even pin it.
+        let stash_pin = match pin_dropped_stash(&repo, &path, &stash_ref) {
+            Ok(r) => r,
+            Err(e) => {
+                return WorkdirResult::err_with_backup(
+                    format!("Refusing to drop {stash_ref} — could not back it up first: {e}"),
+                    Some(backup),
+                )
+            }
+        };
+
+        match git(&path, &["stash", "drop", &stash_ref], false) {
+            Ok(out) if out.ok => WorkdirResult {
+                ok: true,
+                message: format!(
+                    "Dropped {stash_ref} (HEAD snapshot {}). Its content is pinned and recoverable — \
+                     NOT via the global Undo (that only rewinds HEAD/branches, which a stash drop never \
+                     touches): run `git stash apply {stash_pin}` to get it back.",
+                    short_backup(&backup)
+                ),
+                conflicted_files: Vec::new(),
+                backup_ref: Some(backup),
+                backup_patch: None,
+                dropped_stash_ref: Some(stash_pin),
+            },
+            Ok(out) => WorkdirResult::err_with_backup(git_msg(&out), Some(backup)),
+            Err(e) => WorkdirResult::err_with_backup(e, Some(backup)),
+        }
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -2272,47 +2386,56 @@ impl StashResolveResult {
 /// an op that (unlike merge/rebase) is explicitly designed to run on top of a
 /// dirty tree.
 /// JS: `invoke("stash_conflict_abort", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — opens the repo via git2 and then
+/// shells out to `git rev-parse`/`git reset --hard`, both waited on inline
+/// on Tauri's main thread. `async fn` + `run_blocking` moves the whole body
+/// onto Tauri's blocking-task thread pool, matching `workdir_status`'s own
+/// fix.
 #[tauri::command]
 #[specta::specta]
-pub fn stash_conflict_abort(path: String) -> StashResolveResult {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return StashResolveResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-    let Some(state) = read_stash_conflict_state(&repo) else {
-        return StashResolveResult::error("No stash conflict in progress to abort.");
-    };
+pub async fn stash_conflict_abort(path: String) -> StashResolveResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return StashResolveResult::error(format!("Cannot open repository: {}", e.message())),
+        };
+        let Some(state) = read_stash_conflict_state(&repo) else {
+            return StashResolveResult::error("No stash conflict in progress to abort.");
+        };
 
-    let target_sha = match git(&path, &["rev-parse", &state.backup_ref], false) {
-        Ok(o) if o.ok && !o.stdout.is_empty() => o.stdout.trim().to_string(),
-        Ok(o) => {
-            return StashResolveResult::error(format!(
-                "Could not resolve the pre-conflict snapshot {}: {}",
-                state.backup_ref,
-                git_msg(&o)
-            ))
-        }
-        Err(e) => return StashResolveResult::error(e),
-    };
-
-    match git(&path, &["reset", "--hard", &target_sha], false) {
-        Ok(out) if out.ok => {
-            clear_stash_conflict_state(&repo);
-            StashResolveResult {
-                ok: true,
-                state: "clean".into(),
-                conflicted_files: Vec::new(),
-                message: format!(
-                    "Stash conflict aborted — working tree restored to the pre-{} state (snapshot {}). The stash entry is untouched.",
-                    if state.pop { "pop" } else { "apply" },
-                    short_backup(&state.backup_ref),
-                ),
-                backup_ref: None,
+        let target_sha = match git(&path, &["rev-parse", &state.backup_ref], false) {
+            Ok(o) if o.ok && !o.stdout.is_empty() => o.stdout.trim().to_string(),
+            Ok(o) => {
+                return StashResolveResult::error(format!(
+                    "Could not resolve the pre-conflict snapshot {}: {}",
+                    state.backup_ref,
+                    git_msg(&o)
+                ))
             }
+            Err(e) => return StashResolveResult::error(e),
+        };
+
+        match git(&path, &["reset", "--hard", &target_sha], false) {
+            Ok(out) if out.ok => {
+                clear_stash_conflict_state(&repo);
+                StashResolveResult {
+                    ok: true,
+                    state: "clean".into(),
+                    conflicted_files: Vec::new(),
+                    message: format!(
+                        "Stash conflict aborted — working tree restored to the pre-{} state (snapshot {}). The stash entry is untouched.",
+                        if state.pop { "pop" } else { "apply" },
+                        short_backup(&state.backup_ref),
+                    ),
+                    backup_ref: None,
+                }
+            }
+            Ok(out) => StashResolveResult::error(git_msg(&out)),
+            Err(e) => StashResolveResult::error(e),
         }
-        Ok(out) => StashResolveResult::error(git_msg(&out)),
-        Err(e) => StashResolveResult::error(e),
-    }
+    })
+    .await
 }
 
 /// Finish a stash-apply/pop conflict after the user resolved every file (via
@@ -2328,91 +2451,100 @@ pub fn stash_conflict_abort(path: String) -> StashResolveResult {
 /// the conflict) rather than blindly dropping whatever now sits at that
 /// index.
 /// JS: `invoke("stash_conflict_continue", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — opens the repo via git2 and then
+/// shells out repeatedly (`unmerged_files`'s `git diff`, `current_stash_sha`'s
+/// `git rev-parse`, `git stash drop`), all waited on inline on Tauri's main
+/// thread. `async fn` + `run_blocking` moves the whole body onto Tauri's
+/// blocking-task thread pool, matching `workdir_status`'s own fix.
 #[tauri::command]
 #[specta::specta]
-pub fn stash_conflict_continue(path: String) -> StashResolveResult {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return StashResolveResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-    let Some(state) = read_stash_conflict_state(&repo) else {
-        return StashResolveResult::error("No stash conflict in progress to continue.");
-    };
-
-    let remaining = unmerged_files(&path);
-    if !remaining.is_empty() {
-        let n = remaining.len();
-        return StashResolveResult {
-            ok: false,
-            state: "conflict".into(),
-            conflicted_files: remaining,
-            message: format!(
-                "Still conflicted in {n} file{}. Resolve them, then Continue — or Abort.",
-                if n == 1 { "" } else { "s" }
-            ),
-            backup_ref: Some(state.backup_ref.clone()),
+pub async fn stash_conflict_continue(path: String) -> StashResolveResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return StashResolveResult::error(format!("Cannot open repository: {}", e.message())),
         };
-    }
+        let Some(state) = read_stash_conflict_state(&repo) else {
+            return StashResolveResult::error("No stash conflict in progress to continue.");
+        };
 
-    if state.pop {
-        let still_same = current_stash_sha(&path, state.index).as_deref() == Some(state.stash_sha.as_str());
-        if !still_same {
-            clear_stash_conflict_state(&repo);
+        let remaining = unmerged_files(&path);
+        if !remaining.is_empty() {
+            let n = remaining.len();
             return StashResolveResult {
-                ok: true,
-                state: "clean".into(),
-                conflicted_files: Vec::new(),
+                ok: false,
+                state: "conflict".into(),
+                conflicted_files: remaining,
                 message: format!(
-                    "Conflict resolved. NOTE: stash@{{{}}} no longer matches the popped entry (the stash list changed during the conflict), so it was left AS-IS rather than risk dropping the wrong one — check the stash list.",
-                    state.index
+                    "Still conflicted in {n} file{}. Resolve them, then Continue — or Abort.",
+                    if n == 1 { "" } else { "s" }
                 ),
-                backup_ref: None,
+                backup_ref: Some(state.backup_ref.clone()),
             };
         }
-        // See `StashConflictState.untracked_restore_failed`'s own doc
-        // comment: when the SAME failed pop also couldn't restore an
-        // untracked file (git's own "kept in case you need it again"), the
-        // stash is the ONLY remaining copy of that content — auto-dropping
-        // it here (the normal pop-success behavior) would permanently lose
-        // it, so refuse to drop and say exactly why.
-        if state.untracked_restore_failed {
-            clear_stash_conflict_state(&repo);
-            return StashResolveResult {
-                ok: true,
-                state: "clean".into(),
-                conflicted_files: Vec::new(),
-                message: format!(
-                    "Conflict resolved. NOTE: part of stash@{{{}}} could not be restored earlier (an untracked file collided with something already there) — the stash entry was deliberately KEPT, not dropped, so that content isn't lost. Check the stash list.",
-                    state.index
-                ),
-                backup_ref: None,
-            };
-        }
-        let stash_ref = format!("stash@{{{}}}", state.index);
-        if let Err(msg) = match git(&path, &["stash", "drop", &stash_ref], false) {
-            Ok(out) if out.ok => Ok(()),
-            Ok(out) => Err(format!(
-                "Conflict resolved, but could not drop the popped stash entry: {}",
-                git_msg(&out)
-            )),
-            Err(e) => Err(format!("Conflict resolved, but could not drop the popped stash entry: {e}")),
-        } {
-            return StashResolveResult { ok: false, state: "error".into(), conflicted_files: Vec::new(), message: msg, backup_ref: None };
-        }
-    }
 
-    clear_stash_conflict_state(&repo);
-    StashResolveResult {
-        ok: true,
-        state: "clean".into(),
-        conflicted_files: Vec::new(),
-        message: if state.pop {
-            "Stash pop conflict resolved — the popped stash entry has been dropped.".into()
-        } else {
-            "Stash apply conflict resolved. The applied stash entry is untouched (apply never removes it) — drop it yourself from the stash list if you're done with it.".into()
-        },
-        backup_ref: None,
-    }
+        if state.pop {
+            let still_same = current_stash_sha(&path, state.index).as_deref() == Some(state.stash_sha.as_str());
+            if !still_same {
+                clear_stash_conflict_state(&repo);
+                return StashResolveResult {
+                    ok: true,
+                    state: "clean".into(),
+                    conflicted_files: Vec::new(),
+                    message: format!(
+                        "Conflict resolved. NOTE: stash@{{{}}} no longer matches the popped entry (the stash list changed during the conflict), so it was left AS-IS rather than risk dropping the wrong one — check the stash list.",
+                        state.index
+                    ),
+                    backup_ref: None,
+                };
+            }
+            // See `StashConflictState.untracked_restore_failed`'s own doc
+            // comment: when the SAME failed pop also couldn't restore an
+            // untracked file (git's own "kept in case you need it again"), the
+            // stash is the ONLY remaining copy of that content — auto-dropping
+            // it here (the normal pop-success behavior) would permanently lose
+            // it, so refuse to drop and say exactly why.
+            if state.untracked_restore_failed {
+                clear_stash_conflict_state(&repo);
+                return StashResolveResult {
+                    ok: true,
+                    state: "clean".into(),
+                    conflicted_files: Vec::new(),
+                    message: format!(
+                        "Conflict resolved. NOTE: part of stash@{{{}}} could not be restored earlier (an untracked file collided with something already there) — the stash entry was deliberately KEPT, not dropped, so that content isn't lost. Check the stash list.",
+                        state.index
+                    ),
+                    backup_ref: None,
+                };
+            }
+            let stash_ref = format!("stash@{{{}}}", state.index);
+            if let Err(msg) = match git(&path, &["stash", "drop", &stash_ref], false) {
+                Ok(out) if out.ok => Ok(()),
+                Ok(out) => Err(format!(
+                    "Conflict resolved, but could not drop the popped stash entry: {}",
+                    git_msg(&out)
+                )),
+                Err(e) => Err(format!("Conflict resolved, but could not drop the popped stash entry: {e}")),
+            } {
+                return StashResolveResult { ok: false, state: "error".into(), conflicted_files: Vec::new(), message: msg, backup_ref: None };
+            }
+        }
+
+        clear_stash_conflict_state(&repo);
+        StashResolveResult {
+            ok: true,
+            state: "clean".into(),
+            conflicted_files: Vec::new(),
+            message: if state.pop {
+                "Stash pop conflict resolved — the popped stash entry has been dropped.".into()
+            } else {
+                "Stash apply conflict resolved. The applied stash entry is untouched (apply never removes it) — drop it yourself from the stash list if you're done with it.".into()
+            },
+            backup_ref: None,
+        }
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -2441,45 +2573,54 @@ pub fn stash_conflict_continue(path: String) -> StashResolveResult {
 /// — that is `stash_conflict_abort`/`stash_conflict_continue`'s job (a stash
 /// conflict is never a "just re-stash it" situation).
 /// JS: `invoke("stash_undo_apply", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — opens the repo via git2 for the
+/// pre-undo safety snapshot and shells out to `git status`/`git stash push`,
+/// both waited on inline on Tauri's main thread. `async fn` + `run_blocking`
+/// moves the whole body onto Tauri's blocking-task thread pool, matching
+/// `workdir_status`'s own fix.
 #[tauri::command]
 #[specta::specta]
-pub fn stash_undo_apply(path: String) -> WorkdirResult {
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    if !unmerged_files(&path).is_empty() {
-        return WorkdirResult::err(
-            "There are unresolved conflicts from a stash apply/pop — resolve them via the Resolver (Continue/Abort) instead of Undo.",
-        );
-    }
-    let dirty = match git(&path, &["status", "--porcelain"], false) {
-        Ok(o) if o.ok => o.stdout,
-        Ok(o) => return WorkdirResult::err(git_msg(&o)),
-        Err(e) => return WorkdirResult::err(e),
-    };
-    if dirty.is_empty() {
-        return WorkdirResult::err("Working tree is already clean — nothing to undo.");
-    }
+pub async fn stash_undo_apply(path: String) -> WorkdirResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        if !unmerged_files(&path).is_empty() {
+            return WorkdirResult::err(
+                "There are unresolved conflicts from a stash apply/pop — resolve them via the Resolver (Continue/Abort) instead of Undo.",
+            );
+        }
+        let dirty = match git(&path, &["status", "--porcelain"], false) {
+            Ok(o) if o.ok => o.stdout,
+            Ok(o) => return WorkdirResult::err(git_msg(&o)),
+            Err(e) => return WorkdirResult::err(e),
+        };
+        if dirty.is_empty() {
+            return WorkdirResult::err("Working tree is already clean — nothing to undo.");
+        }
 
-    let backup = match crate::safety::snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
-    };
+        let backup = match crate::safety::snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        };
 
-    match git(
-        &path,
-        &["stash", "push", "-u", "-m", "gitcat undo: re-stash after stash apply/pop"],
-        true,
-    ) {
-        Ok(out) if out.ok => WorkdirResult::ok(
-            format!(
-                "Undid the stash apply/pop by re-stashing the working tree (snapshot {}). This created a NEW stash entry — it's the same content, not the original object, but nothing is lost.",
-                short_backup(&backup)
+        match git(
+            &path,
+            &["stash", "push", "-u", "-m", "gitcat undo: re-stash after stash apply/pop"],
+            true,
+        ) {
+            Ok(out) if out.ok => WorkdirResult::ok(
+                format!(
+                    "Undid the stash apply/pop by re-stashing the working tree (snapshot {}). This created a NEW stash entry — it's the same content, not the original object, but nothing is lost.",
+                    short_backup(&backup)
+                ),
+                Some(backup),
             ),
-            Some(backup),
-        ),
-        Ok(out) => WorkdirResult::err_with_backup(git_msg(&out), Some(backup)),
-        Err(e) => WorkdirResult::err_with_backup(e, Some(backup)),
-    }
+            Ok(out) => WorkdirResult::err_with_backup(git_msg(&out), Some(backup)),
+            Err(e) => WorkdirResult::err_with_backup(e, Some(backup)),
+        }
+    })
+    .await
 }

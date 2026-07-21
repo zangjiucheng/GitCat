@@ -218,61 +218,82 @@ fn validate_tag_name(name: &str) -> Result<(), String> {
 /// omitted, it fetches every configured remote (`--all`). Always `--prune`s
 /// stale remote-tracking branches that no longer exist on the remote.
 /// JS call: `invoke("fetch", { path, remote? })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+/// comment, that runs INLINE on Tauri's main thread. This one shells out to
+/// `git fetch`, a real network call that can take anywhere from under a
+/// second to minutes depending on the remote and how much history changed,
+/// so the whole app window (redraws, every other command's IPC) froze for
+/// the entire fetch. `async fn` + `run_blocking` moves it onto Tauri's
+/// blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn fetch(path: String, remote: Option<String>) -> RemoteResult {
-    if let Some(r) = &remote {
-        if let Err(e) = validate_remote_name(r) {
-            return RemoteResult::err(e);
+pub async fn fetch(path: String, remote: Option<String>) -> RemoteResult {
+    crate::blocking::run_blocking(move || {
+        if let Some(r) = &remote {
+            if let Err(e) = validate_remote_name(r) {
+                return RemoteResult::err(e);
+            }
         }
-    }
-    // No git2 needed: nothing here is derived from repo state, and an invalid
-    // path surfaces git's own "not a git repository" error just as clearly.
-    let args: Vec<&str> = match &remote {
-        Some(r) => vec!["fetch", "--prune", "--end-of-options", r.as_str()],
-        None => vec!["fetch", "--all", "--prune"],
-    };
-    match run_git(&path, &args) {
-        Ok(out) if out.ok => RemoteResult::ok(
-            match &remote {
-                Some(r) => format!("Fetched {r}."),
-                None => "Fetched all remotes.".to_string(),
-            },
-            None,
-        ),
-        Ok(out) => RemoteResult::err(git_error_message(&out)),
-        Err(e) => RemoteResult::err(e),
-    }
+        // No git2 needed: nothing here is derived from repo state, and an invalid
+        // path surfaces git's own "not a git repository" error just as clearly.
+        let args: Vec<&str> = match &remote {
+            Some(r) => vec!["fetch", "--prune", "--end-of-options", r.as_str()],
+            None => vec!["fetch", "--all", "--prune"],
+        };
+        match run_git(&path, &args) {
+            Ok(out) if out.ok => RemoteResult::ok(
+                match &remote {
+                    Some(r) => format!("Fetched {r}."),
+                    None => "Fetched all remotes.".to_string(),
+                },
+                None,
+            ),
+            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Err(e) => RemoteResult::err(e),
+        }
+    })
+    .await
 }
 
 /// Fast-forward the current branch to its upstream (`git pull --ff-only`).
 /// Refuses (git's own message) rather than merging/rebasing on divergence —
 /// see module doc for why.
 /// JS call: `invoke("pull", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+/// comment, that runs INLINE on Tauri's main thread. `open_repo`/
+/// `take_snapshot` are git2 calls and `git pull --ff-only` is a real network
+/// fetch-then-merge, so together this could block the whole window for
+/// however long the remote takes to answer. `async fn` + `run_blocking`
+/// moves the whole body onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn pull(path: String) -> RemoteResult {
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    let backup = match take_snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return RemoteResult::err(format!("Safety snapshot failed, aborting: {e}")),
-    };
-    match run_git(&path, &["pull", "--ff-only"]) {
-        Ok(out) if out.ok => {
-            let msg = if out.stdout.contains("Already up to date") {
-                "Already up to date.".to_string()
-            } else {
-                format!("Pulled (snapshot {}).", short_backup(&backup))
-            };
-            RemoteResult::ok(msg, Some(backup))
+pub async fn pull(path: String) -> RemoteResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        let backup = match take_snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return RemoteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        };
+        match run_git(&path, &["pull", "--ff-only"]) {
+            Ok(out) if out.ok => {
+                let msg = if out.stdout.contains("Already up to date") {
+                    "Already up to date.".to_string()
+                } else {
+                    format!("Pulled (snapshot {}).", short_backup(&backup))
+                };
+                RemoteResult::ok(msg, Some(backup))
+            }
+            // e.g. "fatal: Not possible to fast-forward, aborting."
+            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Err(e) => RemoteResult::err(e),
         }
-        // e.g. "fatal: Not possible to fast-forward, aborting."
-        Ok(out) => RemoteResult::err(git_error_message(&out)),
-        Err(e) => RemoteResult::err(e),
-    }
+    })
+    .await
 }
 
 /// The current branch's configured upstream, as a shorthand remote-tracking
@@ -284,22 +305,32 @@ pub fn pull(path: String) -> RemoteResult {
 /// included). Pure read (git2 only): no mutation, no snapshot — nothing here
 /// can leave the repo in a different state.
 /// JS call: `invoke("current_upstream", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+/// comment, that runs INLINE on Tauri's main thread. It's a pure read with no
+/// network involved, but `trust::open_repo`/`find_branch` still go through
+/// git2 and, for a WSL/UNC path, can stall on the filesystem bridge exactly
+/// like the already-fixed `dashboard_repo_status`/`workdir_status` reads did.
+/// `async fn` + `run_blocking` keeps it off the main thread regardless.
 #[tauri::command]
 #[specta::specta]
-pub fn current_upstream(path: String) -> Result<Option<String>, String> {
-    let repo = crate::trust::open_repo(&path).map_err(|e| format!("Cannot open repository: {}", e.message()))?;
-    let branch_name = match repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string())) {
-        Some(b) => b,
-        None => return Ok(None),
-    };
-    // Same has-upstream lookup `push` already does below; here we also keep
-    // the shorthand name instead of just a bool.
-    let upstream_name = repo
-        .find_branch(&branch_name, BranchType::Local)
-        .ok()
-        .and_then(|b| b.upstream().ok())
-        .and_then(|up| up.name().ok().flatten().map(|s| s.to_string()));
-    Ok(upstream_name)
+pub async fn current_upstream(path: String) -> Result<Option<String>, String> {
+    crate::blocking::run_blocking(move || {
+        let repo = crate::trust::open_repo(&path).map_err(|e| format!("Cannot open repository: {}", e.message()))?;
+        let branch_name = match repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string())) {
+            Some(b) => b,
+            None => return Ok(None),
+        };
+        // Same has-upstream lookup `push` already does below; here we also keep
+        // the shorthand name instead of just a bool.
+        let upstream_name = repo
+            .find_branch(&branch_name, BranchType::Local)
+            .ok()
+            .and_then(|b| b.upstream().ok())
+            .and_then(|up| up.name().ok().flatten().map(|s| s.to_string()));
+        Ok(upstream_name)
+    })
+    .await
 }
 
 /// Hard-reset a LOCAL branch to exactly match its configured upstream
@@ -325,94 +356,114 @@ pub fn current_upstream(path: String) -> Result<Option<String>, String> {
 /// to — there being nothing to reset to is treated the same as `pull`
 /// finding nothing to fast-forward.
 /// JS call: `invoke("reset_branch_to_upstream", { path, branch })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+/// comment, that runs INLINE on Tauri's main thread. It opens the repo and
+/// snapshots via git2, then shells out to `git reset --hard`/`git branch -f`,
+/// which for a large working tree or a WSL/UNC path can take real time to
+/// touch every file. `async fn` + `run_blocking` moves the whole body onto
+/// Tauri's blocking-task thread pool so it can't freeze the window.
 #[tauri::command]
 #[specta::specta]
-pub fn reset_branch_to_upstream(path: String, branch: String) -> RemoteResult {
-    if let Err(e) = validate_branch_name(&branch) {
-        return RemoteResult::err(e);
-    }
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    let local = match repo.find_branch(&branch, BranchType::Local) {
-        Ok(b) => b,
-        Err(_) => return RemoteResult::err(format!("No local branch named {branch:?}.")),
-    };
-    let upstream = match local.upstream() {
-        Ok(u) => u,
-        Err(_) => return RemoteResult::err(format!("{branch} has no configured upstream to reset to.")),
-    };
-    let upstream_name = match upstream.name() {
-        Ok(Some(n)) => n.to_string(),
-        _ => return RemoteResult::err(format!("{branch}'s upstream name isn't valid UTF-8.")),
-    };
+pub async fn reset_branch_to_upstream(path: String, branch: String) -> RemoteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_branch_name(&branch) {
+            return RemoteResult::err(e);
+        }
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        let local = match repo.find_branch(&branch, BranchType::Local) {
+            Ok(b) => b,
+            Err(_) => return RemoteResult::err(format!("No local branch named {branch:?}.")),
+        };
+        let upstream = match local.upstream() {
+            Ok(u) => u,
+            Err(_) => return RemoteResult::err(format!("{branch} has no configured upstream to reset to.")),
+        };
+        let upstream_name = match upstream.name() {
+            Ok(Some(n)) => n.to_string(),
+            _ => return RemoteResult::err(format!("{branch}'s upstream name isn't valid UTF-8.")),
+        };
 
-    let backup = match take_snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return RemoteResult::err(format!("Safety snapshot failed, aborting: {e}")),
-    };
+        let backup = match take_snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return RemoteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        };
 
-    let is_current = repo
-        .head()
-        .ok()
-        .filter(|h| h.is_branch())
-        .and_then(|h| h.shorthand().map(|s| s.to_string()))
-        .as_deref()
-        == Some(branch.as_str());
+        let is_current = repo
+            .head()
+            .ok()
+            .filter(|h| h.is_branch())
+            .and_then(|h| h.shorthand().map(|s| s.to_string()))
+            .as_deref()
+            == Some(branch.as_str());
 
-    // Same `--end-of-options` placement `delete_branch`/`rename_branch` use
-    // for `git branch` in git_write.rs: the flag(s) come BEFORE the marker,
-    // never after — EMPIRICALLY VERIFIED (git 2.53.0) that `git branch
-    // --end-of-options -f <branch> <start>` misparses `-f` as a positional
-    // once it comes after the marker ("usage: git branch ..."); only
-    // `-f --end-of-options <branch> <start>` (flag first) works.
-    let out = if is_current {
-        run_git(&path, &["reset", "--hard", "--end-of-options", &upstream_name])
-    } else {
-        run_git(&path, &["branch", "-f", "--end-of-options", &branch, &upstream_name])
-    };
-    match out {
-        Ok(out) if out.ok => RemoteResult::ok(
-            format!("Reset {branch} to {upstream_name} (snapshot {}).", short_backup(&backup)),
-            Some(backup),
-        ),
-        Ok(out) => RemoteResult::err(git_error_message(&out)),
-        Err(e) => RemoteResult::err(e),
-    }
+        // Same `--end-of-options` placement `delete_branch`/`rename_branch` use
+        // for `git branch` in git_write.rs: the flag(s) come BEFORE the marker,
+        // never after — EMPIRICALLY VERIFIED (git 2.53.0) that `git branch
+        // --end-of-options -f <branch> <start>` misparses `-f` as a positional
+        // once it comes after the marker ("usage: git branch ..."); only
+        // `-f --end-of-options <branch> <start>` (flag first) works.
+        let out = if is_current {
+            run_git(&path, &["reset", "--hard", "--end-of-options", &upstream_name])
+        } else {
+            run_git(&path, &["branch", "-f", "--end-of-options", &branch, &upstream_name])
+        };
+        match out {
+            Ok(out) if out.ok => RemoteResult::ok(
+                format!("Reset {branch} to {upstream_name} (snapshot {}).", short_backup(&backup)),
+                Some(backup),
+            ),
+            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Err(e) => RemoteResult::err(e),
+        }
+    })
+    .await
 }
 
 /// Push the current branch. Publishes to "origin" with `--set-upstream` when
 /// it has no configured upstream yet; otherwise a plain `git push`. Never
 /// force-pushes — a non-fast-forward rejection surfaces git's own message.
 /// JS call: `invoke("push", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+/// comment, that runs INLINE on Tauri's main thread. `git push` is a real
+/// network round-trip that can take anywhere from under a second to a long
+/// time on a slow connection or large history, freezing the entire app
+/// window for the duration. `async fn` + `run_blocking` moves the whole body
+/// onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn push(path: String) -> RemoteResult {
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    let branch = match repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string())) {
-        Some(b) => b,
-        None => return RemoteResult::err("HEAD is not on a branch — nothing to push.".to_string()),
-    };
-    let has_upstream = repo.find_branch(&branch, BranchType::Local).ok().and_then(|b| b.upstream().ok()).is_some();
+pub async fn push(path: String) -> RemoteResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        let branch = match repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string())) {
+            Some(b) => b,
+            None => return RemoteResult::err("HEAD is not on a branch — nothing to push.".to_string()),
+        };
+        let has_upstream = repo.find_branch(&branch, BranchType::Local).ok().and_then(|b| b.upstream().ok()).is_some();
 
-    let out = if has_upstream {
-        run_git(&path, &["push"])
-    } else {
-        run_git(&path, &["push", "--set-upstream", "origin", "--end-of-options", &branch])
-    };
-    match out {
-        Ok(out) if out.ok => RemoteResult::ok(
-            if has_upstream { format!("Pushed {branch}.") } else { format!("Published {branch} to origin.") },
-            None,
-        ),
-        // e.g. "! [rejected] ... (non-fast-forward)" or "fatal: 'origin' does not appear to be a git repository"
-        Ok(out) => RemoteResult::err(git_error_message(&out)),
-        Err(e) => RemoteResult::err(e),
-    }
+        let out = if has_upstream {
+            run_git(&path, &["push"])
+        } else {
+            run_git(&path, &["push", "--set-upstream", "origin", "--end-of-options", &branch])
+        };
+        match out {
+            Ok(out) if out.ok => RemoteResult::ok(
+                if has_upstream { format!("Pushed {branch}.") } else { format!("Published {branch} to origin.") },
+                None,
+            ),
+            // e.g. "! [rejected] ... (non-fast-forward)" or "fatal: 'origin' does not appear to be a git repository"
+            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Err(e) => RemoteResult::err(e),
+        }
+    })
+    .await
 }
 
 /// The ONE sanctioned exception to this module's "never force" rule (see
@@ -472,41 +523,51 @@ pub fn push(path: String) -> RemoteResult {
 /// positionals from being misread as flags, mirroring `push_tag`'s own
 /// `<remote> <refspec>` shape below.
 /// JS call: `invoke("force_push", { path, lease })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+/// comment, that runs INLINE on Tauri's main thread. Like plain `push`, this
+/// is a real network round-trip (`git push --force[-with-lease]`), so any
+/// latency to the remote froze the entire app window, not just the confirm
+/// dialog that triggered it. `async fn` + `run_blocking` moves the whole body
+/// onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn force_push(path: String, lease: bool) -> RemoteResult {
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    let branch = match repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string())) {
-        Some(b) => b,
-        None => return RemoteResult::err("HEAD is not on a branch — nothing to force-push.".to_string()),
-    };
-    let has_upstream = repo.find_branch(&branch, BranchType::Local).ok().and_then(|b| b.upstream().ok()).is_some();
-    if !has_upstream {
-        return RemoteResult::err("This branch has no upstream yet — use Push to publish it first.".to_string());
-    }
-    let remote = match repo.branch_upstream_remote(&format!("refs/heads/{branch}")) {
-        Ok(buf) => match buf.as_str() {
-            Some(s) => s.to_string(),
-            None => return RemoteResult::err("This branch's upstream remote name isn't valid UTF-8.".to_string()),
-        },
-        Err(e) => return RemoteResult::err(format!("Could not resolve this branch's upstream remote: {e}")),
-    };
-
-    let flag = if lease { "--force-with-lease" } else { "--force" };
-    let out = run_git(&path, &["push", flag, "--end-of-options", &remote, &branch]);
-    match out {
-        Ok(out) if out.ok => {
-            RemoteResult::ok(format!("Force-pushed {branch} ({}).", if lease { "lease" } else { "forced" }), None)
+pub async fn force_push(path: String, lease: bool) -> RemoteResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        let branch = match repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string())) {
+            Some(b) => b,
+            None => return RemoteResult::err("HEAD is not on a branch — nothing to force-push.".to_string()),
+        };
+        let has_upstream = repo.find_branch(&branch, BranchType::Local).ok().and_then(|b| b.upstream().ok()).is_some();
+        if !has_upstream {
+            return RemoteResult::err("This branch has no upstream yet — use Push to publish it first.".to_string());
         }
-        // e.g. "! [rejected]  <branch> -> <branch> (stale info)" when `lease`
-        // and the remote moved since our last fetch — never silently retried
-        // as a raw force; see this function's own doc comment.
-        Ok(out) => RemoteResult::err(git_error_message(&out)),
-        Err(e) => RemoteResult::err(e),
-    }
+        let remote = match repo.branch_upstream_remote(&format!("refs/heads/{branch}")) {
+            Ok(buf) => match buf.as_str() {
+                Some(s) => s.to_string(),
+                None => return RemoteResult::err("This branch's upstream remote name isn't valid UTF-8.".to_string()),
+            },
+            Err(e) => return RemoteResult::err(format!("Could not resolve this branch's upstream remote: {e}")),
+        };
+
+        let flag = if lease { "--force-with-lease" } else { "--force" };
+        let out = run_git(&path, &["push", flag, "--end-of-options", &remote, &branch]);
+        match out {
+            Ok(out) if out.ok => {
+                RemoteResult::ok(format!("Force-pushed {branch} ({}).", if lease { "lease" } else { "forced" }), None)
+            }
+            // e.g. "! [rejected]  <branch> -> <branch> (stale info)" when `lease`
+            // and the remote moved since our last fetch — never silently retried
+            // as a raw force; see this function's own doc comment.
+            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Err(e) => RemoteResult::err(e),
+        }
+    })
+    .await
 }
 
 /// Push a single tag (`git push <remote> refs/tags/<name>:refs/tags/<name>`).
@@ -535,27 +596,37 @@ pub fn force_push(path: String, lease: bool) -> RemoteResult {
 /// (`:refs/tags/<name>`) so the remote-side ref this creates/updates is
 /// never left for git to infer either.
 /// JS call: `invoke("push_tag", { path, remote?, name })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+/// comment, that runs INLINE on Tauri's main thread. It shells out to
+/// `git push` over the network (no git2 involved at all, but that doesn't
+/// matter — `Command::new`/subprocess waits block just as hard as libgit2
+/// calls), so any latency talking to the remote froze the whole window.
+/// `async fn` + `run_blocking` moves it onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn push_tag(path: String, remote: Option<String>, name: String) -> RemoteResult {
-    let remote = remote.unwrap_or_else(|| "origin".to_string());
-    if let Err(e) = validate_remote_name(&remote) {
-        return RemoteResult::err(e);
-    }
-    if let Err(e) = validate_tag_name(&name) {
-        return RemoteResult::err(e);
-    }
-    // No git2, no snapshot: pushing a tag doesn't touch local state at all —
-    // same rationale as plain `push` (see module doc comment).
-    let refspec = format!("refs/tags/{name}:refs/tags/{name}");
-    match run_git(&path, &["push", "--end-of-options", &remote, &refspec]) {
-        Ok(out) if out.ok => RemoteResult::ok(format!("Pushed tag {name} to {remote}."), None),
-        // e.g. "! [rejected] <name> -> <name> (already exists)" — never forced.
-        // Or, if `name` is a branch with no same-named local tag: "error: src
-        // refspec refs/tags/<name> does not match any" — never a branch push.
-        Ok(out) => RemoteResult::err(git_error_message(&out)),
-        Err(e) => RemoteResult::err(e),
-    }
+pub async fn push_tag(path: String, remote: Option<String>, name: String) -> RemoteResult {
+    crate::blocking::run_blocking(move || {
+        let remote = remote.unwrap_or_else(|| "origin".to_string());
+        if let Err(e) = validate_remote_name(&remote) {
+            return RemoteResult::err(e);
+        }
+        if let Err(e) = validate_tag_name(&name) {
+            return RemoteResult::err(e);
+        }
+        // No git2, no snapshot: pushing a tag doesn't touch local state at all —
+        // same rationale as plain `push` (see module doc comment).
+        let refspec = format!("refs/tags/{name}:refs/tags/{name}");
+        match run_git(&path, &["push", "--end-of-options", &remote, &refspec]) {
+            Ok(out) if out.ok => RemoteResult::ok(format!("Pushed tag {name} to {remote}."), None),
+            // e.g. "! [rejected] <name> -> <name> (already exists)" — never forced.
+            // Or, if `name` is a branch with no same-named local tag: "error: src
+            // refspec refs/tags/<name> does not match any" — never a branch push.
+            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Err(e) => RemoteResult::err(e),
+        }
+    })
+    .await
 }
 
 /// Push a SPECIFIC local branch — not necessarily HEAD/the checked-out one —
@@ -600,61 +671,71 @@ pub fn push_tag(path: String, remote: Option<String>, name: String) -> RemoteRes
 /// Never force-pushes — same "surface git's own rejection, never silently
 /// force" stance as every other push variant in this module.
 /// JS call: `invoke("push_branch", { path, branch, remote?, remoteBranch? })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+/// comment, that runs INLINE on Tauri's main thread. It opens the repo via
+/// git2 and then shells out to `git push` over the network, so — same as
+/// `push`/`force_push` — any latency reaching the remote froze the entire
+/// app window for the duration. `async fn` + `run_blocking` moves the whole
+/// body onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn push_branch(path: String, branch: String, remote: Option<String>, remote_branch: Option<String>) -> RemoteResult {
-    if let Err(e) = validate_branch_name(&branch) {
-        return RemoteResult::err(e);
-    }
-    let remote_branch = match remote_branch {
-        Some(b) => {
-            if let Err(e) = validate_branch_name(&b) {
-                return RemoteResult::err(e);
-            }
-            b
+pub async fn push_branch(path: String, branch: String, remote: Option<String>, remote_branch: Option<String>) -> RemoteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_branch_name(&branch) {
+            return RemoteResult::err(e);
         }
-        None => branch.clone(),
-    };
+        let remote_branch = match remote_branch {
+            Some(b) => {
+                if let Err(e) = validate_branch_name(&b) {
+                    return RemoteResult::err(e);
+                }
+                b
+            }
+            None => branch.clone(),
+        };
 
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
-    let local = match repo.find_branch(&branch, BranchType::Local) {
-        Ok(b) => b,
-        Err(_) => return RemoteResult::err(format!("No such local branch: {branch}")),
-    };
-    let has_upstream = local.upstream().is_ok();
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        let local = match repo.find_branch(&branch, BranchType::Local) {
+            Ok(b) => b,
+            Err(_) => return RemoteResult::err(format!("No such local branch: {branch}")),
+        };
+        let has_upstream = local.upstream().is_ok();
 
-    let remote = match remote {
-        Some(r) => r,
-        None if has_upstream => match repo.branch_upstream_remote(&format!("refs/heads/{branch}")) {
-            Ok(buf) => buf.as_str().unwrap_or("origin").to_string(),
-            Err(_) => "origin".to_string(),
-        },
-        None => "origin".to_string(),
-    };
-    if let Err(e) = validate_remote_name(&remote) {
-        return RemoteResult::err(e);
-    }
-
-    let refspec = format!("refs/heads/{branch}:refs/heads/{remote_branch}");
-    let out = if has_upstream {
-        run_git(&path, &["push", "--end-of-options", &remote, &refspec])
-    } else {
-        run_git(&path, &["push", "--set-upstream", &remote, "--end-of-options", &refspec])
-    };
-    match out {
-        Ok(out) if out.ok => RemoteResult::ok(
-            if remote_branch == branch {
-                format!("Pushed {branch} to {remote}.")
-            } else {
-                format!("Pushed {branch} to {remote}/{remote_branch}.")
+        let remote = match remote {
+            Some(r) => r,
+            None if has_upstream => match repo.branch_upstream_remote(&format!("refs/heads/{branch}")) {
+                Ok(buf) => buf.as_str().unwrap_or("origin").to_string(),
+                Err(_) => "origin".to_string(),
             },
-            None,
-        ),
-        // e.g. "! [rejected] ... (non-fast-forward)" — never forced.
-        Ok(out) => RemoteResult::err(git_error_message(&out)),
-        Err(e) => RemoteResult::err(e),
-    }
+            None => "origin".to_string(),
+        };
+        if let Err(e) = validate_remote_name(&remote) {
+            return RemoteResult::err(e);
+        }
+
+        let refspec = format!("refs/heads/{branch}:refs/heads/{remote_branch}");
+        let out = if has_upstream {
+            run_git(&path, &["push", "--end-of-options", &remote, &refspec])
+        } else {
+            run_git(&path, &["push", "--set-upstream", &remote, "--end-of-options", &refspec])
+        };
+        match out {
+            Ok(out) if out.ok => RemoteResult::ok(
+                if remote_branch == branch {
+                    format!("Pushed {branch} to {remote}.")
+                } else {
+                    format!("Pushed {branch} to {remote}/{remote_branch}.")
+                },
+                None,
+            ),
+            // e.g. "! [rejected] ... (non-fast-forward)" — never forced.
+            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Err(e) => RemoteResult::err(e),
+        }
+    })
+    .await
 }

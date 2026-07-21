@@ -31,7 +31,8 @@ fn working_tree_search_finds_an_uncommitted_edit() {
     // An UNCOMMITTED edit — never `git add`ed/committed.
     std::fs::write(repo.dir.join("a.txt"), "line one\nUNCOMMITTED_TOKEN here\nline three\n").expect("write edit");
 
-    let r = code_search(repo.path(), "UNCOMMITTED_TOKEN".to_string(), true, None).expect("search should succeed");
+    let r = tauri::async_runtime::block_on(code_search(repo.path(), "UNCOMMITTED_TOKEN".to_string(), true, None))
+        .expect("search should succeed");
     assert!(!r.truncated);
     let m = find(&r.matches, "a.txt").expect("expected a.txt to match");
     assert_eq!(m.line, 2);
@@ -46,7 +47,8 @@ fn working_tree_search_finds_a_brand_new_untracked_file() {
     // Never `git add`ed at all.
     std::fs::write(repo.dir.join("new_file.txt"), "BRAND_NEW_UNTRACKED_TOKEN\n").expect("write untracked file");
 
-    let r = code_search(repo.path(), "BRAND_NEW_UNTRACKED_TOKEN".to_string(), true, None).expect("search should succeed");
+    let r = tauri::async_runtime::block_on(code_search(repo.path(), "BRAND_NEW_UNTRACKED_TOKEN".to_string(), true, None))
+        .expect("search should succeed");
     let m = find(&r.matches, "new_file.txt").expect("expected the untracked file to be found");
     assert_eq!(m.line, 1);
 }
@@ -59,15 +61,17 @@ fn historical_commit_search_is_scoped_to_that_commits_own_tree() {
     repo.commit("a.txt", "NEWTOKEN is here\n", "c2: replace content");
 
     // At the OLD commit: finds OLDTOKEN, never NEWTOKEN (which didn't exist yet).
-    let old_search = code_search(repo.path(), "OLDTOKEN".to_string(), true, Some(old_sha.clone())).expect("search should succeed");
+    let old_search = tauri::async_runtime::block_on(code_search(repo.path(), "OLDTOKEN".to_string(), true, Some(old_sha.clone())))
+        .expect("search should succeed");
     assert!(find(&old_search.matches, "a.txt").is_some(), "OLDTOKEN must be found at the old commit");
 
-    let old_search_new_token =
-        code_search(repo.path(), "NEWTOKEN".to_string(), true, Some(old_sha)).expect("search should succeed");
+    let old_search_new_token = tauri::async_runtime::block_on(code_search(repo.path(), "NEWTOKEN".to_string(), true, Some(old_sha)))
+        .expect("search should succeed");
     assert!(old_search_new_token.matches.is_empty(), "NEWTOKEN must NOT be visible at the old commit");
 
     // Unscoped (working tree / current HEAD content): finds NEWTOKEN.
-    let head_search = code_search(repo.path(), "NEWTOKEN".to_string(), true, None).expect("search should succeed");
+    let head_search = tauri::async_runtime::block_on(code_search(repo.path(), "NEWTOKEN".to_string(), true, None))
+        .expect("search should succeed");
     assert!(find(&head_search.matches, "a.txt").is_some(), "NEWTOKEN must be found in the current checkout");
 }
 
@@ -76,13 +80,16 @@ fn case_sensitivity_toggle() {
     let repo = TempRepo::init("codesearch_case");
     repo.commit("a.txt", "Hello World\n", "seed");
 
-    let insensitive = code_search(repo.path(), "hello".to_string(), false, None).expect("search should succeed");
+    let insensitive = tauri::async_runtime::block_on(code_search(repo.path(), "hello".to_string(), false, None))
+        .expect("search should succeed");
     assert!(find(&insensitive.matches, "a.txt").is_some(), "case-insensitive search must match despite case difference");
 
-    let sensitive_wrong_case = code_search(repo.path(), "hello".to_string(), true, None).expect("search should succeed");
+    let sensitive_wrong_case = tauri::async_runtime::block_on(code_search(repo.path(), "hello".to_string(), true, None))
+        .expect("search should succeed");
     assert!(sensitive_wrong_case.matches.is_empty(), "case-sensitive search must NOT match the wrong case");
 
-    let sensitive_right_case = code_search(repo.path(), "Hello".to_string(), true, None).expect("search should succeed");
+    let sensitive_right_case = tauri::async_runtime::block_on(code_search(repo.path(), "Hello".to_string(), true, None))
+        .expect("search should succeed");
     assert!(find(&sensitive_right_case.matches, "a.txt").is_some(), "case-sensitive search must match the exact case");
 }
 
@@ -99,7 +106,8 @@ fn binary_file_is_not_matched() {
     bytes.extend_from_slice(b"more binary data");
     std::fs::write(repo.dir.join("blob.bin"), &bytes).expect("write binary file");
 
-    let r = code_search(repo.path(), "BINARY_TOKEN".to_string(), true, None).expect("search should succeed");
+    let r = tauri::async_runtime::block_on(code_search(repo.path(), "BINARY_TOKEN".to_string(), true, None))
+        .expect("search should succeed");
     assert!(find(&r.matches, "blob.bin").is_none(), "a binary file must never be matched (-I)");
 }
 
@@ -109,7 +117,7 @@ fn empty_query_is_refused_cleanly() {
     repo.commit("a.txt", "content\n", "seed");
 
     let err = must_err(
-        code_search(repo.path(), "".to_string(), true, None),
+        tauri::async_runtime::block_on(code_search(repo.path(), "".to_string(), true, None)),
         "an empty query must be a clean Err, not a silent match-everything Ok",
     );
     assert!(!err.is_empty());
@@ -118,7 +126,7 @@ fn empty_query_is_refused_cleanly() {
 #[test]
 fn invalid_repo_path_is_a_clean_err() {
     let err = must_err(
-        code_search("/no/such/path/at/all".to_string(), "hello".to_string(), true, None),
+        tauri::async_runtime::block_on(code_search("/no/such/path/at/all".to_string(), "hello".to_string(), true, None)),
         "nonexistent repo path must be Err",
     );
     assert!(!err.is_empty());
@@ -130,7 +138,7 @@ fn invalid_at_commit_rev_is_a_clean_err() {
     repo.commit("a.txt", "content\n", "seed");
 
     let err = must_err(
-        code_search(repo.path(), "content".to_string(), true, Some("not-a-real-rev".to_string())),
+        tauri::async_runtime::block_on(code_search(repo.path(), "content".to_string(), true, Some("not-a-real-rev".to_string()))),
         "an unresolvable at_commit must be a clean Err",
     );
     assert!(!err.is_empty());
@@ -150,7 +158,8 @@ fn search_truncates_at_the_match_cap() {
     }
     std::fs::write(repo.dir.join("many_matches.txt"), &content).expect("write many-match file");
 
-    let r = code_search(repo.path(), "needle".to_string(), true, None).expect("search should succeed even when capped");
+    let r = tauri::async_runtime::block_on(code_search(repo.path(), "needle".to_string(), true, None))
+        .expect("search should succeed even when capped");
     assert!(r.truncated, "expected truncated=true for a match count exceeding the cap");
     assert_eq!(r.matches.len(), 2000, "expected exactly MAX_CODE_SEARCH_MATCHES (2000) matches when capped");
 }

@@ -108,21 +108,32 @@ pub struct RerereStatus {
 // Command: rerere_status (READ-ONLY — see module doc for why this shells out)
 // ---------------------------------------------------------------------------
 
-/// JS: `invoke("rerere_status", { path })`.
+/// Opens the repo via git2 (a real disk hit, worse over a network/WSL
+/// bridge path) and then shells out to the `git` CLI up to three separate
+/// times (`config --get`, `rerere status`, `rerere remaining`), each an
+/// out-of-process spawn-and-wait. Run inline on a plain `fn` this blocks
+/// Tauri's main thread — and therefore the whole app window — for the sum of
+/// all four calls; routed through [`crate::blocking::run_blocking`] it runs
+/// on the blocking-task thread pool instead. JS: `invoke("rerere_status", {
+/// path })`.
 #[tauri::command]
 #[specta::specta]
-pub fn rerere_status(path: String) -> Result<RerereStatus, String> {
-    let repo = crate::trust::open_repo(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+pub async fn rerere_status(path: String) -> Result<RerereStatus, String> {
+    crate::blocking::run_blocking(move || rerere_status_inner(&path)).await
+}
+
+fn rerere_status_inner(path: &str) -> Result<RerereStatus, String> {
+    let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
     // `commondir()`, not `path()`: in a linked worktree `path()` is the
     // worktree-private gitdir, but rr-cache is shared repo-wide.
     let common_dir = repo.commondir().to_path_buf();
 
-    let configured = read_configured(&path);
+    let configured = read_configured(path);
     let cache_dir_present = common_dir.join("rr-cache").is_dir();
     let enabled = configured.unwrap_or(cache_dir_present);
 
     let entries = read_cache_entries(&common_dir);
-    let (live_conflict, live_paths) = read_live_paths(&path);
+    let (live_conflict, live_paths) = read_live_paths(path);
 
     Ok(RerereStatus { enabled, configured, cache_dir_present, entries, live_conflict, live_paths })
 }
@@ -197,16 +208,26 @@ fn run_lines(path: &str, args: &[&str]) -> Vec<String> {
 // Command: rerere_set_enabled (WRITE — config only, no snapshot; see module doc)
 // ---------------------------------------------------------------------------
 
-/// Toggle `rerere.enabled` for THIS repository only (never `--global`). JS:
-/// `invoke("rerere_set_enabled", { path, enabled })`.
+/// Opens the repo via git2 as an existence check, then shells out to `git
+/// config` (another out-of-process spawn-and-wait) to write the value. Same
+/// blocking shape as [`rerere_status`] above, just for the write side — a
+/// plain `fn` here would stall the main thread (and the whole window) until
+/// that subprocess exits, so this routes through
+/// [`crate::blocking::run_blocking`] instead. Toggle `rerere.enabled` for
+/// THIS repository only (never `--global`). JS: `invoke("rerere_set_enabled",
+/// { path, enabled })`.
 #[tauri::command]
 #[specta::specta]
-pub fn rerere_set_enabled(path: String, enabled: bool) -> WriteResult {
-    if let Err(e) = crate::trust::open_repo(&path) {
+pub async fn rerere_set_enabled(path: String, enabled: bool) -> WriteResult {
+    crate::blocking::run_blocking(move || rerere_set_enabled_inner(&path, enabled)).await
+}
+
+fn rerere_set_enabled_inner(path: &str, enabled: bool) -> WriteResult {
+    if let Err(e) = crate::trust::open_repo(path) {
         return WriteResult { ok: false, message: format!("Cannot open repository: {}", e.message()), backup_ref: None, conflicting_files: Vec::new() };
     }
     let value = if enabled { "true" } else { "false" };
-    match safety::run_git(&path, &["config", "rerere.enabled", value]) {
+    match safety::run_git(path, &["config", "rerere.enabled", value]) {
         Ok(out) if out.ok => WriteResult {
             ok: true,
             message: format!("rerere {} for this repository.", if enabled { "enabled" } else { "disabled" }),

@@ -39,7 +39,7 @@ fn revert_clean_produces_inverse_commit_with_revert_message() {
     let added = repo.commit("f.txt", "base\nline2\n", "add line2");
     let path = repo.path();
 
-    let result = revert_start(path.clone(), added.clone(), None);
+    let result = tauri::async_runtime::block_on(revert_start(path.clone(), added.clone(), None));
     assert!(result.ok, "expected a clean revert, got: {}", result.message);
     assert_eq!(result.state, "clean");
     assert!(result.conflicted_files.is_empty());
@@ -78,7 +78,7 @@ fn revert_of_change_not_present_is_empty_not_clean() {
     let head_before = repo.commit("f.txt", "base\n", "manually remove line2");
     let path = repo.path();
 
-    let result = revert_start(path.clone(), added, None);
+    let result = tauri::async_runtime::block_on(revert_start(path.clone(), added, None));
     assert_eq!(result.state, "empty", "expected a benign no-op, got: {}", result.message);
     assert!(!result.ok);
     assert!(result.conflicted_files.is_empty());
@@ -98,14 +98,14 @@ fn revert_conflict_resolve_theirs_then_continue() {
     let (repo, _head_b, to_revert) = build_conflicting_repo("revert_resolve");
     let path = repo.path();
 
-    let reverted = revert_start(path.clone(), to_revert.clone(), None);
+    let reverted = tauri::async_runtime::block_on(revert_start(path.clone(), to_revert.clone(), None));
     assert_eq!(reverted.state, "conflict", "expected a conflict, got: {}", reverted.message);
     assert!(!reverted.ok);
     assert_eq!(reverted.conflicted_files, vec!["f.txt".to_string()]);
     assert!(reverted.backup_ref.is_some(), "revert_start should snapshot before mutating");
     assert_eq!(repo.open().state(), RepositoryState::Revert);
 
-    let status = conflict_status(path.clone()).expect("conflict_status failed");
+    let status = tauri::async_runtime::block_on(conflict_status(path.clone())).expect("conflict_status failed");
     assert!(status.in_progress);
     assert_eq!(status.op, "revert");
     assert_eq!(status.files.len(), 1);
@@ -119,16 +119,16 @@ fn revert_conflict_resolve_theirs_then_continue() {
     assert_eq!(f.theirs, "base");
 
     // Accept the revert ("theirs" = the reverted-to state).
-    let resolved = resolve_conflict_file(path.clone(), "f.txt".into(), "theirs".into());
+    let resolved = tauri::async_runtime::block_on(resolve_conflict_file(path.clone(), "f.txt".into(), "theirs".into()));
     assert!(resolved.ok, "resolve_conflict_file failed: {}", resolved.message);
     assert_eq!(resolved.remaining, 0);
 
-    let cont = revert_continue(path.clone());
+    let cont = tauri::async_runtime::block_on(revert_continue(path.clone()));
     assert!(cont.ok, "revert_continue failed: {}", cont.message);
     assert_eq!(cont.state, "clean");
 
     assert_eq!(repo.read("f.txt"), "base\n");
-    let after = conflict_status(path.clone()).expect("conflict_status failed");
+    let after = tauri::async_runtime::block_on(conflict_status(path.clone())).expect("conflict_status failed");
     assert!(!after.in_progress);
     assert_eq!(after.files.len(), 0);
     assert_eq!(repo.open().state(), RepositoryState::Clean);
@@ -144,11 +144,11 @@ fn revert_abort_restores_head() {
     let (repo, head_b, to_revert) = build_conflicting_repo("revert_abort");
     let path = repo.path();
 
-    let reverted = revert_start(path.clone(), to_revert, None);
+    let reverted = tauri::async_runtime::block_on(revert_start(path.clone(), to_revert, None));
     assert_eq!(reverted.state, "conflict", "expected a conflict, got: {}", reverted.message);
     assert_eq!(repo.open().state(), RepositoryState::Revert);
 
-    let aborted = revert_abort(path.clone());
+    let aborted = tauri::async_runtime::block_on(revert_abort(path.clone()));
     assert!(aborted.ok, "revert_abort failed: {}", aborted.message);
     assert_eq!(aborted.state, "clean");
 
@@ -159,7 +159,7 @@ fn revert_abort_restores_head() {
     assert!(repo.is_clean());
 
     // Abort is idempotent when nothing is in progress.
-    let again = revert_abort(path);
+    let again = tauri::async_runtime::block_on(revert_abort(path));
     assert!(again.ok);
     assert_eq!(again.state, "clean");
 }
@@ -207,7 +207,7 @@ fn revert_empty_is_classified_correctly_under_a_non_english_locale() {
     let head_before = repo.commit("f.txt", "base\n", "manually remove line2");
     let path = repo.path();
 
-    let result = revert_start(path.clone(), added, None);
+    let result = tauri::async_runtime::block_on(revert_start(path.clone(), added, None));
     assert_eq!(
         result.state, "empty",
         "expected a benign no-op even under a French locale, got state={:?} message={:?}",
@@ -231,7 +231,7 @@ fn revert_blocked_by_dirty_tree_reports_blocked_by_local_changes() {
     std::fs::write(repo.dir.join("f.txt"), "dirty, uncommitted\n").unwrap();
     assert!(!repo.is_clean());
 
-    let reverted = revert_start(path.clone(), to_revert, None);
+    let reverted = tauri::async_runtime::block_on(revert_start(path.clone(), to_revert, None));
     assert!(!reverted.ok);
     assert_eq!(reverted.state, "error", "expected a dirty-tree refusal, got state {:?}: {}", reverted.state, reverted.message);
     assert!(reverted.blocked_by_local_changes, "expected blocked_by_local_changes=true: {}", reverted.message);
@@ -247,7 +247,7 @@ fn revert_bad_revision_is_not_reported_as_blocked_by_local_changes() {
     let _base = repo.commit("f.txt", "base\n", "base");
     let path = repo.path();
 
-    let reverted = revert_start(path, "not-a-real-sha".into(), None);
+    let reverted = tauri::async_runtime::block_on(revert_start(path, "not-a-real-sha".into(), None));
     assert!(!reverted.ok);
     assert_eq!(reverted.state, "error");
     assert!(!reverted.blocked_by_local_changes, "a bad revision must not be misclassified as a dirty-tree block: {}", reverted.message);
@@ -262,7 +262,7 @@ fn revert_abort_is_always_runnable_even_with_no_snapshot_ever_taken() {
     let _base = repo.commit("f.txt", "base\n", "base");
     let path = repo.path();
 
-    let aborted = revert_abort(path);
+    let aborted = tauri::async_runtime::block_on(revert_abort(path));
     assert!(aborted.ok, "revert_abort failed: {}", aborted.message);
     assert_eq!(aborted.state, "clean");
     assert_eq!(aborted.message, "No revert in progress.");

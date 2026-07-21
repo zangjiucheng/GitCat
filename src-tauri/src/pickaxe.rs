@@ -133,9 +133,21 @@ pub struct PickaxeResults {
 /// `file`. Read-only.
 ///
 /// JS: `commands.pickaxeSearch(path, query, mode, regex, allRefs, file, atCommit)`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
+/// comment, that runs INLINE on Tauri's main thread. This command's body
+/// shells out to `git log -S`/`-G` over the FULL revision history (optionally
+/// every ref, via `--all`) and additionally opens the repo with git2 to
+/// resolve `at_commit`/HEAD — on a large or old repo, or a common token that
+/// matches thousands of commits, that walk is exactly the kind of cost that
+/// scales with repo size `blocking.rs` warns about, and it froze the entire
+/// app window (not just the pickaxe search panel) for as long as it ran.
+/// `async fn` + `run_blocking` moves the work onto Tauri's blocking-task
+/// thread pool, matching `dashboard_repo_status`/`workdir_status`'s already
+/// established fix.
 #[tauri::command]
 #[specta::specta]
-pub fn pickaxe_search(
+pub async fn pickaxe_search(
     path: String,
     query: String,
     mode: String,
@@ -144,7 +156,10 @@ pub fn pickaxe_search(
     file: Option<String>,
     at_commit: Option<String>,
 ) -> Result<PickaxeResults, String> {
-    pickaxe_search_inner(&path, &query, &mode, regex, all_refs, file.as_deref(), at_commit.as_deref())
+    crate::blocking::run_blocking(move || {
+        pickaxe_search_inner(&path, &query, &mode, regex, all_refs, file.as_deref(), at_commit.as_deref())
+    })
+    .await
 }
 
 fn pickaxe_search_inner(

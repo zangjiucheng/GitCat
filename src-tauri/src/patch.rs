@@ -470,9 +470,21 @@ fn mboxrd_escape(blob: &str, real_shas_oldest_first: &[String]) -> String {
 /// commit-menu action for a merge.
 ///
 /// JS: `invoke("export_patch", { path, from, to, dest })`.
+///
+/// BUG FIX: was a plain (non-async) `fn`. Its body opens the repository via
+/// `crate::trust::open_repo`, resolves revisions and drives a git2 revwalk,
+/// then shells out to `git format-patch` via `Command::new` — all of that
+/// used to run inline on Tauri's main thread, so exporting a large revision
+/// range froze the entire app window (redraws, every other IPC command) for
+/// as long as the git2/subprocess work took. Wrapped in `run_blocking` so it
+/// now runs on Tauri's blocking-task thread pool instead.
 #[tauri::command]
 #[specta::specta]
-pub fn export_patch(path: String, from: Option<String>, to: String, dest: String) -> ExportPatchResult {
+pub async fn export_patch(path: String, from: Option<String>, to: String, dest: String) -> ExportPatchResult {
+    crate::blocking::run_blocking(move || export_patch_sync(path, from, to, dest)).await
+}
+
+fn export_patch_sync(path: String, from: Option<String>, to: String, dest: String) -> ExportPatchResult {
     if let Err(e) = validate_rev(&to) {
         return ExportPatchResult::err(e);
     }
@@ -562,9 +574,20 @@ pub fn export_patch(path: String, from: Option<String>, to: String, dest: String
 /// checks `repo.state() != Clean` broadly, not just this module's own kind).
 ///
 /// JS: `invoke("apply_patch", { path, patchFilePath })`.
+///
+/// BUG FIX: was a plain (non-async) `fn`. Its body opens the repository,
+/// takes a safety snapshot (its own git2 commit/ref work), and shells out to
+/// `git am --3way` via `Command::new` — a real merge that can take a while on
+/// a big multi-commit mailbox. All of that used to run inline on Tauri's main
+/// thread, freezing the whole app window for the duration of the apply.
+/// Wrapped in `run_blocking` to move it onto the blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn apply_patch(path: String, patch_file_path: String) -> ApplyPatchResult {
+pub async fn apply_patch(path: String, patch_file_path: String) -> ApplyPatchResult {
+    crate::blocking::run_blocking(move || apply_patch_sync(path, patch_file_path)).await
+}
+
+fn apply_patch_sync(path: String, patch_file_path: String) -> ApplyPatchResult {
     if let Err(e) = validate_patch_file(&patch_file_path) {
         return ApplyPatchResult::error(e);
     }
@@ -612,9 +635,19 @@ pub fn apply_patch(path: String, patch_file_path: String) -> ApplyPatchResult {
 /// doc).
 ///
 /// JS: `invoke("am_continue", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn`. It opens the repository via git2,
+/// takes a best-effort safety snapshot, and shells out to `git am --continue`
+/// via `Command::new` — which can itself run hooks/finish applying a
+/// patch. All of that used to run inline on the main thread, freezing the
+/// whole app window for its duration. Wrapped in `run_blocking`.
 #[tauri::command]
 #[specta::specta]
-pub fn am_continue(path: String) -> ApplyPatchResult {
+pub async fn am_continue(path: String) -> ApplyPatchResult {
+    crate::blocking::run_blocking(move || am_continue_sync(path)).await
+}
+
+fn am_continue_sync(path: String) -> ApplyPatchResult {
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return ApplyPatchResult::error(format!("Cannot open repository: {}", e.message())),
@@ -649,9 +682,19 @@ pub fn am_continue(path: String) -> ApplyPatchResult {
 /// applies here unchanged).
 ///
 /// JS: `invoke("am_skip", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn`. Same shape as `am_continue`: opens
+/// the repository via git2, takes a best-effort snapshot, and shells out to
+/// `git am --skip` via `Command::new`, which may itself need to apply the
+/// NEXT patch in the mailbox before returning. That used to block the main
+/// thread for the whole call. Wrapped in `run_blocking`.
 #[tauri::command]
 #[specta::specta]
-pub fn am_skip(path: String) -> ApplyPatchResult {
+pub async fn am_skip(path: String) -> ApplyPatchResult {
+    crate::blocking::run_blocking(move || am_skip_sync(path)).await
+}
+
+fn am_skip_sync(path: String) -> ApplyPatchResult {
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return ApplyPatchResult::error(format!("Cannot open repository: {}", e.message())),
@@ -684,9 +727,19 @@ pub fn am_skip(path: String) -> ApplyPatchResult {
 /// escape hatch must ALWAYS run" discipline as `rebase_abort`. Idempotent.
 ///
 /// JS: `invoke("am_abort", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn`. It opens the repository via git2
+/// and shells out to `git am --abort` via `Command::new`, which has to
+/// restore the working tree and index back to the pre-am HEAD — real
+/// filesystem/git2 work that used to run inline on the main thread and
+/// freeze the app window for its duration. Wrapped in `run_blocking`.
 #[tauri::command]
 #[specta::specta]
-pub fn am_abort(path: String) -> ApplyPatchResult {
+pub async fn am_abort(path: String) -> ApplyPatchResult {
+    crate::blocking::run_blocking(move || am_abort_sync(path)).await
+}
+
+fn am_abort_sync(path: String) -> ApplyPatchResult {
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return ApplyPatchResult::error(format!("Cannot open repository: {}", e.message())),

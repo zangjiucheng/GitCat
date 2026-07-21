@@ -56,7 +56,7 @@ fn inspect_commit_by_full_sha_and_by_head() {
     let expected_author_time = head_commit.author().when().seconds();
 
     for rev in [head_sha.as_str(), "HEAD"] {
-        let obj = plumbing_inspect(path.clone(), rev.to_string())
+        let obj = tauri::async_runtime::block_on(plumbing_inspect(path.clone(), rev.to_string()))
             .unwrap_or_else(|e| panic!("plumbing_inspect({rev:?}) failed: {e}"));
         match obj {
             PlumbingObject::Commit(c) => {
@@ -78,7 +78,8 @@ fn inspect_commit_by_full_sha_and_by_head() {
 #[test]
 fn inspect_root_commit_has_no_parents() {
     let (repo, root_sha, _head_sha) = build_repo("plumb_root");
-    let obj = plumbing_inspect(repo.path(), root_sha.clone()).expect("inspect root commit");
+    let obj = tauri::async_runtime::block_on(plumbing_inspect(repo.path(), root_sha.clone()))
+        .expect("inspect root commit");
     match obj {
         PlumbingObject::Commit(c) => {
             assert_eq!(c.sha, root_sha);
@@ -99,7 +100,7 @@ fn inspect_tree_top_level_and_nested_subdirectory() {
     let path = repo.path();
 
     // Top-level tree via the friendly `HEAD^{tree}` rev syntax.
-    let obj = plumbing_inspect(path.clone(), "HEAD^{tree}".to_string())
+    let obj = tauri::async_runtime::block_on(plumbing_inspect(path.clone(), "HEAD^{tree}".to_string()))
         .expect("inspect HEAD^{tree}");
     let top = match obj {
         PlumbingObject::Tree(t) => t,
@@ -116,7 +117,7 @@ fn inspect_tree_top_level_and_nested_subdirectory() {
 
     // Nested subdirectory tree, resolved via the `HEAD:dir/sub` colon syntax
     // (also double-checks the tree's own sha against a direct sha lookup).
-    let nested = plumbing_inspect(path.clone(), "HEAD:dir/sub".to_string())
+    let nested = tauri::async_runtime::block_on(plumbing_inspect(path.clone(), "HEAD:dir/sub".to_string()))
         .expect("inspect HEAD:dir/sub");
     let nested = match nested {
         PlumbingObject::Tree(t) => t,
@@ -127,7 +128,8 @@ fn inspect_tree_top_level_and_nested_subdirectory() {
     assert_eq!(nested.entries[0].kind, "blob");
     assert_eq!(nested.entries[0].mode, "100644");
 
-    let by_sha = plumbing_inspect(path, nested.sha.clone()).expect("inspect tree by its own sha");
+    let by_sha = tauri::async_runtime::block_on(plumbing_inspect(path, nested.sha.clone()))
+        .expect("inspect tree by its own sha");
     match by_sha {
         PlumbingObject::Tree(t2) => assert_eq!(t2.entries.len(), 1),
         other => panic!("expected Tree, got {other:?}"),
@@ -142,7 +144,8 @@ fn inspect_tree_top_level_and_nested_subdirectory() {
 #[test]
 fn inspect_text_blob_by_path_rev() {
     let (repo, _root_sha, _head_sha) = build_repo("plumb_blob_text");
-    let obj = plumbing_inspect(repo.path(), "HEAD:root.txt".to_string()).expect("inspect blob");
+    let obj = tauri::async_runtime::block_on(plumbing_inspect(repo.path(), "HEAD:root.txt".to_string()))
+        .expect("inspect blob");
     match obj {
         PlumbingObject::Blob(b) => {
             assert!(!b.is_binary);
@@ -160,7 +163,8 @@ fn inspect_text_blob_by_path_rev() {
 #[test]
 fn inspect_binary_blob_omits_content() {
     let (repo, _root_sha, _head_sha) = build_repo("plumb_blob_bin");
-    let obj = plumbing_inspect(repo.path(), "HEAD:bin.dat".to_string()).expect("inspect blob");
+    let obj = tauri::async_runtime::block_on(plumbing_inspect(repo.path(), "HEAD:bin.dat".to_string()))
+        .expect("inspect blob");
     match obj {
         PlumbingObject::Blob(b) => {
             assert!(b.is_binary, "a blob containing NUL bytes must be detected as binary");
@@ -182,7 +186,7 @@ fn inspect_annotated_tag_by_name_and_by_sha() {
     let tag_sha = repo.rev("v1.0").expect("v1.0 should resolve (unpeeled tag oid)");
 
     for rev in ["v1.0", tag_sha.as_str()] {
-        let obj = plumbing_inspect(path.clone(), rev.to_string())
+        let obj = tauri::async_runtime::block_on(plumbing_inspect(path.clone(), rev.to_string()))
             .unwrap_or_else(|e| panic!("plumbing_inspect({rev:?}) failed: {e}"));
         match obj {
             PlumbingObject::Tag(t) => {
@@ -213,22 +217,29 @@ fn invalid_rev_is_a_clean_err_not_a_panic() {
     let (repo, _root_sha, _head_sha) = build_repo("plumb_invalid");
     let path = repo.path();
 
-    let err = plumbing_inspect(path.clone(), "not-a-real-rev-zzz".to_string())
+    let err = tauri::async_runtime::block_on(plumbing_inspect(path.clone(), "not-a-real-rev-zzz".to_string()))
         .expect_err("bogus rev must be Err");
     assert!(!err.is_empty());
 
-    let err2 = plumbing_inspect(path.clone(), "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string())
-        .expect_err("well-formed but nonexistent sha must be Err");
+    let err2 = tauri::async_runtime::block_on(plumbing_inspect(
+        path.clone(),
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),
+    ))
+    .expect_err("well-formed but nonexistent sha must be Err");
     assert!(!err2.is_empty());
 
-    let err3 = plumbing_inspect(path, String::new()).expect_err("empty rev must be Err");
+    let err3 = tauri::async_runtime::block_on(plumbing_inspect(path, String::new()))
+        .expect_err("empty rev must be Err");
     assert!(!err3.is_empty());
 }
 
 #[test]
 fn invalid_repo_path_is_a_clean_err() {
-    let err = plumbing_inspect("/no/such/path/at/all".to_string(), "HEAD".to_string())
-        .expect_err("nonexistent repo path must be Err");
+    let err = tauri::async_runtime::block_on(plumbing_inspect(
+        "/no/such/path/at/all".to_string(),
+        "HEAD".to_string(),
+    ))
+    .expect_err("nonexistent repo path must be Err");
     assert!(!err.is_empty());
 }
 

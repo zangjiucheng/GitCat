@@ -59,9 +59,9 @@ fn stage_file_and_unstage_file_round_trip_takes_no_snapshot() {
     let path = repo.path();
     std::fs::write(repo.dir.join("f.txt"), "1\n").unwrap();
 
-    let snaps_before = list_snapshots(path.clone()).expect("list_snapshots failed");
+    let snaps_before = tauri::async_runtime::block_on(list_snapshots(path.clone())).expect("list_snapshots failed");
 
-    let staged = stage_file(path.clone(), "f.txt".into());
+    let staged = tauri::async_runtime::block_on(stage_file(path.clone(), "f.txt".into()));
     assert!(staged.ok, "stage_file failed: {}", staged.message);
     assert!(staged.backup_ref.is_none(), "stage_file must not snapshot");
 
@@ -71,7 +71,7 @@ fn stage_file_and_unstage_file_round_trip_takes_no_snapshot() {
     assert_eq!(status.staged[0].status, "M");
     assert!(status.unstaged.is_empty());
 
-    let unstaged = unstage_file(path.clone(), "f.txt".into());
+    let unstaged = tauri::async_runtime::block_on(unstage_file(path.clone(), "f.txt".into()));
     assert!(unstaged.ok, "unstage_file failed: {}", unstaged.message);
     assert!(unstaged.backup_ref.is_none(), "unstage_file must not snapshot");
 
@@ -82,7 +82,7 @@ fn stage_file_and_unstage_file_round_trip_takes_no_snapshot() {
 
     // Regression test for the "no snapshot flood" policy: the snapshot count
     // must be UNCHANGED across both calls.
-    let snaps_after = list_snapshots(path).expect("list_snapshots failed");
+    let snaps_after = tauri::async_runtime::block_on(list_snapshots(path)).expect("list_snapshots failed");
     assert_eq!(snaps_before.len(), snaps_after.len());
 }
 
@@ -97,7 +97,7 @@ fn stage_all_stages_every_unstaged_and_untracked_path() {
     std::fs::write(repo.dir.join("b.txt"), "1\n").unwrap();
     std::fs::write(repo.dir.join("c.txt"), "new\n").unwrap();
 
-    let res = stage_all(path.clone());
+    let res = tauri::async_runtime::block_on(stage_all(path.clone()));
     assert!(res.ok, "stage_all failed: {}", res.message);
     assert!(res.backup_ref.is_none(), "stage_all must not snapshot");
 
@@ -113,7 +113,7 @@ fn discard_file_restores_tracked_content_and_writes_a_patch_backup() {
     let path = repo.path();
     std::fs::write(repo.dir.join("f.txt"), "changed\n").unwrap();
 
-    let res = discard_file(path.clone(), "f.txt".into(), false);
+    let res = tauri::async_runtime::block_on(discard_file(path.clone(), "f.txt".into(), false));
     assert!(res.ok, "discard_file failed: {}", res.message);
     assert!(res.backup_ref.is_none(), "discard_file has no ref-level backup");
     let backup_rel = res.backup_patch.clone().expect("expected a backup_patch path");
@@ -138,7 +138,7 @@ fn discard_file_untracked_removes_the_file_and_backs_up_its_bytes() {
     let path = repo.path();
     std::fs::write(repo.dir.join("scratch.txt"), "throwaway content\n").unwrap();
 
-    let res = discard_file(path.clone(), "scratch.txt".into(), true);
+    let res = tauri::async_runtime::block_on(discard_file(path.clone(), "scratch.txt".into(), true));
     assert!(res.ok, "discard_file(untracked) failed: {}", res.message);
     let backup_rel = res.backup_patch.clone().expect("expected a backup_patch path");
     assert!(backup_rel.ends_with(".orig"));
@@ -174,7 +174,7 @@ fn discard_file_untracked_directory_backs_up_the_tree_and_removes_it() {
     let entry_path = status.unstaged[0].path.clone();
     assert_eq!(status.unstaged[0].status, "?");
 
-    let res = discard_file(path.clone(), entry_path, true);
+    let res = tauri::async_runtime::block_on(discard_file(path.clone(), entry_path, true));
     assert!(res.ok, "discard_file(untracked dir) failed: {}", res.message);
     let backup_rel = res.backup_patch.clone().expect("expected a backup_patch path");
     assert!(backup_rel.ends_with('/'), "a directory backup should itself be a directory: {backup_rel}");
@@ -194,7 +194,7 @@ fn commit_creates_a_real_commit_and_snapshots_first() {
     std::fs::write(repo.dir.join("f.txt"), "1\n").unwrap();
     repo.must(&["add", "-A"]);
 
-    let res = commit(path.clone(), Some("my commit message".into()), None);
+    let res = tauri::async_runtime::block_on(commit(path.clone(), Some("my commit message".into()), None));
     assert!(res.ok, "commit failed: {}", res.message);
     assert!(res.backup_ref.is_some(), "commit should snapshot first");
 
@@ -215,7 +215,7 @@ fn commit_amend_without_message_keeps_prior_message_and_rewrites_sha() {
     std::fs::write(repo.dir.join("f.txt"), "2\n").unwrap();
     repo.must(&["add", "-A"]);
 
-    let res = commit(path.clone(), None, Some(true));
+    let res = tauri::async_runtime::block_on(commit(path.clone(), None, Some(true)));
     assert!(res.ok, "amend failed: {}", res.message);
     assert!(res.backup_ref.is_some(), "amend should snapshot first");
 
@@ -233,7 +233,7 @@ fn commit_refuses_with_empty_message_and_not_amending() {
     std::fs::write(repo.dir.join("f.txt"), "1\n").unwrap();
     repo.must(&["add", "-A"]);
 
-    let res = commit(path.clone(), Some("   ".into()), None);
+    let res = tauri::async_runtime::block_on(commit(path.clone(), Some("   ".into()), None));
     assert!(!res.ok, "commit with an empty message should be refused");
     assert!(res.message.to_lowercase().contains("empty"), "unexpected message: {}", res.message);
     assert!(res.backup_ref.is_none(), "a refused, never-attempted commit must not have snapshotted");
@@ -249,41 +249,41 @@ fn stash_save_list_apply_pop_drop_full_lifecycle() {
     std::fs::write(repo.dir.join("f.txt"), "dirty\n").unwrap();
     assert!(!repo.is_clean());
 
-    let saved = stash_save(path.clone(), Some("my stash".into()), Some(false));
+    let saved = tauri::async_runtime::block_on(stash_save(path.clone(), Some("my stash".into()), Some(false)));
     assert!(saved.ok, "stash_save failed: {}", saved.message);
     assert!(saved.backup_ref.is_some(), "stash_save should snapshot first");
     assert!(repo.is_clean(), "working tree should be clean after stash push");
 
-    let list = stash_list(path.clone()).expect("stash_list failed");
+    let list = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].index, 0);
     assert_eq!(list[0].branch.as_deref(), Some("main"));
 
     // Apply re-dirties the tree AND keeps the stash entry.
-    let applied = stash_apply(path.clone(), 0, None);
+    let applied = tauri::async_runtime::block_on(stash_apply(path.clone(), 0, None));
     assert!(applied.ok, "stash_apply failed: {}", applied.message);
     assert_eq!(repo.read("f.txt"), "dirty\n");
-    let list_after_apply = stash_list(path.clone()).expect("stash_list failed");
+    let list_after_apply = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert_eq!(list_after_apply.len(), 1, "apply must not drop the stash entry");
 
     // Clean up again for pop.
     repo.must(&["checkout", "--", "f.txt"]);
     assert!(repo.is_clean());
 
-    let popped = stash_pop(path.clone(), 0, None);
+    let popped = tauri::async_runtime::block_on(stash_pop(path.clone(), 0, None));
     assert!(popped.ok, "stash_pop failed: {}", popped.message);
     assert_eq!(repo.read("f.txt"), "dirty\n");
-    let list_after_pop = stash_list(path.clone()).expect("stash_list failed");
+    let list_after_pop = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert!(list_after_pop.is_empty(), "pop should drop the stash entry");
 
     // One more save + explicit drop.
-    let saved2 = stash_save(path.clone(), None, Some(false));
+    let saved2 = tauri::async_runtime::block_on(stash_save(path.clone(), None, Some(false)));
     assert!(saved2.ok, "second stash_save failed: {}", saved2.message);
-    let dropped = stash_drop(path.clone(), 0, None);
+    let dropped = tauri::async_runtime::block_on(stash_drop(path.clone(), 0, None));
     assert!(dropped.ok, "stash_drop failed: {}", dropped.message);
     assert!(dropped.backup_ref.is_some(), "stash_drop should snapshot first");
 
-    let list_final = stash_list(path.clone()).expect("stash_list failed");
+    let list_final = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert!(list_final.is_empty());
     // Confirmed independently via the raw CLI.
     assert_eq!(repo.must(&["stash", "list"]), "");
@@ -297,20 +297,20 @@ fn stash_apply_conflict_is_surfaced_and_stash_entry_is_kept() {
 
     // Stash a change to f.txt.
     std::fs::write(repo.dir.join("f.txt"), "stashed change\n").unwrap();
-    let saved = stash_save(path.clone(), None, Some(false));
+    let saved = tauri::async_runtime::block_on(stash_save(path.clone(), None, Some(false)));
     assert!(saved.ok, "stash_save failed: {}", saved.message);
     assert!(repo.is_clean());
 
     // Commit a conflicting edit to the SAME line on top of HEAD.
     let _c1 = repo.commit("f.txt", "conflicting commit\n", "c1");
 
-    let applied = stash_apply(path.clone(), 0, None);
+    let applied = tauri::async_runtime::block_on(stash_apply(path.clone(), 0, None));
     assert!(!applied.ok, "expected stash_apply to hit a conflict");
     assert_eq!(applied.conflicted_files, vec!["f.txt".to_string()]);
     assert!(applied.backup_ref.is_some(), "stash_apply should have snapshotted before attempting");
 
     // Nothing lost: the stash entry is still there.
-    let list = stash_list(path.clone()).expect("stash_list failed");
+    let list = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert_eq!(list.len(), 1, "a failed apply must never drop the stash entry");
 }
 
@@ -326,11 +326,11 @@ fn global_undo_refuses_after_stash_apply_but_stash_undo_apply_restores_a_clean_t
     let path = repo.path();
 
     std::fs::write(repo.dir.join("f.txt"), "dirty\n").unwrap();
-    let saved = stash_save(path.clone(), None, Some(false));
+    let saved = tauri::async_runtime::block_on(stash_save(path.clone(), None, Some(false)));
     assert!(saved.ok, "stash_save failed: {}", saved.message);
     assert!(repo.is_clean());
 
-    let applied = stash_apply(path.clone(), 0, None);
+    let applied = tauri::async_runtime::block_on(stash_apply(path.clone(), 0, None));
     assert!(applied.ok, "stash_apply failed: {}", applied.message);
     assert!(!repo.is_clean(), "apply must leave the tree dirty by definition");
 
@@ -345,13 +345,13 @@ fn global_undo_refuses_after_stash_apply_but_stash_undo_apply_restores_a_clean_t
     );
 
     // The dedicated stash-undo path succeeds instead, restoring a clean tree.
-    let undone = stash_undo_apply(path.clone());
+    let undone = tauri::async_runtime::block_on(stash_undo_apply(path.clone()));
     assert!(undone.ok, "stash_undo_apply failed: {}", undone.message);
     assert!(repo.is_clean(), "tree should be clean again after re-stashing");
     assert!(undone.backup_ref.is_some(), "stash_undo_apply should snapshot first");
 
     // Content is preserved (as a NEW stash entry) — nothing lost.
-    let list = stash_list(path.clone()).expect("stash_list failed");
+    let list = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert!(!list.is_empty(), "re-stashed content should appear in the stash list");
 }
 
@@ -362,7 +362,7 @@ fn stash_undo_apply_refuses_on_an_already_clean_tree() {
     let path = repo.path();
     assert!(repo.is_clean());
 
-    let res = stash_undo_apply(path);
+    let res = tauri::async_runtime::block_on(stash_undo_apply(path));
     assert!(!res.ok, "stash_undo_apply on a clean tree should refuse, not push an empty stash");
 }
 
@@ -380,18 +380,18 @@ fn stash_drop_pins_the_dropped_commit_so_it_survives_gc_and_is_recoverable() {
     let path = repo.path();
 
     std::fs::write(repo.dir.join("f.txt"), "dirty\n").unwrap();
-    let saved = stash_save(path.clone(), None, Some(false));
+    let saved = tauri::async_runtime::block_on(stash_save(path.clone(), None, Some(false)));
     assert!(saved.ok, "stash_save failed: {}", saved.message);
 
     let stash_sha = repo.must(&["rev-parse", "stash@{0}"]);
 
-    let dropped = stash_drop(path.clone(), 0, None);
+    let dropped = tauri::async_runtime::block_on(stash_drop(path.clone(), 0, None));
     assert!(dropped.ok, "stash_drop failed: {}", dropped.message);
     let pin_ref = dropped.dropped_stash_ref.clone().expect("stash_drop must pin the dropped commit");
     assert!(pin_ref.starts_with("refs/gitgui/"), "unexpected pin ref: {pin_ref}");
 
     // The stash entry itself is gone from `stash list`...
-    let list = stash_list(path.clone()).expect("stash_list failed");
+    let list = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert!(list.is_empty());
 
     // ...but the commit object is still reachable via the pinned ref, and its
@@ -422,7 +422,7 @@ fn stage_file_with_glob_metacharacters_stages_only_the_exact_file() {
     std::fs::write(repo.dir.join("test1.txt"), "decoy\n").unwrap();
     std::fs::write(repo.dir.join("test[1].txt"), "real target\n").unwrap();
 
-    let res = stage_file(path.clone(), "test[1].txt".into());
+    let res = tauri::async_runtime::block_on(stage_file(path.clone(), "test[1].txt".into()));
     assert!(res.ok, "stage_file failed: {}", res.message);
 
     let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
@@ -448,11 +448,11 @@ fn discard_file_with_glob_metacharacters_backs_up_and_restores_the_exact_file() 
     std::fs::write(repo.dir.join("test[1].txt"), "changed target\n").unwrap();
     std::fs::write(repo.dir.join("test1.txt"), "changed decoy\n").unwrap();
 
-    let diff = workdir_file_diff(path.clone(), "test[1].txt".into(), false)
+    let diff = tauri::async_runtime::block_on(workdir_file_diff(path.clone(), "test[1].txt".into(), false))
         .expect("workdir_file_diff failed");
     assert_eq!(diff.path, "test[1].txt", "diff must resolve to the exact requested file");
 
-    let res = discard_file(path.clone(), "test[1].txt".into(), false);
+    let res = tauri::async_runtime::block_on(discard_file(path.clone(), "test[1].txt".into(), false));
     assert!(res.ok, "discard_file failed: {}", res.message);
     assert_eq!(repo.read("test[1].txt"), "original\n", "the exact target must be restored");
     assert_eq!(repo.read("test1.txt"), "changed decoy\n", "the decoy sibling must be UNTOUCHED");
@@ -475,19 +475,19 @@ fn stash_apply_refuses_when_expected_sha_does_not_match_current_stash_at_index()
     let path = repo.path();
 
     std::fs::write(repo.dir.join("f.txt"), "dirty\n").unwrap();
-    let saved = stash_save(path.clone(), None, Some(false));
+    let saved = tauri::async_runtime::block_on(stash_save(path.clone(), None, Some(false)));
     assert!(saved.ok);
-    let list = stash_list(path.clone()).expect("stash_list failed");
+    let list = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     let real_sha = list[0].sha.clone();
 
     // A stale/forged sha must be refused BEFORE anything is mutated.
-    let res = stash_apply(path.clone(), 0, Some("deadbeef".into()));
+    let res = tauri::async_runtime::block_on(stash_apply(path.clone(), 0, Some("deadbeef".into())));
     assert!(!res.ok, "stash_apply must refuse when expected_sha does not match");
     assert!(res.backup_ref.is_none(), "a refused, never-attempted apply must not have snapshotted");
     assert!(repo.is_clean(), "a refused apply must not have touched the working tree");
 
     // The CORRECT sha succeeds normally.
-    let ok_res = stash_apply(path.clone(), 0, Some(real_sha));
+    let ok_res = tauri::async_runtime::block_on(stash_apply(path.clone(), 0, Some(real_sha)));
     assert!(ok_res.ok, "stash_apply with the correct expected_sha should succeed: {}", ok_res.message);
 }
 
@@ -498,12 +498,12 @@ fn stash_drop_refuses_when_expected_sha_does_not_match() {
     let path = repo.path();
 
     std::fs::write(repo.dir.join("f.txt"), "dirty\n").unwrap();
-    let saved = stash_save(path.clone(), None, Some(false));
+    let saved = tauri::async_runtime::block_on(stash_save(path.clone(), None, Some(false)));
     assert!(saved.ok);
 
-    let res = stash_drop(path.clone(), 0, Some("deadbeef".into()));
+    let res = tauri::async_runtime::block_on(stash_drop(path.clone(), 0, Some("deadbeef".into())));
     assert!(!res.ok, "stash_drop must refuse when expected_sha does not match");
-    let list = stash_list(path.clone()).expect("stash_list failed");
+    let list = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert_eq!(list.len(), 1, "a refused drop must not have dropped anything");
 }
 
@@ -522,7 +522,7 @@ fn build_stash_conflict_repo(tag: &str) -> (TempRepo, String) {
     let path = repo.path();
 
     std::fs::write(repo.dir.join("f.txt"), "stashed change\n").unwrap();
-    let saved = stash_save(path.clone(), None, Some(false));
+    let saved = tauri::async_runtime::block_on(stash_save(path.clone(), None, Some(false)));
     assert!(saved.ok, "stash_save failed: {}", saved.message);
     assert!(repo.is_clean());
 
@@ -534,11 +534,11 @@ fn build_stash_conflict_repo(tag: &str) -> (TempRepo, String) {
 fn stash_apply_conflict_is_recognized_by_the_shared_resolver_as_op_stash() {
     let (repo, path) = build_stash_conflict_repo("workdir_stash_conflict_op");
 
-    let applied = stash_apply(path.clone(), 0, None);
+    let applied = tauri::async_runtime::block_on(stash_apply(path.clone(), 0, None));
     assert!(!applied.ok, "expected a conflict");
     assert_eq!(repo.open().state(), RepositoryState::Clean, "stash apply/pop never sets MERGE_HEAD");
 
-    let status = conflict_status(path.clone()).expect("conflict_status failed");
+    let status = tauri::async_runtime::block_on(conflict_status(path.clone())).expect("conflict_status failed");
     assert!(status.in_progress);
     assert_eq!(status.op, "stash", "a Clean-state conflict with unmerged paths must report op \"stash\"");
     assert_eq!(status.files.len(), 1);
@@ -549,11 +549,11 @@ fn stash_apply_conflict_is_recognized_by_the_shared_resolver_as_op_stash() {
 fn stash_apply_conflict_abort_restores_pre_conflict_tree_and_keeps_the_stash() {
     let (repo, path) = build_stash_conflict_repo("workdir_stash_apply_abort");
 
-    let applied = stash_apply(path.clone(), 0, None);
+    let applied = tauri::async_runtime::block_on(stash_apply(path.clone(), 0, None));
     assert!(!applied.ok);
     assert_eq!(applied.conflicted_files, vec!["f.txt".to_string()]);
 
-    let aborted = stash_conflict_abort(path.clone());
+    let aborted = tauri::async_runtime::block_on(stash_conflict_abort(path.clone()));
     assert!(aborted.ok, "stash_conflict_abort failed: {}", aborted.message);
     assert_eq!(aborted.state, "clean");
     assert!(repo.is_clean(), "abort should restore a clean tree");
@@ -561,11 +561,11 @@ fn stash_apply_conflict_abort_restores_pre_conflict_tree_and_keeps_the_stash() {
     assert_eq!(repo.open().state(), RepositoryState::Clean);
 
     // The stash entry is untouched by Abort.
-    let list = stash_list(path.clone()).expect("stash_list failed");
+    let list = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert_eq!(list.len(), 1, "abort must not touch the stash entry");
 
     // conflict_status is clean again.
-    let status = conflict_status(path).expect("conflict_status failed");
+    let status = tauri::async_runtime::block_on(conflict_status(path)).expect("conflict_status failed");
     assert!(!status.in_progress);
 }
 
@@ -573,14 +573,14 @@ fn stash_apply_conflict_abort_restores_pre_conflict_tree_and_keeps_the_stash() {
 fn stash_apply_conflict_continue_resolves_and_keeps_the_stash_entry() {
     let (repo, path) = build_stash_conflict_repo("workdir_stash_apply_continue");
 
-    let applied = stash_apply(path.clone(), 0, None);
+    let applied = tauri::async_runtime::block_on(stash_apply(path.clone(), 0, None));
     assert!(!applied.ok);
 
-    let resolved = resolve_conflict_file(path.clone(), "f.txt".into(), "theirs".into());
+    let resolved = tauri::async_runtime::block_on(resolve_conflict_file(path.clone(), "f.txt".into(), "theirs".into()));
     assert!(resolved.ok, "resolve_conflict_file failed: {}", resolved.message);
     assert_eq!(resolved.remaining, 0);
 
-    let cont = stash_conflict_continue(path.clone());
+    let cont = tauri::async_runtime::block_on(stash_conflict_continue(path.clone()));
     assert!(cont.ok, "stash_conflict_continue failed: {}", cont.message);
     assert_eq!(cont.state, "clean");
     // NOTE: the tree is NOT expected to be byte-clean here — exactly like a
@@ -593,10 +593,10 @@ fn stash_apply_conflict_continue_resolves_and_keeps_the_stash_entry() {
     assert_eq!(repo.open().state(), RepositoryState::Clean);
 
     // Apply's own entry is NEVER dropped, even after a successful continue.
-    let list = stash_list(path.clone()).expect("stash_list failed");
+    let list = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert_eq!(list.len(), 1, "a stash APPLY's entry must never be dropped, conflict or not");
 
-    let status = conflict_status(path).expect("conflict_status failed");
+    let status = tauri::async_runtime::block_on(conflict_status(path)).expect("conflict_status failed");
     assert!(!status.in_progress);
 }
 
@@ -604,21 +604,21 @@ fn stash_apply_conflict_continue_resolves_and_keeps_the_stash_entry() {
 fn stash_pop_conflict_abort_restores_pre_conflict_tree_and_keeps_the_stash() {
     let (repo, path) = build_stash_conflict_repo("workdir_stash_pop_abort");
 
-    let popped = stash_pop(path.clone(), 0, None);
+    let popped = tauri::async_runtime::block_on(stash_pop(path.clone(), 0, None));
     assert!(!popped.ok, "expected a conflict");
     assert_eq!(popped.conflicted_files, vec!["f.txt".to_string()]);
 
     // Per git's own behavior, a CONFLICTED pop never drops the stash entry.
-    let list_mid = stash_list(path.clone()).expect("stash_list failed");
+    let list_mid = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert_eq!(list_mid.len(), 1, "a conflicted pop must not have dropped the stash entry yet");
 
-    let aborted = stash_conflict_abort(path.clone());
+    let aborted = tauri::async_runtime::block_on(stash_conflict_abort(path.clone()));
     assert!(aborted.ok, "stash_conflict_abort failed: {}", aborted.message);
     assert!(repo.is_clean());
     assert_eq!(repo.read("f.txt"), "conflicting commit\n");
 
     // Abort must not drop the stash entry either — it was never touched.
-    let list = stash_list(path).expect("stash_list failed");
+    let list = tauri::async_runtime::block_on(stash_list(path)).expect("stash_list failed");
     assert_eq!(list.len(), 1, "abort must keep the popped-but-conflicted stash entry");
 }
 
@@ -626,14 +626,14 @@ fn stash_pop_conflict_abort_restores_pre_conflict_tree_and_keeps_the_stash() {
 fn stash_pop_conflict_continue_resolves_and_drops_the_stash_entry() {
     let (repo, path) = build_stash_conflict_repo("workdir_stash_pop_continue");
 
-    let popped = stash_pop(path.clone(), 0, None);
+    let popped = tauri::async_runtime::block_on(stash_pop(path.clone(), 0, None));
     assert!(!popped.ok, "expected a conflict");
 
-    let resolved = resolve_conflict_file(path.clone(), "f.txt".into(), "theirs".into());
+    let resolved = tauri::async_runtime::block_on(resolve_conflict_file(path.clone(), "f.txt".into(), "theirs".into()));
     assert!(resolved.ok, "resolve_conflict_file failed: {}", resolved.message);
     assert_eq!(resolved.remaining, 0);
 
-    let cont = stash_conflict_continue(path.clone());
+    let cont = tauri::async_runtime::block_on(stash_conflict_continue(path.clone()));
     assert!(cont.ok, "stash_conflict_continue failed: {}", cont.message);
     assert_eq!(cont.state, "clean");
     // NOTE: not byte-clean — see the sibling apply test's comment.
@@ -644,10 +644,10 @@ fn stash_pop_conflict_continue_resolves_and_drops_the_stash_entry() {
     // NOW (only once the resolution is actually kept) the popped entry is
     // dropped — this is the behavior that must NOT happen eagerly inside
     // apply_or_pop itself (a conflicted pop never drops it there).
-    let list = stash_list(path.clone()).expect("stash_list failed");
+    let list = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert!(list.is_empty(), "a stash POP's entry must be dropped once its conflict is actually resolved");
 
-    let status = conflict_status(path).expect("conflict_status failed");
+    let status = tauri::async_runtime::block_on(conflict_status(path)).expect("conflict_status failed");
     assert!(!status.in_progress);
 }
 
@@ -655,10 +655,10 @@ fn stash_pop_conflict_continue_resolves_and_drops_the_stash_entry() {
 fn stash_conflict_continue_refuses_while_files_remain_unresolved() {
     let (_repo, path) = build_stash_conflict_repo("workdir_stash_continue_still_conflicted");
 
-    let applied = stash_apply(path.clone(), 0, None);
+    let applied = tauri::async_runtime::block_on(stash_apply(path.clone(), 0, None));
     assert!(!applied.ok);
 
-    let cont = stash_conflict_continue(path.clone());
+    let cont = tauri::async_runtime::block_on(stash_conflict_continue(path.clone()));
     assert!(!cont.ok, "continue must refuse while conflicts remain");
     assert_eq!(cont.state, "conflict");
     assert_eq!(cont.conflicted_files, vec!["f.txt".to_string()]);
@@ -683,7 +683,7 @@ fn discard_file_reverses_an_unstaged_rename() {
     assert_eq!(status.unstaged[0].status, "R");
     assert_eq!(status.unstaged[0].old_path.as_deref(), Some("old.txt"));
 
-    let res = discard_file(path.clone(), "new.txt".into(), false);
+    let res = tauri::async_runtime::block_on(discard_file(path.clone(), "new.txt".into(), false));
     assert!(res.ok, "discard_file must reverse an unstaged rename, not no-op: {}", res.message);
 
     assert!(repo.dir.join("old.txt").exists(), "old_path should be restored");
@@ -711,7 +711,7 @@ fn stage_file_accepts_a_tab_containing_filename() {
     let name = "a\tb.txt";
     std::fs::write(repo.dir.join(name), "content\n").unwrap();
 
-    let res = stage_file(path.clone(), name.into());
+    let res = tauri::async_runtime::block_on(stage_file(path.clone(), name.into()));
     assert!(res.ok, "a tab-containing filename must be accepted (matches conflict.rs::validate_path), got: {}", res.message);
 
     let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
@@ -764,12 +764,12 @@ fn stage_lines_stages_only_the_selected_line_pair_leaving_the_other_modification
     modified[3] = "b4\n".to_string(); // line 4
     std::fs::write(repo.dir.join("f.txt"), modified.concat()).unwrap();
 
-    let diff = workdir_file_diff(path.clone(), "f.txt".into(), false).expect("workdir_file_diff failed");
+    let diff = tauri::async_runtime::block_on(workdir_file_diff(path.clone(), "f.txt".into(), false)).expect("workdir_file_diff failed");
     assert_eq!(diff.hunks.len(), 1, "the two nearby edits should merge into one hunk");
     let sel = select_lines(&diff.hunks[0], |old_no, new_no| old_no == Some(2) || new_no == Some(2));
     assert_eq!(sel.lines.len(), 2, "expected exactly the '-'/'+' pair for line 2");
 
-    let res = stage_lines(path.clone(), "f.txt".into(), vec![sel]);
+    let res = tauri::async_runtime::block_on(stage_lines(path.clone(), "f.txt".into(), vec![sel]));
     assert!(res.ok, "stage_lines failed: {}", res.message);
     assert!(res.backup_ref.is_none(), "stage_lines is index-only, no snapshot");
 
@@ -803,11 +803,11 @@ fn unstage_lines_unstages_only_the_selected_line_pair_leaving_the_other_staged()
     std::fs::write(repo.dir.join("f.txt"), modified.concat()).unwrap();
     repo.must(&["add", "-A"]); // both changes fully staged
 
-    let diff = workdir_file_diff(path.clone(), "f.txt".into(), true).expect("workdir_file_diff (staged) failed");
+    let diff = tauri::async_runtime::block_on(workdir_file_diff(path.clone(), "f.txt".into(), true)).expect("workdir_file_diff (staged) failed");
     assert_eq!(diff.hunks.len(), 1);
     let sel = select_lines(&diff.hunks[0], |old_no, new_no| old_no == Some(2) || new_no == Some(2));
 
-    let res = unstage_lines(path.clone(), "f.txt".into(), vec![sel]);
+    let res = tauri::async_runtime::block_on(unstage_lines(path.clone(), "f.txt".into(), vec![sel]));
     assert!(res.ok, "unstage_lines failed: {}", res.message);
     assert!(res.backup_ref.is_none(), "unstage_lines is index-only, no snapshot");
 
@@ -838,10 +838,10 @@ fn discard_lines_discards_only_the_selected_line_pair_and_backs_up_the_whole_fil
     modified[3] = "b4\n".to_string();
     std::fs::write(repo.dir.join("f.txt"), modified.concat()).unwrap();
 
-    let diff = workdir_file_diff(path.clone(), "f.txt".into(), false).expect("workdir_file_diff failed");
+    let diff = tauri::async_runtime::block_on(workdir_file_diff(path.clone(), "f.txt".into(), false)).expect("workdir_file_diff failed");
     let sel = select_lines(&diff.hunks[0], |old_no, new_no| old_no == Some(2) || new_no == Some(2));
 
-    let res = discard_lines(path.clone(), "f.txt".into(), vec![sel]);
+    let res = tauri::async_runtime::block_on(discard_lines(path.clone(), "f.txt".into(), vec![sel]));
     assert!(res.ok, "discard_lines failed: {}", res.message);
 
     let content = repo.read("f.txt");
@@ -873,13 +873,13 @@ fn stage_lines_on_a_brand_new_untracked_file_stages_only_the_selected_added_line
 
     std::fs::write(repo.dir.join("new.txt"), "one\ntwo\nthree\nfour\n").unwrap();
 
-    let diff = workdir_file_diff(path.clone(), "new.txt".into(), false).expect("workdir_file_diff failed");
+    let diff = tauri::async_runtime::block_on(workdir_file_diff(path.clone(), "new.txt".into(), false)).expect("workdir_file_diff failed");
     assert_eq!(diff.status, "A");
     assert_eq!(diff.hunks.len(), 1);
     let sel = select_lines(&diff.hunks[0], |_old_no, new_no| matches!(new_no, Some(1) | Some(2)));
     assert_eq!(sel.lines.len(), 2);
 
-    let res = stage_lines(path.clone(), "new.txt".into(), vec![sel]);
+    let res = tauri::async_runtime::block_on(stage_lines(path.clone(), "new.txt".into(), vec![sel]));
     assert!(res.ok, "stage_lines on a new file failed: {}", res.message);
 
     let indexed = repo.must(&["show", ":new.txt"]);
@@ -905,10 +905,10 @@ fn stage_lines_on_a_brand_new_untracked_file_with_every_line_selected_stages_the
 
     std::fs::write(repo.dir.join("new.txt"), "one\ntwo\n").unwrap();
 
-    let diff = workdir_file_diff(path.clone(), "new.txt".into(), false).expect("workdir_file_diff failed");
+    let diff = tauri::async_runtime::block_on(workdir_file_diff(path.clone(), "new.txt".into(), false)).expect("workdir_file_diff failed");
     let sel = select_lines(&diff.hunks[0], |_old_no, _new_no| true); // every added line
 
-    let res = stage_lines(path.clone(), "new.txt".into(), vec![sel]);
+    let res = tauri::async_runtime::block_on(stage_lines(path.clone(), "new.txt".into(), vec![sel]));
     assert!(res.ok, "stage_lines (full new file) failed: {}", res.message);
 
     let indexed = repo.must(&["show", ":new.txt"]);
@@ -929,7 +929,7 @@ fn stage_lines_on_a_fully_deleted_tracked_file_can_partially_restage_as_a_modifi
     let path = repo.path();
 
     std::fs::remove_file(repo.dir.join("d.txt")).unwrap();
-    let diff = workdir_file_diff(path.clone(), "d.txt".into(), false).expect("workdir_file_diff failed");
+    let diff = tauri::async_runtime::block_on(workdir_file_diff(path.clone(), "d.txt".into(), false)).expect("workdir_file_diff failed");
     assert_eq!(diff.status, "D");
     assert_eq!(diff.hunks.len(), 1);
 
@@ -937,7 +937,7 @@ fn stage_lines_on_a_fully_deleted_tracked_file_can_partially_restage_as_a_modifi
     let sel = select_lines(&diff.hunks[0], |old_no, _new_no| matches!(old_no, Some(1) | Some(2)));
     assert_eq!(sel.lines.len(), 2);
 
-    let res = stage_lines(path.clone(), "d.txt".into(), vec![sel]);
+    let res = tauri::async_runtime::block_on(stage_lines(path.clone(), "d.txt".into(), vec![sel]));
     assert!(res.ok, "stage_lines (partial delete) failed: {}", res.message);
 
     let indexed = repo.must(&["show", ":d.txt"]);
@@ -966,7 +966,7 @@ fn stage_lines_refuses_the_whole_request_when_a_hunk_header_no_longer_matches() 
         header: "@@ -999,1 +999,1 @@".to_string(), // does not match the real (current) hunk header
         lines: vec![SelectedLine { kind: "+".to_string(), old_no: None, new_no: Some(2) }],
     };
-    let res = stage_lines(path.clone(), "f.txt".into(), vec![stale]);
+    let res = tauri::async_runtime::block_on(stage_lines(path.clone(), "f.txt".into(), vec![stale]));
     assert!(!res.ok, "a stale/mismatched hunk header must be refused, not silently reinterpreted");
     assert!(
         res.message.contains("changed since you last looked"),
@@ -993,7 +993,7 @@ fn stage_lines_refuses_on_a_binary_file() {
     // one targeting the file's path must still be refused with the binary
     // message (this check must run before header validation, since there is
     // no valid header to check against).
-    let diff = workdir_file_diff(path.clone(), "bin.dat".into(), false).expect("workdir_file_diff failed");
+    let diff = tauri::async_runtime::block_on(workdir_file_diff(path.clone(), "bin.dat".into(), false)).expect("workdir_file_diff failed");
     assert!(diff.binary);
     assert!(diff.hunks.is_empty());
 
@@ -1001,7 +1001,7 @@ fn stage_lines_refuses_on_a_binary_file() {
         header: "@@ -1,1 +1,1 @@".to_string(),
         lines: vec![SelectedLine { kind: "+".to_string(), old_no: None, new_no: Some(1) }],
     };
-    let res = stage_lines(path.clone(), "bin.dat".into(), vec![bogus]);
+    let res = tauri::async_runtime::block_on(stage_lines(path.clone(), "bin.dat".into(), vec![bogus]));
     assert!(!res.ok, "line-level staging on a binary file must be refused");
     assert!(res.message.contains("binary file"), "expected a binary-file message, got: {}", res.message);
 }
@@ -1016,11 +1016,11 @@ fn stage_lines_preserves_a_final_line_with_no_trailing_newline() {
 
     std::fs::write(repo.dir.join("f.txt"), "a1\na2\na3-changed").unwrap(); // still no trailing newline
 
-    let diff = workdir_file_diff(path.clone(), "f.txt".into(), false).expect("workdir_file_diff failed");
+    let diff = tauri::async_runtime::block_on(workdir_file_diff(path.clone(), "f.txt".into(), false)).expect("workdir_file_diff failed");
     assert_eq!(diff.hunks.len(), 1);
     let sel = select_lines(&diff.hunks[0], |_old_no, _new_no| true); // the whole (only) hunk
 
-    let res = stage_lines(path.clone(), "f.txt".into(), vec![sel]);
+    let res = tauri::async_runtime::block_on(stage_lines(path.clone(), "f.txt".into(), vec![sel]));
     assert!(res.ok, "stage_lines failed on a no-trailing-newline file: {}", res.message);
 
     let indexed = repo.must(&["show", ":f.txt"]);
@@ -1047,13 +1047,13 @@ fn stage_lines_refuses_a_partial_selection_of_a_final_no_trailing_newline_line()
 
     std::fs::write(repo.dir.join("f.txt"), "a1\na2\na3-changed").unwrap(); // still no trailing newline
 
-    let diff = workdir_file_diff(path.clone(), "f.txt".into(), false).expect("workdir_file_diff failed");
+    let diff = tauri::async_runtime::block_on(workdir_file_diff(path.clone(), "f.txt".into(), false)).expect("workdir_file_diff failed");
     assert_eq!(diff.hunks.len(), 1);
     // Only the "+" half of the modified last line — NOT the whole hunk.
     let sel = select_lines(&diff.hunks[0], |_old_no, new_no| new_no == Some(3));
     assert_eq!(sel.lines.len(), 1, "expected exactly the '+' line for the new final line");
 
-    let res = stage_lines(path.clone(), "f.txt".into(), vec![sel]);
+    let res = tauri::async_runtime::block_on(stage_lines(path.clone(), "f.txt".into(), vec![sel]));
     assert!(!res.ok, "a partial selection touching a no-trailing-newline boundary must be refused, not silently applied");
     assert!(
         res.message.contains("newline"),
@@ -1084,13 +1084,13 @@ fn unstage_lines_can_partially_unstage_a_fully_staged_new_file() {
     std::fs::write(repo.dir.join("new.txt"), "n1\nn2\nn3\nn4\n").unwrap();
     repo.must(&["add", "--", "new.txt"]);
 
-    let diff = workdir_file_diff(path.clone(), "new.txt".into(), true).expect("workdir_file_diff failed (staged side)");
+    let diff = tauri::async_runtime::block_on(workdir_file_diff(path.clone(), "new.txt".into(), true)).expect("workdir_file_diff failed (staged side)");
     assert_eq!(diff.hunks.len(), 1);
     // Unstage only n2/n4, leaving n1/n3 staged.
     let sel = select_lines(&diff.hunks[0], |_old_no, new_no| new_no == Some(2) || new_no == Some(4));
     assert_eq!(sel.lines.len(), 2);
 
-    let res = unstage_lines(path.clone(), "new.txt".into(), vec![sel]);
+    let res = tauri::async_runtime::block_on(unstage_lines(path.clone(), "new.txt".into(), vec![sel]));
     assert!(res.ok, "unstage_lines failed on a partial selection of a fully-staged new file: {}", res.message);
     assert!(res.backup_ref.is_none(), "unstage_lines is index-only, no snapshot");
 
@@ -1135,13 +1135,13 @@ fn unstage_lines_on_a_renamed_and_modified_file_preserves_the_rename() {
     assert_eq!(pre_status.staged[0].status, "R");
     assert_eq!(pre_status.staged[0].old_path.as_deref(), Some("old.txt"));
 
-    let diff = workdir_file_diff(path.clone(), "new.txt".into(), true).expect("workdir_file_diff failed (staged side)");
+    let diff = tauri::async_runtime::block_on(workdir_file_diff(path.clone(), "new.txt".into(), true)).expect("workdir_file_diff failed (staged side)");
     assert_eq!(diff.hunks.len(), 1, "the two nearby edits should merge into one hunk");
     // Unstage only line 2's pair, leaving line 4's edit staged.
     let sel = select_lines(&diff.hunks[0], |old_no, new_no| old_no == Some(2) || new_no == Some(2));
     assert_eq!(sel.lines.len(), 2);
 
-    let res = unstage_lines(path.clone(), "new.txt".into(), vec![sel]);
+    let res = tauri::async_runtime::block_on(unstage_lines(path.clone(), "new.txt".into(), vec![sel]));
     assert!(res.ok, "unstage_lines failed on a partial selection of a renamed+modified file: {}", res.message);
 
     // The rename must survive — this is the actual regression check.
@@ -1203,26 +1203,26 @@ fn stash_conflict_continue_keeps_the_stash_when_an_untracked_restore_also_failed
     std::fs::write(repo.dir.join("a.txt"), "base\nmain-side change to a\n").unwrap();
     assert!(!repo.is_clean());
 
-    let saved = stash_save(path.clone(), Some("pre-switch".into()), Some(true));
+    let saved = tauri::async_runtime::block_on(stash_save(path.clone(), Some("pre-switch".into()), Some(true)));
     assert!(saved.ok, "stash_save (with untracked) failed: {}", saved.message);
     assert!(repo.is_clean());
 
     let co = tauri::async_runtime::block_on(checkout(path.clone(), "feature".into()));
     assert!(co.ok, "checkout to feature failed: {}", co.message);
 
-    let popped = stash_pop(path.clone(), 0, None);
+    let popped = tauri::async_runtime::block_on(stash_pop(path.clone(), 0, None));
     assert!(!popped.ok, "expected the pop to hit a real index conflict on a.txt");
     assert_eq!(popped.conflicted_files, vec!["a.txt".to_string()]);
     // git's own behavior on ANY failed pop: the stash entry is kept.
-    let list = stash_list(path.clone()).expect("stash_list failed");
+    let list = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert_eq!(list.len(), 1, "a failed pop must never drop the stash entry");
 
     // Resolve the a.txt conflict and stage it.
     std::fs::write(repo.dir.join("a.txt"), "resolved\n").unwrap();
-    let staged = stage_file(path.clone(), "a.txt".into());
+    let staged = tauri::async_runtime::block_on(stage_file(path.clone(), "a.txt".into()));
     assert!(staged.ok, "stage_file failed: {}", staged.message);
 
-    let cont = stash_conflict_continue(path.clone());
+    let cont = tauri::async_runtime::block_on(stash_conflict_continue(path.clone()));
     assert!(cont.ok, "stash_conflict_continue failed: {}", cont.message);
     assert_eq!(cont.state, "clean");
     assert!(
@@ -1234,7 +1234,7 @@ fn stash_conflict_continue_keeps_the_stash_when_an_untracked_restore_also_failed
     // THE regression check: the stash must NOT have been auto-dropped, since
     // part of it (the untracked x.txt) could never be restored and would
     // otherwise be permanently lost by the normal pop-success auto-drop.
-    let list_after = stash_list(path.clone()).expect("stash_list failed");
+    let list_after = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert_eq!(
         list_after.len(),
         1,
@@ -1263,14 +1263,14 @@ fn stash_pop_untracked_restore_failure_alone_is_a_plain_error_with_stash_kept() 
     repo.must(&["commit", "-q", "-m", "main removes x.txt from tracking"]);
     std::fs::write(repo.dir.join("x.txt"), "untracked content on main\n").unwrap();
 
-    let saved = stash_save(path.clone(), Some("pre-switch".into()), Some(true));
+    let saved = tauri::async_runtime::block_on(stash_save(path.clone(), Some("pre-switch".into()), Some(true)));
     assert!(saved.ok, "stash_save (with untracked) failed: {}", saved.message);
     assert!(repo.is_clean());
 
     let co = tauri::async_runtime::block_on(checkout(path.clone(), "feature".into()));
     assert!(co.ok, "checkout to feature failed: {}", co.message);
 
-    let popped = stash_pop(path.clone(), 0, None);
+    let popped = tauri::async_runtime::block_on(stash_pop(path.clone(), 0, None));
     assert!(!popped.ok, "expected the pop to fail (untracked restore collision)");
     assert!(
         popped.conflicted_files.is_empty(),
@@ -1282,6 +1282,6 @@ fn stash_pop_untracked_restore_failure_alone_is_a_plain_error_with_stash_kept() 
         popped.message
     );
 
-    let list = stash_list(path.clone()).expect("stash_list failed");
+    let list = tauri::async_runtime::block_on(stash_list(path.clone())).expect("stash_list failed");
     assert_eq!(list.len(), 1, "git itself keeps the stash entry when it can't restore untracked files");
 }

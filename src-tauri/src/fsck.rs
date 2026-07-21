@@ -131,10 +131,22 @@ pub struct DanglingCommits {
 /// iteration, not chronological). Read-only.
 ///
 /// JS: `commands.danglingCommits(path)` -> `Result<DanglingCommits, string>`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — a `#[tauri::command]` in that
+/// shape runs INLINE on Tauri's main thread, the same thread driving the
+/// window's event loop and every other command's IPC delivery. This
+/// command's body both opens the repo with git2 AND shells out to `git
+/// fsck --dangling --no-reflogs`, which (per the module doc above) always
+/// walks the ENTIRE object database with no way to bound the walk — on a
+/// large/old repo that stalls for real seconds and freezes the whole app
+/// window, not just this recovery panel. `async fn` + `run_blocking` moves
+/// that work onto Tauri's blocking-task thread pool, matching
+/// `repo_summary`'s own established fix for the same shape (inner already
+/// returns `Result<T, String>`, so no extra `map_err` is needed here).
 #[tauri::command]
 #[specta::specta]
-pub fn dangling_commits(path: String) -> Result<DanglingCommits, String> {
-    dangling_commits_inner(&path)
+pub async fn dangling_commits(path: String) -> Result<DanglingCommits, String> {
+    crate::blocking::run_blocking(move || dangling_commits_inner(&path)).await
 }
 
 fn dangling_commits_inner(path: &str) -> Result<DanglingCommits, String> {

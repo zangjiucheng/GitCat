@@ -299,9 +299,19 @@ fn classify(
 /// failure.
 ///
 /// JS: `invoke("cherry_pick", { path, sha, recordOrigin? })`.
+///
+/// Runs on Tauri's blocking-task pool, not inline: this opens the repo with
+/// git2 and then shells out to `git cherry-pick`, which for a real commit can
+/// touch every file the patch spans and run pre-commit/commit-msg hooks — a
+/// plain sync `fn` here would freeze the whole app window for however long
+/// that takes, not just the cherry-pick UI.
 #[tauri::command]
 #[specta::specta]
-pub fn cherry_pick(path: String, sha: String, record_origin: Option<bool>) -> PickResult {
+pub async fn cherry_pick(path: String, sha: String, record_origin: Option<bool>) -> PickResult {
+    crate::blocking::run_blocking(move || cherry_pick_inner(path, sha, record_origin)).await
+}
+
+fn cherry_pick_inner(path: String, sha: String, record_origin: Option<bool>) -> PickResult {
     if let Err(e) = validate_sha(&sha) {
         return PickResult::error(e);
     }
@@ -357,9 +367,18 @@ pub fn cherry_pick(path: String, sha: String, record_origin: Option<bool>) -> Pi
 /// remain unresolved, or `empty` if the resolution left no net change.
 ///
 /// JS: `invoke("cherry_pick_continue", { path })`.
+///
+/// Runs on Tauri's blocking-task pool, not inline: this opens the repo with
+/// git2, snapshots it, and shells out to `git cherry-pick --continue`, which
+/// finalizes the commit and can invoke hooks — a plain sync `fn` would freeze
+/// the whole app window until that subprocess exits.
 #[tauri::command]
 #[specta::specta]
-pub fn cherry_pick_continue(path: String) -> PickResult {
+pub async fn cherry_pick_continue(path: String) -> PickResult {
+    crate::blocking::run_blocking(move || cherry_pick_continue_inner(path)).await
+}
+
+fn cherry_pick_continue_inner(path: String) -> PickResult {
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return PickResult::error(format!("Cannot open repository: {}", e.message())),
@@ -403,9 +422,18 @@ pub fn cherry_pick_continue(path: String) -> PickResult {
 /// the user's way out). Idempotent: "nothing in progress" is a benign success.
 ///
 /// JS: `invoke("cherry_pick_abort", { path })`.
+///
+/// Runs on Tauri's blocking-task pool, not inline: this opens the repo with
+/// git2 and shells out to `git cherry-pick --abort`, which walks the index
+/// and working tree back to the pre-pick state — a plain sync `fn` would
+/// freeze the whole app window for the duration of that reset.
 #[tauri::command]
 #[specta::specta]
-pub fn cherry_pick_abort(path: String) -> PickResult {
+pub async fn cherry_pick_abort(path: String) -> PickResult {
+    crate::blocking::run_blocking(move || cherry_pick_abort_inner(path)).await
+}
+
+fn cherry_pick_abort_inner(path: String) -> PickResult {
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
         Err(e) => return PickResult::error(format!("Cannot open repository: {}", e.message())),

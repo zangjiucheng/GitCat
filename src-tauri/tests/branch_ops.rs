@@ -138,9 +138,9 @@ fn undo_refuses_on_dirty_tree_and_restores_head_when_clean() {
     let path = repo.path();
 
     // Snapshot HEAD@c1 (this is what undo will rewind to).
-    let snap = create_snapshot(path.clone()).expect("create_snapshot failed");
+    let snap = tauri::async_runtime::block_on(create_snapshot(path.clone())).expect("create_snapshot failed");
     assert_eq!(snap.sha, short(&c1));
-    let snaps_before = list_snapshots(path.clone()).expect("list_snapshots failed");
+    let snaps_before = tauri::async_runtime::block_on(list_snapshots(path.clone())).expect("list_snapshots failed");
     assert!(snaps_before.iter().any(|s| s.reference == snap.reference));
 
     // Move HEAD forward without going through GitCat (so no further snapshot
@@ -150,7 +150,7 @@ fn undo_refuses_on_dirty_tree_and_restores_head_when_clean() {
 
     // Dirty the working tree: undo must refuse (fail-closed), never force.
     std::fs::write(repo.dir.join("f.txt"), "dirty, uncommitted\n").unwrap();
-    let refused = undo_last(path.clone()).expect("undo_last failed");
+    let refused = tauri::async_runtime::block_on(undo_last(path.clone())).expect("undo_last failed");
     assert!(!refused.ok, "undo should refuse on a dirty tree");
     assert!(
         refused.message.to_lowercase().contains("uncommitted")
@@ -168,7 +168,7 @@ fn undo_refuses_on_dirty_tree_and_restores_head_when_clean() {
     repo.must(&["checkout", "--", "f.txt"]);
     assert!(repo.is_clean());
 
-    let undone = undo_last(path.clone()).expect("undo_last failed");
+    let undone = tauri::async_runtime::block_on(undo_last(path.clone())).expect("undo_last failed");
     assert!(undone.ok, "undo failed: {}", undone.message);
     assert_eq!(undone.restored_to.as_deref(), Some(short(&c1).as_str()));
     assert_eq!(
@@ -181,7 +181,7 @@ fn undo_refuses_on_dirty_tree_and_restores_head_when_clean() {
 
     // undo is itself undoable: it should have sealed the pre-undo state (c2)
     // as a new snapshot before rewinding.
-    let snaps_after = list_snapshots(path.clone()).expect("list_snapshots failed");
+    let snaps_after = tauri::async_runtime::block_on(list_snapshots(path.clone())).expect("list_snapshots failed");
     assert!(snaps_after.len() > snaps_before.len(), "undo should add a sealing snapshot");
 }
 

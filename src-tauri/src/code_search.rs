@@ -109,15 +109,24 @@ pub struct CodeSearchResults {
 /// commit's own tree otherwise. Read-only.
 ///
 /// JS: `commands.codeSearch(path, query, caseSensitive, atCommit)`.
+///
+/// This command's body opens the repo via `crate::trust::open_repo` and, when
+/// `at_commit` is given, resolves it with `repo.revparse_single` — both git2
+/// calls — and then shells out to `git grep` via `Command::new`/`.output()`,
+/// which blocks synchronously until the child process exits. As a plain
+/// (non-async) `fn` this ran inline on Tauri's main thread, so a slow rev
+/// resolution or a `git grep` scan over a large/slow (e.g. network-mounted)
+/// working tree would freeze the whole app window; routing it through
+/// `crate::blocking::run_blocking` moves that work off the main thread.
 #[tauri::command]
 #[specta::specta]
-pub fn code_search(
+pub async fn code_search(
     path: String,
     query: String,
     case_sensitive: bool,
     at_commit: Option<String>,
 ) -> Result<CodeSearchResults, String> {
-    code_search_inner(&path, &query, case_sensitive, at_commit.as_deref())
+    crate::blocking::run_blocking(move || code_search_inner(&path, &query, case_sensitive, at_commit.as_deref())).await
 }
 
 fn code_search_inner(

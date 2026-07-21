@@ -348,52 +348,64 @@ fn classify(
 /// a failure.
 ///
 /// JS: `invoke("revert_start", { path, sha, signoff? })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — it opens the repo and reads state
+/// via git2 AND shells out to `git revert`, waiting on that subprocess to
+/// exit, all inline on Tauri's main thread. A revert can take real time
+/// (large trees, a merge-heavy inverse patch) and it also snapshots first
+/// (its own git2 walk), so the whole app window froze for the entire
+/// operation, not just this command. `async fn` + `run_blocking` moves the
+/// whole body onto Tauri's blocking-task thread pool, matching
+/// `workdir_status`'s established fix.
 #[tauri::command]
 #[specta::specta]
-pub fn revert_start(path: String, sha: String, signoff: Option<bool>) -> RevertResult {
-    if let Err(e) = validate_sha(&sha) {
-        return RevertResult::error(e);
-    }
-    let repo = match Repository::open(&path) {
-        Ok(r) => r,
-        Err(e) => return RevertResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-
-    // Refuse to stack a new revert on top of an unfinished one.
-    if in_progress(&repo) {
-        return RevertResult::error("A revert is already in progress — resolve or abort it first.");
-    }
-
-    // Snapshot FIRST — never mutate without a pre-op backup. If it fails, abort.
-    let backup = match crate::safety::snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return RevertResult::error(format!("Safety snapshot failed, aborting: {e}")),
-    };
-
-    // git revert [-s] --no-edit --end-of-options <sha>
-    let mut args: Vec<&str> = vec!["revert"];
-    if signoff.unwrap_or(false) {
-        args.push("-s");
-    }
-    args.push("--no-edit");
-    args.push("--end-of-options");
-    args.push(&sha);
-
-    let out = match git(&path, &args, true) {
-        Ok(o) => o,
-        Err(e) => {
-            return RevertResult {
-                ok: false,
-                state: "error".into(),
-                conflicted_files: Vec::new(),
-                message: e,
-                backup_ref: Some(backup),
-                blocked_by_local_changes: false,
-            }
+pub async fn revert_start(path: String, sha: String, signoff: Option<bool>) -> RevertResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_sha(&sha) {
+            return RevertResult::error(e);
         }
-    };
+        let repo = match Repository::open(&path) {
+            Ok(r) => r,
+            Err(e) => return RevertResult::error(format!("Cannot open repository: {}", e.message())),
+        };
 
-    classify(&repo, &path, &out, Some(backup), &sha)
+        // Refuse to stack a new revert on top of an unfinished one.
+        if in_progress(&repo) {
+            return RevertResult::error("A revert is already in progress — resolve or abort it first.");
+        }
+
+        // Snapshot FIRST — never mutate without a pre-op backup. If it fails, abort.
+        let backup = match crate::safety::snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return RevertResult::error(format!("Safety snapshot failed, aborting: {e}")),
+        };
+
+        // git revert [-s] --no-edit --end-of-options <sha>
+        let mut args: Vec<&str> = vec!["revert"];
+        if signoff.unwrap_or(false) {
+            args.push("-s");
+        }
+        args.push("--no-edit");
+        args.push("--end-of-options");
+        args.push(&sha);
+
+        let out = match git(&path, &args, true) {
+            Ok(o) => o,
+            Err(e) => {
+                return RevertResult {
+                    ok: false,
+                    state: "error".into(),
+                    conflicted_files: Vec::new(),
+                    message: e,
+                    backup_ref: Some(backup),
+                    blocked_by_local_changes: false,
+                }
+            }
+        };
+
+        classify(&repo, &path, &out, Some(backup), &sha)
+    })
+    .await
 }
 
 /// Continue an in-progress revert after the user resolved the conflict (files
@@ -404,45 +416,57 @@ pub fn revert_start(path: String, sha: String, signoff: Option<bool>) -> RevertR
 /// conflicts remain unresolved.
 ///
 /// JS: `invoke("revert_continue", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — same class of stall as
+/// `revert_start`: it opens the repo via git2, reads `REVERT_HEAD`, takes
+/// another pre-commit snapshot, and shells out to `git revert --continue`,
+/// blocking on that subprocess inline on Tauri's main thread. Since this is
+/// the very command the conflict resolver calls after every resolve, it
+/// froze the whole window right when the user was in the middle of
+/// unblocking a conflict. `async fn` + `run_blocking` moves the wait onto
+/// Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn revert_continue(path: String) -> RevertResult {
-    let repo = match Repository::open(&path) {
-        Ok(r) => r,
-        Err(e) => return RevertResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-    if !in_progress(&repo) {
-        return RevertResult::error("No revert in progress to continue.");
-    }
-
-    // Name the commit being reverted (for messages) while REVERT_HEAD exists.
-    let label = git(&path, &["rev-parse", "--short", "REVERT_HEAD"], false)
-        .ok()
-        .filter(|o| o.ok)
-        .map(|o| o.stdout)
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "the commit".to_string());
-
-    // Snapshot the pre-commit state (HEAD is still the pre-revert commit during
-    // a conflict). Best-effort: continue must remain possible even if it can't
-    // run.
-    let backup = crate::safety::snapshot(&repo).ok();
-
-    let out = match git(&path, &["revert", "--continue"], true) {
-        Ok(o) => o,
-        Err(e) => {
-            return RevertResult {
-                ok: false,
-                state: "error".into(),
-                conflicted_files: Vec::new(),
-                message: e,
-                backup_ref: backup,
-                blocked_by_local_changes: false,
-            }
+pub async fn revert_continue(path: String) -> RevertResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match Repository::open(&path) {
+            Ok(r) => r,
+            Err(e) => return RevertResult::error(format!("Cannot open repository: {}", e.message())),
+        };
+        if !in_progress(&repo) {
+            return RevertResult::error("No revert in progress to continue.");
         }
-    };
 
-    classify(&repo, &path, &out, backup, &label)
+        // Name the commit being reverted (for messages) while REVERT_HEAD exists.
+        let label = git(&path, &["rev-parse", "--short", "REVERT_HEAD"], false)
+            .ok()
+            .filter(|o| o.ok)
+            .map(|o| o.stdout)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "the commit".to_string());
+
+        // Snapshot the pre-commit state (HEAD is still the pre-revert commit during
+        // a conflict). Best-effort: continue must remain possible even if it can't
+        // run.
+        let backup = crate::safety::snapshot(&repo).ok();
+
+        let out = match git(&path, &["revert", "--continue"], true) {
+            Ok(o) => o,
+            Err(e) => {
+                return RevertResult {
+                    ok: false,
+                    state: "error".into(),
+                    conflicted_files: Vec::new(),
+                    message: e,
+                    backup_ref: backup,
+                    blocked_by_local_changes: false,
+                }
+            }
+        };
+
+        classify(&repo, &path, &out, backup, &label)
+    })
+    .await
 }
 
 /// Abort an in-progress revert: `git revert --abort` restores the pre-revert
@@ -451,33 +475,44 @@ pub fn revert_continue(path: String) -> RevertResult {
 /// the user's way out). Idempotent: "nothing in progress" is a benign success.
 ///
 /// JS: `invoke("revert_abort", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — it opens the repo via git2 and
+/// shells out to `git revert --abort`, blocking on that subprocess inline on
+/// Tauri's main thread for as long as git takes to restore the pre-revert
+/// state. Being the escape hatch that must always be reachable even under a
+/// bad conflict, it's especially bad for this one to also freeze the window
+/// while it runs. `async fn` + `run_blocking` moves the wait onto Tauri's
+/// blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn revert_abort(path: String) -> RevertResult {
-    let repo = match Repository::open(&path) {
-        Ok(r) => r,
-        Err(e) => return RevertResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-    if !in_progress(&repo) {
-        return RevertResult {
-            ok: true,
-            state: "clean".into(),
-            conflicted_files: Vec::new(),
-            message: "No revert in progress.".into(),
-            backup_ref: None,
-            blocked_by_local_changes: false,
+pub async fn revert_abort(path: String) -> RevertResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match Repository::open(&path) {
+            Ok(r) => r,
+            Err(e) => return RevertResult::error(format!("Cannot open repository: {}", e.message())),
         };
-    }
-    match git(&path, &["revert", "--abort"], false) {
-        Ok(o) if o.ok => RevertResult {
-            ok: true,
-            state: "clean".into(),
-            conflicted_files: Vec::new(),
-            message: "Revert aborted — back to the pre-revert state.".into(),
-            backup_ref: None,
-            blocked_by_local_changes: false,
-        },
-        Ok(o) => RevertResult::error(git_msg(&o)),
-        Err(e) => RevertResult::error(e),
-    }
+        if !in_progress(&repo) {
+            return RevertResult {
+                ok: true,
+                state: "clean".into(),
+                conflicted_files: Vec::new(),
+                message: "No revert in progress.".into(),
+                backup_ref: None,
+                blocked_by_local_changes: false,
+            };
+        }
+        match git(&path, &["revert", "--abort"], false) {
+            Ok(o) if o.ok => RevertResult {
+                ok: true,
+                state: "clean".into(),
+                conflicted_files: Vec::new(),
+                message: "Revert aborted — back to the pre-revert state.".into(),
+                backup_ref: None,
+                blocked_by_local_changes: false,
+            },
+            Ok(o) => RevertResult::error(git_msg(&o)),
+            Err(e) => RevertResult::error(e),
+        }
+    })
+    .await
 }

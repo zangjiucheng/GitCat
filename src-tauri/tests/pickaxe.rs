@@ -63,8 +63,16 @@ fn added_removed_mode_matches_count_changes_but_not_a_pure_reorder() {
     let (repo, [c1, c2, c3, c4, c5]) = build_reorder_repo("pickaxe_reorder_s");
     let _ = &c5; // not expected to appear
 
-    let r = pickaxe_search(repo.path(), "hello world".to_string(), "added-removed".to_string(), false, false, None, None)
-        .expect("-S search should succeed");
+    let r = tauri::async_runtime::block_on(pickaxe_search(
+        repo.path(),
+        "hello world".to_string(),
+        "added-removed".to_string(),
+        false,
+        false,
+        None,
+        None,
+    ))
+    .expect("-S search should succeed");
     assert!(!r.truncated);
     let subs = subjects(&r.entries);
     assert!(subs.iter().any(|s| s.starts_with("c1:")), "expected c1 in {:?}", subs);
@@ -87,8 +95,16 @@ fn added_removed_mode_matches_count_changes_but_not_a_pure_reorder() {
 fn diff_match_mode_also_matches_the_pure_reorder_commit() {
     let (repo, [c1, c2, c3, c4, c5]) = build_reorder_repo("pickaxe_reorder_g");
 
-    let r = pickaxe_search(repo.path(), "hello world".to_string(), "diff-match".to_string(), false, false, None, None)
-        .expect("-G search should succeed");
+    let r = tauri::async_runtime::block_on(pickaxe_search(
+        repo.path(),
+        "hello world".to_string(),
+        "diff-match".to_string(),
+        false,
+        false,
+        None,
+        None,
+    ))
+    .expect("-G search should succeed");
     assert!(!r.truncated);
     let subs = subjects(&r.entries);
     for (sha, label) in [(&c1, "c1"), (&c2, "c2"), (&c3, "c3"), (&c4, "c4"), (&c5, "c5")] {
@@ -109,7 +125,7 @@ fn pickaxe_regex_makes_added_removed_mode_treat_query_as_a_regex() {
     let c2 = repo.commit("content.txt", "hello world\nfoobar123\n", "c2: add foobar123");
 
     // Literal '.' must NOT match "foobar123" as a wildcard without --pickaxe-regex.
-    let literal = pickaxe_search(
+    let literal = tauri::async_runtime::block_on(pickaxe_search(
         repo.path(),
         "foo.*123".to_string(),
         "added-removed".to_string(),
@@ -117,7 +133,7 @@ fn pickaxe_regex_makes_added_removed_mode_treat_query_as_a_regex() {
         false,
         None,
         None,
-    )
+    ))
     .expect("literal -S search should succeed");
     assert!(
         literal.entries.is_empty(),
@@ -126,7 +142,7 @@ fn pickaxe_regex_makes_added_removed_mode_treat_query_as_a_regex() {
     );
 
     // With regex:true, the same query as a real regex must match c2.
-    let regexed = pickaxe_search(
+    let regexed = tauri::async_runtime::block_on(pickaxe_search(
         repo.path(),
         "foo.*123".to_string(),
         "added-removed".to_string(),
@@ -134,7 +150,7 @@ fn pickaxe_regex_makes_added_removed_mode_treat_query_as_a_regex() {
         false,
         None,
         None,
-    )
+    ))
     .expect("regex -S search should succeed");
     assert_eq!(regexed.entries.len(), 1, "expected exactly c2 to match: {}", fmt_entries(&regexed.entries));
     assert_eq!(regexed.entries[0].sha, c2);
@@ -151,12 +167,20 @@ fn file_scope_excludes_matches_in_other_files() {
     let c2 = repo.commit("other.txt", "hello world\n", "c2: hello world in other.txt");
 
     // No scope: both files' commits match.
-    let all = pickaxe_search(repo.path(), "hello world".to_string(), "added-removed".to_string(), false, false, None, None)
-        .expect("unscoped search should succeed");
+    let all = tauri::async_runtime::block_on(pickaxe_search(
+        repo.path(),
+        "hello world".to_string(),
+        "added-removed".to_string(),
+        false,
+        false,
+        None,
+        None,
+    ))
+    .expect("unscoped search should succeed");
     assert_eq!(all.entries.len(), 2, "expected both commits unscoped: {}", fmt_entries(&all.entries));
 
     // Scoped to content.txt: only c1.
-    let scoped = pickaxe_search(
+    let scoped = tauri::async_runtime::block_on(pickaxe_search(
         repo.path(),
         "hello world".to_string(),
         "added-removed".to_string(),
@@ -164,7 +188,7 @@ fn file_scope_excludes_matches_in_other_files() {
         false,
         Some("content.txt".to_string()),
         None,
-    )
+    ))
     .expect("file-scoped search should succeed");
     assert_eq!(scoped.entries.len(), 1, "expected only c1 when scoped to content.txt: {}", fmt_entries(&scoped.entries));
     assert_eq!(scoped.entries[0].sha, c1);
@@ -184,7 +208,7 @@ fn file_scope_refuses_a_nonexistent_path_instead_of_silently_returning_nothing()
     let _c1 = repo.commit("content.txt", "hello world\n", "c1: hello world in content.txt");
 
     let err = must_err(
-        pickaxe_search(
+        tauri::async_runtime::block_on(pickaxe_search(
             repo.path(),
             "hello world".to_string(),
             "added-removed".to_string(),
@@ -192,7 +216,7 @@ fn file_scope_refuses_a_nonexistent_path_instead_of_silently_returning_nothing()
             false,
             Some("nonexistent/path.txt".to_string()),
             None,
-        ),
+        )),
         "a typo'd file scope must be refused, not silently return zero matches",
     );
     assert!(
@@ -213,7 +237,7 @@ fn at_commit_anchors_the_search_before_a_later_matching_commit() {
     let mid = repo.rev("HEAD").unwrap();
     let _c2 = repo.commit("content.txt", "hello world\n", "c2: adds hello world, AFTER mid");
 
-    let anchored = pickaxe_search(
+    let anchored = tauri::async_runtime::block_on(pickaxe_search(
         repo.path(),
         "hello world".to_string(),
         "added-removed".to_string(),
@@ -221,7 +245,7 @@ fn at_commit_anchors_the_search_before_a_later_matching_commit() {
         false,
         None,
         Some(mid.clone()),
-    )
+    ))
     .expect("at_commit search should succeed");
     assert_eq!(
         anchored.entries.len(),
@@ -231,8 +255,16 @@ fn at_commit_anchors_the_search_before_a_later_matching_commit() {
     );
 
     // Sanity: the SAME query with no at_commit (defaults to HEAD) DOES find it.
-    let unanchored = pickaxe_search(repo.path(), "hello world".to_string(), "added-removed".to_string(), false, false, None, None)
-        .expect("unanchored search should succeed");
+    let unanchored = tauri::async_runtime::block_on(pickaxe_search(
+        repo.path(),
+        "hello world".to_string(),
+        "added-removed".to_string(),
+        false,
+        false,
+        None,
+        None,
+    ))
+    .expect("unanchored search should succeed");
     assert_eq!(unanchored.entries.len(), 1, "unanchored (HEAD) search must find c2: {}", fmt_entries(&unanchored.entries));
 }
 
@@ -250,9 +282,16 @@ fn all_refs_finds_a_commit_only_reachable_from_a_non_head_branch() {
     assert_eq!(repo.current_branch(), "main");
 
     // Without --all: HEAD's ancestry (main) only, c2 invisible.
-    let without_all =
-        pickaxe_search(repo.path(), "hello world".to_string(), "added-removed".to_string(), false, false, None, None)
-            .expect("search without --all should succeed");
+    let without_all = tauri::async_runtime::block_on(pickaxe_search(
+        repo.path(),
+        "hello world".to_string(),
+        "added-removed".to_string(),
+        false,
+        false,
+        None,
+        None,
+    ))
+    .expect("search without --all should succeed");
     assert!(
         !without_all.entries.iter().any(|e| e.sha == c2),
         "branch-only commit must be invisible without --all: {}",
@@ -260,9 +299,16 @@ fn all_refs_finds_a_commit_only_reachable_from_a_non_head_branch() {
     );
 
     // With --all: every ref is walked, c2 visible.
-    let with_all =
-        pickaxe_search(repo.path(), "hello world".to_string(), "added-removed".to_string(), false, true, None, None)
-            .expect("search with --all should succeed");
+    let with_all = tauri::async_runtime::block_on(pickaxe_search(
+        repo.path(),
+        "hello world".to_string(),
+        "added-removed".to_string(),
+        false,
+        true,
+        None,
+        None,
+    ))
+    .expect("search with --all should succeed");
     assert!(
         with_all.entries.iter().any(|e| e.sha == c2),
         "branch-only commit must be visible with --all: {}",
@@ -314,8 +360,16 @@ fn search_truncates_at_the_match_cap() {
         parent = Some(commit_oid);
     }
 
-    let r = pickaxe_search(repo.path(), "needle".to_string(), "added-removed".to_string(), false, false, None, None)
-        .expect("search should succeed even when capped");
+    let r = tauri::async_runtime::block_on(pickaxe_search(
+        repo.path(),
+        "needle".to_string(),
+        "added-removed".to_string(),
+        false,
+        false,
+        None,
+        None,
+    ))
+    .expect("search should succeed even when capped");
     assert!(r.truncated, "expected truncated=true for a match count exceeding the cap");
     assert_eq!(r.entries.len(), 2000, "expected exactly MAX_PICKAXE_MATCHES (2000) entries when capped, got {}", r.entries.len());
     // Most-recent-first: the very first entry must be the LAST commit made.
@@ -333,13 +387,29 @@ fn empty_query_is_refused_cleanly_not_silently_empty() {
     let _c1 = repo.commit("content.txt", "hello world\n", "seed");
 
     let err = must_err(
-        pickaxe_search(repo.path(), "".to_string(), "added-removed".to_string(), false, false, None, None),
+        tauri::async_runtime::block_on(pickaxe_search(
+            repo.path(),
+            "".to_string(),
+            "added-removed".to_string(),
+            false,
+            false,
+            None,
+            None,
+        )),
         "an empty -S query must be a clean Err, not a silent empty Ok",
     );
     assert!(!err.is_empty());
 
     let err_g = must_err(
-        pickaxe_search(repo.path(), "".to_string(), "diff-match".to_string(), false, false, None, None),
+        tauri::async_runtime::block_on(pickaxe_search(
+            repo.path(),
+            "".to_string(),
+            "diff-match".to_string(),
+            false,
+            false,
+            None,
+            None,
+        )),
         "an empty -G query must be a clean Err, not a silent empty Ok",
     );
     assert!(!err_g.is_empty());
@@ -351,7 +421,15 @@ fn unknown_mode_is_a_clean_err() {
     let _c1 = repo.commit("content.txt", "hello world\n", "seed");
 
     let err = must_err(
-        pickaxe_search(repo.path(), "hello".to_string(), "bogus-mode".to_string(), false, false, None, None),
+        tauri::async_runtime::block_on(pickaxe_search(
+            repo.path(),
+            "hello".to_string(),
+            "bogus-mode".to_string(),
+            false,
+            false,
+            None,
+            None,
+        )),
         "an unknown mode must be a clean Err",
     );
     assert!(!err.is_empty());
@@ -360,7 +438,15 @@ fn unknown_mode_is_a_clean_err() {
 #[test]
 fn invalid_repo_path_is_a_clean_err() {
     let err = must_err(
-        pickaxe_search("/no/such/path/at/all".to_string(), "hello".to_string(), "added-removed".to_string(), false, false, None, None),
+        tauri::async_runtime::block_on(pickaxe_search(
+            "/no/such/path/at/all".to_string(),
+            "hello".to_string(),
+            "added-removed".to_string(),
+            false,
+            false,
+            None,
+            None,
+        )),
         "nonexistent repo path must be Err",
     );
     assert!(!err.is_empty());
@@ -375,8 +461,16 @@ fn entries_carry_correctly_shortened_shas() {
     let repo = TempRepo::init("pickaxe_short_sha");
     let c1 = repo.commit("content.txt", "hello world\n", "c1: seed");
 
-    let r = pickaxe_search(repo.path(), "hello world".to_string(), "added-removed".to_string(), false, false, None, None)
-        .expect("search should succeed");
+    let r = tauri::async_runtime::block_on(pickaxe_search(
+        repo.path(),
+        "hello world".to_string(),
+        "added-removed".to_string(),
+        false,
+        false,
+        None,
+        None,
+    ))
+    .expect("search should succeed");
     assert_eq!(r.entries.len(), 1);
     assert_eq!(r.entries[0].sha, c1);
     assert_eq!(r.entries[0].short_sha, short(&c1));

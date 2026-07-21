@@ -418,9 +418,18 @@ pub fn set_tool_settings(app: AppHandle<Wry>, diff_tool: Option<ExternalTool>, m
 /// clear stderr) but this command never inspects that exit code — the user
 /// gets no in-app error, only whatever a dev-mode terminal shows. Mitigated
 /// by the settings modal's own hint text, not solved here.
+///
+/// BUG FIX: was a plain (non-async) `fn` — `open_diff_tool_inner` opens the
+/// repository with git2 (`crate::trust::open_repo`) before it ever spawns the
+/// external tool, and on a WSL/UNC path that open can itself stall for real
+/// seconds (the same class of stall `dashboard_repo_status`/`workdir_status`
+/// were fixed for). Even though the spawn itself is fire-and-forget, that
+/// leading git2 open still ran inline on Tauri's main thread, freezing the
+/// whole app window for its duration. `async fn` + `run_blocking` moves the
+/// whole body onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn open_diff_tool(
+pub async fn open_diff_tool(
     app: AppHandle<Wry>,
     path: String,
     file: String,
@@ -428,8 +437,11 @@ pub fn open_diff_tool(
     from_rev: Option<String>,
     to_rev: Option<String>,
 ) -> Result<(), String> {
-    let settings = load_from(&settings_path(&app)?)?;
-    open_diff_tool_inner(settings.diff_tool, &path, &file, staged, from_rev, to_rev)
+    crate::blocking::run_blocking(move || {
+        let settings = load_from(&settings_path(&app)?)?;
+        open_diff_tool_inner(settings.diff_tool, &path, &file, staged, from_rev, to_rev)
+    })
+    .await
 }
 
 /// Plain, `AppHandle`-free inner (same split as `watch.rs`/`git_bisect.rs`/
@@ -479,18 +491,33 @@ pub fn open_diff_tool_inner(
 /// mergetool subprocess (needs the outcome). Returns `conflict::ResolveResult`
 /// directly (reused, not duplicated — same `{ok, remaining, message}` shape
 /// and same non-`Result` "never rejects" contract as `resolve_conflict_file`).
+///
+/// BUG FIX: was a plain (non-async) `fn`, and of every command fixed in this
+/// pass this is the worst instance of the bug: `resolve_conflict_with_
+/// external_tool_inner` runs `git mergetool` via `safety::run_git`'s
+/// `Command::output`, which blocks until that subprocess exits — and that
+/// subprocess is an interactive GUI diff/merge tool the USER is actively
+/// editing in, with no timeout, so the wait is unbounded and entirely at the
+/// user's own pace (seconds to however long they take to finish resolving).
+/// As a plain sync command this froze the entire app window — not just the
+/// conflict panel — for that whole open-ended duration. `async fn` +
+/// `run_blocking` moves the wait onto Tauri's blocking-task thread pool so
+/// the rest of the app stays responsive while the external tool is open.
 #[tauri::command]
 #[specta::specta]
-pub fn resolve_conflict_with_external_tool(app: AppHandle<Wry>, path: String, file: String) -> conflict::ResolveResult {
-    let settings_path = match settings_path(&app) {
-        Ok(p) => p,
-        Err(e) => return conflict::ResolveResult { ok: false, remaining: 0, message: e },
-    };
-    let settings = match load_from(&settings_path) {
-        Ok(s) => s,
-        Err(e) => return conflict::ResolveResult { ok: false, remaining: 0, message: e },
-    };
-    resolve_conflict_with_external_tool_inner(settings.merge_tool, &path, &file)
+pub async fn resolve_conflict_with_external_tool(app: AppHandle<Wry>, path: String, file: String) -> conflict::ResolveResult {
+    crate::blocking::run_blocking(move || {
+        let settings_path = match settings_path(&app) {
+            Ok(p) => p,
+            Err(e) => return conflict::ResolveResult { ok: false, remaining: 0, message: e },
+        };
+        let settings = match load_from(&settings_path) {
+            Ok(s) => s,
+            Err(e) => return conflict::ResolveResult { ok: false, remaining: 0, message: e },
+        };
+        resolve_conflict_with_external_tool_inner(settings.merge_tool, &path, &file)
+    })
+    .await
 }
 
 /// Plain, `AppHandle`-free inner — same rationale as [`open_diff_tool_inner`].

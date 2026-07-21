@@ -222,43 +222,54 @@ fn pin_deleted_tag(repo: &Repository, oid: Oid, name: &str) -> Result<String, St
 /// lightweight (`git tag <name> [<target>]`). No snapshot — see module doc
 /// comment for why creating a tag needs none.
 /// JS call: `invoke("create_tag", { path, name, target?, message? })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — its body shells out to a real
+/// `git tag` subprocess via [`run_git`] and blocks the calling thread until
+/// that process exits. As a plain `#[tauri::command]` this ran inline on
+/// Tauri's main thread, freezing the entire app window (not just the tag
+/// dialog) for as long as the subprocess took. `async fn` + `run_blocking`
+/// moves that wait onto Tauri's blocking-task thread pool, matching
+/// `workdir.rs`'s `stage_file` fix for the identical shape of bug.
 #[tauri::command]
 #[specta::specta]
-pub fn create_tag(path: String, name: String, target: Option<String>, message: Option<String>) -> WriteResult {
-    if let Err(e) = validate_tag_name(&name) {
-        return err_result(e);
-    }
-    if let Some(t) = &target {
-        if let Err(e) = validate_revision(t) {
+pub async fn create_tag(path: String, name: String, target: Option<String>, message: Option<String>) -> WriteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_tag_name(&name) {
             return err_result(e);
         }
-    }
+        if let Some(t) = &target {
+            if let Err(e) = validate_revision(t) {
+                return err_result(e);
+            }
+        }
 
-    let has_msg = message.as_deref().map(|m| !m.trim().is_empty()).unwrap_or(false);
-    let mut args: Vec<&str> = vec!["tag"];
-    if has_msg {
-        args.push("-a");
-        args.push("-m");
-        args.push(message.as_deref().unwrap());
-    }
-    // --end-of-options must come AFTER -a/-m (EMPIRICALLY VERIFIED: placed
-    // before them, git treats -a/-m themselves as positional args and fails
-    // with "too many arguments") and BEFORE <name>/[<target>], guarding both.
-    args.push("--end-of-options");
-    args.push(&name);
-    if let Some(t) = &target {
-        args.push(t.as_str());
-    }
+        let has_msg = message.as_deref().map(|m| !m.trim().is_empty()).unwrap_or(false);
+        let mut args: Vec<&str> = vec!["tag"];
+        if has_msg {
+            args.push("-a");
+            args.push("-m");
+            args.push(message.as_deref().unwrap());
+        }
+        // --end-of-options must come AFTER -a/-m (EMPIRICALLY VERIFIED: placed
+        // before them, git treats -a/-m themselves as positional args and fails
+        // with "too many arguments") and BEFORE <name>/[<target>], guarding both.
+        args.push("--end-of-options");
+        args.push(&name);
+        if let Some(t) = &target {
+            args.push(t.as_str());
+        }
 
-    match run_git(&path, &args) {
-        Ok(out) if out.ok => ok_result(
-            format!("Created {} tag {name}.", if has_msg { "annotated" } else { "lightweight" }),
-            None,
-        ),
-        // e.g. "fatal: tag '<name>' already exists"
-        Ok(out) => err_result(git_error_message(&out)),
-        Err(e) => err_result(e),
-    }
+        match run_git(&path, &args) {
+            Ok(out) if out.ok => ok_result(
+                format!("Created {} tag {name}.", if has_msg { "annotated" } else { "lightweight" }),
+                None,
+            ),
+            // e.g. "fatal: tag '<name>' already exists"
+            Ok(out) => err_result(git_error_message(&out)),
+            Err(e) => err_result(e),
+        }
+    })
+    .await
 }
 
 /// Delete a tag. THE ONE THAT NEEDS CARE — see module doc comment. Pins the
@@ -267,46 +278,57 @@ pub fn create_tag(path: String, name: String, target: Option<String>, message: O
 /// success message names the pinned ref directly and is explicit that
 /// recovery is NOT via the global Undo (⌘Z) button.
 /// JS call: `invoke("delete_tag", { path, name })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — it opens the repo and reads/writes
+/// refs through git2 (`find_reference`, `pin_deleted_tag`'s `repo.reference`)
+/// AND shells out to a `git tag -d` subprocess via [`run_git`], all inline on
+/// Tauri's main thread. Every one of those steps blocked the whole app
+/// window for as long as it took, not just this delete. `async fn` +
+/// `run_blocking` moves the entire body onto Tauri's blocking-task thread
+/// pool, matching `dashboard_repo_status`/`workdir_status`'s established fix.
 #[tauri::command]
 #[specta::specta]
-pub fn delete_tag(path: String, name: String) -> WriteResult {
-    if let Err(e) = validate_tag_name(&name) {
-        return err_result(e);
-    }
-    let repo = match open_repo(&path) {
-        Ok(r) => r,
-        Err(w) => return w,
-    };
+pub async fn delete_tag(path: String, name: String) -> WriteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_tag_name(&name) {
+            return err_result(e);
+        }
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
 
-    // Resolve the tag's DIRECT target (never peeled — see module doc comment)
-    // so an annotated tag's own object (message/tagger/signature) is what
-    // gets pinned, not just the commit it ultimately points at.
-    let full_ref = format!("refs/tags/{name}");
-    let target = match repo.find_reference(&full_ref).ok().and_then(|r| r.target()) {
-        Some(oid) => oid,
-        None => return err_result(format!("Tag {name} does not exist.")),
-    };
-    let short_target: String = target.to_string().chars().take(7).collect();
+        // Resolve the tag's DIRECT target (never peeled — see module doc comment)
+        // so an annotated tag's own object (message/tagger/signature) is what
+        // gets pinned, not just the commit it ultimately points at.
+        let full_ref = format!("refs/tags/{name}");
+        let target = match repo.find_reference(&full_ref).ok().and_then(|r| r.target()) {
+            Some(oid) => oid,
+            None => return err_result(format!("Tag {name} does not exist.")),
+        };
+        let short_target: String = target.to_string().chars().take(7).collect();
 
-    // Pin BEFORE ever mutating. Refuse the whole delete if we can't even back
-    // it up first — never delete unbacked-up.
-    let pin = match pin_deleted_tag(&repo, target, &name) {
-        Ok(p) => p,
-        Err(e) => return err_result(format!("Refusing to delete tag {name} — could not back it up first: {e}")),
-    };
+        // Pin BEFORE ever mutating. Refuse the whole delete if we can't even back
+        // it up first — never delete unbacked-up.
+        let pin = match pin_deleted_tag(&repo, target, &name) {
+            Ok(p) => p,
+            Err(e) => return err_result(format!("Refusing to delete tag {name} — could not back it up first: {e}")),
+        };
 
-    match run_git(&path, &["tag", "-d", "--end-of-options", &name]) {
-        Ok(out) if out.ok => ok_result(
-            format!(
-                "Deleted tag {name} (was {short_target}). This is NOT restorable via the global Undo \
-                 (\u{2318}Z) — that only rewinds branches, never tags. Recover with: git tag {name} {pin}"
+        match run_git(&path, &["tag", "-d", "--end-of-options", &name]) {
+            Ok(out) if out.ok => ok_result(
+                format!(
+                    "Deleted tag {name} (was {short_target}). This is NOT restorable via the global Undo \
+                     (\u{2318}Z) — that only rewinds branches, never tags. Recover with: git tag {name} {pin}"
+                ),
+                Some(pin),
             ),
-            Some(pin),
-        ),
-        // e.g. "error: tag '<name>' not found." — the pin ref is a harmless,
-        // inert leftover in this case (matches `workdir::stash_drop`'s own
-        // failure-after-pin behavior: it doesn't surface the pin either).
-        Ok(out) => err_result(git_error_message(&out)),
-        Err(e) => err_result(e),
-    }
+            // e.g. "error: tag '<name>' not found." — the pin ref is a harmless,
+            // inert leftover in this case (matches `workdir::stash_drop`'s own
+            // failure-after-pin behavior: it doesn't surface the pin either).
+            Ok(out) => err_result(git_error_message(&out)),
+            Err(e) => err_result(e),
+        }
+    })
+    .await
 }

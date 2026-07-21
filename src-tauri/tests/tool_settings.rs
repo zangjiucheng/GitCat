@@ -260,7 +260,7 @@ fn build_conflicting_merge(tag: &str) -> TempRepo {
 fn resolve_conflict_with_external_tool_resolves_and_auto_stages_via_fake_mergetool() {
     let repo = build_conflicting_merge("mergetool_resolve");
 
-    let status_before = conflict_status(repo.path()).expect("conflict_status failed");
+    let status_before = tauri::async_runtime::block_on(conflict_status(repo.path())).expect("conflict_status failed");
     assert_eq!(status_before.op, "merge");
     assert_eq!(status_before.files.len(), 1);
 
@@ -278,7 +278,7 @@ fn resolve_conflict_with_external_tool_resolves_and_auto_stages_via_fake_mergeto
 
     // conflict_status must report the hand-off contract: files empty, but
     // still in_progress (ready for the existing per-op Continue button).
-    let status_after = conflict_status(repo.path()).expect("conflict_status failed");
+    let status_after = tauri::async_runtime::block_on(conflict_status(repo.path())).expect("conflict_status failed");
     assert!(status_after.files.is_empty());
     assert_eq!(status_after.op, "merge");
     assert!(status_after.in_progress, "op must still be in_progress — ready for Continue, not auto-concluded");

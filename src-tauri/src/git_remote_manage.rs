@@ -177,10 +177,18 @@ fn validate_remote_url(url: &str) -> Result<(), String> {
 /// any). Read-only (git2), mirrors list_refs/submodule_status's own
 /// git2-for-reads + `Result<T, String>` convention.
 /// JS call: `invoke("list_remotes", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s doc comment,
+/// that runs INLINE on Tauri's main thread. This opens the repository and
+/// walks its configured remotes via git2, which for a WSL/UNC-bridged repo
+/// can be the same kind of multi-second-or-worse stall `dashboard_repo_status`
+/// and `workdir_status` were already fixed for, freezing the entire app
+/// window for as long as it takes. `async fn` + `run_blocking` moves the work
+/// onto Tauri's blocking-task thread pool, matching that established pattern.
 #[tauri::command]
 #[specta::specta]
-pub fn list_remotes(path: String) -> Result<Vec<RemoteEntry>, String> {
-    list_remotes_inner(&path).map_err(|e| e.message().to_string())
+pub async fn list_remotes(path: String) -> Result<Vec<RemoteEntry>, String> {
+    crate::blocking::run_blocking(move || list_remotes_inner(&path).map_err(|e| e.message().to_string())).await
 }
 
 fn list_remotes_inner(path: &str) -> Result<Vec<RemoteEntry>, git2::Error> {
@@ -209,63 +217,92 @@ fn list_remotes_inner(path: &str) -> Result<Vec<RemoteEntry>, git2::Error> {
 /// Add a new remote (`git remote add`). Refuses a duplicate name via git's
 /// own error rather than a pre-check (see module doc comment for why).
 /// JS call: `invoke("add_remote", { path, name, url })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — it shells out to a real `git`
+/// subprocess (`Command::new("git")`) and blocks waiting for it to exit,
+/// which ran inline on Tauri's main thread and froze the entire app window
+/// for as long as that subprocess took, not just this dialog. `async fn` +
+/// `run_blocking` moves the wait onto Tauri's blocking-task thread pool,
+/// matching `workdir_status`'s own established fix for the identical class
+/// of stall.
 #[tauri::command]
 #[specta::specta]
-pub fn add_remote(path: String, name: String, url: String) -> RemoteResult {
-    if let Err(e) = validate_remote_name(&name) {
-        return err_result(e);
-    }
-    if let Err(e) = validate_remote_url(&url) {
-        return err_result(e);
-    }
-    match run_git(&path, &["remote", "add", "--end-of-options", &name, &url]) {
-        Ok(out) if out.ok => ok_result(format!("Added remote {name}.")),
-        // e.g. "error: remote origin already exists."
-        Ok(out) => err_result(git_error_message(&out)),
-        Err(e) => err_result(e),
-    }
+pub async fn add_remote(path: String, name: String, url: String) -> RemoteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_remote_name(&name) {
+            return err_result(e);
+        }
+        if let Err(e) = validate_remote_url(&url) {
+            return err_result(e);
+        }
+        match run_git(&path, &["remote", "add", "--end-of-options", &name, &url]) {
+            Ok(out) if out.ok => ok_result(format!("Added remote {name}.")),
+            // e.g. "error: remote origin already exists."
+            Ok(out) => err_result(git_error_message(&out)),
+            Err(e) => err_result(e),
+        }
+    })
+    .await
 }
 
 /// Rename a remote (`git remote rename`). Validates BOTH names. Real git
 /// behavior: also renames every refs/remotes/<old>/* tracking ref to
 /// refs/remotes/<new>/* — nothing extra needed here for that.
 /// JS call: `invoke("rename_remote", { path, oldName, newName })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — same as `add_remote` above, it
+/// shells out to `git remote rename` and blocks Tauri's main thread on that
+/// subprocess (which, for a remote with many tracking refs to rewrite, is
+/// not instant) for as long as it runs. `async fn` + `run_blocking` moves the
+/// wait onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn rename_remote(path: String, old_name: String, new_name: String) -> RemoteResult {
-    if let Err(e) = validate_remote_name(&old_name) {
-        return err_result(e);
-    }
-    if let Err(e) = validate_remote_name(&new_name) {
-        return err_result(e);
-    }
-    match run_git(&path, &["remote", "rename", "--end-of-options", &old_name, &new_name]) {
-        Ok(out) if out.ok => ok_result(format!("Renamed remote {old_name} \u{2192} {new_name}.")),
-        // e.g. "error: No such remote: 'x'" or "error: remote y already exists."
-        Ok(out) => err_result(git_error_message(&out)),
-        Err(e) => err_result(e),
-    }
+pub async fn rename_remote(path: String, old_name: String, new_name: String) -> RemoteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_remote_name(&old_name) {
+            return err_result(e);
+        }
+        if let Err(e) = validate_remote_name(&new_name) {
+            return err_result(e);
+        }
+        match run_git(&path, &["remote", "rename", "--end-of-options", &old_name, &new_name]) {
+            Ok(out) if out.ok => ok_result(format!("Renamed remote {old_name} \u{2192} {new_name}.")),
+            // e.g. "error: No such remote: 'x'" or "error: remote y already exists."
+            Ok(out) => err_result(git_error_message(&out)),
+            Err(e) => err_result(e),
+        }
+    })
+    .await
 }
 
 /// Change a remote's fetch URL (`git remote set-url`) — the "edit" half of
 /// add/edit/rename/remove; there is no separate edit_remote command since
 /// editing IS changing the URL (or renaming, via rename_remote above).
 /// JS call: `invoke("set_remote_url", { path, name, url })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — same as `add_remote` above, it
+/// shells out to `git remote set-url` and blocks Tauri's main thread on that
+/// subprocess for as long as it runs, freezing the whole app window rather
+/// than just this dialog. `async fn` + `run_blocking` moves the wait onto
+/// Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn set_remote_url(path: String, name: String, url: String) -> RemoteResult {
-    if let Err(e) = validate_remote_name(&name) {
-        return err_result(e);
-    }
-    if let Err(e) = validate_remote_url(&url) {
-        return err_result(e);
-    }
-    match run_git(&path, &["remote", "set-url", "--end-of-options", &name, &url]) {
-        Ok(out) if out.ok => ok_result(format!("Updated {name}'s URL.")),
-        // e.g. "error: No such remote 'x'"
-        Ok(out) => err_result(git_error_message(&out)),
-        Err(e) => err_result(e),
-    }
+pub async fn set_remote_url(path: String, name: String, url: String) -> RemoteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_remote_name(&name) {
+            return err_result(e);
+        }
+        if let Err(e) = validate_remote_url(&url) {
+            return err_result(e);
+        }
+        match run_git(&path, &["remote", "set-url", "--end-of-options", &name, &url]) {
+            Ok(out) if out.ok => ok_result(format!("Updated {name}'s URL.")),
+            // e.g. "error: No such remote 'x'"
+            Ok(out) => err_result(git_error_message(&out)),
+            Err(e) => err_result(e),
+        }
+    })
+    .await
 }
 
 /// Remove a remote entirely (`git remote remove`) — deletes its config
@@ -274,16 +311,25 @@ pub fn set_remote_url(path: String, name: String, url: String) -> RemoteResult {
 /// why there is deliberately no undo net here — the frontend MUST confirm
 /// before calling this.
 /// JS call: `invoke("remove_remote", { path, name })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — same as `add_remote` above, it
+/// shells out to `git remote remove` (which also has to delete every one of
+/// that remote's tracking refs) and blocks Tauri's main thread on that
+/// subprocess for as long as it runs. `async fn` + `run_blocking` moves the
+/// wait onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn remove_remote(path: String, name: String) -> RemoteResult {
-    if let Err(e) = validate_remote_name(&name) {
-        return err_result(e);
-    }
-    match run_git(&path, &["remote", "remove", "--end-of-options", &name]) {
-        Ok(out) if out.ok => ok_result(format!("Removed remote {name}.")),
-        // e.g. "error: No such remote: 'x'"
-        Ok(out) => err_result(git_error_message(&out)),
-        Err(e) => err_result(e),
-    }
+pub async fn remove_remote(path: String, name: String) -> RemoteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_remote_name(&name) {
+            return err_result(e);
+        }
+        match run_git(&path, &["remote", "remove", "--end-of-options", &name]) {
+            Ok(out) if out.ok => ok_result(format!("Removed remote {name}.")),
+            // e.g. "error: No such remote: 'x'"
+            Ok(out) => err_result(git_error_message(&out)),
+            Err(e) => err_result(e),
+        }
+    })
+    .await
 }

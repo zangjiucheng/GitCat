@@ -47,7 +47,7 @@ fn rerere_records_a_resolution_and_replays_it_on_the_same_conflict_shape() {
 
     // Mid-conflict: rerere has recorded a preimage (unresolved) and can name
     // the live path via `git rerere status`.
-    let mid = rerere_status(path.clone()).expect("rerere_status failed");
+    let mid = tauri::async_runtime::block_on(rerere_status(path.clone())).expect("rerere_status failed");
     assert!(mid.enabled, "rerere should be effectively enabled");
     assert_eq!(mid.configured, Some(true));
     assert_eq!(mid.entries.len(), 1, "expected exactly one rr-cache entry mid-conflict");
@@ -63,7 +63,7 @@ fn rerere_records_a_resolution_and_replays_it_on_the_same_conflict_shape() {
     repo.must(&["commit", "--no-verify", "-m", "merge sideB, resolve conflict"]);
     assert_eq!(repo.open().state(), RepositoryState::Clean);
 
-    let after_commit = rerere_status(path.clone()).expect("rerere_status failed");
+    let after_commit = tauri::async_runtime::block_on(rerere_status(path.clone())).expect("rerere_status failed");
     assert_eq!(after_commit.entries.len(), 1);
     assert!(after_commit.entries[0].resolved, "postimage should now exist");
     assert!(!after_commit.live_conflict, "no conflict is live right after commit");
@@ -98,7 +98,7 @@ fn rerere_records_a_resolution_and_replays_it_on_the_same_conflict_shape() {
     repo.must(&["commit", "--no-verify", "-m", "merge sideD into sideC (auto-resolved by rerere)"]);
     assert_eq!(repo.open().state(), RepositoryState::Clean);
 
-    let final_status = rerere_status(path).expect("rerere_status failed");
+    let final_status = tauri::async_runtime::block_on(rerere_status(path)).expect("rerere_status failed");
     assert!(
         final_status.entries.iter().any(|e| e.resolved),
         "expected at least one resolved rr-cache entry after replay"
@@ -113,21 +113,21 @@ fn rerere_set_enabled_toggles_the_local_config_and_status_reflects_it() {
     let _c0 = repo.commit("f.txt", "x\n", "c0");
     let path = repo.path();
 
-    let on = rerere_set_enabled(path.clone(), true);
+    let on = tauri::async_runtime::block_on(rerere_set_enabled(path.clone(), true));
     assert!(on.ok, "enable failed: {}", on.message);
     let (_, local_on, _) = repo.git(&["config", "--local", "--get", "rerere.enabled"]);
     assert_eq!(local_on.trim(), "true");
 
-    let st_on = rerere_status(path.clone()).expect("rerere_status failed");
+    let st_on = tauri::async_runtime::block_on(rerere_status(path.clone())).expect("rerere_status failed");
     assert_eq!(st_on.configured, Some(true));
     assert!(st_on.enabled);
 
-    let off = rerere_set_enabled(path.clone(), false);
+    let off = tauri::async_runtime::block_on(rerere_set_enabled(path.clone(), false));
     assert!(off.ok, "disable failed: {}", off.message);
     let (_, local_off, _) = repo.git(&["config", "--local", "--get", "rerere.enabled"]);
     assert_eq!(local_off.trim(), "false");
 
-    let st_off = rerere_status(path).expect("rerere_status failed");
+    let st_off = tauri::async_runtime::block_on(rerere_status(path)).expect("rerere_status failed");
     assert_eq!(st_off.configured, Some(false));
     assert!(!st_off.enabled, "an explicit false must win regardless of any rr-cache fallback");
 }
@@ -138,7 +138,7 @@ fn rerere_status_on_a_repo_that_never_touched_rerere_reports_no_cache_entries() 
     let _c0 = repo.commit("f.txt", "x\n", "c0");
     let path = repo.path();
 
-    let st = rerere_status(path).expect("rerere_status failed");
+    let st = tauri::async_runtime::block_on(rerere_status(path)).expect("rerere_status failed");
     // With the ambient global/system config now isolated (tests/common/mod.rs),
     // `cache_dir_present` is reliably false here — but we deliberately do NOT
     // assert on it directly, keying "nothing recorded" off `entries.is_empty()`

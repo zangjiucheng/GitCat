@@ -88,13 +88,25 @@ pub struct RepoFileResult {
 /// Read `file_name`'s current content (repo-root only). Missing file => `Ok("")`,
 /// never an error — see module doc comment.
 /// JS: `commands.readRepoFile(path, fileName)` -> `Result<string, string>`.
+///
+/// BUG FIX: was a plain (non-async) `fn`. Its body calls `open` -> `crate::trust::open_repo`,
+/// which does a git2 `Repository::open` and, on the dubious-ownership retry path, shells out
+/// to `git config --global --add safe.directory` twice via `safety::run_git` before retrying —
+/// real blocking work on a slow, network, or WSL-bridged path. A plain `fn` `#[tauri::command]`
+/// runs that inline on Tauri's main thread, freezing the whole app window (not just this
+/// editor pane) for as long as it takes. `async fn` + `run_blocking` matches
+/// `dashboard_repo_status`'s/`workdir_status`'s own established fix.
 #[tauri::command]
 #[specta::specta]
-pub fn read_repo_file(path: String, file_name: String) -> Result<String, String> {
-    validate_file_name(&file_name)?;
-    let repo = open(&path)?;
-    let file_path = resolve_path(&repo, &file_name)?;
-    refuse_if_symlink(&file_path, &file_name)?;
+pub async fn read_repo_file(path: String, file_name: String) -> Result<String, String> {
+    crate::blocking::run_blocking(move || read_repo_file_inner(&path, &file_name)).await
+}
+
+fn read_repo_file_inner(path: &str, file_name: &str) -> Result<String, String> {
+    validate_file_name(file_name)?;
+    let repo = open(path)?;
+    let file_path = resolve_path(&repo, file_name)?;
+    refuse_if_symlink(&file_path, file_name)?;
     match std::fs::read_to_string(&file_path) {
         Ok(s) => Ok(s),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
@@ -104,21 +116,31 @@ pub fn read_repo_file(path: String, file_name: String) -> Result<String, String>
 
 /// Overwrite `file_name` with `content` verbatim (repo-root only).
 /// JS: `commands.writeRepoFile(path, fileName, content)` -> `RepoFileResult`.
+///
+/// BUG FIX: was a plain (non-async) `fn`, for the identical reason as `read_repo_file`
+/// above — it opens the repo through the same `open` -> `crate::trust::open_repo` path,
+/// which can block on a git2 `Repository::open` plus (on the ownership-retry path) a
+/// synchronous `git config --global` subprocess call. `async fn` + `run_blocking` keeps
+/// that off Tauri's main thread the same way.
 #[tauri::command]
 #[specta::specta]
-pub fn write_repo_file(path: String, file_name: String, content: String) -> RepoFileResult {
-    if let Err(e) = validate_file_name(&file_name) {
+pub async fn write_repo_file(path: String, file_name: String, content: String) -> RepoFileResult {
+    crate::blocking::run_blocking(move || write_repo_file_inner(&path, &file_name, &content)).await
+}
+
+fn write_repo_file_inner(path: &str, file_name: &str, content: &str) -> RepoFileResult {
+    if let Err(e) = validate_file_name(file_name) {
         return RepoFileResult { ok: false, message: e };
     }
-    let repo = match open(&path) {
+    let repo = match open(path) {
         Ok(r) => r,
         Err(e) => return RepoFileResult { ok: false, message: e },
     };
-    let file_path = match resolve_path(&repo, &file_name) {
+    let file_path = match resolve_path(&repo, file_name) {
         Ok(p) => p,
         Err(e) => return RepoFileResult { ok: false, message: e },
     };
-    if let Err(e) = refuse_if_symlink(&file_path, &file_name) {
+    if let Err(e) = refuse_if_symlink(&file_path, file_name) {
         return RepoFileResult { ok: false, message: e };
     }
     match std::fs::write(&file_path, content.as_bytes()) {

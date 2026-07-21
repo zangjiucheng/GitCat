@@ -49,7 +49,7 @@ fn index_to_sha_mapping_matches_git_reflog_show_head() {
     assert_eq!(expected[4], c1, "HEAD@{{4}} should be commit c1");
     assert_eq!(expected[5], c0, "HEAD@{{5}} should be the initial commit c0");
 
-    let entries = reflog(path).expect("reflog() failed");
+    let entries = tauri::async_runtime::block_on(reflog(path)).expect("reflog() failed");
     assert_eq!(entries.len(), expected.len());
 
     for (i, exp_full) in expected.iter().enumerate() {
@@ -77,7 +77,7 @@ fn restore_lands_on_the_expected_sha_and_seals_a_new_snapshot() {
     let before = snapshots(&repo.open()).expect("snapshots").len();
 
     // HEAD@{1} is c2 (see the mapping test above) — restore the "lost" tip.
-    let res = gitcat_lib::reflog::reflog_restore(path.clone(), 1);
+    let res = tauri::async_runtime::block_on(gitcat_lib::reflog::reflog_restore(path.clone(), 1));
     assert!(res.ok, "reflog_restore failed: {}", res.message);
     assert_eq!(res.restored_to.as_deref(), Some(common::short(&c2).as_str()));
     assert!(res.sealed.as_deref().unwrap_or("").starts_with("refs/gitgui/backup/"));
@@ -103,7 +103,7 @@ fn restore_refuses_on_a_dirty_working_tree() {
     std::fs::write(repo.dir.join("f.txt"), "dirty, uncommitted\n").expect("write");
     assert!(!repo.is_clean());
 
-    let res = gitcat_lib::reflog::reflog_restore(path.clone(), 1);
+    let res = tauri::async_runtime::block_on(gitcat_lib::reflog::reflog_restore(path.clone(), 1));
     assert!(!res.ok, "restore should refuse on a dirty tree");
     assert!(
         res.message.to_lowercase().contains("uncommitted") || res.message.to_lowercase().contains("clean"),
@@ -125,8 +125,8 @@ fn restore_refuses_a_stale_out_of_range_index() {
     let path = repo.path();
     let before = snapshots(&repo.open()).expect("snapshots").len();
 
-    let len = reflog(path.clone()).expect("reflog() failed").len();
-    let res = gitcat_lib::reflog::reflog_restore(path.clone(), len); // one past the end
+    let len = tauri::async_runtime::block_on(reflog(path.clone())).expect("reflog() failed").len();
+    let res = tauri::async_runtime::block_on(gitcat_lib::reflog::reflog_restore(path.clone(), len)); // one past the end
     assert!(!res.ok, "restore should refuse an out-of-range index");
     assert!(res.restored_to.is_none());
     assert!(res.sealed.is_none(), "an out-of-range restore must not seal a snapshot first");

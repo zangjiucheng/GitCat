@@ -157,7 +157,7 @@ fn blame_reports_distinct_hunks_per_authoring_commit() {
         "c3: edit line 2",
     );
 
-    let fb = blame_file(repo.path(), "file.txt".to_string(), None, false)
+    let fb = tauri::async_runtime::block_on(blame_file(repo.path(), "file.txt".to_string(), None, false))
         .expect("blame at HEAD should succeed");
 
     assert_eq!(fb.path, "file.txt");
@@ -214,7 +214,7 @@ fn blame_at_an_older_commit_shows_that_commits_own_content() {
         "c2: append line3",
     );
 
-    let fb = blame_file(repo.path(), "file.txt".to_string(), Some(c1.clone()), false)
+    let fb = tauri::async_runtime::block_on(blame_file(repo.path(), "file.txt".to_string(), Some(c1.clone()), false))
         .expect("blame at c1 should succeed");
     assert_eq!(fb.at_sha, c1);
     assert_eq!(fb.total_lines, 2);
@@ -247,7 +247,7 @@ fn blame_surfaces_orig_path_across_a_rename() {
         "c2: rename old.txt -> new.txt, add gamma",
     );
 
-    let fb = blame_file(repo.path(), "new.txt".to_string(), None, false)
+    let fb = tauri::async_runtime::block_on(blame_file(repo.path(), "new.txt".to_string(), None, false))
         .expect("blame across a rename should succeed");
     assert_eq!(fb.at_sha, c2);
     assert_eq!(fb.lines, vec!["alpha", "beta", "gamma"]);
@@ -289,7 +289,7 @@ fn blame_brand_new_file_has_a_single_hunk() {
     let repo = TempRepo::init("blame_new_file");
     let c1 = repo.commit("fresh.txt", "only line\n", "add fresh.txt");
 
-    let fb = blame_file(repo.path(), "fresh.txt".to_string(), None, false)
+    let fb = tauri::async_runtime::block_on(blame_file(repo.path(), "fresh.txt".to_string(), None, false))
         .expect("blame a brand-new file should succeed");
     assert_eq!(fb.total_lines, 1);
     assert_eq!(fb.lines, vec!["only line"]);
@@ -309,7 +309,7 @@ fn blame_empty_file_reports_zero_lines_and_no_hunks() {
     let repo = TempRepo::init("blame_empty_file");
     let _c1 = repo.commit("empty.txt", "", "add empty file");
 
-    let fb = blame_file(repo.path(), "empty.txt".to_string(), None, false)
+    let fb = tauri::async_runtime::block_on(blame_file(repo.path(), "empty.txt".to_string(), None, false))
         .expect("blame an empty file should succeed, not error");
     assert_eq!(fb.total_lines, 0);
     assert!(!fb.truncated);
@@ -337,7 +337,7 @@ fn blame_binary_file_is_a_clean_refusal_not_a_panic() {
     repo.must(&["commit", "-q", "--no-verify", "-m", "add binary file"]);
 
     let err = must_err(
-        blame_file(repo.path(), "bin.dat".to_string(), None, false),
+        tauri::async_runtime::block_on(blame_file(repo.path(), "bin.dat".to_string(), None, false)),
         "a binary file must refuse blame, not panic or succeed",
     );
     assert!(err.contains("binary"), "expected a binary-refusal message, got: {err}");
@@ -355,7 +355,7 @@ fn blame_file_missing_at_target_commit_is_a_clean_err() {
 
     // "later.txt" does not exist in the root commit's own tree.
     let err = must_err(
-        blame_file(repo.path(), "later.txt".to_string(), Some(root_sha.clone()), false),
+        tauri::async_runtime::block_on(blame_file(repo.path(), "later.txt".to_string(), Some(root_sha.clone()), false)),
         "a file absent from the target commit must be a clean Err",
     );
     assert!(
@@ -365,7 +365,7 @@ fn blame_file_missing_at_target_commit_is_a_clean_err() {
 
     // A wholly bogus path at HEAD must also fail cleanly.
     let err2 = must_err(
-        blame_file(repo.path(), "nope/nowhere.txt".to_string(), None, false),
+        tauri::async_runtime::block_on(blame_file(repo.path(), "nope/nowhere.txt".to_string(), None, false)),
         "a bogus path must be a clean Err",
     );
     assert!(!err2.is_empty());
@@ -390,7 +390,7 @@ fn blame_at_head_fails_for_a_renames_new_path_when_the_rename_is_only_staged() {
     repo.must(&["mv", "old.txt", "new.txt"]); // staged rename, NOT committed
 
     let err = must_err(
-        blame_file(repo.path(), "new.txt".to_string(), None, false),
+        tauri::async_runtime::block_on(blame_file(repo.path(), "new.txt".to_string(), None, false)),
         "new.txt isn't in HEAD's tree yet — the rename is only staged",
     );
     assert!(err.contains("does not exist"), "expected a 'does not exist' message, got: {err}");
@@ -398,7 +398,7 @@ fn blame_at_head_fails_for_a_renames_new_path_when_the_rename_is_only_staged() {
     // The OLD path is exactly what Workdir.svelte's `blameTarget()` must fall
     // back to for this row, and it must blame fine (unaffected by the staged
     // rename, since HEAD's own tree still only knows the file by this name).
-    let fb = blame_file(repo.path(), "old.txt".to_string(), None, false)
+    let fb = tauri::async_runtime::block_on(blame_file(repo.path(), "old.txt".to_string(), None, false))
         .expect("old.txt must still blame fine at HEAD despite the pending rename");
     assert_eq!(fb.lines, vec!["alpha", "beta"]);
 }
@@ -411,7 +411,7 @@ fn blame_at_head_fails_for_a_brand_new_files_path_when_only_staged() {
     repo.must(&["add", "-A"]); // staged "A", not committed — no history anywhere yet
 
     let err = must_err(
-        blame_file(repo.path(), "brand_new.txt".to_string(), None, false),
+        tauri::async_runtime::block_on(blame_file(repo.path(), "brand_new.txt".to_string(), None, false)),
         "a staged-but-uncommitted new file has no HEAD history to blame",
     );
     assert!(err.contains("does not exist"), "expected a 'does not exist' message, got: {err}");
@@ -420,7 +420,7 @@ fn blame_at_head_fails_for_a_brand_new_files_path_when_only_staged() {
 #[test]
 fn blame_invalid_repo_path_is_a_clean_err() {
     let err = must_err(
-        blame_file("/no/such/path/at/all".to_string(), "x.txt".to_string(), None, false),
+        tauri::async_runtime::block_on(blame_file("/no/such/path/at/all".to_string(), "x.txt".to_string(), None, false)),
         "nonexistent repo path must be Err",
     );
     assert!(!err.is_empty());
@@ -439,8 +439,8 @@ fn blame_truncates_at_the_line_cap_without_dropping_or_overshooting() {
     // 2000 lines exactly — must NOT be reported as truncated.
     let content_2000: String = (1..=2000).map(|i| format!("line{i}\n")).collect();
     commit_as(&repo, "Alice", "alice@example.com", "big.txt", &content_2000, "c1: 2000 lines");
-    let fb_2000 =
-        blame_file(repo.path(), "big.txt".to_string(), None, false).expect("blame at exactly the cap should succeed");
+    let fb_2000 = tauri::async_runtime::block_on(blame_file(repo.path(), "big.txt".to_string(), None, false))
+        .expect("blame at exactly the cap should succeed");
     assert_eq!(fb_2000.total_lines, 2000);
     assert!(!fb_2000.truncated, "exactly MAX_BLAME_LINES lines must not be reported as truncated");
     assert_eq!(fb_2000.lines.len(), 2000);
@@ -449,8 +449,8 @@ fn blame_truncates_at_the_line_cap_without_dropping_or_overshooting() {
     // exactly 2000 lines/hunk-coverage, never fewer and never more.
     let content_2001: String = (1..=2001).map(|i| format!("line{i}\n")).collect();
     commit_as(&repo, "Alice", "alice@example.com", "big.txt", &content_2001, "c2: 2001 lines");
-    let fb_2001 =
-        blame_file(repo.path(), "big.txt".to_string(), None, false).expect("blame past the cap should succeed, just truncated");
+    let fb_2001 = tauri::async_runtime::block_on(blame_file(repo.path(), "big.txt".to_string(), None, false))
+        .expect("blame past the cap should succeed, just truncated");
     assert_eq!(fb_2001.total_lines, 2001, "the file's REAL total_lines must be reported even when truncated");
     assert!(fb_2001.truncated, "2001 lines must be reported as truncated");
     assert_eq!(fb_2001.lines.len(), 2000, "the returned content must be capped to exactly MAX_BLAME_LINES");
@@ -484,7 +484,8 @@ fn blame_straddling_hunk_at_the_cap_is_clipped_not_overshot() {
     content.push_str(&(1981..=2010).map(|i| format!("extra{i}\n")).collect::<String>());
     let c2 = commit_as(&repo, "Bob", "bob@example.com", "big.txt", &content, "c2: append 30 more, straddling the cap");
 
-    let fb = blame_file(repo.path(), "big.txt".to_string(), None, false).expect("blame should succeed");
+    let fb = tauri::async_runtime::block_on(blame_file(repo.path(), "big.txt".to_string(), None, false))
+        .expect("blame should succeed");
     assert!(fb.truncated);
     assert_eq!(fb.lines.len(), 2000);
 
@@ -514,8 +515,8 @@ fn blame_ignore_whitespace_skips_a_whitespace_only_edit() {
     // c2 changes ONLY whitespace on line 2 (a trailing space) — no real content change.
     let c2 = commit_as(&repo, "Bob", "bob@example.com", "f.txt", "line1\nline2 \nline3\n", "c2: whitespace-only edit");
 
-    let fb_default =
-        blame_file(repo.path(), "f.txt".to_string(), None, false).expect("blame (default) should succeed");
+    let fb_default = tauri::async_runtime::block_on(blame_file(repo.path(), "f.txt".to_string(), None, false))
+        .expect("blame (default) should succeed");
     let hunk_for = |fb: &gitcat_lib::blame::FileBlame, line: u32| {
         fb.hunks
             .iter()
@@ -530,8 +531,8 @@ fn blame_ignore_whitespace_skips_a_whitespace_only_edit() {
         "with ignoreWhitespace OFF (default), the whitespace-only edit commit should be blamed"
     );
 
-    let fb_ignore =
-        blame_file(repo.path(), "f.txt".to_string(), None, true).expect("blame (ignoreWhitespace) should succeed");
+    let fb_ignore = tauri::async_runtime::block_on(blame_file(repo.path(), "f.txt".to_string(), None, true))
+        .expect("blame (ignoreWhitespace) should succeed");
     assert_eq!(
         hunk_for(&fb_ignore, 2),
         c1,

@@ -17,7 +17,7 @@ fn create_lightweight_tag_defaults_to_head() {
     let c0 = repo.commit("f.txt", "0\n", "c0");
     let path = repo.path();
 
-    let res = create_tag(path.clone(), "v1".into(), None, None);
+    let res = tauri::async_runtime::block_on(create_tag(path.clone(), "v1".into(), None, None));
     assert!(res.ok, "create_tag failed: {}", res.message);
     assert!(res.backup_ref.is_none(), "creating a tag is purely additive — it must not snapshot");
     assert!(res.message.to_lowercase().contains("lightweight"));
@@ -33,7 +33,7 @@ fn create_annotated_tag_stores_the_message() {
     let c0 = repo.commit("f.txt", "0\n", "c0");
     let path = repo.path();
 
-    let res = create_tag(path.clone(), "v1".into(), None, Some("Release notes here".into()));
+    let res = tauri::async_runtime::block_on(create_tag(path.clone(), "v1".into(), None, Some("Release notes here".into())));
     assert!(res.ok, "create_tag failed: {}", res.message);
     assert!(res.message.to_lowercase().contains("annotated"));
 
@@ -53,7 +53,7 @@ fn create_tag_can_target_a_non_head_commit() {
     let _c1 = repo.commit("f.txt", "1\n", "c1");
     let path = repo.path();
 
-    let res = create_tag(path.clone(), "at-c0".into(), Some(c0.clone()), None);
+    let res = tauri::async_runtime::block_on(create_tag(path.clone(), "at-c0".into(), Some(c0.clone()), None));
     assert!(res.ok, "create_tag failed: {}", res.message);
     assert_eq!(repo.rev("refs/tags/at-c0"), Some(c0), "tag should target c0, not the current HEAD (c1)");
 }
@@ -64,8 +64,8 @@ fn create_tag_rejects_a_duplicate_name() {
     let _c0 = repo.commit("f.txt", "0\n", "c0");
     let path = repo.path();
 
-    assert!(create_tag(path.clone(), "v1".into(), None, None).ok);
-    let dup = create_tag(path.clone(), "v1".into(), None, None);
+    assert!(tauri::async_runtime::block_on(create_tag(path.clone(), "v1".into(), None, None)).ok);
+    let dup = tauri::async_runtime::block_on(create_tag(path.clone(), "v1".into(), None, None));
     assert!(!dup.ok, "creating the same tag twice must be refused");
 }
 
@@ -75,10 +75,10 @@ fn delete_tag_pins_a_recovery_ref_that_resolves_to_the_original_lightweight_targ
     let c0 = repo.commit("f.txt", "0\n", "c0");
     let path = repo.path();
 
-    let created = create_tag(path.clone(), "todelete".into(), None, None);
+    let created = tauri::async_runtime::block_on(create_tag(path.clone(), "todelete".into(), None, None));
     assert!(created.ok, "create_tag failed: {}", created.message);
 
-    let deleted = delete_tag(path.clone(), "todelete".into());
+    let deleted = tauri::async_runtime::block_on(delete_tag(path.clone(), "todelete".into()));
     assert!(deleted.ok, "delete_tag failed: {}", deleted.message);
     assert!(repo.rev("refs/tags/todelete").is_none(), "the tag ref itself should be gone");
 
@@ -101,14 +101,14 @@ fn delete_tag_pins_the_raw_tag_object_for_an_annotated_tag_not_just_its_commit()
     let _c0 = repo.commit("f.txt", "0\n", "c0");
     let path = repo.path();
 
-    let created = create_tag(path.clone(), "atag".into(), None, Some("keep me".into()));
+    let created = tauri::async_runtime::block_on(create_tag(path.clone(), "atag".into(), None, Some("keep me".into())));
     assert!(created.ok, "create_tag failed: {}", created.message);
 
     // The tag ref's DIRECT (unpeeled) target is the annotated tag OBJECT, not the commit.
     let tag_object_sha = repo.must(&["rev-parse", "refs/tags/atag"]);
     assert_eq!(repo.must(&["cat-file", "-t", &tag_object_sha]), "tag");
 
-    let deleted = delete_tag(path.clone(), "atag".into());
+    let deleted = tauri::async_runtime::block_on(delete_tag(path.clone(), "atag".into()));
     assert!(deleted.ok, "delete_tag failed: {}", deleted.message);
     let pin_ref = deleted.backup_ref.clone().expect("delete_tag should report the pinned recovery ref");
 
@@ -126,8 +126,8 @@ fn delete_then_manually_recover_via_the_pinned_ref_works_end_to_end() {
     let c0 = repo.commit("f.txt", "0\n", "c0");
     let path = repo.path();
 
-    assert!(create_tag(path.clone(), "v1".into(), None, None).ok);
-    let deleted = delete_tag(path.clone(), "v1".into());
+    assert!(tauri::async_runtime::block_on(create_tag(path.clone(), "v1".into(), None, None)).ok);
+    let deleted = tauri::async_runtime::block_on(delete_tag(path.clone(), "v1".into()));
     assert!(deleted.ok, "delete_tag failed: {}", deleted.message);
     assert!(repo.rev("refs/tags/v1").is_none());
     let pin_ref = deleted.backup_ref.expect("delete_tag should report the pinned recovery ref");
@@ -146,10 +146,10 @@ fn push_tag_to_a_bare_remote_makes_it_appear_there() {
     local.must(&["push", "-q", "-u", "origin", "main"]);
     let path = local.path();
 
-    assert!(create_tag(path.clone(), "v1".into(), None, None).ok);
+    assert!(tauri::async_runtime::block_on(create_tag(path.clone(), "v1".into(), None, None)).ok);
     assert!(origin.rev("refs/tags/v1").is_none(), "tag shouldn't exist on the remote yet");
 
-    let res = push_tag(path.clone(), None, "v1".into());
+    let res = tauri::async_runtime::block_on(push_tag(path.clone(), None, "v1".into()));
     assert!(res.ok, "push_tag failed: {}", res.message);
     assert!(res.backup_ref.is_none(), "pushing a tag never touches local state, so it must not snapshot");
     assert_eq!(origin.rev("refs/tags/v1"), Some(c0), "tag should now exist on the remote, pointing at c0");
@@ -164,8 +164,8 @@ fn push_tag_defaults_to_origin_and_never_forces_a_rejected_move() {
     local.must(&["push", "-q", "-u", "origin", "main"]);
     let path = local.path();
 
-    assert!(create_tag(path.clone(), "v1".into(), None, None).ok);
-    assert!(push_tag(path.clone(), None, "v1".into()).ok);
+    assert!(tauri::async_runtime::block_on(create_tag(path.clone(), "v1".into(), None, None)).ok);
+    assert!(tauri::async_runtime::block_on(push_tag(path.clone(), None, "v1".into())).ok);
     let remote_sha_before = origin.rev("refs/tags/v1");
 
     // Move the LOCAL tag to a new commit without going through GitCat, then
@@ -174,7 +174,7 @@ fn push_tag_defaults_to_origin_and_never_forces_a_rejected_move() {
     let _c1 = local.commit("g.txt", "1\n", "c1");
     local.must(&["tag", "-f", "v1"]);
 
-    let res = push_tag(path.clone(), None, "v1".into());
+    let res = tauri::async_runtime::block_on(push_tag(path.clone(), None, "v1".into()));
     assert!(!res.ok, "a moved-tag push must be rejected, not forced");
     assert_eq!(origin.rev("refs/tags/v1"), remote_sha_before, "a rejected push must never overwrite the remote's tag");
 }
@@ -204,7 +204,7 @@ fn push_tag_refuses_to_push_a_same_named_branch_when_no_such_tag_exists() {
     assert!(local.rev("refs/tags/X").is_none(), "precondition: no local tag named X");
     assert!(local.rev("refs/heads/X").is_some(), "precondition: a local branch named X exists");
 
-    let res = push_tag(path.clone(), None, "X".into());
+    let res = tauri::async_runtime::block_on(push_tag(path.clone(), None, "X".into()));
     assert!(
         !res.ok,
         "push_tag must fail cleanly when no tag named X exists locally, not silently push the branch \
@@ -240,11 +240,11 @@ fn push_tag_pushes_the_tag_not_the_same_named_branch_when_both_exist() {
     // Branch "Y" sits at c1 (HEAD); tag "Y" is deliberately created at the
     // OLDER commit c0, so the two same-named refs disagree.
     local.must(&["branch", "Y"]);
-    assert!(create_tag(path.clone(), "Y".into(), Some(c0.clone()), None).ok);
+    assert!(tauri::async_runtime::block_on(create_tag(path.clone(), "Y".into(), Some(c0.clone()), None)).ok);
     assert_eq!(local.rev("refs/heads/Y"), Some(c1.clone()));
     assert_eq!(local.rev("refs/tags/Y"), Some(c0.clone()));
 
-    let res = push_tag(path.clone(), None, "Y".into());
+    let res = tauri::async_runtime::block_on(push_tag(path.clone(), None, "Y".into()));
     assert!(res.ok, "push_tag failed: {}", res.message);
 
     assert_eq!(origin.rev("refs/tags/Y"), Some(c0), "the pushed tag must resolve to the TAG's target, not the branch's");
@@ -259,15 +259,15 @@ fn tag_name_validation_rejects_an_illegal_name_across_all_three_commands() {
 
     // "-flag" looks like an option; ".." is never a legal ref component.
     for bad in ["-flag", "a..b"] {
-        let created = create_tag(path.clone(), bad.into(), None, None);
+        let created = tauri::async_runtime::block_on(create_tag(path.clone(), bad.into(), None, None));
         assert!(!created.ok, "create_tag should refuse {bad:?}");
         assert!(created.backup_ref.is_none());
 
-        let deleted = delete_tag(path.clone(), bad.into());
+        let deleted = tauri::async_runtime::block_on(delete_tag(path.clone(), bad.into()));
         assert!(!deleted.ok, "delete_tag should refuse {bad:?}");
         assert!(deleted.backup_ref.is_none());
 
-        let pushed = push_tag(path.clone(), None, bad.into());
+        let pushed = tauri::async_runtime::block_on(push_tag(path.clone(), None, bad.into()));
         assert!(!pushed.ok, "push_tag should refuse {bad:?}");
         assert!(pushed.backup_ref.is_none());
     }

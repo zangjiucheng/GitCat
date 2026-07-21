@@ -82,11 +82,25 @@ pub struct ResolveResult {
 
 /// Report the in-progress operation and the conflicted files (with all three
 /// merge stages). Read-only. JS: `invoke("conflict_status", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s doc comment,
+/// that runs INLINE on Tauri's main thread. Its body opens the repo with
+/// git2, walks index conflict entries, and calls `find_blob` for every stage
+/// of every conflicted file, so on a large conflicted merge (many files
+/// and/or large blobs) this call alone can freeze the whole window; the
+/// resolver polls this on every load and after every per-file resolution, so
+/// the stall is not a one-off. `async fn` + `run_blocking` moves the git2
+/// work onto Tauri's blocking-task thread pool, matching `workdir_status`'s
+/// established pattern.
 #[tauri::command]
 #[specta::specta]
-pub fn conflict_status(path: String) -> Result<ConflictStatus, String> {
+pub async fn conflict_status(path: String) -> Result<ConflictStatus, String> {
+    crate::blocking::run_blocking(move || conflict_status_inner(&path)).await
+}
+
+fn conflict_status_inner(path: &str) -> Result<ConflictStatus, String> {
     let repo =
-        crate::trust::open_repo(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+        crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
     let op = detect_op(&repo).map_err(|e| e.message().to_string())?;
     let files = read_conflicts(&repo).map_err(|e| e.message().to_string())?;
     let in_progress = op != "none" || !files.is_empty();
@@ -303,9 +317,21 @@ fn ensure_resolvable_op(path: &str) -> Result<(), String> {
 ///
 /// No snapshot here — see the module doc: the enclosing op was snapshotted and
 /// its `--abort` restores everything.
+///
+/// BUG FIX: was a plain (non-async) `fn` — its body opens the repo with git2
+/// (`ensure_resolvable_op`) and shells out to `git checkout`/`git add`/`git
+/// diff` (via `safety::run_git`), each of which forks a real subprocess and
+/// waits for it to exit. Any one of those on the main thread freezes the
+/// whole app window for as long as the checkout/add/diff takes, not just the
+/// row being resolved. `async fn` + `run_blocking` moves it off the main
+/// thread, matching `dashboard_repo_status`'s established pattern.
 #[tauri::command]
 #[specta::specta]
-pub fn resolve_conflict_file(path: String, file: String, side: String) -> ResolveResult {
+pub async fn resolve_conflict_file(path: String, file: String, side: String) -> ResolveResult {
+    crate::blocking::run_blocking(move || resolve_conflict_file_inner(path, file, side)).await
+}
+
+fn resolve_conflict_file_inner(path: String, file: String, side: String) -> ResolveResult {
     // `--ours` = stage 2 (HEAD), `--theirs` = stage 3 (incoming). Reject anything else.
     let flag = match side.as_str() {
         "ours" => "--ours",
@@ -455,9 +481,22 @@ pub struct ConflictFileHunks {
 /// text, rather than reimplementing line-alignment from scratch) and parses
 /// that into structured hunks the frontend can render/edit per-region.
 /// JS: `invoke("conflict_file_hunks", { path, file })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — its body opens the repo with git2,
+/// reads blobs for all three conflict stages, writes them to scratch files,
+/// and then shells out to `git merge-file` (a real subprocess it waits on) to
+/// compute the 3-way diff. That subprocess wait, plus the blob/filesystem
+/// I/O around it, ran inline on Tauri's main thread and froze the whole
+/// window for as long as it took. `async fn` + `run_blocking` moves all of it
+/// onto Tauri's blocking-task thread pool, matching this file's other fixed
+/// commands.
 #[tauri::command]
 #[specta::specta]
-pub fn conflict_file_hunks(path: String, file: String) -> Result<ConflictFileHunks, String> {
+pub async fn conflict_file_hunks(path: String, file: String) -> Result<ConflictFileHunks, String> {
+    crate::blocking::run_blocking(move || conflict_file_hunks_inner(path, file)).await
+}
+
+fn conflict_file_hunks_inner(path: String, file: String) -> Result<ConflictFileHunks, String> {
     if let Err(e) = validate_path(&file) {
         return Err(e);
     }
@@ -654,9 +693,21 @@ impl ConflictHunk {
 ///
 /// No snapshot here — same reasoning as `resolve_conflict_file`: this only
 /// ever runs inside an already-snapshotted, already-in-progress operation.
+///
+/// BUG FIX: was a plain (non-async) `fn` — its body opens the repo with git2
+/// (`ensure_resolvable_op`), writes the resolved file to the working tree,
+/// and shells out to `git add` and `git diff` (via `safety::run_git`), each
+/// spawning and waiting on a real subprocess. Running that inline on Tauri's
+/// main thread froze the whole app window for as long as those calls took.
+/// `async fn` + `run_blocking` moves it off the main thread, matching this
+/// file's other fixed commands.
 #[tauri::command]
 #[specta::specta]
-pub fn resolve_conflict_hunks(path: String, file: String, resolved_content: String) -> ResolveResult {
+pub async fn resolve_conflict_hunks(path: String, file: String, resolved_content: String) -> ResolveResult {
+    crate::blocking::run_blocking(move || resolve_conflict_hunks_inner(path, file, resolved_content)).await
+}
+
+fn resolve_conflict_hunks_inner(path: String, file: String, resolved_content: String) -> ResolveResult {
     if let Err(e) = validate_path(&file) {
         return ResolveResult::err(e);
     }

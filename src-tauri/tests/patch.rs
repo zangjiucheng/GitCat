@@ -54,7 +54,7 @@ fn export_single_commit_then_am_reproduces_identical_diff() {
     let dest = std::env::temp_dir().join(format!("gitcat-patch-single-{}.patch", std::process::id()));
     let dest_str = dest.to_string_lossy().to_string();
 
-    let res = export_patch(path.clone(), None, added.clone(), dest_str.clone());
+    let res = tauri::async_runtime::block_on(export_patch(path.clone(), None, added.clone(), dest_str.clone()));
     assert!(res.ok, "export_patch failed: {}", res.message);
     let text = std::fs::read_to_string(&dest).expect("read exported patch");
     assert!(text.starts_with("From "), "expected an mbox 'From ' header, got: {:?}", &text[..text.len().min(80)]);
@@ -97,7 +97,7 @@ fn export_range_then_am_applies_as_separate_commits_not_squashed() {
     let dest = std::env::temp_dir().join(format!("gitcat-patch-range-{}.patch", std::process::id()));
     let dest_str = dest.to_string_lossy().to_string();
 
-    let res = export_patch(path.clone(), Some(base.clone()), c2.clone(), dest_str.clone());
+    let res = tauri::async_runtime::block_on(export_patch(path.clone(), Some(base.clone()), c2.clone(), dest_str.clone()));
     assert!(res.ok, "export_patch (range) failed: {}", res.message);
     assert!(res.message.contains('2'), "expected the export message to mention 2 commits: {}", res.message);
 
@@ -157,7 +157,7 @@ fn export_then_apply_survives_a_commit_body_that_looks_like_a_real_mbox_boundary
     let dest = std::env::temp_dir().join(format!("gitcat-patch-lookalike-{}.patch", std::process::id()));
     let dest_str = dest.to_string_lossy().to_string();
 
-    let res = export_patch(path.clone(), Some(base.clone()), c2.clone(), dest_str.clone());
+    let res = tauri::async_runtime::block_on(export_patch(path.clone(), Some(base.clone()), c2.clone(), dest_str.clone()));
     assert!(res.ok, "export_patch failed: {}", res.message);
     assert!(res.message.contains('2'), "expected the export message to mention 2 commits: {}", res.message);
 
@@ -171,7 +171,7 @@ fn export_then_apply_survives_a_commit_body_that_looks_like_a_real_mbox_boundary
     // path that must pass --patch-format=mboxrd to correctly unescape.
     let target = clone_of(&repo, "patch_mbox_lookalike");
     target.must(&["reset", "--hard", &base]);
-    let applied = apply_patch(target.path(), dest_str.clone());
+    let applied = tauri::async_runtime::block_on(apply_patch(target.path(), dest_str.clone()));
     assert!(applied.ok, "apply_patch failed on a lookalike-body patch: {}", applied.message);
     assert_eq!(applied.state, "clean");
 
@@ -200,7 +200,7 @@ fn export_refuses_a_merge_commit_in_single_commit_mode() {
     let dest = std::env::temp_dir().join(format!("gitcat-patch-merge-{}.patch", std::process::id()));
     let dest_str = dest.to_string_lossy().to_string();
 
-    let res = export_patch(path, None, merge_sha, dest_str.clone());
+    let res = tauri::async_runtime::block_on(export_patch(path, None, merge_sha, dest_str.clone()));
     assert!(!res.ok, "expected export_patch to refuse a merge commit");
     assert!(
         res.message.to_lowercase().contains("merge"),
@@ -216,7 +216,7 @@ fn export_nonexistent_revision_is_a_clean_error() {
     let _base = repo.commit("f.txt", "base\n", "base");
     let path = repo.path();
     let dest = std::env::temp_dir().join(format!("gitcat-patch-badrev-{}.patch", std::process::id()));
-    let res = export_patch(path, None, "not-a-real-rev".into(), dest.to_string_lossy().to_string());
+    let res = tauri::async_runtime::block_on(export_patch(path, None, "not-a-real-rev".into(), dest.to_string_lossy().to_string()));
     assert!(!res.ok);
     assert!(!dest.exists());
 }
@@ -232,7 +232,7 @@ fn build_conflicting_apply_scenario(tag: &str) -> (TempRepo, String) {
     let to_export = src.commit("f.txt", "A\n", "edit to A");
     let dest = std::env::temp_dir().join(format!("gitcat-{tag}-{}.patch", std::process::id()));
     let dest_str = dest.to_string_lossy().to_string();
-    let res = export_patch(src.path(), None, to_export, dest_str.clone());
+    let res = tauri::async_runtime::block_on(export_patch(src.path(), None, to_export, dest_str.clone()));
     assert!(res.ok, "export_patch failed: {}", res.message);
 
     // A DIFFERENT repo starting from the SAME base, independently diverged.
@@ -257,7 +257,7 @@ fn apply_patch_clean_multi_commit_message_reports_real_count() {
     let head = src.commit("f.txt", "base\nline2\nline3\n", "add line3");
     let dest = std::env::temp_dir().join(format!("gitcat-patch-clean-count-{}.patch", std::process::id()));
     let dest_str = dest.to_string_lossy().to_string();
-    let res = export_patch(src.path(), Some(base.clone()), head, dest_str.clone());
+    let res = tauri::async_runtime::block_on(export_patch(src.path(), Some(base.clone()), head, dest_str.clone()));
     assert!(res.ok, "export_patch failed: {}", res.message);
 
     let target = TempRepo::init("patch_apply_clean_count_dest");
@@ -265,7 +265,7 @@ fn apply_patch_clean_multi_commit_message_reports_real_count() {
     let _base2 = target.commit("f.txt", "base\n", "base");
     let path = target.path();
 
-    let applied = apply_patch(path, dest_str);
+    let applied = tauri::async_runtime::block_on(apply_patch(path, dest_str));
     assert!(applied.ok, "expected a clean apply, got: {}", applied.message);
     assert_eq!(applied.state, "clean");
     assert!(
@@ -287,7 +287,7 @@ fn apply_patch_conflict_is_detected_with_op_am_then_resolved_via_continue() {
     let (repo, patch_path) = build_conflicting_apply_scenario("patch_apply_conflict");
     let path = repo.path();
 
-    let applied = apply_patch(path.clone(), patch_path.clone());
+    let applied = tauri::async_runtime::block_on(apply_patch(path.clone(), patch_path.clone()));
     assert_eq!(applied.state, "conflict", "expected a conflict, got: {}", applied.message);
     assert!(!applied.ok);
     assert!(!applied.conflicted_files.is_empty(), "expected real conflicted files");
@@ -296,7 +296,7 @@ fn apply_patch_conflict_is_detected_with_op_am_then_resolved_via_continue() {
 
     // conflict_status must label this "am", not "rebase" — the whole point of
     // the RepositoryState::ApplyMailbox disambiguation in conflict.rs.
-    let status = conflict_status(path.clone()).expect("conflict_status failed");
+    let status = tauri::async_runtime::block_on(conflict_status(path.clone())).expect("conflict_status failed");
     assert!(status.in_progress);
     assert_eq!(status.op, "am");
     assert_eq!(status.files.len(), 1);
@@ -304,18 +304,18 @@ fn apply_patch_conflict_is_detected_with_op_am_then_resolved_via_continue() {
     assert_eq!(f.path, "f.txt");
 
     // Resolve via the SAME resolve_conflict_file path every other conflict uses.
-    let resolved = resolve_conflict_file(path.clone(), "f.txt".into(), "theirs".into());
+    let resolved = tauri::async_runtime::block_on(resolve_conflict_file(path.clone(), "f.txt".into(), "theirs".into()));
     assert!(resolved.ok, "resolve_conflict_file failed: {}", resolved.message);
     assert_eq!(resolved.remaining, 0);
 
     // Continue via am_continue (NEVER rebase_continue — see patch.rs's module doc).
-    let cont = am_continue(path.clone());
+    let cont = tauri::async_runtime::block_on(am_continue(path.clone()));
     assert!(cont.ok, "am_continue failed: {}", cont.message);
     assert_eq!(cont.state, "clean");
 
     assert_eq!(repo.read("f.txt"), "A\n");
     assert_eq!(repo.open().state(), RepositoryState::Clean);
-    let after = conflict_status(path).expect("conflict_status failed");
+    let after = tauri::async_runtime::block_on(conflict_status(path)).expect("conflict_status failed");
     assert!(!after.in_progress);
 }
 
@@ -331,7 +331,7 @@ fn apply_patch_am_skip_reclassifies_and_am_abort_restores_pre_apply_state() {
     let head = src.rev("HEAD").unwrap();
     let dest = std::env::temp_dir().join(format!("gitcat-patch-am-skip-{}.patch", std::process::id()));
     let dest_str = dest.to_string_lossy().to_string();
-    let res = export_patch(src.path(), Some(_base.clone()), head, dest_str.clone());
+    let res = tauri::async_runtime::block_on(export_patch(src.path(), Some(_base.clone()), head, dest_str.clone()));
     assert!(res.ok, "export_patch failed: {}", res.message);
 
     let target = TempRepo::init("patch_am_skip_dest");
@@ -340,19 +340,19 @@ fn apply_patch_am_skip_reclassifies_and_am_abort_restores_pre_apply_state() {
     let pre_apply_head = target.commit("f.txt", "B\n", "edit to B");
     let path = target.path();
 
-    let applied = apply_patch(path.clone(), dest_str);
+    let applied = tauri::async_runtime::block_on(apply_patch(path.clone(), dest_str));
     assert_eq!(applied.state, "conflict", "expected a conflict, got: {}", applied.message);
     assert_eq!(target.open().state(), RepositoryState::ApplyMailbox);
 
     // Skip the first (still-conflicting) commit entirely.
-    let skipped = am_skip(path.clone());
+    let skipped = tauri::async_runtime::block_on(am_skip(path.clone()));
     // Either it lands cleanly (if the 2nd patch happens to apply against the
     // now-current tree) or it re-conflicts on the 2nd patch — both are valid
     // outcomes of "skip"; assert it's NOT an outright error either way.
     assert_ne!(skipped.state, "error", "am_skip should never surface a bare error here: {}", skipped.message);
 
     // Regardless of which branch we're in, am_abort must fully restore state.
-    let aborted = am_abort(path.clone());
+    let aborted = tauri::async_runtime::block_on(am_abort(path.clone()));
     assert!(aborted.ok, "am_abort failed: {}", aborted.message);
     assert_eq!(aborted.state, "clean");
     assert_eq!(target.rev("HEAD").as_deref(), Some(pre_apply_head.as_str()));
@@ -361,7 +361,7 @@ fn apply_patch_am_skip_reclassifies_and_am_abort_restores_pre_apply_state() {
     assert!(target.is_clean());
 
     // Idempotent.
-    let again = am_abort(path);
+    let again = tauri::async_runtime::block_on(am_abort(path));
     assert!(again.ok);
     assert_eq!(again.state, "clean");
 }
@@ -401,12 +401,12 @@ fn genuine_apply_backend_rebase_conflict_still_reports_op_rebase_not_am() {
     assert!(!out.status.success(), "expected the apply-based rebase to conflict");
     assert_eq!(repo.open().state(), RepositoryState::Rebase, "apply-backend rebase should be RepositoryState::Rebase, not ApplyMailbox");
 
-    let status = conflict_status(path.clone()).expect("conflict_status failed");
+    let status = tauri::async_runtime::block_on(conflict_status(path.clone())).expect("conflict_status failed");
     assert_eq!(status.op, "rebase", "a genuine apply-backend rebase conflict must still be labeled 'rebase', not 'am'");
 
     // Clean up via the real rebase abort (not am_abort — this is a rebase, not
     // an am session; am_abort would correctly no-op here since state != ApplyMailbox).
-    let noop = am_abort(path.clone());
+    let noop = tauri::async_runtime::block_on(am_abort(path.clone()));
     assert!(noop.ok);
     assert_eq!(noop.message, "No patch-apply in progress.", "am_abort must NOT touch a genuine rebase-apply conflict");
     assert_eq!(repo.open().state(), RepositoryState::Rebase, "am_abort must be a no-op against a real rebase conflict");

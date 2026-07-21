@@ -130,10 +130,20 @@ pub struct FileHistory {
 /// a path absent from the target commit's tree or a directory-shaped path.
 ///
 /// JS: `commands.fileHistory(path, file, atCommit)`.
+///
+/// BUG FIX: was a plain (non-async) `fn`, so it ran INLINE on Tauri's main
+/// thread (see `blocking.rs`'s doc comment) — its body opens the repo and
+/// walks its tree via git2, then shells out to `git log --follow`, a whole
+/// history walk over `Command::new` (see this module's own "why shell out"
+/// doc comment above) that gets slower the longer/more-renamed a file's past
+/// is. Either half of that stalls the entire app window, not just the File
+/// History panel, for as long as the call takes. `async fn` + `run_blocking`
+/// moves the actual work onto Tauri's blocking-task thread pool, matching
+/// `dashboard_repo_status`/`workdir_status`'s own established pattern.
 #[tauri::command]
 #[specta::specta]
-pub fn file_history(path: String, file: String, at_commit: Option<String>) -> Result<FileHistory, String> {
-    file_history_inner(&path, &file, at_commit.as_deref())
+pub async fn file_history(path: String, file: String, at_commit: Option<String>) -> Result<FileHistory, String> {
+    crate::blocking::run_blocking(move || file_history_inner(&path, &file, at_commit.as_deref())).await
 }
 
 fn file_history_inner(path: &str, file: &str, at_commit: Option<&str>) -> Result<FileHistory, String> {

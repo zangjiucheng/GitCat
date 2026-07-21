@@ -65,10 +65,23 @@ pub struct ReflogEntry {
 /// Read HEAD's reflog, newest first. Read-only (git2).
 ///
 /// JS: `commands.reflog(path)` -> `Result<ReflogEntry[], string>`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — see `dashboard_repo_status`'s own
+/// identical fix (`dashboard.rs`) for the full writeup. `open()` opens a
+/// git2 `Repository` and `read_reflog()` walks HEAD's reflog, both of which
+/// ran INLINE on Tauri's main thread when this was a plain sync command,
+/// freezing the whole app window for the duration of the call — not just
+/// the reflog panel that triggered it. `async fn` + `run_blocking` moves
+/// that work onto Tauri's blocking-task thread pool, matching `list_refs`'s
+/// established pattern.
 #[tauri::command]
 #[specta::specta]
-pub fn reflog(path: String) -> Result<Vec<ReflogEntry>, String> {
-    let repo = open(&path)?;
+pub async fn reflog(path: String) -> Result<Vec<ReflogEntry>, String> {
+    crate::blocking::run_blocking(move || reflog_inner(&path)).await
+}
+
+fn reflog_inner(path: &str) -> Result<Vec<ReflogEntry>, String> {
+    let repo = open(path)?;
     read_reflog(&repo)
 }
 
@@ -86,10 +99,24 @@ pub fn reflog(path: String) -> Result<Vec<ReflogEntry>, String> {
 ///     must never silently land on the wrong commit).
 ///
 /// JS: `commands.reflogRestore(path, index)` -> `UndoResult`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — see `dashboard_repo_status`'s own
+/// identical fix (`dashboard.rs`) for the full writeup. This command opens
+/// a git2 `Repository`, snapshots it, and — most costly — shells out to the
+/// git CLI twice (`status --porcelain` for the dirty-tree guard, then
+/// `reset --hard` for the actual mutation) via `safety::run_git`, each a
+/// blocking child-process wait. Run inline, any one of those stalls froze
+/// the entire app window, not just the reflog panel doing the restore.
+/// `async fn` + `run_blocking` moves that work onto Tauri's blocking-task
+/// thread pool, matching `list_refs`'s established pattern.
 #[tauri::command]
 #[specta::specta]
-pub fn reflog_restore(path: String, index: usize) -> UndoResult {
-    let repo = match open(&path) {
+pub async fn reflog_restore(path: String, index: usize) -> UndoResult {
+    crate::blocking::run_blocking(move || reflog_restore_inner(&path, index)).await
+}
+
+fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
+    let repo = match open(path) {
         Ok(r) => r,
         Err(e) => return fail(e),
     };

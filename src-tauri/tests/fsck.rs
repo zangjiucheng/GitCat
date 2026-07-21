@@ -24,7 +24,7 @@ fn hard_reset_discarded_commit_is_found_as_dangling() {
     assert_eq!(repo.rev("HEAD").as_deref(), Some(c2.as_str()));
     assert!(repo.obj_exists(&c3), "the object must still exist in the odb");
 
-    let r = dangling_commits(repo.path()).expect("dangling_commits should succeed");
+    let r = tauri::async_runtime::block_on(dangling_commits(repo.path())).expect("dangling_commits should succeed");
     assert!(!r.truncated);
     assert!(
         r.commits.iter().any(|c| c.sha == c3),
@@ -39,7 +39,7 @@ fn still_reachable_commit_is_never_reported_as_dangling() {
     let c1 = repo.commit("f.txt", "1\n", "c1: seed");
     let c2 = repo.commit("f.txt", "2\n", "c2: tip, still on main");
 
-    let r = dangling_commits(repo.path()).expect("dangling_commits should succeed");
+    let r = tauri::async_runtime::block_on(dangling_commits(repo.path())).expect("dangling_commits should succeed");
     assert!(
         !r.commits.iter().any(|c| c.sha == c1 || c.sha == c2),
         "commits still reachable from a live branch must never be reported as dangling: {:?}",
@@ -52,7 +52,7 @@ fn repo_with_no_dangling_commits_returns_a_clean_empty_list_not_an_error() {
     let repo = TempRepo::init("fsck_empty");
     let _c1 = repo.commit("f.txt", "1\n", "only commit, nothing ever stranded");
 
-    let r = dangling_commits(repo.path()).expect("dangling_commits should succeed even with nothing dangling");
+    let r = tauri::async_runtime::block_on(dangling_commits(repo.path())).expect("dangling_commits should succeed even with nothing dangling");
     assert!(r.commits.is_empty(), "expected an empty list, got: {:?}", r.commits.iter().map(|c| &c.sha).collect::<Vec<_>>());
     assert!(!r.truncated);
 }
@@ -65,7 +65,7 @@ fn dto_fields_are_correctly_populated_for_a_found_dangling_commit() {
 
     repo.must(&["reset", "--hard", &c1]);
 
-    let r = dangling_commits(repo.path()).expect("dangling_commits should succeed");
+    let r = tauri::async_runtime::block_on(dangling_commits(repo.path())).expect("dangling_commits should succeed");
     let found = r.commits.iter().find(|c| c.sha == c2).unwrap_or_else(|| {
         panic!("expected {c2} in dangling list, got: {:?}", r.commits.iter().map(|c| &c.sha).collect::<Vec<_>>())
     });
@@ -95,7 +95,7 @@ fn end_to_end_recovery_via_create_branch_removes_it_from_the_dangling_list() {
 
     repo.must(&["reset", "--hard", &c1]);
 
-    let before = dangling_commits(path.clone()).expect("dangling_commits should succeed");
+    let before = tauri::async_runtime::block_on(dangling_commits(path.clone())).expect("dangling_commits should succeed");
     assert!(before.commits.iter().any(|c| c.sha == c2), "c2 should be dangling before recovery");
 
     // Recover exactly as the frontend would: create_branch with the
@@ -105,7 +105,7 @@ fn end_to_end_recovery_via_create_branch_removes_it_from_the_dangling_list() {
     assert!(recovered.ok, "create_branch should succeed recovering a real dangling sha: {}", recovered.message);
     assert_eq!(repo.rev("refs/heads/recovered-c2").as_deref(), Some(c2.as_str()));
 
-    let after = dangling_commits(path).expect("dangling_commits should succeed");
+    let after = tauri::async_runtime::block_on(dangling_commits(path)).expect("dangling_commits should succeed");
     assert!(
         !after.commits.iter().any(|c| c.sha == c2),
         "c2 must no longer be dangling once a real branch points at it: {:?}",
@@ -163,7 +163,7 @@ fn recovery_works_on_an_unborn_head_repo_with_a_plumbing_only_dangling_commit() 
     let commit_sha = commit_sha.trim().to_string();
     assert!(repo.rev("HEAD").is_none(), "HEAD must still be unborn — commit-tree alone moves no ref");
 
-    let found = dangling_commits(path.clone()).expect("dangling_commits should succeed on an unborn-HEAD repo");
+    let found = tauri::async_runtime::block_on(dangling_commits(path.clone())).expect("dangling_commits should succeed on an unborn-HEAD repo");
     assert!(
         found.commits.iter().any(|c| c.sha == commit_sha),
         "the plumbing-only commit should be listed as dangling: {:?}",

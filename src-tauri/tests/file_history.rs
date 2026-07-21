@@ -55,7 +55,7 @@ fn history_follows_a_rename_and_continues_with_the_old_path() {
     let c3 = commit_rename(&repo, "old-name.txt", "new-name.txt", "line1\nline2\nline3\n", "c3: rename to new-name.txt");
     let c4 = repo.commit("new-name.txt", "line1\nline2\nline3\nline4\n", "c4: edit after rename");
 
-    let fh = file_history(repo.path(), "new-name.txt".to_string(), None)
+    let fh = tauri::async_runtime::block_on(file_history(repo.path(), "new-name.txt".to_string(), None))
         .expect("history across a rename should succeed");
 
     assert_eq!(fh.file, "new-name.txt");
@@ -108,7 +108,7 @@ fn history_reports_non_ascii_paths_uncorrupted_by_quotepath() {
     let c1 = repo.commit("café-résumé.txt", "line1\n", "c1: add café-résumé.txt");
     let c2 = commit_rename(&repo, "café-résumé.txt", "naïve.txt", "line1\nline2\n", "c2: rename to naïve.txt");
 
-    let fh = file_history(repo.path(), "naïve.txt".to_string(), None).expect("history should succeed");
+    let fh = tauri::async_runtime::block_on(file_history(repo.path(), "naïve.txt".to_string(), None)).expect("history should succeed");
 
     assert_eq!(fh.entries.len(), 2, "expected 2 entries, got: {}", fmt_entries(&fh.entries));
     assert_eq!(fh.entries[0].sha, c2);
@@ -135,7 +135,7 @@ fn history_with_no_renames_behaves_like_a_plain_log() {
     let c2 = repo.commit("file.txt", "v1\nv2\n", "c2: edit file.txt");
     let c3 = repo.commit("file.txt", "v1\nv2\nv3\n", "c3: edit file.txt again");
 
-    let fh = file_history(repo.path(), "file.txt".to_string(), None).expect("plain history should succeed");
+    let fh = tauri::async_runtime::block_on(file_history(repo.path(), "file.txt".to_string(), None)).expect("plain history should succeed");
     assert_eq!(fh.at_sha, c3);
     assert!(!fh.truncated);
     assert_eq!(fh.entries.len(), 3, "expected 3 entries, got: {}", fmt_entries(&fh.entries));
@@ -165,7 +165,7 @@ fn history_of_a_file_deleted_at_head_is_queryable_via_at_commit() {
 
     // At HEAD, the file doesn't exist -> clean Err, not a panic or empty Ok.
     let err = must_err(
-        file_history(repo.path(), "gone.txt".to_string(), None),
+        tauri::async_runtime::block_on(file_history(repo.path(), "gone.txt".to_string(), None)),
         "gone.txt no longer exists at HEAD",
     );
     assert!(err.contains("does not exist"), "expected a 'does not exist' message, got: {err}");
@@ -176,7 +176,7 @@ fn history_of_a_file_deleted_at_head_is_queryable_via_at_commit() {
     // delete commit's own tree no longer has the path) - confirm that too,
     // then confirm the parent works.
     let err_at_delete = must_err(
-        file_history(repo.path(), "gone.txt".to_string(), Some(c3.clone())),
+        tauri::async_runtime::block_on(file_history(repo.path(), "gone.txt".to_string(), Some(c3.clone()))),
         "gone.txt is absent from the delete commit's own tree",
     );
     assert!(err_at_delete.contains("does not exist"));
@@ -189,7 +189,7 @@ fn history_of_a_file_deleted_at_head_is_queryable_via_at_commit() {
     // detail.svelte.ts's `historyFile`, which resolves it via
     // `plumbingInspect` before calling `fileHistoryCtrl.openFor`). Here the
     // parent's real sha is already in hand as `c2`.
-    let fh = file_history(repo.path(), "gone.txt".to_string(), Some(c2.clone()))
+    let fh = tauri::async_runtime::block_on(file_history(repo.path(), "gone.txt".to_string(), Some(c2.clone())))
         .expect("history at the parent of the delete commit should succeed");
     assert_eq!(fh.at_sha, c2, "at_sha must resolve to the parent commit, not the delete commit");
     assert_eq!(fh.entries.len(), 2, "expected 2 entries, got: {}", fmt_entries(&fh.entries));
@@ -241,7 +241,7 @@ fn history_truncates_at_the_commit_cap() {
         parent = Some(commit_oid);
     }
 
-    let fh = file_history(repo.path(), "churn.txt".to_string(), None).expect("history should succeed even when capped");
+    let fh = tauri::async_runtime::block_on(file_history(repo.path(), "churn.txt".to_string(), None)).expect("history should succeed even when capped");
     assert!(fh.truncated, "expected truncated=true for a history exceeding the cap");
     assert_eq!(
         fh.entries.len(),
@@ -263,7 +263,7 @@ fn history_of_a_bogus_path_is_a_clean_err() {
     let _c1 = repo.commit("real.txt", "hi\n", "seed");
 
     let err = must_err(
-        file_history(repo.path(), "nope/nowhere.txt".to_string(), None),
+        tauri::async_runtime::block_on(file_history(repo.path(), "nope/nowhere.txt".to_string(), None)),
         "a bogus path must be a clean Err",
     );
     assert!(!err.is_empty());
@@ -272,7 +272,7 @@ fn history_of_a_bogus_path_is_a_clean_err() {
 #[test]
 fn history_invalid_repo_path_is_a_clean_err() {
     let err = must_err(
-        file_history("/no/such/path/at/all".to_string(), "x.txt".to_string(), None),
+        tauri::async_runtime::block_on(file_history("/no/such/path/at/all".to_string(), "x.txt".to_string(), None)),
         "nonexistent repo path must be Err",
     );
     assert!(!err.is_empty());

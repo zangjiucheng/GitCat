@@ -403,28 +403,62 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
 // the core fns above; each opens the repo from a path.
 // ---------------------------------------------------------------------------
 
+/// Tauri command: pin the current HEAD under a fresh backup ref before a
+/// mutation. JS: `invoke("create_snapshot", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — it opens the repo (`crate::trust::
+/// open_repo`, whose WSL/UNC auto-trust retry can itself shell out) and then
+/// creates a ref and re-walks every `refs/gitgui/backup/*` ref via git2, all
+/// inline on Tauri's main thread. This runs before EVERY mutating command in
+/// the app, so any slowness here (a cold WSL trust probe, a repo with many
+/// prior snapshots) froze the whole window right before the user's action
+/// even started. `async fn` + `run_blocking` moves it onto Tauri's
+/// blocking-task thread pool, matching `workdir_status`'s established fix.
 #[tauri::command]
 #[specta::specta]
-pub fn create_snapshot(path: String) -> Result<Snapshot, String> {
-    let repo = open(&path)?;
-    let ref_name = snapshot(&repo)?;
-    // Re-read so the UI gets ts/sha/subject for the ribbon in one round-trip.
-    snapshots(&repo)?
-        .into_iter()
-        .find(|s| s.reference == ref_name)
-        .ok_or_else(|| "snapshot created but not found".to_string())
+pub async fn create_snapshot(path: String) -> Result<Snapshot, String> {
+    crate::blocking::run_blocking(move || {
+        let repo = open(&path)?;
+        let ref_name = snapshot(&repo)?;
+        // Re-read so the UI gets ts/sha/subject for the ribbon in one round-trip.
+        snapshots(&repo)?
+            .into_iter()
+            .find(|s| s.reference == ref_name)
+            .ok_or_else(|| "snapshot created but not found".to_string())
+    })
+    .await
 }
 
+/// Tauri command: list every backup snapshot, newest first, for the Snapshot
+/// ribbon. JS: `invoke("list_snapshots", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — it opens the repo and walks
+/// `refs/gitgui/backup/*` via git2, peeling each ref to a commit for its
+/// sha/subject. Cheap for a small ref set but still inline on Tauri's main
+/// thread, and the auto-trust open alone can stall on a WSL/UNC path — same
+/// class of freeze as `dashboard_repo_status`. `async fn` + `run_blocking`
+/// moves the read onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn list_snapshots(path: String) -> Result<Vec<Snapshot>, String> {
-    snapshots(&open(&path)?)
+pub async fn list_snapshots(path: String) -> Result<Vec<Snapshot>, String> {
+    crate::blocking::run_blocking(move || snapshots(&open(&path)?)).await
 }
 
+/// Tauri command: global Undo (⌘Z) — rewind HEAD/current branch to the
+/// newest snapshot. JS: `invoke("undo_last", { path })`.
+///
+/// BUG FIX: was a plain (non-async) `fn` — `undo()` opens the repo via git2
+/// AND shells out to the real `git` binary repeatedly (`status --porcelain`,
+/// `update-ref` per branch, `symbolic-ref`, and a `reset --hard` that
+/// rewrites the whole working tree), waiting on every subprocess inline on
+/// Tauri's main thread. `reset --hard` alone scales with repo/working-tree
+/// size, so this was one of the worst possible commands to run on the UI
+/// thread. `async fn` + `run_blocking` moves the entire sequence onto
+/// Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub fn undo_last(path: String) -> Result<UndoResult, String> {
-    undo(&open(&path)?)
+pub async fn undo_last(path: String) -> Result<UndoResult, String> {
+    crate::blocking::run_blocking(move || undo(&open(&path)?)).await
 }
 
 // ---------------------------------------------------------------------------

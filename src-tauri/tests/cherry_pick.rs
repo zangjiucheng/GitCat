@@ -37,13 +37,13 @@ fn cherry_pick_conflict_resolve_theirs_then_continue() {
     let (repo, _main_head, feature_tip) = build_conflicting_repo("pick_resolve");
     let path = repo.path();
 
-    let picked = cherry_pick(path.clone(), feature_tip.clone(), Some(true));
+    let picked = tauri::async_runtime::block_on(cherry_pick(path.clone(), feature_tip.clone(), Some(true)));
     assert_eq!(picked.state, "conflict", "expected a conflict, got: {}", picked.message);
     assert!(!picked.ok);
     assert_eq!(picked.conflicted_files, vec!["shared.txt".to_string()]);
     assert!(picked.backup_ref.is_some(), "cherry_pick should snapshot before mutating");
 
-    let status = conflict_status(path.clone()).expect("conflict_status failed");
+    let status = tauri::async_runtime::block_on(conflict_status(path.clone())).expect("conflict_status failed");
     assert!(status.in_progress);
     assert_eq!(status.op, "cherry-pick");
     assert_eq!(status.files.len(), 1);
@@ -53,18 +53,18 @@ fn cherry_pick_conflict_resolve_theirs_then_continue() {
     assert_eq!(f.ours, "main line");
     assert_eq!(f.theirs, "feature line");
 
-    let resolved = resolve_conflict_file(path.clone(), "shared.txt".into(), "theirs".into());
+    let resolved = tauri::async_runtime::block_on(resolve_conflict_file(path.clone(), "shared.txt".into(), "theirs".into()));
     assert!(resolved.ok, "resolve_conflict_file failed: {}", resolved.message);
     assert_eq!(resolved.remaining, 0);
 
-    let cont = cherry_pick_continue(path.clone());
+    let cont = tauri::async_runtime::block_on(cherry_pick_continue(path.clone()));
     assert!(cont.ok, "cherry_pick_continue failed: {}", cont.message);
     assert_eq!(cont.state, "clean");
 
     // Working tree now carries the "theirs" content, and the repo is no
     // longer mid-pick.
     assert_eq!(repo.read("shared.txt"), "feature line\n");
-    let after = conflict_status(path.clone()).expect("conflict_status failed");
+    let after = tauri::async_runtime::block_on(conflict_status(path.clone())).expect("conflict_status failed");
     assert!(!after.in_progress);
     assert_eq!(after.files.len(), 0);
     assert_eq!(repo.open().state(), RepositoryState::Clean);
@@ -75,11 +75,11 @@ fn cherry_pick_abort_restores_head() {
     let (repo, main_head, feature_tip) = build_conflicting_repo("pick_abort");
     let path = repo.path();
 
-    let picked = cherry_pick(path.clone(), feature_tip, Some(true));
+    let picked = tauri::async_runtime::block_on(cherry_pick(path.clone(), feature_tip, Some(true)));
     assert_eq!(picked.state, "conflict", "expected a conflict, got: {}", picked.message);
     assert_eq!(repo.open().state(), RepositoryState::CherryPick);
 
-    let aborted = cherry_pick_abort(path.clone());
+    let aborted = tauri::async_runtime::block_on(cherry_pick_abort(path.clone()));
     assert!(aborted.ok, "cherry_pick_abort failed: {}", aborted.message);
     assert_eq!(aborted.state, "clean");
 
@@ -90,7 +90,7 @@ fn cherry_pick_abort_restores_head() {
     assert!(repo.is_clean());
 
     // Abort is idempotent when nothing is in progress.
-    let again = cherry_pick_abort(path);
+    let again = tauri::async_runtime::block_on(cherry_pick_abort(path));
     assert!(again.ok);
     assert_eq!(again.state, "clean");
 }
@@ -109,7 +109,7 @@ fn cherry_pick_blocked_by_dirty_tree_reports_blocked_by_local_changes() {
     std::fs::write(repo.dir.join("a.txt"), "dirty-a\n").unwrap();
     assert!(!repo.is_clean());
 
-    let picked = cherry_pick(path.clone(), feature_tip, Some(true));
+    let picked = tauri::async_runtime::block_on(cherry_pick(path.clone(), feature_tip, Some(true)));
     assert!(!picked.ok);
     assert_eq!(picked.state, "error", "expected a dirty-tree refusal, got state {:?}: {}", picked.state, picked.message);
     assert!(picked.blocked_by_local_changes, "expected blocked_by_local_changes=true: {}", picked.message);
@@ -126,7 +126,7 @@ fn cherry_pick_bad_revision_is_not_reported_as_blocked_by_local_changes() {
     let _c0 = repo.commit("a.txt", "base\n", "c0");
     let path = repo.path();
 
-    let picked = cherry_pick(path, "not-a-real-sha".into(), Some(true));
+    let picked = tauri::async_runtime::block_on(cherry_pick(path, "not-a-real-sha".into(), Some(true)));
     assert!(!picked.ok);
     assert_eq!(picked.state, "error");
     assert!(!picked.blocked_by_local_changes, "a bad revision must not be misclassified as a dirty-tree block: {}", picked.message);

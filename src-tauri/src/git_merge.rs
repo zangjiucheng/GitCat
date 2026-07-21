@@ -360,27 +360,36 @@ fn classify(
 /// a failure.
 ///
 /// JS: `invoke("merge_start", { path, sha, strategy })`.
+///
+/// Opens the repo with git2 and, via `merge_one`, shells out to `git merge`
+/// itself — a real merge of arbitrary size (tree diffing, working-tree
+/// checkout, possibly a conflict). As a plain sync fn that ran inline on
+/// Tauri's main thread, freezing the whole window for as long as the merge
+/// took. `async fn` + `run_blocking` moves it to Tauri's blocking-task pool.
 #[tauri::command]
 #[specta::specta]
-pub fn merge_start(path: String, sha: String, strategy: Option<String>) -> MergeResult {
-    if let Err(e) = validate_sha(&sha) {
-        return MergeResult::error(e);
-    }
-    let extra_flag = match parse_strategy(strategy.as_deref()) {
-        Ok(f) => f,
-        Err(e) => return MergeResult::error(e),
-    };
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
-    };
+pub async fn merge_start(path: String, sha: String, strategy: Option<String>) -> MergeResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_sha(&sha) {
+            return MergeResult::error(e);
+        }
+        let extra_flag = match parse_strategy(strategy.as_deref()) {
+            Ok(f) => f,
+            Err(e) => return MergeResult::error(e),
+        };
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+        };
 
-    // Refuse to stack a new merge on top of an unfinished one.
-    if in_progress(&repo) {
-        return MergeResult::error("A merge is already in progress — resolve or abort it first.");
-    }
+        // Refuse to stack a new merge on top of an unfinished one.
+        if in_progress(&repo) {
+            return MergeResult::error("A merge is already in progress — resolve or abort it first.");
+        }
 
-    merge_one(&repo, &path, &sha, extra_flag)
+        merge_one(&repo, &path, &sha, extra_flag)
+    })
+    .await
 }
 
 /// `strategy` -> the extra CLI flag it maps to (or `None` for today's exact
@@ -462,45 +471,54 @@ fn merge_one(repo: &Repository, path: &str, sha: &str, extra_flag: Option<&str>)
 /// conflicts remain unresolved.
 ///
 /// JS: `invoke("merge_continue", { path })`.
+///
+/// Opens the repo with git2, shells out to `git rev-parse` to name the
+/// in-progress merge, then to `git merge --continue` itself — which finishes
+/// the merge and may run hooks, all real subprocess work whose cost scales
+/// with the repo/commit. As a plain sync fn this ran inline on Tauri's main
+/// thread, freezing the whole window; `async fn` + `run_blocking` fixes that.
 #[tauri::command]
 #[specta::specta]
-pub fn merge_continue(path: String) -> MergeResult {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-    if !in_progress(&repo) {
-        return MergeResult::error("No merge in progress to continue.");
-    }
-
-    // Name the commit being merged in (for messages) while MERGE_HEAD exists.
-    let label = git(&path, &["rev-parse", "--short", "MERGE_HEAD"], false)
-        .ok()
-        .filter(|o| o.ok)
-        .map(|o| o.stdout)
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "the commit".to_string());
-
-    // Snapshot the pre-commit state (HEAD is still the pre-merge commit during
-    // a conflict). Best-effort: continue must remain possible even if it can't
-    // run.
-    let backup = crate::safety::snapshot(&repo).ok();
-
-    let out = match git(&path, &["merge", "--continue"], true) {
-        Ok(o) => o,
-        Err(e) => {
-            return MergeResult {
-                ok: false,
-                state: "error".into(),
-                conflicted_files: Vec::new(),
-                message: e,
-                backup_ref: backup,
-                blocked_by_local_changes: false,
-            }
+pub async fn merge_continue(path: String) -> MergeResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+        };
+        if !in_progress(&repo) {
+            return MergeResult::error("No merge in progress to continue.");
         }
-    };
 
-    classify(&repo, &path, &out, backup, &label)
+        // Name the commit being merged in (for messages) while MERGE_HEAD exists.
+        let label = git(&path, &["rev-parse", "--short", "MERGE_HEAD"], false)
+            .ok()
+            .filter(|o| o.ok)
+            .map(|o| o.stdout)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "the commit".to_string());
+
+        // Snapshot the pre-commit state (HEAD is still the pre-merge commit during
+        // a conflict). Best-effort: continue must remain possible even if it can't
+        // run.
+        let backup = crate::safety::snapshot(&repo).ok();
+
+        let out = match git(&path, &["merge", "--continue"], true) {
+            Ok(o) => o,
+            Err(e) => {
+                return MergeResult {
+                    ok: false,
+                    state: "error".into(),
+                    conflicted_files: Vec::new(),
+                    message: e,
+                    backup_ref: backup,
+                    blocked_by_local_changes: false,
+                }
+            }
+        };
+
+        classify(&repo, &path, &out, backup, &label)
+    })
+    .await
 }
 
 /// Abort an in-progress merge: `git merge --abort` restores the pre-merge
@@ -509,14 +527,23 @@ pub fn merge_continue(path: String) -> MergeResult {
 /// the user's way out). Idempotent: "nothing in progress" is a benign success.
 ///
 /// JS: `invoke("merge_abort", { path })`.
+///
+/// Opens the repo with git2 and, via `merge_abort_impl`, shells out to
+/// `git merge --abort`, which checks out the pre-merge tree — a real
+/// checkout whose cost scales with the working tree's size. Run inline on
+/// Tauri's main thread as a plain sync fn this froze the whole window for
+/// the duration; `async fn` + `run_blocking` moves it off that thread.
 #[tauri::command]
 #[specta::specta]
-pub fn merge_abort(path: String) -> MergeResult {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-    merge_abort_impl(&repo, &path)
+pub async fn merge_abort(path: String) -> MergeResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+        };
+        merge_abort_impl(&repo, &path)
+    })
+    .await
 }
 
 /// Shared body of [`merge_abort`], taking an already-open repo handle —
@@ -675,74 +702,84 @@ fn other_op_in_progress(repo: &Repository) -> bool {
 /// previous unresolved squash, …) — see `other_op_in_progress`'s doc comment.
 ///
 /// JS: `invoke("merge_squash", { path, sha })`.
+///
+/// Opens the repo with git2, then shells out to `git merge --squash` — a
+/// real merge computation (tree diffing, index staging, possibly a
+/// conflict) whose cost scales with the diff being squashed in. As a plain
+/// sync fn this ran inline on Tauri's main thread, freezing the whole
+/// window for as long as the squash took; `async fn` + `run_blocking` moves
+/// it to Tauri's blocking-task pool.
 #[tauri::command]
 #[specta::specta]
-pub fn merge_squash(path: String, sha: String) -> MergeSquashResult {
-    if let Err(e) = validate_sha(&sha) {
-        return MergeSquashResult::error(e);
-    }
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => {
-            return MergeSquashResult::error(format!("Cannot open repository: {}", e.message()))
+pub async fn merge_squash(path: String, sha: String) -> MergeSquashResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_sha(&sha) {
+            return MergeSquashResult::error(e);
         }
-    };
-    if other_op_in_progress(&repo) {
-        return MergeSquashResult::error(
-            "Another operation (merge/rebase/cherry-pick/revert) is already in progress — resolve or abort it first.",
-        );
-    }
-    if !unmerged_files(&path).is_empty() {
-        return MergeSquashResult::error(
-            "There are unresolved conflicts already — resolve or abort them first.",
-        );
-    }
-    // At this point unmerged_files() is empty, which proves any PRIOR
-    // conflict — of either kind — is genuinely concluded (a live one would
-    // still have unmerged entries). Clear any sidecar left behind by a
-    // conflict that was resolved out-of-band (e.g. via a plain `git commit`
-    // from a terminal) instead of through this app's own Abort/Continue —
-    // an adversarially-found bug: a stale sidecar surviving here would later
-    // make `conflict.rs::detect_op` misattribute a FUTURE, unrelated
-    // conflict to the wrong op, and that op's abort/continue would then act
-    // on a backup_ref/identity that has nothing to do with the real
-    // conflict (in the squash-vs-stash case, hard-resetting HEAD to a stale,
-    // unrelated snapshot). Clearing both sidecars here (not just this
-    // module's own) closes the gap symmetrically with `apply_or_pop`'s
-    // identical cleanup below.
-    clear_merge_squash_conflict_state(&repo);
-    crate::workdir::clear_stash_conflict_state(&repo);
-
-    let backup = match crate::safety::snapshot(&repo) {
-        Ok(b) => b,
-        Err(e) => return MergeSquashResult::error(format!("Safety snapshot failed, aborting: {e}")),
-    };
-
-    // git merge --squash --no-autostash --end-of-options <sha>
-    //
-    // --no-autostash for the identical reason merge_start passes it (see that
-    // command's own comment): without it, an ambient `merge.autoStash=true`
-    // could silently stash a dirty tree, squash-merge, then reapply the
-    // stash — and if THAT reapply conflicts, this module has no sequencer
-    // marker to notice at all (squash already has none of its own), which
-    // would strand the user's original edit in `stash@{0}` with no trace.
-    // --no-autostash makes the dirty-tree case refuse up front instead.
-    let args: Vec<&str> = vec!["merge", "--squash", "--no-autostash", "--end-of-options", &sha];
-    let out = match git(&path, &args, true) {
-        Ok(o) => o,
-        Err(e) => {
-            return MergeSquashResult {
-                ok: false,
-                state: "error".into(),
-                conflicted_files: Vec::new(),
-                message: e,
-                backup_ref: Some(backup),
-                suggested_message: None,
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => {
+                return MergeSquashResult::error(format!("Cannot open repository: {}", e.message()))
             }
+        };
+        if other_op_in_progress(&repo) {
+            return MergeSquashResult::error(
+                "Another operation (merge/rebase/cherry-pick/revert) is already in progress — resolve or abort it first.",
+            );
         }
-    };
+        if !unmerged_files(&path).is_empty() {
+            return MergeSquashResult::error(
+                "There are unresolved conflicts already — resolve or abort them first.",
+            );
+        }
+        // At this point unmerged_files() is empty, which proves any PRIOR
+        // conflict — of either kind — is genuinely concluded (a live one would
+        // still have unmerged entries). Clear any sidecar left behind by a
+        // conflict that was resolved out-of-band (e.g. via a plain `git commit`
+        // from a terminal) instead of through this app's own Abort/Continue —
+        // an adversarially-found bug: a stale sidecar surviving here would later
+        // make `conflict.rs::detect_op` misattribute a FUTURE, unrelated
+        // conflict to the wrong op, and that op's abort/continue would then act
+        // on a backup_ref/identity that has nothing to do with the real
+        // conflict (in the squash-vs-stash case, hard-resetting HEAD to a stale,
+        // unrelated snapshot). Clearing both sidecars here (not just this
+        // module's own) closes the gap symmetrically with `apply_or_pop`'s
+        // identical cleanup below.
+        clear_merge_squash_conflict_state(&repo);
+        crate::workdir::clear_stash_conflict_state(&repo);
 
-    classify_squash(&repo, &path, &out, backup, &sha)
+        let backup = match crate::safety::snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return MergeSquashResult::error(format!("Safety snapshot failed, aborting: {e}")),
+        };
+
+        // git merge --squash --no-autostash --end-of-options <sha>
+        //
+        // --no-autostash for the identical reason merge_start passes it (see that
+        // command's own comment): without it, an ambient `merge.autoStash=true`
+        // could silently stash a dirty tree, squash-merge, then reapply the
+        // stash — and if THAT reapply conflicts, this module has no sequencer
+        // marker to notice at all (squash already has none of its own), which
+        // would strand the user's original edit in `stash@{0}` with no trace.
+        // --no-autostash makes the dirty-tree case refuse up front instead.
+        let args: Vec<&str> = vec!["merge", "--squash", "--no-autostash", "--end-of-options", &sha];
+        let out = match git(&path, &args, true) {
+            Ok(o) => o,
+            Err(e) => {
+                return MergeSquashResult {
+                    ok: false,
+                    state: "error".into(),
+                    conflicted_files: Vec::new(),
+                    message: e,
+                    backup_ref: Some(backup),
+                    suggested_message: None,
+                }
+            }
+        };
+
+        classify_squash(&repo, &path, &out, backup, &sha)
+    })
+    .await
 }
 
 /// Turn a finished `git merge --squash` run into a [`MergeSquashResult`] —
@@ -818,49 +855,58 @@ fn classify_squash(repo: &Repository, path: &str, out: &Out, backup: String, lab
 /// `--abort` of its own.
 ///
 /// JS: `invoke("merge_squash_abort", { path })`.
+///
+/// Opens the repo with git2 and shells out to `git rev-parse` then
+/// `git reset --hard` — the latter a real working-tree checkout whose cost
+/// scales with the tree's size. As a plain sync fn this ran inline on
+/// Tauri's main thread, freezing the whole window; `async fn` +
+/// `run_blocking` moves it to Tauri's blocking-task pool.
 #[tauri::command]
 #[specta::specta]
-pub fn merge_squash_abort(path: String) -> MergeSquashResult {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => {
-            return MergeSquashResult::error(format!("Cannot open repository: {}", e.message()))
-        }
-    };
-    let Some(state) = read_merge_squash_conflict_state(&repo) else {
-        return MergeSquashResult::error("No squash-merge conflict in progress to abort.");
-    };
-
-    let target_sha = match git(&path, &["rev-parse", &state.backup_ref], false) {
-        Ok(o) if o.ok && !o.stdout.is_empty() => o.stdout.trim().to_string(),
-        Ok(o) => {
-            return MergeSquashResult::error(format!(
-                "Could not resolve the pre-conflict snapshot {}: {}",
-                state.backup_ref,
-                git_msg(&o)
-            ))
-        }
-        Err(e) => return MergeSquashResult::error(e),
-    };
-
-    match git(&path, &["reset", "--hard", &target_sha], false) {
-        Ok(out) if out.ok => {
-            clear_merge_squash_conflict_state(&repo);
-            MergeSquashResult {
-                ok: true,
-                state: "clean".into(),
-                conflicted_files: Vec::new(),
-                message: format!(
-                    "Squash-merge conflict aborted — working tree restored to the pre-squash state (snapshot {}).",
-                    short_backup(&state.backup_ref)
-                ),
-                backup_ref: None,
-                suggested_message: None,
+pub async fn merge_squash_abort(path: String) -> MergeSquashResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => {
+                return MergeSquashResult::error(format!("Cannot open repository: {}", e.message()))
             }
+        };
+        let Some(state) = read_merge_squash_conflict_state(&repo) else {
+            return MergeSquashResult::error("No squash-merge conflict in progress to abort.");
+        };
+
+        let target_sha = match git(&path, &["rev-parse", &state.backup_ref], false) {
+            Ok(o) if o.ok && !o.stdout.is_empty() => o.stdout.trim().to_string(),
+            Ok(o) => {
+                return MergeSquashResult::error(format!(
+                    "Could not resolve the pre-conflict snapshot {}: {}",
+                    state.backup_ref,
+                    git_msg(&o)
+                ))
+            }
+            Err(e) => return MergeSquashResult::error(e),
+        };
+
+        match git(&path, &["reset", "--hard", &target_sha], false) {
+            Ok(out) if out.ok => {
+                clear_merge_squash_conflict_state(&repo);
+                MergeSquashResult {
+                    ok: true,
+                    state: "clean".into(),
+                    conflicted_files: Vec::new(),
+                    message: format!(
+                        "Squash-merge conflict aborted — working tree restored to the pre-squash state (snapshot {}).",
+                        short_backup(&state.backup_ref)
+                    ),
+                    backup_ref: None,
+                    suggested_message: None,
+                }
+            }
+            Ok(out) => MergeSquashResult::error(git_msg(&out)),
+            Err(e) => MergeSquashResult::error(e),
         }
-        Ok(out) => MergeSquashResult::error(git_msg(&out)),
-        Err(e) => MergeSquashResult::error(e),
-    }
+    })
+    .await
 }
 
 /// Finish a squash-merge conflict after every file is resolved+staged (via
@@ -874,44 +920,53 @@ pub fn merge_squash_abort(path: String) -> MergeSquashResult {
 /// mutation).
 ///
 /// JS: `invoke("merge_squash_continue", { path })`.
+///
+/// Opens the repo with git2 and shells out to `git diff --name-only
+/// --diff-filter=U` (via `unmerged_files`) to check whether every conflict
+/// is really resolved — a status read whose cost scales with the size of
+/// the diff/index being checked. As a plain sync fn this ran inline on
+/// Tauri's main thread; `async fn` + `run_blocking` moves it off it.
 #[tauri::command]
 #[specta::specta]
-pub fn merge_squash_continue(path: String) -> MergeSquashResult {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => {
-            return MergeSquashResult::error(format!("Cannot open repository: {}", e.message()))
-        }
-    };
-    if read_merge_squash_conflict_state(&repo).is_none() {
-        return MergeSquashResult::error("No squash-merge conflict in progress to continue.");
-    }
-
-    let remaining = unmerged_files(&path);
-    if !remaining.is_empty() {
-        let n = remaining.len();
-        return MergeSquashResult {
-            ok: false,
-            state: "conflict".into(),
-            conflicted_files: remaining,
-            message: format!(
-                "Still conflicted in {n} file{}. Resolve them, then Continue — or Abort.",
-                if n == 1 { "" } else { "s" }
-            ),
-            backup_ref: None,
-            suggested_message: None,
+pub async fn merge_squash_continue(path: String) -> MergeSquashResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => {
+                return MergeSquashResult::error(format!("Cannot open repository: {}", e.message()))
+            }
         };
-    }
+        if read_merge_squash_conflict_state(&repo).is_none() {
+            return MergeSquashResult::error("No squash-merge conflict in progress to continue.");
+        }
 
-    clear_merge_squash_conflict_state(&repo);
-    MergeSquashResult {
-        ok: true,
-        state: "staged".into(),
-        conflicted_files: Vec::new(),
-        message: "Squash-merge conflict resolved — write a commit message to finish.".into(),
-        backup_ref: None,
-        suggested_message: read_squash_msg(&repo),
-    }
+        let remaining = unmerged_files(&path);
+        if !remaining.is_empty() {
+            let n = remaining.len();
+            return MergeSquashResult {
+                ok: false,
+                state: "conflict".into(),
+                conflicted_files: remaining,
+                message: format!(
+                    "Still conflicted in {n} file{}. Resolve them, then Continue — or Abort.",
+                    if n == 1 { "" } else { "s" }
+                ),
+                backup_ref: None,
+                suggested_message: None,
+            };
+        }
+
+        clear_merge_squash_conflict_state(&repo);
+        MergeSquashResult {
+            ok: true,
+            state: "staged".into(),
+            conflicted_files: Vec::new(),
+            message: "Squash-merge conflict resolved — write a commit message to finish.".into(),
+            backup_ref: None,
+            suggested_message: read_squash_msg(&repo),
+        }
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -1069,55 +1124,64 @@ fn validate_mode(mode: &str) -> Result<(), String> {
 /// always a real merge commit once there's more than one.
 ///
 /// JS: `invoke("merge_start_multi", { path, shas, mode, strategy })`.
+///
+/// Opens the repo with git2 and, via `merge_octopus`/`merge_one`, shells out
+/// to a real `git merge` (possibly across many branches at once, in octopus
+/// mode) — tree diffing and a working-tree checkout whose cost scales with
+/// the repo. As a plain sync fn this ran inline on Tauri's main thread,
+/// freezing the whole window; `async fn` + `run_blocking` fixes that.
 #[tauri::command]
 #[specta::specta]
-pub fn merge_start_multi(path: String, shas: Vec<String>, mode: String, strategy: Option<String>) -> MergeResult {
-    if let Err(e) = validate_mode(&mode) {
-        return MergeResult::error(e);
-    }
-    if shas.len() < 2 {
-        return MergeResult::error("Pick at least two branches to merge.");
-    }
-    for sha in &shas {
-        if let Err(e) = validate_sha(sha) {
+pub async fn merge_start_multi(path: String, shas: Vec<String>, mode: String, strategy: Option<String>) -> MergeResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_mode(&mode) {
             return MergeResult::error(e);
         }
-    }
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-    if in_progress(&repo) {
-        return MergeResult::error("A merge is already in progress — resolve or abort it first.");
-    }
-    if read_merge_queue_state(&repo).is_some() {
-        return MergeResult::error(
-            "A sequential merge queue is already in progress — continue or abort it first.",
+        if shas.len() < 2 {
+            return MergeResult::error("Pick at least two branches to merge.");
+        }
+        for sha in &shas {
+            if let Err(e) = validate_sha(sha) {
+                return MergeResult::error(e);
+            }
+        }
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+        };
+        if in_progress(&repo) {
+            return MergeResult::error("A merge is already in progress — resolve or abort it first.");
+        }
+        if read_merge_queue_state(&repo).is_some() {
+            return MergeResult::error(
+                "A sequential merge queue is already in progress — continue or abort it first.",
+            );
+        }
+
+        if mode == "octopus" {
+            return merge_octopus(&repo, &path, &shas);
+        }
+
+        // sequential — validate the strategy before writing anything.
+        let extra_flag = match parse_strategy(strategy.as_deref()) {
+            Ok(f) => f,
+            Err(e) => return MergeResult::error(e),
+        };
+        write_merge_queue_state(
+            &repo,
+            &MergeQueueState {
+                current: Some(shas[0].clone()),
+                head_before_current: head_sha(&repo),
+                remaining: shas[1..].to_vec(),
+                done: Vec::new(),
+                strategy,
+            },
         );
-    }
-
-    if mode == "octopus" {
-        return merge_octopus(&repo, &path, &shas);
-    }
-
-    // sequential — validate the strategy before writing anything.
-    let extra_flag = match parse_strategy(strategy.as_deref()) {
-        Ok(f) => f,
-        Err(e) => return MergeResult::error(e),
-    };
-    write_merge_queue_state(
-        &repo,
-        &MergeQueueState {
-            current: Some(shas[0].clone()),
-            head_before_current: head_sha(&repo),
-            remaining: shas[1..].to_vec(),
-            done: Vec::new(),
-            strategy,
-        },
-    );
-    let result = merge_one(&repo, &path, &shas[0], extra_flag);
-    settle_queue_step(&repo, &shas[0], &result);
-    result
+        let result = merge_one(&repo, &path, &shas[0], extra_flag);
+        settle_queue_step(&repo, &shas[0], &result);
+        result
+    })
+    .await
 }
 
 /// One octopus attempt — see `merge_start_multi`'s own doc comment for the
@@ -1244,66 +1308,75 @@ fn settle_queue_step(repo: &Repository, sha: &str, result: &MergeResult) {
 /// "the previous attempt never actually happened".
 ///
 /// JS: `invoke("merge_queue_continue", { path })`.
+///
+/// Opens the repo with git2, checks unmerged state via `git diff
+/// --name-only --diff-filter=U`, and — to advance the queue — shells out to
+/// a real `git merge` via `merge_one`, whose cost scales with the branch
+/// being merged. As a plain sync fn this ran inline on Tauri's main thread,
+/// freezing the whole window; `async fn` + `run_blocking` fixes that.
 #[tauri::command]
 #[specta::specta]
-pub fn merge_queue_continue(path: String) -> MergeResult {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-    let Some(mut st) = read_merge_queue_state(&repo) else {
-        return MergeResult::error("No sequential merge queue in progress.");
-    };
-    if in_progress(&repo) || !unmerged_files(&path).is_empty() {
-        return MergeResult::error("Finish resolving the current merge first.");
-    }
-    if let Some(cur) = st.current.clone() {
-        if head_sha(&repo) == st.head_before_current {
-            // HEAD hasn't moved since `current` was set — it was never
-            // actually merged (aborted out of band, or errored outright).
-            // Retry it rather than silently marking it done and skipping on.
-            let extra_flag = match parse_strategy(st.strategy.as_deref()) {
-                Ok(f) => f,
-                Err(e) => return MergeResult::error(e),
-            };
-            let result = merge_one(&repo, &path, &cur, extra_flag);
-            settle_queue_step(&repo, &cur, &result);
-            return result;
-        }
-        st.current = None;
-        st.done.push(cur);
-    }
-    if st.remaining.is_empty() {
-        // Nothing left to advance to. This IS the success path when the sha
-        // just promoted above was the queue's LAST one, resolved via a
-        // conflict (a clean/empty step instead reaches here with `current`
-        // already `None` and `remaining` already empty — `settle_queue_step`
-        // clears the sidecar the moment that happens, so this call wouldn't
-        // even find one — see the `else` above). Report it as the ordinary
-        // "clean" a caller already knows how to route (close + reload +
-        // cheer), same as any other finished merge.
-        clear_merge_queue_state(&repo);
-        return MergeResult {
-            ok: true,
-            state: "clean".into(),
-            conflicted_files: Vec::new(),
-            message: "Sequential merge queue complete.".into(),
-            backup_ref: None,
-            blocked_by_local_changes: false,
+pub async fn merge_queue_continue(path: String) -> MergeResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
         };
-    }
-    let next = st.remaining.remove(0);
-    st.current = Some(next.clone());
-    st.head_before_current = head_sha(&repo);
-    write_merge_queue_state(&repo, &st);
+        let Some(mut st) = read_merge_queue_state(&repo) else {
+            return MergeResult::error("No sequential merge queue in progress.");
+        };
+        if in_progress(&repo) || !unmerged_files(&path).is_empty() {
+            return MergeResult::error("Finish resolving the current merge first.");
+        }
+        if let Some(cur) = st.current.clone() {
+            if head_sha(&repo) == st.head_before_current {
+                // HEAD hasn't moved since `current` was set — it was never
+                // actually merged (aborted out of band, or errored outright).
+                // Retry it rather than silently marking it done and skipping on.
+                let extra_flag = match parse_strategy(st.strategy.as_deref()) {
+                    Ok(f) => f,
+                    Err(e) => return MergeResult::error(e),
+                };
+                let result = merge_one(&repo, &path, &cur, extra_flag);
+                settle_queue_step(&repo, &cur, &result);
+                return result;
+            }
+            st.current = None;
+            st.done.push(cur);
+        }
+        if st.remaining.is_empty() {
+            // Nothing left to advance to. This IS the success path when the sha
+            // just promoted above was the queue's LAST one, resolved via a
+            // conflict (a clean/empty step instead reaches here with `current`
+            // already `None` and `remaining` already empty — `settle_queue_step`
+            // clears the sidecar the moment that happens, so this call wouldn't
+            // even find one — see the `else` above). Report it as the ordinary
+            // "clean" a caller already knows how to route (close + reload +
+            // cheer), same as any other finished merge.
+            clear_merge_queue_state(&repo);
+            return MergeResult {
+                ok: true,
+                state: "clean".into(),
+                conflicted_files: Vec::new(),
+                message: "Sequential merge queue complete.".into(),
+                backup_ref: None,
+                blocked_by_local_changes: false,
+            };
+        }
+        let next = st.remaining.remove(0);
+        st.current = Some(next.clone());
+        st.head_before_current = head_sha(&repo);
+        write_merge_queue_state(&repo, &st);
 
-    let extra_flag = match parse_strategy(st.strategy.as_deref()) {
-        Ok(f) => f,
-        Err(e) => return MergeResult::error(e),
-    };
-    let result = merge_one(&repo, &path, &next, extra_flag);
-    settle_queue_step(&repo, &next, &result);
-    result
+        let extra_flag = match parse_strategy(st.strategy.as_deref()) {
+            Ok(f) => f,
+            Err(e) => return MergeResult::error(e),
+        };
+        let result = merge_one(&repo, &path, &next, extra_flag);
+        settle_queue_step(&repo, &next, &result);
+        result
+    })
+    .await
 }
 
 /// Cancel a sequential merge queue: best-effort abort any conflict on the
@@ -1319,38 +1392,47 @@ pub fn merge_queue_continue(path: String) -> MergeResult {
 /// rely on the snapshot as their only safety net, by design).
 ///
 /// JS: `invoke("merge_queue_abort", { path })`.
+///
+/// Opens the repo with git2 and, when the current step is still mid-merge,
+/// shells out via `merge_abort_impl` to `git merge --abort` — a real
+/// working-tree checkout whose cost scales with the tree's size. As a plain
+/// sync fn this ran inline on Tauri's main thread, freezing the whole
+/// window; `async fn` + `run_blocking` moves it to Tauri's blocking pool.
 #[tauri::command]
 #[specta::specta]
-pub fn merge_queue_abort(path: String) -> MergeResult {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
-    };
-    if read_merge_queue_state(&repo).is_none() {
-        return MergeResult {
+pub async fn merge_queue_abort(path: String) -> MergeResult {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+        };
+        if read_merge_queue_state(&repo).is_none() {
+            return MergeResult {
+                ok: true,
+                state: "clean".into(),
+                conflicted_files: Vec::new(),
+                message: "No sequential merge queue in progress.".into(),
+                backup_ref: None,
+                blocked_by_local_changes: false,
+            };
+        }
+        if in_progress(&repo) {
+            let r = merge_abort_impl(&repo, &path);
+            if r.state != "clean" {
+                return r;
+            }
+        }
+        clear_merge_queue_state(&repo);
+        MergeResult {
             ok: true,
             state: "clean".into(),
             conflicted_files: Vec::new(),
-            message: "No sequential merge queue in progress.".into(),
+            message: "Sequential merge queue cancelled — branches already merged are kept.".into(),
             backup_ref: None,
             blocked_by_local_changes: false,
-        };
-    }
-    if in_progress(&repo) {
-        let r = merge_abort_impl(&repo, &path);
-        if r.state != "clean" {
-            return r;
         }
-    }
-    clear_merge_queue_state(&repo);
-    MergeResult {
-        ok: true,
-        state: "clean".into(),
-        conflicted_files: Vec::new(),
-        message: "Sequential merge queue cancelled — branches already merged are kept.".into(),
-        backup_ref: None,
-        blocked_by_local_changes: false,
-    }
+    })
+    .await
 }
 
 /// Read-only queue status. See [`MergeQueueStatus`]'s own doc comment for the
@@ -1358,20 +1440,29 @@ pub fn merge_queue_abort(path: String) -> MergeResult {
 /// check).
 ///
 /// JS: `invoke("merge_queue_status", { path })`.
+///
+/// Opens the repo with git2 (mirrors `bisect_status`'s own precedent: a
+/// repo-open, even for a small sidecar read, still goes through git2 and is
+/// polled repeatedly — after every queue step and on repo-open recovery).
+/// `async fn` + `run_blocking` keeps that off Tauri's main thread, matching
+/// every other command in this module rather than being the one exception.
 #[tauri::command]
 #[specta::specta]
-pub fn merge_queue_status(path: String) -> MergeQueueStatus {
-    let repo = match crate::trust::open_repo(&path) {
-        Ok(r) => r,
-        Err(_) => return IDLE_QUEUE_STATUS,
-    };
-    match read_merge_queue_state(&repo) {
-        Some(st) => MergeQueueStatus {
-            in_progress: true,
-            current: st.current,
-            remaining: st.remaining,
-            done: st.done,
-        },
-        None => IDLE_QUEUE_STATUS,
-    }
+pub async fn merge_queue_status(path: String) -> MergeQueueStatus {
+    crate::blocking::run_blocking(move || {
+        let repo = match crate::trust::open_repo(&path) {
+            Ok(r) => r,
+            Err(_) => return IDLE_QUEUE_STATUS,
+        };
+        match read_merge_queue_state(&repo) {
+            Some(st) => MergeQueueStatus {
+                in_progress: true,
+                current: st.current,
+                remaining: st.remaining,
+                done: st.done,
+            },
+            None => IDLE_QUEUE_STATUS,
+        }
+    })
+    .await
 }
