@@ -1527,6 +1527,46 @@ async getGitIdentity(path: string) : Promise<Result<GitIdentity, string>> {
 async setGitIdentity(path: string, name: string, email: string) : Promise<WriteResult> {
     return await TAURI_INVOKE("set_git_identity", { path, name, email });
 },
+/**
+ * JS: `commands.getGitConfigValues(path, keys)` ->
+ * `Promise<Result<ConfigEntry[], string>>`. Reads each requested key at
+ * BOTH `--local` and `--global` (2 subprocess calls per key), used both for
+ * the curated fields (`core.autocrlf`, `pull.rebase`, ...) and to re-read a
+ * single key right after an Advanced-section save.
+ */
+async getGitConfigValues(path: string, keys: string[]) : Promise<Result<ConfigEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_git_config_values", { path, keys }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.listGitConfigEntries(path, scope)` ->
+ * `Promise<Result<RawConfigEntry[], string>>`. Backs the Advanced section's
+ * initial listing — `git config <scope> --list -z` (NUL-terminated records,
+ * each `key\nvalue`) so a value containing its own newline can never be
+ * misparsed as a record boundary the way naive line-splitting would.
+ */
+async listGitConfigEntries(path: string, scope: ConfigScope) : Promise<Result<RawConfigEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_git_config_entries", { path, scope }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.setGitConfigValue(path, key, value, scope)` ->
+ * `Promise<WriteResult>` (never rejects; `ok:false` + message on failure,
+ * same non-`Result` contract as `identity::set_git_identity`).
+ * `value: null` unsets the key AT THAT SCOPE (`git config --unset`) rather
+ * than writing an empty string.
+ */
+async setGitConfigValue(path: string, key: string, value: string | null, scope: ConfigScope) : Promise<WriteResult> {
+    return await TAURI_INVOKE("set_git_config_value", { path, key, value, scope });
+},
 async watchRepo(path: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("watch_repo", { path }) };
@@ -2099,6 +2139,18 @@ export type CommitInfo = { sha: string; subject: string }
 export type CommitMeta = { sha: string; subject: string; an: Person; cm: Person; refs: RefChip[]; merge: boolean }
 export type CommitObject = { sha: string; shortSha: string; author: PlumbingPerson; committer: PlumbingPerson; parents: string[]; tree: string; message: string }
 /**
+ * One config key's value at each scope, plus the effective (local-wins)
+ * result — same shape/naming spirit as `identity::GitIdentity`, generalized
+ * from two hardcoded fields to an arbitrary caller-supplied key.
+ */
+export type ConfigEntry = { key: string; local: string | null; global: string | null;
+/**
+ * `local` if set, else `global`, else `None` — identical per-key
+ * fallback to `identity::resolve`'s own name/email handling.
+ */
+effective: string | null }
+export type ConfigScope = "local" | "global"
+/**
  * One conflicted file, with the three merge stages as text.
  * 
  * `base` = stage 1 (common ancestor), `ours` = stage 2 (HEAD / current branch),
@@ -2480,6 +2532,19 @@ export type PlumbingObject = ({ kind: "commit" } & CommitObject) | ({ kind: "tre
 export type PlumbingPerson = { name: string; email: string; time: number }
 export type ProblemAreas = { files: ProblemFile[]; revertOrHotfixCommits: number; totalCommits: number }
 export type ProblemFile = { path: string; bugfixTouches: number; totalTouches: number }
+/**
+ * One raw `key = value` line from `git config --list`, used by the
+ * Settings "Advanced" section to show what's already set at a scope rather
+ * than requiring the user to already know a key's exact name. Deliberately
+ * NOT deduplicated by key: a genuinely multi-valued key (e.g.
+ * `remote.origin.fetch`) shows as one row per value, matching what
+ * `git config --list` itself reports — editing such a row through
+ * [`set_git_config_value`] (a plain, non-`--add` write) will cleanly fail
+ * with git's own "multiple values" error rather than silently collapsing
+ * them, since dedicated GitCat UI (Remotes, Submodules) already owns those
+ * keys.
+ */
+export type RawConfigEntry = { key: string; value: string }
 /**
  * Result of any rebase step (start / continue / skip / abort). Serializes
  * camelCase: `conflictedFiles`, `backupRef`.

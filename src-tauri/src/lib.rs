@@ -15,6 +15,7 @@ pub mod git_tag; // Tags: create / delete (push_tag lives in git_remote.rs — s
 pub mod git_write;
 pub mod workdir; // working-tree status + stage/unstage/discard/commit + stash
 pub mod git_bisect; // M3: git bisect (start / mark good|bad|skip / status / reset)
+pub mod git_config; // Settings' Git Config panel: generic per-key local/global git config read/write (identity.rs generalized beyond user.name/user.email)
 pub mod git_merge; // M6 (stage 1): merge (drag-onto-HEAD) + continue / abort
 pub mod git_rebase; // M6 (stage 2): linear rebase onto a target + continue / skip / abort
 pub mod git_revert; // M6 (stage 3): revert a single commit onto HEAD + continue / abort
@@ -220,6 +221,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // Setup wizard: repo-local git identity check + fix (never touches global config)
         identity::get_git_identity,
         identity::set_git_identity,
+        git_config::get_git_config_values,
+        git_config::list_git_config_entries,
+        git_config::set_git_config_value,
         // Live refresh: watch/unwatch the open repo's git-dir for external changes
         watch::watch_repo,
         watch::unwatch_repo,

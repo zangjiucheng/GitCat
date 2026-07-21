@@ -9,8 +9,9 @@
   // chrome ExternalTools/SetupWizard reuse). The Git Identity section
   // mirrors SetupWizard's own identity step markup closely — see
   // settings.svelte.ts's header doc for why.
-  import { settingsCtrl } from "./settings.svelte.ts";
+  import { settingsCtrl, CURATED_CONFIG_FIELDS } from "./settings.svelte.ts";
   import type { ThemeMode } from "./settings.svelte.ts";
+  import type { ConfigScope } from "../../ipc/bindings";
   import { playTamaSound } from "../../legacy/sound.ts";
 
   function onKeydown(e: KeyboardEvent) {
@@ -26,6 +27,15 @@
   // with no step would invite showing users a distracting 17-decimal float.
   function onVolumeInput(e: Event) {
     settingsCtrl.setSoundEffectsVolume(Number((e.target as HTMLInputElement).value) / 100);
+  }
+
+  function onConfigScopeChange(e: Event) {
+    settingsCtrl.setConfigScope((e.target as HTMLSelectElement).value as ConfigScope);
+  }
+
+  function onCuratedFieldChange(key: string, e: Event) {
+    const v = (e.target as HTMLInputElement | HTMLSelectElement).value.trim();
+    void settingsCtrl.setConfigField(key, v || null);
   }
 </script>
 
@@ -129,6 +139,117 @@
         <p class="mut" style="font-size:11.5px;margin:8px 0 0">
           Written only to this repository's <code>.git/config</code> — your global git identity is never touched.
         </p>
+      {/if}
+
+      <h4 class="d-lab">Git config</h4>
+      {#if !settingsCtrl.repo}
+        <p class="mut">Open a repository to view or edit its git configuration.</p>
+      {:else}
+        <div class="rm-form" style="margin-bottom:10px">
+          <select value={settingsCtrl.configScope} onchange={onConfigScopeChange}>
+            <option value="local">This repository (.git/config)</option>
+            <option value="global">Global (~/.gitconfig — every repository)</option>
+          </select>
+        </div>
+        {#if settingsCtrl.configLoading}
+          <div class="log-row"><span class="spinner"></span><span class="msg mut">Loading git configuration&#8230;</span></div>
+        {:else}
+          {#if settingsCtrl.configError}
+            <div class="pl-err" style="margin-bottom:8px">{settingsCtrl.configError}</div>
+          {/if}
+          <div class="rm-form">
+            {#each CURATED_CONFIG_FIELDS as field (field.key)}
+              <label for={"cfg-" + field.key} style="font-size:12px;color:var(--muted)">{field.label}</label>
+              {#if field.kind === "select"}
+                <select
+                  id={"cfg-" + field.key}
+                  value={settingsCtrl.configFieldValue(field.key)}
+                  disabled={settingsCtrl.savingConfigKey === field.key}
+                  onchange={(e) => onCuratedFieldChange(field.key, e)}
+                >
+                  {#each field.options ?? [] as opt (opt.value)}
+                    <option value={opt.value}>{opt.label}</option>
+                  {/each}
+                </select>
+              {:else}
+                <input
+                  id={"cfg-" + field.key}
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder={field.placeholder}
+                  value={settingsCtrl.configFieldValue(field.key)}
+                  disabled={settingsCtrl.savingConfigKey === field.key}
+                  onchange={(e) => onCuratedFieldChange(field.key, e)}
+                />
+              {/if}
+              {#if settingsCtrl.effectiveConfigHint(field.key)}
+                <p class="mut" style="font-size:11px;margin:2px 0 0">{settingsCtrl.effectiveConfigHint(field.key)}</p>
+              {/if}
+              {#if settingsCtrl.configFieldErrors[field.key]}
+                <div class="pl-err" style="font-size:11px;margin:2px 0 0">{settingsCtrl.configFieldErrors[field.key]}</div>
+              {/if}
+            {/each}
+          </div>
+
+          {#if !settingsCtrl.advancedOpen}
+            <button class="btn ghost" style="margin-top:10px" onclick={() => settingsCtrl.openAdvanced()}>Show advanced (any key)&#8230;</button>
+          {:else}
+            <button class="btn ghost" style="margin-top:10px" onclick={() => settingsCtrl.closeAdvanced()}>Hide advanced</button>
+            <div style="margin-top:8px">
+              {#if settingsCtrl.advancedLoading}
+                <div class="log-row"><span class="spinner"></span><span class="msg mut">Loading&#8230;</span></div>
+              {:else}
+                {#if settingsCtrl.advancedError}
+                  <div class="pl-err" style="margin-bottom:6px">{settingsCtrl.advancedError}</div>
+                {/if}
+                {#each settingsCtrl.advancedEntries as entry (entry.key + " " + entry.value)}
+                  <div class="log-row" style="justify-content:space-between;gap:8px">
+                    <span class="msg" style="font-family:monospace;font-size:11.5px;overflow-wrap:anywhere">{entry.key} = {entry.value}</span>
+                    <button
+                      class="btn ghost"
+                      style="flex:0 0 auto"
+                      disabled={settingsCtrl.savingConfigKey === entry.key}
+                      onclick={() => settingsCtrl.removeAdvancedEntry(entry.key)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                {:else}
+                  <p class="mut" style="font-size:11.5px">No {settingsCtrl.configScope} config entries.</p>
+                {/each}
+                <p class="mut" style="font-size:11px;margin:8px 0 4px">
+                  Add a key, or type an existing key's name to update its value.
+                </p>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="section.key"
+                    bind:value={settingsCtrl.newAdvancedKey}
+                    disabled={settingsCtrl.savingConfigKey !== null}
+                    style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--text);font:inherit;font-size:12px;padding:6px 8px"
+                  />
+                  <input
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="value"
+                    bind:value={settingsCtrl.newAdvancedValue}
+                    disabled={settingsCtrl.savingConfigKey !== null}
+                    style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--text);font:inherit;font-size:12px;padding:6px 8px"
+                  />
+                  <button
+                    class="btn ghost"
+                    style="flex:0 0 auto"
+                    disabled={!settingsCtrl.newAdvancedKey.trim() || settingsCtrl.savingConfigKey !== null}
+                    onclick={() => settingsCtrl.addAdvancedEntry()}
+                  >
+                    Set
+                  </button>
+                </div>
+              {/if}
+            </div>
+          {/if}
+        {/if}
       {/if}
     </div>
     <div class="modal-foot">
