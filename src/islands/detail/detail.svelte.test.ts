@@ -114,12 +114,34 @@ describe("isolation", () => {
 });
 
 describe("showHero / showEmpty", () => {
-  it("showHero sets the loaded hero and clears any selected commit", () => {
+  it("showHero sets the loaded hero when nothing is selected", () => {
     setDemoGraph();
-    detailCtrl.select(0);
     detailCtrl.showHero(128, 293.4);
     expect(detailCtrl.hero).toEqual({ kind: "loaded", n: 128, ms: 293.4 });
     expect(detailCtrl.commit).toBeNull();
+  });
+
+  it("showHero does NOT clear an already-selected commit — regression for the streaming graph load", () => {
+    // legacy/main.ts's onGraphBatch calls showHero() on EVERY streamed batch
+    // (to live-update the "N commits laid out in M ms" counter), not just
+    // once at the end. A commit clicked while later batches are still
+    // arriving used to have its detail panel (and any expanded diff) silently
+    // closed by the very next batch, since showHero unconditionally cleared
+    // `commit` regardless of whether one was actually selected.
+    setDemoGraph();
+    detailCtrl.select(0);
+    expect(detailCtrl.commit).not.toBeNull();
+    detailCtrl.expandDiff();
+    expect(detailCtrl.diffExpanded).toBe(true);
+
+    detailCtrl.showHero(129, 300.1);
+
+    expect(detailCtrl.commit).not.toBeNull();
+    expect(detailCtrl.diffExpanded).toBe(true);
+    // The live count is still tracked for whenever the user DOES step away
+    // (deselect()'s own "restore whichever hero showHero last set" contract).
+    detailCtrl.deselect();
+    expect(detailCtrl.hero).toEqual({ kind: "loaded", n: 129, ms: 300.1 });
   });
 
   it("showEmpty sets the empty hero and clears any selected commit", () => {
