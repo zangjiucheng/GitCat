@@ -657,12 +657,14 @@ class Tama3DActor implements TamaActor {
         break;
       }
       case "greeting":
-        // Wave side-to-side in screen space. Wrist Y stays fixed so the palm
-        // does not repeatedly flip toward and away from the camera.
+        // Swing the upright forearm around the elbow so the hand's center
+        // travels left/right. Counter-rotate the wrist by the same amount to
+        // keep the palm facing the camera instead of rocking front/back.
+        const wave = Math.sin(time * 5.2) * 0.24;
         rightArmZ = -0.66;
-        rightElbowZ = -2.02;
+        rightElbowZ = -2.02 + wave;
         rightWristY = -0.8;
-        rightWristZ = Math.sin(time * 5.2) * 0.3;
+        rightWristZ = -wave;
         rightFingerCurl = 0.02;
         rightFingerSpread = 0.24;
         rightFingerRipple = 0.025;
