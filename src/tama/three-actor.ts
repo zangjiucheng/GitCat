@@ -655,9 +655,10 @@ class Tama3DActor implements TamaActor {
         break;
       case "confused":
         // One ear up, one ear out, and mismatched tails form the question.
+        // Keep both eyes on the shared blink track: asymmetric eye openness
+        // reads as a broken rig once the animated eyelids are visible.
         headZ += 0.15 + Math.sin(time * 2.4) * 0.02;
-        leftEyeOpen = 0.82;
-        rightEyeOpen = 1.08;
+        leftEyeOpen = rightEyeOpen = 0.96;
         leftEarZ = 0.1;
         rightEarZ = 0.24;
         tailBaseZ = 0.08;
