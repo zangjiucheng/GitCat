@@ -116,7 +116,7 @@ mount(Detail, { target: document.getElementById("detail")! });
 // the removed DRAWER section for why this (and Reflog/Rerere/Plumbing
 // below) are no longer mounted into a permanent drawer pane. MUST mount
 // inside #canvasWrap, not document.body: its position:absolute floats
-// relative to that element, same as #deltaReadout/.hint.
+// relative to that element, same as #deltaReadout.
 mount(BisectDrawer, { target: document.getElementById("bisectPanelMount")! });
 
 mount(Sidebar, { target: document.getElementById("sidebarRefs")! });
