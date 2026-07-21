@@ -45,3 +45,21 @@ tauri-plugin-devtools = "2.1.0"
 console-subscriber = "0.5"
 tokio = { version = "1", features = ["tracing"] }
 
+# A separate profile for local flamegraph profiling (samply, WPA, etc. —
+# see run()'s own doc comment in lib.rs for the profiling story this is
+# part of), DELIBERATELY NOT added to [profile.release] itself:
+# .github/workflows/release.yml's real release pipeline builds a 6-platform
+# matrix that all share whatever [profile.release] says, and unlike
+# Windows' MSVC toolchain (which always emits debug info as a SEPARATE .pdb
+# next to the .exe, at zero cost to the shipped binary), Linux/macOS
+# typically embed DWARF debug info directly IN the binary unless a
+# platform-specific strip step runs — turning debug info on for every
+# platform's real release artifact just to profile locally on one dev's
+# Windows machine would have silently bloated 5 platforms' shipped
+# installers for a benefit only this one has any use for. `cargo build
+# --profile profiling` builds into target/profiling/ instead, fully
+# isolated from anything release.yml touches.
+[profile.profiling]
+inherits = "release"
+debug = true
+
