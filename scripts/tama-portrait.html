@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tama portrait renderer</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+      }
+
+      #mount {
+        width: 380px;
+        height: 520px;
+      }
+
+      .tama-3d-canvas {
+        display: block;
+        width: 100% !important;
+        height: 100% !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="mount"></div>
+    <script type="module">
+      import { createTama3DActor } from "/src/tama/three-actor.ts";
+
+      const state = new URLSearchParams(location.search).get("state") ?? "idle";
+      const mount = document.querySelector("#mount");
+      const actor = createTama3DActor({
+        mount,
+        onUnavailable: () => {
+          document.body.dataset.ready = "error";
+        },
+      });
+      actor.setState(state);
+      const loaded = await actor.load();
+      actor.setState(state);
+      document.body.dataset.ready = loaded ? "true" : "error";
+    </script>
+  </body>
+</html>

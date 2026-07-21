@@ -13,8 +13,14 @@ type Rig = {
   head: THREE.Object3D | null;
   neck: THREE.Object3D | null;
   upperBody: THREE.Object3D | null;
+  leftShoulder: THREE.Object3D | null;
+  rightShoulder: THREE.Object3D | null;
   leftArm: THREE.Object3D | null;
   rightArm: THREE.Object3D | null;
+  leftElbow: THREE.Object3D | null;
+  rightElbow: THREE.Object3D | null;
+  leftWrist: THREE.Object3D | null;
+  rightWrist: THREE.Object3D | null;
   tail: THREE.Object3D | null;
 };
 
@@ -36,8 +42,22 @@ class Tama3DActor implements TamaActor {
   private pointerY = 0;
   private gesture: TamaGesture | null = null;
   private gestureStarted = 0;
-  private rig: Rig = { head: null, neck: null, upperBody: null, leftArm: null, rightArm: null, tail: null };
+  private rig: Rig = {
+    head: null,
+    neck: null,
+    upperBody: null,
+    leftShoulder: null,
+    rightShoulder: null,
+    leftArm: null,
+    rightArm: null,
+    leftElbow: null,
+    rightElbow: null,
+    leftWrist: null,
+    rightWrist: null,
+    tail: null,
+  };
   private baseRotations = new Map<THREE.Object3D, THREE.Euler>();
+  private baseModelPosition = new THREE.Vector3();
 
   constructor(options: ThreeActorOptions) {
     this.mount = options.mount;
@@ -159,6 +179,7 @@ class Tama3DActor implements TamaActor {
     const box = new THREE.Box3().setFromObject(this.model);
     const center = box.getCenter(new THREE.Vector3());
     this.model.position.set(-center.x, -box.min.y, -center.z);
+    this.baseModelPosition.copy(this.model.position);
   }
 
   private frameCamera(): void {
@@ -193,8 +214,14 @@ class Tama3DActor implements TamaActor {
       head: find("頭", "头", "Head"),
       neck: find("首", "Neck"),
       upperBody: find("上半身2", "上半身", "UpperBody"),
+      leftShoulder: find("左肩", "LeftShoulder"),
+      rightShoulder: find("右肩", "RightShoulder"),
       leftArm: find("左腕", "左腕", "LeftArm"),
       rightArm: find("右腕", "右腕", "RightArm"),
+      leftElbow: find("左ひじ", "LeftElbow"),
+      rightElbow: find("右ひじ", "RightElbow"),
+      leftWrist: find("左手首", "LeftWrist"),
+      rightWrist: find("右手首", "RightWrist"),
       tail: find("尾", "Tail"),
     };
     for (const bone of Object.values(this.rig)) {
@@ -249,23 +276,89 @@ class Tama3DActor implements TamaActor {
     let headX = this.pointerY * 0.16;
     let headY = this.pointerX * 0.28;
     let headZ = Math.sin(time * 0.75) * 0.018;
-    let arm = 0;
+    let bodyX = breathe;
+    let bodyY = 0;
+    let bodyZ = -breathe * 0.5;
+    let leftShoulderZ = 0;
+    let rightShoulderZ = 0;
+    let leftArmZ = 0;
+    let rightArmZ = 0;
+    let leftElbowX = 0;
+    let rightElbowX = 0;
+    let leftElbowZ = 0;
+    let rightElbowZ = 0;
+    let leftWristY = 0;
+    let rightWristY = 0;
+    let lift = Math.sin(time * 1.8) * 0.004;
+    let sway = 0;
 
     if (this.state === "sleep") {
-      headX += 0.2;
+      headX += 0.24;
       headZ += 0.16;
+      bodyX += 0.08;
+      leftArmZ = 0.12;
+      rightArmZ = -0.12;
+      lift = -0.012;
     } else if (this.state === "thinking") {
       headZ -= 0.13;
       headY += 0.12;
-    } else if (this.state === "warn" || this.state === "confused") {
+      rightArmZ = 0.48;
+      rightElbowX = -0.72;
+      rightWristY = -0.2;
+    } else if (this.state === "warn") {
+      headX -= 0.08;
       headZ += Math.sin(time * 7) * 0.035;
+      leftArmZ = -0.34;
+      rightArmZ = 0.34;
+      leftElbowX = rightElbowX = -0.28;
     } else if (this.state === "danger") {
       headY += Math.sin(time * 14) * 0.06;
-    } else if (this.state === "celebrate" || this.state === "greeting") {
-      arm = 0.55 + Math.sin(time * 5) * 0.12;
+      leftArmZ = -(0.66 + Math.sin(time * 11) * 0.08);
+      rightArmZ = 0.66 + Math.sin(time * 11 + 1.4) * 0.08;
+      leftElbowX = rightElbowX = -0.48;
+      sway = Math.sin(time * 16) * 0.012;
+    } else if (this.state === "celebrate") {
+      leftArmZ = -(0.68 + Math.sin(time * 5) * 0.12);
+      rightArmZ = 0.68 + Math.sin(time * 5 + 1.2) * 0.12;
+      leftElbowX = rightElbowX = -0.32;
       headZ += Math.sin(time * 3) * 0.05;
-    } else if (this.state === "curious" || this.state === "hint") {
+      lift = Math.max(0, Math.sin(time * 4)) * 0.035;
+    } else if (this.state === "greeting") {
+      rightArmZ = 0.7;
+      rightElbowX = -0.58;
+      rightWristY = Math.sin(time * 6) * 0.34;
+      leftArmZ = -0.08;
+      headZ -= 0.045;
+    } else if (this.state === "rescue") {
+      rightArmZ = 0.58;
+      rightElbowX = -0.24;
+      leftArmZ = -0.16;
+      bodyZ = -0.06;
+      headZ -= 0.055;
+    } else if (this.state === "confused") {
+      headZ += 0.16 + Math.sin(time * 2.4) * 0.025;
+      leftShoulderZ = -0.13;
+      rightShoulderZ = 0.13;
+      leftArmZ = -0.28;
+      rightArmZ = 0.28;
+      leftElbowZ = -0.2;
+      rightElbowZ = 0.2;
+    } else if (this.state === "syncing") {
+      headX += 0.06;
+      leftArmZ = -0.26;
+      rightArmZ = 0.26;
+      leftElbowX = -0.42 + Math.sin(time * 5) * 0.12;
+      rightElbowX = -0.42 + Math.sin(time * 5 + Math.PI) * 0.12;
+      bodyY = Math.sin(time * 2.5) * 0.018;
+    } else if (this.state === "curious") {
       headZ -= 0.1;
+      leftArmZ = -0.16;
+      leftElbowX = -0.32;
+    } else if (this.state === "hint") {
+      headZ -= 0.12;
+      rightArmZ = 0.38;
+      rightElbowX = -0.46;
+      rightWristY = 0.18 + Math.sin(time * 3) * 0.08;
     }
 
     const gestureAge = performance.now() - this.gestureStarted;
@@ -279,10 +372,20 @@ class Tama3DActor implements TamaActor {
 
     apply(this.rig.head, headX, headY, headZ);
     apply(this.rig.neck, headX * 0.25, headY * 0.2, headZ * 0.2);
-    apply(this.rig.upperBody, breathe, 0, -breathe * 0.5);
-    apply(this.rig.leftArm, 0, 0, -arm);
-    apply(this.rig.rightArm, 0, 0, arm);
+    apply(this.rig.upperBody, bodyX, bodyY, bodyZ);
+    apply(this.rig.leftShoulder, 0, 0, leftShoulderZ);
+    apply(this.rig.rightShoulder, 0, 0, rightShoulderZ);
+    apply(this.rig.leftArm, 0, 0, leftArmZ);
+    apply(this.rig.rightArm, 0, 0, rightArmZ);
+    apply(this.rig.leftElbow, leftElbowX, 0, leftElbowZ);
+    apply(this.rig.rightElbow, rightElbowX, 0, rightElbowZ);
+    apply(this.rig.leftWrist, 0, leftWristY, 0);
+    apply(this.rig.rightWrist, 0, rightWristY, 0);
     apply(this.rig.tail, 0, Math.sin(time * 2.4) * 0.14, Math.sin(time * 1.7) * 0.06);
+    if (this.model) {
+      this.model.position.x = THREE.MathUtils.lerp(this.model.position.x, this.baseModelPosition.x + sway, smooth);
+      this.model.position.y = THREE.MathUtils.lerp(this.model.position.y, this.baseModelPosition.y + lift, smooth);
+    }
   }
 
   private handleVisibility = (): void => {
