@@ -512,217 +512,311 @@ class Tama3DActor implements TamaActor {
     // Z; the old X-only bends mostly moved the forearm in depth and made the
     // poses look unchanged (or anatomically wrong) from the front camera.
     switch (this.state) {
-      case "idle":
-        // Relaxed nekomata idle: the two ears twitch independently while the
-        // split tails drift out of phase. Arms stay entirely at rest.
-        headZ += Math.sin(time * 0.75) * 0.012;
+      case "idle": {
+        // Calm nekomata idle: breathing rides the big head/torso silhouette,
+        // the two ears move independently, and the split tails drift slowly out
+        // of phase. Arms stay entirely at rest. Lowest tempo on the ladder.
+        const breath = Math.sin(time * 0.9);
+        headX += breath * 0.035;                 // gentle chin bob = breathing
+        bodyX += breath * 0.03;                  // upper chest rides the same breath
+        headZ += Math.sin(time * 0.6) * 0.02;    // slow, low-arousal head roll
+        // LEFT ear drifts + fires a sparse sharp up-flick (~every 7-8s); RIGHT
+        // just drifts on its own freq/phase -> one ear twitches alone.
+        const leftEarFlick = Math.pow(Math.max(0, Math.sin(time * 0.83)), 12) * 0.28;
+        leftEarZ = -Math.sin(time * 0.7) * 0.05 + leftEarFlick;
+        rightEarZ = Math.sin(time * 1.05 + 1.7) * 0.05;
+        leftEarX = rightEarX = Math.sin(time * 0.7) * 0.05;
+        tailBaseY = Math.sin(time * 0.5) * 0.1;  // slow, gentle, out-of-phase drift
+        leftTailY = Math.sin(time * 0.6) * 0.12;
+        rightTailY = Math.sin(time * 0.6 + Math.PI) * 0.12;
         break;
+      }
       case "sleep":
-        // Ears loosen outward, tails curl close, and the whole torso settles.
-        headX += 0.3;
-        headZ += 0.11;
-        bodyX += 0.1;
-        leftEarX = rightEarX = 0.08;
-        leftEarZ = -0.2;
-        rightEarZ = 0.2;
-        tailBaseY = Math.sin(time * 0.55) * 0.025;
+        // Head drooped forward + lolled to one side with a slow dozing bob. Kept
+        // at 0.40 so the deeper droop doesn't hide the closed eyelids (the key
+        // sleep signal) behind the bangs.
+        headX += 0.4 + Math.sin(time * 0.4) * 0.05;
+        headY += 0.05;
+        headZ += 0.22;
+        bodyX += 0.16 + Math.sin(time * 0.4) * 0.03;   // settled, slow breathing
+        bodyZ += 0.06;
+        lowerBodyZ = 0.05;
+        // Ears fully relaxed: splayed wide + pitched DOWN, held still (droop).
+        leftEarX = rightEarX = 0.16;
+        leftEarZ = -0.42;
+        rightEarZ = 0.42;
+        leftEarY = 0.05;
+        rightEarY = -0.05;
+        tailBaseY = Math.sin(time * 0.35) * 0.02;      // curled in, nearly still
         leftTailY = rightTailY = 0;
-        leftTailZ = 0.2;
-        rightTailZ = -0.2;
-        lift = -0.012;
-        leftEyeOpen = 0.045;
-        rightEyeOpen = 0.045;
+        leftTailZ = 0.28;
+        rightTailZ = -0.28;
+        lift = -0.018;
+        leftEyeOpen = rightEyeOpen = 0.045;
         break;
       case "hint":
-        // One ear locks onto the target before a restrained presenting paw.
-        headZ -= 0.1;
-        headY += 0.08;
-        leftArmZ = 0.28;
-        leftElbowZ = 1.8;
-        leftWristY = 0.82;
-        leftWristZ = -0.04 + Math.sin(time * 3) * 0.035;
-        leftFingerCurl = 0.16 + Math.sin(time * 3) * 0.025;
-        leftFingerRipple = 0.015;
-        leftEarZ = 0.08;
-        rightEarZ = 0.02;
-        tailBaseY = Math.sin(time * 2.2) * 0.13;
-        leftTailZ = 0.12;
-        rightTailZ = -0.08;
+        // Look-here: the head and one ear lock onto the target while a lively
+        // presenting paw beckons forward and the eyes brighten with attention.
+        headY += 0.2;            // turn to face the paw/target (character's left)
+        headZ -= 0.16;           // deeper curious head-cock
+        headX -= 0.04;           // slight chin-up = bright, inviting
+        leftArmZ = 0.32;         // +Z raises the LEFT arm to shoulder height
+        leftArmX = -0.12;        // -X swings forward toward camera = offer the tip
+        leftElbowZ = 1.7;        // fold so the paw sits up (|Z| < 2.4)
+        leftWristY = 0.82;       // palm toward the camera
+        leftWristZ = Math.sin(time * 3) * 0.12;        // gentle "come look" beckon
+        leftFingerCurl = 0.16 + Math.sin(time * 3) * 0.03;
+        leftFingerRipple = 0.02;
+        // LEFT ear perks UP + forward onto the target; RIGHT stays relaxed splay.
+        leftEarZ = 0.34 + Math.sin(time * 4) * 0.05;
+        leftEarY = 0.22;
+        rightEarZ = 0.16 + Math.sin(time * 1.6) * 0.03;
+        leftEyeOpen = rightEyeOpen = 1.05;
+        tailBaseY = Math.sin(time * 2.4) * 0.18;       // peppy, livelier than idle
+        leftTailY = Math.sin(time * 2.4 + 0.6) * 0.12;
+        rightTailY = Math.sin(time * 2.4 - 0.6) * 0.12;
+        leftTailZ = 0.14;
+        rightTailZ = -0.06;
         break;
       case "thinking":
-        // Asymmetric ears and a slow tail tip sell concentration; only one
-        // hand sits under the chin instead of floating beside the cheek.
-        headX += 0.035;
-        headZ -= 0.08;
-        headY += 0.08;
-        rightArmZ = 0.2;
+        // Clear sideways head COCK + gaze-off turn + gentle chin-down.
+        headX += 0.09;
+        headZ += -0.2 + Math.sin(time * 0.45) * 0.03;
+        headY += 0.16;
+        bodyZ -= 0.05;           // subtle matching lean (keeps the breathe term)
+        // Right hand toward chin: swing the whole arm FORWARD (-X) so it clears
+        // the hair. Arm/elbow Z are IK seeds (the thinking IK overrides elbow.z).
+        rightArmX = -0.35;
+        rightArmZ = 0.1;
         rightElbowZ = -1.55;
-        rightWristY = -0.55;
+        rightWristX = -0.15;
+        rightWristY = -0.6;
         rightWristZ = 0.04;
-        rightFingerCurl = 0.12;
-        leftEyeOpen = 0.82;
-        rightEyeOpen = 0.9;
-        leftEarZ = -0.14;
-        rightEarZ = -0.02;
-        tailBaseY = Math.sin(time * 0.85) * 0.045;
-        leftTailY = Math.sin(time * 1.1) * 0.04;
-        rightTailY = Math.sin(time * 1.1 + 1.4) * 0.04;
+        rightFingerCurl = 0.2;
+        leftEyeOpen = rightEyeOpen = 0.85;             // symmetric concentration squint (lid-free)
+        // Asymmetry: RIGHT ear pinned up/alert (slow twitch), LEFT splayed down.
+        leftEarZ = -0.28;
+        rightEarZ = -0.35 + Math.sin(time * 1.3) * 0.05;
+        tailBaseY = Math.sin(time * 0.6) * 0.1;        // slow, deliberate ponder sway
+        leftTailY = Math.sin(time * 0.75) * 0.1;
+        rightTailY = Math.sin(time * 0.75 + 1.6) * 0.1;
         break;
       case "warn":
-        // Ears pin back and the tails go rigid before one small stop gesture.
-        headX -= 0.07;
-        headZ += Math.sin(time * 7) * 0.025;
-        leftArmZ = 0.3;
-        leftElbowZ = 1.82;
-        leftWristX = -0.2;
+        // Chin-up recoil ("careful") + held alert cock + nervous micro-sway.
+        headX -= 0.1;
+        headZ = 0.06 + Math.sin(time * 8) * 0.03;
+        // Raised open "hold on" hand: high, forward (-X), palm to camera, splayed.
+        leftArmZ = 0.45;
+        leftArmX = -0.16;
+        leftElbowZ = 1.95;
+        leftWristX = -0.15;
         leftWristY = 0.82;
         leftFingerCurl = 0;
-        leftFingerSpread = 0.22;
-        leftEyeOpen = rightEyeOpen = 1.08;
-        bodyX -= 0.035;
-        leftEarZ = -0.25;
-        rightEarZ = 0.25;
+        leftFingerSpread = 0.32;
+        leftEyeOpen = rightEyeOpen = 1.12;
+        bodyX -= 0.06;                                 // slight upper-body recoil
+        // Ears PINNED UP (perk sign) + synced fast twitch = tension. #1 carrier.
+        leftEarZ = 0.38 + Math.sin(time * 10) * 0.04;
+        rightEarZ = -0.38 - Math.sin(time * 10) * 0.04;
+        leftEarX = rightEarX = 0;
+        // Stiff tail held to one side + fast tense twitch.
         tailBaseY = 0;
+        tailBaseZ = 0.12 + Math.sin(time * 9) * 0.04;
         leftTailY = rightTailY = 0;
-        leftTailZ = 0.1;
-        rightTailZ = -0.1;
+        leftTailZ = 0.14;
+        rightTailZ = -0.14;
         break;
       case "danger": {
-        // Pinned ears and rapidly lashing twin tails lead the panic motion.
-        const panic = Math.sin(time * 11) * 0.07;
-        headY += Math.sin(time * 14) * 0.045;
-        leftArmZ = 0.55 + panic * 0.4;
-        rightArmZ = -0.55 - panic * 0.4;
+        // Alarm/panic: ears splay hard-flat and lash, twin tails whip fast, the
+        // head recoils and scans, and both palms shove forward defensively. Flat
+        // ears (earX 0) + fast motion + wide eyes separate this from sleep's
+        // still, down-pitched droop.
+        const lash = Math.sin(time * 18) * 0.14;       // fast ear flutter
+        const shake = Math.sin(time * 16) * 0.09;      // nervous head scan
+        headX -= 0.06;                                 // chin-up recoil (lean away)
+        headY += shake;
+        headZ += Math.sin(time * 13) * 0.05;           // agitated tilt tremor
+        bodyX -= 0.04;                                 // torso recoil
+        lowerBodyZ = Math.sin(time * 15) * 0.03;
+        sway = Math.sin(time * 15 + Math.PI) * 0.02;
+        leftArmZ = 0.6 + Math.sin(time * 17) * 0.05;   // high defensive palms, flinching
+        rightArmZ = -0.6 - Math.sin(time * 17) * 0.05;
+        leftArmX = -0.12;
+        rightArmX = -0.12;
         leftElbowZ = 2.14;
         rightElbowZ = -2.14;
         leftWristY = 0.82;
         rightWristY = -0.82;
         leftWristZ = -0.04;
         rightWristZ = 0.04;
-        leftFingerCurl = 0.14;
-        rightFingerCurl = 0.14;
-        leftFingerSpread = 0.06;
-        rightFingerSpread = 0.06;
-        leftEyeOpen = rightEyeOpen = 1.14;
-        leftEarZ = -0.32 + panic * 0.2;
-        rightEarZ = 0.32 - panic * 0.2;
-        tailBaseY = Math.sin(time * 8.5) * 0.22;
-        leftTailY = Math.sin(time * 9.5) * 0.18;
-        rightTailY = Math.sin(time * 9.5 + 1.2) * 0.18;
-        sway = Math.sin(time * 16) * 0.01;
+        leftFingerCurl = rightFingerCurl = 0;
+        leftFingerSpread = rightFingerSpread = 0.2;
+        leftEyeOpen = rightEyeOpen = 1.2;              // wide, unblinking panic stare
+        leftEarX = rightEarX = 0;
+        leftEarZ = -0.46 + lash;
+        rightEarZ = 0.46 - lash;
+        tailBaseY = Math.sin(time * 10) * 0.34;        // fast, wide whip
+        leftTailY = Math.sin(time * 11) * 0.24;
+        rightTailY = Math.sin(time * 11 + 1.2) * 0.24;
+        leftTailZ = 0.04;
+        rightTailZ = -0.04;
         break;
       }
       case "celebrate": {
-        // Open hands by the cheeks; ears perk and both tails wag broadly.
-        const cheer = Math.sin(time * 5) * 0.045;
-        leftArmZ = 0.4 + cheer;
-        rightArmZ = -0.4 - cheer;
-        leftElbowZ = 2.02;
-        rightElbowZ = -2.02;
+        // Wide bright eyes carry the joy; open hands lift into a real cheer while
+        // hard-perked ears and a broad twin-tail wag add celebratory energy.
+        const cheer = Math.sin(time * 6) * 0.06;
+        leftArmZ = 0.52 + cheer;                       // raise open hands (safe height)
+        rightArmZ = -0.52 - cheer;
+        leftElbowZ = 2.0;                              // forearms vertical -> palms up
+        rightElbowZ = -2.0;
         leftWristY = 0.82;
         rightWristY = -0.82;
         leftWristZ = -0.03;
         rightWristZ = 0.03;
         leftFingerCurl = 0;
         rightFingerCurl = 0;
-        leftFingerSpread = 0.38;
-        rightFingerSpread = 0.38;
-        leftEyeOpen = rightEyeOpen = 0.82;
-        leftEarZ = 0.08;
-        rightEarZ = -0.08;
-        tailBaseY = Math.sin(time * 4.2) * 0.2;
-        leftTailY = Math.sin(time * 5.2) * 0.2;
-        rightTailY = Math.sin(time * 5.2 + Math.PI) * 0.2;
-        headZ += Math.sin(time * 3) * 0.035;
-        lift = Math.max(0, Math.sin(time * 4)) * 0.022;
+        leftFingerSpread = 0.5;                        // open jazz-hands silhouette
+        rightFingerSpread = 0.5;
+        leftEyeOpen = rightEyeOpen = 1.12;             // wide, bright, joyful
+        leftEarZ = 0.26 + Math.sin(time * 7) * 0.05;   // ears pinned UP + lively perk
+        rightEarZ = -0.26 - Math.sin(time * 7) * 0.05;
+        tailBaseY = Math.sin(time * 5) * 0.3;          // big whole-tail sway
+        leftTailY = Math.sin(time * 6) * 0.34;         // broad, out-of-phase wag
+        rightTailY = Math.sin(time * 6 + Math.PI) * 0.34;
+        headX += -0.06;                                // slight bright look-up (additive)
+        headZ += Math.sin(time * 3.4) * 0.05;          // playful side tilt
+        lift = Math.max(0, Math.sin(time * 4.5)) * 0.04;   // bouncy hop
         break;
       }
       case "rescue":
-        // Forward ears, grounded hips and a modest open hand communicate help.
-        rightArmX = -0.18;
-        rightArmZ = -0.16;
-        rightElbowZ = 0.18;
-        rightWristX = -0.18;
+        // Offering hand: right arm lifted to chest height and swung forward (-X)
+        // with a fold deep enough to lift the OPEN palm above the mid-torso cuff
+        // artifact and the side hair, reading as a distinct forward offer.
+        rightArmZ = -0.4;        // raise upper arm (-Z raises the right arm)
+        rightArmX = -0.3;        // swing forward toward camera = reaching out
+        rightElbowZ = -1.0;      // offering fold (RIGHT flex = -Z), lifts the palm
+        rightWristY = -0.6;      // palm toward the viewer
+        rightWristX = -0.12;     // slight upward palm tilt = open, giving
         rightFingerCurl = 0;
-        rightFingerSpread = 0.18;
-        leftArmZ = -0.25;
-        bodyZ = -0.045;
-        headZ -= 0.045;
-        lowerBodyZ = 0.025;
-        leftEarY = -0.08;
-        rightEarY = 0.08;
-        tailBaseY = Math.sin(time * 1.15) * 0.055;
+        rightFingerSpread = 0.3; // open welcoming hand
+        leftArmZ = -0.5;         // support arm settled at side = grounded
+        // Forward-pinned ears: reverse the splay so they stand up + angle forward.
+        leftEarZ = 0.24;
+        rightEarZ = -0.24;
+        leftEarY = -0.18;
+        rightEarY = 0.18;
+        headX += 0.06;           // slight attentive chin-down toward the person
+        headZ -= 0.11;           // sympathetic tilt
+        leftEyeOpen = rightEyeOpen = 0.95;             // steady, soft, calm gaze
+        bodyX += 0.04;           // subtle lean-in (keeps the breathe on Z)
+        lowerBodyZ = 0.03;       // settled hip
+        tailBaseY = Math.sin(time * 0.9) * 0.09;       // calm, slow, steady sway
+        leftTailY = Math.sin(time * 0.9) * 0.1;
+        rightTailY = Math.sin(time * 0.9 + Math.PI) * 0.1;
         break;
       case "confused":
-        // One ear up, one ear out, and mismatched tails form the question.
-        // Keep both eyes on the shared blink track: asymmetric eye openness
-        // reads as a broken rig once the animated eyelids are visible.
-        headZ += 0.15 + Math.sin(time * 2.4) * 0.02;
-        leftEyeOpen = rightEyeOpen = 0.96;
-        leftEarZ = 0.1;
-        rightEarZ = 0.24;
-        tailBaseZ = 0.08;
-        leftTailY = Math.sin(time * 1.2) * 0.04;
-        rightTailY = Math.sin(time * 1.9 + 1) * 0.1;
+        // "Huh?" carried by a hard head-cock and strongly mismatched ears -- the
+        // two channels that survive the tiny front crop. Hands stay at rest (any
+        // raise hides behind the hair). Slow motion (mid arousal).
+        headX -= 0.05;
+        headY += 0.08;
+        headZ += 0.45 + Math.sin(time * 2) * 0.03;     // hard quizzical cock
+        leftEyeOpen = rightEyeOpen = 0.85;             // slight quizzical squint (lid-free)
+        // Opposite POSES carry the mismatch: LEFT perks upright (small swivel),
+        // RIGHT flops out/down.
+        leftEarZ = 0.52 + Math.sin(time * 3.5) * 0.06;
+        leftEarY = 0.1;
+        rightEarZ = 0.56;
+        rightEarX = 0.12;
+        // Twin tails sweep to one side (base) + hook the tips back (chains) into
+        // a lazy question-mark; slow drift only.
+        tailBaseZ = 0.32;
+        tailBaseY = Math.sin(time * 1.1) * 0.1;
+        leftTailZ = -0.18;
+        rightTailZ = -0.18;
+        leftTailY = Math.sin(time * 1.4) * 0.05;
+        rightTailY = Math.sin(time * 1.4 + 1.3) * 0.06;
+        bodyZ += -0.03;          // counter-lean so the cocked head pops
         break;
       case "curious":
-        // Ears lead toward the sound, head and hips follow, arms remain loose.
-        headZ -= 0.12;
-        headY -= 0.05;
-        leftArmX = 0.12;
-        rightArmX = -0.08;
-        bodyZ = 0.018;
-        lowerBodyZ = -0.02;
-        leftEarY = 0.12;
-        rightEarY = 0.08;
-        leftEarZ = 0.08;
-        rightEarZ = 0.02;
-        tailBaseZ = -0.08;
-        leftTailY = Math.sin(time * 1.7) * 0.08;
-        rightTailY = Math.sin(time * 1.7 + 0.8) * 0.08;
+        // Intrigued: ears snap erect + forward, eyes go wide, the head cocks +
+        // turns to peer in, and the chest/hips lean toward the stimulus. Hands
+        // stay tucked (they die behind the hair). Lively tempo (above idle).
+        headX += 0.05;
+        headY -= 0.12;
+        headZ -= 0.15 + Math.sin(time * 1.8) * 0.03;
+        bodyX += 0.045;
+        bodyZ += 0.02;
+        lowerBodyZ = -0.03;
+        leftEyeOpen = rightEyeOpen = 1.1;
+        leftEarZ = 0.34;         // BOTH ears erect (perk sign, symmetric = focused)
+        rightEarZ = -0.34;
+        leftEarY = 0.16 + Math.sin(time * 2.6) * 0.04; // forward swivel + life
+        rightEarY = 0.16 - Math.sin(time * 2.6) * 0.04;
+        tailBaseZ = -0.07;       // tails cocked slightly to one side = alert
+        tailBaseY = Math.sin(time * 2.2) * 0.06;
+        leftTailY = Math.sin(time * 2.2) * 0.14;
+        rightTailY = Math.sin(time * 2.2 + 0.7) * 0.14;
         break;
       case "syncing": {
-        // Focused ears and metronomic tails carry the working rhythm. Elbows
-        // remain bent well short of 180 degrees so forearms stay distinct.
-        const work = Math.sin(time * 5) * 0.06;
-        headX += 0.055;
-        leftArmZ = 0.06;
-        rightArmZ = -0.06;
-        leftElbowZ = 2.4;
-        rightElbowZ = -2.4;
-        leftWristY = 0.4 + work * 0.25;
-        rightWristY = -0.4 - work * 0.25;
+        // Busy git-sync: hands alternate like typing, ears pin forward, tail
+        // keeps time. Antiphase elbow flex reads as working hands in silhouette.
+        const work = Math.sin(time * 5.5) * 0.3;       // fast rhythmic work tempo
+        const twitch = Math.sin(time * 5.5) * 0.035;   // synced attentive ear flick
+        headX += 0.1 + Math.sin(time * 5.5) * 0.02;    // dipped to the work + nod
+        leftArmX = -0.16;
+        rightArmX = -0.16;
+        leftArmZ = 0.02;
+        rightArmZ = -0.02;
+        leftElbowZ = 2.05 + work;                      // peaks 2.35 < 2.4 limit
+        rightElbowZ = -2.05 + work;
+        leftWristX = 0.16;
+        rightWristX = 0.16;
+        leftWristY = 0.2;
+        rightWristY = -0.2;
         leftWristZ = -0.04;
         rightWristZ = 0.04;
-        leftFingerCurl = 0.13 + work * 0.3;
-        rightFingerCurl = 0.13 - work * 0.3;
-        leftEyeOpen = rightEyeOpen = 0.88;
-        leftEarZ = -0.03;
-        rightEarZ = 0.03;
-        tailBaseY = Math.sin(time * 3.2) * 0.12;
-        leftTailY = Math.sin(time * 3.2) * 0.11;
-        rightTailY = Math.sin(time * 3.2 + Math.PI) * 0.11;
-        bodyY = Math.sin(time * 2.5) * 0.018;
+        leftFingerCurl = 0.16 + work * 0.4;
+        rightFingerCurl = 0.16 - work * 0.4;
+        leftEyeOpen = rightEyeOpen = 0.85;             // concentration squint (lid-free)
+        leftEarZ = 0.18 + twitch;                      // ears pinned forward + twitch
+        rightEarZ = -0.18 - twitch;
+        tailBaseY = Math.sin(time * 4) * 0.18;         // metronomic (in-phase)
+        leftTailY = Math.sin(time * 4) * 0.14;
+        rightTailY = Math.sin(time * 4) * 0.14;
+        leftTailZ = 0.04;
+        rightTailZ = -0.04;
+        bodyX = 0.05 + Math.sin(time * 4) * 0.02;      // lean into the work
+        bodyY = Math.sin(time * 2.5) * 0.016;
         break;
       }
-      case "greeting":
-        // Swing the upright forearm around the elbow so the hand's center
-        // travels left/right. Counter-rotate the wrist by the same amount to
-        // keep the palm facing the camera instead of rocking front/back.
-        const wave = Math.sin(time * 5.2) * 0.24;
-        rightArmZ = -0.66;
-        rightElbowZ = -2.02 + wave;
-        rightWristY = -0.8;
-        rightWristZ = -wave;
+      case "greeting": {
+        // Big open-palm wave held high and out to the model's-right (viewer's
+        // left), clear of the hair/face. Perked bobbing ears carry the warmth;
+        // the always-visible tail adds a broad welcoming wag.
+        const wave = Math.sin(time * 5.4) * 0.34;      // wider forearm sweep
+        rightArmZ = -0.85;                             // raise the whole arm high
+        rightArmX = -0.12;                             // ease forward, clear the hair
+        rightElbowZ = -1.95 + wave;                    // swing forearm (|Z| peak 2.29)
+        rightWristY = -0.85;                           // palm square to camera
+        rightWristZ = -wave;                           // counter-rotate, palm stays front
         rightFingerCurl = 0.02;
-        rightFingerSpread = 0.24;
-        rightFingerRipple = 0.025;
-        rightEarZ = -Math.pow(Math.max(0, Math.sin(time * 1.4)), 10) * 0.12;
-        tailBaseY = Math.sin(time * 2.4) * 0.16;
-        leftTailY = Math.sin(time * 2.8) * 0.14;
-        rightTailY = Math.sin(time * 2.8 + 1.1) * 0.14;
-        headZ -= 0.045;
+        rightFingerSpread = 0.32;
+        rightFingerRipple = 0.03;
+        const earBob = Math.sin(time * 5.4) * 0.06;
+        leftEarZ = 0.24 + earBob;                      // ears perked UP + friendly bob
+        rightEarZ = -0.24 - earBob;
+        leftEarY = -0.07;                              // mild forward yaw = welcoming
+        rightEarY = 0.07;
+        headX += -0.06 + Math.sin(time * 5.4) * 0.04;  // engaged look-up + nod-bob
+        headZ -= 0.06;                                 // warm friendly tilt
+        leftEyeOpen = rightEyeOpen = 1.05;             // bright, awake, welcoming
+        tailBaseY = Math.sin(time * 3.0) * 0.22;       // broad welcoming wag
+        leftTailY = Math.sin(time * 3.2) * 0.18;
+        rightTailY = Math.sin(time * 3.2 + 1.1) * 0.18;
         break;
+      }
     }
 
     const gestureAge = performance.now() - this.gestureStarted;
@@ -825,9 +919,13 @@ class Tama3DActor implements TamaActor {
       const easedClosure = THREE.MathUtils.smoothstep(closure, 0, 1);
       const targetY = THREE.MathUtils.lerp(eyelid.openY, eyelid.closedY, easedClosure);
       eyelid.mesh.position.y = THREE.MathUtils.lerp(eyelid.mesh.position.y, targetY, smooth);
+      // The two lid tubes are wider than the eye gap, so at partial opacity they
+      // overlap into a translucent maroon band across the face. Only fade them in
+      // near FULL closure (blink dips + sleep) so concentration squints (openness
+      // ~0.8, driven by the eye-scale alone) stay clean and lid-free.
       eyelid.mesh.material.opacity = THREE.MathUtils.lerp(
         eyelid.mesh.material.opacity,
-        THREE.MathUtils.smoothstep(closure, 0.08, 0.7),
+        THREE.MathUtils.smoothstep(closure, 0.5, 0.88),
         smooth,
       );
       eyelid.mesh.visible = eyelid.mesh.material.opacity > 0.01;
