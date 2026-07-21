@@ -13,6 +13,7 @@ type Rig = {
   head: THREE.Object3D | null;
   neck: THREE.Object3D | null;
   upperBody: THREE.Object3D | null;
+  lowerBody: THREE.Object3D | null;
   leftShoulder: THREE.Object3D | null;
   rightShoulder: THREE.Object3D | null;
   leftArm: THREE.Object3D | null;
@@ -21,7 +22,11 @@ type Rig = {
   rightElbow: THREE.Object3D | null;
   leftWrist: THREE.Object3D | null;
   rightWrist: THREE.Object3D | null;
-  tail: THREE.Object3D | null;
+  leftEar: THREE.Object3D[];
+  rightEar: THREE.Object3D[];
+  tailBase: THREE.Object3D | null;
+  leftTail: THREE.Object3D[];
+  rightTail: THREE.Object3D[];
 };
 
 class Tama3DActor implements TamaActor {
@@ -46,6 +51,7 @@ class Tama3DActor implements TamaActor {
     head: null,
     neck: null,
     upperBody: null,
+    lowerBody: null,
     leftShoulder: null,
     rightShoulder: null,
     leftArm: null,
@@ -54,7 +60,11 @@ class Tama3DActor implements TamaActor {
     rightElbow: null,
     leftWrist: null,
     rightWrist: null,
-    tail: null,
+    leftEar: [],
+    rightEar: [],
+    tailBase: null,
+    leftTail: [],
+    rightTail: [],
   };
   private baseRotations = new Map<THREE.Object3D, THREE.Euler>();
   private baseModelPosition = new THREE.Vector3();
@@ -210,10 +220,13 @@ class Tama3DActor implements TamaActor {
       });
       return match;
     };
+    const chain = (...names: string[]): THREE.Object3D[] =>
+      names.map((name) => model.getObjectByName(name)).filter((bone): bone is THREE.Object3D => Boolean(bone));
     this.rig = {
       head: find("頭", "头", "Head"),
       neck: find("首", "Neck"),
       upperBody: find("上半身2", "上半身", "UpperBody"),
+      lowerBody: find("下半身", "LowerBody"),
       leftShoulder: find("左肩", "LeftShoulder"),
       rightShoulder: find("右肩", "RightShoulder"),
       leftArm: find("左腕", "左腕", "LeftArm"),
@@ -222,10 +235,21 @@ class Tama3DActor implements TamaActor {
       rightElbow: find("右ひじ", "RightElbow"),
       leftWrist: find("左手首", "LeftWrist"),
       rightWrist: find("右手首", "RightWrist"),
-      tail: find("尾", "Tail"),
+      // Weight inspection of the GLB shows that the head ornaments use the
+      // TJ chains, while Kirara's two tails share 右W_1 before splitting into
+      // the right W chain and the 左W branch. The node named 尾 is only a
+      // skinned mesh, so rotating it was never a real tail animation.
+      leftEar: chain("左TJ_0_1", "左TJ_1_1", "左TJ_2_1"),
+      rightEar: chain("右TJ_0_1", "右TJ_1_1", "右TJ_2_1"),
+      tailBase: find("右W_1"),
+      leftTail: chain("左W_1", "左W_2", "左W_3", "左W_4"),
+      rightTail: chain("右W_3", "右W_4", "右W_5", "右W_6"),
     };
-    for (const bone of Object.values(this.rig)) {
-      if (bone) this.baseRotations.set(bone, bone.rotation.clone());
+    for (const value of Object.values(this.rig)) {
+      const bones = Array.isArray(value) ? value : [value];
+      for (const bone of bones) {
+        if (bone) this.baseRotations.set(bone, bone.rotation.clone());
+      }
     }
   }
 
@@ -295,6 +319,21 @@ class Tama3DActor implements TamaActor {
     let rightWristZ = 0;
     let lift = Math.sin(time * 1.8) * 0.004;
     let sway = 0;
+    let lowerBodyZ = 0;
+    const leftFlick = Math.pow(Math.max(0, Math.sin(time * 0.83)), 18) * 0.1;
+    const rightFlick = Math.pow(Math.max(0, Math.sin(time * 0.71 + 2.2)), 20) * 0.08;
+    let leftEarX = 0;
+    let leftEarY = 0;
+    let leftEarZ = -leftFlick;
+    let rightEarX = 0;
+    let rightEarY = 0;
+    let rightEarZ = rightFlick;
+    let tailBaseY = Math.sin(time * 1.35) * 0.08;
+    let tailBaseZ = 0;
+    let leftTailY = Math.sin(time * 1.35 + 0.7) * 0.07;
+    let leftTailZ = 0.04;
+    let rightTailY = Math.sin(time * 1.35 - 0.7) * 0.07;
+    let rightTailZ = -0.04;
 
     // This model uses an MMD rig whose arms point diagonally down from the
     // shoulders. Raising them therefore needs mirrored Z rotations: positive
@@ -303,133 +342,174 @@ class Tama3DActor implements TamaActor {
     // poses look unchanged (or anatomically wrong) from the front camera.
     switch (this.state) {
       case "idle":
+        // Relaxed nekomata idle: the two ears twitch independently while the
+        // split tails drift out of phase. Arms stay entirely at rest.
         headZ += Math.sin(time * 0.75) * 0.012;
         break;
       case "sleep":
-        // Bowed head and fully relaxed arms; a compact crop reads this more
-        // naturally than forcing the long MMD forearms into a fake fold.
+        // Ears loosen outward, tails curl close, and the whole torso settles.
         headX += 0.3;
         headZ += 0.11;
         bodyX += 0.1;
-        leftArmZ = -0.05;
-        rightArmZ = 0.05;
         leftWristZ = 0.08;
         rightWristZ = -0.08;
+        leftEarX = rightEarX = 0.08;
+        leftEarZ = -0.2;
+        rightEarZ = 0.2;
+        tailBaseY = Math.sin(time * 0.55) * 0.025;
+        leftTailY = rightTailY = 0;
+        leftTailZ = 0.2;
+        rightTailZ = -0.2;
         lift = -0.012;
         break;
       case "hint":
-        // One arm presents the useful direction while the other stays open.
+        // One ear locks onto the target before a restrained presenting paw.
         headZ -= 0.1;
         headY += 0.08;
-        leftArmZ = 0.82;
-        leftElbowZ = -0.12;
+        leftArmZ = 0.28;
+        leftElbowZ = 1.8;
         leftWristZ = -0.16 + Math.sin(time * 3) * 0.05;
-        rightArmZ = -0.04;
+        leftEarZ = 0.08;
+        rightEarZ = 0.02;
+        tailBaseY = Math.sin(time * 2.2) * 0.13;
+        leftTailZ = 0.12;
+        rightTailZ = -0.08;
         break;
       case "thinking":
-        // Right hand at the cheek, with the other arm supporting it.
+        // Asymmetric ears and a slow tail tip sell concentration; only one
+        // hand supports the cheek instead of both arms forming a big pose.
         headZ -= 0.11;
         headY += 0.12;
-        rightArmZ = -0.64;
-        rightElbowZ = -2.08;
+        rightArmZ = -0.5;
+        rightElbowZ = -2.02;
         rightWristZ = -0.3;
-        leftArmZ = 0.02;
-        leftElbowZ = 3.0;
-        leftWristZ = 0.12;
+        leftEarZ = -0.14;
+        rightEarZ = -0.02;
+        tailBaseY = Math.sin(time * 0.85) * 0.045;
+        leftTailY = Math.sin(time * 1.1) * 0.04;
+        rightTailY = Math.sin(time * 1.1 + 1.4) * 0.04;
         break;
       case "warn":
-        // A readable stop/recoil silhouette rather than two lowered arms.
+        // Ears pin back and the tails go rigid before one small stop gesture.
         headX -= 0.07;
         headZ += Math.sin(time * 7) * 0.025;
-        leftArmZ = 0.38;
-        rightArmZ = -0.38;
-        leftElbowZ = 1.92;
-        rightElbowZ = -1.92;
-        leftWristX = rightWristX = -0.2;
+        leftArmZ = 0.3;
+        leftElbowZ = 1.82;
+        leftWristX = -0.2;
         bodyX -= 0.035;
+        leftEarZ = -0.25;
+        rightEarZ = 0.25;
+        tailBaseY = 0;
+        leftTailY = rightTailY = 0;
+        leftTailZ = 0.1;
+        rightTailZ = -0.1;
         break;
       case "danger": {
-        // Hands up near the face plus a small panic shake.
+        // Pinned ears and rapidly lashing twin tails lead the panic motion.
         const panic = Math.sin(time * 11) * 0.07;
         headY += Math.sin(time * 14) * 0.045;
-        leftArmZ = 0.72 + panic;
-        rightArmZ = -0.72 - panic;
+        leftArmZ = 0.55 + panic * 0.4;
+        rightArmZ = -0.55 - panic * 0.4;
         leftElbowZ = 2.14;
         rightElbowZ = -2.14;
         leftWristZ = 0.22;
         rightWristZ = -0.22;
+        leftEarZ = -0.32 + panic * 0.2;
+        rightEarZ = 0.32 - panic * 0.2;
+        tailBaseY = Math.sin(time * 8.5) * 0.22;
+        leftTailY = Math.sin(time * 9.5) * 0.18;
+        rightTailY = Math.sin(time * 9.5 + 1.2) * 0.18;
         sway = Math.sin(time * 16) * 0.01;
         break;
       }
       case "celebrate": {
-        // Both hands clearly overhead, with a buoyant bounce.
-        const cheer = Math.sin(time * 5) * 0.08;
-        leftShoulderZ = 0.08;
-        rightShoulderZ = -0.08;
-        leftArmZ = 1.38 + cheer;
-        rightArmZ = -1.38 - cheer;
-        leftElbowZ = -0.32;
-        rightElbowZ = 0.32;
-        leftWristZ = 0.12;
-        rightWristZ = -0.12;
+        // Hands become compact cat paws by the cheeks; ears perk and both
+        // tails wag broadly in opposite phases.
+        const cheer = Math.sin(time * 5) * 0.045;
+        leftArmZ = 0.4 + cheer;
+        rightArmZ = -0.4 - cheer;
+        leftElbowZ = 2.02;
+        rightElbowZ = -2.02;
+        leftWristX = rightWristX = -0.18;
+        leftWristZ = 0.2;
+        rightWristZ = -0.2;
+        leftEarZ = 0.08;
+        rightEarZ = -0.08;
+        tailBaseY = Math.sin(time * 4.2) * 0.2;
+        leftTailY = Math.sin(time * 5.2) * 0.2;
+        rightTailY = Math.sin(time * 5.2 + Math.PI) * 0.2;
         headZ += Math.sin(time * 3) * 0.035;
-        lift = Math.max(0, Math.sin(time * 4)) * 0.035;
+        lift = Math.max(0, Math.sin(time * 4)) * 0.022;
         break;
       }
       case "rescue":
-        // Open, steady reach: right hand offers help, left arm balances.
-        rightArmX = -0.22;
-        rightArmZ = -0.34;
-        rightElbowZ = 0.34;
-        rightWristX = -0.24;
-        leftArmZ = 0.18;
-        leftElbowZ = -0.42;
+        // Forward ears, grounded hips and a modest open hand communicate help.
+        rightArmX = -0.18;
+        rightArmZ = -0.16;
+        rightElbowZ = 0.18;
+        rightWristX = -0.18;
+        leftArmZ = 0.06;
         bodyZ = -0.045;
         headZ -= 0.045;
+        lowerBodyZ = 0.025;
+        leftEarY = -0.08;
+        rightEarY = 0.08;
+        tailBaseY = Math.sin(time * 1.15) * 0.055;
         break;
       case "confused":
-        // Mirrored outward forearms make an unmistakable shrug.
+        // One ear up, one ear out, and mismatched tails form the question.
         headZ += 0.15 + Math.sin(time * 2.4) * 0.02;
-        leftShoulderZ = -0.08;
-        rightShoulderZ = 0.08;
-        leftArmZ = 0.18;
-        rightArmZ = -0.18;
-        leftElbowZ = 0.72;
-        rightElbowZ = -0.72;
-        leftWristZ = -0.2;
-        rightWristZ = 0.2;
+        leftEarZ = 0.1;
+        rightEarZ = 0.24;
+        tailBaseZ = 0.08;
+        leftTailY = Math.sin(time * 1.2) * 0.04;
+        rightTailY = Math.sin(time * 1.9 + 1) * 0.1;
         break;
       case "curious":
-        // A gentle full-body lean; relaxed arms keep it distinct from the
-        // hand-to-face thinking pose.
+        // Ears lead toward the sound, head and hips follow, arms remain loose.
         headZ -= 0.12;
         headY -= 0.05;
         leftArmX = 0.12;
         rightArmX = -0.08;
-        leftArmZ = -0.04;
-        rightArmZ = 0.04;
         bodyZ = 0.018;
+        lowerBodyZ = -0.02;
+        leftEarY = 0.12;
+        rightEarY = 0.08;
+        leftEarZ = 0.08;
+        rightEarZ = 0.02;
+        tailBaseZ = -0.08;
+        leftTailY = Math.sin(time * 1.7) * 0.08;
+        rightTailY = Math.sin(time * 1.7 + 0.8) * 0.08;
         break;
       case "syncing": {
-        // Alternating compact "working" motions in front of the torso.
-        const work = Math.sin(time * 5) * 0.1;
+        // Focused ears and metronomic tails carry the working rhythm; hands
+        // stay compact in front instead of pumping up and down.
+        const work = Math.sin(time * 5) * 0.06;
         headX += 0.055;
         leftArmZ = 0.08;
         rightArmZ = -0.08;
-        leftElbowZ = 2.95 + work;
-        rightElbowZ = -2.95 + work;
+        leftElbowZ = 2.9;
+        rightElbowZ = -2.9;
         leftWristY = work * 0.7;
         rightWristY = -work * 0.7;
+        leftEarZ = -0.03;
+        rightEarZ = 0.03;
+        tailBaseY = Math.sin(time * 3.2) * 0.12;
+        leftTailY = Math.sin(time * 3.2) * 0.11;
+        rightTailY = Math.sin(time * 3.2 + Math.PI) * 0.11;
         bodyY = Math.sin(time * 2.5) * 0.018;
         break;
       }
       case "greeting":
-        // Right forearm upright and wrist waving side-to-side.
-        rightArmZ = -0.9;
+        // A small wave is supported by one ear flick and friendly twin tails.
+        rightArmZ = -0.66;
         rightElbowZ = -2.02;
-        rightWristZ = -0.18 + Math.sin(time * 6) * 0.24;
-        rightWristY = Math.sin(time * 6) * 0.12;
-        leftArmZ = 0.04;
+        rightWristZ = -0.18 + Math.sin(time * 6) * 0.2;
+        rightWristY = Math.sin(time * 6) * 0.1;
+        rightEarZ = -Math.pow(Math.max(0, Math.sin(time * 1.4)), 10) * 0.12;
+        tailBaseY = Math.sin(time * 2.4) * 0.16;
+        leftTailY = Math.sin(time * 2.8) * 0.14;
+        rightTailY = Math.sin(time * 2.8 + 1.1) * 0.14;
         headZ -= 0.045;
         break;
     }
@@ -446,6 +526,7 @@ class Tama3DActor implements TamaActor {
     apply(this.rig.head, headX, headY, headZ);
     apply(this.rig.neck, headX * 0.25, headY * 0.2, headZ * 0.2);
     apply(this.rig.upperBody, bodyX, bodyY, bodyZ);
+    apply(this.rig.lowerBody, 0, 0, lowerBodyZ);
     apply(this.rig.leftShoulder, 0, 0, leftShoulderZ);
     apply(this.rig.rightShoulder, 0, 0, rightShoulderZ);
     apply(this.rig.leftArm, leftArmX, 0, leftArmZ);
@@ -454,7 +535,20 @@ class Tama3DActor implements TamaActor {
     apply(this.rig.rightElbow, 0, 0, rightElbowZ);
     apply(this.rig.leftWrist, leftWristX, leftWristY, leftWristZ);
     apply(this.rig.rightWrist, rightWristX, rightWristY, rightWristZ);
-    apply(this.rig.tail, 0, Math.sin(time * 2.4) * 0.14, Math.sin(time * 1.7) * 0.06);
+    const applyChain = (bones: THREE.Object3D[], x: number, y: number, z: number): void => {
+      bones.forEach((bone, index) => {
+        const falloff = Math.pow(0.62, index);
+        apply(bone, x * falloff, y * falloff, z * falloff);
+      });
+    };
+    applyChain(this.rig.leftEar, leftEarX, leftEarY, leftEarZ);
+    applyChain(this.rig.rightEar, rightEarX, rightEarY, rightEarZ);
+    // Most of the W-chain's local Y rotation disappears into camera depth.
+    // Project the authored wag primarily onto local Z so both tails remain
+    // readable instead of blinking in and out of the tiny portrait crop.
+    apply(this.rig.tailBase, 0, tailBaseY * 0.25, tailBaseZ + tailBaseY * 0.55);
+    applyChain(this.rig.leftTail, 0, leftTailY * 0.2, leftTailZ + leftTailY * 0.85);
+    applyChain(this.rig.rightTail, 0, rightTailY * 0.2, rightTailZ + rightTailY * 0.85);
     if (this.model) {
       this.model.position.x = THREE.MathUtils.lerp(this.model.position.x, this.baseModelPosition.x + sway, smooth);
       this.model.position.y = THREE.MathUtils.lerp(this.model.position.y, this.baseModelPosition.y + lift, smooth);
