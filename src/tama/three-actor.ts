@@ -305,8 +305,10 @@ class Tama3DActor implements TamaActor {
     let bodyZ = -breathe * 0.5;
     let leftShoulderZ = 0;
     let rightShoulderZ = 0;
-    let leftArmZ = 0;
-    let rightArmZ = 0;
+    // The imported MMD bind pose is an A-pose. Start every state from arms
+    // hanging close to the body, then opt individual gestures back in.
+    let leftArmZ = -0.34;
+    let rightArmZ = 0.34;
     let leftArmX = 0;
     let rightArmX = 0;
     let leftElbowZ = 0;
@@ -351,8 +353,6 @@ class Tama3DActor implements TamaActor {
         headX += 0.3;
         headZ += 0.11;
         bodyX += 0.1;
-        leftWristZ = 0.08;
-        rightWristZ = -0.08;
         leftEarX = rightEarX = 0.08;
         leftEarZ = -0.2;
         rightEarZ = 0.2;
@@ -368,6 +368,7 @@ class Tama3DActor implements TamaActor {
         headY += 0.08;
         leftArmZ = 0.28;
         leftElbowZ = 1.8;
+        leftWristY = 1.05;
         leftWristZ = -0.16 + Math.sin(time * 3) * 0.05;
         leftEarZ = 0.08;
         rightEarZ = 0.02;
@@ -382,7 +383,8 @@ class Tama3DActor implements TamaActor {
         headY += 0.12;
         rightArmZ = -0.5;
         rightElbowZ = -2.02;
-        rightWristZ = -0.3;
+        rightWristY = -1.05;
+        rightWristZ = 0.3;
         leftEarZ = -0.14;
         rightEarZ = -0.02;
         tailBaseY = Math.sin(time * 0.85) * 0.045;
@@ -396,6 +398,7 @@ class Tama3DActor implements TamaActor {
         leftArmZ = 0.3;
         leftElbowZ = 1.82;
         leftWristX = -0.2;
+        leftWristY = 1.05;
         bodyX -= 0.035;
         leftEarZ = -0.25;
         rightEarZ = 0.25;
@@ -412,8 +415,10 @@ class Tama3DActor implements TamaActor {
         rightArmZ = -0.55 - panic * 0.4;
         leftElbowZ = 2.14;
         rightElbowZ = -2.14;
-        leftWristZ = 0.22;
-        rightWristZ = -0.22;
+        leftWristY = 1.05;
+        rightWristY = -1.05;
+        leftWristZ = -0.22;
+        rightWristZ = 0.22;
         leftEarZ = -0.32 + panic * 0.2;
         rightEarZ = 0.32 - panic * 0.2;
         tailBaseY = Math.sin(time * 8.5) * 0.22;
@@ -430,9 +435,10 @@ class Tama3DActor implements TamaActor {
         rightArmZ = -0.4 - cheer;
         leftElbowZ = 2.02;
         rightElbowZ = -2.02;
-        leftWristX = rightWristX = -0.18;
-        leftWristZ = 0.2;
-        rightWristZ = -0.2;
+        leftWristY = 1.05;
+        rightWristY = -1.05;
+        leftWristZ = -0.22;
+        rightWristZ = 0.22;
         leftEarZ = 0.08;
         rightEarZ = -0.08;
         tailBaseY = Math.sin(time * 4.2) * 0.2;
@@ -448,7 +454,7 @@ class Tama3DActor implements TamaActor {
         rightArmZ = -0.16;
         rightElbowZ = 0.18;
         rightWristX = -0.18;
-        leftArmZ = 0.06;
+        leftArmZ = -0.25;
         bodyZ = -0.045;
         headZ -= 0.045;
         lowerBodyZ = 0.025;
@@ -486,8 +492,8 @@ class Tama3DActor implements TamaActor {
         // stay compact in front instead of pumping up and down.
         const work = Math.sin(time * 5) * 0.06;
         headX += 0.055;
-        leftArmZ = 0.08;
-        rightArmZ = -0.08;
+        leftArmZ = -0.18;
+        rightArmZ = 0.18;
         leftElbowZ = 2.9;
         rightElbowZ = -2.9;
         leftWristY = work * 0.7;
@@ -504,8 +510,8 @@ class Tama3DActor implements TamaActor {
         // A small wave is supported by one ear flick and friendly twin tails.
         rightArmZ = -0.66;
         rightElbowZ = -2.02;
-        rightWristZ = -0.18 + Math.sin(time * 6) * 0.2;
-        rightWristY = Math.sin(time * 6) * 0.1;
+        rightWristY = -1.05 + Math.sin(time * 6) * 0.08;
+        rightWristZ = 0.18 + Math.sin(time * 6) * 0.2;
         rightEarZ = -Math.pow(Math.max(0, Math.sin(time * 1.4)), 10) * 0.12;
         tailBaseY = Math.sin(time * 2.4) * 0.16;
         leftTailY = Math.sin(time * 2.8) * 0.14;
