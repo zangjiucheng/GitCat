@@ -21,6 +21,8 @@ import { commands } from "../ipc/bindings";
 // change via STATE_SOUND — see sound.ts's own header for why this is a leaf
 // module main.ts imports FROM, never the reverse.
 import { playTamaSound, STATE_SOUND } from "./sound.ts";
+import { createTamaPresentation } from "../tama/actor.ts";
+import { TAMA_SPRITE_POSES } from "../tama/types.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -775,30 +777,19 @@ class TamaMascot{
   // main.ts's own TAMA_IMG comment + the redesign's pose-mapping table for
   // why each pairing was chosen (fewer poses than states; several states
   // intentionally share one).
-  static POSE={idle:"curious",sleep:"sleep",hint:"curious",thinking:"thinking",warn:"shocked",danger:"alarm",celebrate:"happy",rescue:"confident",confused:"shocked",curious:"curious",syncing:"thinking",greeting:"hero"};
+  static POSE=TAMA_SPRITE_POSES;
   constructor(el){this.nook=el.nook;this.sprite=el.sprite;this.spriteWrap=el.spriteWrap;this.line=el.line;this.tele=el.tele;
-    this.sticky=null;this.toastT=null;this.dwellT=null;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
+    this.sticky=null;this.toastT=null;this.dwellT=null;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;
+    this.actor=createTamaPresentation({host:this.spriteWrap,modelMount:el.modelMount,sprite:this.sprite,images:TAMA_IMG,reducedMotion:this.reduced});
+    this.set("idle");void this.actor.load();this._teleLoop();}
   // Only touches the portrait's `src` when the resolved pose actually
   // changed (several states share one pose — see POSE above) — a real
   // "pop" (shrink+fade out via .swap, swap src, overshoot back in via
   // .swap-in — see index.html's own spriteSwapOut/spriteSwapIn keyframes),
   // skipped entirely under reduced-motion (immediate swap, no animation).
   set(s){clearTimeout(this.dwellT);const cfg=TamaMascot.STATES[s]||TamaMascot.STATES.idle;
-    const pose=TamaMascot.POSE[s]||"curious";
-    if(this.sprite.dataset.pose!==pose){
-      this.sprite.dataset.pose=pose;
-      if(this.reduced){ this.sprite.src=TAMA_IMG[pose]; }
-      else{
-        this.sprite.classList.remove("swap-in"); this.sprite.classList.add("swap");
-        setTimeout(()=>{
-          this.sprite.src=TAMA_IMG[pose];
-          this.sprite.classList.remove("swap");
-          void this.sprite.offsetWidth;
-          this.sprite.classList.add("swap-in");
-          setTimeout(()=>this.sprite.classList.remove("swap-in"),240);
-        },110);
-      }
-    }
+    if(!TamaMascot.STATES[s])s="idle";
+    this.actor.setState(s);
     // Sound plays on a real FSM-STATE change, not a pose change (several
     // states above intentionally share one pose) — captured before
     // overwriting dataset.state so re-entering the same state (e.g. two
@@ -826,8 +817,8 @@ class TamaMascot{
   // a portrait) for a routine "nothing to do" moment; same remove/reflow/
   // add restart trick the old tail-wag used, so retriggering it before the
   // previous one finishes still replays from the start.
-  nod(){if(this.reduced)return;this.sprite.classList.remove("nod");void this.sprite.offsetWidth;this.sprite.classList.add("nod");}
-  setInteracting(on){this.nook.classList.toggle("is-interacting",on);}
+  nod(){this.actor.playGesture("nod");}
+  setInteracting(on){this.nook.classList.toggle("is-interacting",on);this.actor.setPaused(on);}
   event(name,p={}){
     switch(name){
       case "fetch.upToDate": case "checkout.clean": this.nod(); return null;
@@ -850,7 +841,7 @@ class TamaMascot{
   _tele(){this.tele.textContent="snapshots "+Safety.teleCount()+" · last "+Safety.teleAgo();}
   _teleLoop(){this._tele();setInterval(()=>{if(this.nook.dataset.state!=="thinking")this._tele();},20000);}
 }
-const Tama=new TamaMascot({nook:$("#nook"),sprite:$("#sprite"),spriteWrap:$("#spriteWrap"),line:$("#toastLine"),tele:$("#telemetry")});
+const Tama=new TamaMascot({nook:$("#nook"),sprite:$("#sprite"),spriteWrap:$("#spriteWrap"),modelMount:$("#tamaModel"),line:$("#toastLine"),tele:$("#telemetry")});
 
 /* The nook cat subtly leans toward your cursor, and naps when you go idle.
    A painted portrait can't move its own pupils the way the old vector cat
@@ -861,14 +852,9 @@ const Tama=new TamaMascot({nook:$("#nook"),sprite:$("#sprite"),spriteWrap:$("#sp
 Tama.lastMove=performance.now();
 const _gazeOn=new Set(["idle","hint","warn","rescue","thinking","confused","curious","syncing"]);
 function gaze(mx,my){
-  const wrap=$("#spriteWrap"); if(!wrap)return;
   const st=$("#nook").dataset.state;
-  if(Tama.reduced||!_gazeOn.has(st)){ wrap.style.transform=""; return; }
-  const r=$("#sprite").getBoundingClientRect(); if(!r.width) return;
-  const cx=r.left+r.width*0.5, cy=r.top+r.height*0.4;
-  let dx=mx-cx, dy=my-cy, d=Math.hypot(dx,dy)||1, mag=Math.min(1,d/220);
-  const tx=(dx/d*mag*2.2).toFixed(2), ty=(dy/d*mag*1.6).toFixed(2), rot=(dx/d*mag*1.6).toFixed(2);
-  wrap.style.transform="translate("+tx+"px,"+ty+"px) rotate("+rot+"deg)";
+  if(Tama.reduced||!_gazeOn.has(st)){ Tama.actor.clearPointer(); return; }
+  Tama.actor.setPointer(mx,my);
 }
 document.addEventListener("mousemove",e=>{
   Tama.lastMove=performance.now();
@@ -888,12 +874,13 @@ function scheduleGlance(){
   setTimeout(()=>{
     const wrap=$("#spriteWrap"), n=$("#nook");
     if(wrap&&n&&!Tama.reduced&&_gazeOn.has(n.dataset.state)&&performance.now()-Tama.lastMove>4000){
-      wrap.classList.remove("glance"); void wrap.offsetWidth; wrap.classList.add("glance");
+      Tama.actor.playGesture("glance");
     }
     scheduleGlance();
   },8000+Math.random()*6000);
 }
 scheduleGlance();
+window.addEventListener("beforeunload",()=>Tama.actor.destroy(),{once:true});
 
 // Hidden Easter egg: click the portrait itself 7 times within 2.5s to open
 // Tama Gallery (src/islands/tamagallery) — every pose in one grid, click a

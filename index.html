@@ -438,8 +438,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    letterboxes. No frame/ring around it — the portrait's own white
    background blends into .nook's panel color with nothing boxing it in. */
 .sprite-wrap{position:relative;flex:none;transition:transform .12s ease;will-change:transform}
+.tama-model{position:absolute;inset:0;z-index:1;width:78px;height:104px;opacity:0;pointer-events:none;
+  transition:opacity .22s ease;filter:drop-shadow(0 3px 8px rgba(0,0,0,.18))}
+.tama-3d-canvas{display:block;width:100%!important;height:100%!important}
+.sprite-wrap.model-active .tama-model{opacity:1}
+.sprite-wrap.model-active .sprite{opacity:0;animation:none!important}
 .sprite{width:78px;height:104px;display:block;object-fit:contain;object-position:top;
-  filter:drop-shadow(0 3px 8px rgba(0,0,0,.18));
+  position:relative;z-index:0;filter:drop-shadow(0 3px 8px rgba(0,0,0,.18));
+  transition:opacity .18s ease;
   animation:spriteBreathe 4.2s ease-in-out infinite}
 /* Pose swap is a real "pop" (shrink+fade out, swap src, overshoot back in)
    rather than a flat crossfade — see TamaMascot.set()'s own comment for the
@@ -546,7 +552,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tama-cheer .tama-pic{width:78px;height:104px;flex:none}
 .tama-cheer .cheer-txt{font-family:var(--display);font-weight:600;font-size:13px;line-height:1.4;max-width:184px;padding-bottom:10px}
 .tama-cheer .cheer-txt .jp{color:var(--accent2);font-weight:700}
-@media (prefers-reduced-motion:reduce){.sprite,.sprite-wrap{animation:none!important;transition:none!important}
+@media (prefers-reduced-motion:reduce){.sprite,.sprite-wrap,.tama-model{animation:none!important;transition:none!important}
   .spark,.zz{animation:none!important}
   .toast-line{transition:opacity .01s!important;transform:none!important}
   .scrim,.scrim.on,.modal,.scrim.on .modal,.cmdk,.cmdk.on,.cmdk-panel,.cmdk.on .cmdk-panel,
@@ -1789,6 +1795,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
     <!-- Tama's lamp-nook -->
     <div class="nook tstage" id="nook" data-state="idle" role="status" aria-live="polite">
       <div class="sprite-wrap" id="spriteWrap">
+        <div class="tama-model" id="tamaModel" aria-hidden="true"></div>
         <img class="sprite" id="sprite" alt="Tama">
         <span class="spark s1"></span><span class="spark s2"></span><span class="spark s3"></span>
         <span class="zz z1">z</span><span class="zz z2">z</span><span class="zz z3">z</span>

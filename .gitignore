@@ -11,11 +11,14 @@ node_modules
 dist
 dist-ssr
 *.local
+.claude/scratch
 
 # Playwright E2E
+.playwright-cli
 /test-results
 /playwright-report
 /blob-report
+/output/playwright
 
 # VitePress docs site (built by .github/workflows/docs.yml, not committed)
 docs/.vitepress/dist
