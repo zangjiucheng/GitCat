@@ -24,6 +24,13 @@ dist-ssr
 docs/.vitepress/dist
 docs/.vitepress/cache
 
+# `pnpm flamegraph` (scripts/profile.mjs) — samply's own recording output,
+# written to the repo root (samply's default -o path is relative to the
+# cwd it's invoked from). Local profiling artifacts, never meant to be
+# committed.
+profile.json.gz
+profile.kernel.etl
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

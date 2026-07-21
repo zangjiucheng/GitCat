@@ -103,13 +103,41 @@ fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
     })
 }
 
-fn git_error_message(out: &GitOut) -> String {
-    if !out.stderr.is_empty() {
+/// Best human message from a failed git run (prefer stderr, then stdout).
+///
+/// On a WSL-routed repo (see `crate::wsl`'s own module doc), an SSH
+/// authentication failure gets an extra, actionable hint appended: `wsl.exe
+/// -e` is a direct exec with NO shell at all, so `~/.bashrc`/`~/.profile`
+/// never run — a distro whose SSH agent is only started/exported there (a
+/// bare `ssh-agent` session, or a Windows-agent-via-npiperelay bridge
+/// sourced in `.bashrc`) is invisible to this non-interactive invocation,
+/// and a still-locked passphrase-protected key can't be unlocked
+/// non-interactively either way. This doesn't (and can't, generically) FIX
+/// that gap — the right fix depends entirely on the user's own distro-side
+/// SSH setup — it just makes the failure's actual cause discoverable
+/// instead of a bare "Permission denied" with no connection to WSL at all.
+/// Matches against git/ssh's own "Permission denied (publickey[,...])." —
+/// the universal OpenSSH auth-failure message, regardless of which
+/// specific auth METHOD (agent vs. key file) was attempted.
+fn git_error_message(path: &str, out: &GitOut) -> String {
+    let base = if !out.stderr.is_empty() {
         out.stderr.clone()
     } else if !out.stdout.is_empty() {
         out.stdout.clone()
     } else {
         format!("git exited with status {:?}", out.code)
+    };
+    if crate::wsl::wsl_target(path).is_some() && base.contains("Permission denied") && base.contains("publickey") {
+        // Kept short on purpose: Tama's toast-line (index.html's .toast-line)
+        // clamps to 5 wrapped lines in a ~150px-wide bubble, so a full
+        // explanation of *why* (wsl.exe -e execs with no shell, skipping
+        // ~/.bashrc/profile) would just get silently cut off.
+        format!(
+            "{base} (WSL skips shell init, so ssh-agent never starts — start one in a WSL terminal, \
+             or use a passphrase-less key)"
+        )
+    } else {
+        base
     }
 }
 
@@ -249,7 +277,7 @@ pub async fn fetch(path: String, remote: Option<String>) -> RemoteResult {
                 },
                 None,
             ),
-            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
             Err(e) => RemoteResult::err(e),
         }
     })
@@ -289,7 +317,7 @@ pub async fn pull(path: String) -> RemoteResult {
                 RemoteResult::ok(msg, Some(backup))
             }
             // e.g. "fatal: Not possible to fast-forward, aborting."
-            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
             Err(e) => RemoteResult::err(e),
         }
     })
@@ -416,7 +444,7 @@ pub async fn reset_branch_to_upstream(path: String, branch: String) -> RemoteRes
                 format!("Reset {branch} to {upstream_name} (snapshot {}).", short_backup(&backup)),
                 Some(backup),
             ),
-            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
             Err(e) => RemoteResult::err(e),
         }
     })
@@ -459,7 +487,7 @@ pub async fn push(path: String) -> RemoteResult {
                 None,
             ),
             // e.g. "! [rejected] ... (non-fast-forward)" or "fatal: 'origin' does not appear to be a git repository"
-            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
             Err(e) => RemoteResult::err(e),
         }
     })
@@ -563,7 +591,7 @@ pub async fn force_push(path: String, lease: bool) -> RemoteResult {
             // e.g. "! [rejected]  <branch> -> <branch> (stale info)" when `lease`
             // and the remote moved since our last fetch — never silently retried
             // as a raw force; see this function's own doc comment.
-            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
             Err(e) => RemoteResult::err(e),
         }
     })
@@ -622,7 +650,7 @@ pub async fn push_tag(path: String, remote: Option<String>, name: String) -> Rem
             // e.g. "! [rejected] <name> -> <name> (already exists)" — never forced.
             // Or, if `name` is a branch with no same-named local tag: "error: src
             // refspec refs/tags/<name> does not match any" — never a branch push.
-            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
             Err(e) => RemoteResult::err(e),
         }
     })
@@ -733,9 +761,47 @@ pub async fn push_branch(path: String, branch: String, remote: Option<String>, r
                 None,
             ),
             // e.g. "! [rejected] ... (non-fast-forward)" — never forced.
-            Ok(out) => RemoteResult::err(git_error_message(&out)),
+            Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
             Err(e) => RemoteResult::err(e),
         }
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn out(stderr: &str) -> GitOut {
+        GitOut { ok: false, code: Some(128), stdout: String::new(), stderr: stderr.to_string() }
+    }
+
+    #[test]
+    fn git_error_message_appends_the_wsl_ssh_hint_only_on_a_wsl_path() {
+        let msg = git_error_message(r"\\wsl.localhost\Ubuntu\home\jc\repo", &out("Permission denied (publickey)."));
+        assert!(msg.starts_with("Permission denied (publickey)."), "original stderr must still lead the message: {msg:?}");
+        assert!(msg.contains("ssh-agent"), "expected the WSL-specific hint appended: {msg:?}");
+    }
+
+    #[test]
+    fn git_error_message_leaves_a_non_wsl_permission_error_unmodified() {
+        let msg = git_error_message(r"C:\Users\jc\repo", &out("Permission denied (publickey)."));
+        assert_eq!(msg, "Permission denied (publickey).", "a plain Windows-path repo must never see the WSL-specific hint");
+    }
+
+    #[test]
+    fn git_error_message_leaves_a_wsl_path_non_ssh_error_unmodified() {
+        let msg = git_error_message(r"\\wsl.localhost\Ubuntu\home\jc\repo", &out("fatal: not a git repository"));
+        assert_eq!(msg, "fatal: not a git repository", "only an actual SSH permission failure should get the hint");
+    }
+
+    #[test]
+    fn git_error_message_falls_back_to_stdout_then_a_generic_message() {
+        let mut o = out("");
+        o.stdout = "some stdout text".to_string();
+        assert_eq!(git_error_message("/any/path", &o), "some stdout text");
+
+        let empty = GitOut { ok: false, code: Some(1), stdout: String::new(), stderr: String::new() };
+        assert_eq!(git_error_message("/any/path", &empty), "git exited with status Some(1)");
+    }
 }

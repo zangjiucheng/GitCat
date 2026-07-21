@@ -85,6 +85,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Wry};
 
 use crate::conflict;
+use crate::procutil::NoConsoleWindowExt;
 use crate::safety::{self, GitOut};
 
 const FILE_NAME: &str = "external_tools.json";
@@ -475,6 +476,7 @@ pub fn open_diff_tool_inner(
         .ok_or_else(|| format!("No external diff tool configured. {HINT}"))?;
     let args = build_difftool_argv(file, staged, &from_rev, &to_rev, &tool);
     std::process::Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(path)
         .args(&args)

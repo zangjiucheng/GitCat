@@ -103,8 +103,52 @@ jobs:
       # layer of protection against that whole bug CLASS recurring.
       # --test-threads=1 so the three tests' own eprintln! timing lines
       # print in a stable, non-interleaved order.
+      #
+      # The numbers themselves used to only be visible by opening this
+      # step's raw log — easy to forget to check on a green run. Each test's
+      # own `eprintln!("[perf] <name>: <elapsed> ...")` line is parsed out and
+      # written as a markdown table to $GITHUB_STEP_SUMMARY instead, which
+      # GitHub renders directly on the workflow run's summary page (no step
+      # expansion needed). `set +e` around the pipe keeps the default
+      # `bash -eo pipefail` from aborting the script before the summary gets
+      # written on a FAILING run too — ${PIPESTATUS[0]} still captures cargo
+      # test's real exit code, and the final `exit` still fails the job/step
+      # exactly as before. Deliberately NOT `... | tee perf-output.log ||
+      # true`: with pipefail active, running ANY command (even bare `true`)
+      # after the pipe resets $PIPESTATUS to reflect THAT command instead —
+      # verified locally that this silently turned every failure into a
+      # falsely-reported status 0, which would have made this step always
+      # "succeed" even on a real regression.
+      #
+      # `grep -o '\[perf\].*'` (not a line-anchored `^\[perf\]`) because
+      # cargo test's own unbuffered "test <name> ... " progress text shares
+      # the SAME line as each test's eprintln! (no newline between them until
+      # "ok"/"FAILED" is appended) — verified against a real local run; a
+      # `^`-anchored match found nothing since "[perf]" is never actually
+      # first on its line.
       - name: Performance regression tests
-        run: cargo test --test perf_graph -- --nocapture --test-threads=1
+        run: |
+          set +e
+          cargo test --test perf_graph -- --nocapture --test-threads=1 2>&1 | tee perf-output.log
+          status=${PIPESTATUS[0]}
+          set -e
+          {
+            echo "### ⏱️ Performance regression tests"
+            echo
+            echo "| Check | Elapsed |"
+            echo "| --- | --- |"
+            grep -o '\[perf\].*' perf-output.log | while IFS= read -r line; do
+              body=${line#"[perf] "}
+              name=${body%%:*}
+              rest=${body#*": "}
+              echo "| \`$name\` | $rest |"
+            done
+            if [ "$status" -ne 0 ]; then
+              echo
+              echo "⚠️ A performance check **failed** — see this step's log for the exact assertion."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       - name: Build examples
         run: cargo build --examples --locked

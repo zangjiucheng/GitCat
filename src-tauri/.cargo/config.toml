@@ -1,0 +1,11 @@
+# Required for console-subscriber (tokio-console) to see any task events at
+# all — see lib.rs's run() for where it's actually initialized (dev-only,
+# #[cfg(debug_assertions)]). This cfg flag itself is always on for every
+# build (dev AND release) since toggling it forces a full rebuild either
+# way; it only unlocks tokio's unstable tracing instrumentation hooks, which
+# add a small always-on per-task-spawn cost (a few extra tracing calls) but
+# no observable behavior change on their own — the actual diagnostic
+# server/overhead only exists when console_subscriber::init() runs, which
+# never happens in a release build.
+[build]
+rustflags = ["--cfg", "tokio_unstable"]

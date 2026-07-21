@@ -20,6 +20,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import type { RepoSummary } from "../../ipc/bindings";
+import { detailCtrl } from "../detail/detail.svelte.ts";
 
 // Canned demo data (design-mode only) — same spirit as reflog.svelte.ts's own
 // DEMO constant, so the browser preview still shows a populated modal without
@@ -135,7 +136,19 @@ class RepoSummaryState {
       // An empty/unborn repo's first open still consumes the claim (see
       // claim_repo_summary_first_open's own doc comment) but has nothing
       // meaningful to show — stay closed rather than popping an all-zeroes modal.
-      if (this.summary && this.summary.totalCommits > 0) {
+      //
+      // BUG FIX: refresh() above is a real git-log walk (up to 20,000
+      // commits) that can take a noticeable moment even off the main thread
+      // — plenty of time for the user to have already clicked into a
+      // commit's Detail view while it was running. Popping this modal open
+      // unconditionally once it finally resolved yanked them straight back
+      // out of whatever they'd just opened, every single time ("加载统计又会
+      // 回到统计界面" — reported live against this exact race). The claim
+      // itself is still consumed either way (see claimRepoSummaryFirstOpen's
+      // own one-shot contract) — this only skips the FORCED pop-open when
+      // the user has since engaged with something else; the data stays
+      // loaded and ready for whenever they do open the summary themselves.
+      if (this.summary && this.summary.totalCommits > 0 && !detailCtrl.commit) {
         this.open = true;
         this.tamaImg = bridge.TAMA_IMG.curious;
       }

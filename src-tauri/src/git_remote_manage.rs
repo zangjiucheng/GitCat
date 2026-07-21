@@ -62,6 +62,7 @@ use std::process::Command;
 use serde::Serialize;
 
 use crate::git_remote::RemoteResult;
+use crate::procutil::NoConsoleWindowExt;
 
 // ---------------------------------------------------------------------------
 // RemoteResult constructors (RemoteResult's own `ok`/`err` are private to
@@ -108,6 +109,7 @@ struct GitOut {
 
 fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
     let output = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)

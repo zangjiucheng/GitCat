@@ -599,13 +599,6 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   border-radius:6px;padding:2px 6px;cursor:pointer}
 .perf .sep{width:1px;height:14px;background:var(--border)}
 .perf-dev{display:flex;align-items:center;gap:8px}
-.hint{position:absolute;left:14px;bottom:10px;z-index:6;color:var(--muted);font-size:11px;pointer-events:none;font-family:var(--mono);
-  /* Was 70% opaque — a real commit row scrolled to the very bottom of the
-     canvas (where this legend sits) showed through it, its text/lane lines
-     visually blending with the hint's own text. Matches .delta-readout's own
-     92% just above, the established opacity for a fixed overlay chip that
-     must stay legible against arbitrary canvas content behind it. */
-  background:color-mix(in srgb,var(--panel) 92%,transparent);padding:3px 8px;border-radius:6px}
 .delta-readout{position:absolute;top:44px;right:14px;z-index:6;font-family:var(--mono);font-size:11px;color:var(--text);
   background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid color-mix(in srgb,var(--accent) 45%,var(--border));
   border-radius:var(--r-control);padding:4px 9px;opacity:0;transition:opacity .18s;pointer-events:none}
@@ -1310,6 +1303,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    mistake" rule as bisect/setupwizard above — a neutral utility screen gets
    the same accent tint as bisect (indigo), not a new color. ---------- */
 .settings .modal-head{background:color-mix(in srgb,var(--accent) 10%,var(--panel))}
+/* Settings grew a lot of sections (Appearance/Graph/Cherry-pick/Updates/
+   Tama/Git identity/Git config, the last with its own curated fields +
+   Advanced editor) — same fixed-height-then-scroll treatment every other
+   content-heavy modal already uses (dashboard/pickaxe/codesearch/
+   reposummary's own ".modal.X .modal-body{max-height:...vh;overflow:auto}"
+   rules) rather than letting the modal grow past the viewport. */
+.modal.settings .modal-body{max-height:70vh;overflow:auto}
 /* Reusable "small labeled checkbox row" for Settings' instant-apply toggles
    — deliberately NOT reusing .cp-x (that class is named for the cherry-pick
    -x flag specifically; reusing it here under an unrelated name would read
@@ -1829,9 +1829,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
         <!-- Zoom in/out buttons, and the "Record origin" (cherry-pick -x)
              checkbox, used to live here too — both removed outright, not
              relocated. Zoom: ⌘/ctrl+wheel AND the +/- keys already zoom (see
-             the on-canvas .hint text below, and zoomAt()'s own call sites in
-             legacy/main.ts), so the buttons were a third, fully redundant
-             way to do the same thing. Record origin: now a single Settings
+             zoomAt()'s own call sites in legacy/main.ts), so the buttons
+             were a third, fully redundant way to do the same thing. Record
+             origin: now a single Settings
              preference (see src/islands/settings) rather than a live
              per-cherry-pick toggle sitting in front of the commit graph —
              cherryPick() below reads loadSettings().cherryPickRecordOriginDefault
@@ -1841,11 +1841,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
              they always worked for every user. -->
       </div>
       <div class="delta-readout" id="deltaReadout"></div>
-      <div class="hint">wheel scroll &#183; &#8984;/ctrl+wheel zoom &#183; click select &#183; drag a dot to cherry-pick &#183; shift+drag to merge &#183; &#8984;Z undo &#183; scroll the ribbon to zoom the snapshot timeline</div>
       <!-- filled by the BisectDrawer Svelte island (src/islands/bisectdrawer) —
            a floating panel, MUST be a child of #canvasWrap (not document.body):
            its position:absolute is relative to this element, same as
-           #deltaReadout/.hint just above. -->
+           #deltaReadout just above. -->
       <div id="bisectPanelMount"></div>
     </div>
   </main>

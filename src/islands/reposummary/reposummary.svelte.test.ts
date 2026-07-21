@@ -27,6 +27,7 @@ vi.mock("../../ipc/env", () => ({
 import { commands } from "../../ipc/bindings";
 import type { RepoSummary } from "../../ipc/bindings";
 import { repoSummaryCtrl } from "./reposummary.svelte.ts";
+import { detailCtrl } from "../detail/detail.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
@@ -57,6 +58,7 @@ function resetCtrl() {
   repoSummaryCtrl.summary = null;
   repoSummaryCtrl.tamaImg = "";
   repoSummaryCtrl.repo = "";
+  detailCtrl.commit = null;
   mockInTauri = true;
   vi.clearAllMocks();
 }
@@ -226,5 +228,31 @@ describe("maybeAutoShow — real mode (IN_TAURI)", () => {
 
     expect(commands.claimRepoSummaryFirstOpen).not.toHaveBeenCalled();
     expect(repoSummaryCtrl.open).toBe(false);
+  });
+
+  // Regression: refresh() below is a real git-log walk that can take long
+  // enough for the user to click into a commit's Detail view before it
+  // resolves — the modal must not steal them back out of it once it does
+  // ("加载统计又会回到统计界面").
+  it("does not force-open when the user has since selected a commit in Detail", async () => {
+    vi.mocked(commands.claimRepoSummaryFirstOpen).mockResolvedValueOnce(ok(true));
+    vi.mocked(commands.repoSummary).mockResolvedValueOnce(ok(summary()));
+    detailCtrl.commit = { row: 0, subject: "picked mid-load", sha: "abc123" } as any;
+
+    await repoSummaryCtrl.maybeAutoShow("repo1");
+
+    expect(commands.repoSummary).toHaveBeenCalledWith("repo1"); // data still loads...
+    expect(repoSummaryCtrl.summary?.totalCommits).toBeGreaterThan(0); // ...and stays available...
+    expect(repoSummaryCtrl.open).toBe(false); // ...it just doesn't pop over Detail.
+  });
+
+  it("still opens normally once Detail is empty again (no commit selected)", async () => {
+    vi.mocked(commands.claimRepoSummaryFirstOpen).mockResolvedValueOnce(ok(true));
+    vi.mocked(commands.repoSummary).mockResolvedValueOnce(ok(summary()));
+    detailCtrl.commit = null;
+
+    await repoSummaryCtrl.maybeAutoShow("repo1");
+
+    expect(repoSummaryCtrl.open).toBe(true);
   });
 });

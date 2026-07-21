@@ -606,6 +606,22 @@ function endPointer(e){
   removeGhost(); state.drag=null; down=null; state.pointerActive=false; dirty=true;
 }
 cv.addEventListener("pointerup",endPointer); cv.addEventListener("pointercancel",endPointer);
+// Double-click a commit row -> jump straight to the full-page diff popup
+// (detailCtrl.expandDiff(), the same modal .diff-file-h's own "Expand diff"
+// button already opens) instead of making that a separate, required second
+// click after a plain single-click just selects the row. select(row) first
+// (harmless/idempotent if the row's own pointerup already selected it via
+// endPointer above — a dblclick is always preceded by two real click
+// sequences) so this works even if the two clicks of the dblclick landed on
+// a row that, for whatever reason, isn't already the selected one.
+// Ignored for anywhere that isn't a real commit row (row<0), same guard
+// contextmenu's own listener below uses.
+cv.addEventListener("dblclick",(e)=>{
+  const p=rel(e), hit=hitTest(p.x,p.y);
+  if(!hit||hit.row<0) return;
+  select(hit.row);
+  detailCtrl.expandDiff();
+});
 // Commit-row context menu (src/islands/commitmenu) — the canvas's first-ever
 // "contextmenu" listener (there was previously NO per-commit-row menu at all;
 // see that island's own header). preventDefault so the native OS/browser menu

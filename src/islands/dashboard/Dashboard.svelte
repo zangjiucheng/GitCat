@@ -48,12 +48,15 @@
                   {/if}
                 </div>
                 <div class="db-path mut mono" title={r.path}>{r.path}</div>
-                {#if r.loading}
+                {#if r.status?.lastSubject}
+                  <div class="db-sub mut">
+                    {r.status.lastSubject} &#183; {bridge.relTime(r.status.lastCommitTime ?? 0)}{#if r.loading}
+                      <span class="spinner"></span>{/if}
+                  </div>
+                {:else if r.loading}
                   <div class="db-sub mut"><span class="spinner"></span> reading status&#8230;</div>
                 {:else if r.error}
                   <div class="db-sub db-broken">&#9888; {r.error}</div>
-                {:else if r.status?.lastSubject}
-                  <div class="db-sub mut">{r.status.lastSubject} &#183; {bridge.relTime(r.status.lastCommitTime ?? 0)}</div>
                 {/if}
               </div>
               <div class="db-act">

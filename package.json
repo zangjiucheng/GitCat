@@ -1,7 +1,7 @@
 {
   "name": "gitcat",
   "private": true,
-  "version": "0.7.3",
+  "version": "0.8.0",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
@@ -17,6 +17,7 @@
     "tama:debug": "vite --host 127.0.0.1 --open /scripts/tama-debug.html",
     "tama:portraits": "node scripts/render-tama-portraits.mjs",
     "demo": "bash scripts/make-demo-repo.sh",
+    "flamegraph": "node scripts/profile.mjs",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"

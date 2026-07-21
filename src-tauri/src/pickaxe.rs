@@ -74,6 +74,7 @@ use serde::Serialize;
 use std::process::Command;
 
 use crate::model::Person;
+use crate::procutil::NoConsoleWindowExt;
 
 /// Cap on returned matches. Kept at the SAME value as file_history.rs's own
 /// `MAX_HISTORY_COMMITS` (2000) — deliberately NOT raised despite this
@@ -293,6 +294,7 @@ struct Out {
 
 fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
     let o = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)

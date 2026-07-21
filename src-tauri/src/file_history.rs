@@ -69,6 +69,7 @@ use std::process::Command;
 use serde::Serialize;
 
 use crate::model::Person;
+use crate::procutil::NoConsoleWindowExt;
 
 /// Cap on returned history entries. Duplicated (own constant, not shared —
 /// see blame.rs's MAX_BLAME_LINES / commands.rs's MAX_FILES precedent) rather
@@ -235,6 +236,7 @@ struct Out {
 
 fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
     let o = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)

@@ -51,6 +51,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use git2::Repository;
 use serde::{Deserialize, Serialize};
 
+use crate::procutil::NoConsoleWindowExt;
+
 /// Process-wide monotonic tie-breaker, mirrors `safety.rs`'s `SNAP_SEQ`: two
 /// backups taken in the same nanosecond still get distinct ids.
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -69,6 +71,7 @@ struct Out {
 /// (not installed / not on PATH); a non-zero git exit is `Ok(Out{ok:false})`.
 fn git(path: &str, args: &[&str]) -> Result<Out, String> {
     let o = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)

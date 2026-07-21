@@ -56,6 +56,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Command;
 
+use crate::procutil::NoConsoleWindowExt;
+
 /// How far back the whole walk looks — "the last year", matching the
 /// article's own example window.
 const CHURN_WINDOW_DAYS: i64 = 365;
@@ -395,6 +397,7 @@ struct Out {
 
 fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
     let o = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)

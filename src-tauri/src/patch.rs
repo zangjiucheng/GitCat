@@ -134,6 +134,8 @@ use std::process::Command;
 use git2::{Repository, RepositoryState};
 use serde::Serialize;
 
+use crate::procutil::NoConsoleWindowExt;
+
 // ---------------------------------------------------------------------------
 // Payloads
 // ---------------------------------------------------------------------------
@@ -208,6 +210,7 @@ struct Out {
 
 fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     let mut cmd = Command::new("git");
+    cmd.no_console_window();
     cmd.arg("-C").arg(path).args(args);
     if no_editor {
         cmd.env("GIT_EDITOR", "true").env("GIT_SEQUENCE_EDITOR", "true");
@@ -241,6 +244,7 @@ struct RawOut {
 
 fn run_format_patch(path: &str, args: &[&str]) -> Result<RawOut, String> {
     let o = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)

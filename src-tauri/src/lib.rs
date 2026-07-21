@@ -15,6 +15,7 @@ pub mod git_tag; // Tags: create / delete (push_tag lives in git_remote.rs — s
 pub mod git_write;
 pub mod workdir; // working-tree status + stage/unstage/discard/commit + stash
 pub mod git_bisect; // M3: git bisect (start / mark good|bad|skip / status / reset)
+pub mod git_config; // Settings' Git Config panel: generic per-key local/global git config read/write (identity.rs generalized beyond user.name/user.email)
 pub mod git_merge; // M6 (stage 1): merge (drag-onto-HEAD) + continue / abort
 pub mod git_rebase; // M6 (stage 2): linear rebase onto a target + continue / skip / abort
 pub mod git_revert; // M6 (stage 3): revert a single commit onto HEAD + continue / abort
@@ -25,6 +26,7 @@ pub mod model;
 pub mod patch; // format-patch export + git am --3way apply (with am's own continue/skip/abort)
 pub mod pickaxe; // pickaxe / diff-content search: git log -S/-G across (a subset of) history
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
+pub mod procutil; // suppresses the console window Windows flashes open per subprocess spawn
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod repo_files; // backlog #14 (final item): .gitignore/.mailmap in-app editors — allow-listed repo-root file read/write
 pub mod repo_registry; // backlog #11: app-level tracked-repos JSON persistence
@@ -220,6 +222,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // Setup wizard: repo-local git identity check + fix (never touches global config)
         identity::get_git_identity,
         identity::set_git_identity,
+        git_config::get_git_config_values,
+        git_config::list_git_config_entries,
+        git_config::set_git_config_value,
         // Live refresh: watch/unwatch the open repo's git-dir for external changes
         watch::watch_repo,
         watch::unwatch_repo,
@@ -309,7 +314,54 @@ pub fn run() {
             .header("// @ts-nocheck\n"), "../src/ipc/bindings.ts")
         .expect("failed to export typescript bindings");
 
-    tauri::Builder::default()
+    // `mut` is only ever reassigned inside the debug_assertions block below —
+    // genuinely unused in a release build, where that block doesn't compile
+    // at all. #[allow] rather than restructuring around it: the alternative
+    // (two full separate builder chains) would duplicate every `.plugin()`/
+    // `.manage()` call below across both branches for one conditional line.
+    #[allow(unused_mut)]
+    let mut app_builder = tauri::Builder::default();
+    // Dev-only profiling/inspection, never shipped in a release build. Pick
+    // EXACTLY ONE of the two, never both: both tauri-plugin-devtools and
+    // console-subscriber (tokio-console) try to install the process-global
+    // tracing dispatcher, and only one can ever win — confirmed via a real
+    // crash ("a global default trace dispatcher has already been set") when
+    // both ran; tauri-plugin-devtools's own init()/try_init() doc comment
+    // says outright it "will panic ... if another library has already
+    // initialized a global tracing subscriber". Both also open an
+    // unauthenticated local diagnostic port and add real per-task tracing
+    // overhead, hence #[cfg(debug_assertions)] gating either from ever
+    // running in a release build at all.
+    //
+    //   - default (neither env var set): NEITHER runs — an ordinary `pnpm
+    //     tauri dev` stays a plain, lightweight dev build with no extra
+    //     console spam, diagnostic port, or tracing overhead. Both tools are
+    //     genuinely opt-in, not "on unless you know to turn them off".
+    //   - GITCAT_DEVTOOLS=1: tauri-plugin-devtools (CrabNebula) — a GUI
+    //     inspector, viewed via the separate CrabNebula DevTools desktop app.
+    //   - GITCAT_TOKIO_CONSOLE=1: console-subscriber (tokio-console) — a raw
+    //     async-task inspector for everything routed through
+    //     tauri::async_runtime (confirmed backed by a real
+    //     tokio::runtime::Runtime, so this sees genuine task data, including
+    //     every run_blocking/spawn_blocking call), viewed via the separate
+    //     `tokio-console` CLI (`cargo install tokio-console`), connecting to
+    //     the default 127.0.0.1:6669 gRPC endpoint. Requires building with
+    //     `RUSTFLAGS="--cfg tokio_unstable"` (see .cargo/config.toml) or this
+    //     subscriber sees no task events at all.
+    //   - both set: GITCAT_TOKIO_CONSOLE wins — they can't run together at
+    //     all (both try to install the process-global tracing dispatcher;
+    //     confirmed via a real startup panic when both ran), so one has to
+    //     take priority rather than leaving that case undefined.
+    #[cfg(debug_assertions)]
+    {
+        if std::env::var_os("GITCAT_TOKIO_CONSOLE").is_some() {
+            console_subscriber::init();
+        } else if std::env::var_os("GITCAT_DEVTOOLS").is_some() {
+            app_builder = app_builder.plugin(tauri_plugin_devtools::init());
+        }
+    }
+
+    app_builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         // Updater: checks the GitHub Release matching this build's `latest.json`

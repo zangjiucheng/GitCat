@@ -123,6 +123,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use git2::{Oid, Repository, Sort};
 use serde::{Deserialize, Serialize};
 
+use crate::procutil::NoConsoleWindowExt;
+
 // ---------------------------------------------------------------------------
 // Payload
 // ---------------------------------------------------------------------------
@@ -229,6 +231,7 @@ struct Out {
 /// if git can't spawn.
 fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     let mut cmd = Command::new("git");
+    cmd.no_console_window();
     cmd.arg("-C").arg(path).args(args);
     if no_editor {
         cmd.env("GIT_EDITOR", "true")
@@ -253,6 +256,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
 /// is completely undisturbed.
 fn git_with_env(path: &str, args: &[&str], envs: &[(&str, &str)]) -> Result<Out, String> {
     let mut cmd = Command::new("git");
+    cmd.no_console_window();
     cmd.arg("-C").arg(path).args(args);
     for (k, v) in envs {
         cmd.env(k, v);

@@ -116,7 +116,7 @@ mount(Detail, { target: document.getElementById("detail")! });
 // the removed DRAWER section for why this (and Reflog/Rerere/Plumbing
 // below) are no longer mounted into a permanent drawer pane. MUST mount
 // inside #canvasWrap, not document.body: its position:absolute floats
-// relative to that element, same as #deltaReadout/.hint.
+// relative to that element, same as #deltaReadout.
 mount(BisectDrawer, { target: document.getElementById("bisectPanelMount")! });
 
 mount(Sidebar, { target: document.getElementById("sidebarRefs")! });
@@ -307,6 +307,45 @@ if (IN_TAURI) {
       // best-effort, same as watch_repo — a transient poll failure just tries again next tick
     }
   }, POLL_MS);
+}
+
+// Auto-fetch (Settings' own "Periodically fetch from all remotes" toggle) —
+// keeps ahead/behind counts and incoming remote changes current without a
+// manual Pull. Same shape as the poll just above: a single module-level
+// timestamp (not per-repo — harmless to carry over across a repo switch,
+// this only gates TIMING, unlike pollSnapshot above which gates a real
+// correctness comparison and so must never leak across repos), IN_TAURI-
+// gated, re-reads bridge.CUR_REPO and loadSettings() fresh on every tick
+// rather than restarting the interval when the user flips the Settings
+// toggle or changes the interval — so neither ever needs wiring beyond
+// persisting to localStorage.
+//
+// AUTO_FETCH_CHECK_MS is how often we check whether a fetch is DUE, not the
+// fetch interval itself (that's user-configurable, in whole minutes, via
+// settingsCtrl.autoFetchIntervalMinutes) — a coarse 30s check is plenty
+// granular against a multi-minute interval without polling pointlessly often.
+// Deliberately silent either way (no Tama toast, no spinner) even on
+// failure: this is meant to be fully ambient background upkeep, exactly
+// like the dashboard-status poll above, not a user-facing action — a
+// stale/offline network just tries again next tick, same as that poll's own
+// best-effort contract.
+const AUTO_FETCH_CHECK_MS = 30_000;
+let lastAutoFetchAt = 0;
+if (IN_TAURI) {
+  setInterval(async () => {
+    const path = bridge.CUR_REPO as unknown as string | null;
+    if (!path) return;
+    const s = loadSettings();
+    if (!s.autoFetchEnabled) return;
+    if (Date.now() < lastAutoFetchAt + s.autoFetchIntervalMinutes * 60_000) return;
+    lastAutoFetchAt = Date.now();
+    try {
+      const res = await commands.fetch(path, null);
+      if (!res.ok) console.warn("auto-fetch:", res.message);
+    } catch (e) {
+      console.error("auto-fetch failed unexpectedly", e);
+    }
+  }, AUTO_FETCH_CHECK_MS);
 }
 
 // Manual refresh (topbar button) — the explicit escape hatch for exactly

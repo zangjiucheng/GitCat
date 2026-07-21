@@ -517,7 +517,16 @@ class DetailState {
 
   showHero(n: number, ms: number) {
     this.lastHero = { n, ms };
-    this.commit = null;
+    // BUG FIX: the graph now streams in over many batches (legacy/main.ts's
+    // onGraphBatch calls this on EVERY batch, not just once at the end, to
+    // live-update the "N commits laid out in M ms" counter) — a commit
+    // clicked while later batches are still arriving used to get its detail
+    // panel (and any expanded diff) silently closed by the very next batch,
+    // since this unconditionally cleared `commit` regardless of whether one
+    // was actually selected. `lastHero` still updates unconditionally above
+    // so deselect() reflects the latest count once the user does step away;
+    // only the VISIBLE hero card is skipped while a real selection is up.
+    if (this.commit) return;
     this.hero = { kind: "loaded", n, ms };
     this.diffExpanded = false;
   }

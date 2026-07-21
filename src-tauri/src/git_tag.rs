@@ -71,6 +71,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use git2::{Oid, Repository};
 
 use crate::git_write::WriteResult;
+use crate::procutil::NoConsoleWindowExt;
 
 /// Process-wide monotonic tie-breaker for `refs/gitgui/deleted-tag/*` names —
 /// its own counter (not shared with `safety.rs`'s `SNAP_SEQ` or `workdir.rs`'s
@@ -107,6 +108,7 @@ struct GitOut {
 
 fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
     let output = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)
