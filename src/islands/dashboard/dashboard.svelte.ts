@@ -176,14 +176,25 @@ class DashboardState {
   // `loading` when called from addRepository()/removeRepository(), which
   // already know nothing else in the list could have changed. When
   // `forceRefetchAll` is true (only `show()`'s call, via `refresh(true)`),
-  // EVERY row is reset to `loading` regardless of any cached status, so a
-  // fresh dashboard open always re-checks reality rather than trusting
-  // whatever it last saw earlier in the session.
+  // EVERY row is marked `loading` again so a fresh dashboard open always
+  // re-checks reality rather than trusting whatever it last saw earlier in
+  // the session — but a row that already has a cached status/error KEEPS
+  // showing it while that re-check is in flight, rather than blanking to a
+  // bare spinner: a WSL-tracked row's re-check is a real `wsl.exe` round
+  // trip (see `crate::wsl::wsl_status`'s own doc comment) that can take a
+  // couple of seconds, and re-paying that as a blank "reading status…" row
+  // on every single dashboard open — even for a repo whose branch/dirty
+  // state almost certainly hasn't changed since 10 seconds ago — is exactly
+  // the "still too slow" complaint this exists to fix. Dashboard.svelte's
+  // row template prefers a cached `status.lastSubject` over the loading
+  // spinner for this same reason.
   private applyTrackedList(list: TrackedRepo[], forceRefetchAll = false): void {
     const existing = new Map(this.rows.map((r) => [r.path, r]));
     this.rows = list.map((t) => {
-      const prev = forceRefetchAll ? undefined : existing.get(t.path);
-      return prev ? { ...prev, lastOpenedAt: t.lastOpenedAt } : { path: t.path, lastOpenedAt: t.lastOpenedAt, loading: true, status: null, error: null };
+      const prev = existing.get(t.path);
+      if (!prev) return { path: t.path, lastOpenedAt: t.lastOpenedAt, loading: true, status: null, error: null };
+      if (!forceRefetchAll) return { ...prev, lastOpenedAt: t.lastOpenedAt };
+      return { ...prev, lastOpenedAt: t.lastOpenedAt, loading: true };
     });
   }
 
