@@ -7,7 +7,20 @@ const MODEL_URL = "/tama/models/kirara/model.glb";
 type ThreeActorOptions = {
   mount: HTMLElement;
   onUnavailable: () => void;
+  debug?: boolean;
 };
+
+export type TamaDebugRotation = { x: number; y: number; z: number };
+
+export interface Tama3DDebugActor extends TamaActor {
+  getDebugBoneNames(): string[];
+  getDebugBoneOffset(name: string): TamaDebugRotation;
+  selectDebugBone(name: string): boolean;
+  setDebugBoneOffset(name: string, rotation: TamaDebugRotation): boolean;
+  resetDebugBone(name: string): void;
+  resetAllDebugBones(): void;
+  setDebugMarkerVisible(visible: boolean): void;
+}
 
 type Rig = {
   head: THREE.Object3D | null;
@@ -51,6 +64,10 @@ class Tama3DActor implements TamaActor {
   private pointerY = 0;
   private gesture: TamaGesture | null = null;
   private gestureStarted = 0;
+  private readonly debugEnabled: boolean;
+  private readonly debugOffsets = new Map<string, THREE.Vector3>();
+  private debugBone: THREE.Object3D | null = null;
+  private debugMarker: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> | null = null;
   private rig: Rig = {
     head: null,
     neck: null,
@@ -80,6 +97,7 @@ class Tama3DActor implements TamaActor {
   constructor(options: ThreeActorOptions) {
     this.mount = options.mount;
     this.onUnavailable = options.onUnavailable;
+    this.debugEnabled = options.debug ?? false;
   }
 
   async load(): Promise<boolean> {
@@ -149,6 +167,56 @@ class Tama3DActor implements TamaActor {
     this.pointerY = 0;
   }
 
+  getDebugBoneNames(): string[] {
+    if (!this.debugEnabled || !this.model) return [];
+    const names: string[] = [];
+    this.model.traverse((object) => {
+      if (object.type === "Bone" && object.name && !object.name.endsWith("_end")) names.push(object.name);
+    });
+    return names.sort((left, right) => left.localeCompare(right, "ja"));
+  }
+
+  getDebugBoneOffset(name: string): TamaDebugRotation {
+    const offset = this.debugOffsets.get(name);
+    return { x: offset?.x ?? 0, y: offset?.y ?? 0, z: offset?.z ?? 0 };
+  }
+
+  selectDebugBone(name: string): boolean {
+    if (!this.debugEnabled || !this.model || !this.scene) return false;
+    const bone = this.model.getObjectByName(name);
+    if (!bone || bone.type !== "Bone") return false;
+    this.debugBone = bone;
+    if (!this.debugMarker) {
+      const modelHeight = Number(this.camera?.userData.modelHeight) || 1;
+      this.debugMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(modelHeight * 0.012, 18, 12),
+        new THREE.MeshBasicMaterial({ color: 0xff4f91, depthTest: false, transparent: true, opacity: 0.95 }),
+      );
+      this.debugMarker.renderOrder = 1000;
+      this.scene.add(this.debugMarker);
+    }
+    this.debugMarker.visible = true;
+    return true;
+  }
+
+  setDebugBoneOffset(name: string, rotation: TamaDebugRotation): boolean {
+    if (!this.debugEnabled || !this.model?.getObjectByName(name)) return false;
+    this.debugOffsets.set(name, new THREE.Vector3(rotation.x, rotation.y, rotation.z));
+    return true;
+  }
+
+  resetDebugBone(name: string): void {
+    this.debugOffsets.delete(name);
+  }
+
+  resetAllDebugBones(): void {
+    this.debugOffsets.clear();
+  }
+
+  setDebugMarkerVisible(visible: boolean): void {
+    if (this.debugMarker) this.debugMarker.visible = visible;
+  }
+
   setPaused(paused: boolean): void {
     this.paused = paused;
     if (!paused && !document.hidden) {
@@ -171,6 +239,8 @@ class Tama3DActor implements TamaActor {
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const material of materials) material?.dispose();
     });
+    this.debugMarker?.geometry.dispose();
+    this.debugMarker?.material.dispose();
     this.renderer?.dispose();
     this.mount.replaceChildren();
     this.renderer = null;
@@ -267,6 +337,13 @@ class Tama3DActor implements TamaActor {
         if (bone) this.baseRotations.set(bone, bone.rotation.clone());
       }
     }
+    if (this.debugEnabled) {
+      model.traverse((object) => {
+        if (object.type === "Bone" && !this.baseRotations.has(object)) {
+          this.baseRotations.set(object, object.rotation.clone());
+        }
+      });
+    }
   }
 
   private resize(): void {
@@ -303,13 +380,16 @@ class Tama3DActor implements TamaActor {
 
   private updatePose(time: number, delta: number): void {
     const smooth = 1 - Math.exp(-delta * 8);
+    const appliedBones = new Set<THREE.Object3D>();
     const apply = (bone: THREE.Object3D | null, x = 0, y = 0, z = 0): void => {
       if (!bone) return;
       const base = this.baseRotations.get(bone);
       if (!base) return;
-      bone.rotation.x = THREE.MathUtils.lerp(bone.rotation.x, base.x + x, smooth);
-      bone.rotation.y = THREE.MathUtils.lerp(bone.rotation.y, base.y + y, smooth);
-      bone.rotation.z = THREE.MathUtils.lerp(bone.rotation.z, base.z + z, smooth);
+      appliedBones.add(bone);
+      const debug = this.debugOffsets.get(bone.name);
+      bone.rotation.x = THREE.MathUtils.lerp(bone.rotation.x, base.x + x + (debug?.x ?? 0), smooth);
+      bone.rotation.y = THREE.MathUtils.lerp(bone.rotation.y, base.y + y + (debug?.y ?? 0), smooth);
+      bone.rotation.z = THREE.MathUtils.lerp(bone.rotation.z, base.z + z + (debug?.z ?? 0), smooth);
     };
 
     const breathe = Math.sin(time * 1.8) * 0.018;
@@ -617,9 +697,18 @@ class Tama3DActor implements TamaActor {
     apply(this.rig.tailBase, 0, tailBaseY * 0.25, tailBaseZ + tailBaseY * 0.55);
     applyChain(this.rig.leftTail, 0, leftTailY * 0.2, leftTailZ + leftTailY * 0.85);
     applyChain(this.rig.rightTail, 0, rightTailY * 0.2, rightTailZ + rightTailY * 0.85);
+    for (const name of this.debugOffsets.keys()) {
+      const bone = this.model?.getObjectByName(name) ?? null;
+      if (!bone || appliedBones.has(bone)) continue;
+      apply(bone);
+    }
     if (this.model) {
       this.model.position.x = THREE.MathUtils.lerp(this.model.position.x, this.baseModelPosition.x + sway, smooth);
       this.model.position.y = THREE.MathUtils.lerp(this.model.position.y, this.baseModelPosition.y + lift, smooth);
+      if (this.debugMarker?.visible && this.debugBone) {
+        this.model.updateMatrixWorld(true);
+        this.debugBone.getWorldPosition(this.debugMarker.position);
+      }
     }
   }
 
@@ -638,4 +727,8 @@ class Tama3DActor implements TamaActor {
 
 export function createTama3DActor(options: ThreeActorOptions): TamaActor {
   return new Tama3DActor(options);
+}
+
+export function createTama3DDebugActor(options: Omit<ThreeActorOptions, "debug">): Tama3DDebugActor {
+  return new Tama3DActor({ ...options, debug: true });
 }

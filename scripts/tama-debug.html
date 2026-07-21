@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tama 动作与关节调试台</title>
+  </head>
+  <body>
+    <main class="workbench">
+      <section class="stage-panel" aria-label="Tama 3D preview">
+        <header class="stage-head">
+          <div>
+            <span class="eyebrow">GitCat / LOCAL RIG INSPECTOR</span>
+            <h1>Tama 动作调试台</h1>
+          </div>
+          <div class="live"><span></span> LIVE</div>
+        </header>
+        <div class="viewport-shell">
+          <div class="crosshair" aria-hidden="true"></div>
+          <div id="model" class="model"></div>
+          <div class="stage-readout">
+            <span id="stateReadout">动作 idle</span>
+            <span id="boneReadout">关节 左肩</span>
+          </div>
+        </div>
+        <p class="stage-help">粉色圆点是当前关节。先选动作，再选关节，拖动三个轴观察差异。</p>
+      </section>
+
+      <aside class="controls">
+        <section class="control-block">
+          <div class="section-label"><span>01</span> 动作</div>
+          <label for="state">当前动作</label>
+          <select id="state"></select>
+          <div id="stateButtons" class="state-grid"></div>
+        </section>
+
+        <section class="control-block">
+          <div class="section-label"><span>02</span> 关节</div>
+          <label for="bone">当前关节</label>
+          <select id="bone"></select>
+          <div id="quickBones" class="quick-bones"></div>
+          <label class="check-row"><input id="marker" type="checkbox" checked /> 显示关节圆点</label>
+        </section>
+
+        <section class="control-block axes">
+          <div class="section-label"><span>03</span> 旋转偏移</div>
+          <div id="axisControls"></div>
+          <div class="button-row">
+            <button id="resetBone" type="button">重置当前关节</button>
+            <button id="resetAll" type="button" class="quiet">全部归零</button>
+          </div>
+        </section>
+
+        <section class="control-block report-block">
+          <div class="section-label"><span>04</span> 发给 Codex</div>
+          <label for="note">问题备注</label>
+          <textarea id="note" rows="2" placeholder="例如：这个动作右手腕还是反着的"></textarea>
+          <pre id="report"></pre>
+          <button id="copyReport" type="button" class="copy">复制调试信息</button>
+          <div id="copyStatus" class="copy-status" role="status"></div>
+        </section>
+      </aside>
+    </main>
+    <script type="module" src="/src/tama/debug-page.ts"></script>
+  </body>
+</html>
