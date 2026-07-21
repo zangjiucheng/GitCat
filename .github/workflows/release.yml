@@ -17,8 +17,64 @@ permissions:
   contents: write
 
 jobs:
+  # Create the ONE draft release up front, before any platform builds — this
+  # is the fix for the duplicate-draft bug. Previously every matrix leg ran
+  # tauri-action with `tagName` + `releaseDraft: true`, so each leg
+  # independently "find-or-create"d the release. GitHub's get-release-by-tag
+  # API does not return drafts, so concurrent legs couldn't see the
+  # in-progress draft and each created its OWN — leaving 2+ draft releases for
+  # a single tag with the platform assets (and a partial latest.json apiece)
+  # scattered across them. Creating the draft exactly once here, and having
+  # every build leg upload into it BY ID, removes the race entirely.
+  create-release:
+    name: Create draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+    steps:
+      - name: Find-or-create the draft release for this tag
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '')
+            // listReleases (authenticated, with contents:write) DOES include
+            // drafts — unlike the get-by-tag endpoint tauri-action relied on —
+            // so a re-run reuses the existing draft instead of stacking a new
+            // one on top. Idempotent by design.
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            })
+            let release = releases.find(r => r.tag_name === tag)
+            if (release) {
+              core.info(`Reusing existing release ${release.id} for ${tag}`)
+            } else {
+              const { data } = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                name: `GitCat ${tag}`,
+                body: "See the assets below for your platform's installer.",
+                draft: true,
+                prerelease: false,
+              })
+              release = data
+              core.info(`Created draft release ${release.id} for ${tag}`)
+            }
+            return release.id
+
   build:
     name: ${{ matrix.name }}
+    needs: create-release
+    # Run after create-release on a tag push; also run on workflow_dispatch,
+    # where create-release is skipped (its result is 'skipped', not 'failure').
+    # The !cancelled() status function is what lets this job run despite a
+    # skipped dependency; skip only if create-release genuinely FAILED — then
+    # there's no release to upload into.
+    if: ${{ !cancelled() && needs.create-release.result != 'failure' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       # One slow/flaky platform (e.g. a transient arm64 runner hiccup)
@@ -125,7 +181,8 @@ jobs:
         run: pnpm tauri build --target ${{ matrix.target }}
 
       # Real release path (tag push): build AND upload every platform's
-      # bundle to one shared draft release named after the tag. Draft (not
+      # bundle into the ONE shared draft the create-release job made above,
+      # addressed by id so no leg ever creates its own. Draft (not
       # published) on purpose — review the generated notes/assets and hit
       # "Publish" by hand once all 6 matrix entries have reported in. The
       # in-app updater (src/islands/updater) only sees a release once it's
@@ -154,11 +211,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "GitCat ${{ github.ref_name }}"
-          releaseBody: "See the assets below for your platform's installer."
-          releaseDraft: true
-          prerelease: false
+          # Upload into the draft create-release already made, by id. With
+          # releaseId set, tauri-action uploads this platform's bundle (and
+          # merges its entry into the release's shared latest.json) into THAT
+          # release instead of trying to create one — which is what used to
+          # spawn duplicate drafts. No tagName/releaseName/releaseDraft here
+          # on purpose: those are the create-mode inputs we're avoiding.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target ${{ matrix.target }}
 
   # Runs ONCE after every matrix leg has uploaded its assets (not per-leg —
@@ -166,26 +225,27 @@ jobs:
   # doesn't reliably handle on its own:
   finalize-release:
     name: Finalize release (prerelease flag + changelog notes)
-    needs: build
+    needs: [create-release, build]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      # tauri-action's own `prerelease: false` input (see the build step
-      # above) does not reliably stick — every release through v0.5.0 ended
-      # up prerelease=true on GitHub regardless (verified via
-      # `gh api repos/.../releases`), which silently breaks the in-app
-      # updater: its endpoint (releases/latest/download/latest.json) only
-      # ever resolves to a published, NON-prerelease release. Force-correct
-      # the flag here, independent of whatever tauri-action is actually
-      # doing internally. The release stays a draft (untouched by this
-      # step) for a human to review and publish by hand; this only makes
-      # sure that once published, it's actually discoverable as an update.
+      # The release is now created by the create-release job with
+      # prerelease:false, so the flag is reliable at the source. Historically
+      # it was tauri-action that created the release, and its own
+      # `prerelease: false` input did NOT reliably stick — every release
+      # through v0.5.0 ended up prerelease=true on GitHub regardless, which
+      # silently breaks the in-app updater: its endpoint
+      # (releases/latest/download/latest.json) only ever resolves to a
+      # published, NON-prerelease release. Keep force-correcting the flag here
+      # anyway as a cheap belt-and-suspenders. The release stays a draft
+      # (untouched by this step) for a human to review and publish by hand;
+      # this only makes sure that once published, it's discoverable as an update.
       - name: gh release edit --prerelease=false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "${{ github.ref_name }}" --prerelease=false --repo ${{ github.repository }}
 
-      # The build step's own `releaseBody` above is one fixed, generic
+      # create-release seeds the draft body with one fixed, generic
       # sentence — fine as a placeholder, useless as an actual changelog.
       # Replace the draft's description with GitHub's own auto-generated
       # release notes (commits/PRs since the previous tag, same content
