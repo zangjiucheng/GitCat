@@ -48,6 +48,12 @@ type Rig = {
   rightTail: THREE.Object3D[];
 };
 
+type AnimatedEyelid = {
+  mesh: THREE.Mesh<THREE.TubeGeometry, THREE.MeshBasicMaterial>;
+  openY: number;
+  closedY: number;
+};
+
 class Tama3DActor implements TamaActor {
   private readonly mount: HTMLElement;
   private readonly onUnavailable: () => void;
@@ -98,6 +104,8 @@ class Tama3DActor implements TamaActor {
   private baseRotations = new Map<THREE.Object3D, THREE.Euler>();
   private baseScales = new Map<THREE.Object3D, THREE.Vector3>();
   private baseModelPosition = new THREE.Vector3();
+  private leftEyelid: AnimatedEyelid | null = null;
+  private rightEyelid: AnimatedEyelid | null = null;
 
   constructor(options: ThreeActorOptions) {
     this.mount = options.mount;
@@ -136,6 +144,7 @@ class Tama3DActor implements TamaActor {
       this.scene.add(this.model);
       this.frameCamera();
       this.captureRig();
+      this.prepareEyelids();
       this.resize();
 
       this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -355,6 +364,45 @@ class Tama3DActor implements TamaActor {
         }
       });
     }
+  }
+
+  private prepareEyelids(): void {
+    const head = this.rig.head;
+    if (!this.model || !head) return;
+    const modelHeight = Number(this.camera?.userData.modelHeight) || 1;
+    this.model.updateMatrixWorld(true);
+
+    const createEyelid = (eye: THREE.Object3D | null): AnimatedEyelid | null => {
+      if (!eye) return null;
+      const eyePosition = eye.getWorldPosition(new THREE.Vector3());
+      head.worldToLocal(eyePosition);
+      const halfWidth = modelHeight * 0.017;
+      const curve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(-halfWidth, 0, 0),
+        new THREE.Vector3(0, -modelHeight * 0.0045, 0),
+        new THREE.Vector3(halfWidth, 0, 0),
+      );
+      const mesh = new THREE.Mesh(
+        new THREE.TubeGeometry(curve, 16, modelHeight * 0.00115, 5, false),
+        new THREE.MeshBasicMaterial({
+          color: 0x5a2a32,
+          depthTest: false,
+          depthWrite: false,
+          opacity: 0,
+          transparent: true,
+        }),
+      );
+      const closedY = eyePosition.y + modelHeight * 0.0005;
+      const openY = closedY + modelHeight * 0.014;
+      mesh.position.set(eyePosition.x, openY, eyePosition.z + modelHeight * 0.025);
+      mesh.renderOrder = 900;
+      mesh.visible = false;
+      head.add(mesh);
+      return { mesh, openY, closedY };
+    };
+
+    this.leftEyelid = createEyelid(this.rig.leftEye);
+    this.rightEyelid = createEyelid(this.rig.rightEye);
   }
 
   private resize(): void {
@@ -770,6 +818,21 @@ class Tama3DActor implements TamaActor {
     };
     applyEyeOpen(this.rig.leftEye, leftEyeOpen);
     applyEyeOpen(this.rig.rightEye, rightEyeOpen);
+    const applyEyelid = (eyelid: AnimatedEyelid | null, openness: number): void => {
+      if (!eyelid) return;
+      const closure = THREE.MathUtils.clamp(1 - openness, 0, 1);
+      const easedClosure = THREE.MathUtils.smoothstep(closure, 0, 1);
+      const targetY = THREE.MathUtils.lerp(eyelid.openY, eyelid.closedY, easedClosure);
+      eyelid.mesh.position.y = THREE.MathUtils.lerp(eyelid.mesh.position.y, targetY, smooth);
+      eyelid.mesh.material.opacity = THREE.MathUtils.lerp(
+        eyelid.mesh.material.opacity,
+        THREE.MathUtils.smoothstep(closure, 0.08, 0.7),
+        smooth,
+      );
+      eyelid.mesh.visible = eyelid.mesh.material.opacity > 0.01;
+    };
+    applyEyelid(this.leftEyelid, leftEyeOpen);
+    applyEyelid(this.rightEyelid, rightEyeOpen);
     const applyChain = (bones: THREE.Object3D[], x: number, y: number, z: number): void => {
       bones.forEach((bone, index) => {
         const falloff = Math.pow(0.62, index);
