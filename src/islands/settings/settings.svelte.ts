@@ -106,9 +106,28 @@ export interface PersistedSettings {
   // row is a real layout change existing users haven't opted into, unlike
   // the other toggles here which don't affect the graph's own rendering.
   showAllCommitTags: boolean;
+  // Periodically `git fetch --all --prune` while a repo is open, so
+  // ahead/behind counts and incoming remote changes stay current without a
+  // manual Pull. Off by default — unlike autoCheckUpdates (checking GitHub
+  // for a GitCat release, the same lightweight thing every launch), this
+  // touches the user's OWN git remotes/credentials on a recurring timer;
+  // that's meaningfully more surprising to have silently on by default than
+  // an app-update check, so it's opt-in.
+  autoFetchEnabled: boolean;
+  // Whole minutes between auto-fetch attempts while enabled — see
+  // AUTO_FETCH_INTERVAL_OPTIONS below for the exact choices offered.
+  autoFetchIntervalMinutes: number;
 }
 
 const STORAGE_KEY = "gitcat.settings";
+
+// Auto-fetch interval choices shown in Settings — a plain array (not
+// free-typed) since a background timer firing at an arbitrary user-typed
+// value (e.g. "0" or a negative number) needs validating anyway; a fixed
+// list sidesteps that entirely. 15 min default: frequent enough to feel
+// "current" without fetching so often it'd be indistinguishable from every
+// other git client's own background chatter.
+export const AUTO_FETCH_INTERVAL_OPTIONS = [5, 10, 15, 30, 60] as const;
 
 // Exactly today's hardcoded behavior (forced dark, unchecked record-origin,
 // auto-update-check always on, sounds on at full volume) — existing users
@@ -125,6 +144,8 @@ const DEFAULTS: PersistedSettings = {
   soundEffectsEnabled: true,
   soundEffectsVolume: 1,
   showAllCommitTags: false,
+  autoFetchEnabled: false,
+  autoFetchIntervalMinutes: 15,
 };
 
 // Both loadSettings() (below) and setSoundEffectsVolume() need the same 0-1
@@ -179,6 +200,8 @@ class SettingsState {
   soundEffectsEnabled = $state(DEFAULTS.soundEffectsEnabled);
   soundEffectsVolume = $state(DEFAULTS.soundEffectsVolume);
   showAllCommitTags = $state(DEFAULTS.showAllCommitTags);
+  autoFetchEnabled = $state(DEFAULTS.autoFetchEnabled);
+  autoFetchIntervalMinutes = $state(DEFAULTS.autoFetchIntervalMinutes);
 
   // ── git identity section (repo-scoped, explicit Save) ───────────────────
   // Unlike remotes.svelte.ts's own plain (non-$state) `repo` field — which
@@ -422,6 +445,8 @@ class SettingsState {
     this.soundEffectsEnabled = s.soundEffectsEnabled;
     this.soundEffectsVolume = s.soundEffectsVolume;
     this.showAllCommitTags = s.showAllCommitTags;
+    this.autoFetchEnabled = s.autoFetchEnabled;
+    this.autoFetchIntervalMinutes = s.autoFetchIntervalMinutes;
     this.repo = repo ?? "";
     this.identityError = "";
     this.configError = "";
@@ -474,6 +499,20 @@ class SettingsState {
     this.showAllCommitTags = v;
     saveSettings({ showAllCommitTags: v });
     bridge.setGraphShowAllTags(v); // applies to the canvas immediately — see legacy/main.ts
+  }
+
+  // The background timer itself lives in main.ts (mirrors the existing
+  // dashboard-status poll there) and reads these two via loadSettings() on
+  // its own tick — no bridge call needed here, just persist like every
+  // other instant-apply preference.
+  setAutoFetchEnabled(v: boolean): void {
+    this.autoFetchEnabled = v;
+    saveSettings({ autoFetchEnabled: v });
+  }
+
+  setAutoFetchIntervalMinutes(v: number): void {
+    this.autoFetchIntervalMinutes = v;
+    saveSettings({ autoFetchIntervalMinutes: v });
   }
 
   async refreshIdentity(): Promise<void> {

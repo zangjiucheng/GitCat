@@ -9,7 +9,7 @@
   // chrome ExternalTools/SetupWizard reuse). The Git Identity section
   // mirrors SetupWizard's own identity step markup closely — see
   // settings.svelte.ts's header doc for why.
-  import { settingsCtrl, CURATED_CONFIG_FIELDS } from "./settings.svelte.ts";
+  import { settingsCtrl, CURATED_CONFIG_FIELDS, AUTO_FETCH_INTERVAL_OPTIONS } from "./settings.svelte.ts";
   import type { ThemeMode } from "./settings.svelte.ts";
   import type { ConfigScope } from "../../ipc/bindings";
   import { playTamaSound } from "../../legacy/sound.ts";
@@ -88,6 +88,32 @@
         />
         Automatically check for updates on launch
       </label>
+
+      <h4 class="d-lab">Auto-fetch</h4>
+      <label
+        class="set-toggle"
+        style="margin-bottom:8px"
+        title="Runs git fetch --all --prune on a timer while a repo is open, so ahead/behind counts and incoming remote changes stay current without a manual Pull"
+      >
+        <input
+          type="checkbox"
+          checked={settingsCtrl.autoFetchEnabled}
+          onchange={(e) => settingsCtrl.setAutoFetchEnabled((e.target as HTMLInputElement).checked)}
+        />
+        Periodically fetch from all remotes
+      </label>
+      {#if settingsCtrl.autoFetchEnabled}
+        <div class="rm-form" style="margin-bottom:14px;max-width:220px">
+          <select
+            value={String(settingsCtrl.autoFetchIntervalMinutes)}
+            onchange={(e) => settingsCtrl.setAutoFetchIntervalMinutes(Number((e.target as HTMLSelectElement).value))}
+          >
+            {#each AUTO_FETCH_INTERVAL_OPTIONS as m (m)}
+              <option value={String(m)}>Every {m} minutes</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
 
       <h4 class="d-lab">Tama</h4>
       <label class="set-toggle" style="margin-bottom:10px" title="A few short synthesized chimes for her more significant moments — warnings, danger, celebrating, a copy-to-clipboard tick">

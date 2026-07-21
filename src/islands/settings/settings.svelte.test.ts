@@ -106,6 +106,8 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       soundEffectsEnabled: true,
       soundEffectsVolume: 1,
       showAllCommitTags: false,
+      autoFetchEnabled: false,
+      autoFetchIntervalMinutes: 15,
     });
   });
 
@@ -121,6 +123,8 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       soundEffectsEnabled: true,
       soundEffectsVolume: 0.9,
       showAllCommitTags: false,
+      autoFetchEnabled: false,
+      autoFetchIntervalMinutes: 15,
     });
   });
 
@@ -134,6 +138,8 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       soundEffectsEnabled: true,
       soundEffectsVolume: 1,
       showAllCommitTags: false,
+      autoFetchEnabled: false,
+      autoFetchIntervalMinutes: 15,
     });
   });
 
@@ -156,6 +162,8 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       soundEffectsEnabled: true,
       soundEffectsVolume: 1,
       showAllCommitTags: false,
+      autoFetchEnabled: false,
+      autoFetchIntervalMinutes: 15,
     });
   });
 
@@ -184,8 +192,17 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
 });
 
 describe("show — seeds app-level fields and drives the identity section", () => {
-  it("seeds themeMode/cherryPickRecordOriginDefault/autoCheckUpdates/soundEffectsEnabled/soundEffectsVolume/showAllCommitTags from localStorage", () => {
-    saveSettings({ themeMode: "system", cherryPickRecordOriginDefault: true, autoCheckUpdates: false, soundEffectsEnabled: false, soundEffectsVolume: 0.25, showAllCommitTags: true });
+  it("seeds themeMode/cherryPickRecordOriginDefault/autoCheckUpdates/soundEffectsEnabled/soundEffectsVolume/showAllCommitTags/autoFetchEnabled/autoFetchIntervalMinutes from localStorage", () => {
+    saveSettings({
+      themeMode: "system",
+      cherryPickRecordOriginDefault: true,
+      autoCheckUpdates: false,
+      soundEffectsEnabled: false,
+      soundEffectsVolume: 0.25,
+      showAllCommitTags: true,
+      autoFetchEnabled: true,
+      autoFetchIntervalMinutes: 60,
+    });
 
     settingsCtrl.show(null);
 
@@ -196,6 +213,8 @@ describe("show — seeds app-level fields and drives the identity section", () =
     expect(settingsCtrl.soundEffectsEnabled).toBe(false);
     expect(settingsCtrl.soundEffectsVolume).toBe(0.25);
     expect(settingsCtrl.showAllCommitTags).toBe(true);
+    expect(settingsCtrl.autoFetchEnabled).toBe(true);
+    expect(settingsCtrl.autoFetchIntervalMinutes).toBe(60);
   });
 
   it("with no repo open, clears identity and never calls getGitIdentity", () => {
@@ -270,6 +289,20 @@ describe("setThemeMode / setCherryPickRecordOriginDefault / setAutoCheckUpdates 
     expect(settingsCtrl.showAllCommitTags).toBe(true);
     expect(loadSettings().showAllCommitTags).toBe(true);
     expect(bridge.setGraphShowAllTags).toHaveBeenCalledWith(true);
+  });
+
+  it("setAutoFetchEnabled updates state and persists", () => {
+    settingsCtrl.setAutoFetchEnabled(true);
+
+    expect(settingsCtrl.autoFetchEnabled).toBe(true);
+    expect(loadSettings().autoFetchEnabled).toBe(true);
+  });
+
+  it("setAutoFetchIntervalMinutes updates state and persists", () => {
+    settingsCtrl.setAutoFetchIntervalMinutes(30);
+
+    expect(settingsCtrl.autoFetchIntervalMinutes).toBe(30);
+    expect(loadSettings().autoFetchIntervalMinutes).toBe(30);
   });
 });
 
