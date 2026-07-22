@@ -92,6 +92,35 @@ export function blameTargetForWorkdirFile(f: Pick<WorkdirEntry, "path" | "status
   return f.status === "R" ? (f.oldPath ?? f.path) : f.path;
 }
 
+// Folder-tree grouping for Workdir.svelte's staged/unstaged file lists — same
+// split-on-"/", build-dirs-on-demand algorithm as detail.svelte.ts's own
+// `tree` getter (that one isn't reused directly: `WorkdirEntry` has no
+// add/del diffstat counts, and this codebase's own convention is a small
+// per-module copy over a shared helper for something this size — see
+// detail.svelte.ts's `TreeDir`/`TreeFile`). Deliberately no sorting, same as
+// that precedent: `dirs` is a plain object walked in insertion order, `files`
+// keeps the backend's own array order — libgit2 already returns status
+// entries path-sorted, so this reads sorted "for free" without extra code.
+export type WdTreeFile = WorkdirEntry & { name: string };
+export type WdTreeDir = { dirs: Record<string, WdTreeDir>; files: WdTreeFile[] };
+
+export function buildWdTree(entries: WorkdirEntry[]): WdTreeDir {
+  const root: WdTreeDir = { dirs: {}, files: [] };
+  for (const f of entries) {
+    const parts = f.path.split("/");
+    let n = root;
+    parts.forEach((seg, j) => {
+      if (j === parts.length - 1) {
+        n.files.push({ ...f, name: seg });
+      } else {
+        n.dirs[seg] = n.dirs[seg] || { dirs: {}, files: [] };
+        n = n.dirs[seg];
+      }
+    });
+  }
+  return root;
+}
+
 // One checked "+"/"-" row, keyed by the SAME anchor (hunk header + kind/
 // oldNo/newNo) the backend's `apply_selected_lines` re-verifies against a
 // fresh diff before trusting anything — see workdir.rs's `SelectedLine`/
@@ -203,6 +232,18 @@ class WorkdirState {
 
   status = $state<WorkdirStatus | null>(null);
   loading = $state(false);
+
+  // Grouped-by-folder views of status's own flat staged/unstaged arrays, for
+  // Workdir.svelte's tree rendering — see buildWdTree's own doc comment.
+  // Getters (not cached $state), same as detail.svelte.ts's own `tree`:
+  // status is already the single source of truth, and re-deriving on every
+  // access is cheap relative to a real IPC round trip.
+  get stagedTree(): WdTreeDir {
+    return buildWdTree(this.status?.staged ?? []);
+  }
+  get unstagedTree(): WdTreeDir {
+    return buildWdTree(this.status?.unstaged ?? []);
+  }
 
   busy = $state(false);
   busyTarget = $state<string | null>(null);

@@ -51,8 +51,8 @@ vi.mock("../resolver/resolver.svelte.ts", () => ({
 import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
-import { workdirCtrl, canBlameWorkdirFile, blameTargetForWorkdirFile } from "./workdir.svelte.ts";
-import type { FileChange, HunkSelection, StashEntry, WorkdirResult, WorkdirStatus } from "../../ipc/bindings";
+import { workdirCtrl, canBlameWorkdirFile, blameTargetForWorkdirFile, buildWdTree } from "./workdir.svelte.ts";
+import type { FileChange, HunkSelection, StashEntry, WorkdirEntry, WorkdirResult, WorkdirStatus } from "../../ipc/bindings";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
@@ -1072,5 +1072,65 @@ describe("canBlameWorkdirFile / blameTargetForWorkdirFile", () => {
     for (const status of ["M", "D", "T"]) {
       expect(blameTargetForWorkdirFile({ path: "f.ts", status, oldPath: null })).toBe("f.ts");
     }
+  });
+});
+
+describe("buildWdTree — folder-tree grouping for Workdir.svelte's staged/unstaged lists", () => {
+  const entry = (path: string, status = "M", oldPath: string | null = null): WorkdirEntry => ({ path, status, oldPath });
+
+  it("root-level files land directly in the root node's own files array", () => {
+    const tree = buildWdTree([entry("a.ts"), entry("b.ts")]);
+    expect(Object.keys(tree.dirs)).toEqual([]);
+    expect(tree.files.map((f) => f.name)).toEqual(["a.ts", "b.ts"]);
+  });
+
+  it("nests a file under one directory per path segment", () => {
+    const tree = buildWdTree([entry("src/auth/session.ts")]);
+    expect(Object.keys(tree.dirs)).toEqual(["src"]);
+    expect(Object.keys(tree.dirs.src.dirs)).toEqual(["auth"]);
+    expect(tree.dirs.src.dirs.auth.files).toEqual([{ path: "src/auth/session.ts", status: "M", oldPath: null, name: "session.ts" }]);
+  });
+
+  it("two files sharing a directory prefix reuse the SAME dir node, not two separate ones", () => {
+    const tree = buildWdTree([entry("src/a.ts"), entry("src/b.ts")]);
+    expect(Object.keys(tree.dirs)).toEqual(["src"]);
+    expect(tree.dirs.src.files.map((f) => f.name)).toEqual(["a.ts", "b.ts"]);
+  });
+
+  it("keeps the caller's own array order — no sorting is applied", () => {
+    const tree = buildWdTree([entry("z.ts"), entry("a.ts")]);
+    expect(tree.files.map((f) => f.name)).toEqual(["z.ts", "a.ts"]);
+  });
+
+  it("a leaf's own name is just its final path segment; the full path/status/oldPath survive unchanged", () => {
+    const tree = buildWdTree([entry("src/old.ts", "R", "src/renamed-from.ts")]);
+    const f = tree.dirs.src.files[0];
+    expect(f).toEqual({ path: "src/old.ts", status: "R", oldPath: "src/renamed-from.ts", name: "old.ts" });
+  });
+
+  it("an empty entry list produces an empty root with no dirs or files", () => {
+    const tree = buildWdTree([]);
+    expect(tree.dirs).toEqual({});
+    expect(tree.files).toEqual([]);
+  });
+});
+
+describe("workdirCtrl.stagedTree / unstagedTree — live tree views of status", () => {
+  it("groups status.staged and status.unstaged independently, each into its own tree", () => {
+    workdirCtrl.status = {
+      staged: [{ path: "src/a.ts", status: "M", oldPath: null }],
+      unstaged: [{ path: "docs/readme.md", status: "M", oldPath: null }],
+      conflicted: 0,
+      branch: "main",
+      hasStash: false,
+    };
+    expect(Object.keys(workdirCtrl.stagedTree.dirs)).toEqual(["src"]);
+    expect(Object.keys(workdirCtrl.unstagedTree.dirs)).toEqual(["docs"]);
+  });
+
+  it("is an empty tree when status is null (no repo open yet)", () => {
+    workdirCtrl.status = null;
+    expect(workdirCtrl.stagedTree).toEqual({ dirs: {}, files: [] });
+    expect(workdirCtrl.unstagedTree).toEqual({ dirs: {}, files: [] });
   });
 });

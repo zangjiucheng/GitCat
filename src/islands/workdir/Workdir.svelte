@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { workdirCtrl, canBlameWorkdirFile, blameTargetForWorkdirFile } from "./workdir.svelte.ts";
+  import { workdirCtrl, canBlameWorkdirFile, blameTargetForWorkdirFile, type WdTreeDir } from "./workdir.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import { blameCtrl } from "../blame/blame.svelte.ts";
   import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
@@ -8,6 +8,7 @@
   import History from "@lucide/svelte/icons/history";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Trash2 from "@lucide/svelte/icons/trash-2";
+  import Folder from "@lucide/svelte/icons/folder";
 
   // "Open in external diff" (backlog #12) — added to BOTH staged (4th icon,
   // was 3) and unstaged (5th icon, was 4) rows: unlike Blame/History (which
@@ -101,64 +102,8 @@
     {#if !workdirCtrl.status?.staged.length}
       <div class="mut" style="font-size:12px">nothing staged</div>
     {:else}
-      <div class="wd-files">
-        {#each workdirCtrl.status.staged as f (f.path)}
-          <div
-            class="wd-file"
-            class:active={workdirCtrl.selectedDiffFile === f.path && workdirCtrl.selectedDiffStaged}
-            role="button"
-            tabindex="0"
-            onclick={() => workdirCtrl.selectDiffFile(f.path, true)}
-            onkeydown={(e) => (e.key === "Enter" || e.key === " ") && workdirCtrl.selectDiffFile(f.path, true)}
-          >
-            <span class="st" data-status={f.status}>{STATUS_LABEL[f.status] ?? f.status}</span>
-            <span class="wd-path" title={f.path}>{f.oldPath ? f.oldPath + " → " + f.path : f.path}</span>
-            {#if workdirCtrl.busyTarget === f.path}
-              <span class="spinner"></span>
-            {:else}
-              <button
-                class="wd-act"
-                title="Blame"
-                aria-label="Blame {f.path}"
-                disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  blameCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f), null);
-                }}><Eye class="ico" size={14} aria-hidden="true" /></button
-              >
-              <button
-                class="wd-act"
-                title="History"
-                aria-label="History {f.path}"
-                disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  fileHistoryCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f));
-                }}><History class="ico" size={14} aria-hidden="true" /></button
-              >
-              <button
-                class="wd-act"
-                title="Unstage"
-                aria-label="Unstage {f.path}"
-                disabled={workdirCtrl.busy}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  workdirCtrl.unstageFile(repo(), f.path);
-                }}>&#8722;</button
-              >
-              <button
-                class="wd-act"
-                title="Open in external diff"
-                aria-label="Open in external diff for {f.path}"
-                disabled={workdirCtrl.busy}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  externalToolsCtrl.openDiff(repo(), f.path, true);
-                }}><ExternalLink class="ico" size={14} aria-hidden="true" /></button
-              >
-            {/if}
-          </div>
-        {/each}
+      <div class="wd-files tree">
+        {@render stagedDirNode(workdirCtrl.stagedTree)}
       </div>
     {/if}
   </section>
@@ -175,74 +120,8 @@
     {#if !workdirCtrl.status?.unstaged.length}
       <div class="mut" style="font-size:12px">no unstaged changes</div>
     {:else}
-      <div class="wd-files">
-        {#each workdirCtrl.status.unstaged as f (f.path)}
-          <div
-            class="wd-file"
-            class:active={workdirCtrl.selectedDiffFile === f.path && !workdirCtrl.selectedDiffStaged}
-            role="button"
-            tabindex="0"
-            onclick={() => workdirCtrl.selectDiffFile(f.path, false)}
-            onkeydown={(e) => (e.key === "Enter" || e.key === " ") && workdirCtrl.selectDiffFile(f.path, false)}
-          >
-            <span class="st" data-status={f.status}>{STATUS_LABEL[f.status] ?? f.status}</span>
-            <span class="wd-path" title={f.path}>{f.oldPath ? f.oldPath + " → " + f.path : f.path}</span>
-            {#if workdirCtrl.busyTarget === f.path}
-              <span class="spinner"></span>
-            {:else}
-              <button
-                class="wd-act"
-                title="Blame"
-                aria-label="Blame {f.path}"
-                disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  blameCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f), null);
-                }}><Eye class="ico" size={14} aria-hidden="true" /></button
-              >
-              <button
-                class="wd-act"
-                title="History"
-                aria-label="History {f.path}"
-                disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  fileHistoryCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f));
-                }}><History class="ico" size={14} aria-hidden="true" /></button
-              >
-              <button
-                class="wd-act"
-                title="Stage"
-                aria-label="Stage {f.path}"
-                disabled={workdirCtrl.busy}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  workdirCtrl.stageFile(repo(), f.path);
-                }}>&#43;</button
-              >
-              <button
-                class="wd-act danger"
-                title="Discard"
-                aria-label="Discard changes to {f.path}"
-                disabled={workdirCtrl.busy}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  workdirCtrl.confirmDiscard(f.path, f.status === "?");
-                }}><Trash2 class="ico" size={14} aria-hidden="true" /></button
-              >
-              <button
-                class="wd-act"
-                title="Open in external diff"
-                aria-label="Open in external diff for {f.path}"
-                disabled={workdirCtrl.busy || f.status === "?"}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  externalToolsCtrl.openDiff(repo(), f.path, false);
-                }}><ExternalLink class="ico" size={14} aria-hidden="true" /></button
-              >
-            {/if}
-          </div>
-        {/each}
+      <div class="wd-files tree">
+        {@render unstagedDirNode(workdirCtrl.unstagedTree)}
       </div>
     {/if}
   </section>
@@ -394,3 +273,162 @@
     {/if}
   </section>
 {/if}
+
+<!-- Staged/unstaged folder-tree rendering (see workdir.svelte.ts's buildWdTree
+     doc comment) — two near-identical recursive snippets, one per section,
+     rather than one parameterized by a `staged` flag: their action buttons
+     genuinely differ (Unstage vs. Stage+Discard, and only unstaged rows
+     disable "Open in external diff" for an untracked "?" row), so factoring
+     them into one shared snippet would just replace this duplication with an
+     equivalent pile of conditionals — same "duplicate the small per-row
+     logic" convention Detail.svelte's own dirNode snippet already follows in
+     spirit. Both reuse the SAME .tree/.dir/.indent/.tw folder CSS Detail.svelte
+     already established (index.html) — leaf rows keep the existing .wd-file/
+     .wd-path/.wd-act classes UNCHANGED (not Detail's .file/.fname/.badge,
+     which assume a diffstat this WorkdirEntry shape doesn't have), so every
+     existing status-color/hover/active/action-button rule keeps applying
+     exactly as it did in the old flat list. A rename shows its full
+     "oldPath → path" (unambiguous even when a rename crosses directories);
+     an ordinary file shows just its own leaf name, since the tree structure
+     already conveys the directory — title keeps the full path either way. -->
+{#snippet stagedDirNode(node: WdTreeDir)}
+  {#each Object.entries(node.dirs) as [name, child]}
+    <details class="dir" open>
+      <summary><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /> {name}</summary>
+      <div class="indent">{@render stagedDirNode(child)}</div>
+    </details>
+  {/each}
+  {#each node.files as f (f.path)}
+    <div
+      class="wd-file"
+      class:active={workdirCtrl.selectedDiffFile === f.path && workdirCtrl.selectedDiffStaged}
+      role="button"
+      tabindex="0"
+      onclick={() => workdirCtrl.selectDiffFile(f.path, true)}
+      onkeydown={(e) => (e.key === "Enter" || e.key === " ") && workdirCtrl.selectDiffFile(f.path, true)}
+    >
+      <span class="st" data-status={f.status}>{STATUS_LABEL[f.status] ?? f.status}</span>
+      <span class="wd-path" title={f.path}>{f.oldPath ? f.oldPath + " → " + f.path : f.name}</span>
+      {#if workdirCtrl.busyTarget === f.path}
+        <span class="spinner"></span>
+      {:else}
+        <button
+          class="wd-act"
+          title="Blame"
+          aria-label="Blame {f.path}"
+          disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
+          onclick={(e) => {
+            e.stopPropagation();
+            blameCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f), null);
+          }}><Eye class="ico" size={14} aria-hidden="true" /></button
+        >
+        <button
+          class="wd-act"
+          title="History"
+          aria-label="History {f.path}"
+          disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
+          onclick={(e) => {
+            e.stopPropagation();
+            fileHistoryCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f));
+          }}><History class="ico" size={14} aria-hidden="true" /></button
+        >
+        <button
+          class="wd-act"
+          title="Unstage"
+          aria-label="Unstage {f.path}"
+          disabled={workdirCtrl.busy}
+          onclick={(e) => {
+            e.stopPropagation();
+            workdirCtrl.unstageFile(repo(), f.path);
+          }}>&#8722;</button
+        >
+        <button
+          class="wd-act"
+          title="Open in external diff"
+          aria-label="Open in external diff for {f.path}"
+          disabled={workdirCtrl.busy}
+          onclick={(e) => {
+            e.stopPropagation();
+            externalToolsCtrl.openDiff(repo(), f.path, true);
+          }}><ExternalLink class="ico" size={14} aria-hidden="true" /></button
+        >
+      {/if}
+    </div>
+  {/each}
+{/snippet}
+
+{#snippet unstagedDirNode(node: WdTreeDir)}
+  {#each Object.entries(node.dirs) as [name, child]}
+    <details class="dir" open>
+      <summary><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /> {name}</summary>
+      <div class="indent">{@render unstagedDirNode(child)}</div>
+    </details>
+  {/each}
+  {#each node.files as f (f.path)}
+    <div
+      class="wd-file"
+      class:active={workdirCtrl.selectedDiffFile === f.path && !workdirCtrl.selectedDiffStaged}
+      role="button"
+      tabindex="0"
+      onclick={() => workdirCtrl.selectDiffFile(f.path, false)}
+      onkeydown={(e) => (e.key === "Enter" || e.key === " ") && workdirCtrl.selectDiffFile(f.path, false)}
+    >
+      <span class="st" data-status={f.status}>{STATUS_LABEL[f.status] ?? f.status}</span>
+      <span class="wd-path" title={f.path}>{f.oldPath ? f.oldPath + " → " + f.path : f.name}</span>
+      {#if workdirCtrl.busyTarget === f.path}
+        <span class="spinner"></span>
+      {:else}
+        <button
+          class="wd-act"
+          title="Blame"
+          aria-label="Blame {f.path}"
+          disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
+          onclick={(e) => {
+            e.stopPropagation();
+            blameCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f), null);
+          }}><Eye class="ico" size={14} aria-hidden="true" /></button
+        >
+        <button
+          class="wd-act"
+          title="History"
+          aria-label="History {f.path}"
+          disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
+          onclick={(e) => {
+            e.stopPropagation();
+            fileHistoryCtrl.openFor(repo(), null, blameTargetForWorkdirFile(f));
+          }}><History class="ico" size={14} aria-hidden="true" /></button
+        >
+        <button
+          class="wd-act"
+          title="Stage"
+          aria-label="Stage {f.path}"
+          disabled={workdirCtrl.busy}
+          onclick={(e) => {
+            e.stopPropagation();
+            workdirCtrl.stageFile(repo(), f.path);
+          }}>&#43;</button
+        >
+        <button
+          class="wd-act danger"
+          title="Discard"
+          aria-label="Discard changes to {f.path}"
+          disabled={workdirCtrl.busy}
+          onclick={(e) => {
+            e.stopPropagation();
+            workdirCtrl.confirmDiscard(f.path, f.status === "?");
+          }}><Trash2 class="ico" size={14} aria-hidden="true" /></button
+        >
+        <button
+          class="wd-act"
+          title="Open in external diff"
+          aria-label="Open in external diff for {f.path}"
+          disabled={workdirCtrl.busy || f.status === "?"}
+          onclick={(e) => {
+            e.stopPropagation();
+            externalToolsCtrl.openDiff(repo(), f.path, false);
+          }}><ExternalLink class="ico" size={14} aria-hidden="true" /></button
+        >
+      {/if}
+    </div>
+  {/each}
+{/snippet}
