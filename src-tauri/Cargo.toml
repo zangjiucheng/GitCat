@@ -40,6 +40,14 @@ base64 = "0.22"
 # see Cargo.lock), so this promotes an already-locked version to a direct
 # dependency rather than adding a new one to the tree.
 percent-encoding = "2"
+# SSH askpass helper (see askpass.rs's own module doc): a synchronous,
+# no-event-loop-needed native message box, shown from a throwaway re-exec of
+# this SAME binary (see windows.rs's own current_exe() precedent) when ssh
+# needs interactive host-key confirmation and has no terminal to ask on.
+# Already resolved transitively (tauri-plugin-dialog's own file-picker
+# backend) — same "promote an already-locked version" reasoning as
+# percent-encoding above, not a new dependency to the tree.
+rfd = "0.16"
 
 # Dev-only profiling/inspection (see run()'s own doc comment in lib.rs for
 # the full rationale) — compiled in unconditionally like any other

@@ -1,3 +1,4 @@
+pub mod askpass; // SSH askpass helper: this same exe, re-launched, answers ssh's host-key-confirmation prompt via a native dialog — see its own module doc
 pub mod blame; // read-only line-annotation (git blame) view
 pub mod blocking; // run a repo-touching command's body off the main thread — see its own doc comment
 pub mod code_search; // Search Code: git-grep-based full-text search of the current checkout (or a chosen historical commit)

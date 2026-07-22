@@ -119,14 +119,24 @@ pub fn wsl_target(path: &str) -> Option<(String, String)> {
 /// boundary entirely — confirmed to reach the child process — and needs no
 /// cooperation from `WSLENV`, which the user could have cleared/customized.
 ///
-/// Known residual gap, NOT fixed here: SSH's own passphrase/host-key
-/// prompts open `/dev/tty` directly rather than reading stdin, so a WSL-side
-/// remote that genuinely needs an interactive SSH prompt can still hang even
-/// with stdin nulled. Suppressing that fully (e.g. forcing `-o
-/// BatchMode=yes` via `GIT_SSH_COMMAND`) risks silently overriding a user's
-/// own `core.sshCommand`/`GIT_SSH_COMMAND` customization (a corporate
-/// jump-host wrapper, say) and wasn't verified against a real SSH server —
-/// left as a follow-up rather than shipped unverified.
+/// SSH's own passphrase/host-key prompts open `/dev/tty` (or the console,
+/// on Windows) directly rather than reading stdin, so nulling stdin alone
+/// (above) was never enough to stop one from hanging — the PLAIN branch
+/// below now also points `SSH_ASKPASS` at this app's own executable
+/// (`askpass.rs`'s own module doc has the full story: OpenSSH invokes
+/// whatever `SSH_ASKPASS` names for ANY question it can't otherwise ask,
+/// this app's own `main()` recognizes a re-exec of itself for that purpose
+/// and shows a native yes/no dialog instead of ever booting Tauri).
+///
+/// Known residual gap, NOT fixed here: the WSL branch's `ssh` runs INSIDE
+/// the distro, so `SSH_ASKPASS` would need a WSL-mounted path to this same
+/// .exe (`/mnt/c/...`) and would have to travel through the same `env
+/// VAR=val` argv-prefix trick `GIT_TERMINAL_PROMPT` already uses just below
+/// — a bare `Command::env` on the outer `wsl.exe` process doesn't cross into
+/// the distro's own environment any more than it did for that var (see
+/// below). Real, separate work with its own WSL-side testing burden — a
+/// WSL-routed remote that hits an interactive SSH prompt still only gets
+/// `git_remote.rs`'s existing text hint, not this dialog.
 pub fn git_command(path: &str, args: &[&str]) -> Command {
     let mut cmd = match wsl_target(path) {
         Some((distro, linux_path)) => {
@@ -146,6 +156,26 @@ pub fn git_command(path: &str, args: &[&str]) -> Command {
             let mut c = Command::new("git");
             c.arg("-C").arg(path).args(args);
             c.env("GIT_TERMINAL_PROMPT", "0");
+            // See this function's own doc comment above. current_exe()
+            // failing at all would be a genuinely exceptional environment
+            // problem (not something a repo/path could ever cause) — just
+            // skip askpass wiring rather than fail the whole command over
+            // it; every caller already handles a plain SSH failure fine.
+            if let Ok(exe) = std::env::current_exe() {
+                c.env("SSH_ASKPASS", &exe);
+                // Without this, OpenSSH only tries SSH_ASKPASS when it
+                // detects it has no controlling terminal AT ALL — usually
+                // true here anyway (this whole command's stdin is nulled
+                // one line below), but `force` makes that explicit instead
+                // of relying on ssh's own auto-detection, which historically
+                // also wanted an X11 DISPLAY on Unix before it would even
+                // consider askpass (irrelevant on Windows, but this app
+                // ships for macOS/Linux too — `force` sidesteps that
+                // entirely on every platform, requires OpenSSH 8.4+, a no-op
+                // fallback to today's existing behavior on anything older).
+                c.env("SSH_ASKPASS_REQUIRE", "force");
+                c.env(crate::askpass::ENV_MARKER, "1");
+            }
             c
         }
     };
