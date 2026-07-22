@@ -51,7 +51,7 @@
 
 use std::process::{Command, Stdio};
 
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{output_with_timeout, NoConsoleWindowExt, SUBPROCESS_TIMEOUT};
 
 /// `path` -> `(distro, linux_path)` when `path` is a WSL UNC path, checking
 /// both the modern `wsl.localhost` host and the legacy `wsl$` alias, and
@@ -258,17 +258,91 @@ pub fn parse_status_porcelain_v2(raw: &str) -> Vec<StatusEntry> {
 /// problem.
 pub fn wsl_status(path: &str) -> Option<Result<Vec<StatusEntry>, String>> {
     wsl_target(path)?;
-    let out = git_command(path, &["status", "--porcelain=v2", "-z", "--untracked-files=all", "--find-renames"]).output();
+    let cmd = git_command(path, &["status", "--porcelain=v2", "-z", "--untracked-files=all", "--find-renames"]);
+    let out = output_with_timeout(cmd, SUBPROCESS_TIMEOUT);
     Some(match out {
         Ok(o) if o.status.success() => Ok(parse_status_porcelain_v2(&String::from_utf8_lossy(&o.stdout))),
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+            Err(format!("WSL status check timed out after {SUBPROCESS_TIMEOUT:?} — try `wsl --shutdown` in a terminal, then reopen this repo"))
+        }
         Err(e) => Err(format!("Could not run git: {e}")),
     })
+}
+
+/// For a WSL-path repo ONLY, computes `branch`'s ahead/behind against its
+/// own configured upstream via `git rev-list --left-right --count
+/// <branch>...<branch>@{upstream}` run through the distro's own git —
+/// exactly the same "let the distro's native git do it instead of crossing
+/// the `\\wsl.localhost\` bridge" idea `wsl_status` already uses for the
+/// dirty/conflicted check, applied to `dashboard.rs`'s OTHER git2 call:
+/// `Repository::graph_ahead_behind` walks the COMMIT graph (parent
+/// pointers), not the working tree, so it was never at risk of the specific
+/// symlink-over-9P-bridge stall `wsl_status`'s own doc comment describes —
+/// but it still opens/reads OBJECT DATABASE files (loose objects, or a
+/// packfile's own index) through that same bridge, one round trip at a
+/// time, which a repo with CPython-scale history (100,000+ commits) can
+/// make genuinely slow even without hitting that specific bug. Running the
+/// walk natively inside the distro (on its own real filesystem, no bridge
+/// crossing at all) avoids that entirely.
+///
+/// Three-way return, same shape as `wsl_status` plus one extra layer:
+///   - `None` — not a WSL path, caller keeps using git2 unchanged.
+///   - `Some(Ok(None))` — confirmed WSL path, `branch` has no upstream
+///     configured (not an error — matches `dashboard_repo_status_inner`'s
+///     own pre-existing "(None, None)" no-upstream case exactly).
+///   - `Some(Ok(Some((ahead, behind))))` — the real numbers.
+///   - `Some(Err(_))` — the check itself failed or timed out; callers should
+///     degrade to `(None, None)` here too rather than falling back to the
+///     slower git2 walk this function exists to avoid (same
+///     graceful-degradation spirit `dashboard_repo_status_inner`'s own
+///     liberal use of `.ok()` already has for every OTHER field here).
+pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize, usize)>, String>> {
+    wsl_target(path)?;
+    let revspec = format!("{branch}...{branch}@{{upstream}}");
+    let cmd = git_command(path, &["rev-list", "--left-right", "--count", &revspec]);
+    Some(match output_with_timeout(cmd, SUBPROCESS_TIMEOUT) {
+        Ok(o) if o.status.success() => {
+            let text = String::from_utf8_lossy(&o.stdout);
+            match parse_ahead_behind_count(&text) {
+                Some(pair) => Ok(Some(pair)),
+                None => Err(format!("unexpected `git rev-list --left-right --count` output: {text:?}")),
+            }
+        }
+        // git's own message for this is stable across versions: "fatal: no
+        // upstream configured for branch '<name>'" — not a real failure,
+        // just "there's nothing to compute" (see this function's own doc
+        // comment on the Ok(None) case).
+        Ok(o) if String::from_utf8_lossy(&o.stderr).contains("no upstream") => Ok(None),
+        Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+            Err(format!("WSL ahead/behind check timed out after {SUBPROCESS_TIMEOUT:?}"))
+        }
+        Err(e) => Err(format!("Could not run git: {e}")),
+    })
+}
+
+/// `git rev-list --left-right --count A...B`'s stdout is two whitespace-
+/// separated integers ("<commits only in A>\t<commits only in B>\n") — `A`
+/// being the local branch, `B` its upstream, in `wsl_ahead_behind`'s own
+/// revspec, so this is exactly (ahead, behind) in that order. `None` for
+/// anything that doesn't parse as exactly two integers — a real git version
+/// difference or output surprise should read as "couldn't determine
+/// ahead/behind", never silently misattribute one number to the other.
+fn parse_ahead_behind_count(text: &str) -> Option<(usize, usize)> {
+    let mut parts = text.split_whitespace();
+    let ahead = parts.next()?.parse().ok()?;
+    let behind = parts.next()?.parse().ok()?;
+    Some((ahead, behind))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // output_with_timeout's own generic wait/kill/drain behavior is tested
+    // at its actual home, procutil.rs — nothing WSL-specific about it to
+    // re-test here.
 
     #[test]
     fn detects_modern_wsl_localhost_host_both_slash_directions() {
@@ -435,5 +509,19 @@ mod tests {
     #[test]
     fn empty_input_parses_to_no_entries() {
         assert!(parse_status_porcelain_v2("").is_empty());
+    }
+
+    #[test]
+    fn parse_ahead_behind_count_reads_two_whitespace_separated_integers_in_order() {
+        assert_eq!(parse_ahead_behind_count("2\t0\n"), Some((2, 0)));
+        assert_eq!(parse_ahead_behind_count("0 5"), Some((0, 5)));
+        assert_eq!(parse_ahead_behind_count("  12   34  "), Some((12, 34)));
+    }
+
+    #[test]
+    fn parse_ahead_behind_count_rejects_anything_that_isnt_exactly_two_integers() {
+        assert_eq!(parse_ahead_behind_count(""), None);
+        assert_eq!(parse_ahead_behind_count("3"), None);
+        assert_eq!(parse_ahead_behind_count("not a number 4"), None);
     }
 }

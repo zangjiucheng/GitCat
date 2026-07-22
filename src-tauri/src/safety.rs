@@ -26,7 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use git2::Repository;
 use serde::Serialize;
 
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{output_with_timeout, NoConsoleWindowExt, SUBPROCESS_TIMEOUT};
 
 const BACKUP_GLOB: &str = "refs/gitgui/backup/*";
 const BACKUP_PREFIX: &str = "refs/gitgui/backup/";
@@ -51,17 +51,30 @@ pub struct GitOut {
 
 /// Run `git -C <repo> <args…>` in the repo's workdir.
 ///
-/// Returns `Err(String)` ONLY when git can't be spawned (not installed / not on
-/// PATH); a non-zero git exit is a successful call yielding `Ok(GitOut{ok:false})`
-/// so callers can surface git's own stderr instead of turning it into a panic.
+/// Returns `Err(String)` when git can't be spawned (not installed / not on
+/// PATH) OR times out (see `procutil::output_with_timeout`'s own doc
+/// comment — this is the single most widely-shared git-shelling helper in
+/// this codebase, ~20 call sites, all quick local plumbing/porcelain
+/// commands (config, status --porcelain, diff --name-only, checkout, reset
+/// --hard) that should never legitimately take anywhere near
+/// `SUBPROCESS_TIMEOUT`; notably including `trust::open_repo`'s own WSL
+/// "dubious ownership" auto-trust retry, which runs THROUGH this function on
+/// every single WSL-path repo open — a bare `git -C <wsl-unc-path> config
+/// --global --add safe.directory ...` call with no timeout at all, before
+/// `wsl_status` (wsl.rs's OWN now-timeout-protected fast path) is ever even
+/// reached); a non-zero git exit is still a successful call yielding
+/// `Ok(GitOut{ok:false})` so callers can surface git's own stderr instead of
+/// turning it into a panic.
 pub fn run_git(repo: &str, args: &[&str]) -> Result<GitOut, String> {
-    let out = Command::new("git")
-        .no_console_window()
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .output()
-        .map_err(|e| format!("failed to run git: {e}"))?;
+    let mut cmd = Command::new("git");
+    cmd.no_console_window().arg("-C").arg(repo).args(args);
+    let out = output_with_timeout(cmd, SUBPROCESS_TIMEOUT).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::TimedOut {
+            format!("git timed out after {SUBPROCESS_TIMEOUT:?} (repo: {repo})")
+        } else {
+            format!("failed to run git: {e}")
+        }
+    })?;
     Ok(GitOut {
         ok: out.status.success(),
         stdout: String::from_utf8_lossy(&out.stdout).trim_end().to_string(),

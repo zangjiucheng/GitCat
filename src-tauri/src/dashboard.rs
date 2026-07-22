@@ -13,6 +13,14 @@
 //! and still miss "last commit"; this is one round-trip, and the only git2
 //! calls it makes are a status read (no walk) and a single commit lookup (no
 //! walk), so it stays cheap even against a repo with a huge history.
+//!
+//! For a WSL-path repo specifically, BOTH the status read and the
+//! ahead/behind computation instead run through the distro's own native git
+//! (`wsl::wsl_status`/`wsl::wsl_ahead_behind`) rather than git2 reaching over
+//! the `\\wsl.localhost\` 9P bridge — see each of those functions' own doc
+//! comments for why (a confirmed catastrophic stall for the working-tree
+//! status read; real-but-less-dramatic per-object network latency for the
+//! commit-graph walk, both worse the larger the repo's history).
 
 use git2::StatusOptions;
 use serde::Serialize;
@@ -64,16 +72,35 @@ fn dashboard_repo_status_inner(path: &str) -> Result<DashboardRepoStatus, git2::
         .and_then(|h| h.shorthand())
         .map(str::to_string);
 
-    let (ahead, behind) = branch
-        .as_deref()
-        .and_then(|name| repo.find_branch(name, git2::BranchType::Local).ok())
-        .and_then(|b| {
-            let local_oid = b.get().target()?;
-            let up = b.upstream().ok()?.get().peel_to_commit().ok()?;
-            repo.graph_ahead_behind(local_oid, up.id()).ok()
-        })
-        .map(|(a, b)| (Some(a), Some(b)))
-        .unwrap_or((None, None));
+    // PERFORMANCE: `Repository::graph_ahead_behind` below walks the commit
+    // graph through the object database — reached over the `\\wsl.localhost\`
+    // 9P bridge for a WSL-path repo, one round trip per object. Never at risk
+    // of the SPECIFIC symlink-over-9P stall `wsl::wsl_status`'s own doc
+    // comment describes (this walks commit objects, not working-tree
+    // symlinks), but still real, avoidable per-object network latency that a
+    // repo with CPython-scale history (100,000+ commits) can feel. Same
+    // "let the distro's own native git do it instead" idea as `wsl_status`
+    // already applies to the dirty/conflicted check just below, applied here
+    // too — see `wsl::wsl_ahead_behind`'s own doc comment for the exact
+    // command and its three-way return.
+    let (ahead, behind) = match branch.as_deref().and_then(|name| crate::wsl::wsl_ahead_behind(path, name)) {
+        Some(Ok(pair)) => pair.map_or((None, None), |(a, b)| (Some(a), Some(b))),
+        // The WSL-routed check itself failed/timed out — degrade to
+        // (None, None) same as every other best-effort field here, rather
+        // than falling back to the slower git2 walk this exists to avoid.
+        Some(Err(_)) => (None, None),
+        // Not a WSL path — original git2 path, unchanged.
+        None => branch
+            .as_deref()
+            .and_then(|name| repo.find_branch(name, git2::BranchType::Local).ok())
+            .and_then(|b| {
+                let local_oid = b.get().target()?;
+                let up = b.upstream().ok()?.get().peel_to_commit().ok()?;
+                repo.graph_ahead_behind(local_oid, up.id()).ok()
+            })
+            .map(|(a, b)| (Some(a), Some(b)))
+            .unwrap_or((None, None)),
+    };
 
     let (head_sha, last_subject, last_commit_time) =
         match head_ref.as_ref().and_then(|h| h.peel_to_commit().ok()) {
