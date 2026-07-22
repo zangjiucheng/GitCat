@@ -108,6 +108,30 @@ import type { LocalBranch, SimpleRef, Snapshot, SubmoduleInfo } from "../../ipc/
 // backport/security-fix commits shouldn't disappear just for resting.
 const STALE_DAYS = 90;
 
+// FOLLOW-UP FIX ("Auto still isn't smart enough"): STALE_DAYS alone is a hard
+// yes/no cliff (a branch touched 89 days ago and one touched 91 days ago land
+// in totally different buckets despite being practically identical) AND has
+// no upper bound at all — a repo with, say, 30 branches that are all
+// individually "recent enough and technically unmerged" just shows all 30,
+// which is exactly the clutter Auto mode exists to avoid. recomputeAutoVisibility
+// now ranks the "recent-but-unmerged" set by a smooth recency score (frecency-
+// style exponential decay, same idea browsers use to rank URL-bar history)
+// instead of a boolean, and keeps only the top MAX_AUTO_CANDIDATES of them.
+// RECENCY_HALF_LIFE_DAYS: a branch's score halves every this-many days since
+// its last commit — 14 days means "touched two weeks ago" scores half of
+// "touched today", smoothly, rather than the old all-or-nothing cliff.
+// MIN_RECENCY is deliberately anchored to the OLD STALE_DAYS cutoff (the
+// score a branch would have at exactly 90 days old) rather than picked
+// independently — this keeps the pass/fail boundary for a repo with few
+// candidates (nothing to rank/cap) identical to before; the cap below is
+// what's actually new. This ONLY applies to the "recent-but-unmerged" tier —
+// the current branch and anything with unpushed commits are kept
+// unconditionally, same guarantee as before (see the "always" tier in
+// recomputeAutoVisibility), never subject to this cap.
+const RECENCY_HALF_LIFE_DAYS = 14;
+const MIN_RECENCY = Math.pow(0.5, STALE_DAYS / RECENCY_HALF_LIFE_DAYS);
+const MAX_AUTO_CANDIDATES = 10;
+
 // Demo data (design-mode only) — mirrors the static markup this replaces, so
 // the browser preview still shows a populated sidebar without a real repo.
 // lastCommitTime: fabricated relative to whenever the browser preview
@@ -544,10 +568,12 @@ class SidebarState {
 
   // Current branch (always kept, same guarantee push_head() already gives
   // every OTHER filter path) + anything with unpushed commits (ahead of its
-  // own upstream) + anything not yet merged into the repo's resolved default
-  // branch (branch_merge_status) AND not stale (see STALE_DAYS above). Only
-  // ever writes visibleLocal — see autoMode's own doc comment for why
-  // remotes are left alone.
+  // own upstream) + the most recently active of whatever's left that isn't
+  // yet merged into the repo's resolved default branch (branch_merge_status),
+  // ranked and capped rather than a plain age boolean — see
+  // RECENCY_HALF_LIFE_DAYS/MAX_AUTO_CANDIDATES's own doc comment. Only ever
+  // writes visibleLocal — see autoMode's own doc comment for why remotes are
+  // left alone.
   //
   // "No upstream configured" is NOT by itself treated as "keep" once real
   // merge data is available — a branch with no upstream can still be fully
@@ -587,15 +613,33 @@ class SidebarState {
         console.error("branch_merge_status", e);
       }
     }
-    const staleCutoff = Date.now() / 1000 - STALE_DAYS * 86400;
-    const nextLocal = this.locals
-      .filter(
-        (b) =>
-          b.name === this.head ||
-          (b.ahead ?? 0) > 0 ||
-          ((mergedInto !== null ? !mergedInto.has(b.name) : b.upstream === null) && b.lastCommitTime >= staleCutoff),
-      )
-      .map((b) => b.name);
+    // Two tiers (see RECENCY_HALF_LIFE_DAYS/MAX_AUTO_CANDIDATES's own doc
+    // comment for why): `always` — the current branch and anything with
+    // unpushed commits — is kept unconditionally, no cap, exactly the same
+    // guarantee the old boolean filter gave those two cases. Everything else
+    // that qualifies as "not yet merged" (same mergedInto/upstream-fallback
+    // logic as before) becomes a scored `candidate`, ranked by a smooth
+    // recency decay instead of the old hard STALE_DAYS boolean, and only the
+    // top MAX_AUTO_CANDIDATES of those survive — this is what actually bounds
+    // how many "still technically unmerged" branches Auto can show at once,
+    // which the old filter never did at all.
+    const now = Date.now() / 1000;
+    const always: string[] = [];
+    const candidates: { name: string; recency: number }[] = [];
+    for (const b of this.locals) {
+      if (b.name === this.head || (b.ahead ?? 0) > 0) {
+        always.push(b.name);
+        continue;
+      }
+      const isUnmergedCandidate = mergedInto !== null ? !mergedInto.has(b.name) : b.upstream === null;
+      if (!isUnmergedCandidate) continue;
+      const ageDays = Math.max(0, (now - b.lastCommitTime) / 86400);
+      const recency = Math.pow(0.5, ageDays / RECENCY_HALF_LIFE_DAYS);
+      if (recency < MIN_RECENCY) continue;
+      candidates.push({ name: b.name, recency });
+    }
+    candidates.sort((a, b) => b.recency - a.recency);
+    const nextLocal = [...always, ...candidates.slice(0, MAX_AUTO_CANDIDATES).map((c) => c.name)];
 
     // ADVERSARIALLY-FOUND FIX: persistVisibleBranches always reloads the
     // graph (bridge.reloadGraph), and reloadGraph's own tail always calls

@@ -449,6 +449,74 @@ describe("branch visibility", () => {
     expect(sidebarCtrl.visibleLocal).toEqual(["main", "ancient-but-unpushed"]);
   });
 
+  it("recomputeAutoVisibility: more unmerged-but-recent branches than MAX_AUTO_CANDIDATES are capped, keeping the MOST recently active ones", async () => {
+    // Regression test for "Auto still isn't smart enough" — the old filter
+    // had no upper bound at all, so a repo with a dozen+ branches that were
+    // all individually "recent enough and technically unmerged" just showed
+    // every single one. 12 candidate branches here, one every 5 days apart —
+    // only the 10 most recent (MAX_AUTO_CANDIDATES) should survive; the two
+    // oldest (branch-10, branch-11) must be dropped even though they're well
+    // within the old 90-day STALE_DAYS window on their own.
+    mockInTauri = true;
+    sidebarCtrl.head = "main";
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main", lastCommitTime: NOW },
+      ...Array.from({ length: 12 }, (_, i) => ({
+        name: `branch-${i}`,
+        sha: `s${i}`,
+        ahead: null,
+        behind: null,
+        upstream: null,
+        lastCommitTime: NOW - i * 5 * 86400,
+      })),
+    ];
+    vi.mocked(commands.branchMergeStatus).mockResolvedValue(ok({ defaultBranch: "main", merged: [] }));
+
+    await sidebarCtrl.recomputeAutoVisibility("/repo");
+
+    expect(sidebarCtrl.visibleLocal).toEqual([
+      "main",
+      "branch-0",
+      "branch-1",
+      "branch-2",
+      "branch-3",
+      "branch-4",
+      "branch-5",
+      "branch-6",
+      "branch-7",
+      "branch-8",
+      "branch-9",
+    ]);
+    expect(sidebarCtrl.visibleLocal).not.toContain("branch-10");
+    expect(sidebarCtrl.visibleLocal).not.toContain("branch-11");
+  });
+
+  it("recomputeAutoVisibility: a branch with unpushed commits is never subject to the recent-candidates cap", async () => {
+    // The `always` tier (current branch + anything ahead of its upstream)
+    // bypasses ranking/capping entirely — 11 unpushed branches (one more
+    // than MAX_AUTO_CANDIDATES) must ALL stay visible, unlike the capped
+    // "unmerged but not ahead" tier covered by the test above.
+    mockInTauri = true;
+    sidebarCtrl.head = "main";
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: 0, behind: 0, upstream: "origin/main", lastCommitTime: NOW },
+      ...Array.from({ length: 11 }, (_, i) => ({
+        name: `wip-${i}`,
+        sha: `s${i}`,
+        ahead: 1,
+        behind: 0,
+        upstream: `origin/wip-${i}`,
+        lastCommitTime: NOW - 400 * 86400, // ancient, but ahead>0 must still win
+      })),
+    ];
+    vi.mocked(commands.branchMergeStatus).mockResolvedValue(ok({ defaultBranch: "main", merged: [] }));
+
+    await sidebarCtrl.recomputeAutoVisibility("/repo");
+
+    expect(sidebarCtrl.visibleLocal).toHaveLength(12); // main + all 11 wip-* branches
+    for (let i = 0; i < 11; i++) expect(sidebarCtrl.visibleLocal).toContain(`wip-${i}`);
+  });
+
   it("design mode: toggling updates local state only, no IPC call, no graph reload", async () => {
     mockInTauri = false;
     sidebarCtrl.locals = [{ name: "main", sha: "a", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];

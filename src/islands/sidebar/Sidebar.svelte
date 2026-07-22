@@ -155,7 +155,7 @@
     <button
       class="auto-toggle"
       class:active={sidebarCtrl.autoMode}
-      title="Auto: show the current branch plus anything with unpushed or unmerged commits, always up to date"
+      title="Auto: show the current branch plus anything with unpushed commits, and the most recently active unmerged branches, always up to date"
       onclick={() => sidebarCtrl.toggleAutoMode(bridge.CUR_REPO as unknown as string)}
       >{#if sidebarCtrl.autoMode}<Zap class="ico" size={12} aria-hidden="true" /> {/if}Auto</button
     >
