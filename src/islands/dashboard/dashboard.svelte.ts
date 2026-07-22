@@ -61,6 +61,20 @@ export function repoBasename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
 }
 
+// Own frontend copy of src-tauri/src/wsl.rs's wsl_target() host-matching
+// logic (just the "is this a WSL path at all" half — the distro/linux-path
+// split it also does isn't needed here), so a tracked row can show a "WSL"
+// chip without a round trip to ask the backend. Same case-insensitive host
+// match against both the modern `wsl.localhost` and legacy `wsl$` UNC
+// aliases, checked against the FIRST non-empty path segment after
+// normalizing `\`->`/` (Windows paths, both `\\wsl.localhost\...` and
+// `//wsl.localhost/...` forms — see wsl.rs's own doc comment on why both
+// slash directions are accepted).
+export function isWslPath(path: string): boolean {
+  const host = path.replace(/\\/g, "/").split("/").find((s) => s.length > 0)?.toLowerCase();
+  return host === "wsl.localhost" || host === "wsl$";
+}
+
 // Canned rows for design-mode (!IN_TAURI) — same spirit as every other
 // island's DEMO constant, including one deliberately BROKEN row so the
 // "path no longer resolves" state still demos in the browser preview.
@@ -308,6 +322,29 @@ class DashboardState {
       return;
     }
     await bridge.openRepo(path);
+  }
+
+  // Multi-window: spawns a genuinely separate OS window pointed directly at
+  // `path` (src-tauri/src/windows.rs's open_repo_in_new_window), rather than
+  // bridge.openRepo(path) — which tears down and rebuilds THIS window's own
+  // CUR_REPO/graph/sidebar state, exactly the opposite of what "in a new
+  // window" means. Deliberately does NOT close the dashboard (`this.open`
+  // untouched, unlike openRepository above) — the calling window's own state
+  // is completely unaffected by this action, so there's no reason to leave
+  // "picking a repo" mode; the new window opens in the background.
+  async openRepositoryInNewWindow(path: string): Promise<void> {
+    if (!IN_TAURI || this.demo) {
+      bridge.tama.say("This is where " + repoBasename(path) + " would open in a new window (demo).");
+      return;
+    }
+    // Genuinely fire-and-forget on the Rust side (open_repo_in_new_window
+    // returns `()`, not a Result — see its own doc comment): window creation
+    // essentially never fails in normal operation (labels are a single
+    // process-global monotonic counter, so a collision can't happen), and
+    // any failure that DID occur is only logged on the Rust side, not
+    // surfaced back through IPC — there's nothing meaningful to await/report
+    // here beyond letting the call land.
+    await commands.openRepoInNewWindow(path);
   }
 }
 

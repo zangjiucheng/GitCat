@@ -1641,6 +1641,7 @@ dependencies = [
  "console-subscriber",
  "git2",
  "notify-debouncer-mini",
+ "percent-encoding",
  "portable-pty",
  "serde",
  "serde_json",

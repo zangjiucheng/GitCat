@@ -285,7 +285,20 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .build()?
     };
 
-    let window_menu = SubmenuBuilder::new(app, "Window").minimize().build()?;
+    let window_menu = {
+        // Multi-window: spawns a genuinely separate OS PROCESS (a fresh
+        // invocation of this same executable — see windows.rs's own module
+        // doc for why: it must NOT be an additional window inside this
+        // already-running process, sharing this process's backend/state),
+        // empty hero state — pick a repo from ITS OWN Dashboard/repo-pick
+        // button. Handled directly here (see handle_event's own "new-window"
+        // arm), not forwarded to the frontend like almost everything else in
+        // this file — there's nothing for JS to do here at all.
+        // CmdOrCtrl+Shift+N is already File's "New Branch…" — CmdOrCtrl+N is
+        // otherwise unused.
+        let new_window = MenuItemBuilder::with_id("new-window", "New Window").accelerator("CmdOrCtrl+N").build(app)?;
+        SubmenuBuilder::new(app, "Window").item(&new_window).separator().minimize().build()?
+    };
 
     let help_menu = {
         let github = MenuItemBuilder::with_id("open-github", "GitCat on GitHub").build(app)?;
@@ -324,6 +337,12 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         }
         "report-issue" => {
             let _ = app.opener().open_url(ISSUES_URL, None::<&str>);
+        }
+        // Multi-window: spawns a fresh, fully independent OS process (see
+        // windows.rs's own module doc) — handled directly here, not
+        // forwarded to the frontend, since there's nothing for JS to do.
+        "new-window" => {
+            crate::windows::spawn_new_window(None);
         }
         // Everything else is a frontend (Svelte controller / legacy chrome)
         // action — forward the id as a JS event rather than duplicating that

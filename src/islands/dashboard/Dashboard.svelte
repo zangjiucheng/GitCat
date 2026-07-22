@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { dashboardCtrl, repoBasename } from "./dashboard.svelte.ts";
+  import { dashboardCtrl, repoBasename, isWslPath } from "./dashboard.svelte.ts";
   import * as bridge from "../../legacy/bridge";
 
   function onKeydown(e: KeyboardEvent) {
@@ -31,6 +31,9 @@
               <div class="db-main">
                 <div class="db-name-row">
                   <span class="db-name" title={r.path}>{repoBasename(r.path)}</span>
+                  {#if isWslPath(r.path)}
+                    <span class="row-chip wsl" title="This repository lives inside WSL — network commands route through wsl.exe for credential resolution">WSL</span>
+                  {/if}
                   {#if r.status?.branch}
                     <span class="row-chip head">{r.status.branch}</span>
                   {:else if r.status?.detached}
@@ -61,6 +64,11 @@
               </div>
               <div class="db-act">
                 <button class="btn" disabled={!!r.error} onclick={() => dashboardCtrl.openRepository(r.path)}>Open</button>
+                <button
+                  disabled={!!r.error}
+                  title="Open this repository in a separate window, keeping whatever's open here"
+                  onclick={() => dashboardCtrl.openRepositoryInNewWindow(r.path)}>New Window</button
+                >
                 <button disabled={dashboardCtrl.removingPath === r.path} onclick={() => dashboardCtrl.removeRepository(r.path)}>
                   {#if dashboardCtrl.removingPath === r.path}<span class="spinner"></span>{:else}Remove{/if}
                 </button>

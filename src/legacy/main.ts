@@ -1618,6 +1618,17 @@ function onGraphBatch(payload){
 // everywhere a repo path needs to become a short display name rather than
 // re-deriving it ad hoc at each call site.
 function repoBasename(path){ return path.replace(/[\/\\]+$/,"").split(/[\/\\]/).pop() || path; }
+// Own copy of dashboard.svelte.ts's isWslPath (same "duplicate the small
+// helper per owning module" convention repoBasename above already follows —
+// that file can't import from this legacy/vanilla one, or vice versa,
+// without going through bridge.ts) — own frontend mirror of src-tauri/src/
+// wsl.rs's wsl_target() host-matching logic, just the "is this a WSL path at
+// all" half. Drives #repoWslTag, the topbar's own WSL indicator for
+// whichever repo is CURRENTLY OPEN (see openRepo()/bootEmpty() below) — the
+// Dashboard modal's own per-row chip only covers TRACKED repos, which isn't
+// the same set as "the one actually open right now" (e.g. a repo opened via
+// the native picker but never added to the tracked list).
+function isWslPath(path){ const host=path.replace(/\\/g,"/").split("/").find(s=>s.length>0)?.toLowerCase(); return host==="wsl.localhost"||host==="wsl$"; }
 // Returns true when the repo actually loaded, false when load_graph (or any
 // step) failed. Never throws — callers that don't care (pickRepo) can ignore
 // the result, while the setup wizard uses it to keep its done-step overlay up
@@ -1679,6 +1690,7 @@ async function openRepo(path){
     // the one actually visible on screen. Empirically confirmed: this was
     // the reason the topbar chip never updated after opening a repo.
     $(".repo-pick .repo-name").textContent = repoBasename(path);
+    const wslTag=$("#repoWslTag"); if(wslTag) wslTag.style.display = isWslPath(path) ? "" : "none";
     // Undoes bootEmpty()'s own hide — a no-op unless the repo being opened
     // right now was reached via closeRepo() first.
     const bp=$(".branch-pill"); if(bp) bp.style.display="";
@@ -1942,6 +1954,7 @@ function bootEmpty(){
   // call it AFTER a repo was open, leaving these alone would keep showing the
   // just-closed repo's name and branch as if it were still open.
   const pick=$(".repo-pick .repo-name"); if(pick) pick.textContent="Open a repository…";
+  const wslTag=$("#repoWslTag"); if(wslTag) wslTag.style.display="none";
   const bp=$(".branch-pill"); if(bp) bp.style.display="none";
   dirty=true;
   Tama.set("greeting"); // cold boot AND "Close Repository" both land here — a wave either way
@@ -1977,7 +1990,18 @@ setGraphShowAllTags(loadSettings().showAllCommitTags);
 $("#dangerTamaImg").src=TAMA_IMG.alarm; $("#tamaCheerImg").src=TAMA_IMG.happy;
 new ResizeObserver(()=>resize()).observe(wrap);
 resize();
-if(IN_TAURI){ bootEmpty(); }        // real app: wait for the user to open a repo
+if(IN_TAURI){
+  // Multi-window (src-tauri/src/windows.rs): a window spawned via
+  // spawn_new_window (Dashboard's "Open in New Window" row action) carries
+  // its target repo as a `?repo=` query param on its own index.html URL —
+  // read synchronously here, before ever choosing between openRepo() and
+  // bootEmpty(), so a window that already knows its target repo never
+  // flashes the empty hero state first. URLSearchParams.get() already
+  // returns the fully percent-decoded value — no separate decodeURIComponent
+  // needed (that would double-decode a path containing a literal '%').
+  const initialRepo=new URLSearchParams(location.search).get("repo");
+  if(initialRepo) openRepo(initialRepo); else bootEmpty();
+}
 else { loadGraph(10000); }          // plain browser (design mode): synthetic demo data
 requestAnimationFrame(tick);
 if(!IN_TAURI) setTimeout(()=>{Tama.event("snapshot.surfaced");Tama.say("Safety Manager armed — I snapshot before every mutation. にゃ〜",4200);},800);

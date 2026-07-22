@@ -33,6 +33,13 @@ specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 notify-debouncer-mini = "0.7.0"
 portable-pty = "0.9"
 base64 = "0.22"
+# Multi-window: a repo path handed to a newly spawned window travels as a
+# `?repo=` URL query param (see windows.rs's own doc comment) — a repo path
+# can contain spaces/#/&/non-ASCII, all meaningful in a URL if not escaped.
+# Already resolved transitively (pulled in by tauri/wry's own URL handling —
+# see Cargo.lock), so this promotes an already-locked version to a direct
+# dependency rather than adding a new one to the tree.
+percent-encoding = "2"
 
 # Dev-only profiling/inspection (see run()'s own doc comment in lib.rs for
 # the full rationale) — compiled in unconditionally like any other

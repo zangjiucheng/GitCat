@@ -663,6 +663,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .row-chip.head{border-color:var(--accent);color:var(--accent)}
 .row-chip.tag{border-color:var(--accent2);color:var(--accent2)}
 .row-chip.remote{color:var(--muted)}
+/* --l5 is one of the commit-graph's own lane colors (a light blue/cyan in
+   both themes) — reused here rather than a new one-off hardcoded hex so this
+   chip stays theme-aware like every other .row-chip variant already is. */
+.row-chip.wsl{color:var(--l5);border-color:color-mix(in srgb,var(--l5) 40%,transparent)}
 .covered{border:1px solid color-mix(in srgb,var(--accent) 30%,var(--border));border-radius:var(--r-panel);padding:9px 11px;
   background:color-mix(in srgb,var(--accent) 8%,var(--bg));font-size:11.5px;display:flex;gap:9px;align-items:flex-start;margin-top:10px}
 .covered .ck{width:8px;height:8px;border-radius:2px;background:var(--accent);margin-top:3px;flex:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
@@ -1723,6 +1727,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
       </button>
       <button class="repo-pick">
         <span class="repo-name">gitcat</span>
+        <!-- Mirrors the Dashboard's own per-row WSL chip (Dashboard.svelte) —
+             same .row-chip.wsl class/color, toggled by openRepo()/bootEmpty()
+             in legacy/main.ts based on isWslPath(path) so the CURRENTLY OPEN
+             repo shows the same indicator, not just tracked-but-not-open ones. -->
+        <span class="row-chip wsl" id="repoWslTag" style="display:none" title="This repository lives inside WSL — network commands route through wsl.exe for credential resolution">WSL</span>
         <svg class="tb-ic chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg>
       </button>
       <div class="branch-pill">

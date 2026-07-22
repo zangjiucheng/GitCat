@@ -30,6 +30,7 @@ vi.mock("../../ipc/bindings", () => ({
     addTrackedRepo: vi.fn(),
     removeTrackedRepo: vi.fn(),
     dashboardRepoStatus: vi.fn(),
+    openRepoInNewWindow: vi.fn(),
   },
 }));
 
@@ -48,7 +49,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { DashboardRepoStatus, TrackedRepo } from "../../ipc/bindings";
-import { dashboardCtrl } from "./dashboard.svelte.ts";
+import { dashboardCtrl, isWslPath } from "./dashboard.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
@@ -417,5 +418,52 @@ describe("openRepository — hands off to the existing bridge.openRepo(), tearin
     expect(dashboardCtrl.open).toBe(false);
     expect(bridge.openRepo).not.toHaveBeenCalled();
     expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("acme-web"));
+  });
+});
+
+describe("openRepositoryInNewWindow — multi-window: spawns a separate window, never touches THIS window's own state", () => {
+  it("calls commands.openRepoInNewWindow with the row's path and leaves the dashboard open", async () => {
+    mockInTauri = true;
+    dashboardCtrl.demo = false;
+    dashboardCtrl.open = true;
+
+    await dashboardCtrl.openRepositoryInNewWindow("/repo/a");
+
+    expect(commands.openRepoInNewWindow).toHaveBeenCalledWith("/repo/a");
+    // Unlike openRepository above, this action doesn't affect the CURRENT
+    // window's state at all — no reason to leave "picking a repo" mode.
+    expect(dashboardCtrl.open).toBe(true);
+    expect(bridge.openRepo).not.toHaveBeenCalled();
+  });
+
+  it("demo (non-Tauri) mode says a canned line, without touching commands.openRepoInNewWindow", async () => {
+    mockInTauri = false;
+    dashboardCtrl.demo = true;
+    dashboardCtrl.open = true;
+
+    await dashboardCtrl.openRepositoryInNewWindow("/home/demo/acme-web");
+
+    expect(commands.openRepoInNewWindow).not.toHaveBeenCalled();
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("acme-web"));
+  });
+});
+
+describe("isWslPath — own frontend copy of wsl.rs's wsl_target() host-matching, for the dashboard's WSL chip", () => {
+  it("detects the modern wsl.localhost host, both slash directions", () => {
+    expect(isWslPath("\\\\wsl.localhost\\Ubuntu\\home\\jc\\repo")).toBe(true);
+    expect(isWslPath("//wsl.localhost/Ubuntu/home/jc/repo")).toBe(true);
+  });
+
+  it("detects the legacy wsl$ alias", () => {
+    expect(isWslPath("\\\\wsl$\\Debian\\home\\jc\\repo")).toBe(true);
+  });
+
+  it("host match is case-insensitive", () => {
+    expect(isWslPath("\\\\WSL.LOCALHOST\\Ubuntu\\Home\\JC\\Repo")).toBe(true);
+  });
+
+  it("ordinary Windows and real UNC paths are not WSL", () => {
+    expect(isWslPath("C:\\Users\\me\\repo")).toBe(false);
+    expect(isWslPath("\\\\server\\share\\repo")).toBe(false); // a REAL network share, not WSL
   });
 });

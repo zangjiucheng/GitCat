@@ -2813,6 +2813,19 @@ async terminalKill(id: string) : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * JS: `commands.openRepoInNewWindow(path)` — the Dashboard's "Open in New
+ * Window" row action (see `src/islands/dashboard/dashboard.svelte.ts`'s
+ * `openRepositoryInNewWindow`). Deliberately synchronous/non-async:
+ * `Command::spawn()` itself is non-blocking (it doesn't wait for the child
+ * process to do anything), so there's no work here that needs Tauri's
+ * blocking-task thread pool. Never touches `bridge.openRepo` (the calling
+ * window's OWN repo/state) — the whole point is a second, independent
+ * process, not switching the current one.
+ */
+async openRepoInNewWindow(path: string) : Promise<void> {
+    await TAURI_INVOKE("open_repo_in_new_window", { path });
 }
 }
 

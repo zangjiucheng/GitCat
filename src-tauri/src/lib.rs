@@ -38,6 +38,7 @@ pub mod terminal; // "Open Terminal": a real PTY-backed shell embedded in GitCat
 pub mod tool_settings; // backlog #12: external diff/merge tool settings + delegate entirely to `git difftool`/`git mergetool`
 pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious ownership"
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
+pub mod windows; // multi-window: spawn a fresh, fully independent GitCat process, optionally pointed directly at a repo
 pub mod wsl; // routes git_remote.rs's/submodule.rs's network commands through wsl.exe on a WSL-path repo, so credentials resolve inside the distro
 
 use tauri::Manager;
@@ -287,6 +288,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         terminal::terminal_write,
         terminal::terminal_resize,
         terminal::terminal_kill,
+        // Multi-window: the Dashboard's "Open in New Window" row action (the
+        // generic "New Window" menu item is handled entirely in Rust, see
+        // menu.rs's own handle_event — no command round trip for that path).
+        windows::open_repo_in_new_window,
     ])
     // `GraphBatch` is never a command's own parameter/return type — it's ONLY
     // ever emitted over the raw `"graph-batch"` event (see
@@ -385,6 +390,13 @@ pub fn run() {
         .on_menu_event(menu::handle_event)
         .setup(move |app| {
             builder.mount_events(app);
+            // Multi-window (see windows.rs's own module doc): this process's
+            // one and only window is created HERE, not via a
+            // tauri.conf.json-declared window — `app.windows` is
+            // deliberately empty in that config, since the window's own URL
+            // needs to vary per-process (this process's own `?repo=`
+            // argument) in a way static JSON config can't express.
+            windows::create_initial_window(app.handle())?;
             Ok(())
         })
         .build(tauri::generate_context!())

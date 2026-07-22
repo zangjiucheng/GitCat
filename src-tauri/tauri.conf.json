@@ -11,16 +11,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "GitCat",
-        "width": 1440,
-        "height": 900,
-        "minWidth": 960,
-        "minHeight": 600,
-        "center": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
