@@ -518,6 +518,15 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   width:13px;height:13px;background:var(--elevated);border-left:1px solid var(--border);border-top:1px solid var(--border)}
 .hero-bubble b{color:var(--accent);font-family:var(--display)}
 .hero-bubble .jp{color:var(--accent2);font-weight:700}
+/* Serious mode (.tama-off, see the sprite-wrap/tama-pic rule below): the
+   rounded card + upward-pointing tail (::after) was designed as a speech
+   bubble FROM Tama's portrait sitting just above it — with that portrait
+   hidden, the exact same styling reads as a quote pointing at nobody.
+   Flattens it to plain, unboxed text instead (matching .hero-hint's own
+   plain style right below it in the DOM) rather than keeping a "bubble"
+   shape that no longer has anyone to belong to. */
+.tama-off .hero-bubble{background:none;border:none;box-shadow:none;padding:0;margin-top:8px}
+.tama-off .hero-bubble::after{content:none}
 .hero-stat{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:4px}
 .hero-stat b{color:var(--success)} .hero-stat .n{color:var(--accent);font-weight:700}
 .hero-hint{font-size:11.5px;color:var(--muted);line-height:1.75;max-width:270px}
@@ -554,6 +563,19 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .tama-cheer .tama-pic{width:78px;height:104px;flex:none}
 .tama-cheer .cheer-txt{font-family:var(--display);font-weight:600;font-size:13px;line-height:1.4;max-width:184px;padding-bottom:10px}
 .tama-cheer .cheer-txt .jp{color:var(--accent2);font-weight:700}
+/* "Serious work" mode (settings.svelte.ts's tamaEnabled, applied via
+   legacy/main.ts's setTamaEnabled toggling this class on <body>) — hides
+   every DECORATIVE Tama portrait: the nook's animated sprite (+ its spark/zz
+   decorations, all children of .sprite-wrap), the Detail empty-state hero
+   image, every modal header's small portrait, and the undo "cheer" popover's
+   image. Deliberately does NOT touch .toast-line/.telemetry (the nook's
+   .talk sibling, untouched here) — that's the app's ONLY inline status/
+   error-message surface (there's no separate toast system), so this must
+   never silently remove a message like "Open a repository first" along with
+   the character. .nook's own flex row (.sprite-wrap + .talk, gap:8px) just
+   collapses to .talk alone when .sprite-wrap is hidden — no layout fix
+   needed, same reasoning .sprite-wrap being flex:none already relies on. */
+.tama-off .sprite-wrap,.tama-off .tama-pic,.tama-off .tama-hero-img{display:none}
 @media (prefers-reduced-motion:reduce){.sprite,.sprite-wrap{animation:none!important;transition:none!important}
   .spark,.zz{animation:none!important}
   .toast-line{transition:opacity .01s!important;transform:none!important}

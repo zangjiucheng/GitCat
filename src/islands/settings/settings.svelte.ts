@@ -4,14 +4,15 @@
 // existing precedent rather than a made-up new one:
 //
 //   - Theme mode / cherry-pick record-origin / auto-check-updates / sound
-//     effects — simple client-only preferences nothing on the Rust side
-//     ever needs to read or write (theme is pure CSS/DOM; cherry-pick's
-//     recordOrigin arg is read straight from here at pick-time by
-//     legacy/main.ts's cherryPick() — no live per-pick checkbox anymore,
+//     effects / Tama visibility — simple client-only preferences nothing on
+//     the Rust side ever needs to read or write (theme is pure CSS/DOM;
+//     cherry-pick's recordOrigin arg is read straight from here at pick-time
+//     by legacy/main.ts's cherryPick() — no live per-pick checkbox anymore,
 //     this IS the only control now that it was moved out of the canvas
 //     toolbar; auto-check is just a frontend gate around one setTimeout in
 //     main.ts; sound effects gates src/legacy/sound.ts's own playTamaSound,
-//     read fresh on every play the same way). These persist
+//     read fresh on every play the same way; Tama visibility toggles a CSS
+//     class, see setTamaEnabled's own doc comment). These persist
 //     to localStorage under one namespaced JSON blob — the same idiom
 //     setupwizard.svelte.ts's own `gitcat.setupWizardDismissed` flag already
 //     established — NOT a new Rust `tool_settings.rs`-style JSON-file
@@ -82,6 +83,22 @@ export const CURATED_CONFIG_FIELDS: CuratedConfigField[] = [
 
 const CURATED_CONFIG_KEYS = CURATED_CONFIG_FIELDS.map((f) => f.key);
 
+// ── tabs ─────────────────────────────────────────────────────────────────
+// The modal used to be one long scroll through 8 sections; splitting it into
+// tabs groups them by what they actually act on: General (app-level prefs
+// with no repo scope at all), Tama (her own visibility + sound controls),
+// Git Identity (the one section with its own explicit Save button), and Git
+// Config (curated fields + the Advanced raw editor — kept together since
+// both read/write the exact same underlying config store via configScope).
+export type SettingsTab = "general" | "tama" | "identity" | "gitconfig";
+
+export const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
+  { id: "general", label: "General" },
+  { id: "tama", label: "Tama" },
+  { id: "identity", label: "Git Identity" },
+  { id: "gitconfig", label: "Git Config" },
+];
+
 export interface PersistedSettings {
   themeMode: ThemeMode;
   cherryPickRecordOriginDefault: boolean;
@@ -117,6 +134,18 @@ export interface PersistedSettings {
   // Whole minutes between auto-fetch attempts while enabled — see
   // AUTO_FETCH_INTERVAL_OPTIONS below for the exact choices offered.
   autoFetchIntervalMinutes: number;
+  // "Serious work" mode: hides Tama's decorative portraits everywhere she
+  // appears (the nook's animated sprite, the Detail empty-state hero image,
+  // every modal header's small portrait, the undo "cheer" popover's image —
+  // see index.html's own `.tama-off` rule) and swaps the Detail hero card's
+  // playful greeting for plain, functional text. Deliberately does NOT hide
+  // the nook's `.toast-line`/`.telemetry` text — that's the app's only
+  // inline status/error-message surface (there's no separate toast system),
+  // so turning Tama off must never silently remove messages like "Open a
+  // repository first" along with the character. On by default: this is a
+  // personality trait of the app, not a bug users need to opt out of a
+  // regression for.
+  tamaEnabled: boolean;
 }
 
 const STORAGE_KEY = "gitcat.settings";
@@ -146,6 +175,7 @@ const DEFAULTS: PersistedSettings = {
   showAllCommitTags: false,
   autoFetchEnabled: false,
   autoFetchIntervalMinutes: 15,
+  tamaEnabled: true,
 };
 
 // Both loadSettings() (below) and setSoundEffectsVolume() need the same 0-1
@@ -192,6 +222,11 @@ const DEMO_IDENTITY: GitIdentity = { name: "Demo User", email: "demo@example.com
 
 class SettingsState {
   open = $state(false);
+  activeTab = $state<SettingsTab>("general");
+
+  setActiveTab(tab: SettingsTab): void {
+    this.activeTab = tab;
+  }
 
   // ── app-level prefs (instant-apply, no Save button) ─────────────────────
   themeMode = $state<ThemeMode>(DEFAULTS.themeMode);
@@ -202,6 +237,7 @@ class SettingsState {
   showAllCommitTags = $state(DEFAULTS.showAllCommitTags);
   autoFetchEnabled = $state(DEFAULTS.autoFetchEnabled);
   autoFetchIntervalMinutes = $state(DEFAULTS.autoFetchIntervalMinutes);
+  tamaEnabled = $state(DEFAULTS.tamaEnabled);
 
   // ── git identity section (repo-scoped, explicit Save) ───────────────────
   // Unlike remotes.svelte.ts's own plain (non-$state) `repo` field — which
@@ -248,6 +284,25 @@ class SettingsState {
   advancedError = $state("");
   newAdvancedKey = $state("");
   newAdvancedValue = $state("");
+  advancedFilter = $state("");
+
+  // Client-side only — advancedEntries is already fully loaded for the
+  // current scope (see refreshAdvanced below), so there's no reason to
+  // round-trip to Rust just to narrow a list already sitting in memory.
+  get filteredAdvancedEntries(): RawConfigEntry[] {
+    const q = this.advancedFilter.trim().toLowerCase();
+    if (!q) return this.advancedEntries;
+    return this.advancedEntries.filter((e) => e.key.toLowerCase().includes(q) || e.value.toLowerCase().includes(q));
+  }
+
+  // Copies a listed row into the add/update form below — addAdvancedEntry()
+  // already doubles as "add" AND "update" (see its own doc comment), this
+  // just removes the "must remember to retype the exact key" gotcha. No IPC
+  // call here — nothing is written until the existing Set button is pressed.
+  editAdvancedEntry(entry: RawConfigEntry): void {
+    this.newAdvancedKey = entry.key;
+    this.newAdvancedValue = entry.value;
+  }
 
   // What a curated field's control should show right now: this scope's own
   // raw value if it has one, else "" (both select and text controls use ""
@@ -362,6 +417,7 @@ class SettingsState {
 
   async openAdvanced(): Promise<void> {
     this.advancedOpen = true;
+    this.advancedFilter = "";
     await this.refreshAdvanced();
   }
 
@@ -438,6 +494,7 @@ class SettingsState {
   // localStorage and re-fetches identity — same "never trust stale state
   // across a reopen" discipline as every other on-demand modal.
   show(repo: string | null): void {
+    this.activeTab = "general";
     const s = loadSettings();
     this.themeMode = s.themeMode;
     this.cherryPickRecordOriginDefault = s.cherryPickRecordOriginDefault;
@@ -447,6 +504,7 @@ class SettingsState {
     this.showAllCommitTags = s.showAllCommitTags;
     this.autoFetchEnabled = s.autoFetchEnabled;
     this.autoFetchIntervalMinutes = s.autoFetchIntervalMinutes;
+    this.tamaEnabled = s.tamaEnabled;
     this.repo = repo ?? "";
     this.identityError = "";
     this.configError = "";
@@ -513,6 +571,12 @@ class SettingsState {
   setAutoFetchIntervalMinutes(v: number): void {
     this.autoFetchIntervalMinutes = v;
     saveSettings({ autoFetchIntervalMinutes: v });
+  }
+
+  setTamaEnabled(v: boolean): void {
+    this.tamaEnabled = v;
+    saveSettings({ tamaEnabled: v });
+    bridge.setTamaEnabled(v); // applies the .tama-off class immediately — see legacy/main.ts
   }
 
   async refreshIdentity(): Promise<void> {

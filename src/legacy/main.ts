@@ -1084,6 +1084,18 @@ function applyThemeMode(mode){
 // applyThemeMode above; boot seeds it from the persisted value below.
 let showAllTags=false;
 function setGraphShowAllTags(v){ showAllTags=v; dirty=true; }
+// "Serious work" mode (settings.svelte.ts's tamaEnabled) — toggles a single
+// CSS class (see index.html's own `.tama-off` rule) that hides every
+// DECORATIVE Tama portrait (the nook's animated sprite, the Detail
+// empty-state hero image, every modal header's small portrait, the undo
+// "cheer" popover's image), while deliberately leaving `.toast-line`/
+// `.telemetry` alone — those are the app's ONLY inline status/error-message
+// surface (there's no separate toast system), so this must never silently
+// remove a message like "Open a repository first" along with the character.
+// A pure CSS toggle rather than touching every Tama.say()/warn()/event()
+// call site (500+ across the codebase, per an earlier audit) means this
+// setting needs zero wiring beyond this one function and one CSS rule.
+function setTamaEnabled(v){ document.body.classList.toggle("tama-off",!v); }
 $("#themeBtn").addEventListener("click",()=>{
   const cur=document.documentElement.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light");
   applyTheme(cur==="dark"?"light":"dark");
@@ -1987,6 +1999,7 @@ $("#backToParentBtn").addEventListener("click", goBackToParent);
 // any DOM element here — there's no longer a live per-pick checkbox to seed.
 applyThemeMode(loadSettings().themeMode);
 setGraphShowAllTags(loadSettings().showAllCommitTags);
+setTamaEnabled(loadSettings().tamaEnabled);
 $("#dangerTamaImg").src=TAMA_IMG.alarm; $("#tamaCheerImg").src=TAMA_IMG.happy;
 new ResizeObserver(()=>resize()).observe(wrap);
 resize();
@@ -2015,7 +2028,7 @@ function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
-  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, onGraphBatch,
+  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
   // above for the full design) — enterSubmodule/goBackToParent are hoisted
   // `function` declarations, so no TDZ risk (same reasoning as

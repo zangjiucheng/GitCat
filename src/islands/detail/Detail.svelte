@@ -5,6 +5,7 @@
   import Workdir from "../workdir/Workdir.svelte";
   import { resolver } from "../resolver/resolver.svelte.ts";
   import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
+  import { settingsCtrl } from "../settings/settings.svelte.ts";
   import { fade } from "svelte/transition";
   import Folder from "@lucide/svelte/icons/folder";
   import Eye from "@lucide/svelte/icons/eye";
@@ -65,14 +66,22 @@
   <div class="tama-hero">
     <img class="tama-hero-img" src={bridge.TAMA_IMG.hero} alt={detailCtrl.hero.kind === "empty" ? "Tama" : "Tama, GitCat's guardian"} />
     {#if detailCtrl.hero.kind === "loaded"}
-      <div class="hero-bubble">
-        はじめまして! I'm <b>Tama</b>, GitCat's guardian. I pin a snapshot before every mutation — so your history is always safe with
-        me. <span class="jp">にゃ〜♪</span>
-      </div>
+      {#if settingsCtrl.tamaEnabled}
+        <div class="hero-bubble">
+          はじめまして! I'm <b>Tama</b>, GitCat's guardian. I pin a snapshot before every mutation — so your history is always safe with
+          me. <span class="jp">にゃ〜♪</span>
+        </div>
+      {:else}
+        <div class="hero-bubble">A snapshot is taken before every mutation — your history is always safe.</div>
+      {/if}
       <div class="hero-stat"><span class="n">{detailCtrl.hero.n.toLocaleString()}</span> commits laid out in <b>{detailCtrl.hero.ms.toFixed(0)} ms</b></div>
       <div class="hero-hint">Click a commit to inspect it &#183; drag a dot onto another to cherry-pick &#183; &#8984;Z to rewind</div>
     {:else}
-      <div class="hero-bubble">はじめまして! I'm <b>Tama</b>. Open a Git repository and I'll lay out its whole history in a blink. <span class="jp">にゃ〜♪</span></div>
+      {#if settingsCtrl.tamaEnabled}
+        <div class="hero-bubble">はじめまして! I'm <b>Tama</b>. Open a Git repository and I'll lay out its whole history in a blink. <span class="jp">にゃ〜♪</span></div>
+      {:else}
+        <div class="hero-bubble">Open a Git repository to get started.</div>
+      {/if}
       <div style="margin-top:2px;display:flex;align-items:center;gap:8px;justify-content:center">
         <!-- Single entry point (was two: a direct native-picker button plus a
              separate "Repositories…" dashboard button) — both behaviors now

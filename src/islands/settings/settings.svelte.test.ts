@@ -35,6 +35,7 @@ function memoryStorage(): Storage {
 vi.mock("../../legacy/bridge", () => ({
   applyThemeMode: vi.fn(),
   setGraphShowAllTags: vi.fn(),
+  setTamaEnabled: vi.fn(),
   tama: { set: vi.fn(), say: vi.fn(), warn: vi.fn(), event: vi.fn() },
 }));
 
@@ -70,6 +71,11 @@ function identity(partial: Partial<GitIdentity> = {}): GitIdentity {
 function resetCtrl() {
   vi.stubGlobal("localStorage", memoryStorage());
   settingsCtrl.open = false;
+  settingsCtrl.activeTab = "general";
+  settingsCtrl.advancedEntries = [];
+  settingsCtrl.advancedFilter = "";
+  settingsCtrl.newAdvancedKey = "";
+  settingsCtrl.newAdvancedValue = "";
   settingsCtrl.themeMode = "dark";
   settingsCtrl.cherryPickRecordOriginDefault = false;
   settingsCtrl.autoCheckUpdates = true;
@@ -108,6 +114,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       showAllCommitTags: false,
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
+      tamaEnabled: true,
     });
   });
 
@@ -125,6 +132,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       showAllCommitTags: false,
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
+      tamaEnabled: true,
     });
   });
 
@@ -140,6 +148,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       showAllCommitTags: false,
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
+      tamaEnabled: true,
     });
   });
 
@@ -164,6 +173,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       showAllCommitTags: false,
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
+      tamaEnabled: true,
     });
   });
 
@@ -192,7 +202,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
 });
 
 describe("show — seeds app-level fields and drives the identity section", () => {
-  it("seeds themeMode/cherryPickRecordOriginDefault/autoCheckUpdates/soundEffectsEnabled/soundEffectsVolume/showAllCommitTags/autoFetchEnabled/autoFetchIntervalMinutes from localStorage", () => {
+  it("seeds themeMode/cherryPickRecordOriginDefault/autoCheckUpdates/soundEffectsEnabled/soundEffectsVolume/showAllCommitTags/autoFetchEnabled/autoFetchIntervalMinutes/tamaEnabled from localStorage", () => {
     saveSettings({
       themeMode: "system",
       cherryPickRecordOriginDefault: true,
@@ -202,6 +212,7 @@ describe("show — seeds app-level fields and drives the identity section", () =
       showAllCommitTags: true,
       autoFetchEnabled: true,
       autoFetchIntervalMinutes: 60,
+      tamaEnabled: false,
     });
 
     settingsCtrl.show(null);
@@ -215,6 +226,7 @@ describe("show — seeds app-level fields and drives the identity section", () =
     expect(settingsCtrl.showAllCommitTags).toBe(true);
     expect(settingsCtrl.autoFetchEnabled).toBe(true);
     expect(settingsCtrl.autoFetchIntervalMinutes).toBe(60);
+    expect(settingsCtrl.tamaEnabled).toBe(false);
   });
 
   it("with no repo open, clears identity and never calls getGitIdentity", () => {
@@ -291,6 +303,14 @@ describe("setThemeMode / setCherryPickRecordOriginDefault / setAutoCheckUpdates 
     expect(bridge.setGraphShowAllTags).toHaveBeenCalledWith(true);
   });
 
+  it("setTamaEnabled updates state, persists, and applies via bridge.setTamaEnabled", () => {
+    settingsCtrl.setTamaEnabled(false);
+
+    expect(settingsCtrl.tamaEnabled).toBe(false);
+    expect(loadSettings().tamaEnabled).toBe(false);
+    expect(bridge.setTamaEnabled).toHaveBeenCalledWith(false);
+  });
+
   it("setAutoFetchEnabled updates state and persists", () => {
     settingsCtrl.setAutoFetchEnabled(true);
 
@@ -303,6 +323,80 @@ describe("setThemeMode / setCherryPickRecordOriginDefault / setAutoCheckUpdates 
 
     expect(settingsCtrl.autoFetchIntervalMinutes).toBe(30);
     expect(loadSettings().autoFetchIntervalMinutes).toBe(30);
+  });
+});
+
+describe("activeTab — settings modal tabs", () => {
+  it("defaults to 'general'", () => {
+    expect(settingsCtrl.activeTab).toBe("general");
+  });
+
+  it("setActiveTab switches the active tab", () => {
+    settingsCtrl.setActiveTab("gitconfig");
+    expect(settingsCtrl.activeTab).toBe("gitconfig");
+  });
+
+  it("show() resets activeTab back to 'general', even if a different tab was left selected", () => {
+    settingsCtrl.setActiveTab("identity");
+
+    settingsCtrl.show(null);
+
+    expect(settingsCtrl.activeTab).toBe("general");
+  });
+});
+
+describe("filteredAdvancedEntries / editAdvancedEntry — Advanced git-config editor", () => {
+  const entries = [
+    { key: "core.autocrlf", value: "true" },
+    { key: "user.signingkey", value: "ABCDEF" },
+    { key: "alias.st", value: "status" },
+  ];
+
+  beforeEach(() => {
+    settingsCtrl.advancedEntries = entries;
+  });
+
+  it("returns every entry unfiltered when advancedFilter is blank", () => {
+    expect(settingsCtrl.filteredAdvancedEntries).toEqual(entries);
+  });
+
+  it("matches on a key substring", () => {
+    settingsCtrl.advancedFilter = "autocrlf";
+    expect(settingsCtrl.filteredAdvancedEntries).toEqual([entries[0]]);
+  });
+
+  it("matches on a value substring", () => {
+    settingsCtrl.advancedFilter = "status";
+    expect(settingsCtrl.filteredAdvancedEntries).toEqual([entries[2]]);
+  });
+
+  it("matches case-insensitively", () => {
+    settingsCtrl.advancedFilter = "SIGNINGKEY";
+    expect(settingsCtrl.filteredAdvancedEntries).toEqual([entries[1]]);
+  });
+
+  it("returns an empty list when nothing matches", () => {
+    settingsCtrl.advancedFilter = "nope-not-here";
+    expect(settingsCtrl.filteredAdvancedEntries).toEqual([]);
+  });
+
+  it("editAdvancedEntry copies the row's key/value into the add/update form", () => {
+    settingsCtrl.editAdvancedEntry(entries[1]);
+
+    expect(settingsCtrl.newAdvancedKey).toBe("user.signingkey");
+    expect(settingsCtrl.newAdvancedValue).toBe("ABCDEF");
+  });
+});
+
+describe("openAdvanced — resets the filter on every (re)open", () => {
+  it("clears a leftover advancedFilter when reopening", async () => {
+    settingsCtrl.repo = "/repo/a";
+    settingsCtrl.advancedFilter = "leftover";
+    mockInTauri = false; // demo path: refreshAdvanced just clears advancedEntries, no IPC mock needed
+
+    await settingsCtrl.openAdvanced();
+
+    expect(settingsCtrl.advancedFilter).toBe("");
   });
 });
 

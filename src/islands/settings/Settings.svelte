@@ -9,7 +9,7 @@
   // chrome ExternalTools/SetupWizard reuse). The Git Identity section
   // mirrors SetupWizard's own identity step markup closely — see
   // settings.svelte.ts's header doc for why.
-  import { settingsCtrl, CURATED_CONFIG_FIELDS, AUTO_FETCH_INTERVAL_OPTIONS } from "./settings.svelte.ts";
+  import { settingsCtrl, CURATED_CONFIG_FIELDS, AUTO_FETCH_INTERVAL_OPTIONS, SETTINGS_TABS } from "./settings.svelte.ts";
   import type { ThemeMode } from "./settings.svelte.ts";
   import type { ConfigScope } from "../../ipc/bindings";
   import { playTamaSound } from "../../legacy/sound.ts";
@@ -49,7 +49,21 @@
         <p>Theme, cherry-pick defaults, update checks, and this repository's git identity.</p>
       </div>
     </div>
+    <div class="rf-tabs" role="tablist" style="padding:10px 20px 0">
+      {#each SETTINGS_TABS as t (t.id)}
+        <button
+          class="rf-tab"
+          class:sel={settingsCtrl.activeTab === t.id}
+          role="tab"
+          aria-selected={settingsCtrl.activeTab === t.id}
+          onclick={() => settingsCtrl.setActiveTab(t.id)}
+        >
+          {t.label}
+        </button>
+      {/each}
+    </div>
     <div class="modal-body">
+      {#if settingsCtrl.activeTab === "general"}
       <h4 class="d-lab">Appearance</h4>
       <div class="rm-form" style="margin-bottom:14px">
         <select value={settingsCtrl.themeMode} onchange={onThemeChange}>
@@ -114,8 +128,18 @@
           </select>
         </div>
       {/if}
+      {/if}
 
+      {#if settingsCtrl.activeTab === "tama"}
       <h4 class="d-lab">Tama</h4>
+      <label
+        class="set-toggle"
+        style="margin-bottom:10px"
+        title="Hides Tama's portraits everywhere she appears (the corner mascot, the empty-state greeting, modal headers, the undo popover) for a plainer, more focused look. Status/error messages in the corner still show — just without the character."
+      >
+        <input type="checkbox" checked={settingsCtrl.tamaEnabled} onchange={(e) => settingsCtrl.setTamaEnabled((e.target as HTMLInputElement).checked)} />
+        Show Tama
+      </label>
       <label class="set-toggle" style="margin-bottom:10px" title="A few short synthesized chimes for her more significant moments — warnings, danger, celebrating, a copy-to-clipboard tick">
         <input
           type="checkbox"
@@ -141,7 +165,9 @@
           onclick={() => playTamaSound("celebrate", { bypassCooldown: true })}>Test</button
         >
       </div>
+      {/if}
 
+      {#if settingsCtrl.activeTab === "identity"}
       <h4 class="d-lab">Git identity</h4>
       {#if !settingsCtrl.repo}
         <p class="mut">Open a repository to view or edit its git identity.</p>
@@ -166,7 +192,9 @@
           Written only to this repository's <code>.git/config</code> — your global git identity is never touched.
         </p>
       {/if}
+      {/if}
 
+      {#if settingsCtrl.activeTab === "gitconfig"}
       <h4 class="d-lab">Git config</h4>
       {#if !settingsCtrl.repo}
         <p class="mut">Open a repository to view or edit its git configuration.</p>
@@ -228,9 +256,26 @@
                 {#if settingsCtrl.advancedError}
                   <div class="pl-err" style="margin-bottom:6px">{settingsCtrl.advancedError}</div>
                 {/if}
-                {#each settingsCtrl.advancedEntries as entry (entry.key + " " + entry.value)}
+                {#if settingsCtrl.advancedEntries.length > 0}
+                  <input
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="Filter keys or values&#8230;"
+                    bind:value={settingsCtrl.advancedFilter}
+                    style="width:100%;box-sizing:border-box;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--text);font:inherit;font-size:12px;padding:6px 8px"
+                  />
+                {/if}
+                {#each settingsCtrl.filteredAdvancedEntries as entry (entry.key + " " + entry.value)}
                   <div class="log-row" style="justify-content:space-between;gap:8px">
                     <span class="msg" style="font-family:monospace;font-size:11.5px;overflow-wrap:anywhere">{entry.key} = {entry.value}</span>
+                    <button
+                      class="btn ghost"
+                      style="flex:0 0 auto"
+                      disabled={settingsCtrl.savingConfigKey === entry.key}
+                      onclick={() => settingsCtrl.editAdvancedEntry(entry)}
+                    >
+                      Edit
+                    </button>
                     <button
                       class="btn ghost"
                       style="flex:0 0 auto"
@@ -241,10 +286,13 @@
                     </button>
                   </div>
                 {:else}
-                  <p class="mut" style="font-size:11.5px">No {settingsCtrl.configScope} config entries.</p>
+                  <p class="mut" style="font-size:11.5px">
+                    {#if settingsCtrl.advancedFilter.trim()}No entries match &quot;{settingsCtrl.advancedFilter.trim()}&quot;.{:else}No {settingsCtrl.configScope}
+                      config entries.{/if}
+                  </p>
                 {/each}
                 <p class="mut" style="font-size:11px;margin:8px 0 4px">
-                  Add a key, or type an existing key's name to update its value.
+                  Add a key, or click Edit on an existing row to update its value.
                 </p>
                 <div style="display:flex;gap:6px;align-items:center">
                   <input
@@ -277,10 +325,11 @@
           {/if}
         {/if}
       {/if}
+      {/if}
     </div>
     <div class="modal-foot">
       <button class="btn ghost" disabled={settingsCtrl.identitySaving} onclick={() => settingsCtrl.close()}>Close</button>
-      {#if settingsCtrl.repo && !settingsCtrl.identityLoading}
+      {#if settingsCtrl.activeTab === "identity" && settingsCtrl.repo && !settingsCtrl.identityLoading}
         <button class="btn" disabled={!settingsCtrl.canSaveIdentity} onclick={() => settingsCtrl.saveIdentity()}>
           {#if settingsCtrl.identitySaving}<span class="spinner"></span> Saving&#8230;{:else}Save Identity{/if}
         </button>

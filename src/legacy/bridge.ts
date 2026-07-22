@@ -90,6 +90,10 @@ export {
   // localStorage per frame), same live-re-export safety as applyThemeMode
   // above (hoisted `function`, no TDZ risk).
   setGraphShowAllTags,
+  // Settings island's "Tama" visibility toggle — applies the `.tama-off` CSS
+  // class immediately, same live-re-export safety as applyThemeMode/
+  // setGraphShowAllTags above (hoisted `function`, no TDZ risk).
+  setTamaEnabled,
   // "graph-batch" event handler — src/main.ts's own event listener forwards
   // every batch here (mirrors "repo-changed"/refreshFromExternalChange's own
   // shape). Hoisted `function`, no TDZ risk (same reasoning as
