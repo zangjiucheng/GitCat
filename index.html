@@ -141,6 +141,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   background:color-mix(in srgb,var(--accent) 16%,transparent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);
   font-weight:600;font-size:12px}
 .branch-pill .tb-ic{color:var(--accent)}
+/* #pillBranch had no width bound at all — .tb-left/.tb-right deliberately
+   never shrink below their own content's natural size (see .topbar's own
+   comment above, added so Fetch/Pull/Push can't get crushed), so a long
+   branch/feature name either wrapped onto a second line inside the pill or
+   ballooned the whole topbar wider. Capping just this span (not the whole
+   .branch-pill, so the ahead/behind .ab badge stays fully visible) keeps the
+   topbar's own width stable regardless of branch-name length. */
+.branch-pill #pillBranch{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
 .branch-pill .ab{font-family:var(--mono);font-size:11px;color:var(--muted)}
 .branch-pill .ab b{color:var(--text)}
 /* Bigger than before (320 vs. the old 260px basis) per direct feedback;
