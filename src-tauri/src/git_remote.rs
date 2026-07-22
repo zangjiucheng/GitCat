@@ -105,20 +105,44 @@ fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
 
 /// Best human message from a failed git run (prefer stderr, then stdout).
 ///
-/// On a WSL-routed repo (see `crate::wsl`'s own module doc), an SSH
-/// authentication failure gets an extra, actionable hint appended: `wsl.exe
-/// -e` is a direct exec with NO shell at all, so `~/.bashrc`/`~/.profile`
-/// never run — a distro whose SSH agent is only started/exported there (a
-/// bare `ssh-agent` session, or a Windows-agent-via-npiperelay bridge
-/// sourced in `.bashrc`) is invisible to this non-interactive invocation,
-/// and a still-locked passphrase-protected key can't be unlocked
-/// non-interactively either way. This doesn't (and can't, generically) FIX
-/// that gap — the right fix depends entirely on the user's own distro-side
-/// SSH setup — it just makes the failure's actual cause discoverable
-/// instead of a bare "Permission denied" with no connection to WSL at all.
-/// Matches against git/ssh's own "Permission denied (publickey[,...])." —
-/// the universal OpenSSH auth-failure message, regardless of which
-/// specific auth METHOD (agent vs. key file) was attempted.
+/// Every git subprocess this app runs — WSL-routed or plain (see
+/// `crate::wsl::git_command`) — is launched with `stdin(Stdio::null())` and
+/// no console window at all, so the `ssh` child it spawns for a remote
+/// operation has NO terminal to prompt on, ever. Two distinct SSH failure
+/// modes fall out of that same one root cause, and both get an extra,
+/// actionable hint appended here (never auto-worked-around: silently
+/// bypassing either one has a real security cost, see the host-key case
+/// below, so this only makes the cause discoverable, matching this file's
+/// "never force/bypass silently" convention elsewhere):
+///
+///   - "Permission denied (publickey...)" — auth itself failed. On a
+///     WSL-routed repo specifically, `wsl.exe -e` is a direct exec with NO
+///     shell at all, so `~/.bashrc`/`~/.profile` never run — a distro whose
+///     SSH agent is only started/exported there (a bare `ssh-agent`
+///     session, or a Windows-agent-via-npiperelay bridge sourced in
+///     `.bashrc`) is invisible to this non-interactive invocation, and a
+///     still-locked passphrase-protected key can't be unlocked
+///     non-interactively either way.
+///   - "Host key verification failed" — this HOST has never been connected
+///     to before from wherever `ssh`'s own `known_hosts` lives for this
+///     invocation (Windows' `%USERPROFILE%\.ssh\known_hosts` for a plain
+///     path, or the WSL DISTRO's own separate `~/.ssh/known_hosts` for a
+///     WSL-routed one — on a WSL repo this can trip even when the same
+///     host is already trusted on the WINDOWS side via another tool
+///     (GitExtensions, plain `ssh`, ...): that's a completely different
+///     known_hosts file from the distro's own, and each side only ever
+///     gets populated by actually connecting through IT specifically. On a
+///     plain (non-WSL) repo the cause is simpler: this app's own git
+///     subprocess just genuinely never got a chance to accept this host's
+///     key yet, unlike a tool that runs `ssh` with a real console attached.
+///     A real interactive `ssh` normally prompts
+///     "...are you sure you want to continue connecting?" the first time;
+///     with no terminal to answer on, OpenSSH treats an unanswerable
+///     prompt as a "no" and fails closed instead of hanging — which is the
+///     secure behavior (silently auto-trusting an unverified host key here
+///     would be a real MITM-protection regression, not a convenience fix),
+///     so the fix has to be "go accept it once from somewhere interactive",
+///     not something this app can safely do on its own behalf.
 fn git_error_message(path: &str, out: &GitOut) -> String {
     let base = if !out.stderr.is_empty() {
         out.stderr.clone()
@@ -127,15 +151,21 @@ fn git_error_message(path: &str, out: &GitOut) -> String {
     } else {
         format!("git exited with status {:?}", out.code)
     };
-    if crate::wsl::wsl_target(path).is_some() && base.contains("Permission denied") && base.contains("publickey") {
-        // Kept short on purpose: Tama's toast-line (index.html's .toast-line)
-        // clamps to 5 wrapped lines in a ~150px-wide bubble, so a full
-        // explanation of *why* (wsl.exe -e execs with no shell, skipping
-        // ~/.bashrc/profile) would just get silently cut off.
+    let is_wsl = crate::wsl::wsl_target(path).is_some();
+    // Kept short on purpose: Tama's toast-line (index.html's .toast-line)
+    // clamps to 5 wrapped lines in a ~150px-wide bubble, so a full
+    // explanation of *why* would just get silently cut off.
+    if is_wsl && base.contains("Permission denied") && base.contains("publickey") {
         format!(
             "{base} (WSL skips shell init, so ssh-agent never starts — start one in a WSL terminal, \
              or use a passphrase-less key)"
         )
+    } else if base.contains("Host key verification failed") {
+        if is_wsl {
+            format!("{base} (run any ssh/git command against this remote from a WSL terminal once to accept its host key, then retry)")
+        } else {
+            format!("{base} (run any ssh/git command against this remote from a terminal once to accept its host key, then retry)")
+        }
     } else {
         base
     }
@@ -793,6 +823,33 @@ mod tests {
     fn git_error_message_leaves_a_wsl_path_non_ssh_error_unmodified() {
         let msg = git_error_message(r"\\wsl.localhost\Ubuntu\home\jc\repo", &out("fatal: not a git repository"));
         assert_eq!(msg, "fatal: not a git repository", "only an actual SSH permission failure should get the hint");
+    }
+
+    // Every git subprocess runs with stdin(Stdio::null()) and no console (see
+    // wsl::git_command), so ssh can never interactively prompt to trust a
+    // new host key — this hits BOTH WSL and plain Windows repos (unlike the
+    // publickey case above, which is WSL-only), since each side has its own
+    // separate known_hosts file that may simply never have seen this host
+    // before, regardless of what another tool has already trusted elsewhere.
+    #[test]
+    fn git_error_message_appends_a_host_key_hint_on_a_wsl_path() {
+        let msg = git_error_message(
+            r"\\wsl.localhost\Ubuntu\home\jc\repo",
+            &out("Host key verification failed.\r\nfatal: Could not read from remote repository."),
+        );
+        assert!(msg.starts_with("Host key verification failed."), "original stderr must still lead the message: {msg:?}");
+        assert!(msg.contains("WSL terminal"), "expected the WSL-specific remediation hint: {msg:?}");
+    }
+
+    #[test]
+    fn git_error_message_appends_a_host_key_hint_on_a_plain_windows_path_too() {
+        let msg = git_error_message(
+            r"C:\Users\jc\repo",
+            &out("Host key verification failed.\r\nfatal: Could not read from remote repository."),
+        );
+        assert!(msg.starts_with("Host key verification failed."), "original stderr must still lead the message: {msg:?}");
+        assert!(msg.contains("from a terminal once"), "expected the plain-path remediation hint: {msg:?}");
+        assert!(!msg.contains("WSL terminal"), "a non-WSL repo must never see the WSL-specific wording: {msg:?}");
     }
 
     #[test]
