@@ -194,6 +194,47 @@ for (const axis of AXES) {
 stateSelect.addEventListener("change", () => selectState(stateSelect.value as TamaState));
 boneSelect.addEventListener("change", () => selectBone(boneSelect.value));
 marker.addEventListener("change", () => actor.setDebugMarkerVisible(marker.checked));
+
+// Drag inside the viewport to orbit the camera around the model; double-click resets.
+let orbitAz = 0;
+let orbitEl = 0;
+let orbiting = false;
+let orbitX = 0;
+let orbitY = 0;
+modelMount.style.cursor = "grab";
+modelMount.style.touchAction = "none";
+modelMount.addEventListener("pointerdown", (event) => {
+  orbiting = true;
+  orbitX = event.clientX;
+  orbitY = event.clientY;
+  modelMount.style.cursor = "grabbing";
+  modelMount.setPointerCapture(event.pointerId);
+});
+modelMount.addEventListener("pointermove", (event) => {
+  if (!orbiting) return;
+  orbitAz += (event.clientX - orbitX) * 0.01;
+  orbitEl += (event.clientY - orbitY) * 0.01;
+  orbitEl = Math.max(-1.25, Math.min(1.25, orbitEl));
+  orbitX = event.clientX;
+  orbitY = event.clientY;
+  actor.setDebugCameraOrbit(orbitAz, orbitEl);
+});
+const endOrbit = (event: PointerEvent) => {
+  orbiting = false;
+  modelMount.style.cursor = "grab";
+  try {
+    modelMount.releasePointerCapture(event.pointerId);
+  } catch {
+    /* pointer already released */
+  }
+};
+modelMount.addEventListener("pointerup", endOrbit);
+modelMount.addEventListener("pointercancel", endOrbit);
+modelMount.addEventListener("dblclick", () => {
+  orbitAz = 0;
+  orbitEl = 0;
+  actor.setDebugCameraOrbit(0, 0);
+});
 note.addEventListener("input", refreshReport);
 element<HTMLButtonElement>("resetBone").addEventListener("click", () => {
   actor.resetDebugBone(bone);

@@ -20,6 +20,7 @@ export interface Tama3DDebugActor extends TamaActor {
   resetDebugBone(name: string): void;
   resetAllDebugBones(): void;
   setDebugMarkerVisible(visible: boolean): void;
+  setDebugCameraOrbit(azimuth: number, elevation: number): void;
 }
 
 type Rig = {
@@ -106,6 +107,7 @@ class Tama3DActor implements TamaActor {
   private baseModelPosition = new THREE.Vector3();
   private leftEyelid: AnimatedEyelid | null = null;
   private rightEyelid: AnimatedEyelid | null = null;
+  private eyeballMeshes: THREE.Mesh[] = [];
 
   constructor(options: ThreeActorOptions) {
     this.mount = options.mount;
@@ -145,6 +147,7 @@ class Tama3DActor implements TamaActor {
       this.frameCamera();
       this.captureRig();
       this.prepareEyelids();
+      this.prepareEyeMeshes();
       this.resize();
 
       this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -231,6 +234,22 @@ class Tama3DActor implements TamaActor {
     if (this.debugMarker) this.debugMarker.visible = visible;
   }
 
+  setDebugCameraOrbit(azimuth: number, elevation: number): void {
+    if (!this.debugEnabled || !this.camera) return;
+    const centerY = Number(this.camera.userData.orbitCenterY) || 0;
+    const radius = Number(this.camera.userData.orbitRadius) || 1;
+    // Clamp elevation short of the poles so lookAt's up-vector never flips.
+    const el = THREE.MathUtils.clamp(elevation, -1.25, 1.25);
+    const cosEl = Math.cos(el);
+    this.camera.position.set(
+      Math.sin(azimuth) * cosEl * radius,
+      centerY + Math.sin(el) * radius,
+      Math.cos(azimuth) * cosEl * radius,
+    );
+    this.camera.lookAt(0, centerY, 0);
+    this.camera.updateProjectionMatrix();
+  }
+
   setPaused(paused: boolean): void {
     this.paused = paused;
     if (!paused && !document.hidden) {
@@ -292,10 +311,15 @@ class Tama3DActor implements TamaActor {
     // face, ears, hands and tail readable instead of reducing the whole model
     // to a narrow full-body silhouette.
     const centerY = box.min.y + size.y * 0.78;
-    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, Math.max(100, size.y * 10));
-    this.camera.position.set(0, centerY, Math.max(size.y * 1.8, size.z * 3));
+    const orbitRadius = Math.max(size.y * 1.8, size.z * 3);
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, Math.max(100, size.y * 10 + orbitRadius));
+    this.camera.position.set(0, centerY, orbitRadius);
     this.camera.lookAt(0, centerY, 0);
     this.camera.userData.modelHeight = size.y;
+    // Orbit pivot + radius, so the debug workbench can spin the view around the
+    // model (see setDebugCameraOrbit) without disturbing the framing.
+    this.camera.userData.orbitCenterY = centerY;
+    this.camera.userData.orbitRadius = orbitRadius;
   }
 
   private captureRig(): void {
@@ -405,6 +429,27 @@ class Tama3DActor implements TamaActor {
     this.rightEyelid = createEyelid(this.rig.rightEye);
   }
 
+  private prepareEyeMeshes(): void {
+    if (!this.model) return;
+    // The eyeball is separate skinned meshes (白目 sclera / 星目 highlight / 目 iris)
+    // that do NOT follow the eye-bone scale, so scaling the bone alone leaves the
+    // white sclera showing when "closed". Clone their (shared) materials so a blink
+    // can fade the whole eyeball out WITHOUT touching the lashes/lid-crease (睫/二重)
+    // or the 神之眼 charm that share the same source material.
+    for (const name of ["白目", "星目", "目"]) {
+      const mesh = this.model.getObjectByName(name) as THREE.Mesh | undefined;
+      if (!mesh?.isMesh) continue;
+      const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const clones = source.map((material) => {
+        const clone = (material as THREE.Material).clone();
+        clone.transparent = true;
+        return clone;
+      });
+      mesh.material = clones.length === 1 ? clones[0] : clones;
+      this.eyeballMeshes.push(mesh);
+    }
+  }
+
   private resize(): void {
     if (!this.renderer || !this.camera) return;
     const rect = this.mount.getBoundingClientRect();
@@ -485,9 +530,16 @@ class Tama3DActor implements TamaActor {
     let rightFingerRipple = 0;
     let leftFingerSpread = 0;
     let rightFingerSpread = 0;
-    const blink = Math.pow(Math.max(0, Math.sin(time * 0.72)), 42);
-    let leftEyeOpen = 1 - blink * 0.92;
-    let rightEyeOpen = 1 - blink * 0.92;
+    // Blinking is a GLOBAL overlay (every state) kept separate from the per-state
+    // squint. A wide pulse that briefly HOLDS shut so the eyeball fade/lid reach
+    // full closure. eyeClose is a held-shut amount (sleep); blinkAllowed lets a
+    // state opt out (panic stare).
+    const blinkT = (time * 0.21) % 1;
+    const rawBlink = blinkT < 0.06 ? THREE.MathUtils.clamp(Math.sin((blinkT / 0.06) * Math.PI) * 1.6, 0, 1) : 0;
+    let blinkAllowed = 1;
+    let eyeClose = 0;
+    let leftEyeOpen = 1; // per-state squint (mood): <1 narrows the iris, >1 widens
+    let rightEyeOpen = 1;
     let lift = Math.sin(time * 1.8) * 0.004;
     let sway = 0;
     let lowerBodyZ = 0;
@@ -552,7 +604,7 @@ class Tama3DActor implements TamaActor {
         leftTailZ = 0.28;
         rightTailZ = -0.28;
         lift = -0.018;
-        leftEyeOpen = rightEyeOpen = 0.045;
+        eyeClose = 1; // hold the eyes shut (dozing)
         break;
       case "hint":
         // Look-here: the head and one ear lock onto the target while a lively
@@ -611,8 +663,8 @@ class Tama3DActor implements TamaActor {
         leftElbowZ = 1.95;
         leftWristX = -0.15;
         leftWristY = 0.82;
-        leftFingerCurl = 0;
-        leftFingerSpread = 0.32;
+        leftFingerCurl = -0.12;    // straighten a touch for a firm flat "stop" palm
+        leftFingerSpread = 0.08;   // fingers close together, not fanned
         leftEyeOpen = rightEyeOpen = 1.12;
         bodyX -= 0.06;                                 // slight upper-body recoil
         // Ears PINNED UP (perk sign) + synced fast twitch = tension. #1 carrier.
@@ -649,9 +701,9 @@ class Tama3DActor implements TamaActor {
         rightWristY = -0.82;
         leftWristZ = -0.04;
         rightWristZ = 0.04;
-        leftFingerCurl = rightFingerCurl = 0;
-        leftFingerSpread = rightFingerSpread = 0.2;
-        leftEyeOpen = rightEyeOpen = 1.2;              // wide, unblinking panic stare
+        leftFingerCurl = rightFingerCurl = 0.1; // tense, slightly hooked defensive fingers
+        leftFingerSpread = rightFingerSpread = 0.14;
+        leftEyeOpen = rightEyeOpen = 1.2; blinkAllowed = 0; // wide, unblinking panic stare
         leftEarX = rightEarX = 0;
         leftEarZ = -0.46 + lash;
         rightEarZ = 0.46 - lash;
@@ -676,8 +728,8 @@ class Tama3DActor implements TamaActor {
         rightWristZ = 0.03;
         leftFingerCurl = 0;
         rightFingerCurl = 0;
-        leftFingerSpread = 0.5;                        // open jazz-hands silhouette
-        rightFingerSpread = 0.5;
+        leftFingerSpread = 0.2;                        // open cheer hands, softly spread
+        rightFingerSpread = 0.2;
         leftEyeOpen = rightEyeOpen = 1.12;             // wide, bright, joyful
         leftEarZ = 0.26 + Math.sin(time * 7) * 0.05;   // ears pinned UP + lively perk
         rightEarZ = -0.26 - Math.sin(time * 7) * 0.05;
@@ -699,7 +751,7 @@ class Tama3DActor implements TamaActor {
         rightWristY = -0.6;      // palm toward the viewer
         rightWristX = -0.12;     // slight upward palm tilt = open, giving
         rightFingerCurl = 0;
-        rightFingerSpread = 0.3; // open welcoming hand
+        rightFingerSpread = 0.15; // softly open, welcoming cupped hand
         leftArmZ = -0.5;         // support arm settled at side = grounded
         // Forward-pinned ears: reverse the splay so they stand up + angle forward.
         leftEarZ = 0.24;
@@ -802,7 +854,7 @@ class Tama3DActor implements TamaActor {
         rightWristY = -0.85;                           // palm square to camera
         rightWristZ = -wave;                           // counter-rotate, palm stays front
         rightFingerCurl = 0.02;
-        rightFingerSpread = 0.32;
+        rightFingerSpread = 0.14;
         rightFingerRipple = 0.03;
         const earBob = Math.sin(time * 5.4) * 0.06;
         leftEarZ = 0.24 + earBob;                      // ears perked UP + friendly bob
@@ -879,12 +931,18 @@ class Tama3DActor implements TamaActor {
       spread: number,
       mirror: number,
     ): void => {
-      const jointStrength = [0.42, 0.7, 0.58];
+      // A SMALL always-on rest curl so an "open" hand reads as relaxed rather than
+      // a flat, rigid starfish — but kept low, because finger curl rides local X
+      // (closer to a roll than a true curl on this rig) and a large value bends
+      // the tips back into an unnatural claw. ~0.1 effective is the natural sweet
+      // spot; per-state curls add onto this.
+      const restCurl = 0.08;
+      const jointStrength = [0.6, 0.72, 0.5];
       const spreadPattern = [-0.75, -0.22, 0.24, 0.72];
       bones.forEach((bone, index) => {
         const finger = Math.floor(index / 3);
         const joint = index % 3;
-        const staggeredCurl = curl + Math.sin(time * 6 + finger * 0.7) * ripple;
+        const staggeredCurl = restCurl + curl + Math.sin(time * 6 + finger * 0.7) * ripple;
         const amount = staggeredCurl * jointStrength[index % 3];
         // Curl on local X to move each chain through the palm plane without
         // crossing neighboring fingers. Only the root receives a small,
@@ -903,35 +961,41 @@ class Tama3DActor implements TamaActor {
     applyFingers(this.rig.rightFingers, rightFingerCurl, rightFingerRipple, rightFingerSpread, 1);
     applyThumb(this.rig.leftThumb, leftFingerCurl, -1);
     applyThumb(this.rig.rightThumb, rightFingerCurl, 1);
-    const applyEyeOpen = (eye: THREE.Object3D | null, openness: number): void => {
+    // Blink + sleep's held-shut, kept separate from the squint. The squint only
+    // narrows the iris (eye-bone scale); the CLOSE crossfades the eyeball out and
+    // the lid in, so no white sclera is ever left behind.
+    const blink = rawBlink * blinkAllowed;
+    const closeAmt = 1 - (1 - eyeClose) * (1 - blink);
+    const closeEased = THREE.MathUtils.smoothstep(closeAmt, 0, 1);
+    const eyeballOpacity = 1 - THREE.MathUtils.smoothstep(closeAmt, 0.1, 0.62);
+    // Hard-hide via the mesh (Object3D.visible is honored by every renderer);
+    // the material opacity only carries the crossfade while partly open.
+    const eyeballVisible = eyeballOpacity > 0.01;
+    for (const mesh of this.eyeballMeshes) {
+      mesh.visible = eyeballVisible;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of mats) (material as THREE.MeshStandardMaterial).opacity = eyeballOpacity;
+    }
+    const applyEyeOpen = (eye: THREE.Object3D | null, squint: number): void => {
       if (!eye) return;
       const base = this.baseScales.get(eye);
       if (!base) return;
       eye.scale.x = THREE.MathUtils.lerp(eye.scale.x, base.x, smooth);
-      eye.scale.y = THREE.MathUtils.lerp(eye.scale.y, base.y * openness, smooth);
+      eye.scale.y = THREE.MathUtils.lerp(eye.scale.y, base.y * squint, smooth);
       eye.scale.z = THREE.MathUtils.lerp(eye.scale.z, base.z, smooth);
     };
     applyEyeOpen(this.rig.leftEye, leftEyeOpen);
     applyEyeOpen(this.rig.rightEye, rightEyeOpen);
-    const applyEyelid = (eyelid: AnimatedEyelid | null, openness: number): void => {
+    const applyEyelid = (eyelid: AnimatedEyelid | null): void => {
       if (!eyelid) return;
-      const closure = THREE.MathUtils.clamp(1 - openness, 0, 1);
-      const easedClosure = THREE.MathUtils.smoothstep(closure, 0, 1);
-      const targetY = THREE.MathUtils.lerp(eyelid.openY, eyelid.closedY, easedClosure);
-      eyelid.mesh.position.y = THREE.MathUtils.lerp(eyelid.mesh.position.y, targetY, smooth);
-      // The two lid tubes are wider than the eye gap, so at partial opacity they
-      // overlap into a translucent maroon band across the face. Only fade them in
-      // near FULL closure (blink dips + sleep) so concentration squints (openness
-      // ~0.8, driven by the eye-scale alone) stay clean and lid-free.
-      eyelid.mesh.material.opacity = THREE.MathUtils.lerp(
-        eyelid.mesh.material.opacity,
-        THREE.MathUtils.smoothstep(closure, 0.5, 0.88),
-        smooth,
-      );
+      // The lid sweeps down and fades in as the eyeball fades out, forming the
+      // closed-eye line. A squint keeps closeAmt≈0, so no lid ever shows there.
+      eyelid.mesh.position.y = THREE.MathUtils.lerp(eyelid.openY, eyelid.closedY, closeEased);
+      eyelid.mesh.material.opacity = THREE.MathUtils.smoothstep(closeAmt, 0.15, 0.6);
       eyelid.mesh.visible = eyelid.mesh.material.opacity > 0.01;
     };
-    applyEyelid(this.leftEyelid, leftEyeOpen);
-    applyEyelid(this.rightEyelid, rightEyeOpen);
+    applyEyelid(this.leftEyelid);
+    applyEyelid(this.rightEyelid);
     const applyChain = (bones: THREE.Object3D[], x: number, y: number, z: number): void => {
       bones.forEach((bone, index) => {
         const falloff = Math.pow(0.62, index);
