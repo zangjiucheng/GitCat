@@ -1639,8 +1639,21 @@ function repoBasename(path){ return path.replace(/[\/\\]+$/,"").split(/[\/\\]/).
 // whichever repo is CURRENTLY OPEN (see openRepo()/bootEmpty() below) — the
 // Dashboard modal's own per-row chip only covers TRACKED repos, which isn't
 // the same set as "the one actually open right now" (e.g. a repo opened via
-// the native picker but never added to the tracked list).
-function isWslPath(path){ const host=path.replace(/\\/g,"/").split("/").find(s=>s.length>0)?.toLowerCase(); return host==="wsl.localhost"||host==="wsl$"; }
+// the native picker but never added to the tracked list). Strips a leading
+// `\\?\UNC\` first, same as wsl_target()/dashboard.svelte.ts's own copy:
+// opening a repo via the Dashboard hands this whatever repo_registry.rs
+// stored, which went through std::fs::canonicalize() and so already has
+// that Windows-added prefix — without stripping it the topbar chip only
+// ever worked for a repo opened straight from the native picker.
+function isWslPath(path){
+  let segments=path.replace(/\\/g,"/").split("/").filter(s=>s.length>0);
+  if(segments[0]?.toLowerCase()==="?"){
+    if(segments[1]?.toLowerCase()!=="unc") return false;
+    segments=segments.slice(2);
+  }
+  const host=segments[0]?.toLowerCase();
+  return host==="wsl.localhost"||host==="wsl$";
+}
 // Returns true when the repo actually loaded, false when load_graph (or any
 // step) failed. Never throws — callers that don't care (pickRepo) can ignore
 // the result, while the setup wizard uses it to keep its done-step overlay up

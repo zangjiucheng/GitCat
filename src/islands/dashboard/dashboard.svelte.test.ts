@@ -466,4 +466,18 @@ describe("isWslPath — own frontend copy of wsl.rs's wsl_target() host-matching
     expect(isWslPath("C:\\Users\\me\\repo")).toBe(false);
     expect(isWslPath("\\\\server\\share\\repo")).toBe(false); // a REAL network share, not WSL
   });
+
+  // repo_registry::normalize() runs every TRACKED repo's path through
+  // std::fs::canonicalize on the Rust side, which on Windows rewrites a UNC
+  // path to this "extended-length" \\?\UNC\... form — every Dashboard row
+  // (as opposed to a freshly-picked, never-tracked path) is in this shape.
+  it("strips the extended-length \\\\?\\UNC\\ prefix std::fs::canonicalize adds", () => {
+    expect(isWslPath("\\\\?\\UNC\\wsl.localhost\\Ubuntu\\home\\jc\\repo")).toBe(true);
+    expect(isWslPath("\\\\?\\UNC\\wsl$\\Debian\\home\\jc\\repo")).toBe(true);
+    expect(isWslPath("\\\\?\\unc\\WSL.LOCALHOST\\Ubuntu\\home\\jc\\repo")).toBe(true);
+  });
+
+  it("an extended-length LOCAL drive path (\\\\?\\C:\\...) is not mistaken for WSL", () => {
+    expect(isWslPath("\\\\?\\C:\\Users\\me\\repo")).toBe(false);
+  });
 });

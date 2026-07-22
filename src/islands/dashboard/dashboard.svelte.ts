@@ -69,9 +69,22 @@ export function repoBasename(path: string): string {
 // aliases, checked against the FIRST non-empty path segment after
 // normalizing `\`->`/` (Windows paths, both `\\wsl.localhost\...` and
 // `//wsl.localhost/...` forms — see wsl.rs's own doc comment on why both
-// slash directions are accepted).
+// slash directions are accepted) — and, same as wsl_target(), strips a
+// leading `\\?\UNC\` first: every TRACKED repo's path went through Rust's
+// repo_registry::normalize(), which runs std::fs::canonicalize() on it —
+// Windows rewrites `\\wsl.localhost\...` to `\\?\UNC\wsl.localhost\...` in
+// the process, so without this a Dashboard row for a WSL repo never showed
+// the chip at all (a freshly-picked, not-yet-tracked path still matched).
 export function isWslPath(path: string): boolean {
-  const host = path.replace(/\\/g, "/").split("/").find((s) => s.length > 0)?.toLowerCase();
+  let segments = path
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((s) => s.length > 0);
+  if (segments[0]?.toLowerCase() === "?") {
+    if (segments[1]?.toLowerCase() !== "unc") return false; // e.g. \\?\C:\... — a local drive, never WSL
+    segments = segments.slice(2);
+  }
+  const host = segments[0]?.toLowerCase();
   return host === "wsl.localhost" || host === "wsl$";
 }
 

@@ -62,10 +62,27 @@ use crate::procutil::{output_with_timeout, NoConsoleWindowExt, SUBPROCESS_TIMEOU
 /// The host segment is matched case-insensitively (Windows UNC hosts are
 /// case-insensitive); the distro name and Linux path are kept exactly as
 /// given — Linux paths ARE case-sensitive.
+///
+/// Also strips a leading `\\?\UNC\` (Windows' own "extended-length path"
+/// form) before matching: `repo_registry::normalize` runs every tracked
+/// repo's path through `std::fs::canonicalize`, which on Windows rewrites
+/// `\\wsl.localhost\Ubuntu\...` to `\\?\UNC\wsl.localhost\Ubuntu\...` —
+/// without this, a WSL repo opened via the Dashboard (any tracked repo)
+/// would silently stop being recognized as WSL at all here, even though a
+/// freshly-picked, not-yet-tracked path still matched. `\\?\C:\...` (a
+/// local drive in extended form) correctly still returns `None` below —
+/// only the `UNC` marker specifically continues on to the host check.
 pub fn wsl_target(path: &str) -> Option<(String, String)> {
     let forward = path.replace('\\', "/");
     let mut segments = forward.split('/').filter(|s| !s.is_empty());
-    let host = segments.next()?;
+    let mut host = segments.next()?;
+    if host.eq_ignore_ascii_case("?") {
+        let marker = segments.next()?;
+        if !marker.eq_ignore_ascii_case("UNC") {
+            return None;
+        }
+        host = segments.next()?;
+    }
     if !host.eq_ignore_ascii_case("wsl.localhost") && !host.eq_ignore_ascii_case("wsl$") {
         return None;
     }
@@ -396,6 +413,35 @@ mod tests {
         assert_eq!(wsl_target(r"C:\Users\me\repo"), None);
         assert_eq!(wsl_target(r"\\server\share\repo"), None); // a REAL network share, not WSL
         assert_eq!(wsl_target("/home/me/repo"), None); // a WSL-internal path with no Windows host at all
+    }
+
+    // repo_registry::normalize() runs every TRACKED repo's path through
+    // std::fs::canonicalize, which on Windows rewrites a UNC path to this
+    // "extended-length" \\?\UNC\... form — a repo opened from the Dashboard
+    // (as opposed to freshly picked and never tracked) hits this shape.
+    #[test]
+    fn strips_the_extended_length_unc_prefix_canonicalize_adds() {
+        assert_eq!(
+            wsl_target(r"\\?\UNC\wsl.localhost\Ubuntu\home\jc\repo"),
+            Some(("Ubuntu".to_string(), "/home/jc/repo".to_string()))
+        );
+        assert_eq!(
+            wsl_target(r"\\?\UNC\wsl$\Debian\home\jc\repo"),
+            Some(("Debian".to_string(), "/home/jc/repo".to_string()))
+        );
+        // Case-insensitive like the plain UNC host match above.
+        assert_eq!(
+            wsl_target(r"\\?\unc\WSL.LOCALHOST\Ubuntu\home\jc\repo"),
+            Some(("Ubuntu".to_string(), "/home/jc/repo".to_string()))
+        );
+    }
+
+    // The SAME extended-length form exists for ordinary local drive paths
+    // (\\?\C:\...) — canonicalize's most common case by far. Must not be
+    // mistaken for WSL just because it also starts with \\?\.
+    #[test]
+    fn extended_length_local_drive_paths_are_not_wsl() {
+        assert_eq!(wsl_target(r"\\?\C:\Users\me\repo"), None);
     }
 
     #[test]
