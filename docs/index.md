@@ -8,16 +8,12 @@ hero:
   image:
     src: /tama-hero.webp
     alt: Tama, GitCat's cat mascot, waving hello
-  actions:
-    - theme: brand
-      text: Download
-      link: https://github.com/zangjiucheng/GitCat/releases
-    - theme: alt
-      text: Features
-      link: /features
-    - theme: alt
-      text: View on GitHub
-      link: https://github.com/zangjiucheng/GitCat
+  # No `actions` here on purpose — DownloadButton.vue (injected via
+  # theme/index.ts's own Layout override) renders the ENTIRE actions row
+  # itself: an OS-auto-detecting split download button plus the same
+  # "Features"/"View on GitHub" links this used to list here as plain
+  # theme:brand/alt entries. See that component's own doc comment for why
+  # a Vue component was necessary instead of just more frontmatter.
 
 # Every icon below is an inline Lucide SVG (stroke="currentColor", tinted via
 # custom.css's indigo/teal alternation) — the exact same icon set + style the

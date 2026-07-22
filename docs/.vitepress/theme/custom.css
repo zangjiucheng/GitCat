@@ -204,6 +204,25 @@
   animation: gc-fade-up 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* `animation: ... both` leaves `.container` sitting on a non-`none`
+   `transform: translateY(0)` forever after it finishes — which, per spec,
+   makes `.container` a NEW STACKING CONTEXT root. DownloadButton.vue's own
+   dropdown (`.dl-menu`, z-index:20, nested inside `.container`) got
+   trapped inside that context as a result: its z-index only ever competed
+   against other things INSIDE `.container`, never against `.VPFeatures`
+   (a normal-flow, unpositioned SIBLING of `.VPHero` itself, painting after
+   it in DOM order) — so the feature grid visually painted over the open
+   dropdown instead of the dropdown sitting on top of it. Promoting the
+   whole `.VPHero` section to its OWN explicitly-stacked, positioned
+   context fixes this at the right level: now `.VPHero`'s entire subtree
+   (dropdown included, however deep) is compared against `.VPFeatures` as
+   ONE unit, and wins outright since `.VPFeatures` has no z-index of its
+   own to contest it. */
+.VPHero {
+  position: relative;
+  z-index: 5;
+}
+
 .VPHero .image-src {
   animation: gc-float 6s ease-in-out 0.2s infinite;
 }
@@ -260,11 +279,162 @@
   transform: translateY(-2px);
 }
 
+/* ---- OS-detecting download split button (DownloadButton.vue) — reproduces
+   VPHero.vue's own `.actions`/`.action` layout (that component's Vue
+   `scoped` styles never leak here, hence defining them again) so this sits
+   flush with the two plain VPButton links right next to it. `.dl-main`/
+   `.dl-chevron` reuse the SAME --vp-button-brand-* vars every other brand
+   button on the site already resolves through (custom.css's own :root
+   block above points those at the indigo palette) rather than hardcoding
+   the color again a third time. */
+.dl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin: -6px;
+  padding-top: 24px;
+}
+.dl-actions .action {
+  flex-shrink: 0;
+  padding: 6px;
+}
+
+.dl-split {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  height: 40px;
+  border-radius: 20px;
+  overflow: visible;
+  border: 1px solid var(--vp-button-brand-border);
+  background: var(--vp-button-brand-bg);
+  transition: border-color 0.25s, background-color 0.25s;
+}
+.dl-split:hover {
+  border-color: var(--vp-button-brand-hover-border);
+  background: var(--vp-button-brand-hover-bg);
+}
+
+.dl-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px;
+  color: var(--vp-button-brand-text);
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.dl-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.dl-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+}
+
+.dl-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  flex: none;
+  border: none;
+  border-left: 1px solid color-mix(in srgb, var(--vp-button-brand-text) 30%, transparent);
+  background: transparent;
+  color: var(--vp-button-brand-text);
+  cursor: pointer;
+  border-radius: 0 20px 20px 0;
+}
+.dl-chevron-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s ease;
+}
+.dl-chevron-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+}
+.dl-chevron-icon.open {
+  transform: rotate(180deg);
+}
+
+.dl-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  min-width: 248px;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg-elv);
+  box-shadow: 0 16px 32px -12px rgba(20, 20, 30, 0.28);
+  animation: gc-menu-in 0.16s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.dark .dl-menu {
+  box-shadow: 0 16px 32px -12px rgba(0, 0, 0, 0.6);
+}
+
+.dl-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--vp-c-text-1);
+  font-size: 13.5px;
+  text-align: left;
+}
+.dl-menu-item:hover {
+  background: var(--vp-c-bg-soft);
+}
+.dl-menu-check {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--vp-c-indigo-1);
+}
+.dl-menu-check :deep(svg) {
+  width: 100%;
+  height: 100%;
+}
+.dl-menu-icon {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--vp-c-text-2);
+}
+.dl-menu-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+}
+.dl-menu-label {
+  flex: 1;
+}
+
+@keyframes gc-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .VPHero .container,
   .VPHero .image-src,
   .VPHero .image-bg,
-  .VPFeatures .item {
+  .VPFeatures .item,
+  .dl-menu {
     animation: none !important;
   }
   .VPFeature,
@@ -272,7 +442,9 @@
   .VPFeature .icon,
   .VPFeature:hover .icon,
   .VPButton,
-  .VPButton:hover {
+  .VPButton:hover,
+  .dl-split,
+  .dl-chevron-icon {
     transition: none !important;
     transform: none !important;
   }
