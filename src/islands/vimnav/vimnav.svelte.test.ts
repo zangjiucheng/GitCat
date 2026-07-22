@@ -36,6 +36,8 @@ import {
   pageCanvasSelection,
   noteGKey,
   noteNonGKey,
+  handleGlobalKeydown,
+  vimnavCtrl,
 } from "./vimnav.svelte.ts";
 
 beforeEach(() => {
@@ -169,6 +171,77 @@ describe("canvas selection movement", () => {
     (bridge.state as any).selectedRow = 97;
     pageCanvasSelection(1);
     expect(bridge.state.selectedRow).toBe(99);
+  });
+});
+
+describe("handleGlobalKeydown — modifier guard (regression: Ctrl/Cmd+K used to also scroll the canvas)", () => {
+  // BUG: `e.key` is the same "k" whether or not Ctrl/Cmd is held — the bare
+  // j/k/g/G/? bindings used to match on `e.key` alone, so Ctrl/Cmd+K (opening
+  // the command palette, handled entirely elsewhere by Cmdk.svelte) ALSO
+  // tripped this file's own "k" -> move-selection-up handler underneath it.
+  function key(k: string, opts: Partial<KeyboardEventInit> = {}): KeyboardEvent {
+    return new KeyboardEvent("keydown", { key: k, cancelable: true, ...opts });
+  }
+
+  it("Ctrl+K does not move the canvas selection, and leaves the event unhandled for the command palette", () => {
+    const e = key("k", { ctrlKey: true });
+    handleGlobalKeydown(e);
+    expect(bridge.state.selectedRow).toBe(-1);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("Cmd+K (metaKey, e.g. macOS) is likewise left alone", () => {
+    const e = key("k", { metaKey: true });
+    handleGlobalKeydown(e);
+    expect(bridge.state.selectedRow).toBe(-1);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("a bare k/j (no modifier) still moves the canvas selection — the fix only excludes the modified case", () => {
+    const upEvent = key("k");
+    handleGlobalKeydown(upEvent);
+    expect(bridge.state.selectedRow).toBe(99); // nothing selected yet — "up" wraps to the last row, matching moveCanvasSelection's own test above
+    expect(upEvent.defaultPrevented).toBe(true);
+
+    (bridge.state as any).selectedRow = -1;
+    handleGlobalKeydown(key("j"));
+    expect(bridge.state.selectedRow).toBe(0);
+  });
+
+  it("Ctrl+G and Ctrl+? are likewise left alone, not just Ctrl+K", () => {
+    handleGlobalKeydown(key("g", { ctrlKey: true }));
+    handleGlobalKeydown(key("G", { ctrlKey: true }));
+    handleGlobalKeydown(key("?", { ctrlKey: true }));
+    expect(bridge.state.selectedRow).toBe(-1);
+    expect(vimnavCtrl.helpOpen).toBe(false);
+  });
+
+  it("a bare ? (no modifier) still opens the help overlay", () => {
+    handleGlobalKeydown(key("?"));
+    expect(vimnavCtrl.helpOpen).toBe(true);
+    vimnavCtrl.closeHelp();
+  });
+
+  it("Ctrl+D/Ctrl+U still fire — the one binding that DOES require a modifier — unaffected by the fix", () => {
+    (bridge.state as any).selectedRow = 10;
+    handleGlobalKeydown(key("d", { ctrlKey: true }));
+    expect(bridge.state.selectedRow).toBe(15); // matches pageCanvasSelection's own test above
+
+    handleGlobalKeydown(key("u", { ctrlKey: true }));
+    expect(bridge.state.selectedRow).toBe(10);
+  });
+
+  it("a bare d/u (no modifier) does nothing — only the Ctrl/Cmd form is bound", () => {
+    (bridge.state as any).selectedRow = 10;
+    handleGlobalKeydown(key("d"));
+    expect(bridge.state.selectedRow).toBe(10);
+  });
+
+  it("Alt+K is also excluded, defensively, even though nothing in this app binds Alt+letter today", () => {
+    const e = key("k", { altKey: true });
+    handleGlobalKeydown(e);
+    expect(bridge.state.selectedRow).toBe(-1);
+    expect(e.defaultPrevented).toBe(false);
   });
 });
 

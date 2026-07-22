@@ -152,14 +152,31 @@ export function handleGlobalKeydown(e: KeyboardEvent) {
     }
     return;
   }
-  if (e.key === "?") {
+
+  // BUG FIX: every bare vim-style binding below (j/k/g/G/?) used to match on
+  // `e.key` alone — but `KeyboardEvent.key` is the SAME "k" whether or not
+  // Ctrl/Cmd is held, only `e.ctrlKey`/`e.metaKey` say so separately. That
+  // meant Ctrl/Cmd+K (opening the command palette — Cmdk.svelte's own
+  // separate listener) ALSO tripped this file's "k" -> scroll-up handler:
+  // the palette opened AND the canvas selection moved underneath it. Only
+  // Ctrl/Cmd+D and +U (page down/up, just below) are actually MEANT to fire
+  // with a modifier held — every bare-letter binding here must NOT, so
+  // `noModifier` gates all of them at once. Alt is included defensively
+  // (nothing in this app currently binds an Alt+letter shortcut, but a bare
+  // vim key firing under Alt would be equally wrong on principle); Shift is
+  // deliberately EXCLUDED from this check — "G" and "?" are themselves only
+  // reachable via Shift on a standard layout, so excluding it would break
+  // them entirely, not guard them.
+  const noModifier = !e.ctrlKey && !e.metaKey && !e.altKey;
+
+  if (noModifier && e.key === "?") {
     e.preventDefault();
     vimnavCtrl.toggleHelp();
     return;
   }
   if (vimnavCtrl.helpOpen) return; // don't act on nav keys while help is up
 
-  if (e.key === "j" || e.key === "k") {
+  if (noModifier && (e.key === "j" || e.key === "k")) {
     e.preventDefault();
     const dir = e.key === "j" ? 1 : -1;
     noteNonGKey();
@@ -167,7 +184,7 @@ export function handleGlobalKeydown(e: KeyboardEvent) {
     if (!anyOtherScrimOpen()) moveCanvasSelection(dir);
     return;
   }
-  if (e.key === "g") {
+  if (noModifier && e.key === "g") {
     const completed = noteGKey();
     if (completed) {
       e.preventDefault();
@@ -175,7 +192,7 @@ export function handleGlobalKeydown(e: KeyboardEvent) {
     }
     return;
   }
-  if (e.key === "G") {
+  if (noModifier && e.key === "G") {
     noteNonGKey();
     e.preventDefault();
     if (!anyOtherScrimOpen()) jumpCanvasSelection("last");
