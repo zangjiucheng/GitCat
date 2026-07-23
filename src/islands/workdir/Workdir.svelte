@@ -9,6 +9,8 @@
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import Folder from "@lucide/svelte/icons/folder";
+  import ChevronsDownUp from "@lucide/svelte/icons/chevrons-down-up";
+  import ChevronsUpDown from "@lucide/svelte/icons/chevrons-up-down";
 
   // "Open in external diff" (backlog #12) — added to BOTH staged (4th icon,
   // was 3) and unstaged (5th icon, was 4) rows: unlike Blame/History (which
@@ -98,6 +100,9 @@
   <section>
     <div class="wd-sec-head">
       <h4 class="d-lab" style="margin:0">Staged ({workdirCtrl.status?.staged.length ?? 0})</h4>
+      {#if workdirCtrl.stagedHasDirs}
+        <div class="wd-sec-actions">{@render treeCtl("staged", workdirCtrl.stagedHasDirs)}</div>
+      {/if}
     </div>
     {#if !workdirCtrl.status?.staged.length}
       <div class="mut" style="font-size:12px">nothing staged</div>
@@ -111,11 +116,14 @@
   <section>
     <div class="wd-sec-head">
       <h4 class="d-lab" style="margin:0">Unstaged ({workdirCtrl.status?.unstaged.length ?? 0})</h4>
-      {#if workdirCtrl.status?.unstaged.length}
-        <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageAll(repo())}>
-          {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__all__"}<span class="spinner"></span>{:else}Stage all{/if}
-        </button>
-      {/if}
+      <div class="wd-sec-actions">
+        {@render treeCtl("unstaged", workdirCtrl.unstagedHasDirs)}
+        {#if workdirCtrl.status?.unstaged.length}
+          <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageAll(repo())}>
+            {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__all__"}<span class="spinner"></span>{:else}Stage all{/if}
+          </button>
+        {/if}
+      </div>
     </div>
     {#if !workdirCtrl.status?.unstaged.length}
       <div class="mut" style="font-size:12px">no unstaged changes</div>
@@ -292,9 +300,24 @@
      "oldPath → path" (unambiguous even when a rename crosses directories);
      an ordinary file shows just its own leaf name, since the tree structure
      already conveys the directory — title keeps the full path either way. -->
+{#snippet treeCtl(section: "staged" | "unstaged", hasDirs: boolean)}
+  {#if hasDirs}
+    <button class="wd-act" title="Collapse all folders" aria-label="Collapse all folders" onclick={() => workdirCtrl.collapseAll(section)}>
+      <ChevronsDownUp class="ico" size={14} aria-hidden="true" />
+    </button>
+    <button class="wd-act" title="Expand all folders" aria-label="Expand all folders" onclick={() => workdirCtrl.expandAll(section)}>
+      <ChevronsUpDown class="ico" size={14} aria-hidden="true" />
+    </button>
+  {/if}
+{/snippet}
+
 {#snippet stagedDirNode(node: WdTreeDir)}
-  {#each Object.entries(node.dirs) as [name, child]}
-    <details class="dir" open>
+  {#each Object.entries(node.dirs) as [name, child] (child.path)}
+    <details
+      class="dir"
+      open={!workdirCtrl.isDirCollapsed("staged", child.path)}
+      ontoggle={(e) => workdirCtrl.setDirOpen("staged", child.path, (e.currentTarget as HTMLDetailsElement).open)}
+    >
       <summary><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /> {name}</summary>
       <div class="indent">{@render stagedDirNode(child)}</div>
     </details>
@@ -359,8 +382,12 @@
 {/snippet}
 
 {#snippet unstagedDirNode(node: WdTreeDir)}
-  {#each Object.entries(node.dirs) as [name, child]}
-    <details class="dir" open>
+  {#each Object.entries(node.dirs) as [name, child] (child.path)}
+    <details
+      class="dir"
+      open={!workdirCtrl.isDirCollapsed("unstaged", child.path)}
+      ontoggle={(e) => workdirCtrl.setDirOpen("unstaged", child.path, (e.currentTarget as HTMLDetailsElement).open)}
+    >
       <summary><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /> {name}</summary>
       <div class="indent">{@render unstagedDirNode(child)}</div>
     </details>

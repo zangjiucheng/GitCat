@@ -1130,7 +1130,52 @@ describe("workdirCtrl.stagedTree / unstagedTree — live tree views of status", 
 
   it("is an empty tree when status is null (no repo open yet)", () => {
     workdirCtrl.status = null;
-    expect(workdirCtrl.stagedTree).toEqual({ dirs: {}, files: [] });
-    expect(workdirCtrl.unstagedTree).toEqual({ dirs: {}, files: [] });
+    expect(workdirCtrl.stagedTree).toEqual({ dirs: {}, files: [], path: "" });
+    expect(workdirCtrl.unstagedTree).toEqual({ dirs: {}, files: [], path: "" });
+  });
+});
+
+describe("folder collapse state (Collapse all / Expand all)", () => {
+  beforeEach(() => {
+    workdirCtrl.status = {
+      staged: [{ path: "src/auth/session.ts", status: "M", oldPath: null }, { path: "docs/readme.md", status: "M", oldPath: null }],
+      unstaged: [{ path: "src/ui/button.ts", status: "M", oldPath: null }],
+      conflicted: 0,
+      branch: "main",
+      hasStash: false,
+    };
+    workdirCtrl.expandAll("staged");
+    workdirCtrl.expandAll("unstaged");
+  });
+
+  it("each dir node carries its full repo-relative path", () => {
+    const tree = buildWdTree([{ path: "src/auth/session.ts", status: "M", oldPath: null }]);
+    expect(tree.path).toBe("");
+    expect(tree.dirs.src.path).toBe("src");
+    expect(tree.dirs.src.dirs.auth.path).toBe("src/auth");
+  });
+
+  it("folders default to expanded; setDirOpen toggles one", () => {
+    expect(workdirCtrl.isDirCollapsed("staged", "src")).toBe(false);
+    workdirCtrl.setDirOpen("staged", "src", false);
+    expect(workdirCtrl.isDirCollapsed("staged", "src")).toBe(true);
+    workdirCtrl.setDirOpen("staged", "src", true);
+    expect(workdirCtrl.isDirCollapsed("staged", "src")).toBe(false);
+  });
+
+  it("collapseAll collapses every folder in that section, expandAll clears them", () => {
+    workdirCtrl.collapseAll("staged");
+    expect(workdirCtrl.isDirCollapsed("staged", "src")).toBe(true);
+    expect(workdirCtrl.isDirCollapsed("staged", "src/auth")).toBe(true);
+    expect(workdirCtrl.isDirCollapsed("staged", "docs")).toBe(true);
+    workdirCtrl.expandAll("staged");
+    expect(workdirCtrl.isDirCollapsed("staged", "src")).toBe(false);
+    expect(workdirCtrl.isDirCollapsed("staged", "src/auth")).toBe(false);
+  });
+
+  it("the two sections' collapse states are independent", () => {
+    workdirCtrl.collapseAll("staged");
+    expect(workdirCtrl.isDirCollapsed("staged", "src")).toBe(true);
+    expect(workdirCtrl.isDirCollapsed("unstaged", "src")).toBe(false); // same path, different section
   });
 });

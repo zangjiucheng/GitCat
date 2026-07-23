@@ -102,10 +102,13 @@ export function blameTargetForWorkdirFile(f: Pick<WorkdirEntry, "path" | "status
 // keeps the backend's own array order — libgit2 already returns status
 // entries path-sorted, so this reads sorted "for free" without extra code.
 export type WdTreeFile = WorkdirEntry & { name: string };
-export type WdTreeDir = { dirs: Record<string, WdTreeDir>; files: WdTreeFile[] };
+// `path` = the dir's full repo-relative path ("" for the root), so the collapse
+// state (see WorkdirState.collapsedDirs) can key each folder stably across the
+// tree re-deriving on every status refresh.
+export type WdTreeDir = { dirs: Record<string, WdTreeDir>; files: WdTreeFile[]; path: string };
 
 export function buildWdTree(entries: WorkdirEntry[]): WdTreeDir {
-  const root: WdTreeDir = { dirs: {}, files: [] };
+  const root: WdTreeDir = { dirs: {}, files: [], path: "" };
   for (const f of entries) {
     const parts = f.path.split("/");
     let n = root;
@@ -113,7 +116,7 @@ export function buildWdTree(entries: WorkdirEntry[]): WdTreeDir {
       if (j === parts.length - 1) {
         n.files.push({ ...f, name: seg });
       } else {
-        n.dirs[seg] = n.dirs[seg] || { dirs: {}, files: [] };
+        n.dirs[seg] = n.dirs[seg] || { dirs: {}, files: [], path: n.path ? n.path + "/" + seg : seg };
         n = n.dirs[seg];
       }
     });
@@ -243,6 +246,50 @@ class WorkdirState {
   }
   get unstagedTree(): WdTreeDir {
     return buildWdTree(this.status?.unstaged ?? []);
+  }
+  stagedHasDirs = $derived(Object.keys(buildWdTree(this.status?.staged ?? []).dirs).length > 0);
+  unstagedHasDirs = $derived(Object.keys(buildWdTree(this.status?.unstaged ?? []).dirs).length > 0);
+
+  // ── folder collapse state (Collapse all / Expand all + per-folder toggle) ──
+  // Default is expanded: a folder is open UNLESS its key is in this set. Keyed
+  // by `section \0 dirPath` (via `dirKey`) so the two sections never collide and
+  // the state survives the tree re-deriving on every status refresh. Each
+  // `<details>` binds `open` to !isDirCollapsed and syncs native toggles back
+  // through `setDirOpen` (see Workdir.svelte). Reassigned, never mutated in
+  // place, so Svelte 5 sees the change (a `$state` Set isn't deep-proxied).
+  collapsedDirs = $state<Set<string>>(new Set());
+  private dirKey(section: "staged" | "unstaged", path: string): string {
+    return section + " " + path;
+  }
+  isDirCollapsed(section: "staged" | "unstaged", path: string): boolean {
+    return this.collapsedDirs.has(this.dirKey(section, path));
+  }
+  setDirOpen(section: "staged" | "unstaged", path: string, open: boolean) {
+    const k = this.dirKey(section, path);
+    if (open === !this.collapsedDirs.has(k)) return; // already in that state — no churn
+    const next = new Set(this.collapsedDirs);
+    if (open) next.delete(k);
+    else next.add(k);
+    this.collapsedDirs = next;
+  }
+  private eachDirPath(node: WdTreeDir, out: string[]) {
+    for (const seg in node.dirs) {
+      const child = node.dirs[seg];
+      out.push(child.path);
+      this.eachDirPath(child, out);
+    }
+  }
+  collapseAll(section: "staged" | "unstaged") {
+    const tree = section === "staged" ? this.stagedTree : this.unstagedTree;
+    const paths: string[] = [];
+    this.eachDirPath(tree, paths);
+    const next = new Set(this.collapsedDirs);
+    for (const p of paths) next.add(this.dirKey(section, p));
+    this.collapsedDirs = next;
+  }
+  expandAll(section: "staged" | "unstaged") {
+    const pre = section + " ";
+    this.collapsedDirs = new Set([...this.collapsedDirs].filter((k) => !k.startsWith(pre)));
   }
 
   busy = $state(false);
