@@ -330,7 +330,12 @@
   height: 16px;
   flex: none;
 }
-.dl-icon :deep(svg) {
+/* Plain descendant selector, NOT `:deep(svg)`: this is a globally-imported
+   stylesheet (theme/index.ts `import "./custom.css"`), not a Vue SFC
+   `<style scoped>` block, so `:deep()` is meaningless here — the browser
+   drops the whole rule as an unparseable selector and the icon loses its
+   sizing entirely. Same fix applied to every icon-sizing rule below. */
+.dl-icon svg {
   width: 100%;
   height: 100%;
 }
@@ -354,12 +359,69 @@
   height: 14px;
   transition: transform 0.2s ease;
 }
-.dl-chevron-icon :deep(svg) {
+.dl-chevron-icon svg {
   width: 100%;
   height: 100%;
 }
 .dl-chevron-icon.open {
   transform: rotate(180deg);
+}
+
+/* Full-width, zero-height flex item: in the `flex-wrap: wrap` `.dl-actions`
+   row it forces everything after it onto a new line, so the two secondary
+   links (Features / View on GitHub) sit on their OWN second row under the
+   primary download button rather than trailing it on the same line. */
+.dl-row-break {
+  flex-basis: 100%;
+  width: 100%;
+  height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+/* The two secondary hero actions (Features / View on GitHub). VitePress's
+   `.VPButton` is `display: inline-block`; make these inline-flex so the
+   leading brand icon (GitHub mark / lucide sparkles) sits on the same line
+   as the label, matching the primary download button's icon+text layout so
+   the whole actions row reads as one family rather than a bare word next to
+   an iconned button.
+
+   The stock `.alt` VPButton's border resolves to a near-invisible tint on
+   the hero background, so give these an explicit, defined outline: a soft
+   surface fill, a real 1px border, and an indigo-tinted hover that echoes
+   the primary button's own accent. */
+.dl-actions .dl-linkbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 18px;
+  border: 1px solid var(--vp-c-border);
+  border-radius: 20px;
+  background-color: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-1);
+  font-weight: 600;
+  font-size: 14px;
+  transition:
+    border-color 0.25s ease,
+    background-color 0.25s ease,
+    color 0.25s ease,
+    transform 0.2s ease;
+}
+.dl-actions .dl-linkbtn:hover {
+  border-color: var(--vp-c-brand-1);
+  background-color: var(--vp-c-brand-soft);
+  color: var(--vp-c-brand-1);
+}
+.dl-linkbtn-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.dl-linkbtn-icon svg {
+  width: 100%;
+  height: 100%;
 }
 
 .dl-menu {
@@ -399,18 +461,20 @@
   flex: none;
   color: var(--vp-c-indigo-1);
 }
-.dl-menu-check :deep(svg) {
+.dl-menu-check svg {
   width: 100%;
   height: 100%;
 }
 .dl-menu-icon {
   display: inline-flex;
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   flex: none;
-  color: var(--vp-c-text-2);
+  /* text-1, not the muted text-2: the reference screenshot's menu icons read
+     at full strength (bright on its dark menu), not as a faint secondary. */
+  color: var(--vp-c-text-1);
 }
-.dl-menu-icon :deep(svg) {
+.dl-menu-icon svg {
   width: 100%;
   height: 100%;
 }

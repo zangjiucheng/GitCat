@@ -2,11 +2,11 @@
   Replaces index.md's old plain "Download" hero button (a static link to
   the bare /releases page) with an OS-auto-detecting split button, styled
   after the reference screenshot the request was built from: one big
-  "Download for <platform>" button plus a chevron opening a dropdown of
-  every other build, each with its own small platform icon and a checkmark
-  on whichever one is currently the default.
+  "Download beta for <platform>" button plus a chevron opening a dropdown of
+  every other build, each with its own small platform icon, a "· Beta"
+  suffix, and a checkmark on whichever one is currently the default.
 
-  Renders the WHOLE hero actions row itself (this button + the two plain
+  Renders the WHOLE hero actions row itself (this button + the two
   "Features"/"View on GitHub" links) rather than just the download button
   alone — see theme/index.ts's own doc comment for why: VPHome.vue doesn't
   forward a slot that lands INSIDE the framework's own `.actions` flex row,
@@ -36,47 +36,46 @@ const RELEASES_URL = `https://github.com/${REPO}/releases`;
 // also the dropdown's own display order (Apple Silicon leads: it's the
 // dominant new-Mac architecture as of this writing, same reasoning
 // detectPlatformFamily()'s own mac fallback below uses).
+//
+// Two labels per target, matching the reference screenshot's own split:
+//   mainLabel — the big button copy ("Download beta for macOS (Apple Silicon)")
+//   menuLabel — the dropdown row ("Apple Silicon (macOS) · Beta" is
+//               menuLabel + the " · Beta" the template appends)
 const RELEASE_TARGETS = [
-  { id: "mac-arm", label: "Apple Silicon (macOS)", icon: "apple", match: (n) => n.endsWith("_aarch64.dmg") },
-  { id: "mac-intel", label: "Intel (macOS)", icon: "apple", match: (n) => n.endsWith("_x64.dmg") },
-  { id: "win-x64", label: "Windows x64", icon: "windows", match: (n) => n.endsWith("_x64-setup.exe") },
-  { id: "win-arm64", label: "Windows ARM64", icon: "windows", match: (n) => n.endsWith("_arm64-setup.exe") },
-  { id: "linux-x64", label: "Linux x64", icon: "linux", match: (n) => n.endsWith("_amd64.AppImage") },
-  { id: "linux-arm64", label: "Linux ARM64", icon: "linux", match: (n) => n.endsWith("_aarch64.AppImage") },
+  { id: "mac-arm", mainLabel: "macOS (Apple Silicon)", menuLabel: "Apple Silicon (macOS)", icon: "apple", match: (n) => n.endsWith("_aarch64.dmg") },
+  { id: "mac-intel", mainLabel: "macOS (Intel)", menuLabel: "Intel (macOS)", icon: "apple", match: (n) => n.endsWith("_x64.dmg") },
+  { id: "win-x64", mainLabel: "Windows AMD64", menuLabel: "Windows AMD64", icon: "windows", match: (n) => n.endsWith("_x64-setup.exe") },
+  { id: "win-arm64", mainLabel: "Windows ARM64", menuLabel: "Windows ARM64", icon: "windows", match: (n) => n.endsWith("_arm64-setup.exe") },
+  { id: "linux-x64", mainLabel: "Linux 64", menuLabel: "Linux 64", icon: "linux", match: (n) => n.endsWith("_amd64.AppImage") },
+  { id: "linux-arm64", mainLabel: "Linux ARM64", menuLabel: "Linux ARM64", icon: "linux", match: (n) => n.endsWith("_aarch64.AppImage") },
 ];
 
-// Stroke-based, currentColor — the SAME lucide icon language custom.css
-// already established for the feature-card icons just above this
-// component on the page (see index.md's own doc comment on why: matches
-// the app's own @lucide/svelte icon set rather than emoji/platform glyphs).
-// windows/linux aren't real lucide icons (lucide is a generic UI icon set,
-// not a brand-mark one) — hand-drawn here in the same stroke style so all
-// three read as one consistent family instead of a mismatched grab-bag.
+// Platform icons are the real BRAND marks the reference screenshot uses, not
+// the app's generic lucide UI set: a filled Apple logo and a filled
+// four-pane Windows logo (both read cleanly as solid silhouettes), plus an
+// OUTLINE Tux for Linux — a penguin needs its belly/face drawn, so a solid
+// fill would collapse to an unreadable blob (this is exactly why the
+// screenshot itself fills Apple/Windows but outlines Linux). `github` (the
+// Octocat mark) and `features` (lucide "sparkles") ride along for the two
+// secondary hero buttons. All use currentColor so each inherits whatever
+// its container's text color is (white on the brand button, muted in the menu).
 const ICONS = {
-  apple: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.528V3a1 1 0 0 1 1-1h0"/><path d="M18.237 21A15 15 0 0 0 22 11a6 6 0 0 0-10-4.472A6 6 0 0 0 2 11a15.1 15.1 0 0 0 3.763 10 3 3 0 0 0 3.648.648 5.5 5.5 0 0 1 5.178 0A3 3 0 0 0 18.237 21"/></svg>',
+  apple:
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 12.536c-.03-3.017 2.47-4.463 2.58-4.535-1.406-2.056-3.594-2.337-4.37-2.368-1.861-.189-3.632 1.096-4.574 1.096-.94 0-2.395-1.069-3.94-1.04-2.026.03-3.896 1.178-4.94 2.994-2.106 3.65-.539 9.056 1.51 12.017 1.002 1.45 2.196 3.078 3.762 3.02 1.51-.06 2.08-.976 3.905-.976 1.826 0 2.34.976 3.937.946 1.625-.03 2.653-1.478 3.646-2.931 1.148-1.681 1.62-3.309 1.648-3.393-.036-.016-3.164-1.214-3.195-4.816zM14.09 3.86c.833-1.01 1.395-2.414 1.242-3.81-1.2.048-2.654.8-3.515 1.81-.77.895-1.446 2.322-1.265 3.694 1.34.104 2.706-.681 3.538-1.694z"/></svg>',
   windows:
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449 9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-13.051-1.351"/></svg>',
   linux:
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="8" rx="3.4" ry="3.8"/><path d="M7.7 11.2c-1 1.8-1.5 3.5-1.5 5.3 0 3 2.4 4.8 5.8 4.8s5.8-1.8 5.8-4.8c0-1.8-.5-3.5-1.5-5.3"/><circle cx="10.3" cy="7.6" r=".55" fill="currentColor" stroke="none"/><circle cx="13.7" cy="7.6" r=".55" fill="currentColor" stroke="none"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6c-2.2 0-3.5 1.8-3.5 4.2 0 1.1.2 1.7-.5 2.7C6.4 11.6 5.4 13.6 5.4 16c0 3.1 2.7 5.4 6.6 5.4s6.6-2.3 6.6-5.4c0-2.4-1-4.4-2.6-6.5-.7-1-.5-1.6-.5-2.7 0-2.4-1.3-4.2-3.5-4.2Z"/><path d="M9.1 13c-.5 1-.8 2.1-.8 3.2 0 1.8 1.6 3 3.7 3s3.7-1.2 3.7-3c0-1.1-.3-2.2-.8-3.2"/><path d="M10.9 8.9h2.2l-1.1 1.5z" fill="currentColor" stroke="none"/><circle cx="10.4" cy="7.5" r=".55" fill="currentColor" stroke="none"/><circle cx="13.6" cy="7.5" r=".55" fill="currentColor" stroke="none"/><path d="M9.4 20.9 8 22.3M14.6 20.9 16 22.3"/></svg>',
+  github:
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23a11.5 11.5 0 0 1 3-.405c1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>',
+  features:
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .962 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.962 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg>',
 };
 
 const CHEVRON =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const CHECK =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
-
-// SHORT label for the main button (`Download for ${shortLabel}`) — the
-// dropdown row uses the fuller `label` above instead ("Apple Silicon
-// (macOS)"), matching the reference screenshot's own split between a
-// terse main button and more descriptive menu rows.
-const SHORT_LABEL = {
-  "mac-arm": "macOS",
-  "mac-intel": "macOS (Intel)",
-  "win-x64": "Windows",
-  "win-arm64": "Windows (ARM64)",
-  "linux-x64": "Linux",
-  "linux-arm64": "Linux (ARM64)",
-};
 
 // Module-scope, not component-scope: this component only mounts while the
 // home page (`layout: home`) is showing, so a plain component-local ref
@@ -104,7 +103,9 @@ const primaryTarget = ref(null);
 const dropdownOpen = ref(false);
 const rootEl = ref(null);
 
-const primaryShortLabel = computed(() => SHORT_LABEL[primaryTarget.value] ?? "your platform");
+const primaryMainLabel = computed(
+  () => RELEASE_TARGETS.find((t) => t.id === primaryTarget.value)?.mainLabel ?? "your platform"
+);
 const primaryIcon = computed(() => ICONS[RELEASE_TARGETS.find((t) => t.id === primaryTarget.value)?.icon] ?? "");
 
 function hrefFor(id) {
@@ -205,7 +206,7 @@ onBeforeUnmount(() => {
       <div class="dl-split" :class="{ open: dropdownOpen }" ref="rootEl">
         <a class="dl-main" :href="hrefFor(primaryTarget)">
           <span class="dl-icon" v-html="primaryIcon"></span>
-          <span>Download for {{ primaryShortLabel }}</span>
+          <span>Download beta for {{ primaryMainLabel }}</span>
         </a>
         <button class="dl-chevron" type="button" aria-label="Other platforms" :aria-expanded="dropdownOpen" @click="toggleDropdown">
           <span class="dl-chevron-icon" :class="{ open: dropdownOpen }" v-html="CHEVRON"></span>
@@ -221,16 +222,26 @@ onBeforeUnmount(() => {
           >
             <span class="dl-menu-check" v-html="t.id === primaryTarget ? CHECK : ''"></span>
             <span class="dl-menu-icon" v-html="ICONS[t.icon]"></span>
-            <span class="dl-menu-label">{{ t.label }}</span>
+            <span class="dl-menu-label">{{ t.menuLabel }} · Beta</span>
           </a>
         </div>
       </div>
     </div>
+    <!-- Full-width flex break: forces the two secondary links onto their own
+         second row, under the primary download button, instead of trailing
+         it on the same line. -->
+    <div class="dl-row-break"></div>
     <div class="action">
-      <a class="VPButton medium alt" :href="withBase('/features')">Features</a>
+      <a class="VPButton medium alt dl-linkbtn" :href="withBase('/features')">
+        <span class="dl-linkbtn-icon" v-html="ICONS.features"></span>
+        <span>Features</span>
+      </a>
     </div>
     <div class="action">
-      <a class="VPButton medium alt" href="https://github.com/zangjiucheng/GitCat" target="_blank" rel="noreferrer">View on GitHub</a>
+      <a class="VPButton medium alt dl-linkbtn" href="https://github.com/zangjiucheng/GitCat" target="_blank" rel="noreferrer">
+        <span class="dl-linkbtn-icon" v-html="ICONS.github"></span>
+        <span>View on GitHub</span>
+      </a>
     </div>
   </div>
 </template>
