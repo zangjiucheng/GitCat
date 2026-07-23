@@ -60,7 +60,8 @@
           <button class="btn" onclick={() => resolver.openWorkdirToAmend()}>Open Workdir to amend&#8230;</button>
         </div>
       {:else}
-        <div class="cf-layout">
+        <div class="cf-layout" class:no-files={!resolver.files.length}>
+          {#if resolver.files.length}
           <div class="cf-files" data-vimnav-list>
             {#each resolver.files as f (f.path)}
               {@const resolved = !resolver.remaining.has(f.path)}
@@ -77,6 +78,7 @@
               </div>
             {/each}
           </div>
+          {/if}
           <div class="cf-main">
             {#if resolver.current}
               <div class="cf-actions">

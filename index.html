@@ -1265,6 +1265,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    row, and from there into .cf-files/.cf-main below, matching #cfThree's own
    updated rule. */
 .cf-layout{display:grid;grid-template-columns:190px 1fr;gap:12px;flex:1;min-height:0}
+/* No conflicted files (e.g. resuming an in-progress op with nothing to merge,
+   or all resolved and the list emptied): the left file-list box is hidden, so
+   drop its column and let .cf-main take the full width instead of leaving a
+   bordered empty box. */
+.cf-layout.no-files{grid-template-columns:1fr}
 .cf-files{display:flex;flex-direction:column;gap:2px;min-height:0;overflow:auto;border:1px solid var(--border);border-radius:var(--r-panel);padding:4px;background:var(--bg)}
 .cf-file{display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:6px;cursor:pointer;font-size:12px}
 .cf-file:hover{background:var(--elevated)}
