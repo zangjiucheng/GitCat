@@ -1898,7 +1898,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
         <li>Original SHAs become unreachable: <code>a1b2c3d</code> &#8230; <code>90ff210</code></li>
         <li>GPG signatures on rewritten commits are dropped</li></ul></div>
       <div class="backup-note" id="dangerNote"><svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Pre-op backup pinned first &#8594; full pre-rewrite state stays recoverable.</div>
-      <div class="confirm-type"><label>Type the branch name <b class="mono" id="dangerTypeName">main</b> to arm the rewrite:</label>
+      <div class="confirm-type"><label id="dangerTypeLabel">Type the branch name <b class="mono" id="dangerTypeName">main</b> to arm the rewrite:</label>
         <input id="confirmInput" placeholder="main" spellcheck="false" autocomplete="off"></div>
     </div>
     <div class="modal-foot"><button class="btn ghost" id="dangerCancel">Cancel</button><button class="btn danger" id="dangerGo" disabled>Rewrite history</button></div>

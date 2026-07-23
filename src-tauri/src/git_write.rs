@@ -634,6 +634,74 @@ pub async fn checkout(path: String, name: String) -> WriteResult {
     .await
 }
 
+/// Reset the current HEAD (and, when on a branch, that branch ref) to `target`,
+/// with `mode` one of `"soft" | "mixed" | "hard"`:
+/// - soft:  move HEAD only; index AND working tree untouched.
+/// - mixed: move HEAD + reset the index; working-tree files kept (git default).
+/// - hard:  move HEAD + reset the index AND overwrite the working tree —
+///          DISCARDS every staged/unstaged change.
+///
+/// Snapshots the current HEAD commit FIRST (Safety Manager), so the branch's
+/// PREVIOUS position is always recoverable via Undo — even a hard reset can be
+/// walked back to the commit you were on. IMPORTANT: that snapshot pins
+/// *committed history only*, NOT the working tree (identical to `undo`/reflog
+/// `restore`, which for exactly this reason refuse on a dirty tree) — so a
+/// `hard` reset's discarded UNCOMMITTED changes have no in-app recovery path.
+/// The frontend's typed-confirm warning (resethead.svelte.ts) spells that out
+/// before this is ever reached; the danger of losing uncommitted work is a
+/// user-consented, deliberately-armed action here, mirroring the existing
+/// `reset_branch_to_upstream`'s own "snapshot the tip, then `reset --hard`"
+/// contract.
+///
+/// `target` is resolved to a real commit up front (via git2 revparse — accepts
+/// a full/abbreviated sha, a ref like `origin/main`, or `HEAD~2`) so a bad
+/// hash fails cleanly BEFORE any snapshot/mutation, and the resolved short sha
+/// can go in the success message. The mutation itself passes the resolved full
+/// sha through `--end-of-options` (same hardening as every sibling here).
+/// JS call: `invoke("reset_head_to_commit", { path, target, mode })`.
+#[tauri::command]
+#[specta::specta]
+pub async fn reset_head_to_commit(path: String, target: String, mode: String) -> WriteResult {
+    crate::blocking::run_blocking(move || {
+        if let Err(e) = validate_revision(&target) {
+            return WriteResult::err(e);
+        }
+        let flag = match mode.as_str() {
+            "soft" => "--soft",
+            "mixed" => "--mixed",
+            "hard" => "--hard",
+            other => return WriteResult::err(format!("Unknown reset mode {other:?} (expected soft, mixed, or hard).")),
+        };
+        let repo = match open_repo(&path) {
+            Ok(r) => r,
+            Err(w) => return w,
+        };
+        // Resolve to a concrete commit BEFORE snapshotting or mutating, so a bad
+        // hash/ref never leaves a snapshot behind and the message can name the
+        // real short sha. `peel_to_commit` follows annotated tags/refs down to a
+        // commit; anything that isn't a commit-ish fails here.
+        let resolved = match repo.revparse_single(&target).and_then(|o| o.peel_to_commit()) {
+            Ok(c) => c.id().to_string(),
+            Err(e) => return WriteResult::err(format!("Can't resolve {target:?} to a commit: {}", e.message())),
+        };
+        let short: String = resolved.chars().take(7).collect();
+        // Snapshot FIRST — never move HEAD without a backup of where it was.
+        let backup = match take_snapshot(&repo) {
+            Ok(b) => b,
+            Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        };
+        match run_git(&path, &["reset", flag, "--end-of-options", &resolved]) {
+            Ok(out) if out.ok => WriteResult::ok(
+                format!("Reset HEAD to {short} ({mode}, snapshot {}).", short_backup(&backup)),
+                Some(backup),
+            ),
+            Ok(out) => WriteResult::err(git_error_message(&out)),
+            Err(e) => WriteResult::err(e),
+        }
+    })
+    .await
+}
+
 /// Force-switch to `name` (optionally creating it from `start_point`,
 /// mirroring `create_branch`'s own shape — needed for the sidebar's
 /// `checkoutRemote`'s "new local branch tracking a remote" path), discarding

@@ -19,6 +19,7 @@ import Remotes from "./islands/remotes/Remotes.svelte";
 import { remotesCtrl } from "./islands/remotes/remotes.svelte.ts";
 import { resolver } from "./islands/resolver/resolver.svelte.ts";
 import { forcePushCtrl } from "./islands/forcepush/forcepush.svelte.ts";
+import { resetHeadCtrl } from "./islands/resethead/resethead.svelte.ts";
 import ExportPatches from "./islands/exportpatches/ExportPatches.svelte";
 import { exportPatchesCtrl } from "./islands/exportpatches/exportpatches.svelte.ts";
 import { applyPatchCtrl } from "./islands/applypatch/applypatch.svelte.ts";
@@ -477,6 +478,9 @@ if (IN_TAURI) {
         break;
       case "open-terminal":
         terminalCtrl.toggle(bridge.CUR_REPO as unknown as string);
+        break;
+      case "reset-head":
+        resetHeadCtrl.promptForHash(bridge.CUR_REPO as unknown as string);
         break;
       case "force-push-lease":
         forcePushCtrl.forcePushLease(bridge.CUR_REPO as unknown as string);

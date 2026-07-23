@@ -78,6 +78,7 @@
           title={commitMenuCtrl.isMerge ? "Can't revert a merge commit (needs --mainline, which isn't supported)" : undefined}
           onclick={() => commitMenuCtrl.revert()}>Revert commit</button
         >
+        <button class="danger" onclick={() => commitMenuCtrl.resetHere()}>Reset HEAD to here&#8230;</button>
         <button
           disabled={commitMenuCtrl.isMerge}
           title={commitMenuCtrl.isMerge

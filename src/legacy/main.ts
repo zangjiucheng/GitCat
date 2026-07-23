@@ -1230,7 +1230,18 @@ function armDanger(ctx){
   const st=$("#dangerSteps"); if(st) st.style.display=ctx.steps===false?"none":"";
   const lose=$("#dangerLose"); lose.innerHTML=ctx.lose||""; lose.style.display=ctx.lose?"":"none";
   const note=$("#dangerNote"); note.innerHTML=ctx.note||""; note.style.display=ctx.note?"":"none";
-  $("#dangerTypeName").textContent=ctx.name;
+  // Confirm-to-arm label, rebuilt each open so the noun/verb can be tailored
+  // per caller — `ctx.typeNoun`/`ctx.typeVerb` default to the original
+  // "Type the branch name X to arm the rewrite:" wording (so every existing
+  // caller is unchanged), while reset overrides them ("short SHA … to confirm
+  // the reset"). The name goes in via textContent (never innerHTML) so a
+  // ref/sha can't inject markup, and #dangerTypeName is recreated every time so
+  // it's always present.
+  const typeLabel=$("#dangerTypeLabel");
+  typeLabel.textContent="Type the "+(ctx.typeNoun||"branch name")+" ";
+  const tn=document.createElement("b"); tn.className="mono"; tn.id="dangerTypeName"; tn.textContent=ctx.name;
+  typeLabel.appendChild(tn);
+  typeLabel.appendChild(document.createTextNode(" to "+(ctx.typeVerb||"arm the rewrite")+":"));
   const inp=$("#confirmInput"); inp.placeholder=ctx.name; inp.value="";
   $("#dangerGo").textContent=ctx.confirmLabel||"Confirm"; $("#dangerGo").disabled=true;
   openScrim("#dangerScrim"); setTimeout(()=>inp.focus(),30);

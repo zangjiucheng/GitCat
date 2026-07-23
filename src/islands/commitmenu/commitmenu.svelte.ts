@@ -44,6 +44,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
+import { resetHeadCtrl } from "../resethead/resethead.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { save } from "@tauri-apps/plugin-dialog";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
@@ -280,6 +281,21 @@ class CommitMenuState {
       bridge.tama.warn("Export failed — " + e);
       console.error(e);
     }
+  }
+
+  // Reset HEAD (current branch) to the right-clicked commit. Deliberately NO
+  // isMerge guard — `git reset` to a merge commit is perfectly legal. This is
+  // the one destructive action here that MOVES your branch rather than adding a
+  // commit, so unlike cherryPick/merge/revert it hands off to resetHeadCtrl's
+  // own typed-confirm danger scrim (mode picker + snapshot warning) rather than
+  // running immediately: close this popover first, then arm that. Captures
+  // repo/sha/shortSha/subject into locals before close() blanks them (same
+  // "capture into a local before closing" discipline as exportAsPatch/copy*).
+  resetHere() {
+    if (this.busy) return;
+    const repo = this.repo, sha = this.sha, shortSha = this.shortSha, subject = this.subject;
+    this.close();
+    resetHeadCtrl.resetToKnownCommit(repo, sha, shortSha, subject);
   }
 
   // ── copy actions (menu view) — clipboard-only, no IN_TAURI gate needed:

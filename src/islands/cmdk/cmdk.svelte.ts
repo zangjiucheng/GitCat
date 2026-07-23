@@ -22,6 +22,7 @@ import { repoSummaryCtrl } from "../reposummary/reposummary.svelte.ts";
 import { remotesCtrl } from "../remotes/remotes.svelte.ts";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { forcePushCtrl } from "../forcepush/forcepush.svelte.ts";
+import { resetHeadCtrl } from "../resethead/resethead.svelte.ts";
 import { exportPatchesCtrl } from "../exportpatches/exportpatches.svelte.ts";
 import { applyPatchCtrl } from "../applypatch/applypatch.svelte.ts";
 import { terminalCtrl } from "../terminal/terminal.svelte.ts";
@@ -200,6 +201,13 @@ const ACTIONS: ActionItem[] = [
     label: "Open Terminal",
     hint: "Toggle the built-in terminal at this repository's root",
     run: () => terminalCtrl.toggle(bridge.CUR_REPO as unknown as string),
+  },
+  {
+    type: "action",
+    id: "reset-head",
+    label: "Reset HEAD to commit",
+    hint: "Move the current branch to any commit hash or ref (soft / mixed / hard)",
+    run: () => resetHeadCtrl.promptForHash(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",

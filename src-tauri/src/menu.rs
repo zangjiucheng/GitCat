@@ -252,6 +252,12 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         let force_push_lease = MenuItemBuilder::with_id("force-push-lease", "Force Push (Safe)").build(app)?;
         let force_push_override =
             MenuItemBuilder::with_id("force-push-override", "Force Push (Override Remote)").build(app)?;
+        // Reset HEAD to a commit: a LOCAL-history danger move (moves the current
+        // branch, a hard reset discards uncommitted work) — grouped with the
+        // remote-danger force-push items, listed first as the less-catastrophic
+        // of the cluster. Its own typed-confirm scrim + mode picker (see
+        // resethead.svelte.ts) gates the danger, so this is just the opener.
+        let reset_head = MenuItemBuilder::with_id("reset-head", "Reset HEAD to Commit\u{2026}").build(app)?;
         // git-filter-repo: the one genuinely irreversible-by-normal-Undo
         // operation in the app (rewrites every commit hash in scope, expires
         // the reflog) — used to live as its own permanent red topbar button
@@ -278,6 +284,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .item(&pull_rebase)
             .item(&open_terminal)
             .separator()
+            .item(&reset_head)
             .item(&force_push_lease)
             .item(&force_push_override)
             .separator()
@@ -350,8 +357,8 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "refresh" | "about"
         | "bisect" | "reflog" | "rerere" | "plumbing" | "repo-summary" | "remotes" | "export-patches" | "apply-patch"
         | "pickaxe-search" | "code-search" | "repositories" | "external-tools" | "settings" | "dangling-recovery"
-        | "repo-files" | "uncommitted-changes" | "pull-merge" | "pull-rebase" | "open-terminal" | "force-push-lease"
-        | "force-push-override" | "filter-repo" | "check-for-updates") => {
+        | "repo-files" | "uncommitted-changes" | "pull-merge" | "pull-rebase" | "open-terminal" | "reset-head"
+        | "force-push-lease" | "force-push-override" | "filter-repo" | "check-for-updates") => {
             let _ = app.emit("menu-action", id);
         }
         _ => {}

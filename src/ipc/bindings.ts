@@ -270,6 +270,36 @@ async checkoutDiscard(path: string, name: string, startPoint: string | null) : P
     return await TAURI_INVOKE("checkout_discard", { path, name, startPoint });
 },
 /**
+ * Reset the current HEAD (and, when on a branch, that branch ref) to `target`,
+ * with `mode` one of `"soft" | "mixed" | "hard"`:
+ * - soft:  move HEAD only; index AND working tree untouched.
+ * - mixed: move HEAD + reset the index; working-tree files kept (git default).
+ * - hard:  move HEAD + reset the index AND overwrite the working tree —
+ * DISCARDS every staged/unstaged change.
+ * 
+ * Snapshots the current HEAD commit FIRST (Safety Manager), so the branch's
+ * PREVIOUS position is always recoverable via Undo — even a hard reset can be
+ * walked back to the commit you were on. IMPORTANT: that snapshot pins
+ * *committed history only*, NOT the working tree (identical to `undo`/reflog
+ * `restore`, which for exactly this reason refuse on a dirty tree) — so a
+ * `hard` reset's discarded UNCOMMITTED changes have no in-app recovery path.
+ * The frontend's typed-confirm warning (resethead.svelte.ts) spells that out
+ * before this is ever reached; the danger of losing uncommitted work is a
+ * user-consented, deliberately-armed action here, mirroring the existing
+ * `reset_branch_to_upstream`'s own "snapshot the tip, then `reset --hard`"
+ * contract.
+ * 
+ * `target` is resolved to a real commit up front (via git2 revparse — accepts
+ * a full/abbreviated sha, a ref like `origin/main`, or `HEAD~2`) so a bad
+ * hash fails cleanly BEFORE any snapshot/mutation, and the resolved short sha
+ * can go in the success message. The mutation itself passes the resolved full
+ * sha through `--end-of-options` (same hardening as every sibling here).
+ * JS call: `invoke("reset_head_to_commit", { path, target, mode })`.
+ */
+async resetHeadToCommit(path: string, target: string, mode: string) : Promise<WriteResult> {
+    return await TAURI_INVOKE("reset_head_to_commit", { path, target, mode });
+},
+/**
  * Delete a branch. Refuses the current branch. `force=false` uses `git branch
  * -d` (refuses an unmerged branch -> surfaced as `ok:false`); `force=true` uses
  * `-D`. The deleted tip sha is included in the success message since M2a Undo
