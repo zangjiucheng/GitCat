@@ -231,14 +231,20 @@
         </div>
       </div>
       <div class="modal-body diffx-body">
-        <div class="diffx-files tree" data-vimnav-list>
-          {#if detailCtrl.treeLoading}
-            <div class="mut" style="padding:6px 4px"><span class="spinner"></span> loading files&#8230;</div>
-          {:else if !detailCtrl.tree.files.length && !Object.keys(detailCtrl.tree.dirs).length}
-            <div class="mut" style="padding:6px 4px">no file changes</div>
-          {:else}
-            {@render dirNode(detailCtrl.tree)}
-          {/if}
+        <div class="diffx-files">
+          <div class="diffx-files-head">
+            <span class="d-lab" style="margin:0">Files</span>
+            {@render treeCtl()}
+          </div>
+          <div class="diffx-files-scroll tree" data-vimnav-list>
+            {#if detailCtrl.treeLoading}
+              <div class="mut" style="padding:6px 4px"><span class="spinner"></span> loading files&#8230;</div>
+            {:else if !detailCtrl.tree.files.length && !Object.keys(detailCtrl.tree.dirs).length}
+              <div class="mut" style="padding:6px 4px">no file changes</div>
+            {:else}
+              {@render dirNode(detailCtrl.tree)}
+            {/if}
+          </div>
         </div>
         <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
           {#if detailCtrl.diffLoading}

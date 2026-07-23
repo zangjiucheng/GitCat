@@ -819,7 +819,12 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .modal.diffx{width:min(1200px,96vw);height:88vh;display:flex;flex-direction:column}
 .diffx-head-main h3{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .modal.diffx .modal-body{flex:1;min-height:0;overflow:hidden;padding:0;display:flex}
-.diffx-files{flex:none;width:280px;margin-top:0;overflow:auto;border-right:1px solid var(--border);padding:10px}
+/* File panel: a fixed header (Files label + Collapse/Expand-all) over a
+   scrolling tree, so a changeset with many folders scrolls inside the 280px
+   column instead of being cut off, and the controls stay pinned. */
+.diffx-files{flex:none;width:280px;border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+.diffx-files-head{display:flex;align-items:center;gap:8px;padding:10px 10px 6px;flex:none}
+.diffx-files-scroll{flex:1;min-height:0;overflow:auto;margin-top:0;padding:0 10px 10px}
 .diffx-diff{flex:1;min-width:0;min-height:0;max-height:none;border:0;border-radius:0}
 
 /* ============================== WORKDIR (staging + commit + stash) ==============================
