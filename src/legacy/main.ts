@@ -9,6 +9,7 @@ import { sidebarCtrl } from "../islands/sidebar/sidebar.svelte.ts";
 import { workdirCtrl } from "../islands/workdir/workdir.svelte.ts";
 import { commitMenuCtrl } from "../islands/commitmenu/commitmenu.svelte.ts";
 import { snapshotPreviewCtrl } from "../islands/snapshotpreview/snapshotpreview.svelte.ts";
+import { ribbonTickFracs, RIBBON_TOP_FRAC, RIBBON_BOT_FRAC, RIBBON_MIN_TICK_PX } from "./ribbon.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
 import { repoSummaryCtrl } from "../islands/reposummary/reposummary.svelte.ts";
 // Hidden Easter egg — see its own header doc + this file's click-counter
@@ -1316,18 +1317,13 @@ if(import.meta.env.DEV) $("#devBadge").style.display="flex";
    — so the very first render already shows everything available (no more
    flat 8-tick cap) rather than requiring a zoom just to see more. Double-
    click the ribbon to reset back to auto-fit. */
-const RIBBON_MIN_TICK_PX=7, RIBBON_TOP_FRAC=0.08, RIBBON_BOT_FRAC=0.92;
+// Ribbon frac/tick constants + the tick-geometry math now live in a pure,
+// unit-tested module (see ./ribbon.ts for why — it fixes a large-array crash
+// and an old-cluster off-screen overflow). Only the WINDOW range constants
+// (zoom logic, not frac math) stay here.
 const RIBBON_WINDOW_MIN=300, RIBBON_WINDOW_MAX=180*86400; // 5 minutes .. ~6 months
 let ribbonWindowSec=null; // null = auto-fit; a number once the user has zoomed
 
-function ribbonTickFracs(agesAscending,H){
-  const maxAge=Math.max(1,...agesAscending);
-  const span=RIBBON_BOT_FRAC-RIBBON_TOP_FRAC;
-  const fracs=agesAscending.map(age=>RIBBON_TOP_FRAC+span*(Math.log1p(Math.max(0,age))/Math.log1p(maxAge)));
-  const minGap=RIBBON_MIN_TICK_PX/H;
-  for(let i=1;i<fracs.length;i++){ if(fracs[i]<fracs[i-1]+minGap) fracs[i]=fracs[i-1]+minGap; }
-  return fracs;
-}
 function ribbonWindowLabel(sec){
   if(sec<3600) return Math.max(1,Math.round(sec/60))+"m";
   if(sec<86400) return Math.round(sec/3600)+"h";
