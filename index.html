@@ -1130,6 +1130,22 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   font-size:12.5px;background:var(--bg);text-align:center;padding:0 20px}
 
 /* ============================== MODALS ============================== */
+/* Tama message toast — pinned top-right ABOVE every modal (z-index beats the
+   .scrim at 300 and the cmdk/dev-badge at 500), so an error or result Tama
+   surfaces while a full-screen scrim covers her nook (bottom of the sidebar)
+   is still visible. Shown only while a scrim is actually up (see _topToast).
+   aria-hidden: the nook itself is an aria-live region, so this visual mirror
+   must not double-announce to screen readers. */
+.top-toast{position:fixed;top:14px;right:16px;z-index:600;max-width:340px;
+  padding:10px 14px;border-radius:10px;background:var(--panel);border:1px solid var(--border);
+  border-left:3px solid var(--muted);box-shadow:var(--shadow);color:var(--text);
+  font-family:var(--display);font-weight:600;font-size:12.5px;line-height:1.36;
+  opacity:0;transform:translateY(-8px);pointer-events:none;
+  transition:opacity .18s ease,transform .18s ease}
+.top-toast.show{opacity:1;transform:none}
+.top-toast.k-warn{border-left-color:var(--danger)}
+.top-toast.k-caution{border-left-color:var(--warning,#c98a2e)}
+.top-toast.k-good{border-left-color:var(--success)}
 .scrim{position:fixed;inset:0;z-index:300;background:rgba(18,20,28,.62);backdrop-filter:blur(2px);
   display:flex;align-items:center;justify-content:center;padding:24px;
   opacity:0;visibility:hidden;transition:opacity .16s ease,visibility 0s linear .16s}
@@ -1881,6 +1897,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   <section class="detail" id="detail"><div class="resize-handle detail-handle" id="resizeDetail" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><!-- filled by the Detail Svelte island (src/islands/detail) --></section>
 
 </div>
+
+<!-- Tama's top-of-everything message toast — surfaces errors/results when a
+     modal is covering her nook (see .top-toast CSS + main.ts's _topToast). -->
+<div class="top-toast" id="topToast" aria-hidden="true"></div>
 
 <!-- ============================ DANGER MODAL (filter-repo) ============================ -->
 <div class="scrim" id="dangerScrim">

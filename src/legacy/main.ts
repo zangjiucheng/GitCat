@@ -794,8 +794,8 @@ class TamaMascot{
   // why each pairing was chosen (fewer poses than states; several states
   // intentionally share one).
   static POSE={idle:"curious",sleep:"sleep",hint:"curious",thinking:"thinking",warn:"shocked",danger:"alarm",celebrate:"happy",rescue:"confident",confused:"shocked",curious:"curious",syncing:"thinking",greeting:"hero"};
-  constructor(el){this.nook=el.nook;this.sprite=el.sprite;this.spriteWrap=el.spriteWrap;this.line=el.line;this.tele=el.tele;
-    this.sticky=null;this.toastT=null;this.dwellT=null;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
+  constructor(el){this.nook=el.nook;this.sprite=el.sprite;this.spriteWrap=el.spriteWrap;this.line=el.line;this.tele=el.tele;this.topToast=el.topToast;
+    this.sticky=null;this.toastT=null;this.topToastT=null;this.dwellT=null;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
   // Only touches the portrait's `src` when the resolved pose actually
   // changed (several states share one pose — see POSE above) — a real
   // "pop" (shrink+fade out via .swap, swap src, overshoot back in via
@@ -832,9 +832,22 @@ class TamaMascot{
   // text itself was never a factor, so a long message could get yanked away
   // before it's even read. 50ms/char (~20 chars/sec) covers that on top of
   // whatever floor the caller asked for, and leaves short toasts unchanged.
-  say(t,ms=3200){if(!t){this.line.classList.remove("show");return;}this.line.textContent=t;this.line.classList.add("show");
+  say(t,ms=3200){if(!t){this.line.classList.remove("show");this._topToast("");return;}this.line.textContent=t;this.line.classList.add("show");
     const dwell=Math.max(ms,1200+t.length*50);
-    clearTimeout(this.toastT);this.toastT=setTimeout(()=>this.line.classList.remove("show"),dwell);}
+    clearTimeout(this.toastT);this.toastT=setTimeout(()=>this.line.classList.remove("show"),dwell);
+    this._topToast(t,dwell);}
+  // The nook (where say() shows its line) sits at the bottom of the sidebar, so
+  // any full-screen .scrim modal covers it — an error or result surfaced while
+  // a modal is open would otherwise be invisible. When (and ONLY when) a scrim
+  // is actually up, mirror the message to a toast pinned top-right ABOVE
+  // everything, tinted by the current pose (failure / caution / celebrate). No
+  // scrim open => the nook itself is visible, so this stays out of the way.
+  _topToast(t,dwell){const el=this.topToast;if(!el)return;
+    if(!t||!document.querySelector(".scrim.on")){el.classList.remove("show");return;}
+    const st=this.nook.dataset.state;
+    const kind=(st==="confused"||st==="danger")?" k-warn":st==="warn"?" k-caution":st==="celebrate"?" k-good":"";
+    el.className="top-toast"+kind;el.textContent=t;el.classList.add("show");
+    clearTimeout(this.topToastT);this.topToastT=setTimeout(()=>el.classList.remove("show"),Math.max(2800,dwell||0));}
   // "confused", not "warn" — this is a real operation FAILURE (every
   // call site across the app), distinct from mutation.caution's own
   // pre-mutation "warn" pose (which still calls set("warn") directly, not
@@ -868,7 +881,7 @@ class TamaMascot{
   _tele(){this.tele.textContent="snapshots "+Safety.teleCount()+" · last "+Safety.teleAgo();}
   _teleLoop(){this._tele();setInterval(()=>{if(this.nook.dataset.state!=="thinking")this._tele();},20000);}
 }
-const Tama=new TamaMascot({nook:$("#nook"),sprite:$("#sprite"),spriteWrap:$("#spriteWrap"),line:$("#toastLine"),tele:$("#telemetry")});
+const Tama=new TamaMascot({nook:$("#nook"),sprite:$("#sprite"),spriteWrap:$("#spriteWrap"),line:$("#toastLine"),tele:$("#telemetry"),topToast:$("#topToast")});
 
 /* The nook cat subtly leans toward your cursor, and naps when you go idle.
    A painted portrait can't move its own pupils the way the old vector cat
