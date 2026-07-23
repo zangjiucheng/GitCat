@@ -140,7 +140,7 @@
             {:else}
               <div class="cf-all-resolved">
                 {#if resolver.stuckMessage}
-                  <span class="mut">Couldn't finish the commit — see the note below, then Continue again or Abort.</span>
+                  <span class="mut">Couldn't commit — see the note below.</span>
                 {:else}
                   <span class="mut">All files resolved — press Continue &amp; commit.</span>
                 {/if}

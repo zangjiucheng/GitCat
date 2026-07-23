@@ -70,6 +70,49 @@ fn cherry_pick_conflict_resolve_theirs_then_continue() {
     assert_eq!(repo.open().state(), RepositoryState::Clean);
 }
 
+// Resolving the conflict back to "ours" (HEAD's own side — the in-app hunk
+// editor's pre-filled default, and what "Take ours" produces) leaves the pick
+// with NO net change: `git cherry-pick --continue` reports it "now empty".
+// classify must NOT silently auto-abort + report a benign "already applied"
+// here (that reads as "nothing happened, no commit" to the user). It must keep
+// the pick in progress and report state:"conflict" with an empty file list and
+// an explanatory message, so the resolver's stuck banner surfaces WHY nothing
+// was committed and Abort stays reachable.
+#[test]
+fn cherry_pick_resolve_to_ours_is_empty_and_stays_in_progress() {
+    let (repo, main_head, feature_tip) = build_conflicting_repo("pick_empty_ours");
+    let path = repo.path();
+
+    let picked = tauri::async_runtime::block_on(cherry_pick(path.clone(), feature_tip, Some(true)));
+    assert_eq!(picked.state, "conflict", "expected a conflict, got: {}", picked.message);
+
+    let resolved = tauri::async_runtime::block_on(resolve_conflict_file(path.clone(), "shared.txt".into(), "ours".into()));
+    assert!(resolved.ok, "resolve_conflict_file failed: {}", resolved.message);
+    assert_eq!(resolved.remaining, 0);
+
+    let cont = tauri::async_runtime::block_on(cherry_pick_continue(path.clone()));
+    assert_eq!(cont.state, "conflict", "empty-after-resolution must not be 'clean'/'empty', got: {}", cont.message);
+    assert!(!cont.ok);
+    assert!(cont.conflicted_files.is_empty(), "no per-file conflict remains — it routes to the stuck banner");
+    assert!(
+        cont.message.to_lowercase().contains("nothing to commit") || cont.message.to_lowercase().contains("no changes"),
+        "message should explain the empty result, got: {}",
+        cont.message
+    );
+
+    // Still mid-pick, HEAD unmoved — the user can Abort (or redo taking theirs).
+    let status = tauri::async_runtime::block_on(conflict_status(path.clone())).expect("conflict_status failed");
+    assert!(status.in_progress, "must stay in progress, not auto-abort");
+    assert_eq!(status.files.len(), 0);
+    assert_eq!(repo.rev("HEAD").as_deref(), Some(main_head.as_str()), "HEAD must not have moved");
+
+    // Abort cleans up back to the pre-pick state.
+    let aborted = tauri::async_runtime::block_on(cherry_pick_abort(path.clone()));
+    assert!(aborted.ok, "cherry_pick_abort failed: {}", aborted.message);
+    assert_eq!(repo.open().state(), RepositoryState::Clean);
+    assert_eq!(repo.rev("HEAD").as_deref(), Some(main_head.as_str()));
+}
+
 #[test]
 fn cherry_pick_abort_restores_head() {
     let (repo, main_head, feature_tip) = build_conflicting_repo("pick_abort");

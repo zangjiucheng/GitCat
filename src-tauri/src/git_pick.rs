@@ -200,6 +200,12 @@ fn classify(
     out: &Out,
     backup: Option<String>,
     label: &str,
+    // True when re-classifying a `--continue` (vs. the initial pick). Only
+    // affects the "empty" branch below: an empty result at CONTINUE time means
+    // the user's own conflict resolution reproduced the current branch, which
+    // is a completely different situation from an already-applied commit at
+    // START time — see that branch's comment.
+    is_continue: bool,
 ) -> PickResult {
     let snap_note = backup
         .as_deref()
@@ -249,7 +255,33 @@ fn classify(
             || blob.contains("nothing to commit")
             || blob.contains("previous cherry-pick is now empty");
         if is_empty {
-            // Redundant pick: tidy the sequencer, report a benign no-op.
+            if is_continue {
+                // Empty AFTER a manual resolution (not an already-applied commit
+                // at start): the user's resolution reproduced the current branch
+                // — most commonly by keeping "ours" for every conflict, which is
+                // exactly the in-app hunk editor's pre-filled default and what
+                // "Take ours" does — so the pick has NO net change and would add
+                // nothing to HEAD. Do NOT auto-abort and do NOT mislabel it as
+                // "already applied": that combination is precisely what makes the
+                // pick look like it silently "did nothing" (modal closes, no
+                // commit, no error). Instead keep the pick in progress and route
+                // it to the resolver's persistent stuck banner (state:"conflict"
+                // with an empty file list — see resolver.svelte.ts's
+                // showConflictOrStuck) with an accurate, actionable message, so
+                // the user can Abort and redo taking "theirs" to keep the change.
+                return PickResult {
+                    ok: false,
+                    state: "conflict".into(),
+                    conflicted_files: Vec::new(),
+                    message: format!(
+                        "Nothing to commit: your resolution left {label} with no changes versus the current branch, so it would add nothing to HEAD. Abort this pick, then redo it and choose “Take theirs” (or edit the hunks) to keep the picked change."
+                    ),
+                    backup_ref: backup,
+                    blocked_by_local_changes: false,
+                };
+            }
+            // Redundant pick (empty at START — the commit's changes are already
+            // present): tidy the sequencer, report a benign no-op.
             let _ = git(path, &["cherry-pick", "--abort"], false);
             return PickResult {
                 ok: false,
@@ -359,7 +391,7 @@ fn cherry_pick_inner(path: String, sha: String, record_origin: Option<bool>) -> 
         }
     };
 
-    classify(&repo, &path, &out, Some(backup), &sha)
+    classify(&repo, &path, &out, Some(backup), &sha, false)
 }
 
 /// Continue an in-progress cherry-pick after the user resolved the conflict
@@ -416,7 +448,7 @@ fn cherry_pick_continue_inner(path: String) -> PickResult {
         }
     };
 
-    classify(&repo, &path, &out, backup, &label)
+    classify(&repo, &path, &out, backup, &label, true)
 }
 
 /// Abort an in-progress cherry-pick: `git cherry-pick --abort` restores the
