@@ -1642,6 +1642,41 @@ describe("continue", () => {
     expect(resolver.open).toBe(true);
     expect(resolver.files.map((f) => f.path)).toEqual(["c.ts"]);
     expect(bridge.tama.warn).toHaveBeenCalled();
+    // A REAL per-file conflict still to resolve → no stuck banner (the file
+    // list + editor is right there).
+    expect(resolver.stuckMessage).toBeNull();
+  });
+
+  it("state 'conflict' with NO files (git couldn't create the commit) pins an inline stuck banner", async () => {
+    resolver.open = true;
+    resolver.repo = "repo1";
+    resolver.sha = "sha1";
+    // git left the op in progress but nothing is unmerged — a failing hook /
+    // gpg-sign, not a per-file conflict. classify returns state:"conflict"
+    // with an EMPTY file list and git's reason in `message`.
+    vi.mocked(commands.cherryPickContinue).mockResolvedValueOnce(
+      pickResult({ state: "conflict", conflictedFiles: [], message: "Cherry-pick could not finish: hook rejected the commit." }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([], true, "cherry-pick")));
+
+    await resolver.continue();
+
+    expect(resolver.open).toBe(true); // still open — the user must fix the cause or Abort
+    expect(resolver.files).toEqual([]);
+    expect(resolver.stuckMessage).toBe("Cherry-pick could not finish: hook rejected the commit.");
+  });
+
+  it("a fresh continue() clears a prior stuck banner before retrying", async () => {
+    resolver.open = true;
+    resolver.repo = "repo1";
+    resolver.sha = "sha1";
+    resolver.stuckMessage = "old reason"; // left over from a previous failed attempt
+    vi.mocked(commands.cherryPickContinue).mockResolvedValueOnce(pickResult({ state: "clean", message: "Committed." }));
+
+    await resolver.continue();
+
+    expect(resolver.stuckMessage).toBeNull();
+    expect(resolver.open).toBe(false);
   });
 
   it("state 'clean' closes the modal", async () => {

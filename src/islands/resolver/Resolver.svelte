@@ -139,11 +139,18 @@
               </div>
             {:else}
               <div class="cf-all-resolved">
-                <span class="mut">All files resolved — press Continue &amp; commit.</span>
+                {#if resolver.stuckMessage}
+                  <span class="mut">Couldn't finish the commit — see the note below, then Continue again or Abort.</span>
+                {:else}
+                  <span class="mut">All files resolved — press Continue &amp; commit.</span>
+                {/if}
               </div>
             {/if}
           </div>
         </div>
+      {/if}
+      {#if resolver.stuckMessage}
+        <div class="cf-stuck-note">&#9888;&#65039; {resolver.stuckMessage}</div>
       {/if}
       <div class="backup-note" style="margin-top:12px">
         <RotateCcw class="ico" size={14} aria-hidden="true" /> Snapshot before {resolver.op}: <code>{resolver.backupRef}</code>{#if !resolver.editing} &#183; rerere may auto-apply a recorded resolution.{/if}

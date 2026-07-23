@@ -383,6 +383,20 @@ class ResolverState {
   // opens (see the four `this.dirtyBlock = null;` reset sites in
   // startPick/startMerge/startRebase/startRevert, which now also reset this).
   dirtyBlockStuck = $state<string | null>(null);
+  // Set when a continue()/skip() ran but git left the op STILL in progress
+  // with NO unmerged files — i.e. not a per-file conflict the user can resolve,
+  // but git refusing to CREATE the commit itself: a failing pre-commit/
+  // commit-msg hook, or a gpg-sign failure with no interactive pinentry in the
+  // GUI-spawned process (empirically the two ways `git <op> --continue` exits
+  // non-zero yet leaves nothing unmerged — see git_pick.rs classify's "in
+  // progress, nothing unmerged, not empty" branch). Shown as a PERSISTENT
+  // inline banner in the modal (like `dirtyBlockStuck` above) rather than a
+  // `bridge.tama.warn` toast, because the screen is otherwise IDENTICAL to the
+  // normal "all resolved — press Continue" state: without a pinned, in-modal
+  // reason, re-clicking Continue just loops with no visible change ("nothing
+  // happens"). Cleared at the top of continue()/skip()/abort() (a fresh action
+  // gets a clean slate) and by reset() (every close/open path).
+  stuckMessage = $state<string | null>(null);
 
   // Set ONLY by openFromResult's optional `onQueueContinue` param (see that
   // method's own doc comment) — multimerge.svelte.ts's sequential-mode hook
@@ -441,6 +455,7 @@ class ResolverState {
     this.selected = null;
     this.remaining = new Set();
     this.editing = false;
+    this.stuckMessage = null;
     this.clearHunks();
   }
   close() {
@@ -1158,6 +1173,7 @@ class ResolverState {
     if (this.busy) return;
     this.busy = true;
     this.activeAction = "skip";
+    this.stuckMessage = null; // a fresh attempt clears any prior "couldn't commit" banner
     this.tamaImg = bridge.TAMA_IMG.thinking;
     try {
       const r = await skipFn(this.repo);
@@ -1170,7 +1186,7 @@ class ResolverState {
         this.editing = false;
         this.tamaImg = bridge.TAMA_IMG.alarm;
         await this.refresh();
-        bridge.tama.warn(r.message || "Still conflicted — resolve the remaining files.");
+        this.showConflictOrStuck(r.message);
       } else {
         await this.applyOutcome(r, this.sha);
       }
@@ -1193,6 +1209,7 @@ class ResolverState {
     if (this.busy) return;
     this.busy = true;
     this.activeAction = "abort";
+    this.stuckMessage = null; // aborting clears the "couldn't commit" banner regardless of outcome
     this.tamaImg = bridge.TAMA_IMG.thinking;
     try {
       const r = await OPS[this.op].abort(this.repo);
@@ -1234,6 +1251,7 @@ class ResolverState {
     if (this.busy) return;
     this.busy = true;
     this.activeAction = "continue";
+    this.stuckMessage = null; // a fresh attempt clears any prior "couldn't commit" banner
     this.tamaImg = bridge.TAMA_IMG.thinking;
     try {
       const r = await OPS[this.op].continueOp(this.repo);
@@ -1248,7 +1266,7 @@ class ResolverState {
         this.editing = false;
         this.tamaImg = bridge.TAMA_IMG.alarm;
         await this.refresh();
-        bridge.tama.warn(r.message || "Still conflicted — resolve the remaining files.");
+        this.showConflictOrStuck(r.message);
       } else {
         await this.applyOutcome(r, this.sha);
       }
@@ -1258,6 +1276,30 @@ class ResolverState {
     } finally {
       this.busy = false;
       this.activeAction = null;
+    }
+  }
+
+  // Shared by continue()/skip()'s `state:"conflict"` branch (both re-classify
+  // to the same shape): AFTER refresh() has repopulated `.files`, decide how to
+  // surface a still-in-progress result. Two genuinely different situations —
+  //   • `.files` non-empty → a real per-file conflict is (still) waiting; the
+  //     file list + three-way editor is right there, so a transient toast
+  //     nudging the user to it is the right, non-blocking touch.
+  //   • `.files` EMPTY → git couldn't CREATE the commit (failing hook / gpg-sign
+  //     with no pinentry). There's nothing to "resolve"; the screen is otherwise
+  //     identical to "all resolved", so a toast that auto-dismisses (and, under
+  //     a covering modal, renders in Tama's nook beneath the scrim) reads as
+  //     "nothing happened". Pin git's own reason INLINE (`stuckMessage`) so it
+  //     persists in the modal until the user fixes the cause and retries, or
+  //     Aborts. Still fire one warn too (mirrored to the top-of-modal toast).
+  private showConflictOrStuck(message: string | null | undefined) {
+    if (this.files.length === 0) {
+      this.stuckMessage =
+        message ||
+        "Couldn't create the commit — a pre-commit/commit-msg hook or commit signing may have failed. Fix that, then press Continue again, or Abort.";
+      bridge.tama.warn(this.stuckMessage);
+    } else {
+      bridge.tama.warn(message || "Still conflicted — resolve the remaining files.");
     }
   }
 
