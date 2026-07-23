@@ -1263,6 +1263,27 @@ describe("resolveWithExternalTool (backlog #12)", () => {
     expect(resolver.remaining.has(FILE_A.path)).toBe(true);
   });
 
+  it("reframes 'no external merge tool configured' as a calm hint (built-in editor), not a red warning", async () => {
+    resolver.repo = "repo1";
+    resolver.demo = false;
+    resolver.files = [FILE_A];
+    resolver.selected = FILE_A.path;
+    resolver.remaining = new Set([FILE_A.path]);
+
+    vi.mocked(commands.resolveConflictWithExternalTool).mockResolvedValueOnce({
+      ok: false,
+      remaining: 1,
+      message: "No external merge tool configured. Set one via Tools \u{25b8} External Tools\u{2026}.",
+    } satisfies ResolveResult);
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A])));
+
+    await resolver.resolveWithExternalTool();
+
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+    expect(bridge.tama.set).toHaveBeenCalledWith("hint");
+    expect(bridge.tama.say).toHaveBeenCalledWith(expect.stringContaining("Take ours"), expect.any(Number));
+  });
+
   it("is a no-op when there is no selected file", async () => {
     resolver.selected = null;
 

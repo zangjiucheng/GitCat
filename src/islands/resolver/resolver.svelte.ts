@@ -996,7 +996,23 @@ class ResolverState {
     this.activeAction = "tool";
     try {
       const r = await commands.resolveConflictWithExternalTool(this.repo, f.path);
-      if (!r.ok) bridge.tama.warn(r.message || "Could not resolve " + f.path + " with the external tool.");
+      if (!r.ok) {
+        // "No external merge tool configured" is the one refusal worth
+        // reframing rather than warning: an external tool is entirely OPTIONAL
+        // — the built-in Take-ours/Take-theirs + per-hunk 3-way editor in THIS
+        // same modal resolves the file with no tool at all. So nudge toward
+        // that (a calm hint, not a red failure), keeping the backend's "add one
+        // in Tools ▸ External Tools" pointer for anyone who does want their own.
+        if (/no external merge tool configured/i.test(r.message || "")) {
+          bridge.tama.set("hint");
+          bridge.tama.say(
+            "No external merge tool is set up — but you don't need one: resolve right here with Take ours / Take theirs, or edit the conflict hunks below. (To use your own — VS Code, Meld, … — add it in Tools ▸ External Tools.)",
+            7000,
+          );
+        } else {
+          bridge.tama.warn(r.message || "Could not resolve " + f.path + " with the external tool.");
+        }
+      }
     } catch (e) {
       bridge.tama.warn("Resolve with external tool failed — " + e);
       return;
