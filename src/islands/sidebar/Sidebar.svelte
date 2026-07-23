@@ -2,6 +2,7 @@
   import { sidebarCtrl, submoduleAction, submoduleCanOpen, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
   import { remotesCtrl } from "../remotes/remotes.svelte.ts";
   import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
+  import { snapshotPreviewCtrl } from "../snapshotpreview/snapshotpreview.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import type { SimpleRef, SubmoduleInfo } from "../../ipc/bindings";
   import Folder from "@lucide/svelte/icons/folder";
@@ -561,12 +562,26 @@
       {:else}
         {#each sidebarCtrl.snapshots.slice(0, SNAP_CAP) as s (s.ref)}
           {@const sha7 = (s.sha || "").slice(0, 7) || "snapshot"}
-          <div class="snap-item" data-tip={new Date(s.ts * 1000).toLocaleString()}>
+          <div
+            class="snap-item snap-clickable"
+            data-tip={new Date(s.ts * 1000).toLocaleString()}
+            role="button"
+            tabindex="0"
+            title="Preview this snapshot"
+            onclick={(e) => snapshotPreviewCtrl.showAt(s, e.clientX, e.clientY)}
+            onkeydown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                snapshotPreviewCtrl.showAt(s, r.right, r.top);
+              }
+            }}
+          >
             <span class="dot" style="background:var(--accent)"></span>
             <div class="snap-main">
               <span class="snap-subject">{s.subject || "(no message)"}</span>
               <span class="snap-meta">
-                <button class="snap-sha" onclick={() => sidebarCtrl.copySnapshotSha(s.sha)}>{sidebarCtrl.copiedSnapshotSha === s.sha ? "copied ✓" : sha7}</button>
+                <button class="snap-sha" onclick={(e) => { e.stopPropagation(); sidebarCtrl.copySnapshotSha(s.sha); }}>{sidebarCtrl.copiedSnapshotSha === s.sha ? "copied ✓" : sha7}</button>
                 <span class="mut">&#183; {bridge.relTime(s.ts).replace(" ago", "")}</span>
               </span>
             </div>

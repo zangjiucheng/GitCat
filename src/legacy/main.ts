@@ -8,6 +8,7 @@ import { loadSettings, saveSettings, pruneSnapshotsPerPolicy } from "../islands/
 import { sidebarCtrl } from "../islands/sidebar/sidebar.svelte.ts";
 import { workdirCtrl } from "../islands/workdir/workdir.svelte.ts";
 import { commitMenuCtrl } from "../islands/commitmenu/commitmenu.svelte.ts";
+import { snapshotPreviewCtrl } from "../islands/snapshotpreview/snapshotpreview.svelte.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
 import { repoSummaryCtrl } from "../islands/reposummary/reposummary.svelte.ts";
 // Hidden Easter egg — see its own header doc + this file's click-counter
@@ -1358,7 +1359,7 @@ function positionTicks(){ const rb=$("#ribbon"); $$(".tick",rb).forEach(t=>t.rem
       const t=document.createElement("div"); t.className="tick"; t.style.top=(f*H)+"px";
       t.addEventListener("mouseenter",()=>{const d=$("#deltaReadout");d.textContent=ago+" ago · "+sha+" · "+sub.slice(0,48);d.classList.add("show");});
       t.addEventListener("mouseleave",()=>$("#deltaReadout").classList.remove("show"));
-      t.addEventListener("click",()=>pulseTick(i));
+      t.addEventListener("click",(e)=>{ pulseTick(i); snapshotPreviewCtrl.showAt(within[i], e.clientX, e.clientY); });
       rb.appendChild(t); });
     return;
   }
@@ -1376,7 +1377,7 @@ function positionTicks(){ const rb=$("#ribbon"); $$(".tick",rb).forEach(t=>t.rem
     const t=document.createElement("div"); t.className="tick"; t.style.top=(f*H)+"px";
     t.addEventListener("mouseenter",()=>{const d=$("#deltaReadout");d.textContent="main −"+(i+1)+" · HEAD moved · "+(1+i%3)+" refs changed";d.classList.add("show");});
     t.addEventListener("mouseleave",()=>$("#deltaReadout").classList.remove("show"));
-    t.addEventListener("click",()=>{pulseTick(i);Tama.event("undo.performed",{hash:hhex(i+2)});});
+    t.addEventListener("click",(e)=>{ pulseTick(i); snapshotPreviewCtrl.showAt({ ref:"refs/gitgui/backup/demo-"+i, ts: Math.floor(Date.now()/1000-age), sha: hhex(i+2), subject: MSGS[i%MSGS.length] }, e.clientX, e.clientY); });
     rb.appendChild(t); }); }
 function pulseTick(i){const ticks=$$(".tick");const t=ticks[i]||ticks[0];if(t){t.classList.remove("pulse");void t.offsetWidth;t.classList.add("pulse");}}
 $("#ribbon").addEventListener("wheel",e=>{

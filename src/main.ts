@@ -51,6 +51,7 @@ import { setupWizardCtrl } from "./islands/setupwizard/setupwizard.svelte.ts";
 import Cmdk from "./islands/cmdk/Cmdk.svelte";
 import { cmdkCtrl } from "./islands/cmdk/cmdk.svelte.ts";
 import VimNav from "./islands/vimnav/VimNav.svelte";
+import SnapshotPreview from "./islands/snapshotpreview/SnapshotPreview.svelte";
 import About from "./islands/about/About.svelte";
 import { aboutCtrl } from "./islands/about/about.svelte.ts";
 import { updaterCtrl } from "./islands/updater/updater.svelte.ts";
@@ -102,6 +103,7 @@ if (IN_TAURI) {
 
 mount(Cmdk, { target: document.body });
 mount(VimNav, { target: document.body });
+mount(SnapshotPreview, { target: document.body });
 mount(About, { target: document.body });
 // Workdir is NOT mounted as its own top-level tree here even though the
 // design spec's own §4 "Wiring" prose describes a second `mount(Workdir, …)`
