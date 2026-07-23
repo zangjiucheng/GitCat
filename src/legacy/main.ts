@@ -2015,7 +2015,23 @@ applyThemeMode(loadSettings().themeMode);
 setGraphShowAllTags(loadSettings().showAllCommitTags);
 setTamaEnabled(loadSettings().tamaEnabled);
 $("#dangerTamaImg").src=TAMA_IMG.alarm; $("#tamaCheerImg").src=TAMA_IMG.happy;
-new ResizeObserver(()=>resize()).observe(wrap);
+// Debounced resize. A continuous window OR panel-divider drag fires this
+// observer every frame; recomputing layout + reallocating the canvas backing
+// store + a full (virtualised) redraw on each one janks a large graph. #cv is
+// CSS width/height:100%, so the browser smoothly SCALES the last crisp frame to
+// the new size while the drag is in flight (that IS the resize animation) — we
+// only re-render sharply once it SETTLES. The `.resizing` class dips the canvas
+// a touch and fades it back on settle, so the re-render reads as intentional
+// rather than a flicker. The observer's initial (on-observe) callback is
+// skipped via `obsInit` — the direct `resize()` just below already did the cold
+// boot sizing (and cold Tauri windows can report 0×0, see boot's own resize()).
+let resizeSettle=null, obsInit=true;
+new ResizeObserver(()=>{
+  if(obsInit){ obsInit=false; return; }
+  cv.classList.add("resizing");
+  if(resizeSettle) clearTimeout(resizeSettle);
+  resizeSettle=setTimeout(()=>{ resizeSettle=null; cv.classList.remove("resizing"); resize(); dirty=true; }, 120);
+}).observe(wrap);
 resize();
 if(IN_TAURI){
   // Multi-window (src-tauri/src/windows.rs): a window spawned via
