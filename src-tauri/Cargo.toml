@@ -44,10 +44,18 @@ percent-encoding = "2"
 # no-event-loop-needed native message box, shown from a throwaway re-exec of
 # this SAME binary (see windows.rs's own current_exe() precedent) when ssh
 # needs interactive host-key confirmation and has no terminal to ask on.
-# Already resolved transitively (tauri-plugin-dialog's own file-picker
-# backend) — same "promote an already-locked version" reasoning as
-# percent-encoding above, not a new dependency to the tree.
-rfd = "0.16"
+# Already in the tree via tauri-plugin-dialog's own file-picker backend, so
+# this promotes an already-locked version to a direct dependency.
+#
+# `default-features = false` is REQUIRED, not cosmetic: rfd's default features
+# select its `xdg-portal` Linux backend, but tauri-plugin-dialog already
+# selects the `gtk3` backend — and rfd's build.rs hard-panics if both are on
+# at once ("You can't enable both `gtk3` and `xdg-portal` features at once").
+# Feature unification is additive, so leaving rfd's defaults on turns BOTH
+# backends on for the single shared rfd crate and breaks the Linux build. We
+# only use the synchronous MessageDialog, which is backend-agnostic, so mirror
+# the gtk3 backend the rest of the app (and its GTK/WebKit runtime) links.
+rfd = { version = "0.16", default-features = false, features = ["gtk3"] }
 
 # Dev-only profiling/inspection (see run()'s own doc comment in lib.rs for
 # the full rationale) — compiled in unconditionally like any other
