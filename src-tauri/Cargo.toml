@@ -1,6 +1,6 @@
 [package]
 name = "gitcat"
-version = "0.8.2"
+version = "0.8.3"
 description = "A cozy, safety-first desktop Git client."
 authors = ["Jiucheng Zang <git.jiucheng@gmail.com>"]
 license = "GPL-3.0-or-later"
