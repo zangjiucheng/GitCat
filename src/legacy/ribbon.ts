@@ -9,13 +9,15 @@
 
 export const RIBBON_TOP_FRAC = 0.08;
 export const RIBBON_BOT_FRAC = 0.92;
-// Smallest gap a tick may occupy — positionTicks sizes its "how many fit" cap
-// off this, so a full ribbon never packs tighter than this.
-export const RIBBON_MIN_TICK_PX = 7;
-// Preferred gap between ticks when there's room to spare, so a handful of
-// snapshots sit as a compact list near the top rather than stretched to the
-// two extremes of a tall ribbon.
-export const RIBBON_TICK_GAP_PX = 14;
+// Smallest pitch a tick may occupy — positionTicks sizes its "how many fit"
+// cap off this, so a full ribbon never packs tighter than this. Kept a little
+// above the 12px tick height (index.html's .tick) so ticks stay individually
+// clickable even when the band is full, never overlapping.
+export const RIBBON_MIN_TICK_PX = 15;
+// Preferred pitch between ticks when there's room to spare, so a handful of
+// snapshots are a compact, comfortably-clickable list near the top rather than
+// tiny marks stretched across a tall ribbon.
+export const RIBBON_TICK_GAP_PX = 22;
 
 /**
  * Vertical position of each of `count` ticks as a fraction (0..1) of the

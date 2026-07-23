@@ -590,16 +590,12 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   background:linear-gradient(var(--panel),var(--bg));position:relative;overflow:hidden}
 .ribbon .rlabel{writing-mode:vertical-rl;transform:rotate(180deg);position:absolute;left:5px;bottom:10px;
   font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);pointer-events:none}
-/* Current zoom window ("6h", "2d", ...) — the ribbon itself is only
-   var(--ribbon-w) wide, too narrow for a real tooltip explaining the
-   gesture (see index.html's shared .hint line instead), so this small
-   always-visible label is the discoverability cue that the timeline has a
-   zoomable time dimension at all. */
-.ribbon .rwindow{position:absolute;top:6px;left:0;right:0;text-align:center;font-size:9px;
-  font-family:var(--mono);color:var(--muted);pointer-events:none}
-.tick{position:absolute;left:11px;right:7px;height:7px;border-radius:2px;cursor:pointer;
+/* Snapshot ticks — sized as a comfortable click target (the ribbon is a plain
+   evenly-spaced list now; positions come from ribbon.ts). 12px tall × ~28px
+   wide, matched to RIBBON_TICK_GAP_PX/RIBBON_MIN_TICK_PX so they never overlap. */
+.tick{position:absolute;left:9px;right:6px;height:12px;border-radius:3px;cursor:pointer;
   background:color-mix(in srgb,var(--accent) 55%,transparent);transition:transform .12s,background .12s}
-.tick:hover{background:var(--accent);transform:scaleX(1.18)}
+.tick:hover{background:var(--accent);transform:scaleX(1.12)}
 .tick.pulse{animation:tickpulse .6s ease}
 @keyframes tickpulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 70%,transparent)}100%{box-shadow:0 0 0 10px transparent}}
 .canvas-wrap{position:relative;flex:1;min-width:0;overflow:hidden}
