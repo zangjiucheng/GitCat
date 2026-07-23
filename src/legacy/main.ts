@@ -49,6 +49,12 @@ function readTheme(){
   if(typeof dirty!=="undefined")dirty=true;
 }
 const PADX=18, ROW_H_BASE=26, LANE_W_BASE=14, DOT_R_BASE=4.6;
+// Per-row branch-colour tag + recessed graph channel (see draw()). BAR_W = the
+// solid left-edge branch bar's width; WASH_ALPHA = the faint whole-row tint in
+// the same lane colour; CHANNEL_ALPHA = how much the lane trough [0,tx) is
+// darkened vs the message column; DIVIDER_ALPHA = the hairline between them.
+// All four are read straight by draw() — tweak the look here.
+const BRANCH_BAR_W=3, BRANCH_WASH_ALPHA=0.08, GRAPH_CHANNEL_ALPHA=0.20, GRAPH_DIVIDER_ALPHA=0.6;
 // Right-edge gutter reserved for the sha (was the ONLY thing living there —
 // hence the old bare "96") plus the author-name preview added alongside it
 // (see draw()'s row loop / authorOf() above): 96 for the sha itself, 8px gap,
@@ -256,10 +262,7 @@ function draw(){
   const first=Math.max(0,Math.min(N-1,Math.floor(st/rowH)));
   const last=Math.max(0,Math.min(N-1,Math.floor((st+H)/rowH)));
 
-  // bisect band (behind everything) — real rows are offset by +bh (see bandH())
   const B=bisectDrawerCtrl.active();
-  if(B){ for(let r=first;r<=last;r++){ const y=r*rowH-st+bh;
-    if(r>B.lo&&r<B.hi&&!bisectDrawerCtrl.skips.has(r)){ ctx.fillStyle=theme.warning; ctx.globalAlpha=0.12; ctx.fillRect(0,y,W,rowH); ctx.globalAlpha=1; } } }
   // Active cherry-pick/merge drag: legalPick/legalMerge already run per-hover
   // (pointermove, for the ghost tooltip's own reason text) — reused here
   // per-VISIBLE-ROW so every illegal drop target dims the same way the
@@ -268,30 +271,18 @@ function draw(){
   // full brightness while a drag is in flight.
   const DR=state.drag;
 
-  // edges — one Path2D per lane colour
-  for(let c=0;c<NCOL;c++) edgePaths[c]=null;
+  // Widest lane touched anywhere in this window — computed UP FRONT (before the
+  // channel/edges/rows below) because the recessed graph channel and its
+  // divider need to know where the lanes end and the subject/message column
+  // begins. Tracks the gap segments too, not just rows with a visible commit
+  // dot: a branch whose tip is scrolled off the top still keeps its line
+  // running straight through every intervening gap (see layout.rs), so without
+  // this a window with no branch-tip row of its own collapsed `tx` to lane 0,
+  // squashing every row's subject/sha text against the graph.
   const gStart=Math.max(0,first-1), gEnd=Math.min(N-2,last);
-  // Track the widest lane touched anywhere in this window WHILE walking the
-  // gap segments below (not just rows with a visible commit dot) — a branch
-  // whose tip is scrolled off the top still keeps its line running straight
-  // through every intervening gap (see layout.rs), so without this a window
-  // with no branch-tip row of its own collapsed `tx` to lane 0 every frame,
-  // squashing every row's subject/sha text against the graph regardless of
-  // how many lanes were actually still open at this scroll position.
   let maxLane=0;
-  for(let g=gStart;g<=gEnd;g++){
-    const yTop=g*rowH+rowH*0.5-st+bh, yBot=(g+1)*rowH+rowH*0.5-st+bh, yMid=(yTop+yBot)*0.5;
-    const s=G.gapStart[g], e=G.gapStart[g+1];
-    for(let k=s;k<e;k++){const top=G.gapTop[k],bot=G.gapBot[k],col=G.gapColor[k];
-      if(top>maxLane) maxLane=top; if(bot>maxLane) maxLane=bot;
-      let p=edgePaths[col]; if(!p) p=edgePaths[col]=new Path2D();
-      const xTop=laneX(top),xBot=laneX(bot);
-      if(top===bot){p.moveTo(xTop,yTop);p.lineTo(xBot,yBot);}
-      else{p.moveTo(xTop,yTop);p.bezierCurveTo(xTop,yMid,xBot,yMid,xBot,yBot);}}
-  }
-  ctx.lineWidth=Math.max(1.7,1.9*layout.zoom); ctx.lineJoin="round"; ctx.lineCap="round";
-  for(let c=0;c<NCOL;c++){const p=edgePaths[c];if(p){ctx.strokeStyle=LANE_COLORS[c];ctx.stroke(p);}}
-
+  for(let g=gStart;g<=gEnd;g++){ const s=G.gapStart[g], e=G.gapStart[g+1];
+    for(let k=s;k<e;k++){ if(G.gapTop[k]>maxLane) maxLane=G.gapTop[k]; if(G.gapBot[k]>maxLane) maxLane=G.gapBot[k]; } }
   for(let r=first;r<=last;r++) if(G.commitLane[r]>maxLane) maxLane=G.commitLane[r];
   // ADVERSARIALLY-FOUND FIX: an extremely wide stretch of history (many
   // simultaneously open branch lanes — hundreds is plausible for a large
@@ -307,12 +298,44 @@ function draw(){
   // that wide, not by widening this column past the point of collision.
   const tx=Math.min(laneX(maxLane)+dotR+14,W-AUTHOR_GUTTER-MIN_SUBJECT_W);
 
+  // Recessed graph channel: the lanes sit in their own slightly darker trough
+  // [0,tx), fenced off from the message column by a hairline divider, so the
+  // busy colored center reads as a distinct channel from the text on the right.
+  // Drawn here (before edges/rows) so it stays BEHIND the branch lines and dots.
+  ctx.fillStyle="#000"; ctx.globalAlpha=GRAPH_CHANNEL_ALPHA; ctx.fillRect(0,0,tx,H); ctx.globalAlpha=1;
+  ctx.fillStyle=theme.border; ctx.globalAlpha=GRAPH_DIVIDER_ALPHA; ctx.fillRect(Math.round(tx)-0.5,0,1,H); ctx.globalAlpha=1;
+
+  // bisect band (behind everything) — real rows are offset by +bh (see bandH())
+  if(B){ for(let r=first;r<=last;r++){ const y=r*rowH-st+bh;
+    if(r>B.lo&&r<B.hi&&!bisectDrawerCtrl.skips.has(r)){ ctx.fillStyle=theme.warning; ctx.globalAlpha=0.12; ctx.fillRect(0,y,W,rowH); ctx.globalAlpha=1; } } }
+
+  // edges — one Path2D per lane colour
+  for(let c=0;c<NCOL;c++) edgePaths[c]=null;
+  for(let g=gStart;g<=gEnd;g++){
+    const yTop=g*rowH+rowH*0.5-st+bh, yBot=(g+1)*rowH+rowH*0.5-st+bh, yMid=(yTop+yBot)*0.5;
+    const s=G.gapStart[g], e=G.gapStart[g+1];
+    for(let k=s;k<e;k++){const top=G.gapTop[k],bot=G.gapBot[k],col=G.gapColor[k];
+      let p=edgePaths[col]; if(!p) p=edgePaths[col]=new Path2D();
+      const xTop=laneX(top),xBot=laneX(bot);
+      if(top===bot){p.moveTo(xTop,yTop);p.lineTo(xBot,yBot);}
+      else{p.moveTo(xTop,yTop);p.bezierCurveTo(xTop,yMid,xBot,yMid,xBot,yBot);}}
+  }
+  ctx.lineWidth=Math.max(1.7,1.9*layout.zoom); ctx.lineJoin="round"; ctx.lineCap="round";
+  for(let c=0;c<NCOL;c++){const p=edgePaths[c];if(p){ctx.strokeStyle=LANE_COLORS[c];ctx.stroke(p);}}
+
   ctx.textBaseline="middle"; ctx.font=layout.chipFont;
   for(let r=first;r<=last;r++){
     const y=r*rowH+rowH*0.5-st+bh, x=laneX(G.commitLane[r]), col=LANE_COLORS[G.commitColor[r]];
     const bisectDim = B && !(r>B.lo&&r<B.hi) && r!==B.good && r!==B.bad;
     const dragDim = DR && !(DR.op==="merge"?legalMerge(DR.source,r):legalPick(DR.source,r)).ok;
     const dim = bisectDim || dragDim;
+    // Branch colour tag: a faint whole-row wash + a solid left-edge bar in this
+    // commit's lane colour, so which branch a row is on reads at a glance. Drawn
+    // first (behind the selection/hover overlays + the good/bad/current markers
+    // below, which keep priority at the same x=0 edge).
+    const ry=r*rowH-st+bh;
+    ctx.fillStyle=col; ctx.globalAlpha=(dim?0.4:1)*BRANCH_WASH_ALPHA; ctx.fillRect(0,ry,W,rowH);
+    ctx.globalAlpha=dim?0.35:0.9; ctx.fillRect(0,ry,BRANCH_BAR_W,rowH); ctx.globalAlpha=1;
     if(r===state.selectedRow){ ctx.fillStyle=theme.accent; ctx.globalAlpha=state.selectAlpha; ctx.fillRect(0,r*rowH-st+bh,W,rowH); ctx.globalAlpha=1;
       ctx.fillStyle=theme.accent; ctx.fillRect(0,r*rowH-st+bh,3,rowH); }
     else if(r===state.hoverRow){ ctx.fillStyle=theme.text; ctx.globalAlpha=state.hoverAlpha; ctx.fillRect(0,r*rowH-st+bh,W,rowH); ctx.globalAlpha=1; }
