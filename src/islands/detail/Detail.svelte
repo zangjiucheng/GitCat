@@ -8,6 +8,8 @@
   import { settingsCtrl } from "../settings/settings.svelte.ts";
   import { fade } from "svelte/transition";
   import Folder from "@lucide/svelte/icons/folder";
+  import ChevronsDownUp from "@lucide/svelte/icons/chevrons-down-up";
+  import ChevronsUpDown from "@lucide/svelte/icons/chevrons-up-down";
   import Eye from "@lucide/svelte/icons/eye";
   import History from "@lucide/svelte/icons/history";
   import ExternalLink from "@lucide/svelte/icons/external-link";
@@ -170,7 +172,10 @@
     {/if}
   </section>
   <section>
-    <h4 class="d-lab">Changes</h4>
+    <div class="d-lab-row">
+      <h4 class="d-lab" style="margin:0">Changes</h4>
+      {@render treeCtl()}
+    </div>
     <div class="diffstat" id="diffstat">
       {#if detailCtrl.diffLoading}
         <span class="mut mono" style="font-size:11px"><span class="spinner"></span> loading diff&#8230;</span>
@@ -263,9 +268,26 @@
   {/each}
 {/snippet}
 
+{#snippet treeCtl()}
+  {#if detailCtrl.treeHasDirs}
+    <span class="tree-ctl">
+      <button class="wd-act" title="Collapse all folders" aria-label="Collapse all folders" onclick={() => detailCtrl.collapseAllDirs()}>
+        <ChevronsDownUp class="ico" size={14} aria-hidden="true" />
+      </button>
+      <button class="wd-act" title="Expand all folders" aria-label="Expand all folders" onclick={() => detailCtrl.expandAllDirs()}>
+        <ChevronsUpDown class="ico" size={14} aria-hidden="true" />
+      </button>
+    </span>
+  {/if}
+{/snippet}
+
 {#snippet dirNode(node: TreeDir)}
-  {#each Object.entries(node.dirs) as [name, child]}
-    <details class="dir" open>
+  {#each Object.entries(node.dirs) as [name, child] (child.path)}
+    <details
+      class="dir"
+      open={!detailCtrl.isDirCollapsed(child.path)}
+      ontoggle={(e) => detailCtrl.setDirOpen(child.path, (e.currentTarget as HTMLDetailsElement).open)}
+    >
       <summary><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /> {name}</summary>
       <div class="indent">{@render dirNode(child)}</div>
     </details>

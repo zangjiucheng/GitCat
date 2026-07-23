@@ -580,3 +580,44 @@ describe("blameFile / historyFile (deleted-file parent resolution)", () => {
     expect(bridge.tama.warn).toHaveBeenCalled();
   });
 });
+
+describe("folder collapse state (Changes tree: Collapse all / Expand all)", () => {
+  it("each dir node carries its full path, and treeHasDirs reflects nesting", () => {
+    setDemoGraph();
+    detailCtrl.select(0); // demo tree includes src/auth/session.ts
+    expect(detailCtrl.treeHasDirs).toBe(true);
+    expect(detailCtrl.tree.path).toBe("");
+    expect(detailCtrl.tree.dirs.src.path).toBe("src");
+    expect(detailCtrl.tree.dirs.src.dirs.auth.path).toBe("src/auth");
+  });
+
+  it("folders default expanded; collapseAllDirs collapses every folder, expandAllDirs clears", () => {
+    setDemoGraph();
+    detailCtrl.select(0);
+    expect(detailCtrl.isDirCollapsed("src")).toBe(false);
+    detailCtrl.collapseAllDirs();
+    expect(detailCtrl.isDirCollapsed("src")).toBe(true);
+    expect(detailCtrl.isDirCollapsed("src/auth")).toBe(true);
+    detailCtrl.expandAllDirs();
+    expect(detailCtrl.isDirCollapsed("src")).toBe(false);
+    expect(detailCtrl.isDirCollapsed("src/auth")).toBe(false);
+  });
+
+  it("setDirOpen toggles one folder", () => {
+    setDemoGraph();
+    detailCtrl.select(0);
+    detailCtrl.setDirOpen("src", false);
+    expect(detailCtrl.isDirCollapsed("src")).toBe(true);
+    detailCtrl.setDirOpen("src", true);
+    expect(detailCtrl.isDirCollapsed("src")).toBe(false);
+  });
+
+  it("selecting another commit resets the folds (each commit opens fully expanded)", () => {
+    setDemoGraph();
+    detailCtrl.select(0);
+    detailCtrl.collapseAllDirs();
+    expect(detailCtrl.isDirCollapsed("src")).toBe(true);
+    detailCtrl.select(1); // different commit
+    expect(detailCtrl.isDirCollapsed("src")).toBe(false);
+  });
+});

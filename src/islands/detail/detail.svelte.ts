@@ -49,7 +49,9 @@ type CommitVM = {
 
 type FileEntry = { p: string; st: string; add: number; del: number; oldPath: string | null };
 type TreeFile = FileEntry & { name: string; i: number };
-export type TreeDir = { dirs: Record<string, TreeDir>; files: TreeFile[] };
+// `path` = the dir's full path ("" for the root) so folder collapse state
+// (see `collapsedDirs`) keys each folder stably across the tree re-deriving.
+export type TreeDir = { dirs: Record<string, TreeDir>; files: TreeFile[]; path: string };
 type DiffFile = { lang: string; lines: [string, string][]; truncated: boolean; binary: boolean };
 
 export type DiffRow =
@@ -235,7 +237,7 @@ class DetailState {
   }
 
   get tree(): TreeDir {
-    const root: TreeDir = { dirs: {}, files: [] };
+    const root: TreeDir = { dirs: {}, files: [], path: "" };
     this.curChanged.forEach((f, i) => {
       const parts = String(f.p).split("/");
       let n = root;
@@ -243,7 +245,7 @@ class DetailState {
         if (j === parts.length - 1) {
           n.files.push({ ...f, name: seg, i });
         } else {
-          n.dirs[seg] = n.dirs[seg] || { dirs: {}, files: [] };
+          n.dirs[seg] = n.dirs[seg] || { dirs: {}, files: [], path: n.path ? n.path + "/" + seg : seg };
           n = n.dirs[seg];
         }
       });
@@ -251,11 +253,46 @@ class DetailState {
     return root;
   }
 
+  // ── folder collapse state for the Changes tree (Collapse all / Expand all +
+  // per-folder toggle) — see WorkdirState's copy for the same design. Default
+  // expanded: a folder is open UNLESS its path is in this set. Keyed by dir
+  // path, so the inline tree and the full-page diff popup (which render the
+  // SAME commit's tree) stay in sync. Reassigned, never mutated in place.
+  // Reset per commit in select() so each commit opens fully expanded.
+  collapsedDirs = $state<Set<string>>(new Set());
+  treeHasDirs = $derived(Object.keys(this.tree.dirs).length > 0);
+  isDirCollapsed(path: string): boolean {
+    return this.collapsedDirs.has(path);
+  }
+  setDirOpen(path: string, open: boolean) {
+    if (open === !this.collapsedDirs.has(path)) return; // already in that state
+    const next = new Set(this.collapsedDirs);
+    if (open) next.delete(path);
+    else next.add(path);
+    this.collapsedDirs = next;
+  }
+  private eachDirPath(node: TreeDir, out: string[]) {
+    for (const seg in node.dirs) {
+      const child = node.dirs[seg];
+      out.push(child.path);
+      this.eachDirPath(child, out);
+    }
+  }
+  collapseAllDirs() {
+    const paths: string[] = [];
+    this.eachDirPath(this.tree, paths);
+    this.collapsedDirs = new Set(paths);
+  }
+  expandAllDirs() {
+    if (this.collapsedDirs.size) this.collapsedDirs = new Set();
+  }
+
   select(row: number) {
     const c = this.commitMeta(row);
     this.commit = c;
     this.hero = null;
     this.copied = false;
+    if (this.collapsedDirs.size) this.collapsedDirs = new Set(); // each commit opens fully expanded
     if (!c) return;
     const live = !!bridge.BACKEND;
     if (live) {
