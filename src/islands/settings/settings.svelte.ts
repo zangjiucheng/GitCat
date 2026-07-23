@@ -99,6 +99,9 @@ export const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: "gitconfig", label: "Git Config" },
 ];
 
+// Safety-Manager snapshot auto-cleanup policy — see PersistedSettings below.
+export type SnapshotRetentionMode = "off" | "count" | "age" | "hybrid";
+
 export interface PersistedSettings {
   themeMode: ThemeMode;
   cherryPickRecordOriginDefault: boolean;
@@ -134,6 +137,20 @@ export interface PersistedSettings {
   // Whole minutes between auto-fetch attempts while enabled — see
   // AUTO_FETCH_INTERVAL_OPTIONS below for the exact choices offered.
   autoFetchIntervalMinutes: number;
+  // Safety-Manager snapshot retention. Every history-changing op pins a backup
+  // ref under refs/gitgui/backup/*; with no cleanup they accumulate forever.
+  // The mode picks the auto-prune policy, run on repo-open:
+  //   "off"    — keep everything (default: opt-in cleanup, no existing user
+  //              silently loses snapshots on update).
+  //   "count"  — keep the newest `snapshotRetentionCount`.
+  //   "age"    — keep those newer than `snapshotRetentionDays` days.
+  //   "hybrid" — keep a snapshot if it's among the newest count OR newer than
+  //              the age cutoff (the safe union; a busy day is never truncated).
+  // The single most-recent snapshot is never pruned regardless (backend floor),
+  // so "undo my last action" always survives cleanup.
+  snapshotRetentionMode: SnapshotRetentionMode;
+  snapshotRetentionCount: number;
+  snapshotRetentionDays: number;
   // "Serious work" mode: hides Tama's decorative portraits everywhere she
   // appears (the nook's animated sprite, the Detail empty-state hero image,
   // every modal header's small portrait, the undo "cheer" popover's image —
@@ -175,6 +192,9 @@ const DEFAULTS: PersistedSettings = {
   showAllCommitTags: false,
   autoFetchEnabled: false,
   autoFetchIntervalMinutes: 15,
+  snapshotRetentionMode: "off",
+  snapshotRetentionCount: 25,
+  snapshotRetentionDays: 14,
   tamaEnabled: true,
 };
 
@@ -214,6 +234,25 @@ export function saveSettings(partial: Partial<PersistedSettings>): PersistedSett
   return next;
 }
 
+// Prune Safety-Manager snapshots per the user's configured retention policy.
+// Called from legacy/main.ts's openRepo (once per repo-open), the same
+// "read settings fresh, IN_TAURI-gated, fire-and-forget" model main.ts's
+// auto-fetch loop uses — so flipping the policy in Settings takes effect on the
+// next repo-open with no extra wiring. Deliberately silent and best-effort:
+// cleaning stale backup refs is background upkeep, never worth a toast or
+// blocking the open, and a failure just retries next time. A no-op (one
+// localStorage read) when the mode is "off".
+export async function pruneSnapshotsPerPolicy(repo: string): Promise<void> {
+  if (!IN_TAURI || !repo) return;
+  const s = loadSettings();
+  if (s.snapshotRetentionMode === "off") return;
+  try {
+    await commands.pruneSnapshots(repo, s.snapshotRetentionMode, s.snapshotRetentionCount, s.snapshotRetentionDays);
+  } catch (e) {
+    console.error("snapshot prune failed", e);
+  }
+}
+
 // Canned identity for design-mode (!IN_TAURI), same spirit as setupwizard's
 // own DEMO_IDENTITY. local:false so the browser preview also demos the
 // "using your global identity" messaging (see Settings.svelte), not just
@@ -237,6 +276,9 @@ class SettingsState {
   showAllCommitTags = $state(DEFAULTS.showAllCommitTags);
   autoFetchEnabled = $state(DEFAULTS.autoFetchEnabled);
   autoFetchIntervalMinutes = $state(DEFAULTS.autoFetchIntervalMinutes);
+  snapshotRetentionMode = $state<SnapshotRetentionMode>(DEFAULTS.snapshotRetentionMode);
+  snapshotRetentionCount = $state(DEFAULTS.snapshotRetentionCount);
+  snapshotRetentionDays = $state(DEFAULTS.snapshotRetentionDays);
   tamaEnabled = $state(DEFAULTS.tamaEnabled);
 
   // ── git identity section (repo-scoped, explicit Save) ───────────────────
@@ -504,6 +546,9 @@ class SettingsState {
     this.showAllCommitTags = s.showAllCommitTags;
     this.autoFetchEnabled = s.autoFetchEnabled;
     this.autoFetchIntervalMinutes = s.autoFetchIntervalMinutes;
+    this.snapshotRetentionMode = s.snapshotRetentionMode;
+    this.snapshotRetentionCount = s.snapshotRetentionCount;
+    this.snapshotRetentionDays = s.snapshotRetentionDays;
     this.tamaEnabled = s.tamaEnabled;
     this.repo = repo ?? "";
     this.identityError = "";
@@ -571,6 +616,28 @@ class SettingsState {
   setAutoFetchIntervalMinutes(v: number): void {
     this.autoFetchIntervalMinutes = v;
     saveSettings({ autoFetchIntervalMinutes: v });
+  }
+
+  setSnapshotRetentionMode(v: SnapshotRetentionMode): void {
+    this.snapshotRetentionMode = v;
+    saveSettings({ snapshotRetentionMode: v });
+  }
+
+  // Count/days are clamped to a whole number >= 1 here (not just via the
+  // input's `min`): a hand-edited localStorage blob, or a blur on an emptied
+  // field (which yields 0/NaN), could otherwise persist a value the backend
+  // would read as "keep nothing". Anything non-finite falls to 1, same floor
+  // as 0/negative — the safety floor still spares the newest either way.
+  setSnapshotRetentionCount(v: number): void {
+    const n = Number.isFinite(v) ? Math.max(1, Math.floor(v)) : 1;
+    this.snapshotRetentionCount = n;
+    saveSettings({ snapshotRetentionCount: n });
+  }
+
+  setSnapshotRetentionDays(v: number): void {
+    const n = Number.isFinite(v) ? Math.max(1, Math.floor(v)) : 1;
+    this.snapshotRetentionDays = n;
+    saveSettings({ snapshotRetentionDays: n });
   }
 
   setTamaEnabled(v: boolean): void {

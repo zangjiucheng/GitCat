@@ -233,6 +233,61 @@ pub fn snapshots(repo: &Repository) -> Result<Vec<Snapshot>, String> {
     Ok(snaps)
 }
 
+/// Delete backup snapshots that fall outside the retention policy, returning
+/// how many refs were removed. `mode`:
+///  - "off":    keep everything (no-op; the frontend also short-circuits).
+///  - "count":  keep the `count` newest, delete the rest.
+///  - "age":    keep those newer than `days` days, delete the older ones.
+///  - "hybrid": keep a snapshot if it is among the `count` newest OR newer than
+///              `days` days — deleting only ones that fail BOTH (the "safe
+///              union": always at least the last `count`, plus everything
+///              recent, so a busy day is never truncated).
+///
+/// SAFETY FLOOR: the single newest snapshot (rank 0) is NEVER pruned, whatever
+/// the policy says — otherwise an aggressive age policy on an idle repo (every
+/// snapshot older than `days`) could delete all of them and leave "undo my
+/// last action" with nothing to rewind to. One stale ref is negligible; losing
+/// the last undo target is not.
+///
+/// Only ever touches this module's own `refs/gitgui/backup/*` namespace. The
+/// commits those refs pinned stay in the object database until git's own gc
+/// reclaims any that are now unreachable — pruning a snapshot ref makes its
+/// commit eligible for that, it does not delete history the branches still hold.
+pub fn prune_backups(repo: &Repository, mode: &str, count: usize, days: u64) -> Result<usize, String> {
+    if mode == "off" {
+        return Ok(0);
+    }
+    let snaps = snapshots(repo)?; // newest-first
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+    let cutoff = now.saturating_sub((days as i64).saturating_mul(86_400));
+    let mut deleted = 0usize;
+    for (i, snap) in snaps.iter().enumerate() {
+        if i == 0 {
+            continue; // safety floor — never prune the most recent snapshot
+        }
+        let within_count = i < count;
+        let within_age = snap.ts >= cutoff;
+        let keep = match mode {
+            "count" => within_count,
+            "age" => within_age,
+            "hybrid" => within_count || within_age,
+            // Unknown mode: fail safe, keep everything (never delete on a typo).
+            _ => true,
+        };
+        if keep {
+            continue;
+        }
+        match repo.find_reference(&snap.reference) {
+            Ok(mut r) => match r.delete() {
+                Ok(()) => deleted += 1,
+                Err(e) => eprintln!("prune_backups: could not delete {}: {}", snap.reference, e.message()),
+            },
+            Err(e) => eprintln!("prune_backups: {} vanished before delete: {}", snap.reference, e.message()),
+        }
+    }
+    Ok(deleted)
+}
+
 /// Rewind HEAD/current branch to the newest snapshot, after snapshotting the
 /// current state (undo-is-undoable). Refuses on a dirty tree (never force).
 pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
@@ -475,6 +530,25 @@ pub async fn list_snapshots(path: String) -> Result<Vec<Snapshot>, String> {
 #[specta::specta]
 pub async fn undo_last(path: String) -> Result<UndoResult, String> {
     crate::blocking::run_blocking(move || undo(&open(&path)?)).await
+}
+
+/// Tauri command: prune backup snapshots per the user's retention policy (see
+/// `prune_backups`). Called from the frontend on repo-open when the configured
+/// mode isn't "off" (settings.svelte.ts's `pruneSnapshotsPerPolicy`). Returns
+/// the number of snapshot refs deleted. `async fn` + `run_blocking` for the
+/// same reason as `list_snapshots`: it opens the repo (the WSL/UNC auto-trust
+/// probe can stall) and walks/deletes refs via git2, off the UI thread.
+/// JS: `invoke("prune_snapshots", { path, mode, count, days })`.
+#[tauri::command]
+#[specta::specta]
+pub async fn prune_snapshots(path: String, mode: String, count: u32, days: u32) -> Result<u32, String> {
+    crate::blocking::run_blocking(move || {
+        if mode == "off" {
+            return Ok(0);
+        }
+        prune_backups(&open(&path)?, &mode, count as usize, days as u64).map(|n| n as u32)
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------

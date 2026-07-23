@@ -4,7 +4,7 @@ import { bisectCtrl } from "../islands/bisect/bisect.svelte.ts";
 import { cmdkCtrl } from "../islands/cmdk/cmdk.svelte.ts";
 import { detailCtrl } from "../islands/detail/detail.svelte.ts";
 import { bisectDrawerCtrl } from "../islands/bisectdrawer/bisectdrawer.svelte.ts";
-import { loadSettings, saveSettings } from "../islands/settings/settings.svelte.ts";
+import { loadSettings, saveSettings, pruneSnapshotsPerPolicy } from "../islands/settings/settings.svelte.ts";
 import { sidebarCtrl } from "../islands/sidebar/sidebar.svelte.ts";
 import { workdirCtrl } from "../islands/workdir/workdir.svelte.ts";
 import { commitMenuCtrl } from "../islands/commitmenu/commitmenu.svelte.ts";
@@ -1709,6 +1709,10 @@ async function openRepo(path){
     // batches instead of one big blob.
     await startGraphStream(path);
     CUR_REPO = path;
+    // Auto-prune old Safety-Manager snapshots per the user's retention policy,
+    // once per repo-open. Fire-and-forget (never awaited — must not delay the
+    // open); a no-op unless the policy is set to something other than "off".
+    void pruneSnapshotsPerPolicy(path);
     // Switching repos must close the pinned "Uncommitted changes" panel (if
     // open) FIRST — its file list belongs to whichever repo was open when
     // select() last populated it. Left open here, it would keep showing the

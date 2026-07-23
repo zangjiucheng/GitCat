@@ -43,6 +43,7 @@ vi.mock("../../ipc/bindings", () => ({
   commands: {
     getGitIdentity: vi.fn(),
     setGitIdentity: vi.fn(),
+    pruneSnapshots: vi.fn(),
   },
 }));
 
@@ -56,7 +57,7 @@ vi.mock("../../ipc/env", () => ({
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { GitIdentity } from "../../ipc/bindings";
-import { loadSettings, saveSettings, settingsCtrl } from "./settings.svelte.ts";
+import { loadSettings, saveSettings, settingsCtrl, pruneSnapshotsPerPolicy } from "./settings.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
@@ -103,6 +104,59 @@ describe("isolation", () => {
   });
 });
 
+describe("snapshot retention settings", () => {
+  it("setSnapshotRetentionMode applies and persists", () => {
+    settingsCtrl.setSnapshotRetentionMode("hybrid");
+    expect(settingsCtrl.snapshotRetentionMode).toBe("hybrid");
+    expect(loadSettings().snapshotRetentionMode).toBe("hybrid");
+  });
+
+  it("count/days setters floor to >= 1 and truncate fractions, persisting the clamped value", () => {
+    settingsCtrl.setSnapshotRetentionCount(0);
+    expect(settingsCtrl.snapshotRetentionCount).toBe(1);
+    expect(loadSettings().snapshotRetentionCount).toBe(1);
+
+    settingsCtrl.setSnapshotRetentionCount(30.9);
+    expect(settingsCtrl.snapshotRetentionCount).toBe(30);
+
+    settingsCtrl.setSnapshotRetentionDays(-5);
+    expect(settingsCtrl.snapshotRetentionDays).toBe(1);
+
+    settingsCtrl.setSnapshotRetentionCount(Number.NaN);
+    expect(settingsCtrl.snapshotRetentionCount).toBe(1);
+  });
+});
+
+describe("pruneSnapshotsPerPolicy", () => {
+  it("no-ops without touching the backend when the mode is off", async () => {
+    saveSettings({ snapshotRetentionMode: "off" });
+    await pruneSnapshotsPerPolicy("/repo");
+    expect(commands.pruneSnapshots).not.toHaveBeenCalled();
+  });
+
+  it("calls prune_snapshots with the configured mode/count/days when not off", async () => {
+    saveSettings({ snapshotRetentionMode: "hybrid", snapshotRetentionCount: 10, snapshotRetentionDays: 7 });
+    await pruneSnapshotsPerPolicy("/repo");
+    expect(commands.pruneSnapshots).toHaveBeenCalledWith("/repo", "hybrid", 10, 7);
+  });
+
+  it("no-ops with no repo, and outside Tauri", async () => {
+    saveSettings({ snapshotRetentionMode: "count" });
+    await pruneSnapshotsPerPolicy("");
+    expect(commands.pruneSnapshots).not.toHaveBeenCalled();
+
+    mockInTauri = false;
+    await pruneSnapshotsPerPolicy("/repo");
+    expect(commands.pruneSnapshots).not.toHaveBeenCalled();
+  });
+
+  it("swallows a backend rejection — fire-and-forget never rejects", async () => {
+    saveSettings({ snapshotRetentionMode: "age", snapshotRetentionDays: 14 });
+    vi.mocked(commands.pruneSnapshots).mockRejectedValueOnce(new Error("boom"));
+    await expect(pruneSnapshotsPerPolicy("/repo")).resolves.toBeUndefined();
+  });
+});
+
 describe("loadSettings / saveSettings — localStorage persistence", () => {
   it("returns defaults when nothing has been saved yet", () => {
     expect(loadSettings()).toEqual({
@@ -114,6 +168,9 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       showAllCommitTags: false,
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
+      snapshotRetentionMode: "off",
+      snapshotRetentionCount: 25,
+      snapshotRetentionDays: 14,
       tamaEnabled: true,
     });
   });
@@ -132,6 +189,9 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       showAllCommitTags: false,
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
+      snapshotRetentionMode: "off",
+      snapshotRetentionCount: 25,
+      snapshotRetentionDays: 14,
       tamaEnabled: true,
     });
   });
@@ -148,6 +208,9 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       showAllCommitTags: false,
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
+      snapshotRetentionMode: "off",
+      snapshotRetentionCount: 25,
+      snapshotRetentionDays: 14,
       tamaEnabled: true,
     });
   });
@@ -173,6 +236,9 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       showAllCommitTags: false,
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
+      snapshotRetentionMode: "off",
+      snapshotRetentionCount: 25,
+      snapshotRetentionDays: 14,
       tamaEnabled: true,
     });
   });

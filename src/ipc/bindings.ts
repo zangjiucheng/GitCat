@@ -176,6 +176,23 @@ async undoLast(path: string) : Promise<Result<UndoResult, string>> {
 }
 },
 /**
+ * Tauri command: prune backup snapshots per the user's retention policy (see
+ * `prune_backups`). Called from the frontend on repo-open when the configured
+ * mode isn't "off" (settings.svelte.ts's `pruneSnapshotsPerPolicy`). Returns
+ * the number of snapshot refs deleted. `async fn` + `run_blocking` for the
+ * same reason as `list_snapshots`: it opens the repo (the WSL/UNC auto-trust
+ * probe can stall) and walks/deletes refs via git2, off the UI thread.
+ * JS: `invoke("prune_snapshots", { path, mode, count, days })`.
+ */
+async pruneSnapshots(path: string, mode: string, count: number, days: number) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("prune_snapshots", { path, mode, count, days }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: list local branches (+ ahead/behind vs upstream), remote
  * branches, and tags, plus the current branch shorthand. Read-only (git2).
  */

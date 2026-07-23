@@ -10,7 +10,7 @@
   // mirrors SetupWizard's own identity step markup closely — see
   // settings.svelte.ts's header doc for why.
   import { settingsCtrl, CURATED_CONFIG_FIELDS, AUTO_FETCH_INTERVAL_OPTIONS, SETTINGS_TABS } from "./settings.svelte.ts";
-  import type { ThemeMode } from "./settings.svelte.ts";
+  import type { ThemeMode, SnapshotRetentionMode } from "./settings.svelte.ts";
   import type { ConfigScope } from "../../ipc/bindings";
   import { playTamaSound } from "../../legacy/sound.ts";
 
@@ -127,6 +127,57 @@
             {/each}
           </select>
         </div>
+      {/if}
+
+      <h4 class="d-lab">Snapshots</h4>
+      <p class="mut" style="font-size:11.5px;margin:0 0 8px">
+        Every history-changing action pins a recoverable backup — this is what powers &#8984;Z Undo and the Snapshots ribbon. Without cleanup they build up over time. Auto-cleanup prunes old ones each time a repo opens; the single most recent snapshot is always kept.
+      </p>
+      <div class="rm-form" style="margin-bottom:8px;max-width:300px">
+        <select
+          value={settingsCtrl.snapshotRetentionMode}
+          onchange={(e) => settingsCtrl.setSnapshotRetentionMode((e.target as HTMLSelectElement).value as SnapshotRetentionMode)}
+        >
+          <option value="off">Keep everything (no cleanup)</option>
+          <option value="count">Keep the newest N</option>
+          <option value="age">Keep the last N days</option>
+          <option value="hybrid">Hybrid — newest N or last N days</option>
+        </select>
+      </div>
+      {#if settingsCtrl.snapshotRetentionMode === "count" || settingsCtrl.snapshotRetentionMode === "hybrid"}
+        <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:13px">
+          Keep the newest
+          <input
+            type="number"
+            min="1"
+            step="1"
+            style="width:64px"
+            value={settingsCtrl.snapshotRetentionCount}
+            onchange={(e) => settingsCtrl.setSnapshotRetentionCount(Number((e.target as HTMLInputElement).value))}
+          />
+          snapshots
+        </label>
+      {/if}
+      {#if settingsCtrl.snapshotRetentionMode === "age" || settingsCtrl.snapshotRetentionMode === "hybrid"}
+        <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:13px">
+          Keep snapshots from the last
+          <input
+            type="number"
+            min="1"
+            step="1"
+            style="width:64px"
+            value={settingsCtrl.snapshotRetentionDays}
+            onchange={(e) => settingsCtrl.setSnapshotRetentionDays(Number((e.target as HTMLInputElement).value))}
+          />
+          days
+        </label>
+      {/if}
+      {#if settingsCtrl.snapshotRetentionMode === "hybrid"}
+        <p class="mut" style="font-size:11px;margin:2px 0 14px">
+          A snapshot survives if it's among the newest {settingsCtrl.snapshotRetentionCount} <b>or</b> from the last {settingsCtrl.snapshotRetentionDays} days.
+        </p>
+      {:else}
+        <div style="margin-bottom:14px"></div>
       {/if}
       {/if}
 

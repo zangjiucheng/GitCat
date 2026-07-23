@@ -54,10 +54,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::commit_detail,
         commands::ancestors_of,
         commands::get_app_info,
-        // Safety Manager (snapshot / list / global undo)
+        // Safety Manager (snapshot / list / global undo / retention prune)
         safety::create_snapshot,
         safety::list_snapshots,
         safety::undo_last,
+        safety::prune_snapshots,
         // Branch ops
         git_write::list_refs,
         // Backs the sidebar's "Auto" branch-visibility mode — which local
