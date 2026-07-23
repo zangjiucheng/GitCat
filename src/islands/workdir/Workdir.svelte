@@ -174,16 +174,17 @@
                   </span>
                 </div>
                 {#each hunk.lines as line, idx (line.kind + ":" + line.oldNo + ":" + line.newNo)}
+                  {@const sel = workdirCtrl.isLineSelected(hunk.header, line)}
                   <div
                     class="diff-line {line.kind === '+' ? 'add' : line.kind === '-' ? 'del' : ''}"
-                    class:selected={workdirCtrl.isLineSelected(hunk.header, line)}
+                    class:selected={sel}
                   >
                     <span class="ln">{line.kind === "+" ? line.newNo : line.kind === "-" ? line.oldNo : (line.newNo ?? line.oldNo)}</span>
                     <span class="sel">
                       {#if line.kind === "+" || line.kind === "-"}
                         <input
                           type="checkbox"
-                          checked={workdirCtrl.isLineSelected(hunk.header, line)}
+                          checked={sel}
                           disabled={workdirCtrl.busy}
                           onclick={(e) => {
                             e.stopPropagation();

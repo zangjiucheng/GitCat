@@ -276,6 +276,13 @@ class WorkdirState {
   // since the acted-on lines no longer exist in the fresh diff by definition
   // (see this file's header + the design's §4 "never trust stale state").
   selectedLines = $state<CheckedLine[]>([]);
+  // O(1) membership index over `selectedLines`, rebuilt (a `$derived`) only
+  // when the selection actually changes. The diff view calls `isLineSelected`
+  // for EVERY visible line — so a Set lookup here is what keeps a single toggle
+  // from re-running an O(lines × selected) `.some()` scan across the whole
+  // diff, which made a large staged diff lag on every click ("unstage diff
+  // lags"). Keyed by header+kind+oldNo+newNo (see `lineKey`).
+  selectedKeys = $derived(new Set(this.selectedLines.map((a) => WorkdirState.lineKey(a.header, a.kind, a.oldNo, a.newNo))));
   // Anchor for shift-click range extension — the last line clicked (plain,
   // ephemeral bookkeeping, not read by any template so it needs no rune).
   // A range never spans a hunk boundary (`lastClickedHeader` must match).
@@ -472,8 +479,18 @@ class WorkdirState {
     return a.header === header && a.kind === kind && a.oldNo === oldNo && a.newNo === newNo;
   }
 
+  // Stable key for a selectable line — the membership index (`selectedKeys`)
+  // and `isLineSelected` derive it identically, so the exact separator only has
+  // to be injective over the ACTUAL fields: `kind` is a single char (+/-/space)
+  // and old/newNo are numbers-or-null, so even a space-containing hunk header
+  // (the only variable-length, leading field) can't collide with the trailing
+  // three. Two tuples share a key only if they are the same line.
+  private static lineKey(header: string, kind: string, oldNo: number | null, newNo: number | null): string {
+    return header + " " + kind + " " + oldNo + " " + newNo;
+  }
+
   isLineSelected(header: string, l: DiffLineRow): boolean {
-    return this.selectedLines.some((a) => WorkdirState.lineMatches(a, header, l.kind, l.oldNo, l.newNo));
+    return this.selectedKeys.has(WorkdirState.lineKey(header, l.kind, l.oldNo, l.newNo));
   }
 
   get selectedLinesCount(): number {
@@ -492,11 +509,17 @@ class WorkdirState {
     if (shiftKey && this.lastClickedHeader === header && this.lastClickedIdx !== null) {
       const lo = Math.min(this.lastClickedIdx, idx);
       const hi = Math.max(this.lastClickedIdx, idx);
+      // Dedup against a local key set built once (O(selected)), not a per-line
+      // `.some()` scan — a shift-range over a big existing selection would
+      // otherwise be O(range × selected).
+      const have = new Set(this.selectedLines.map((a) => WorkdirState.lineKey(a.header, a.kind, a.oldNo, a.newNo)));
       for (let i = lo; i <= hi; i++) {
         const li = lines[i];
-        if ((li.kind === "+" || li.kind === "-") && !this.isLineSelected(header, li)) {
-          this.selectedLines.push({ header, kind: li.kind, oldNo: li.oldNo, newNo: li.newNo });
-        }
+        if (li.kind !== "+" && li.kind !== "-") continue;
+        const k = WorkdirState.lineKey(header, li.kind, li.oldNo, li.newNo);
+        if (have.has(k)) continue;
+        have.add(k);
+        this.selectedLines.push({ header, kind: li.kind, oldNo: li.oldNo, newNo: li.newNo });
       }
     } else {
       const i = this.selectedLines.findIndex((a) => WorkdirState.lineMatches(a, header, l.kind, l.oldNo, l.newNo));
