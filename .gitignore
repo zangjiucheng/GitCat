@@ -17,6 +17,18 @@ dist-ssr
 /playwright-report
 /blob-report
 
+# Playwright skill (the playwright-cli wrapper used for local UI debugging):
+# its per-session console logs, plus the screenshots it writes under output/.
+# Local-only debugging artifacts, never committed.
+/.playwright-cli/
+/output/
+
+# Claude Code agent working dirs — local scratch space + the isolated git
+# worktrees it creates for parallel agents. Ephemeral, never committed.
+# (.claude/.DS_Store is already covered by the .DS_Store rule further down.)
+/.claude/scratch/
+/.claude/worktrees/
+
 # VitePress docs site (built by .github/workflows/docs.yml, not committed)
 docs/.vitepress/dist
 docs/.vitepress/cache
