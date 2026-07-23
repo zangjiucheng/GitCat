@@ -34,6 +34,13 @@ use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder, Wry};
 use crate::procutil::NoConsoleWindowExt;
 
 const WINDOW_TITLE: &str = "GitCat";
+
+/// Env marker set on a process spawned by `spawn_new_window` so its own
+/// `create_initial_window` knows to force-focus its window (see there for
+/// why a spawned window otherwise never gets keyboard focus). Deliberately an
+/// env var, not an argv flag: `initial_repo_arg()` reads the repo path from
+/// `argv[1]`, and a positional flag there would collide with it.
+const SPAWNED_MARKER: &str = "GITCAT_SPAWNED";
 const WINDOW_W: f64 = 1440.0;
 const WINDOW_H: f64 = 900.0;
 const WINDOW_MIN_W: f64 = 960.0;
@@ -64,12 +71,35 @@ fn initial_repo_arg() -> Option<String> {
 /// collision to worry about), pointed at whichever repo (if any) this
 /// process was launched with.
 pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
-    WebviewWindowBuilder::new(app, "main", window_url(initial_repo_arg().as_deref()))
+    let window = WebviewWindowBuilder::new(app, "main", window_url(initial_repo_arg().as_deref()))
         .title(WINDOW_TITLE)
         .inner_size(WINDOW_W, WINDOW_H)
         .min_inner_size(WINDOW_MIN_W, WINDOW_MIN_H)
         .center()
+        .focused(true)
         .build()?;
+
+    // A process launched by `spawn_new_window` below does NOT reliably become
+    // the frontmost/key window on its own: it's a separate OS process spawned
+    // by an already-active GitCat, and the OS (macOS especially) keeps the
+    // PARENT app active, so the child's window appears but its webview never
+    // receives keyboard focus. Every window-level keydown — the whole vim-nav
+    // layer (j/k/gg/G, Enter-to-open-diff), plus ⌘K — is then dead in that
+    // window until the user clicks into it (a click activates the window,
+    // which is why the mouse "works" there but the keyboard doesn't). The
+    // build-time `.focused(true)` hint isn't enough across a process boundary;
+    // an explicit `set_focus()` after build activates THIS process's app and
+    // makes its window key (tao's macOS impl issues activateIgnoringOtherApps
+    // + makeKeyAndOrderFront), so the keyboard works immediately.
+    //
+    // Gated on the `GITCAT_SPAWNED` marker `spawn_new_window` sets, so this
+    // ONLY force-activates windows we deliberately spawned: a normally-
+    // launched PRIMARY window is already frontmost via the OS, and
+    // force-activating it (activateIgnoringOtherApps is aggressive) would yank
+    // focus back if the user happened to tab away during the app's launch.
+    if std::env::var_os(SPAWNED_MARKER).is_some() {
+        let _ = window.set_focus();
+    }
     Ok(())
 }
 
@@ -97,6 +127,10 @@ pub fn spawn_new_window(repo_path: Option<&str>) {
     if let Some(p) = repo_path {
         cmd.arg(p);
     }
+    // Tells the child's `create_initial_window` to force-focus its window —
+    // a spawned process doesn't become key on its own, leaving its keyboard
+    // (vim-nav, ⌘K) dead until clicked. See create_initial_window's own note.
+    cmd.env(SPAWNED_MARKER, "1");
     cmd.no_console_window();
     if let Err(e) = cmd.spawn() {
         eprintln!("failed to launch a new GitCat process: {e}");
