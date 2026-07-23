@@ -26,7 +26,7 @@
         <div><span class="mono">G</span> &#8212; jump to the last commit</div>
         <div><span class="mono">Ctrl+D</span> / <span class="mono">Ctrl+U</span> &#8212; half-page down/up</div>
         <div><span class="mono">/</span> &#8212; open search (same as Ctrl/Cmd+K)</div>
-        <div><span class="mono">Enter</span> / <span class="mono">Space</span> &#8212; activate the focused row</div>
+        <div><span class="mono">Enter</span> &#8212; open the selected commit's diff (or activate the focused list row)</div>
         <div><span class="mono">?</span> &#8212; toggle this help</div>
       </div>
     </div>

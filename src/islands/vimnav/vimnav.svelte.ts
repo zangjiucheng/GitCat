@@ -25,6 +25,7 @@
 // demo-mode branch at all: it's pure keyboard plumbing, identical in both).
 
 import * as bridge from "../../legacy/bridge";
+import { detailCtrl } from "../detail/detail.svelte.ts";
 
 // ── text-input guard ────────────────────────────────────────────────────
 // The one existing precedent for this anywhere in the codebase is
@@ -95,6 +96,21 @@ export function pageCanvasSelection(dir: 1 | -1) {
   const next = Math.max(0, Math.min(n - 1, cur + dir * rowsPerHalfPage));
   bridge.select(next);
   scrollRowIntoView(next);
+}
+
+// ── open the selected commit's full-page diff ───────────────────────────
+// The action behind Enter (see handleGlobalKeydown). The keyboard twin of
+// double-clicking a commit row — legacy/main.ts's own dblclick handler runs
+// this exact detailCtrl.expandDiff(). Returns false (a no-op) unless a commit
+// is actually selected in the detail panel: the hero/empty state and a workdir
+// (uncommitted-changes) selection both leave detailCtrl.commit null, and
+// neither has a commit diff to expand. expandDiff() guards on the same commit,
+// so this is doubly safe; the boolean lets the caller preventDefault only when
+// it actually opened something.
+export function openSelectedCommitDiff(): boolean {
+  if (!detailCtrl.commit) return false;
+  detailCtrl.expandDiff();
+  return true;
 }
 
 // ── "gg" chord detection ─────────────────────────────────────────────────
@@ -202,6 +218,23 @@ export function handleGlobalKeydown(e: KeyboardEvent) {
     noteNonGKey();
     e.preventDefault();
     if (!anyOtherScrimOpen()) pageCanvasSelection(e.key === "d" ? 1 : -1);
+    return;
+  }
+  // Enter — open the selected commit's full-page diff (the keyboard twin of
+  // double-clicking a commit row). Deliberately scoped away from anything that
+  // owns its OWN Enter: a [data-vimnav-list] row (sidebar refs / detail file
+  // tree / resolver + backup lists) activates on Enter, and a focused button
+  // or link keeps its native activation — this must not double-fire on top of
+  // either. Skipped while any scrim is open, which INCLUDES the expanded diff
+  // itself (a `.scrim.on`), so a second Enter is a harmless no-op and Escape
+  // (handled in Detail.svelte) is what closes it. Editable targets were
+  // already excluded by isTextInputFocused at the top of this function.
+  if (noModifier && e.key === "Enter") {
+    noteNonGKey();
+    const target = e.target as Element | null;
+    if (target?.closest("[data-vimnav-list], a[href], button, [role='button']")) return;
+    if (anyOtherScrimOpen()) return;
+    if (openSelectedCommitDiff()) e.preventDefault();
     return;
   }
   noteNonGKey();

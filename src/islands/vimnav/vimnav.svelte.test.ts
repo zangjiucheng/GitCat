@@ -27,13 +27,22 @@ vi.mock("../../legacy/bridge", () => {
   };
 });
 
+// detailCtrl is mocked so importing vimnav (which now imports it for the
+// Enter → open-diff binding) never drags in the whole detail island graph —
+// same isolation reasoning as the bridge mock above.
+vi.mock("../detail/detail.svelte.ts", () => ({
+  detailCtrl: { commit: null as unknown, expandDiff: vi.fn() },
+}));
+
 import * as bridge from "../../legacy/bridge";
+import { detailCtrl } from "../detail/detail.svelte.ts";
 import {
   isTextInputFocused,
   moveDomFocus,
   moveCanvasSelection,
   jumpCanvasSelection,
   pageCanvasSelection,
+  openSelectedCommitDiff,
   noteGKey,
   noteNonGKey,
   handleGlobalKeydown,
@@ -44,6 +53,8 @@ beforeEach(() => {
   document.body.innerHTML = "";
   (bridge.state as any).selectedRow = -1;
   (bridge.state as any).scrollTarget = 0;
+  (detailCtrl as any).commit = null;
+  vi.mocked(detailCtrl.expandDiff).mockClear();
   noteNonGKey();
 });
 
@@ -270,5 +281,88 @@ describe("gg chord detection", () => {
     noteGKey(1000);
     noteNonGKey();
     expect(noteGKey(1100)).toBe(false); // treated as a fresh first "g", not a completion
+  });
+});
+
+describe("openSelectedCommitDiff", () => {
+  it("no-ops (returns false, never calls expandDiff) when no commit is selected", () => {
+    (detailCtrl as any).commit = null;
+    expect(openSelectedCommitDiff()).toBe(false);
+    expect(detailCtrl.expandDiff).not.toHaveBeenCalled();
+  });
+
+  it("expands the diff (returns true) when a commit is selected", () => {
+    (detailCtrl as any).commit = { sha: "abc1234" };
+    expect(openSelectedCommitDiff()).toBe(true);
+    expect(detailCtrl.expandDiff).toHaveBeenCalledOnce();
+  });
+});
+
+describe("handleGlobalKeydown — Enter opens the selected commit's diff", () => {
+  function enter(target?: Element, opts: Partial<KeyboardEventInit> = {}): KeyboardEvent {
+    const e = new KeyboardEvent("keydown", { key: "Enter", cancelable: true, ...opts });
+    // handleGlobalKeydown is called directly here (not dispatched), so e.target
+    // is null unless we set it — mirror the focused element the handler reads.
+    if (target) Object.defineProperty(e, "target", { value: target, configurable: true });
+    return e;
+  }
+
+  it("opens the diff and prevents default when a commit is selected and focus is neutral", () => {
+    (detailCtrl as any).commit = { sha: "abc1234" };
+    const e = enter();
+    handleGlobalKeydown(e);
+    expect(detailCtrl.expandDiff).toHaveBeenCalledOnce();
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("does nothing (and does not preventDefault) when no commit is selected", () => {
+    (detailCtrl as any).commit = null;
+    const e = enter();
+    handleGlobalKeydown(e);
+    expect(detailCtrl.expandDiff).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("leaves Enter alone when focus is on a [data-vimnav-list] row (the row owns Enter)", () => {
+    (detailCtrl as any).commit = { sha: "abc1234" };
+    document.body.innerHTML = `<div data-vimnav-list><div id="r0" tabindex="0"></div></div>`;
+    const e = enter(document.getElementById("r0")!);
+    handleGlobalKeydown(e);
+    expect(detailCtrl.expandDiff).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("leaves Enter alone when focus is on a button (keeps native activation)", () => {
+    (detailCtrl as any).commit = { sha: "abc1234" };
+    document.body.innerHTML = `<button id="b">Go</button>`;
+    const e = enter(document.getElementById("b")!);
+    handleGlobalKeydown(e);
+    expect(detailCtrl.expandDiff).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("does not fire while another scrim is open (including the expanded diff itself, a .scrim.on)", () => {
+    (detailCtrl as any).commit = { sha: "abc1234" };
+    document.body.innerHTML = `<div class="scrim on"></div>`;
+    const e = enter();
+    handleGlobalKeydown(e);
+    expect(detailCtrl.expandDiff).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("is left unhandled when a modifier is held (Ctrl+Enter)", () => {
+    (detailCtrl as any).commit = { sha: "abc1234" };
+    const e = enter(undefined, { ctrlKey: true });
+    handleGlobalKeydown(e);
+    expect(detailCtrl.expandDiff).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("is ignored while typing in a text input", () => {
+    (detailCtrl as any).commit = { sha: "abc1234" };
+    document.body.innerHTML = `<input id="i" />`;
+    const e = enter(document.getElementById("i")!);
+    handleGlobalKeydown(e);
+    expect(detailCtrl.expandDiff).not.toHaveBeenCalled();
   });
 });
