@@ -1672,6 +1672,10 @@ async function openRepo(path){
     // once per repo-open. Fire-and-forget (never awaited — must not delay the
     // open); a no-op unless the policy is set to something other than "off".
     void pruneSnapshotsPerPolicy(path);
+    // If this repo was left mid-conflict (a cherry-pick/merge/rebase/… from a
+    // prior session or the command line), surface the resolver so it can be
+    // resolved/aborted in-app instead of dead-ending on "already in progress".
+    void resolver.openIfInProgress(path);
     // Switching repos must close the pinned "Uncommitted changes" panel (if
     // open) FIRST — its file list belongs to whichever repo was open when
     // select() last populated it. Left open here, it would keep showing the

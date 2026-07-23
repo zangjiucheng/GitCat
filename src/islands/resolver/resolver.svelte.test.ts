@@ -251,6 +251,51 @@ describe("startPick", () => {
   });
 });
 
+describe("openIfInProgress (resume a pre-existing conflict)", () => {
+  it("opens the resolver from live conflict_status when an op is in progress", async () => {
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A, FILE_B], true, "cherry-pick")));
+    const opened = await resolver.openIfInProgress("/repo");
+    expect(opened).toBe(true);
+    expect(resolver.open).toBe(true);
+    expect(resolver.op).toBe("cherry-pick");
+    expect(resolver.files).toEqual([FILE_A, FILE_B]);
+  });
+
+  it("adopts the ACTUAL in-progress op (a merge), not whatever op was last set", async () => {
+    resolver.op = "cherry-pick";
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "merge")));
+    await resolver.openIfInProgress("/repo");
+    expect(resolver.op).toBe("merge");
+    expect(resolver.open).toBe(true);
+  });
+
+  it("handles a no-conflict-but-in-progress op (files empty) — still opens for Continue/Abort", async () => {
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([], true, "cherry-pick")));
+    expect(await resolver.openIfInProgress("/repo")).toBe(true);
+    expect(resolver.open).toBe(true);
+    expect(resolver.files).toEqual([]);
+  });
+
+  it("is a no-op when nothing is in progress", async () => {
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([], false, "none")));
+    expect(await resolver.openIfInProgress("/repo")).toBe(false);
+    expect(resolver.open).toBe(false);
+  });
+
+  it("is a no-op for an op the resolver can't abort/continue", async () => {
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A], true, "bisect")));
+    expect(await resolver.openIfInProgress("/repo")).toBe(false);
+    expect(resolver.open).toBe(false);
+  });
+
+  it("short-circuits (no backend call) with no repo, or when already open", async () => {
+    expect(await resolver.openIfInProgress("")).toBe(false);
+    resolver.open = true;
+    expect(await resolver.openIfInProgress("/repo")).toBe(false);
+    expect(commands.conflictStatus).not.toHaveBeenCalled();
+  });
+});
+
 describe("startMerge", () => {
   it("clean result: reloads the graph and closes the modal", async () => {
     vi.mocked(commands.mergeStart).mockResolvedValueOnce(

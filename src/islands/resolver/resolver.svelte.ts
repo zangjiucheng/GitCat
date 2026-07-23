@@ -710,6 +710,10 @@ class ResolverState {
       default: // "error"
         if (retry && "blockedByLocalChanges" in res && res.blockedByLocalChanges) {
           this.dirtyBlock = { message: res.message || msg.verb + " could not start.", verb: msg.verb, retry };
+        } else if (await this.openIfInProgress(this.repo)) {
+          // The refusal was "another op is already in progress" — instead of a
+          // dead-end warning, surface THAT op's resolver (Abort/Continue) so the
+          // user can clear it here rather than reaching for the command line.
         } else {
           bridge.tama.warn(res.message || msg.verb + " could not start.");
         }
@@ -797,6 +801,72 @@ class ResolverState {
   // the persistent pill's own "Details" affordance.
   reopen() {
     if (this.editing) this.open = true;
+  }
+
+  // Surface an ALREADY-in-progress conflict operation that THIS session's app
+  // didn't itself start — one left mid-conflict in a prior session, or begun on
+  // the command line — so it can be resolved/aborted IN-APP instead of "a
+  // cherry-pick is already in progress" being a dead end (there was previously
+  // no way back to this modal for it). Reads the live conflict_status; if a
+  // resolvable op is in progress, opens the SAME resolver (its Abort/Continue),
+  // populated from that state — no backupRef/sha, since we didn't start it, so
+  // Undo protects only whatever git's own `--abort` restores. Returns whether
+  // it opened one. Called on repo-open (legacy/main.ts) AND from applyOutcome's
+  // error case when a fresh start* is refused because one's already going. Bails
+  // if the resolver is already open (never yanks focus from an active session).
+  async openIfInProgress(repo: string): Promise<boolean> {
+    // No IN_TAURI gate — like every other method here, the real/demo decision
+    // belongs to the caller (repo-open only sets CUR_REPO in Tauri, and the
+    // applyOutcome error path only runs for a real op). A falsy repo (e.g. demo
+    // mode's null CUR_REPO) short-circuits before any backend call.
+    if (!repo || this.open) return false;
+    let inProgress = false, op = "", files: ConflictFile[] = [];
+    try {
+      const r = await commands.conflictStatus(repo);
+      if (r.status === "ok") {
+        inProgress = !!r.data.inProgress;
+        op = r.data.op;
+        files = Array.isArray(r.data.files) ? r.data.files : [];
+      } else {
+        console.error("conflict_status (resume)", r.error);
+        return false;
+      }
+    } catch (e) {
+      console.error("conflict_status (resume)", e);
+      return false;
+    }
+    if (!inProgress) return false;
+    // Only ops the resolver can actually abort/continue (same allowlist as
+    // refresh()/the backend's ensure_resolvable_op) — narrowed here so `this.op`
+    // stays a valid ResolverOp.
+    if (op === "cherry-pick" || op === "merge" || op === "rebase" || op === "revert" || op === "stash" || op === "merge-squash" || op === "am") {
+      this.op = op;
+    } else {
+      return false;
+    }
+    this.demo = false;
+    this.dirtyBlock = null;
+    this.dirtyBlockStuck = null;
+    this.repo = repo;
+    this.sha = "";
+    this.reset();
+    this.tamaImg = bridge.TAMA_IMG.alarm;
+    const n = files.length;
+    this.sub =
+      "A " + op + " is already in progress" +
+      (n ? " (" + n + " conflicted file" + (n === 1 ? "" : "s") + ")" : "") +
+      " — resolve" + (n ? " them" : "") + ", then Continue, or Abort to back it out.";
+    // Populate directly from the status we already read — no second round-trip.
+    // (openConflict's file list comes from the start RESULT and it refresh()es;
+    // here the single conflict_status read above is already authoritative.)
+    this.files = files;
+    this.remaining = new Set(files.map((f) => f.path));
+    this.selected = files.length ? files[0].path : null;
+    if (this.selected != null) void this.loadHunks();
+    this.open = true;
+    bridge.tama.set("rescue");
+    bridge.tama.say("Found a " + op + " already in progress — resolve or abort it here.", 5000);
+    return true;
   }
 
   // merge-squash-only success handoff (see MergeSquashResult's own doc
