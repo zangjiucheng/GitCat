@@ -318,6 +318,46 @@ echo "  - calc.range() may have an edge case worth double-checking." >> "$REPO/d
 
 echo "scratch" > "$REPO/scratch.txt"
 
+# --- Safety Manager snapshots ----------------------------------------------
+# GitCat pins a backup ref (refs/gitgui/backup/<secs>-<nanos>-<seq>) before
+# every history-changing action; list_snapshots reads those for the vertical
+# "snapshots" ribbon and the Snapshots sidebar group. A brand-new demo repo
+# has none (nothing's been mutated IN the app yet), so seed a spread by hand
+# so the snapshot features are testable the moment it opens:
+#   - varied AGES (seconds → months) so the ribbon shows a full evenly-spaced
+#     list AND the retention cleanup's count / age / hybrid modes each prune a
+#     different set (Settings > Snapshots);
+#   - a mix of TARGET commits so clicking different ticks previews different diffs;
+#   - one pinning an ORPHAN commit on no branch, to exercise the preview's
+#     "not in this view" path.
+# ts = seconds part of the ref name; nanos fixed at 0, a running seq keeps every
+# ref unique. Ages are independent of when each pinned commit was actually made
+# — a snapshot just records "HEAD was here at time T".
+now=$(date +%s)
+snapseq=0
+snap() { # snap <age-seconds> <commit-ish>
+  local sha
+  sha=$(git -C "$REPO" rev-parse "$2^{commit}" 2>/dev/null || git -C "$REPO" rev-parse HEAD)
+  git -C "$REPO" update-ref "refs/gitgui/backup/$(( now - $1 ))-0-$((snapseq++))" "$sha"
+}
+snap 45        HEAD          # ~seconds
+snap 240       HEAD~1        # minutes
+snap 900       HEAD~2
+snap 2400      HEAD~3
+snap 7200      HEAD~4        # hours
+snap 28800     HEAD~5
+snap 86400     "$DATA_SHA"   # a day
+snap 259200    HEAD~2        # a few days
+snap 604800    "$BUG_SHA"    # a week
+snap 1209600   HEAD~6        # two weeks
+snap 2592000   HEAD~1        # a month
+snap 6048000   HEAD~3        # a few months
+# Orphan commit (child of HEAD~5, on no branch) — reachable only via its backup
+# ref, so the graph has no row for it and its preview reads "not in this view".
+orphan=$(git -C "$REPO" commit-tree "$(git -C "$REPO" rev-parse HEAD~4^{tree})" \
+  -p "$(git -C "$REPO" rev-parse HEAD~5)" -m "WIP: experiment I later abandoned")
+git -C "$REPO" update-ref "refs/gitgui/backup/$(( now - 600 ))-0-$((snapseq++))" "$orphan"
+
 cat <<EOF
 
 Demo repo ready at: $REPO
@@ -333,6 +373,11 @@ Open $REPO in GitCat (File > Open Repo) to explore:
   - tags: v0.1.0 (annotated), checkpoint (lightweight)
   - a submodule at vendor/widget-lib
   - 2 stashes, a staged file, an unstaged edit, and an untracked file
+  - 13 pre-seeded Safety Manager snapshots (the "snapshots" ribbon down the
+    graph's left edge, and the Snapshots sidebar group): click a tick/row to
+    preview its commit; try Settings > Snapshots retention (count / age /
+    hybrid) to watch cleanup prune different sets; one snapshot pins an orphan
+    commit and previews as "not in this view"
   - origin/main both ahead and behind local main — try Fetch, Pull, Push
   - a bisectable bug: calc.range(a, b) is documented inclusive of b but isn't
     (introduced at $BUG_SHA, never fixed)
