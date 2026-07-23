@@ -34,13 +34,6 @@ use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder, Wry};
 use crate::procutil::NoConsoleWindowExt;
 
 const WINDOW_TITLE: &str = "GitCat";
-
-/// Env marker set on a process spawned by `spawn_new_window` so its own
-/// `create_initial_window` knows to force-focus its window (see there for
-/// why a spawned window otherwise never gets keyboard focus). Deliberately an
-/// env var, not an argv flag: `initial_repo_arg()` reads the repo path from
-/// `argv[1]`, and a positional flag there would collide with it.
-const SPAWNED_MARKER: &str = "GITCAT_SPAWNED";
 const WINDOW_W: f64 = 1440.0;
 const WINDOW_H: f64 = 900.0;
 const WINDOW_MIN_W: f64 = 960.0;
@@ -71,35 +64,12 @@ fn initial_repo_arg() -> Option<String> {
 /// collision to worry about), pointed at whichever repo (if any) this
 /// process was launched with.
 pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
-    let window = WebviewWindowBuilder::new(app, "main", window_url(initial_repo_arg().as_deref()))
+    WebviewWindowBuilder::new(app, "main", window_url(initial_repo_arg().as_deref()))
         .title(WINDOW_TITLE)
         .inner_size(WINDOW_W, WINDOW_H)
         .min_inner_size(WINDOW_MIN_W, WINDOW_MIN_H)
         .center()
-        .focused(true)
         .build()?;
-
-    // A process launched by `spawn_new_window` below does NOT reliably become
-    // the frontmost/key window on its own: it's a separate OS process spawned
-    // by an already-active GitCat, and the OS (macOS especially) keeps the
-    // PARENT app active, so the child's window appears but its webview never
-    // receives keyboard focus. Every window-level keydown — the whole vim-nav
-    // layer (j/k/gg/G, Enter-to-open-diff), plus ⌘K — is then dead in that
-    // window until the user clicks into it (a click activates the window,
-    // which is why the mouse "works" there but the keyboard doesn't). The
-    // build-time `.focused(true)` hint isn't enough across a process boundary;
-    // an explicit `set_focus()` after build activates THIS process's app and
-    // makes its window key (tao's macOS impl issues activateIgnoringOtherApps
-    // + makeKeyAndOrderFront), so the keyboard works immediately.
-    //
-    // Gated on the `GITCAT_SPAWNED` marker `spawn_new_window` sets, so this
-    // ONLY force-activates windows we deliberately spawned: a normally-
-    // launched PRIMARY window is already frontmost via the OS, and
-    // force-activating it (activateIgnoringOtherApps is aggressive) would yank
-    // focus back if the user happened to tab away during the app's launch.
-    if std::env::var_os(SPAWNED_MARKER).is_some() {
-        let _ = window.set_focus();
-    }
     Ok(())
 }
 
@@ -123,18 +93,61 @@ pub fn spawn_new_window(repo_path: Option<&str>) {
             return;
         }
     };
-    let mut cmd = Command::new(exe);
+    // macOS: launch the new instance the OS-sanctioned way — `open -n`, i.e.
+    // via LaunchServices — rather than exec'ing the Mach-O directly. Running
+    // the binary directly with Command::spawn produces a process macOS never
+    // registers as a first-class "running application": its window appears but
+    // is never made key/active, so the ENTIRE keyboard layer (vim-nav
+    // j/k/gg/G, Enter-to-open-diff, ⌘K) is dead in it until the user clicks in
+    // — and any manual activateIgnoringOtherApps workaround only fights the
+    // OTHER, same-bundle-id instance, breaking the parent window's focus
+    // instead. `open -n` hands the second instance to LaunchServices, which
+    // activates it correctly and lets the window server manage focus between
+    // the two instances the normal way — a genuine independent instance, the
+    // way double-clicking the app again (or VS Code's own New Window) behaves.
+    // `--args <repo>` reaches the new instance as its `argv`, so
+    // `initial_repo_arg()` reads it exactly as it does for a direct spawn.
+    // Only for a real `.app` bundle; an unbundled `cargo tauri dev` binary
+    // falls through to the plain spawn below.
+    #[cfg(target_os = "macos")]
+    if let Some(bundle) = macos_app_bundle(&exe) {
+        let mut cmd = Command::new("open");
+        cmd.arg("-n").arg("-a").arg(&bundle);
+        if let Some(p) = repo_path {
+            cmd.arg("--args").arg(p);
+        }
+        match cmd.spawn() {
+            Ok(_) => return,
+            Err(e) => eprintln!("`open -n` failed ({e}); falling back to a direct spawn"),
+        }
+    }
+
+    // Windows / Linux (and the macOS dev/unbundled fallback): a plain child
+    // process. On these platforms a freshly-created top-level window takes
+    // foreground on its own, so no LaunchServices dance is needed.
+    let mut cmd = Command::new(&exe);
     if let Some(p) = repo_path {
         cmd.arg(p);
     }
-    // Tells the child's `create_initial_window` to force-focus its window —
-    // a spawned process doesn't become key on its own, leaving its keyboard
-    // (vim-nav, ⌘K) dead until clicked. See create_initial_window's own note.
-    cmd.env(SPAWNED_MARKER, "1");
     cmd.no_console_window();
     if let Err(e) = cmd.spawn() {
         eprintln!("failed to launch a new GitCat process: {e}");
     }
+}
+
+/// The `.app` bundle this executable lives inside, when it's a real macOS
+/// bundle (`<Name>.app/Contents/MacOS/<bin>`) — `None` for an unbundled
+/// binary such as `cargo tauri dev`'s `target/debug/gitcat`, where `open -a`
+/// has no bundle to launch and the caller falls back to a direct spawn.
+#[cfg(target_os = "macos")]
+fn macos_app_bundle(exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    let macos = exe.parent()?; // <Name>.app/Contents/MacOS
+    let contents = macos.parent()?; // <Name>.app/Contents
+    let bundle = contents.parent()?; // <Name>.app
+    let looks_like_bundle = macos.file_name().and_then(|n| n.to_str()) == Some("MacOS")
+        && contents.file_name().and_then(|n| n.to_str()) == Some("Contents")
+        && bundle.extension().and_then(|e| e.to_str()) == Some("app");
+    looks_like_bundle.then(|| bundle.to_path_buf())
 }
 
 /// JS: `commands.openRepoInNewWindow(path)` — the Dashboard's "Open in New
