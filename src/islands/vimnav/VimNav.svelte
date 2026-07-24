@@ -26,7 +26,8 @@
         <div><span class="mono">G</span> &#8212; jump to the last commit</div>
         <div><span class="mono">Ctrl+D</span> / <span class="mono">Ctrl+U</span> &#8212; half-page down/up</div>
         <div><span class="mono">/</span> &#8212; open search (same as Ctrl/Cmd+K)</div>
-        <div><span class="mono">Ctrl/Cmd+F</span> &#8212; filter refs (focus the sidebar's ref search)</div>
+        <div><span class="mono">Ctrl/Cmd+F</span> &#8212; search code (find in file contents)</div>
+        <div><span class="mono">Ctrl/Cmd+Shift+F</span> &#8212; filter refs (focus the sidebar's ref search)</div>
         <div><span class="mono">Enter</span> &#8212; open the selected commit's diff (or activate the focused list row)</div>
         <div><span class="mono">?</span> &#8212; toggle this help</div>
       </div>

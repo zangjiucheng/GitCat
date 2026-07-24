@@ -122,7 +122,7 @@ const ACTIONS: ActionItem[] = [
     type: "action",
     id: "code-search",
     label: "Search Code",
-    hint: "Full-text search the current checkout (or a chosen historical commit)",
+    hint: "Full-text search the current checkout (or a chosen historical commit) (⌘F)",
     run: () => codeSearchCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   // Multi-repository dashboard (backlog #11): the ONE action here that does

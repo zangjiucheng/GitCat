@@ -5,7 +5,18 @@
   import History from "@lucide/svelte/icons/history";
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape" && codeSearchCtrl.open) codeSearchCtrl.close();
+    if (e.key === "Escape" && codeSearchCtrl.open) {
+      codeSearchCtrl.close();
+      return;
+    }
+    // ⌘F / Ctrl+F — "find in code": open Search Code. Shift is excluded so
+    // ⌘⇧F stays free for the ref filter (see main.ts). Suppresses the webview's
+    // native find-in-page. Needs a repo open to have anything to search.
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+      if (!bridge.CUR_REPO) return;
+      e.preventDefault();
+      codeSearchCtrl.show(bridge.CUR_REPO as unknown as string);
+    }
   }
 
   function onSubmit(e: Event) {
