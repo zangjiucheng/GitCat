@@ -54,7 +54,7 @@ const PADX=18, ROW_H_BASE=26, LANE_W_BASE=14, DOT_R_BASE=4.6;
 // the same lane colour; CHANNEL_ALPHA = how much the lane trough [0,tx) is
 // darkened vs the message column; DIVIDER_ALPHA = the hairline between them.
 // All four are read straight by draw() — tweak the look here.
-const BRANCH_BAR_W=3, BRANCH_WASH_ALPHA=0.08, GRAPH_CHANNEL_ALPHA=0.20, GRAPH_DIVIDER_ALPHA=0.6;
+const BRANCH_BAR_W=3, BRANCH_WASH_ALPHA=0.08, BRANCH_BAR_ALPHA=0.9, GRAPH_CHANNEL_ALPHA=0.20, GRAPH_DIVIDER_ALPHA=0.6;
 // Right-edge gutter reserved for the sha (was the ONLY thing living there —
 // hence the old bare "96") plus the author-name preview added alongside it
 // (see draw()'s row loop / authorOf() above): 96 for the sha itself, 8px gap,
@@ -209,6 +209,11 @@ const view={cssW:0,cssH:0,dpr:1};
 const perf={last:performance.now(),frames:0,accum:0,fps:0,lastDrawMs:0};
 let dirty=true, lastInteracting=false;
 const edgePaths=new Array(NCOL);
+// Per-lane-colour Path2Ds for the branch-colour tags (whole-row wash + left
+// bar). Batching every visible row of the same colour into one path lets the
+// tag pass cost 2 globalAlpha writes + ≤NCOL fills per frame instead of the old
+// 2 fillRects + 3 state changes PER ROW (which janked scroll/pan on tall windows).
+const washPaths=new Array(NCOL), barPaths=new Array(NCOL);
 const laneX=(l)=>PADX+l*layout.laneW-state.panX;
 const clampScroll=(v)=>v<0?0:(v>state.maxScroll?state.maxScroll:v);
 const clampPan=(v)=>v<0?0:(v>state.maxPanX?state.maxPanX:v);
@@ -323,19 +328,29 @@ function draw(){
   ctx.lineWidth=Math.max(1.7,1.9*layout.zoom); ctx.lineJoin="round"; ctx.lineCap="round";
   for(let c=0;c<NCOL;c++){const p=edgePaths[c];if(p){ctx.strokeStyle=LANE_COLORS[c];ctx.stroke(p);}}
 
+  // Branch-colour tags — a faint whole-row wash + a solid left-edge bar per
+  // commit's lane colour, so which branch a row is on reads at a glance. Batched
+  // into one Path2D per colour (like the edges above) and filled here, BEFORE the
+  // row loop, so the per-row selection/hover overlays + good/bad/current markers
+  // still draw on top and keep priority at the x=0 edge. All washes share one
+  // globalAlpha, all bars another, so the whole window is 2 alpha writes + ≤NCOL
+  // fills — not the per-row fillRects that used to jank scroll/pan.
+  for(let c=0;c<NCOL;c++){ washPaths[c]=null; barPaths[c]=null; }
+  for(let r=first;r<=last;r++){ const c=G.commitColor[r], ry=r*rowH-st+bh;
+    (washPaths[c]||(washPaths[c]=new Path2D())).rect(0,ry,W,rowH);
+    (barPaths[c]||(barPaths[c]=new Path2D())).rect(0,ry,BRANCH_BAR_W,rowH); }
+  ctx.globalAlpha=BRANCH_WASH_ALPHA;
+  for(let c=0;c<NCOL;c++){ const p=washPaths[c]; if(p){ctx.fillStyle=LANE_COLORS[c];ctx.fill(p);} }
+  ctx.globalAlpha=BRANCH_BAR_ALPHA;
+  for(let c=0;c<NCOL;c++){ const p=barPaths[c]; if(p){ctx.fillStyle=LANE_COLORS[c];ctx.fill(p);} }
+  ctx.globalAlpha=1;
+
   ctx.textBaseline="middle"; ctx.font=layout.chipFont;
   for(let r=first;r<=last;r++){
     const y=r*rowH+rowH*0.5-st+bh, x=laneX(G.commitLane[r]), col=LANE_COLORS[G.commitColor[r]];
     const bisectDim = B && !(r>B.lo&&r<B.hi) && r!==B.good && r!==B.bad;
     const dragDim = DR && !(DR.op==="merge"?legalMerge(DR.source,r):legalPick(DR.source,r)).ok;
     const dim = bisectDim || dragDim;
-    // Branch colour tag: a faint whole-row wash + a solid left-edge bar in this
-    // commit's lane colour, so which branch a row is on reads at a glance. Drawn
-    // first (behind the selection/hover overlays + the good/bad/current markers
-    // below, which keep priority at the same x=0 edge).
-    const ry=r*rowH-st+bh;
-    ctx.fillStyle=col; ctx.globalAlpha=(dim?0.4:1)*BRANCH_WASH_ALPHA; ctx.fillRect(0,ry,W,rowH);
-    ctx.globalAlpha=dim?0.35:0.9; ctx.fillRect(0,ry,BRANCH_BAR_W,rowH); ctx.globalAlpha=1;
     if(r===state.selectedRow){ ctx.fillStyle=theme.accent; ctx.globalAlpha=state.selectAlpha; ctx.fillRect(0,r*rowH-st+bh,W,rowH); ctx.globalAlpha=1;
       ctx.fillStyle=theme.accent; ctx.fillRect(0,r*rowH-st+bh,3,rowH); }
     else if(r===state.hoverRow){ ctx.fillStyle=theme.text; ctx.globalAlpha=state.hoverAlpha; ctx.fillRect(0,r*rowH-st+bh,W,rowH); ctx.globalAlpha=1; }
