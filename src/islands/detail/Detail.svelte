@@ -113,13 +113,18 @@
   <div transition:fade={{ duration: REDUCE_MOTION ? 0 : 120 }}>
   <section>
     <div class="d-subject">{c.subject}</div>
-    <div class="d-body" id="dBody">
+    <div class="d-body" id="dBody" class:clamped={detailCtrl.bodyLong && !detailCtrl.bodyExpanded}>
       {#if detailCtrl.bodyText === "loading…"}
         <span class="mut">loading&#8230;</span>
       {:else}
         {detailCtrl.bodyText}
       {/if}
     </div>
+    {#if detailCtrl.bodyLong}
+      <button class="d-body-toggle" onclick={() => detailCtrl.toggleBody()}>
+        {detailCtrl.bodyExpanded ? "Show less" : "Show more"}
+      </button>
+    {/if}
     <div class="id-strip">
       <span
         class="hash"

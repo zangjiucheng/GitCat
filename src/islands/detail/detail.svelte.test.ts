@@ -621,3 +621,36 @@ describe("folder collapse state (Changes tree: Collapse all / Expand all)", () =
     expect(detailCtrl.isDirCollapsed("src")).toBe(false);
   });
 });
+
+describe("long commit-message body toggle", () => {
+  it("bodyLong is false for a short message, true past the line/char threshold", () => {
+    detailCtrl.bodyText = "short and sweet";
+    expect(detailCtrl.bodyLong).toBe(false);
+    detailCtrl.bodyText = "x".repeat(400); // >360 chars
+    expect(detailCtrl.bodyLong).toBe(true);
+    detailCtrl.bodyText = Array(8).fill("line").join("\n"); // 7 newlines (>=6)
+    expect(detailCtrl.bodyLong).toBe(true);
+  });
+
+  it("bodyLong ignores the loading placeholder", () => {
+    detailCtrl.bodyText = "loading…";
+    expect(detailCtrl.bodyLong).toBe(false);
+  });
+
+  it("toggleBody flips bodyExpanded", () => {
+    detailCtrl.bodyExpanded = false;
+    detailCtrl.toggleBody();
+    expect(detailCtrl.bodyExpanded).toBe(true);
+    detailCtrl.toggleBody();
+    expect(detailCtrl.bodyExpanded).toBe(false);
+  });
+
+  it("selecting another commit collapses the body again", () => {
+    setDemoGraph();
+    detailCtrl.select(0);
+    detailCtrl.toggleBody();
+    expect(detailCtrl.bodyExpanded).toBe(true);
+    detailCtrl.select(1);
+    expect(detailCtrl.bodyExpanded).toBe(false);
+  });
+});

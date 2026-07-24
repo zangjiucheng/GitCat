@@ -287,12 +287,27 @@ class DetailState {
     if (this.collapsedDirs.size) this.collapsedDirs = new Set();
   }
 
+  // Whether a long commit-message body is expanded (the "Show more/less"
+  // toggle in Detail.svelte). Reset per commit in select() so each opens
+  // collapsed.
+  bodyExpanded = $state(false);
+  // "Too long to show inline" heuristic — 6+ lines or 360+ chars — drives the
+  // clamp + Show more/less toggle (see Detail.svelte). Cheap text check; no DOM
+  // measurement needed.
+  bodyLong = $derived(
+    this.bodyText !== "loading…" && ((this.bodyText.match(/\n/g)?.length ?? 0) >= 6 || this.bodyText.length > 360),
+  );
+  toggleBody() {
+    this.bodyExpanded = !this.bodyExpanded;
+  }
+
   select(row: number) {
     const c = this.commitMeta(row);
     this.commit = c;
     this.hero = null;
     this.copied = false;
     if (this.collapsedDirs.size) this.collapsedDirs = new Set(); // each commit opens fully expanded
+    this.bodyExpanded = false; // long-message toggle resets per commit
     if (!c) return;
     const live = !!bridge.BACKEND;
     if (live) {
