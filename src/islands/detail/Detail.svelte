@@ -58,6 +58,56 @@
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && detailCtrl.diffExpanded) detailCtrl.collapseDiff();
   }
+
+  // Resizable file-tree panel in the expanded-diff modal. The diff pane is
+  // white-space:pre (horizontal scroll, no wrap — see .diff-line), so resizing
+  // only changes container widths, never reflows/re-highlights the diff text —
+  // cheap enough to update live on every pointermove. Persisted to localStorage.
+  const DIFFX_TREE_MIN = 160,
+    DIFFX_TREE_MAX = 620,
+    DIFFX_TREE_DEFAULT = 280,
+    DIFFX_TREE_LS = "gitcat.diffxTreeW";
+  let diffxTreeW = $state<number>(
+    (() => {
+      const v = Number(localStorage.getItem(DIFFX_TREE_LS));
+      return Number.isFinite(v) && v >= DIFFX_TREE_MIN && v <= DIFFX_TREE_MAX ? v : DIFFX_TREE_DEFAULT;
+    })(),
+  );
+  let diffxResizing = $state(false);
+  function saveDiffxWidth() {
+    try {
+      localStorage.setItem(DIFFX_TREE_LS, String(Math.round(diffxTreeW)));
+    } catch {
+      /* private mode / quota — width just won't persist */
+    }
+  }
+  function startDiffxResize(e: PointerEvent) {
+    e.preventDefault();
+    const startX = e.clientX,
+      startW = diffxTreeW;
+    diffxResizing = true;
+    document.body.style.userSelect = "none";
+    const move = (ev: PointerEvent) => {
+      diffxTreeW = Math.max(DIFFX_TREE_MIN, Math.min(DIFFX_TREE_MAX, startW + (ev.clientX - startX)));
+    };
+    const up = () => {
+      diffxResizing = false;
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      saveDiffxWidth();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+  function onSplitterKey(e: KeyboardEvent) {
+    const step = e.shiftKey ? 32 : 8;
+    if (e.key === "ArrowLeft") diffxTreeW = Math.max(DIFFX_TREE_MIN, diffxTreeW - step);
+    else if (e.key === "ArrowRight") diffxTreeW = Math.min(DIFFX_TREE_MAX, diffxTreeW + step);
+    else return;
+    e.preventDefault();
+    saveDiffxWidth();
+  }
 </script>
 
 <svelte:window on:keydown={onKeydown} />
@@ -236,7 +286,7 @@
         </div>
       </div>
       <div class="modal-body diffx-body">
-        <div class="diffx-files">
+        <div class="diffx-files" style="width:{diffxTreeW}px">
           <div class="diffx-files-head">
             <span class="d-lab" style="margin:0">Files</span>
             {@render treeCtl()}
@@ -251,6 +301,28 @@
             {/if}
           </div>
         </div>
+        <!-- Drag to resize the file tree; double-click to reset, arrows to nudge.
+             A resize separator IS interactive (focusable + adjustable, like a
+             slider), but Svelte's a11y lint treats role="separator" as static. -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <div
+          class="diffx-splitter"
+          class:active={diffxResizing}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize file list"
+          aria-valuenow={Math.round(diffxTreeW)}
+          aria-valuemin={DIFFX_TREE_MIN}
+          aria-valuemax={DIFFX_TREE_MAX}
+          tabindex="0"
+          onpointerdown={startDiffxResize}
+          ondblclick={() => {
+            diffxTreeW = DIFFX_TREE_DEFAULT;
+            saveDiffxWidth();
+          }}
+          onkeydown={onSplitterKey}
+        ></div>
         <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
           {#if detailCtrl.diffLoading}
             <div class="diff-file-h mut"><span class="spinner"></span> loading diff&#8230;</div>

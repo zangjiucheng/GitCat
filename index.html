@@ -849,6 +849,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .diffx-files-head{display:flex;align-items:center;gap:8px;padding:10px 10px 6px;flex:none}
 .diffx-files-scroll{flex:1;min-height:0;overflow:auto;margin-top:0;padding:0 10px 10px}
 .diffx-diff{flex:1;min-width:0;min-height:0;max-height:none;border:0;border-radius:0}
+/* Drag handle between the file tree and the diff (Detail.svelte). 8px grab zone
+   with negative margins so it overlaps the .diffx-files border-right instead of
+   adding a gutter; the accent rule appears on hover/drag/keyboard-focus. */
+.diffx-splitter{flex:none;width:8px;margin:0 -4px;cursor:col-resize;position:relative;z-index:5;align-self:stretch}
+.diffx-splitter::after{content:"";position:absolute;top:0;bottom:0;left:3px;width:2px;border-radius:2px;background:transparent;transition:background .12s}
+.diffx-splitter:hover::after,.diffx-splitter.active::after,.diffx-splitter:focus-visible::after{background:var(--accent)}
+.diffx-splitter:focus-visible{outline:none}
 
 /* ============================== WORKDIR (staging + commit + stash) ==============================
    Renders in the SAME #detail slot as the sections above, swapped in by
