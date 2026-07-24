@@ -80,7 +80,7 @@ const ACTIONS: ActionItem[] = [
     type: "action",
     id: "uncommitted-changes",
     label: "Uncommitted Changes",
-    hint: "Jump to the working tree — stage hunks or lines, then commit",
+    hint: "Jump to the working tree — stage hunks or lines, then commit (⌘⇧U)",
     run: () => bridge.goToUncommitted(),
   },
   {

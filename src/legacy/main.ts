@@ -1159,6 +1159,14 @@ document.addEventListener("keydown",e=>{
     e.preventDefault(); focusRefFilter();
   }
 });
+// ⌘⇧U / Ctrl+Shift+U — jump straight to the working tree (the "Uncommitted
+// changes" row + panel), same as ⌘K ▸ Uncommitted Changes. Plain ⌘U is taken
+// (half-page scroll, see vimnav), hence Shift. Ignored while typing in a field.
+document.addEventListener("keydown",e=>{
+  if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.shiftKey&&e.key.toLowerCase()==="u"&&!e.target.closest("input,textarea,[contenteditable=true]")){
+    e.preventDefault(); goToUncommitted();
+  }
+});
 
 // theme
 function applyTheme(name){ document.documentElement.setAttribute("data-theme",name); readTheme(); saveSettings({themeMode:name}); }
