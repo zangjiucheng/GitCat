@@ -54,7 +54,7 @@ const PADX=18, ROW_H_BASE=26, LANE_W_BASE=14, DOT_R_BASE=4.6;
 // the same lane colour; CHANNEL_ALPHA = how much the lane trough [0,tx) is
 // darkened vs the message column; DIVIDER_ALPHA = the hairline between them.
 // All four are read straight by draw() — tweak the look here.
-const BRANCH_BAR_W=3, BRANCH_WASH_ALPHA=0.17, BRANCH_BAR_ALPHA=0.95, GRAPH_CHANNEL_ALPHA=0.20, GRAPH_DIVIDER_ALPHA=0.6, BRANCH_ROW_GAP=2;
+const BRANCH_BAR_W=3, BRANCH_WASH_ALPHA=0.17, BRANCH_BAR_ALPHA=0.95, GRAPH_CHANNEL_ALPHA=0.20, GRAPH_DIVIDER_ALPHA=0.6, BRANCH_ROW_GAP=3;
 // Dedicated left BRANCH / TAG column (GitKraken-style): ref labels live in a
 // fixed left gutter [0,branchColW) instead of inline before the subject, so the
 // message column stays clean and branch names align in one scannable strip. Width
@@ -367,22 +367,23 @@ function draw(){
   ctx.lineWidth=Math.max(1.7,1.9*layout.zoom); ctx.lineJoin="round"; ctx.lineCap="round";
   for(let c=0;c<NCOL;c++){const p=edgePaths[c];if(p){ctx.strokeStyle=LANE_COLORS[c];ctx.stroke(p);}}
 
-  // Branch-colour tags — a colour band from the GRAPH through the MESSAGE [bcw,W)
-  // plus a solid bar at the band's left edge (bcw), both in this commit's lane
-  // colour, so which branch a row is on reads at a glance. The band deliberately
-  // does NOT cover the left label column [0,bcw): that gutter stays neutral so the
-  // branch/tag names read cleanly, and the colour lives on the graph + message
-  // side. Each band is inset vertically by `gap` px so adjacent rows read as
-  // separate tags with a hairline of background between them; the gap shrinks to 0
-  // when rows get too short (zoomed out) to avoid fragmenting the band into noise.
-  // Batched into one Path2D per colour (like the edges) and filled BEFORE the row
-  // loop, so per-row selection/hover overlays + markers draw on top; all washes
-  // share one globalAlpha, all bars another (2 alpha writes + ≤NCOL fills).
-  const gap = rowH>=16 ? BRANCH_ROW_GAP : rowH>=11 ? 1 : 0, bandH2 = Math.max(1, rowH-2*gap), washW=Math.max(0,W-bcw);
+  // Branch-colour tags — a colour band over the GRAPH area only [bcw,tx), stopping
+  // at the message's left edge so the message text stays on a neutral background,
+  // bracketed by a solid bar on BOTH the left edge (bcw) and the right edge (just
+  // left of tx) in this commit's lane colour. The left label column [0,bcw) stays
+  // neutral too, so the colour lives purely on the graph and the right bar sits
+  // right next to the message text as the branch cue. Each band is inset
+  // vertically by `gap` px so adjacent rows read as separate tags with a gap of
+  // background between them; the gap shrinks as rows get short (zoomed out) to
+  // avoid fragmenting the band. Batched into one Path2D per colour (like the edges)
+  // and filled BEFORE the row loop, so per-row selection/hover overlays + markers
+  // draw on top; all washes share one globalAlpha, all bars another.
+  const gap = rowH>=20 ? BRANCH_ROW_GAP : rowH>=13 ? 2 : rowH>=11 ? 1 : 0, bandH2 = Math.max(1, rowH-2*gap);
+  const washW=Math.max(0,tx-bcw), rbarX=tx-BRANCH_BAR_W;
   for(let c=0;c<NCOL;c++){ washPaths[c]=null; barPaths[c]=null; }
   for(let r=first;r<=last;r++){ const c=G.commitColor[r], ry=r*rowH-st+bh+gap;
     (washPaths[c]||(washPaths[c]=new Path2D())).rect(bcw,ry,washW,bandH2);
-    (barPaths[c]||(barPaths[c]=new Path2D())).rect(bcw,ry,BRANCH_BAR_W,bandH2); }
+    const bp=barPaths[c]||(barPaths[c]=new Path2D()); bp.rect(bcw,ry,BRANCH_BAR_W,bandH2); bp.rect(rbarX,ry,BRANCH_BAR_W,bandH2); }
   ctx.globalAlpha=BRANCH_WASH_ALPHA;
   for(let c=0;c<NCOL;c++){ const p=washPaths[c]; if(p){ctx.fillStyle=LANE_COLORS[c];ctx.fill(p);} }
   ctx.globalAlpha=BRANCH_BAR_ALPHA;
