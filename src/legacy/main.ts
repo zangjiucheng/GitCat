@@ -219,7 +219,7 @@ const state={scrollTop:0,scrollTarget:0,maxScroll:0,panX:0,panTarget:0,maxPanX:0
 const REDUCE_MOTION=matchMedia("(prefers-reduced-motion:reduce)").matches;
 const view={cssW:0,cssH:0,dpr:1,renderDpr:1};
 const perf={last:performance.now(),frames:0,accum:0,fps:0,lastDrawMs:0};
-let dirty=true, lastInteracting=false, lowRes=false;
+let dirty=true, lastInteracting=false, lowRes=false, pendingClear=false;
 const edgePaths=new Array(NCOL);
 // Per-lane-colour Path2Ds for the branch-colour tags (whole-row wash + left
 // bar). Batching every visible row of the same colour into one path lets the
@@ -295,11 +295,11 @@ function resize(){
 // the LOW<->FULL transition (never per frame) and draw() re-establishes the
 // transform + all its own state. Geometry is all in CSS px (the transform scale
 // is the only thing that changes), so layout and hit-testing are untouched.
-const INTERACT_RES=0.5;
+const INTERACT_RES=0.5, MOTION_CLEAR_ALPHA=0.5;
 function setRenderDpr(d){ if(Math.abs(d-view.renderDpr)<0.01) return;
   view.renderDpr=d;
   cv.width=Math.round(view.cssW*d); cv.height=Math.round(view.cssH*d);
-  dirty=true; }
+  dirty=true; pendingClear=true; }   // first frame post-resize clears opaque (resized canvas is transparent)
 
 /* ============================================================
    4) DRAW — virtualised pass. Offscreen rows are never touched.
@@ -308,7 +308,17 @@ function draw(){
   const t0=performance.now();
   const {rowH,dotR}=layout, st=state.scrollTop, W=view.cssW, H=view.cssH, N=G.N, bh=bandH(), bcw=layout.branchColW;
   ctx.setTransform(view.renderDpr,0,0,view.renderDpr,0,0);
-  ctx.fillStyle=theme.bg; ctx.fillRect(0,0,W,H);
+  // Motion-blur trail while scrolling low-res: clear with a SEMI-transparent bg
+  // instead of an opaque one, so each frame leaves a fading ghost of the previous
+  // one. The rows scroll vertically, so the ghosts trail vertically — reading as
+  // directional motion blur, which masks the low-res upscaling so it looks
+  // intentional rather than just "blurry". An opaque clear resumes at full res,
+  // wiping the trail the instant scrolling settles. (The pinned header band and
+  // the opaque edges/dots/text redraw over their own pixels each frame, so only
+  // the moving content smears.)
+  if(lowRes&&!pendingClear){ ctx.globalAlpha=MOTION_CLEAR_ALPHA; ctx.fillStyle=theme.bg; ctx.fillRect(0,0,W,H); ctx.globalAlpha=1; }
+  else { ctx.fillStyle=theme.bg; ctx.fillRect(0,0,W,H); }
+  pendingClear=false;
   if(N===0){ if(workdirAvailable()) drawWorkdirBand(); perf.lastDrawMs=performance.now()-t0; return; }
   const first=Math.max(0,Math.min(N-1,Math.floor(st/rowH)));
   const last=Math.max(0,Math.min(N-1,Math.floor((st+H)/rowH)));
