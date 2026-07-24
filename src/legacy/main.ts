@@ -1167,6 +1167,17 @@ document.addEventListener("keydown",e=>{
     e.preventDefault(); goToUncommitted();
   }
 });
+// Remote sync: ⌘⇧D fetch (Download), ⌘⇧L pull, ⌘⇧P push — the topbar buttons'
+// keyboard twins. Each op guards on CUR_REPO / busy itself, so these just
+// invoke it. Ignored while typing in a field.
+document.addEventListener("keydown",e=>{
+  if(!(e.metaKey||e.ctrlKey)||e.altKey||!e.shiftKey) return;
+  if(e.target.closest("input,textarea,[contenteditable=true]")) return;
+  const k=e.key.toLowerCase();
+  if(k==="d"){ e.preventDefault(); doFetch(); }
+  else if(k==="l"){ e.preventDefault(); doPull(); }
+  else if(k==="p"){ e.preventDefault(); doPush(); }
+});
 
 // theme
 function applyTheme(name){ document.documentElement.setAttribute("data-theme",name); readTheme(); saveSettings({themeMode:name}); }

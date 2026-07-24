@@ -28,6 +28,12 @@
             <div><span class="mono">⌘F</span> &#8212; search code (find in file contents)</div>
             <div><span class="mono">⌘⇧F</span> &#8212; filter refs (focus the sidebar's ref search)</div>
           </div>
+          <h4 class="d-lab" style="margin-top:14px">Sync</h4>
+          <div class="pl-kv">
+            <div><span class="mono">⌘⇧D</span> &#8212; fetch (download from the remote)</div>
+            <div><span class="mono">⌘⇧L</span> &#8212; pull</div>
+            <div><span class="mono">⌘⇧P</span> &#8212; push</div>
+          </div>
           <h4 class="d-lab" style="margin-top:14px">View &amp; panels</h4>
           <div class="pl-kv">
             <div><span class="mono">⌘⇧U</span> &#8212; jump to Uncommitted changes</div>
