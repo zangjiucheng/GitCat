@@ -683,6 +683,33 @@ fn submodule_update_with_init_clones_and_checks_out_never_initialized_submodule(
     assert_eq!(row.workdir_sha.as_deref(), Some(child_c0.as_str()));
 }
 
+// Regression: a submodule pointing at an unreachable SSH remote must FAIL
+// (cleanly, fast) rather than hang. submodule_update forces `-c core.sshCommand=
+// ...BatchMode=yes...` (see its doc comment), so ssh never blocks on an
+// interactive prompt — the mechanism behind the "update submodule freezes
+// GitCat" report. 127.0.0.1:1 refuses immediately, so this is deterministic and
+// can't wedge the test.
+#[test]
+fn submodule_update_over_unreachable_ssh_fails_fast_not_hangs() {
+    let _allow = AllowFileProtocol::scoped();
+
+    let child = TempRepo::init("submodule_ssh_child");
+    child.commit("f.txt", "hello\n", "c0");
+
+    let parent = TempRepo::init("submodule_ssh_parent");
+    parent.commit("root.txt", "root\n", "p0");
+    add_submodule(&parent, &child, "sub");
+    // Repoint the submodule at an SSH URL nothing is listening on, and commit
+    // that .gitmodules change so a fresh clone inherits it.
+    parent.must(&["config", "-f", ".gitmodules", "submodule.sub.url", "ssh://git@127.0.0.1:1/x.git"]);
+    parent.must(&["commit", "-aqm", "point sub at ssh"]);
+
+    let clone = FreshClone::of(&parent, "submodule_ssh");
+    let result = tauri::async_runtime::block_on(submodule_update(clone.path(), Some("sub".to_string()), false, true));
+    assert!(!result.ok, "expected a clean failure cloning an unreachable ssh submodule, got ok");
+    assert!(!result.message.is_empty(), "a failure must carry git's message, not an empty string");
+}
+
 #[test]
 fn submodule_update_recursive_handles_nested_submodule_of_a_submodule() {
     let _allow = AllowFileProtocol::scoped();

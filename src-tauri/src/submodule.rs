@@ -704,6 +704,22 @@ pub async fn submodule_init(path: String, submodule_path: String) -> WriteResult
 /// Tauri's blocking-task thread pool, matching `dashboard_repo_status`/
 /// `workdir_status`'s established fix.
 /// JS call: `invoke("submodule_update", { path, submodulePath?, recursive, init })`.
+///
+/// SSH hardening forced onto every submodule clone/fetch, passed as a
+/// `-c core.sshCommand` git config (NOT the `GIT_SSH_COMMAND` env var — git
+/// strips `GIT_*` from the environment of the child `git clone` a submodule
+/// update spawns, so an env var never reaches it; a `-c` config value does,
+/// verified empirically). `BatchMode=yes` is the load-bearing one: it stops ssh
+/// from EVER prompting (unknown host key, key passphrase). Those prompts are
+/// what make ssh invoke GitCat-as-`SSH_ASKPASS` from deep in the submodule's
+/// process tree, which could wedge the whole window (the "update submodule
+/// freezes GitCat / must force-quit" report) — with BatchMode it fails fast with
+/// a clear message ("Host key verification failed" / "Permission denied")
+/// instead, which the resolver surfaces verbatim. ConnectTimeout / ServerAlive*
+/// bound a stalled or silently-dropped network so it can't hang either. A
+/// submodule to an ALREADY-trusted host with a working key/agent is unaffected.
+const SUBMODULE_SSH: &str =
+    "core.sshCommand=ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4";
 #[tauri::command]
 #[specta::specta]
 pub async fn submodule_update(path: String, submodule_path: Option<String>, recursive: bool, init: bool) -> WriteResult {
@@ -713,7 +729,7 @@ pub async fn submodule_update(path: String, submodule_path: Option<String>, recu
                 return err_result(e);
             }
         }
-        let mut args: Vec<&str> = vec!["submodule", "update"];
+        let mut args: Vec<&str> = vec!["-c", SUBMODULE_SSH, "submodule", "update"];
         if init {
             args.push("--init");
         }
@@ -857,7 +873,7 @@ pub async fn submodule_add(
             }
         }
 
-        let mut args: Vec<&str> = vec!["submodule", "add"];
+        let mut args: Vec<&str> = vec!["-c", SUBMODULE_SSH, "submodule", "add"];
         if let Some(b) = &branch {
             args.push("-b");
             args.push(b.as_str());
