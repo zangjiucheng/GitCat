@@ -115,11 +115,6 @@ let graphGeneration=0;
 // onGraphBatch()'s own `done` handling) — a fresh openRepo() never sets this,
 // since there's nothing to restore on a brand new open.
 let pendingReselect=null;
-// Last time onGraphBatch() forced a real (not just dirty-flagged) draw() —
-// see its own doc comment on why a throttled explicit draw is needed to keep
-// the canvas painting incrementally during a burst of rapid "graph-batch"
-// events, instead of only catching up once the burst quiets down.
-let lastForcedDrawAt=0;
 export let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it — exported (live binding) for the Svelte islands via bridge.ts
 const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
 const tinvoke = (cmd, args={}) => window.__TAURI__.core.invoke(cmd, args);
@@ -1824,8 +1819,17 @@ function onGraphBatch(payload){
   // throttled to roughly one per frame, guarantees the canvas keeps actually
   // painting DURING a burst rather than only after it, without redundantly
   // redrawing far more often than the display can even show.
-  const __now=performance.now();
-  if(payload.done || __now-lastForcedDrawAt>=16){ lastForcedDrawAt=__now; draw(); dirty=false; }
+  // Just flag the canvas dirty and let the rAF tick() loop coalesce painting to
+  // ONE draw per frame. This used to force a synchronous draw() here on a
+  // WALL-CLOCK 16ms gate — but on a slow (software-rasterised) canvas each
+  // onGraphBatch already takes far longer than 16ms, so the gate passed on EVERY
+  // batch, turning a backlog of N queued "graph-batch" events into N full
+  // back-to-back draws. Opening a second large repo mid-stream then had to drain
+  // that whole backlog (each batch = append + a full ~70ms draw) before the new
+  // load's generation flip made the rest cheap, freezing the main thread for tens
+  // of seconds. onGraphBatch is now cheap (append + flag), so the queue drains
+  // fast and tick() still paints the graph growing in a frame at a time.
+  dirty=true;
   // Live-update the top-right loading pill's count, and hide it on `done` (which
   // fires for success, truncation AND error — see below), so it never sticks.
   setGraphLoadingPill(!payload.done, BACKEND.n);
@@ -1895,6 +1899,16 @@ let openRepoBusy=false;
 async function openRepo(path){
   if(openRepoBusy) return false;
   openRepoBusy=true;
+  // Invalidate any still-streaming graph's generation RIGHT NOW — before the
+  // awaits below (and before startGraphStream() sets the real one for this open).
+  // If the previous repo was still streaming in, its already-queued "graph-batch"
+  // events would otherwise drain as the CURRENT generation (each paying a full
+  // append + draw) until startGraphStream() finally flips the generation several
+  // awaits later; bumping it here makes those stale batches hit onGraphBatch's
+  // cheap early-return immediately, so opening a second large repo mid-stream
+  // doesn't have a backlog to churn through. startGraphStream() bumps again for
+  // the new stream, which is what the backend's request_id will actually match.
+  graphGeneration = ++graphRequestSeq;
   // An automated bisect run (bisect_run_start) is a real, long-lived blocking
   // Tauri call actually executing the user's command against THIS repo's
   // working tree. Switching repos out from under it would leave it running
