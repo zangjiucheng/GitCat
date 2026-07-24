@@ -55,6 +55,13 @@ const PADX=18, ROW_H_BASE=26, LANE_W_BASE=14, DOT_R_BASE=4.6;
 // darkened vs the message column; DIVIDER_ALPHA = the hairline between them.
 // All four are read straight by draw() — tweak the look here.
 const BRANCH_BAR_W=3, BRANCH_WASH_ALPHA=0.17, BRANCH_BAR_ALPHA=0.95, GRAPH_CHANNEL_ALPHA=0.20, GRAPH_DIVIDER_ALPHA=0.6, BRANCH_ROW_GAP=2;
+// Dedicated left BRANCH / TAG column (GitKraken-style): ref labels live in a
+// fixed left gutter [0,branchColW) instead of inline before the subject, so the
+// message column stays clean and branch names align in one scannable strip. Width
+// is ~19% of the graph, clamped to [MIN,MAX]; it collapses to 0 (falling back to
+// inline chips) when the window is too narrow to spare a column. BRANCH_PAD_L is
+// the label's left inset inside the gutter.
+const BRANCH_COL_MIN=118, BRANCH_COL_MAX=216, BRANCH_PAD_L=12;
 // Right-edge gutter reserved for the sha (was the ONLY thing living there —
 // hence the old bare "96") plus the author-name preview added alongside it
 // (see draw()'s row loop / authorOf() above): 96 for the sha itself, 8px gap,
@@ -187,7 +194,7 @@ function generateGraph(N){
    3) RENDER STATE
    ============================================================ */
 const cv=$("#cv"), ctx=cv.getContext("2d"), wrap=$("#canvasWrap");
-const layout={zoom:1,rowH:ROW_H_BASE,laneW:LANE_W_BASE,dotR:DOT_R_BASE,chipFont:"11px "+FONT_UI,contentH:0};
+const layout={zoom:1,rowH:ROW_H_BASE,laneW:LANE_W_BASE,dotR:DOT_R_BASE,chipFont:"11px "+FONT_UI,contentH:0,branchColW:0};
 // panX/panTarget/maxPanX: HORIZONTAL counterpart to scrollTop/scrollTarget/
 // maxScroll above — a repo with an extremely wide stretch of history (many
 // simultaneously open branch lanes, e.g. hundreds of concurrently active
@@ -214,7 +221,7 @@ const edgePaths=new Array(NCOL);
 // tag pass cost 2 globalAlpha writes + ≤NCOL fills per frame instead of the old
 // 2 fillRects + 3 state changes PER ROW (which janked scroll/pan on tall windows).
 const washPaths=new Array(NCOL), barPaths=new Array(NCOL);
-const laneX=(l)=>PADX+l*layout.laneW-state.panX;
+const laneX=(l)=>layout.branchColW+PADX+l*layout.laneW-state.panX;
 const clampScroll=(v)=>v<0?0:(v>state.maxScroll?state.maxScroll:v);
 const clampPan=(v)=>v<0?0:(v>state.maxPanX?state.maxPanX:v);
 
@@ -224,6 +231,12 @@ function recomputeLayout(){
   layout.laneW=LANE_W_BASE*(0.85+0.15*z);
   layout.dotR=DOT_R_BASE*(0.85+0.15*z);
   layout.chipFont=Math.round(11*Math.min(1.3,z))+"px "+FONT_UI;
+  // Left branch/tag column width: ~19% of the graph, clamped to [MIN,MAX], but
+  // never so wide that the graph lanes + subject lose their room — collapses to 0
+  // (inline chips, the pre-column behaviour) when the window is too narrow.
+  let bcw=Math.round(Math.min(BRANCH_COL_MAX,Math.max(BRANCH_COL_MIN,view.cssW*0.19)));
+  if(bcw>view.cssW-AUTHOR_GUTTER-MIN_SUBJECT_W-120) bcw=0;
+  layout.branchColW=(G&&G.N&&view.cssW>0)?bcw:0;
   layout.contentH=(G?G.N:0)*layout.rowH;
   // +bandH(): the pinned header steals bandH() px of on-screen vertical
   // space from every real row (see bandH()'s own comment + the doc block
@@ -245,7 +258,7 @@ function recomputeLayout(){
   // same as before this feature existed) whenever the graph is narrow enough
   // to fit already — the overwhelmingly common case.
   const widestLaneX=Math.max(0,((G?G.laneCount:0)-1))*layout.laneW;
-  state.maxPanX=Math.max(0,widestLaneX-(view.cssW-PADX*2));
+  state.maxPanX=Math.max(0,widestLaneX-(view.cssW-layout.branchColW-PADX*2));
   state.panTarget=clampPan(state.panTarget); state.panX=clampPan(state.panX);
   dirty=true;
 }
@@ -260,7 +273,7 @@ function resize(){
    ============================================================ */
 function draw(){
   const t0=performance.now();
-  const {rowH,dotR}=layout, st=state.scrollTop, W=view.cssW, H=view.cssH, N=G.N, bh=bandH();
+  const {rowH,dotR}=layout, st=state.scrollTop, W=view.cssW, H=view.cssH, N=G.N, bh=bandH(), bcw=layout.branchColW;
   ctx.setTransform(view.dpr,0,0,view.dpr,0,0);
   ctx.fillStyle=theme.bg; ctx.fillRect(0,0,W,H);
   if(N===0){ if(workdirAvailable()) drawWorkdirBand(); perf.lastDrawMs=performance.now()-t0; return; }
@@ -303,12 +316,17 @@ function draw(){
   // that wide, not by widening this column past the point of collision.
   const tx=Math.min(laneX(maxLane)+dotR+14,W-AUTHOR_GUTTER-MIN_SUBJECT_W);
 
-  // Recessed graph channel: the lanes sit in their own slightly darker trough
-  // [0,tx), fenced off from the message column by a hairline divider, so the
-  // busy colored center reads as a distinct channel from the text on the right.
-  // Drawn here (before edges/rows) so it stays BEHIND the branch lines and dots.
-  ctx.fillStyle="#000"; ctx.globalAlpha=GRAPH_CHANNEL_ALPHA; ctx.fillRect(0,0,tx,H); ctx.globalAlpha=1;
-  ctx.fillStyle=theme.border; ctx.globalAlpha=GRAPH_DIVIDER_ALPHA; ctx.fillRect(Math.round(tx)-0.5,0,1,H); ctx.globalAlpha=1;
+  // Recessed graph channel: the lanes sit in their own slightly darker trough,
+  // the GRAPH area only [bcw,tx). The branch column to its left [0,bcw) is a label
+  // gutter, NOT part of the darkened lane channel; the message column is to the
+  // right of tx. A hairline divider fences off both the branch column (at bcw) and
+  // the message column (at tx) so the three zones read as distinct columns like
+  // the reference. Drawn before edges/rows so it stays BEHIND the lines and dots.
+  ctx.fillStyle="#000"; ctx.globalAlpha=GRAPH_CHANNEL_ALPHA; ctx.fillRect(bcw,0,Math.max(0,tx-bcw),H); ctx.globalAlpha=1;
+  ctx.fillStyle=theme.border; ctx.globalAlpha=GRAPH_DIVIDER_ALPHA;
+  ctx.fillRect(Math.round(tx)-0.5,0,1,H);
+  if(bcw>0) ctx.fillRect(Math.round(bcw)-0.5,0,1,H);
+  ctx.globalAlpha=1;
 
   // bisect band (behind everything) — real rows are offset by +bh (see bandH())
   if(B){ for(let r=first;r<=last;r++){ const y=r*rowH-st+bh;
@@ -371,17 +389,21 @@ function draw(){
     else if(r===state.hoverRow){ctx.beginPath();ctx.arc(x,y,dotR+2.6,0,TAU);ctx.strokeStyle=theme.muted;ctx.lineWidth=1;ctx.stroke();}
     if(bisectDrawerCtrl.cur!=null&&r===bisectDrawerCtrl.cur&&r!==state.selectedRow){ctx.beginPath();ctx.arc(x,y,dotR+3.4,0,TAU);ctx.strokeStyle=theme.accent;ctx.lineWidth=2;ctx.stroke();}
     let cx=tx; ctx.font=layout.chipFont;
-    // BUG FIX: a long tag/branch label (or, with "show every tag" on, several
-    // chained onto one commit) used to draw at its full natural width with
-    // nothing bounding cx afterward — same overlap class the tx-clamp above
-    // already fixes for wide lane stretches, just triggered by chip content
-    // instead of lane count. chipLimit mirrors tx's own reservation (leave at
-    // least MIN_SUBJECT_W for the subject column before the author/sha
-    // gutter starts) — drawChip now truncates a chip that would cross it, and
-    // the loop below stops adding MORE chips once there's no room left at all.
-    const chipLimit=W-AUTHOR_GUTTER-MIN_SUBJECT_W;
-    if(showAllTags&&G.allRefs){ const list=G.allRefs[r]; for(let i=0;i<list.length&&cx<chipLimit;i++) cx=drawChip(cx,y,list[i].label,list[i].kind,chipLimit-cx)+8; }
-    else { const ref=G.refs[r]; if(ref&&cx<chipLimit) cx=drawChip(cx,y,ref.label,ref.kind,chipLimit-cx)+8; }
+    // Ref labels. In column mode (bcw>0) they live in the left BRANCH/TAG gutter
+    // [BRANCH_PAD_L,bcw), left-aligned and tinted in THIS row's branch colour (so
+    // the label matches the row's band), and the subject stays put at tx. When
+    // the window is too narrow for a column (bcw===0) we fall back to the old
+    // inline chips just right of the graph, advancing cx so the subject follows.
+    // drawChip truncates a label that would cross its limit and stops the loop
+    // once no room is left, so a long/multi-ref row never garbles the next column.
+    const bcol=LANE_COLORS[G.commitColor[r]];
+    if(bcw>0){ const bxLimit=bcw-6; let bxc=BRANCH_PAD_L;
+      if(showAllTags&&G.allRefs){ const list=G.allRefs[r]; for(let i=0;i<list.length&&bxc<bxLimit;i++) bxc=drawChip(bxc,y,list[i].label,list[i].kind,bxLimit-bxc,bcol)+6; }
+      else { const ref=G.refs[r]; if(ref&&bxc<bxLimit) drawChip(bxc,y,ref.label,ref.kind,bxLimit-bxc,bcol); }
+    } else { const chipLimit=W-AUTHOR_GUTTER-MIN_SUBJECT_W;
+      if(showAllTags&&G.allRefs){ const list=G.allRefs[r]; for(let i=0;i<list.length&&cx<chipLimit;i++) cx=drawChip(cx,y,list[i].label,list[i].kind,chipLimit-cx)+8; }
+      else { const ref=G.refs[r]; if(ref&&cx<chipLimit) cx=drawChip(cx,y,ref.label,ref.kind,chipLimit-cx)+8; }
+    }
     if(rowH>=15){
       // Reserve room for BOTH the author preview and the sha (AUTHOR_GUTTER
       // below) — previously only the sha itself (96px) was reserved, so
@@ -461,8 +483,8 @@ function drawWorkdirBand(){
 // already use. `maxWidth<=pad*2+8` means there's no usable room at all
 // (not even a one-char label plus ellipsis would read as anything but a
 // sliver) — draws nothing and returns `x` unchanged rather than a garbled chip.
-function drawChip(x,y,label,kind,maxWidth){
-  const col=kind==="branch"?LANE_COLORS[0]:kind==="tag"?theme.accent2||"#7FB6A6":theme.accent;
+function drawChip(x,y,label,kind,maxWidth,colorOverride){
+  const col=colorOverride||(kind==="branch"?LANE_COLORS[0]:kind==="tag"?theme.accent2||"#7FB6A6":theme.accent);
   ctx.font=layout.chipFont;
   const pad=6;
   if(maxWidth!=null&&maxWidth<=pad*2+8) return x;
