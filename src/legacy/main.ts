@@ -217,9 +217,9 @@ const state={scrollTop:0,scrollTarget:0,maxScroll:0,panX:0,panTarget:0,maxPanX:0
 // transition. Checked once, like TamaMascot's own `this.reduced` (this file
 // has no live matchMedia listener anywhere, by the same precedent).
 const REDUCE_MOTION=matchMedia("(prefers-reduced-motion:reduce)").matches;
-const view={cssW:0,cssH:0,dpr:1};
+const view={cssW:0,cssH:0,dpr:1,renderDpr:1};
 const perf={last:performance.now(),frames:0,accum:0,fps:0,lastDrawMs:0};
-let dirty=true, lastInteracting=false;
+let dirty=true, lastInteracting=false, lowRes=false;
 const edgePaths=new Array(NCOL);
 // Per-lane-colour Path2Ds for the branch-colour tags (whole-row wash + left
 // bar). Batching every visible row of the same colour into one path lets the
@@ -281,9 +281,25 @@ function recomputeLayout(){
 }
 function resize(){
   const r=wrap.getBoundingClientRect(); view.cssW=r.width; view.cssH=r.height; view.dpr=window.devicePixelRatio||1;
-  cv.width=Math.round(view.cssW*view.dpr); cv.height=Math.round(view.cssH*view.dpr);
-  ctx.setTransform(view.dpr,0,0,view.dpr,0,0); recomputeLayout(); positionTicks();
+  view.renderDpr=view.dpr;
+  cv.width=Math.round(view.cssW*view.renderDpr); cv.height=Math.round(view.cssH*view.renderDpr);
+  ctx.setTransform(view.renderDpr,0,0,view.renderDpr,0,0); recomputeLayout(); positionTicks();
 }
+// Software-raster fast path (see tick()): while actively scrolling/panning, drop
+// the canvas backing store to a fraction of its full pixel count so a webview
+// that rasterises the canvas in SOFTWARE (no GPU — as the dev webview does, where
+// draw() runs ~35x slower than a GPU browser) pushes far fewer pixels per frame.
+// The CSS box is unchanged, so the browser just upscales the smaller buffer and
+// the motion hides the blur; it snaps back to full DPR the instant scrolling
+// settles. Changing cv.width clears + resets the context, so this only runs on
+// the LOW<->FULL transition (never per frame) and draw() re-establishes the
+// transform + all its own state. Geometry is all in CSS px (the transform scale
+// is the only thing that changes), so layout and hit-testing are untouched.
+const INTERACT_RES=0.5;
+function setRenderDpr(d){ if(Math.abs(d-view.renderDpr)<0.01) return;
+  view.renderDpr=d;
+  cv.width=Math.round(view.cssW*d); cv.height=Math.round(view.cssH*d);
+  dirty=true; }
 
 /* ============================================================
    4) DRAW — virtualised pass. Offscreen rows are never touched.
@@ -291,7 +307,7 @@ function resize(){
 function draw(){
   const t0=performance.now();
   const {rowH,dotR}=layout, st=state.scrollTop, W=view.cssW, H=view.cssH, N=G.N, bh=bandH(), bcw=layout.branchColW;
-  ctx.setTransform(view.dpr,0,0,view.dpr,0,0);
+  ctx.setTransform(view.renderDpr,0,0,view.renderDpr,0,0);
   ctx.fillStyle=theme.bg; ctx.fillRect(0,0,W,H);
   if(N===0){ if(workdirAvailable()) drawWorkdirBand(); perf.lastDrawMs=performance.now()-t0; return; }
   const first=Math.max(0,Math.min(N-1,Math.floor(st/rowH)));
@@ -1564,6 +1580,14 @@ function tick(now){
   }
   state.isInteracting=dirty||state.pointerActive;
   if(state.isInteracting!==lastInteracting){Tama.setInteracting(state.isInteracting);lastInteracting=state.isInteracting;}
+  // Render at reduced resolution while there's real scroll/pan MOTION in flight
+  // (or the stress test is running), full resolution once it settles — see
+  // setRenderDpr(). Hysteresis (enter >10px of pending motion, leave <3px) keeps
+  // it from flip-flopping the canvas size at the boundary; a mere hover/selection
+  // redraw leaves the scroll targets untouched, so it stays crisp.
+  const pend=Math.abs(state.scrollTarget-state.scrollTop)+Math.abs(state.panTarget-state.panX);
+  if(state.stress||pend>10) lowRes=true; else if(pend<3) lowRes=false;
+  setRenderDpr(lowRes?Math.max(0.5,view.dpr*INTERACT_RES):view.dpr);
   if(dirty){draw();dirty=false;}
   perf.frames++; perf.accum+=dt;
   if(perf.accum>=400){ perf.fps=perf.frames*1000/perf.accum; perf.frames=0; perf.accum=0;
