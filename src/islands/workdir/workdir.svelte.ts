@@ -695,6 +695,37 @@ class WorkdirState {
     }
   }
 
+  // Symmetric counterpart to stageAll — unstage every staged path in one call
+  // (`git reset`, index back to HEAD, working tree untouched). Own busyTarget
+  // (`__unstage_all__`) so its button spinner is distinct from Stage-all's.
+  async unstageAll(repo: string) {
+    if (this.busy) return;
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say("Unstaged all changes (demo).");
+      return;
+    }
+    this.busy = true;
+    this.busyTarget = "__unstage_all__";
+    bridge.tama.set("thinking");
+    try {
+      const res = await commands.unstageAll(repo);
+      if (res.ok) {
+        bridge.tama.set("hint");
+        bridge.tama.say(res.message || "Unstaged all changes.", 1800);
+        await this.refreshStatus(repo);
+      } else {
+        bridge.tama.warn(res.message || "Couldn't unstage everything.");
+      }
+    } catch (e) {
+      bridge.tama.warn("Unstage all failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+    }
+  }
+
   // ── discard (destructive — routes through the shared typed-confirm scrim
   //    first, exactly like sidebarCtrl.deleteBranch) ──────────────────────
   confirmDiscard(file: string, untracked: boolean) {

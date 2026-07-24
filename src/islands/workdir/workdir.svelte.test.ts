@@ -27,6 +27,7 @@ vi.mock("../../ipc/bindings", () => ({
     stageFile: vi.fn(),
     unstageFile: vi.fn(),
     stageAll: vi.fn(),
+    unstageAll: vi.fn(),
     discardFile: vi.fn(),
     stageLines: vi.fn(),
     unstageLines: vi.fn(),
@@ -405,6 +406,17 @@ describe("stageFile / unstageFile / stageAll", () => {
     expect(workdirCtrl.busyTarget).toBe("__all__");
     await p;
     expect(commands.stageAll).toHaveBeenCalledWith("/repo");
+    expect(commands.workdirStatus).toHaveBeenCalled();
+  });
+
+  it("unstageAll: uses the __unstage_all__ busy sentinel and re-fetches status", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.unstageAll).mockResolvedValueOnce(wres({ ok: true, message: "Unstaged all changes." }));
+    vi.mocked(commands.workdirStatus).mockResolvedValueOnce(ok(STATUS_CLEAN));
+    const p = workdirCtrl.unstageAll("/repo");
+    expect(workdirCtrl.busyTarget).toBe("__unstage_all__");
+    await p;
+    expect(commands.unstageAll).toHaveBeenCalledWith("/repo");
     expect(commands.workdirStatus).toHaveBeenCalled();
   });
 

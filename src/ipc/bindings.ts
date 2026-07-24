@@ -496,6 +496,16 @@ async stageAll(path: string) : Promise<WorkdirResult> {
     return await TAURI_INVOKE("stage_all", { path });
 },
 /**
+ * Unstage every staged path — `git reset -q` (a mixed reset: the index goes
+ * back to HEAD, the working tree is untouched), the symmetric counterpart to
+ * `stage_all`. Off the main thread for the same reason (a big index reset
+ * shouldn't freeze the window).
+ * JS: `invoke("unstage_all", { path })`.
+ */
+async unstageAll(path: string) : Promise<WorkdirResult> {
+    return await TAURI_INVOKE("unstage_all", { path });
+},
+/**
  * Discard unstaged changes to one file. Destructive: this is the ONE gap the
  * Safety-Manager ref mechanism cannot cover (see doc comment), so it ALWAYS
  * writes a content backup first, then mutates. `untracked=false` restores a

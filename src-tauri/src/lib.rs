@@ -81,6 +81,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         workdir::stage_file,
         workdir::unstage_file,
         workdir::stage_all,
+        workdir::unstage_all,
         workdir::discard_file,
         // Workdir: hunk/line-level staging (stage/unstage/discard a SUBSET of
         // a file's +/- lines, not the whole file)

@@ -837,6 +837,22 @@ pub async fn stage_all(path: String) -> WorkdirResult {
     .await
 }
 
+/// Unstage every staged path — `git reset -q` (a mixed reset: the index goes
+/// back to HEAD, the working tree is untouched), the symmetric counterpart to
+/// `stage_all`. Off the main thread for the same reason (a big index reset
+/// shouldn't freeze the window).
+/// JS: `invoke("unstage_all", { path })`.
+#[tauri::command]
+#[specta::specta]
+pub async fn unstage_all(path: String) -> WorkdirResult {
+    crate::blocking::run_blocking(move || match git(&path, &["reset", "-q"], false) {
+        Ok(out) if out.ok => WorkdirResult::ok("Unstaged all changes.", None),
+        Ok(out) => WorkdirResult::err(git_msg(&out)),
+        Err(e) => WorkdirResult::err(e),
+    })
+    .await
+}
+
 // ---------------------------------------------------------------------------
 // Write: discard (destructive — content-backup safety net, see doc comment)
 // ---------------------------------------------------------------------------

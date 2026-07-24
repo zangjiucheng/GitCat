@@ -478,6 +478,24 @@ fn run_commit_msg_command(path: &str, cmd: &str) -> Result<String, String> {
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        // Interactive "generate-and-commit" tools (aicommit2, plain aicommit, …)
+        // try to open a prompt on the terminal. GitCat runs the command
+        // non-interactively with a nulled stdin (so it can't hang), so their
+        // readline/inquirer layer crashes on the closed stdin (ERR_USE_AFTER_
+        // CLOSE / "not a tty"). Detect that shape and explain it, rather than
+        // dumping the raw Node stack — the fix is a PRINT-only command, not a
+        // tool that owns the whole commit flow itself.
+        let blob = format!("{}\n{}", stderr, stdout).to_lowercase();
+        let looks_interactive = [
+            "err_use_after_close", "readline", "inquirer", "raw mode", "isatty", "not a tty", "enotty", "/dev/tty",
+        ]
+        .iter()
+        .any(|m| blob.contains(m));
+        if looks_interactive {
+            return Err(
+                "This command is interactive — it tried to prompt for input. GitCat runs it non-interactively and reads the message from its output, so configure a command that just PRINTS a commit message and exits (e.g. `opencommit --dry-run`, or a small script). Interactive 'generate-and-commit' tools like aicommit2 own the whole commit themselves and can't be used here.".to_string(),
+            );
+        }
         let detail = if !stderr.is_empty() { stderr } else if !stdout.is_empty() { stdout } else { format!("exited with status {}", out.status.code().unwrap_or(-1)) };
         return Err(format!("The commit-message command failed: {detail}"));
     }
@@ -974,5 +992,22 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let err = run_commit_msg_command(dir.to_str().unwrap(), "true").unwrap_err();
         assert!(err.to_lowercase().contains("no output"), "got: {err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_commit_msg_command_recognizes_an_interactive_tool_crash() {
+        // Reproduces aicommit2's failure shape: a non-zero exit whose stderr is
+        // the inquirer/readline "closed stdin" crash. The error must explain the
+        // interactive mismatch, not just echo the raw stack.
+        let dir = temp_dir("gen-interactive");
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = run_commit_msg_command(
+            dir.to_str().unwrap(),
+            "echo 'Error [ERR_USE_AFTER_CLOSE]: readline was closed' >&2; exit 1",
+        )
+        .unwrap_err();
+        assert!(err.to_lowercase().contains("interactive"), "should flag interactivity, got: {err}");
+        assert!(!err.contains("ERR_USE_AFTER_CLOSE"), "should not dump the raw node stack, got: {err}");
     }
 }

@@ -11,7 +11,7 @@ use gitcat_lib::git_write::checkout;
 use gitcat_lib::model::DiffHunkRow;
 use gitcat_lib::safety::{list_snapshots, undo};
 use gitcat_lib::workdir::{
-    commit, discard_file, discard_lines, stage_all, stage_file, stage_lines, stash_apply,
+    commit, discard_file, discard_lines, stage_all, stage_file, stage_lines, stash_apply, unstage_all,
     stash_conflict_abort, stash_conflict_continue, stash_drop, stash_list, stash_pop, stash_save,
     stash_undo_apply, unstage_file, unstage_lines, workdir_file_diff, workdir_status, HunkSelection,
     SelectedLine,
@@ -104,6 +104,27 @@ fn stage_all_stages_every_unstaged_and_untracked_path() {
     let status = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
     assert!(status.unstaged.is_empty());
     assert_eq!(status.staged.len(), 3);
+}
+
+#[test]
+fn unstage_all_moves_every_staged_path_back_to_unstaged() {
+    let repo = TempRepo::init("workdir_unstage_all");
+    let _c0 = repo.commit("a.txt", "0\n", "c0");
+    let path = repo.path();
+
+    std::fs::write(repo.dir.join("a.txt"), "1\n").unwrap(); // modified
+    std::fs::write(repo.dir.join("c.txt"), "new\n").unwrap(); // untracked
+    assert!(tauri::async_runtime::block_on(stage_all(path.clone())).ok);
+    let before = tauri::async_runtime::block_on(workdir_status(path.clone())).unwrap();
+    assert_eq!(before.staged.len(), 2);
+
+    let res = tauri::async_runtime::block_on(unstage_all(path.clone()));
+    assert!(res.ok, "unstage_all failed: {}", res.message);
+    assert!(res.backup_ref.is_none(), "unstage_all must not snapshot");
+
+    let after = tauri::async_runtime::block_on(workdir_status(path)).unwrap();
+    assert!(after.staged.is_empty(), "expected nothing staged, got {}", after.staged.len());
+    assert_eq!(after.unstaged.len(), 2, "both files return to unstaged");
 }
 
 #[test]

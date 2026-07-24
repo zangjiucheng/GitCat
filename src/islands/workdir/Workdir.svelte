@@ -110,9 +110,14 @@
   <section>
     <div class="wd-sec-head">
       <h4 class="d-lab" style="margin:0">Staged ({workdirCtrl.status?.staged.length ?? 0})</h4>
-      {#if workdirCtrl.stagedHasDirs}
-        <div class="wd-sec-actions">{@render treeCtl("staged", workdirCtrl.stagedHasDirs)}</div>
-      {/if}
+      <div class="wd-sec-actions">
+        {@render treeCtl("staged", workdirCtrl.stagedHasDirs)}
+        {#if workdirCtrl.status?.staged.length}
+          <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageAll(repo())}>
+            {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__unstage_all__"}<span class="spinner"></span>{:else}Unstage all{/if}
+          </button>
+        {/if}
+      </div>
     </div>
     {#if !workdirCtrl.status?.staged.length}
       <div class="mut" style="font-size:12px">nothing staged</div>

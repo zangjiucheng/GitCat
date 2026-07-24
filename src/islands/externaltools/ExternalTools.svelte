@@ -100,8 +100,9 @@
           />
         </div>
         <p class="mut" style="font-size:11.5px;margin:2px 0 0">
-          Runs in the repo; its output fills the commit message (the &#10024; button in the commit box). GitCat talks to no AI itself &#8212; the
-          command is entirely yours (<code>aicommit</code>, <code>opencommit</code>, a script&#8230;).
+          Must <b>print the message and exit</b> (non-interactive) &#8212; GitCat runs it in the repo and its output fills the commit box (the
+          &#10024; button). GitCat talks to no AI itself; the command is entirely yours. Works: <code>opencommit --dry-run</code>, a script/LLM
+          CLI. Won't work: interactive tools like <code>aicommit2</code> that prompt you and commit themselves.
         </p>
       {/if}
     </div>
