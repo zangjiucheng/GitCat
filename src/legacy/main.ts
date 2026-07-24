@@ -1714,10 +1714,30 @@ function loadGraph(N){
 // records it SYNCHRONOUSLY, before the `await` even starts, so no event can
 // ever arrive "too early" relative to it.
 let graphRequestSeq=0;
+// Top-right "still loading" pill (see #loadingPill / index.html). Shown for the
+// whole graph stream — from startGraphStream() until onGraphBatch() sees the
+// stream's `done` — since the centered overlay hides on the FIRST batch while the
+// rest keeps streaming in. `count` (the commits streamed so far) gives live
+// progress so it reads as "still working" rather than a static spinner.
+let loadingPillTimer=null;
+function setGraphLoadingPill(on,count){
+  const p=$("#loadingPill"); if(!p) return;
+  if(on){
+    const l=$("#loadingPillLabel"); if(l) l.textContent = count!=null&&count>0 ? "Loading… "+count.toLocaleString() : "Loading…";
+    // Delay the reveal so a repo that loads in well under this never flashes the
+    // pill — only a genuinely-still-loading stream (which clears the timer late)
+    // ever actually shows it.
+    if(!p.classList.contains("show") && loadingPillTimer==null) loadingPillTimer=setTimeout(()=>{ loadingPillTimer=null; p.classList.add("show"); },180);
+  } else {
+    if(loadingPillTimer!=null){ clearTimeout(loadingPillTimer); loadingPillTimer=null; }
+    p.classList.remove("show");
+  }
+}
 async function startGraphStream(path){
   const myGen = ++graphRequestSeq;
   graphGeneration = myGen;
   BACKEND = { n:0, lane:[], color:[], merge:[], gapStart:[0], gapTop:[], gapBot:[], gapColor:[], rows:[], refs:[], allRefs:[], ncol:7, laneCount:0 };
+  setGraphLoadingPill(true,0);
   await tinvoke("load_graph", { path, requestId: myGen });
   return myGen;
 }
@@ -1806,6 +1826,9 @@ function onGraphBatch(payload){
   // redrawing far more often than the display can even show.
   const __now=performance.now();
   if(payload.done || __now-lastForcedDrawAt>=16){ lastForcedDrawAt=__now; draw(); dirty=false; }
+  // Live-update the top-right loading pill's count, and hide it on `done` (which
+  // fires for success, truncation AND error — see below), so it never sticks.
+  setGraphLoadingPill(!payload.done, BACKEND.n);
 
   if(payload.done){
     if(payload.error){ Tama.warn("Loading history stopped early — "+payload.error,5000); }
@@ -1980,7 +2003,7 @@ async function openRepo(path){
     // repo — same as watch_repo/track_repo_opened above.
     await repoSummaryCtrl.maybeAutoShow(path);
     return true;
-  }catch(e){ Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); return false; }
+  }catch(e){ setGraphLoadingPill(false); Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); return false; }
   finally{ openRepoBusy=false; if(pickBtn){ pickBtn.disabled=false; if(pickSpinner) pickSpinner.remove(); } if(backBtn) backBtn.disabled=false; if(graphLoading) graphLoading.style.display="none"; }
 }
 /* ------------------------------------------------------------
