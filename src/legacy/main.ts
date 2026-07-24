@@ -663,6 +663,19 @@ function dividerAt(x){ const bcw=layout.branchColW; if(bcw<=0) return null;
   if(Math.abs(x-bcw)<=COL_HANDLE) return "branch";
   if(lastTx>bcw+COL_HANDLE&&Math.abs(x-lastTx)<=COL_HANDLE) return "graph";
   return null; }
+// The ref chip(s) at screen-x `mx` in `row`'s BRANCH/TAG gutter, or null when mx
+// isn't over a labelled gutter cell — the hover-tooltip + right-click-checkout
+// target. Returns the whole ref list so the tooltip shows every co-located ref
+// and the context menu can offer each branch.
+function labelAt(mx,row){
+  if(!G||layout.branchColW<=0||mx>=layout.branchColW||row<0) return null;
+  if(showAllTags&&G.allRefs){ const l=G.allRefs[row]; return l&&l.length?l:null; }
+  const ref=G.refs&&G.refs[row]; return ref?[ref]:null;
+}
+function showLabelTip(refs,cx,cy){ const t=$("#graphLabelTip"); if(!t) return;
+  if(refs&&refs.length){ t.textContent=refs.map(r=>r.label).join("   ·   "); t.style.left=(cx+13)+"px"; t.style.top=(cy+15)+"px"; t.style.display="block"; }
+  else t.style.display="none";
+}
 cv.addEventListener("pointerdown",(e)=>{
   // Primary (left) button only — a right-click (button 2, or a middle-click)
   // must never arm `down`/a potential drag. Without this, right-clicking
@@ -676,6 +689,7 @@ cv.addEventListener("pointerdown",(e)=>{
   if(e.button!==0) return;
   cv.focus(); cv.setPointerCapture(e.pointerId); const p=rel(e), g=scrollbarGeom(view.cssH,view.cssW);
   state.pointerActive=true;
+  showLabelTip(null);   // a press starts a drag/select — drop the hover tooltip
   if(g&&p.x>=g.x-4){sbDrag={grab:p.y-g.thumbY,thumbH:g.thumbH};return;}
   // Column resize: a grab on a divider begins a width drag (never a row-select /
   // scroll / cherry-pick), captured before `down` is armed below.
@@ -712,7 +726,11 @@ cv.addEventListener("pointermove",(e)=>{
     return;
   }
   const h=hitTest(p.x,p.y), nr=h?h.row:-1; if(nr!==state.hoverRow){state.hoverRow=nr;dirty=true;}
-  cv.style.cursor=dividerAt(p.x)?"col-resize":(h&&h.onDot?"grab":"default");
+  // Full branch/tag name tooltip when hovering a label in the BRANCH/TAG gutter,
+  // and a pointer cursor there to hint it's clickable (right-click = checkout).
+  const lbl = h ? labelAt(p.x, h.row) : null;
+  showLabelTip(lbl, e.clientX, e.clientY);
+  cv.style.cursor=dividerAt(p.x)?"col-resize":(lbl?"pointer":(h&&h.onDot?"grab":"default"));
 });
 function endPointer(e){
   const p=rel(e);
@@ -742,6 +760,7 @@ function endPointer(e){
   removeGhost(); state.drag=null; down=null; state.pointerActive=false; dirty=true;
 }
 cv.addEventListener("pointerup",endPointer); cv.addEventListener("pointercancel",endPointer);
+cv.addEventListener("pointerleave",()=>showLabelTip(null));
 // Double-click a commit row -> jump straight to the full-page diff popup
 // (detailCtrl.expandDiff(), the same modal .diff-file-h's own "Expand diff"
 // button already opens) instead of making that a separate, required second

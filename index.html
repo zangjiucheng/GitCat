@@ -1980,6 +1980,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 <!-- Tama's top-of-everything message toast — surfaces errors/results when a
      modal is covering her nook (see .top-toast CSS + main.ts's _topToast). -->
 <div class="top-toast" id="topToast" aria-hidden="true"></div>
+<!-- Full branch/tag name shown when hovering a (possibly truncated) label in the
+     graph's BRANCH/TAG column — driven from legacy/main.ts's pointermove. -->
+<div class="rname-tip" id="graphLabelTip" style="display:none" aria-hidden="true"></div>
 
 <!-- ============================ DANGER MODAL (filter-repo) ============================ -->
 <div class="scrim" id="dangerScrim">
