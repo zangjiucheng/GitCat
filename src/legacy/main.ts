@@ -372,22 +372,25 @@ function draw(){
   ctx.lineWidth=Math.max(1.7,1.9*layout.zoom); ctx.lineJoin="round"; ctx.lineCap="round";
   for(let c=0;c<NCOL;c++){const p=edgePaths[c];if(p){ctx.strokeStyle=LANE_COLORS[c];ctx.stroke(p);}}
 
-  // Branch-colour tags — a colour band over the GRAPH area only [bcw,tx) (its own
-  // left edge, against the label-column divider, is indicator enough, so there's
-  // no left bar), plus a single solid bar in the lane colour just INSIDE the
-  // message column, separated by a gap from both the graph and the message text
-  // so it reads as the branch cue sitting beside the message (see the reference).
-  // The label column [0,bcw) and the message text both stay on a neutral
-  // background. Each band is inset vertically by `gap` px so adjacent rows read as
-  // separate tags with a gap of background between them; the gap shrinks as rows
-  // get short (zoomed out) to avoid fragmenting the band. Batched into one Path2D
-  // per colour (like the edges) and filled BEFORE the row loop, so per-row
-  // selection/hover overlays + markers draw on top.
+  // Branch-colour tags — a colour band that runs from the graph column's left
+  // edge (bcw, against the label-column divider — indicator enough, so no left
+  // bar) only as far as THIS row's node (its commit dot), NOT the full graph
+  // width; so the band's right edge is ragged, tracking each row's lane, and the
+  // dot sits at the end of its own band (see the reference). Plus a single solid
+  // bar in the lane colour just INSIDE the message column, gapped from both the
+  // graph and the message text so it reads as the branch cue beside the message.
+  // The label column [0,bcw) and the message text stay on a neutral background.
+  // Each band is inset vertically by `gap` px so adjacent rows read as separate
+  // tags with a gap of background between them; the gap shrinks as rows get short
+  // (zoomed out) to avoid fragmenting the band. Batched into one Path2D per colour
+  // (widths differ per row, fillStyle set once per colour) and filled BEFORE the
+  // row loop, so per-row selection/hover overlays + markers draw on top.
   const gap = rowH>=20 ? BRANCH_ROW_GAP : rowH>=13 ? 2 : rowH>=11 ? 1 : 0, bandH2 = Math.max(1, rowH-2*gap);
-  const washW=Math.max(0,tx-bcw), rbarX=tx+RBAR_INSET, rbar=bcw>0;
+  const rbarX=tx+RBAR_INSET, rbar=bcw>0;
   for(let c=0;c<NCOL;c++){ washPaths[c]=null; barPaths[c]=null; }
   for(let r=first;r<=last;r++){ const c=G.commitColor[r], ry=r*rowH-st+bh+gap;
-    (washPaths[c]||(washPaths[c]=new Path2D())).rect(bcw,ry,washW,bandH2);
+    const ww=Math.max(0,laneX(G.commitLane[r])+dotR+2-bcw);   // band ends exactly at this row's node
+    (washPaths[c]||(washPaths[c]=new Path2D())).rect(bcw,ry,ww,bandH2);
     if(rbar){ (barPaths[c]||(barPaths[c]=new Path2D())).rect(rbarX,ry,BRANCH_BAR_W,bandH2); } }
   ctx.globalAlpha=BRANCH_WASH_ALPHA;
   for(let c=0;c<NCOL;c++){ const p=washPaths[c]; if(p){ctx.fillStyle=LANE_COLORS[c];ctx.fill(p);} }
