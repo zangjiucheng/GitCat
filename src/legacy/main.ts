@@ -1146,6 +1146,19 @@ document.addEventListener("keydown",e=>{
     e.preventDefault(); toggleFocusMode();
   }
 });
+// ⌘F / Ctrl+F — jump to the sidebar's "Filter refs" search. Expands the sidebar
+// first if it's collapsed (panelHandles[0] is the sidebar), then focuses +
+// selects the input on the next frame (so it's visible before focus() runs).
+// preventDefault suppresses the webview's native find-in-page.
+function focusRefFilter(){
+  panelHandles[0]?.expand?.();
+  requestAnimationFrame(()=>{ const el=$("#refFilter"); if(el){ el.focus(); el.select&&el.select(); } });
+}
+document.addEventListener("keydown",e=>{
+  if((e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey&&e.key.toLowerCase()==="f"&&!e.target.closest("input,textarea,[contenteditable=true]")){
+    e.preventDefault(); focusRefFilter();
+  }
+});
 
 // theme
 function applyTheme(name){ document.documentElement.setAttribute("data-theme",name); readTheme(); saveSettings({themeMode:name}); }
