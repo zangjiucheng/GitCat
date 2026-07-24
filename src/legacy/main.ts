@@ -61,7 +61,7 @@ const BRANCH_BAR_W=3, BRANCH_WASH_ALPHA=0.17, BRANCH_BAR_ALPHA=0.95, GRAPH_CHANN
 // is ~19% of the graph, clamped to [MIN,MAX]; it collapses to 0 (falling back to
 // inline chips) when the window is too narrow to spare a column. BRANCH_PAD_L is
 // the label's left inset inside the gutter.
-const BRANCH_COL_MIN=118, BRANCH_COL_MAX=216, BRANCH_PAD_L=12;
+const BRANCH_COL_MIN=96, BRANCH_COL_MAX=260, BRANCH_PAD_L=12, COL_HANDLE=5, MIN_GRAPH_W=32;
 // Right-edge gutter reserved for the sha (was the ONLY thing living there —
 // hence the old bare "96") plus the author-name preview added alongside it
 // (see draw()'s row loop / authorOf() above): 96 for the sha itself, 8px gap,
@@ -221,6 +221,16 @@ const edgePaths=new Array(NCOL);
 // tag pass cost 2 globalAlpha writes + ≤NCOL fills per frame instead of the old
 // 2 fillRects + 3 state changes PER ROW (which janked scroll/pan on tall windows).
 const washPaths=new Array(NCOL), barPaths=new Array(NCOL);
+// User-dragged column widths (px); null = auto. `branch` is the left label
+// column's width; `graph` is the graph column's width (from the branch divider
+// to the message divider). Persisted so a resized layout survives reloads — see
+// the divider-drag handler in the pointer listeners. `lastTx` caches the last
+// drawn graph|message boundary so that handler knows where the divider is.
+const COL_LS="gitcat.colw";
+function loadColW(){ try{ const o=JSON.parse(localStorage.getItem(COL_LS)||"{}"); return {branch:typeof o.branch==="number"?o.branch:null, graph:typeof o.graph==="number"?o.graph:null}; }catch{ return {branch:null,graph:null}; } }
+const colW=loadColW();
+function saveColW(){ try{ localStorage.setItem(COL_LS,JSON.stringify(colW)); }catch{} }
+let lastTx=0;
 const laneX=(l)=>layout.branchColW+PADX+l*layout.laneW-state.panX;
 const clampScroll=(v)=>v<0?0:(v>state.maxScroll?state.maxScroll:v);
 const clampPan=(v)=>v<0?0:(v>state.maxPanX?state.maxPanX:v);
@@ -234,8 +244,10 @@ function recomputeLayout(){
   // Left branch/tag column width: ~19% of the graph, clamped to [MIN,MAX], but
   // never so wide that the graph lanes + subject lose their room — collapses to 0
   // (inline chips, the pre-column behaviour) when the window is too narrow.
-  let bcw=Math.round(Math.min(BRANCH_COL_MAX,Math.max(BRANCH_COL_MIN,view.cssW*0.19)));
-  if(bcw>view.cssW-AUTHOR_GUTTER-MIN_SUBJECT_W-120) bcw=0;
+  const autoB=Math.round(Math.min(BRANCH_COL_MAX,Math.max(BRANCH_COL_MIN,view.cssW*0.14)));
+  let bcw=colW.branch!=null?Math.round(colW.branch):autoB;
+  bcw=Math.max(BRANCH_COL_MIN,Math.min(bcw,Math.round(view.cssW*0.45)));
+  if(bcw>view.cssW-AUTHOR_GUTTER-MIN_SUBJECT_W-MIN_GRAPH_W) bcw=0;
   layout.branchColW=(G&&G.N&&view.cssW>0)?bcw:0;
   layout.contentH=(G?G.N:0)*layout.rowH;
   // +bandH(): the pinned header steals bandH() px of on-screen vertical
@@ -314,7 +326,16 @@ function draw(){
   // (worse to read at extreme widths, never overlapping) regardless of how
   // far a lane actually extends — panning is how you reach/inspect lanes
   // that wide, not by widening this column past the point of collision.
-  const tx=Math.min(laneX(maxLane)+dotR+14,W-AUTHOR_GUTTER-MIN_SUBJECT_W);
+  // Graph|message boundary. Auto = just past the widest visible lane (clamped so
+  // the subject keeps MIN_SUBJECT_W). A user-dragged graph width can only widen
+  // it past the content, never below (max with contentTx) — so lanes never bleed
+  // into the message and there's no need to clip; panning still reaches lanes
+  // wider than the column. lastTx is cached for the divider-drag hit test.
+  const contentTx=Math.min(laneX(maxLane)+dotR+14,W-AUTHOR_GUTTER-MIN_SUBJECT_W);
+  const tx=(bcw>0&&colW.graph!=null)
+    ? Math.min(Math.max(contentTx,bcw+Math.round(colW.graph)),W-AUTHOR_GUTTER-MIN_SUBJECT_W)
+    : contentTx;
+  lastTx=tx;
 
   // Recessed graph channel: the lanes sit in their own slightly darker trough,
   // the GRAPH area only [bcw,tx). The branch column to its left [0,bcw) is a label
@@ -346,23 +367,22 @@ function draw(){
   ctx.lineWidth=Math.max(1.7,1.9*layout.zoom); ctx.lineJoin="round"; ctx.lineCap="round";
   for(let c=0;c<NCOL;c++){const p=edgePaths[c];if(p){ctx.strokeStyle=LANE_COLORS[c];ctx.stroke(p);}}
 
-  // Branch-colour tags — a whole-row wash + a solid left-edge bar, both in this
-  // commit's lane colour, so which branch a row is on reads at a glance. Each
-  // band is inset vertically by `gap` px (top and bottom) so adjacent rows read
-  // as separate tags with a hairline of background between them, rather than
-  // merging into one continuous block. The gap shrinks to 0 when rows get too
-  // short (zoomed out) to avoid fragmenting the band into noise. Batched into one
-  // Path2D per colour (like the edges above) and filled here BEFORE the row loop,
-  // so the per-row selection/hover overlays + good/bad/current markers draw on
-  // top and keep priority at the x=0 edge; all washes share one globalAlpha, all
-  // bars another, so the window is 2 alpha writes + ≤NCOL fills. (The whole-row
-  // wash is fill-rate bound, ~1.3ms/frame on a big window — measured fine in a
-  // release build; it only janked under dev-server overhead.)
-  const gap = rowH>=16 ? BRANCH_ROW_GAP : rowH>=11 ? 1 : 0, bandH2 = Math.max(1, rowH-2*gap);
+  // Branch-colour tags — a colour band from the GRAPH through the MESSAGE [bcw,W)
+  // plus a solid bar at the band's left edge (bcw), both in this commit's lane
+  // colour, so which branch a row is on reads at a glance. The band deliberately
+  // does NOT cover the left label column [0,bcw): that gutter stays neutral so the
+  // branch/tag names read cleanly, and the colour lives on the graph + message
+  // side. Each band is inset vertically by `gap` px so adjacent rows read as
+  // separate tags with a hairline of background between them; the gap shrinks to 0
+  // when rows get too short (zoomed out) to avoid fragmenting the band into noise.
+  // Batched into one Path2D per colour (like the edges) and filled BEFORE the row
+  // loop, so per-row selection/hover overlays + markers draw on top; all washes
+  // share one globalAlpha, all bars another (2 alpha writes + ≤NCOL fills).
+  const gap = rowH>=16 ? BRANCH_ROW_GAP : rowH>=11 ? 1 : 0, bandH2 = Math.max(1, rowH-2*gap), washW=Math.max(0,W-bcw);
   for(let c=0;c<NCOL;c++){ washPaths[c]=null; barPaths[c]=null; }
   for(let r=first;r<=last;r++){ const c=G.commitColor[r], ry=r*rowH-st+bh+gap;
-    (washPaths[c]||(washPaths[c]=new Path2D())).rect(0,ry,W,bandH2);
-    (barPaths[c]||(barPaths[c]=new Path2D())).rect(0,ry,BRANCH_BAR_W,bandH2); }
+    (washPaths[c]||(washPaths[c]=new Path2D())).rect(bcw,ry,washW,bandH2);
+    (barPaths[c]||(barPaths[c]=new Path2D())).rect(bcw,ry,BRANCH_BAR_W,bandH2); }
   ctx.globalAlpha=BRANCH_WASH_ALPHA;
   for(let c=0;c<NCOL;c++){ const p=washPaths[c]; if(p){ctx.fillStyle=LANE_COLORS[c];ctx.fill(p);} }
   ctx.globalAlpha=BRANCH_BAR_ALPHA;
@@ -593,7 +613,14 @@ function zoomAt(cy,dir){
   positionTicks();
 }
 
-let down=null, sbDrag=null;
+let down=null, sbDrag=null, colDrag=null;
+// Which resizable column divider (if any) sits under screen-x `x`: the
+// branch|graph divider at bcw, or the graph|message divider at the last-drawn tx.
+// A COL_HANDLE-px grab zone each side. Null when no branch column is shown.
+function dividerAt(x){ const bcw=layout.branchColW; if(bcw<=0) return null;
+  if(Math.abs(x-bcw)<=COL_HANDLE) return "branch";
+  if(lastTx>bcw+COL_HANDLE&&Math.abs(x-lastTx)<=COL_HANDLE) return "graph";
+  return null; }
 cv.addEventListener("pointerdown",(e)=>{
   // Primary (left) button only — a right-click (button 2, or a middle-click)
   // must never arm `down`/a potential drag. Without this, right-clicking
@@ -608,6 +635,10 @@ cv.addEventListener("pointerdown",(e)=>{
   cv.focus(); cv.setPointerCapture(e.pointerId); const p=rel(e), g=scrollbarGeom(view.cssH,view.cssW);
   state.pointerActive=true;
   if(g&&p.x>=g.x-4){sbDrag={grab:p.y-g.thumbY,thumbH:g.thumbH};return;}
+  // Column resize: a grab on a divider begins a width drag (never a row-select /
+  // scroll / cherry-pick), captured before `down` is armed below.
+  const dv=dividerAt(p.x);
+  if(dv){ colDrag={which:dv,x0:p.x,bcw0:layout.branchColW,tx0:lastTx}; cv.style.cursor="col-resize"; return; }
   down={x0:p.x,y0:p.y,st0:state.scrollTarget,panX0:state.panTarget,hit:hitTest(p.x,p.y),moved:false};
   // Fire the real-ancestor-set fetch as early as possible (see
   // primeDragAncestors' own doc comment) — pointerdown, not the first
@@ -620,6 +651,10 @@ cv.addEventListener("pointermove",(e)=>{
   const p=rel(e);
   if(sbDrag){const H=view.cssH, frac=(p.y-sbDrag.grab)/(H-sbDrag.thumbH);
     state.scrollTarget=state.scrollTop=clampScroll(Math.max(0,Math.min(1,frac))*state.maxScroll);dirty=true;return;}
+  if(colDrag){ const dx=p.x-colDrag.x0;
+    if(colDrag.which==="branch"){ colW.branch=colDrag.bcw0+dx; recomputeLayout(); }
+    else { colW.graph=(colDrag.tx0+dx)-layout.branchColW; }
+    cv.style.cursor="col-resize"; dirty=true; return; }
   if(down){
     const dx=p.x-down.x0, dy=p.y-down.y0; if(!down.moved&&Math.hypot(dx,dy)>4)down.moved=true;
     if(down.hit&&down.hit.onDot){ const t=hitTest(p.x,p.y), tRow=t?t.row:null;
@@ -635,11 +670,12 @@ cv.addEventListener("pointermove",(e)=>{
     return;
   }
   const h=hitTest(p.x,p.y), nr=h?h.row:-1; if(nr!==state.hoverRow){state.hoverRow=nr;dirty=true;}
-  cv.style.cursor=h&&h.onDot?"grab":"default";
+  cv.style.cursor=dividerAt(p.x)?"col-resize":(h&&h.onDot?"grab":"default");
 });
 function endPointer(e){
   const p=rel(e);
   if(sbDrag){sbDrag=null;state.pointerActive=false;return;}
+  if(colDrag){colDrag=null;state.pointerActive=false;cv.style.cursor="default";saveColW();return;}
   if(down){
     if(!down.moved&&down.hit){ if(down.hit.row===-2) selectWorkdir(); else select(down.hit.row); }
     else if(!down.moved&&!down.hit) deselect();
@@ -675,7 +711,11 @@ cv.addEventListener("pointerup",endPointer); cv.addEventListener("pointercancel"
 // Ignored for anywhere that isn't a real commit row (row<0), same guard
 // contextmenu's own listener below uses.
 cv.addEventListener("dblclick",(e)=>{
-  const p=rel(e), hit=hitTest(p.x,p.y);
+  const p=rel(e);
+  // Double-click a column divider to reset that column back to its auto width.
+  const dv=dividerAt(p.x);
+  if(dv){ if(dv==="branch") colW.branch=null; else colW.graph=null; saveColW(); recomputeLayout(); dirty=true; return; }
+  const hit=hitTest(p.x,p.y);
   if(!hit||hit.row<0) return;
   select(hit.row);
   detailCtrl.expandDiff();
