@@ -76,6 +76,11 @@ const RBAR_INSET=2, MSG_TEXT_PAD=11;
 // pathological string freezes the WKWebView main thread hard enough to force a
 // quit. No readable label/line approaches these; longer is truncated to fit.
 const LABEL_MAX=220, HIGHLIGHT_MAX=4000;
+// How strongly to fade commits already in the current branch (ancestors of HEAD,
+// flagged by the backend graph walk) — a bg-colour wash at this alpha over those
+// rows, so un-merged work stands out. Gentle enough to keep the faded history
+// readable.
+const ANCESTOR_DIM_ALPHA=0.34;
 // Right-edge gutter reserved for the sha (was the ONLY thing living there —
 // hence the old bare "96") plus the author-name preview added alongside it
 // (see draw()'s row loop / authorOf() above): 96 for the sha itself, 8px gap,
@@ -486,6 +491,21 @@ function draw(){
       ctx.fillText(sha,W-14,y); ctx.textAlign="left";
     }
     ctx.globalAlpha=1;
+  }
+  // Dim commits already IN the current branch (ancestors of HEAD, flagged by the
+  // backend graph walk) with one batched bg-colour wash over those rows, so
+  // un-merged work stands out. Skip the selected/hovered row (keep it crisp) and
+  // skip entirely during bisect/drag, which own their own dimming. Absent flag
+  // (demo mode / non-streaming) => nothing dimmed.
+  if(!B && !DR && BACKEND && BACKEND.rows){
+    const gg = rowH>=20 ? BRANCH_ROW_GAP : rowH>=13 ? 2 : rowH>=11 ? 1 : 0, bh2=Math.max(1,rowH-2*gg);
+    let ap=null;
+    for(let r=first;r<=last;r++){
+      if(r===state.selectedRow||r===state.hoverRow) continue;
+      const rr=BACKEND.rows[r]; if(!rr||!rr.ancestor) continue;
+      (ap||(ap=new Path2D())).rect(0, r*rowH-st+bh+gg, W, bh2);
+    }
+    if(ap){ ctx.fillStyle=theme.bg; ctx.globalAlpha=ANCESTOR_DIM_ALPHA; ctx.fill(ap); ctx.globalAlpha=1; }
   }
   drawWorkdirBand();
   if(state.drag) drawDragGhost();

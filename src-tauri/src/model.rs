@@ -34,6 +34,10 @@ pub struct CommitMeta {
     pub cm: Person,      // committer
     pub refs: Vec<RefChip>,
     pub merge: bool,     // >= 2 parents
+    // True if this commit is reachable from HEAD (already IN the current branch).
+    // The frontend dims these so un-merged work (not yet on the current branch)
+    // stands out. Only the streaming graph load sets it; other paths leave false.
+    pub ancestor: bool,
 }
 
 /// One line inside a diff hunk. `old_no`/`new_no` are the 1-based line numbers

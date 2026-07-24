@@ -346,6 +346,20 @@ pub fn stream_graph_core(
         };
     }
 
+    // Ancestor-of-HEAD set — the commits already IN the current branch, so the UI
+    // can dim them and let un-merged work stand out. A separate revwalk pushing
+    // ONLY HEAD, collected as oids (best-effort: a detached/unborn HEAD => empty
+    // set => nothing dimmed). O(HEAD's ancestors); the per-commit lookup below is
+    // O(1). The HashSet owns the oids, so it outlives the repo opened just for it.
+    let head_ancestors: std::collections::HashSet<git2::Oid> = crate::trust::open_repo(path)
+        .ok()
+        .and_then(|repo| {
+            let mut w = repo.revwalk().ok()?;
+            w.push_head().ok()?;
+            Some(w.flatten().collect())
+        })
+        .unwrap_or_default();
+
     let result = walk_repo(path, visible_local, visible_remote, |raw, refs| {
         if should_cancel() {
             return false;
@@ -384,6 +398,7 @@ pub fn stream_graph_core(
                 cm: Person { n: raw.committer.0.clone(), e: raw.committer.1.clone(), t: raw.committer.2 },
                 refs: row_refs,
                 merge: out.merge == 1,
+                ancestor: head_ancestors.contains(&raw.id),
             },
             out.lane,
             out.color,
@@ -451,6 +466,7 @@ pub fn build_graph(
                 cm: Person { n: c.committer.0.clone(), e: c.committer.1.clone(), t: c.committer.2 },
                 refs: read.refs.remove(&sha).unwrap_or_default(),
                 merge: lay.merge[i] == 1,
+                ancestor: false, // non-streaming path — dimming is a live-graph feature
             }
         })
         .collect();

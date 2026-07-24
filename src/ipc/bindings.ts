@@ -2965,7 +2965,7 @@ export type CommitInfo = { sha: string; subject: string }
 /**
  * Per-commit metadata (one entry per row, row = index).
  */
-export type CommitMeta = { sha: string; subject: string; an: Person; cm: Person; refs: RefChip[]; merge: boolean }
+export type CommitMeta = { sha: string; subject: string; an: Person; cm: Person; refs: RefChip[]; merge: boolean; ancestor: boolean }
 export type CommitObject = { sha: string; shortSha: string; author: PlumbingPerson; committer: PlumbingPerson; parents: string[]; tree: string; message: string }
 /**
  * One config key's value at each scope, plus the effective (local-wins)
