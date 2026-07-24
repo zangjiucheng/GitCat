@@ -371,7 +371,7 @@
       open={!detailCtrl.isDirCollapsed(child.path)}
       ontoggle={(e) => detailCtrl.setDirOpen(child.path, (e.currentTarget as HTMLDetailsElement).open)}
     >
-      <summary><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /> {name}</summary>
+      <summary title={child.path}><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /> {name}</summary>
       <div class="indent">{@render dirNode(child)}</div>
     </details>
   {/each}
@@ -379,6 +379,7 @@
     <div
       class="file"
       class:active={f.p === detailCtrl.selectedFile}
+      title={f.p}
       onclick={() => detailCtrl.selectFile(f.p)}
       role="button"
       tabindex="0"
