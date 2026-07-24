@@ -1024,10 +1024,22 @@ function highlight(src,lang){const rules=GRAMMARS[lang]||GRAMMARS.generic;let i=
    9) TOP BAR + RIBBON + MODALS wiring
    ============================================================ */
 
-// sidebar/detail drag-to-resize — live-updates the .app grid's --sidebar-w/
-// --detail-w custom properties (see the .app rule); the canvas's own
-// ResizeObserver (below, on canvasWrap) already reacts to the resulting
-// width change, so no separate resize() call is needed here.
+// Shared drag guide-line for the panel splitters: a thin vertical rule that
+// follows the cursor while dragging, so ONLY the line moves during the drag —
+// the panels (and the graph canvas) don't reflow or re-render. The final width
+// is committed to the CSS var once, on release (onUp), which is the single
+// reflow that fires the canvas ResizeObserver. Created lazily, reused by both
+// handles.
+let resizeGuideEl=null;
+function resizeGuide(){
+  if(!resizeGuideEl){ resizeGuideEl=document.createElement("div"); resizeGuideEl.className="resize-guide"; document.body.appendChild(resizeGuideEl); }
+  return resizeGuideEl;
+}
+
+// sidebar/detail drag-to-resize. The panel width is NOT live-updated during the
+// drag anymore — a guide line (above) tracks the cursor and the width lands in
+// the `--sidebar-w`/`--detail-w` custom property only on release, so the layout
+// reflows + the canvas re-renders exactly once instead of every pointermove.
 //
 // Collapse (added on top of the original resize-only behavior): dragging
 // PAST `min` no longer clamps flat — the panel keeps shrinking, live, down
@@ -1046,7 +1058,7 @@ function highlight(src,lang){const rules=GRAMMARS[lang]||GRAMMARS.generic;let i=
 function wireResizeHandle(handle,cssVar,min,max,fromRight,railW){
   if(!handle) return;
   const root=document.documentElement;
-  let startX=0,startW=0,dragged=false,collapsed=false;
+  let startX=0,startW=0,dragged=false,collapsed=false,pendingW=0;
   let lastExpandedW=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||min;
   const collapseAt=(min+railW)/2;
   function setCollapsed(v){
@@ -1058,14 +1070,21 @@ function wireResizeHandle(handle,cssVar,min,max,fromRight,railW){
     const dx=e.clientX-startX;
     if(Math.abs(dx)>3) dragged=true;
     const raw=fromRight?startW-dx:startW+dx;
-    const clamped=Math.max(railW,Math.min(max,raw));
-    root.style.setProperty(cssVar, clamped+"px");
-    setCollapsed(clamped<min);
+    pendingW=Math.max(railW,Math.min(max,raw));
+    // Move ONLY the guide line — leave the panel width (the CSS var) alone so
+    // nothing reflows/re-renders mid-drag. The guide sits at the clamped cursor
+    // x (where the panel edge WILL land): once the width is pinned at railW/max
+    // the line stops there instead of running off with the cursor.
+    const clampedDx=fromRight?(startW-pendingW):(pendingW-startW);
+    const g=resizeGuide();
+    g.style.left=(startX+clampedDx)+"px";
+    g.classList.toggle("will-collapse", pendingW<min);
   }
   function onUp(){
     document.removeEventListener("pointermove",onMove);
     document.removeEventListener("pointerup",onUp);
     handle.classList.remove("active"); root.classList.remove("resizing");
+    resizeGuide().classList.remove("on","will-collapse"); // hide the guide line
     if(!dragged){
       // A plain click, no drag at all: only meaningful while collapsed
       // (reopen); a click on an already-expanded handle is a no-op, same as
@@ -1073,18 +1092,24 @@ function wireResizeHandle(handle,cssVar,min,max,fromRight,railW){
       if(collapsed){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
       return;
     }
-    const cur=parseFloat(getComputedStyle(root).getPropertyValue(cssVar));
-    if(cur<min){
-      if(cur<=collapseAt){ setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
+    // Commit the width the guide landed on — the ONE reflow of the whole drag.
+    // Same resting-state decision as before, now keyed off `pendingW` (the CSS
+    // var was never touched mid-drag) instead of reading it back live.
+    if(pendingW<min){
+      if(pendingW<=collapseAt){ setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
       else { setCollapsed(false); root.style.setProperty(cssVar, min+"px"); lastExpandedW=min; }
     } else {
-      lastExpandedW=cur;
+      setCollapsed(false); root.style.setProperty(cssVar, pendingW+"px"); lastExpandedW=pendingW;
     }
   }
   function beginDrag(startClientX){
     startX=startClientX; dragged=false;
     startW=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||handle.parentElement.getBoundingClientRect().width;
+    pendingW=startW;
     handle.classList.add("active"); root.classList.add("resizing");
+    // Park the guide line at the current edge and show it — it takes over the
+    // visual during the drag while the panels stay put.
+    const g=resizeGuide(); g.style.left=startClientX+"px"; g.classList.add("on"); g.classList.remove("will-collapse");
     document.addEventListener("pointermove",onMove);
     document.addEventListener("pointerup",onUp);
   }
@@ -2015,23 +2040,11 @@ applyThemeMode(loadSettings().themeMode);
 setGraphShowAllTags(loadSettings().showAllCommitTags);
 setTamaEnabled(loadSettings().tamaEnabled);
 $("#dangerTamaImg").src=TAMA_IMG.alarm; $("#tamaCheerImg").src=TAMA_IMG.happy;
-// Debounced resize. A continuous window OR panel-divider drag fires this
-// observer every frame; recomputing layout + reallocating the canvas backing
-// store + a full (virtualised) redraw on each one janks a large graph. #cv is
-// CSS width/height:100%, so the browser smoothly SCALES the last crisp frame to
-// the new size while the drag is in flight (that IS the resize animation) — we
-// only re-render sharply once it SETTLES. The `.resizing` class dips the canvas
-// a touch and fades it back on settle, so the re-render reads as intentional
-// rather than a flicker. The observer's initial (on-observe) callback is
-// skipped via `obsInit` — the direct `resize()` just below already did the cold
-// boot sizing (and cold Tauri windows can report 0×0, see boot's own resize()).
-let resizeSettle=null, obsInit=true;
-new ResizeObserver(()=>{
-  if(obsInit){ obsInit=false; return; }
-  cv.classList.add("resizing");
-  if(resizeSettle) clearTimeout(resizeSettle);
-  resizeSettle=setTimeout(()=>{ resizeSettle=null; cv.classList.remove("resizing"); resize(); dirty=true; }, 120);
-}).observe(wrap);
+// Window resize re-renders live (standard); the panel-divider drag is what
+// avoids a live reflow — it moves only a guide line and commits the width once
+// on release (see wireResizeHandle), so this observer fires just once per
+// splitter drag rather than every frame.
+new ResizeObserver(()=>resize()).observe(wrap);
 resize();
 if(IN_TAURI){
   // Multi-window (src-tauri/src/windows.rs): a window spawned via
