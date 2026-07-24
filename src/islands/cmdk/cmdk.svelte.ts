@@ -85,6 +85,13 @@ const ACTIONS: ActionItem[] = [
   },
   {
     type: "action",
+    id: "focus-mode",
+    label: "Toggle Focus Mode",
+    hint: "Collapse both side panels for a full-width graph (⌘\\)",
+    run: () => bridge.toggleFocusMode(),
+  },
+  {
+    type: "action",
     id: "remotes",
     label: "Manage Remotes",
     hint: "Add, rename, edit the URL, or remove a configured remote",

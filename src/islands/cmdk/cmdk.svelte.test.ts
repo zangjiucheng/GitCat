@@ -19,6 +19,7 @@ vi.mock("../../legacy/bridge", () => ({
   clampScroll: (v: number) => (v < 0 ? 0 : v > 1000 ? 1000 : v),
   select: vi.fn(),
   goToUncommitted: vi.fn(),
+  toggleFocusMode: vi.fn(),
   hhex: (r: number) => "hex" + r,
   msgOf: (r: number) => "demo message " + r,
   AUTHORS: [{ n: "Demo Author", e: "demo@gitcat.dev" }],
@@ -79,11 +80,11 @@ describe("show/close/toggle", () => {
 });
 
 describe("filter", () => {
-  it("with no query, always includes the 25 static tool actions plus loaded commits (no refs in this fixture)", () => {
+  it("with no query, always includes the 26 static tool actions plus loaded commits (no refs in this fixture)", () => {
     setBackendGraph([{ sha: "aaa1111", subject: "Add feature", an: { n: "Dev" }, refs: [] }]);
     cmdkCtrl.show();
     const kinds = cmdkCtrl.results.map((r: any) => r.type);
-    expect(kinds.filter((t) => t === "action").length).toBe(25);
+    expect(kinds.filter((t) => t === "action").length).toBe(26);
     expect(kinds.filter((t) => t === "commit").length).toBe(1);
   });
 
@@ -214,6 +215,15 @@ describe("jump", () => {
     expect(cmdkCtrl.results.length).toBe(1);
     cmdkCtrl.jump(cmdkCtrl.results[0]);
     expect(bridge.goToUncommitted).toHaveBeenCalled();
+  });
+
+  it("the Toggle Focus Mode action calls bridge.toggleFocusMode()", () => {
+    setBackendGraph([]);
+    cmdkCtrl.show();
+    cmdkCtrl.filter("focus");
+    expect(cmdkCtrl.results.length).toBe(1);
+    cmdkCtrl.jump(cmdkCtrl.results[0]);
+    expect(bridge.toggleFocusMode).toHaveBeenCalled();
   });
 });
 

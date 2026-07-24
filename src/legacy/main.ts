@@ -1124,9 +1124,28 @@ function wireResizeHandle(handle,cssVar,min,max,fromRight,railW){
     e.preventDefault();
     if(collapsed){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
   });
+  // Programmatic collapse/expand, so the focus-mode shortcut (below) can drive
+  // the panel exactly like a drag-past-edge / click-to-reopen would.
+  function collapse(){ if(collapsed) return; setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
+  function expand(){ if(!collapsed) return; setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
+  return { isCollapsed:()=>collapsed, collapse, expand };
 }
-wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28);
-wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true,28);
+const panelHandles=[
+  wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28),
+  wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true,28),
+].filter(Boolean);
+// Focus mode (⌘\ / Ctrl+\): collapse BOTH side panels to give the graph the full
+// width, or restore both when they're already collapsed — a straight toggle
+// between "both open" and "both closed". Ignored while typing in a field.
+function toggleFocusMode(){
+  const allCollapsed=panelHandles.length>0 && panelHandles.every(h=>h.isCollapsed());
+  panelHandles.forEach(h=> allCollapsed ? h.expand() : h.collapse());
+}
+document.addEventListener("keydown",e=>{
+  if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.code==="Backslash"&&!e.target.closest("input,textarea,[contenteditable=true]")){
+    e.preventDefault(); toggleFocusMode();
+  }
+});
 
 // theme
 function applyTheme(name){ document.documentElement.setAttribute("data-theme",name); readTheme(); saveSettings({themeMode:name}); }
@@ -2069,7 +2088,7 @@ const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>c
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, hhex, msgOf, AUTHORS,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, toggleFocusMode, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
