@@ -999,6 +999,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .pl-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .pl-kv{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:4px;margin:10px 0}
 .pl-kv .mono{color:var(--text)}
+/* Keyboard-shortcuts reference (the ? overlay): a wider, two-column modal so
+   the whole cheat sheet fits at a glance; collapses to one column when narrow. */
+.modal.kbd-help{width:min(680px,94vw)}
+.kbd-cols{display:grid;grid-template-columns:1fr 1fr;gap:2px 28px}
+.kbd-cols .pl-kv{margin:8px 0 0}
+.kbd-cols .d-lab:first-child{margin-top:0}
+@media (max-width:560px){.kbd-cols{grid-template-columns:1fr}}
 .pl-parent{margin-right:8px;display:inline-block}
 .pl-msg{font-family:var(--mono);font-size:12px;line-height:1.55;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-panel);padding:10px 12px;white-space:pre-wrap;word-break:break-word;margin-top:4px;max-height:280px;overflow:auto}
 .pl-tree{max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:var(--r-panel);background:var(--bg);padding:4px}

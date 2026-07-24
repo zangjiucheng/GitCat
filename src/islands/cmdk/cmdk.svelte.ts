@@ -16,6 +16,7 @@
 
 import * as bridge from "../../legacy/bridge";
 import { reflogCtrl } from "../reflog/reflog.svelte.ts";
+import { vimnavCtrl } from "../vimnav/vimnav.svelte.ts";
 import { rerereCtrl } from "../rerere/rerere.svelte.ts";
 import { plumbing } from "../plumbing/plumbing.svelte.ts";
 import { repoSummaryCtrl } from "../reposummary/reposummary.svelte.ts";
@@ -89,6 +90,13 @@ const ACTIONS: ActionItem[] = [
     label: "Toggle Focus Mode",
     hint: "Collapse both side panels for a full-width graph (⌘\\)",
     run: () => bridge.toggleFocusMode(),
+  },
+  {
+    type: "action",
+    id: "shortcuts",
+    label: "Keyboard Shortcuts",
+    hint: "Show every keybinding (or press ?)",
+    run: () => vimnavCtrl.openHelp(),
   },
   {
     type: "action",

@@ -147,6 +147,12 @@ class VimNavState {
     if (!this.helpOpen && anyOtherScrimOpen()) return; // don't cover another open modal
     this.helpOpen = !this.helpOpen;
   }
+  // Unconditionally open the help (the ⌘K "Keyboard Shortcuts" action) — unlike
+  // toggleHelp's `?` path, this is an explicit request, so it doesn't bail when
+  // the palette is still closing.
+  openHelp() {
+    this.helpOpen = true;
+  }
   closeHelp() {
     this.helpOpen = false;
   }
