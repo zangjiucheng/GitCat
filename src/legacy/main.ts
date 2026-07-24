@@ -62,6 +62,11 @@ const BRANCH_BAR_W=3, BRANCH_WASH_ALPHA=0.17, BRANCH_BAR_ALPHA=0.95, GRAPH_CHANN
 // inline chips) when the window is too narrow to spare a column. BRANCH_PAD_L is
 // the label's left inset inside the gutter.
 const BRANCH_COL_MIN=96, BRANCH_COL_MAX=260, BRANCH_PAD_L=12, COL_HANDLE=5, MIN_GRAPH_W=32;
+// The branch-colour bar that marks each row's branch just inside the message
+// column: RBAR_INSET px right of the graph|message divider, then MSG_TEXT_PAD px
+// in total before the message text begins — so the bar reads as separated from
+// both the graph and the text (see draw()'s tag pass).
+const RBAR_INSET=2, MSG_TEXT_PAD=11;
 // Right-edge gutter reserved for the sha (was the ONLY thing living there —
 // hence the old bare "96") plus the author-name preview added alongside it
 // (see draw()'s row loop / authorOf() above): 96 for the sha itself, 8px gap,
@@ -367,23 +372,23 @@ function draw(){
   ctx.lineWidth=Math.max(1.7,1.9*layout.zoom); ctx.lineJoin="round"; ctx.lineCap="round";
   for(let c=0;c<NCOL;c++){const p=edgePaths[c];if(p){ctx.strokeStyle=LANE_COLORS[c];ctx.stroke(p);}}
 
-  // Branch-colour tags — a colour band over the GRAPH area only [bcw,tx), stopping
-  // at the message's left edge so the message text stays on a neutral background,
-  // bracketed by a solid bar on BOTH the left edge (bcw) and the right edge (just
-  // left of tx) in this commit's lane colour. The left label column [0,bcw) stays
-  // neutral too, so the colour lives purely on the graph and the right bar sits
-  // right next to the message text as the branch cue. Each band is inset
-  // vertically by `gap` px so adjacent rows read as separate tags with a gap of
-  // background between them; the gap shrinks as rows get short (zoomed out) to
-  // avoid fragmenting the band. Batched into one Path2D per colour (like the edges)
-  // and filled BEFORE the row loop, so per-row selection/hover overlays + markers
-  // draw on top; all washes share one globalAlpha, all bars another.
+  // Branch-colour tags — a colour band over the GRAPH area only [bcw,tx) (its own
+  // left edge, against the label-column divider, is indicator enough, so there's
+  // no left bar), plus a single solid bar in the lane colour just INSIDE the
+  // message column, separated by a gap from both the graph and the message text
+  // so it reads as the branch cue sitting beside the message (see the reference).
+  // The label column [0,bcw) and the message text both stay on a neutral
+  // background. Each band is inset vertically by `gap` px so adjacent rows read as
+  // separate tags with a gap of background between them; the gap shrinks as rows
+  // get short (zoomed out) to avoid fragmenting the band. Batched into one Path2D
+  // per colour (like the edges) and filled BEFORE the row loop, so per-row
+  // selection/hover overlays + markers draw on top.
   const gap = rowH>=20 ? BRANCH_ROW_GAP : rowH>=13 ? 2 : rowH>=11 ? 1 : 0, bandH2 = Math.max(1, rowH-2*gap);
-  const washW=Math.max(0,tx-bcw), rbarX=tx-BRANCH_BAR_W;
+  const washW=Math.max(0,tx-bcw), rbarX=tx+RBAR_INSET, rbar=bcw>0;
   for(let c=0;c<NCOL;c++){ washPaths[c]=null; barPaths[c]=null; }
   for(let r=first;r<=last;r++){ const c=G.commitColor[r], ry=r*rowH-st+bh+gap;
     (washPaths[c]||(washPaths[c]=new Path2D())).rect(bcw,ry,washW,bandH2);
-    const bp=barPaths[c]||(barPaths[c]=new Path2D()); bp.rect(bcw,ry,BRANCH_BAR_W,bandH2); bp.rect(rbarX,ry,BRANCH_BAR_W,bandH2); }
+    if(rbar){ (barPaths[c]||(barPaths[c]=new Path2D())).rect(rbarX,ry,BRANCH_BAR_W,bandH2); } }
   ctx.globalAlpha=BRANCH_WASH_ALPHA;
   for(let c=0;c<NCOL;c++){ const p=washPaths[c]; if(p){ctx.fillStyle=LANE_COLORS[c];ctx.fill(p);} }
   ctx.globalAlpha=BRANCH_BAR_ALPHA;
@@ -409,7 +414,7 @@ function draw(){
     if(r===state.selectedRow){ctx.beginPath();ctx.arc(x,y,dotR+3.2,0,TAU);ctx.strokeStyle=theme.text;ctx.lineWidth=1.6;ctx.stroke();}
     else if(r===state.hoverRow){ctx.beginPath();ctx.arc(x,y,dotR+2.6,0,TAU);ctx.strokeStyle=theme.muted;ctx.lineWidth=1;ctx.stroke();}
     if(bisectDrawerCtrl.cur!=null&&r===bisectDrawerCtrl.cur&&r!==state.selectedRow){ctx.beginPath();ctx.arc(x,y,dotR+3.4,0,TAU);ctx.strokeStyle=theme.accent;ctx.lineWidth=2;ctx.stroke();}
-    let cx=tx; ctx.font=layout.chipFont;
+    let cx=bcw>0?tx+MSG_TEXT_PAD:tx; ctx.font=layout.chipFont;
     // Ref labels. In column mode (bcw>0) they live in the left BRANCH/TAG gutter
     // [BRANCH_PAD_L,bcw), left-aligned and tinted in THIS row's branch colour (so
     // the label matches the row's band), and the subject stays put at tx. When
