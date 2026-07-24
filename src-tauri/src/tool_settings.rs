@@ -476,8 +476,11 @@ fn run_commit_msg_command(path: &str, cmd: &str) -> Result<String, String> {
     let out = crate::procutil::output_with_timeout(command, COMMIT_MSG_TIMEOUT)
         .map_err(|e| format!("Could not run the commit-message command: {e}"))?;
     if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        // Strip ANSI first: CLIs like `ollama run` stream a spinner + cursor
+        // control codes to stderr even when piped, and without this the raw
+        // escapes are all the user sees on a failure, hiding the real error.
+        let stderr = strip_ansi(&String::from_utf8_lossy(&out.stderr)).trim().to_string();
+        let stdout = strip_ansi(&String::from_utf8_lossy(&out.stdout)).trim().to_string();
         // Interactive "generate-and-commit" tools (aicommit2, plain aicommit, …)
         // try to open a prompt on the terminal. GitCat runs the command
         // non-interactively with a nulled stdin (so it can't hang), so their
@@ -493,17 +496,66 @@ fn run_commit_msg_command(path: &str, cmd: &str) -> Result<String, String> {
         .any(|m| blob.contains(m));
         if looks_interactive {
             return Err(
-                "This command is interactive — it tried to prompt for input. GitCat runs it non-interactively and reads the message from its output, so configure a command that just PRINTS a commit message and exits (e.g. `opencommit --dry-run`, or a small script). Interactive 'generate-and-commit' tools like aicommit2 own the whole commit themselves and can't be used here.".to_string(),
+                "This command is interactive — it tried to prompt for input. GitCat runs it non-interactively and reads the message from its output, so configure a command that just PRINTS a commit message and exits (e.g. pipe the staged diff to a model: `git diff --staged | ollama run <model> \"write a commit message\"`, or a small script). Interactive 'generate-and-commit' tools like aicommit2/opencommit own the whole commit themselves — use their git hook, not this box.".to_string(),
             );
         }
         let detail = if !stderr.is_empty() { stderr } else if !stdout.is_empty() { stdout } else { format!("exited with status {}", out.status.code().unwrap_or(-1)) };
         return Err(format!("The commit-message command failed: {detail}"));
     }
-    let message = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let message = strip_ansi(&String::from_utf8_lossy(&out.stdout)).trim().to_string();
     if message.is_empty() {
         return Err("The commit-message command produced no output.".to_string());
     }
     Ok(message)
+}
+
+/// Remove ANSI escape sequences (CSI cursor/colour codes, OSC, lone ESC) from a
+/// tool's output. `ollama run` and many other CLIs stream a spinner + cursor
+/// control even when their output is piped, not a TTY; without this those raw
+/// escapes leak into the commit box, or — on a non-zero exit — become the whole
+/// "error message", hiding the real cause. Char-based so multibyte UTF-8 in the
+/// message survives intact.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek().copied() {
+            // CSI (ESC [ … final byte in @..~) — colours, cursor moves, `?`-modes.
+            Some('[') => {
+                chars.next();
+                while let Some(&pc) = chars.peek() {
+                    chars.next();
+                    if ('@'..='~').contains(&pc) {
+                        break;
+                    }
+                }
+            }
+            // OSC (ESC ] … terminated by BEL or ST `ESC \`).
+            Some(']') => {
+                chars.next();
+                while let Some(c2) = chars.next() {
+                    if c2 == '\u{7}' {
+                        break;
+                    }
+                    if c2 == '\u{1b}' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            // Lone ESC or a two-char sequence — drop the ESC (and the next char).
+            _ => {
+                chars.next();
+            }
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1009,5 +1061,29 @@ mod tests {
         .unwrap_err();
         assert!(err.to_lowercase().contains("interactive"), "should flag interactivity, got: {err}");
         assert!(!err.contains("ERR_USE_AFTER_CLOSE"), "should not dump the raw node stack, got: {err}");
+    }
+
+    #[test]
+    fn strip_ansi_drops_escape_codes_and_keeps_text() {
+        // The exact spinner/cursor shape `ollama run` streams.
+        let raw = "\u{1b}[?2026h\u{1b}[?25l\u{1b}[1G\u{1b}[K feat: add retry \u{1b}[?25h\u{1b}[?2026l";
+        assert_eq!(strip_ansi(raw).trim(), "feat: add retry");
+        assert_eq!(strip_ansi("\u{1b}[32mにゃ\u{1b}[0m"), "にゃ"); // colour codes, multibyte survives
+        assert_eq!(strip_ansi("plain, untouched"), "plain, untouched");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_commit_msg_command_strips_ansi_so_the_real_error_shows() {
+        let dir = temp_dir("gen-ansi");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Spinner escapes + a real message on stderr, non-zero exit.
+        let err = run_commit_msg_command(
+            dir.to_str().unwrap(),
+            "printf '\\033[?25l\\033[1GError: model \"x\" not found\\033[?25h' >&2; exit 1",
+        )
+        .unwrap_err();
+        assert!(!err.contains('\u{1b}'), "must not leak raw escapes, got: {err:?}");
+        assert!(err.contains("model \"x\" not found"), "the real error should survive, got: {err}");
     }
 }
