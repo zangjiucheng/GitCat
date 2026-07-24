@@ -45,6 +45,10 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { resetHeadCtrl } from "../resethead/resethead.svelte.ts";
+// Reused for the "Switch to <branch>" action — see checkout() below. Only
+// referenced inside a method (never at module init), so the sidebar<->commitmenu
+// import cycle resolves fine by the time it's actually called.
+import { sidebarCtrl } from "../sidebar/sidebar.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { save } from "@tauri-apps/plugin-dialog";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
@@ -82,6 +86,10 @@ class CommitMenuState {
   shortSha = $state(""); // derived from `sha` by openAt() — never passed in separately
   subject = $state("");
   isMerge = $state(false);
+  // Local branches sitting ON the right-clicked row (passed by openAt) — rendered
+  // as "Switch to <branch>" checkout actions. Empty for a row with no local
+  // branch, or the current branch (which arrives as kind "head", filtered out).
+  branches = $state<string[]>([]);
 
   // "branch"/"tag" sub-view input fields.
   branchName = $state("");
@@ -128,13 +136,14 @@ class CommitMenuState {
   // skip it. The in-flight request itself isn't misdirected either way (it
   // already captured repo/sha into locals before this call), but a second
   // right-click could otherwise arm a second concurrent request.
-  openAt(repo: string, sha: string, subject: string, isMerge: boolean, x: number, y: number) {
+  openAt(repo: string, sha: string, subject: string, isMerge: boolean, x: number, y: number, branches: string[] = []) {
     if (this.busy) return;
     this.repo = repo || "";
     this.sha = sha || "";
     this.shortSha = this.sha.slice(0, 7);
     this.subject = subject || "";
     this.isMerge = !!isMerge;
+    this.branches = branches || [];
     this.x = x;
     this.y = y;
     this.view = "menu";
@@ -154,11 +163,24 @@ class CommitMenuState {
     this.shortSha = "";
     this.subject = "";
     this.isMerge = false;
+    this.branches = [];
     this.branchName = "";
     this.tagName = "";
     this.tagMessage = "";
     this.busy = false;
     this.pendingLabel = "";
+  }
+
+  // Switch to a local branch sitting on the right-clicked row. Reuses the
+  // sidebar's full checkout flow (reload, dirty-tree resolution chooser, error
+  // toasts, demo mode) rather than reimplementing it. Capture the popover
+  // position before close() blanks it so the sidebar's own dirty-checkout menu,
+  // if it opens, anchors near where the user clicked.
+  checkout(name: string) {
+    if (this.busy) return;
+    const pos = { x: this.x, y: this.y };
+    this.close();
+    void sidebarCtrl.checkout(name, pos);
   }
 
   // ── mutating actions (menu view) ────────────────────────────────────────

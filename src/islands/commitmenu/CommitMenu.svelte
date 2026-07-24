@@ -67,6 +67,10 @@
           <span class="spinner"></span><span class="mut">{commitMenuCtrl.pendingLabel}</span>
         </div>
       {:else}
+        {#each commitMenuCtrl.branches as b}
+          <button class="cm-switch" onclick={() => commitMenuCtrl.checkout(b)}>Switch to <b>{b}</b></button>
+        {/each}
+        {#if commitMenuCtrl.branches.length}<div class="cm-sep"></div>{/if}
         <button
           disabled={commitMenuCtrl.isMerge}
           title={commitMenuCtrl.isMerge ? "Can't cherry-pick a merge commit" : undefined}

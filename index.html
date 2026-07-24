@@ -432,6 +432,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    above it, so it needs its own minimal layout rule rather than silently
    rendering unstyled. */
 .cm-pending{display:flex;align-items:center;gap:8px;padding:6px 10px}
+/* "Switch to <branch>" checkout actions at the top of the commit menu. */
+.ref-pop button.cm-switch b{color:var(--accent);font-weight:700}
+.cm-sep{height:1px;background:var(--border);margin:3px 4px}
 
 /* ---------- Tama's lamp-nook (pinned bottom of sidebar) ---------- */
 .nook{height:var(--nook-h);flex:none;position:relative;overflow:hidden;border-top:1px solid var(--border);

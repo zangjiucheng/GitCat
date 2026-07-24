@@ -799,7 +799,12 @@ cv.addEventListener("contextmenu",(e)=>{
   const row=hit.row;
   select(row);
   const sha=(BACKEND&&BACKEND.rows[row])?BACKEND.rows[row].sha:hhex(row);
-  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), e.clientX, e.clientY);
+  // Local branches on this row (kind "branch" — NOT the current HEAD, which is
+  // kind "head", nor tags/remotes) → offered as "Switch to …" checkout actions.
+  const rowRefs=(G&&G.allRefs&&G.allRefs[row])||(G&&G.refs&&G.refs[row]?[G.refs[row]]:[]);
+  const branches=rowRefs.filter(r=>r&&r.kind==="branch").map(r=>r.label);
+  showLabelTip(null);
+  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), e.clientX, e.clientY, branches);
 });
 cv.addEventListener("keydown",(e)=>{
   const rowH=layout.rowH;
