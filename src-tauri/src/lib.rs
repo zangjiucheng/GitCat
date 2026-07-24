@@ -278,6 +278,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // blob-extraction/temp-file code is needed at all.
         tool_settings::get_tool_settings,
         tool_settings::set_tool_settings,
+        tool_settings::generate_commit_message,
         tool_settings::open_diff_tool,
         tool_settings::resolve_conflict_with_external_tool,
         // Repo-root file editors (backlog #14, final item): view/edit .gitignore

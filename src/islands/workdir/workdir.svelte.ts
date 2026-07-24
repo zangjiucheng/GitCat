@@ -297,6 +297,10 @@ class WorkdirState {
 
   message = $state("");
   amend = $state(false);
+  // True only while generateMessage() is running — shares the `__commit__` busy
+  // lock (so the textarea + Commit button disable), but drives ONLY the Generate
+  // button's own spinner/label so it doesn't mislabel a plain commit.
+  generating = $state(false);
 
   selectedDiffFile = $state<string | null>(null);
   // Which side the selected file's diff came from — a file can legitimately
@@ -912,6 +916,43 @@ class WorkdirState {
     } finally {
       this.busy = false;
       this.busyTarget = null;
+    }
+  }
+
+  // Run the user's configured commit-message command (Tools ▸ External Tools)
+  // and drop its output into the message box. GitCat connects to no AI — this
+  // just runs THEIR command (aicommit, opencommit, a script). Shares the commit
+  // box's `__commit__` busy lock so the textarea + Commit button disable while
+  // it runs. A missing/failed command surfaces the backend's own message (which
+  // for "not configured" points at the setting).
+  async generateMessage(repo: string) {
+    if (this.busy) return;
+    if (!IN_TAURI) {
+      bridge.tama.set("hint");
+      bridge.tama.say("Configure a commit-message command in Tools ▸ External Tools to use this (demo).");
+      return;
+    }
+    this.busy = true;
+    this.busyTarget = "__commit__";
+    this.generating = true;
+    bridge.tama.set("thinking");
+    bridge.tama.say("Generating a commit message…");
+    try {
+      const res = await commands.generateCommitMessage(repo);
+      if (res.status === "ok") {
+        this.message = res.data;
+        bridge.tama.set("hint");
+        bridge.tama.say("Drafted a commit message — review and edit before committing.", 4200);
+      } else {
+        bridge.tama.warn(res.error || "Couldn't generate a commit message.");
+      }
+    } catch (e) {
+      bridge.tama.warn("Generate failed — " + e);
+      console.error(e);
+    } finally {
+      this.busy = false;
+      this.busyTarget = null;
+      this.generating = false;
     }
   }
 

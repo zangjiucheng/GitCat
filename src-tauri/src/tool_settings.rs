@@ -132,6 +132,16 @@ pub struct ExternalTool {
 pub struct ToolSettings {
     pub diff_tool: Option<ExternalTool>,
     pub merge_tool: Option<ExternalTool>,
+    /// An OPTIONAL shell command that prints a commit message to stdout — e.g.
+    /// `aicommit`, `opencommit --dry-run`, or the user's own script. GitCat runs
+    /// it (non-interactively, in the repo) when the user clicks "Generate" in
+    /// the commit panel and drops its stdout into the message box. GitCat itself
+    /// talks to NO AI: whatever intelligence (if any) lives entirely inside this
+    /// user-authored command, exactly the same trust boundary as the diff/merge
+    /// tool `cmd` above (a command the user typed for their OWN machine).
+    /// Unlike a tool `name`, this has no git-subsection charset constraint, so
+    /// it's a plain trimmed string (blank => `None` => the feature is unset).
+    pub commit_msg_command: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -139,6 +149,10 @@ struct SettingsFile {
     version: u32,
     diff_tool: Option<ExternalTool>,
     merge_tool: Option<ExternalTool>,
+    // serde treats a missing field as None, so older files (written before this
+    // field existed) load fine without bumping SCHEMA_VERSION.
+    #[serde(default)]
+    commit_msg_command: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +192,11 @@ pub fn load_from(path: &Path) -> Result<ToolSettings, String> {
         Err(e) => return Err(format!("Could not read {}: {e}", path.display())),
     };
     match serde_json::from_str::<SettingsFile>(&text) {
-        Ok(file) => Ok(ToolSettings { diff_tool: file.diff_tool, merge_tool: file.merge_tool }),
+        Ok(file) => Ok(ToolSettings {
+            diff_tool: file.diff_tool,
+            merge_tool: file.merge_tool,
+            commit_msg_command: file.commit_msg_command,
+        }),
         Err(_) => {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -214,6 +232,7 @@ pub fn save_to(path: &Path, settings: &ToolSettings) -> Result<(), String> {
         version: SCHEMA_VERSION,
         diff_tool: settings.diff_tool.clone(),
         merge_tool: settings.merge_tool.clone(),
+        commit_msg_command: settings.commit_msg_command.clone(),
     };
     let json = serde_json::to_string_pretty(&file).map_err(|e| format!("Could not serialize: {e}"))?;
     let mut tmp_name = path.as_os_str().to_os_string();
@@ -386,15 +405,87 @@ pub fn get_tool_settings(app: AppHandle<Wry>) -> Result<ToolSettings, String> {
 /// Whole-form overwrite (the settings modal always submits both slots at
 /// once) — no read-modify-write needed, unlike `repo_registry`'s list
 /// mutations, but still lock-guarded for the same cheap-insurance reason.
-/// JS: `commands.setToolSettings(diffTool, mergeTool)`.
+/// JS: `commands.setToolSettings(diffTool, mergeTool, commitMsgCommand)`.
 #[tauri::command]
 #[specta::specta]
-pub fn set_tool_settings(app: AppHandle<Wry>, diff_tool: Option<ExternalTool>, merge_tool: Option<ExternalTool>) -> Result<ToolSettings, String> {
+pub fn set_tool_settings(
+    app: AppHandle<Wry>,
+    diff_tool: Option<ExternalTool>,
+    merge_tool: Option<ExternalTool>,
+    commit_msg_command: Option<String>,
+) -> Result<ToolSettings, String> {
     let _guard = settings_lock().lock().unwrap_or_else(|e| e.into_inner());
     let path = settings_path(&app)?;
-    let settings = ToolSettings { diff_tool: normalize_tool(diff_tool)?, merge_tool: normalize_tool(merge_tool)? };
+    let settings = ToolSettings {
+        diff_tool: normalize_tool(diff_tool)?,
+        merge_tool: normalize_tool(merge_tool)?,
+        // Just trim; blank => None (feature unset). No charset check — it's an
+        // arbitrary shell command, not a git-subsection name.
+        commit_msg_command: commit_msg_command.map(|c| c.trim().to_string()).filter(|c| !c.is_empty()),
+    };
     save_to(&path, &settings)?;
     Ok(settings)
+}
+
+/// Run the user-configured commit-message command (see
+/// [`ToolSettings::commit_msg_command`]) in `path` and return its stdout as the
+/// generated message. GitCat connects to NO AI — this only runs the command the
+/// user themselves configured (`aicommit`, `opencommit`, a script, …); the
+/// intelligence, network calls, and API keys all live inside THAT command.
+///
+/// Spawned NON-INTERACTIVELY through the platform shell: `output_with_timeout`
+/// nulls stdin (a tool that tries to prompt gets EOF instead of wedging the
+/// app — the same hardening the submodule fix needed), no console window, and a
+/// generous timeout so a hung generator becomes a bounded failure rather than a
+/// forever-spinning button. `async fn` + `run_blocking` keeps the wait off the
+/// main thread.
+///
+/// JS: `commands.generateCommitMessage(path)`.
+#[tauri::command]
+#[specta::specta]
+pub async fn generate_commit_message(app: AppHandle<Wry>, path: String) -> Result<String, String> {
+    let cmd = load_from(&settings_path(&app)?)?
+        .commit_msg_command
+        .filter(|c| !c.trim().is_empty())
+        .ok_or_else(|| {
+            "No commit-message command is set up. Add one in Tools ▸ External Tools (e.g. `aicommit`) — GitCat runs it and drops the output here; it talks to no AI itself.".to_string()
+        })?;
+    crate::blocking::run_blocking(move || run_commit_msg_command(&path, &cmd)).await
+}
+
+/// Timeout for the commit-message generator specifically — much longer than the
+/// 20s `SUBPROCESS_TIMEOUT` git subprocesses use, because an AI-backed tool has
+/// to round-trip a model and can legitimately take tens of seconds.
+const COMMIT_MSG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+fn run_commit_msg_command(path: &str, cmd: &str) -> Result<String, String> {
+    use std::process::Command;
+    // Route through the platform shell so the user can configure a full command
+    // line with args/pipes (e.g. `opencommit --dry-run | tail -n +2`), matching
+    // how git itself runs difftool/mergetool `cmd` strings.
+    let mut command = if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        c.arg("/C").arg(cmd);
+        c
+    } else {
+        let mut c = Command::new("sh");
+        c.arg("-c").arg(cmd);
+        c
+    };
+    command.current_dir(path).no_console_window();
+    let out = crate::procutil::output_with_timeout(command, COMMIT_MSG_TIMEOUT)
+        .map_err(|e| format!("Could not run the commit-message command: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() { stderr } else if !stdout.is_empty() { stdout } else { format!("exited with status {}", out.status.code().unwrap_or(-1)) };
+        return Err(format!("The commit-message command failed: {detail}"));
+    }
+    let message = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if message.is_empty() {
+        return Err("The commit-message command produced no output.".to_string());
+    }
+    Ok(message)
 }
 
 // ---------------------------------------------------------------------------
@@ -699,10 +790,12 @@ mod tests {
         let settings = ToolSettings {
             diff_tool: Some(ExternalTool { name: "meld".into(), cmd: None }),
             merge_tool: Some(ExternalTool { name: "mytool".into(), cmd: Some("mytool $BASE $LOCAL $REMOTE $MERGED".into()) }),
+            commit_msg_command: Some("aicommit".into()),
         };
         save_to(&path, &settings).expect("save_to failed");
 
         let loaded = load_from(&path).expect("load_from failed");
+        assert_eq!(loaded.commit_msg_command.as_deref(), Some("aicommit"));
         assert_eq!(loaded.diff_tool.as_ref().unwrap().name, "meld");
         assert!(loaded.diff_tool.as_ref().unwrap().cmd.is_none());
         assert_eq!(loaded.merge_tool.as_ref().unwrap().name, "mytool");
@@ -849,5 +942,37 @@ mod tests {
         assert!(validate_arg("-x").is_err());
         assert!(validate_arg("a\nb").is_err());
         assert!(validate_arg("f.txt").is_ok());
+    }
+
+    // The commit-message command runner. Unix-only (the tests use POSIX shell
+    // syntax); the Rust CI job runs on Linux. The Windows `cmd /C` path is the
+    // same shape, exercised manually.
+    #[cfg(unix)]
+    #[test]
+    fn run_commit_msg_command_returns_trimmed_stdout() {
+        let dir = temp_dir("gen-ok");
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = run_commit_msg_command(dir.to_str().unwrap(), "printf 'feat: add thing\\n\\nwhy it matters\\n'")
+            .expect("expected success");
+        assert_eq!(out, "feat: add thing\n\nwhy it matters");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_commit_msg_command_reports_a_nonzero_exit_with_its_stderr() {
+        let dir = temp_dir("gen-fail");
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = run_commit_msg_command(dir.to_str().unwrap(), "echo boom >&2; exit 3").unwrap_err();
+        assert!(err.contains("failed"), "got: {err}");
+        assert!(err.contains("boom"), "should surface the command's stderr, got: {err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_commit_msg_command_errors_when_output_is_empty() {
+        let dir = temp_dir("gen-empty");
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = run_commit_msg_command(dir.to_str().unwrap(), "true").unwrap_err();
+        assert!(err.to_lowercase().contains("no output"), "got: {err}");
     }
 }

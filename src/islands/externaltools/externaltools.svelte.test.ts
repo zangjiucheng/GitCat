@@ -42,7 +42,7 @@ function err(error: string): { status: "error"; error: string } {
 }
 
 function settings(partial: Partial<ToolSettings> = {}): ToolSettings {
-  return { diffTool: null, mergeTool: null, ...partial };
+  return { diffTool: null, mergeTool: null, commitMsgCommand: null, ...partial };
 }
 
 function resetCtrl() {
@@ -140,6 +140,7 @@ describe("save — whole-form overwrite", () => {
     expect(commands.setToolSettings).toHaveBeenCalledWith(
       { name: "meld", cmd: null },
       { name: "mytool", cmd: "mytool $BASE $LOCAL $REMOTE $MERGED" },
+      null,
     );
     expect(externalToolsCtrl.open).toBe(false);
     expect(bridge.tama.say).toHaveBeenCalled();
@@ -154,7 +155,25 @@ describe("save — whole-form overwrite", () => {
 
     await externalToolsCtrl.save();
 
-    expect(commands.setToolSettings).toHaveBeenCalledWith(null, null);
+    expect(commands.setToolSettings).toHaveBeenCalledWith(null, null, null);
+  });
+
+  it("saves the commit-message command (trimmed; blank => null)", async () => {
+    externalToolsCtrl.commitCmd = "  aicommit  ";
+    vi.mocked(commands.setToolSettings).mockResolvedValueOnce(ok(settings({ commitMsgCommand: "aicommit" })));
+    await externalToolsCtrl.save();
+    expect(commands.setToolSettings).toHaveBeenCalledWith(null, null, "aicommit");
+
+    externalToolsCtrl.commitCmd = "   ";
+    vi.mocked(commands.setToolSettings).mockResolvedValueOnce(ok(settings()));
+    await externalToolsCtrl.save();
+    expect(commands.setToolSettings).toHaveBeenLastCalledWith(null, null, null);
+  });
+
+  it("loads the commit-message command from settings into the form", async () => {
+    vi.mocked(commands.getToolSettings).mockResolvedValueOnce(ok(settings({ commitMsgCommand: "opencommit --dry-run" })));
+    await externalToolsCtrl.refresh();
+    expect(externalToolsCtrl.commitCmd).toBe("opencommit --dry-run");
   });
 
   it("surfaces a backend validation error (e.g. bad charset) without closing the modal", async () => {

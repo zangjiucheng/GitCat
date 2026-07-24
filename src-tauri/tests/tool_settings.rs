@@ -85,10 +85,12 @@ fn save_then_read_back_persists_across_a_simulated_restart() {
     let settings = ToolSettings {
         diff_tool: Some(ExternalTool { name: "meld".into(), cmd: None }),
         merge_tool: Some(ExternalTool { name: "mytool".into(), cmd: Some("mytool $BASE $LOCAL $REMOTE $MERGED".into()) }),
+        commit_msg_command: Some("opencommit --dry-run".into()),
     };
     save_to(&file, &settings).expect("save_to failed");
 
     let reloaded = load_from(&file).expect("load_from failed");
+    assert_eq!(reloaded.commit_msg_command.as_deref(), Some("opencommit --dry-run"));
     assert_eq!(reloaded.diff_tool.unwrap().name, "meld");
     let mt = reloaded.merge_tool.unwrap();
     assert_eq!(mt.name, "mytool");

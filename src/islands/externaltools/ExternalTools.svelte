@@ -85,6 +85,24 @@
           Leave blank to fall back to this repository's own <code>git config merge.tool</code>, if any. A custom command may use git's own
           <code>$BASE</code>/<code>$LOCAL</code>/<code>$REMOTE</code>/<code>$MERGED</code> placeholders.
         </p>
+
+        <h4 class="d-lab" style="margin-top:16px">Commit message command</h4>
+        <div class="rm-form">
+          <input
+            type="text"
+            class="mono"
+            placeholder="command&#8230; e.g. aicommit, opencommit --dry-run"
+            bind:value={externalToolsCtrl.commitCmd}
+            disabled={externalToolsCtrl.saving}
+            spellcheck="false"
+            autocomplete="off"
+            onkeydown={onFieldKeydown}
+          />
+        </div>
+        <p class="mut" style="font-size:11.5px;margin:2px 0 0">
+          Runs in the repo; its output fills the commit message (the &#10024; button in the commit box). GitCat talks to no AI itself &#8212; the
+          command is entirely yours (<code>aicommit</code>, <code>opencommit</code>, a script&#8230;).
+        </p>
       {/if}
     </div>
     <div class="modal-foot">

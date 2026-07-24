@@ -2325,50 +2325,6 @@ async submoduleStatus(path: string) : Promise<Result<SubmoduleInfo[], string>> {
 async submoduleInit(path: string, submodulePath: string) : Promise<WriteResult> {
     return await TAURI_INVOKE("submodule_init", { path, submodulePath });
 },
-/**
- * Clone/checkout submodule(s) to the commit(s) the superproject's index
- * tracks (`git submodule update`).
- * 
- * - `submodule_path: None` updates EVERY registered submodule in one
- * invocation (no path restriction at all) — the bulk "Update all" action.
- * `Some(p)` restricts to just that one path (`-- <p>`).
- * - `init: true` adds `--init`, folding a never-run `submodule_init` into
- * this same call (clone-if-never-cloned) — the "Init + Update"
- * convenience. `init: false` is the plain "Update" action: it requires the
- * submodule to already be registered+cloned (an update on a
- * not-initialized submodule with `init:false` is a no-op as far as that
- * path is concerned — real git silently skips it rather than erroring,
- * since there is nothing registered yet for it to act on).
- * - `recursive: true` adds `--recursive`, so a freshly-checked-out
- * submodule's OWN submodules (a submodule-of-a-submodule) are inited/
- * updated too, in the same call.
- * 
- * Never passes `--force`. See this module's doc comment for the empirically
- * verified refusal git's own default already gives when an update would
- * clobber uncommitted changes inside a submodule's working tree — that
- * refusal surfaces here verbatim as `ok:false`, exactly like `checkout`/
- * `pull`'s existing "never force" convention.
- * 
- * No Safety Manager snapshot: this only ever touches the SUBMODULE's own
- * separate `.git` (its own HEAD/index/workdir) — never the superproject's
- * HEAD, a branch, or its working tree — identical reasoning to plain
- * `push`'s own "nothing local changes" rationale in `git_remote.rs`. And the
- * one real risk a snapshot might otherwise exist to cover — clobbering
- * uncommitted submodule changes — is already prevented by git's own refusal
- * above, not by anything a superproject-level snapshot could restore anyway.
- * 
- * BUG FIX: was a plain (non-async) `fn`. This is the command most worth
- * fixing in the whole file — its body shells out to `git submodule update`
- * (via `run_git`/`Command::new`), which genuinely clones/fetches the
- * submodule's remote whenever the commit the superproject tracks isn't
- * already present locally, so the process this spawns can legitimately run
- * for network-bound seconds. Left as a plain `fn`, that entire duration ran
- * INLINE on Tauri's main thread and froze the whole app window, not just
- * this row's update action. `async fn` + `run_blocking` moves it onto
- * Tauri's blocking-task thread pool, matching `dashboard_repo_status`/
- * `workdir_status`'s established fix.
- * JS call: `invoke("submodule_update", { path, submodulePath?, recursive, init })`.
- */
 async submoduleUpdate(path: string, submodulePath: string | null, recursive: boolean, init: boolean) : Promise<WriteResult> {
     return await TAURI_INVOKE("submodule_update", { path, submodulePath, recursive, init });
 },
@@ -2690,11 +2646,35 @@ async getToolSettings() : Promise<Result<ToolSettings, string>> {
  * Whole-form overwrite (the settings modal always submits both slots at
  * once) — no read-modify-write needed, unlike `repo_registry`'s list
  * mutations, but still lock-guarded for the same cheap-insurance reason.
- * JS: `commands.setToolSettings(diffTool, mergeTool)`.
+ * JS: `commands.setToolSettings(diffTool, mergeTool, commitMsgCommand)`.
  */
-async setToolSettings(diffTool: ExternalTool | null, mergeTool: ExternalTool | null) : Promise<Result<ToolSettings, string>> {
+async setToolSettings(diffTool: ExternalTool | null, mergeTool: ExternalTool | null, commitMsgCommand: string | null) : Promise<Result<ToolSettings, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_tool_settings", { diffTool, mergeTool }) };
+    return { status: "ok", data: await TAURI_INVOKE("set_tool_settings", { diffTool, mergeTool, commitMsgCommand }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Run the user-configured commit-message command (see
+ * [`ToolSettings::commit_msg_command`]) in `path` and return its stdout as the
+ * generated message. GitCat connects to NO AI — this only runs the command the
+ * user themselves configured (`aicommit`, `opencommit`, a script, …); the
+ * intelligence, network calls, and API keys all live inside THAT command.
+ * 
+ * Spawned NON-INTERACTIVELY through the platform shell: `output_with_timeout`
+ * nulls stdin (a tool that tries to prompt gets EOF instead of wedging the
+ * app — the same hardening the submodule fix needed), no console window, and a
+ * generous timeout so a hung generator becomes a bounded failure rather than a
+ * forever-spinning button. `async fn` + `run_blocking` keeps the wait off the
+ * main thread.
+ * 
+ * JS: `commands.generateCommitMessage(path)`.
+ */
+async generateCommitMessage(path: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_commit_message", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3660,7 +3640,19 @@ export type TodoItem = { sha: string; action: string }
  * exactly like a real git client's tool prefs, persisted as one small JSON
  * file under `app_config_dir()`.
  */
-export type ToolSettings = { diffTool: ExternalTool | null; mergeTool: ExternalTool | null }
+export type ToolSettings = { diffTool: ExternalTool | null; mergeTool: ExternalTool | null; 
+/**
+ * An OPTIONAL shell command that prints a commit message to stdout — e.g.
+ * `aicommit`, `opencommit --dry-run`, or the user's own script. GitCat runs
+ * it (non-interactively, in the repo) when the user clicks "Generate" in
+ * the commit panel and drops its stdout into the message box. GitCat itself
+ * talks to NO AI: whatever intelligence (if any) lives entirely inside this
+ * user-authored command, exactly the same trust boundary as the diff/merge
+ * tool `cmd` above (a command the user typed for their OWN machine).
+ * Unlike a tool `name`, this has no git-subsection charset constraint, so
+ * it's a plain trimmed string (blank => `None` => the feature is unset).
+ */
+commitMsgCommand: string | null }
 export type TrackedRepo = { path: string; 
 /**
  * Unix seconds this repo was last OPENED through this app (via

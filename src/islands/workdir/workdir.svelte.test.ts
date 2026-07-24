@@ -32,6 +32,7 @@ vi.mock("../../ipc/bindings", () => ({
     unstageLines: vi.fn(),
     discardLines: vi.fn(),
     commit: vi.fn(),
+    generateCommitMessage: vi.fn(),
     stashList: vi.fn(),
     stashSave: vi.fn(),
     stashApply: vi.fn(),
@@ -667,6 +668,35 @@ describe("commit", () => {
     await workdirCtrl.commit("/repo");
     expect(commands.commit).not.toHaveBeenCalled();
     expect(vi.mocked(bridge.tama.say).mock.calls[0][0]).toEqual(expect.stringContaining("demo"));
+  });
+});
+
+describe("generateMessage (external commit-message command)", () => {
+  it("fills the message box from the command's stdout and clears its busy flags", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.generateCommitMessage).mockResolvedValueOnce(ok("feat: add the thing\n\nwhy it matters"));
+    await workdirCtrl.generateMessage("/repo");
+    expect(commands.generateCommitMessage).toHaveBeenCalledWith("/repo");
+    expect(workdirCtrl.message).toBe("feat: add the thing\n\nwhy it matters");
+    expect(workdirCtrl.busy).toBe(false);
+    expect(workdirCtrl.generating).toBe(false);
+  });
+
+  it("surfaces the backend error and leaves an existing message untouched", async () => {
+    mockInTauri = true;
+    workdirCtrl.message = "hand-written, keep me";
+    vi.mocked(commands.generateCommitMessage).mockResolvedValueOnce({ status: "error", error: "No commit-message command is set up." });
+    await workdirCtrl.generateMessage("/repo");
+    expect(bridge.tama.warn).toHaveBeenCalled();
+    expect(workdirCtrl.message).toBe("hand-written, keep me");
+    expect(workdirCtrl.busy).toBe(false);
+  });
+
+  it("design mode: no IPC, just a hint pointing at the setting", async () => {
+    mockInTauri = false;
+    await workdirCtrl.generateMessage("/repo");
+    expect(commands.generateCommitMessage).not.toHaveBeenCalled();
+    expect(bridge.tama.say).toHaveBeenCalled();
   });
 });
 

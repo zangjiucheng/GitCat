@@ -74,7 +74,17 @@
   </section>
 
   <section>
-    <h4 class="d-lab">Commit</h4>
+    <div class="d-lab-row">
+      <h4 class="d-lab" style="margin:0">Commit</h4>
+      <button
+        class="wd-stage-all"
+        title="Generate a commit message with your configured command (Tools ▸ External Tools)"
+        disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"}
+        onclick={() => workdirCtrl.generateMessage(repo())}
+      >
+        {#if workdirCtrl.generating}<span class="spinner"></span> Generating&#8230;{:else}&#10024; Generate{/if}
+      </button>
+    </div>
     <textarea
       class="wd-msg"
       rows="3"

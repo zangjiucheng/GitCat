@@ -48,6 +48,11 @@ class ExternalToolsState {
   diffCmd = $state("");
   mergeName = $state("");
   mergeCmd = $state("");
+  // A shell command that prints a commit message (e.g. `aicommit`,
+  // `opencommit --dry-run`, a script). No name/charset constraint — it's an
+  // arbitrary command, not a git-subsection tool name. GitCat runs it and drops
+  // the output in the commit box; it connects to no AI itself.
+  commitCmd = $state("");
 
   // Entry point (Tools menu / ⌘K). Always re-fetches — same "never trust
   // stale settings across a reopen" discipline as every other on-demand
@@ -67,6 +72,7 @@ class ExternalToolsState {
     this.diffCmd = s.diffTool?.cmd ?? "";
     this.mergeName = s.mergeTool?.name ?? "";
     this.mergeCmd = s.mergeTool?.cmd ?? "";
+    this.commitCmd = s.commitMsgCommand ?? "";
   }
 
   async refresh(): Promise<void> {
@@ -117,7 +123,11 @@ class ExternalToolsState {
     this.saving = true;
     this.error = "";
     try {
-      const res = await commands.setToolSettings(this.toTool(this.diffName, this.diffCmd), this.toTool(this.mergeName, this.mergeCmd));
+      const res = await commands.setToolSettings(
+        this.toTool(this.diffName, this.diffCmd),
+        this.toTool(this.mergeName, this.mergeCmd),
+        this.commitCmd.trim() || null,
+      );
       if (res.status === "ok") {
         this.applySettings(res.data);
         bridge.tama.say("External tool preferences saved.");
