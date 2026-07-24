@@ -108,6 +108,11 @@ use crate::procutil::NoConsoleWindowExt;
 /// duplicating small per-module helpers/constants rather than reaching across
 /// module boundaries for them).
 const MAX_LINES_PER_FILE: usize = 2000;
+/// Per-line byte cap — see `commands.rs`'s own `MAX_LINE_LEN`/`cap_line_len` for
+/// the full rationale (a single multi-MB minified line freezes the WebView main
+/// thread when the frontend highlights + `{@html}`-renders it). Kept as a private
+/// copy per this module's stated duplicate-small-helpers precedent above.
+const MAX_LINE_LEN: usize = 8000;
 
 /// Process-wide monotonic tie-breaker for discard-backup filenames, mirroring
 /// `safety.rs`'s `SNAP_SEQ` — a separate counter (not shared with safety.rs)
@@ -677,9 +682,17 @@ fn workdir_file_diff_inner(path: &str, file: &str, staged: bool) -> Result<FileC
                     ' ' => " ",
                     _ => continue,
                 };
-                let text = String::from_utf8_lossy(line.content())
+                let mut text = String::from_utf8_lossy(line.content())
                     .trim_end_matches(['\n', '\r'])
                     .to_string();
+                if text.len() > MAX_LINE_LEN {
+                    let mut cut = MAX_LINE_LEN;
+                    while cut > 0 && !text.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    text.truncate(cut);
+                    text.push_str(" … (line truncated)");
+                }
                 rows.push(DiffLineRow { kind: kind.to_string(), old_no: line.old_lineno(), new_no: line.new_lineno(), text });
                 emitted += 1;
             }

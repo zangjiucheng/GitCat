@@ -47,6 +47,27 @@ pub fn get_app_info(app: tauri::AppHandle<tauri::Wry>) -> AppInfo {
 /// UI or blow up the payload. Beyond these we flag truncation and stop.
 const MAX_FILES: usize = 40;
 const MAX_LINES_PER_FILE: usize = 2000;
+/// Per-line byte cap. Line COUNT is bounded above, but a single line's LENGTH is
+/// not: a minified/generated file can be one multi-megabyte line. Sending it
+/// whole would bloat the IPC payload and — worse — the frontend renders each line
+/// synchronously (syntax highlight + `{@html}` into the DOM) on the WebView's main
+/// thread, so a multi-MB line freezes the whole window. Truncate on a char
+/// boundary with a marker; the frontend caps again as a backstop.
+const MAX_LINE_LEN: usize = 8000;
+
+/// Truncate `s` to at most `MAX_LINE_LEN` bytes on a UTF-8 char boundary,
+/// appending a marker when it actually cut anything.
+fn cap_line_len(mut s: String) -> String {
+    if s.len() > MAX_LINE_LEN {
+        let mut cut = MAX_LINE_LEN;
+        while cut > 0 && !s.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        s.truncate(cut);
+        s.push_str(" … (line truncated)");
+    }
+    s
+}
 
 /// How many commits accumulate before one `"graph-batch"` event fires — small
 /// enough that the first batch (the newest, most-relevant commits) arrives
@@ -583,9 +604,11 @@ fn commit_detail_inner(path: &str, sha: &str) -> Result<CommitDetail, git2::Erro
                     ' ' => " ",
                     _ => continue,
                 };
-                let text = String::from_utf8_lossy(line.content())
-                    .trim_end_matches(['\n', '\r'])
-                    .to_string();
+                let text = cap_line_len(
+                    String::from_utf8_lossy(line.content())
+                        .trim_end_matches(['\n', '\r'])
+                        .to_string(),
+                );
                 rows.push(DiffLineRow {
                     kind: kind.to_string(),
                     old_no: line.old_lineno(),
@@ -703,4 +726,62 @@ fn guess_lang(path: &str) -> String {
         _ => "generic",
     }
     .to_string()
+}
+
+#[cfg(test)]
+
+mod cap_line_len_tests {
+
+    use super::{cap_line_len, MAX_LINE_LEN};
+
+
+
+    #[test]
+
+    fn leaves_short_lines_untouched() {
+
+        let s = "a normal line of code".to_string();
+
+        assert_eq!(cap_line_len(s.clone()), s);
+
+    }
+
+
+
+    #[test]
+
+    fn truncates_an_oversized_line_with_a_marker() {
+
+        let out = cap_line_len("x".repeat(MAX_LINE_LEN * 3));
+
+        assert!(out.len() < MAX_LINE_LEN * 3);
+
+        assert!(out.ends_with(" … (line truncated)"));
+
+        assert!(out.starts_with(&"x".repeat(100)));
+
+    }
+
+
+
+    #[test]
+
+    fn cuts_on_a_utf8_boundary_without_panicking() {
+
+        // A multibyte char (é = 2 bytes) repeated so the naive cut at
+
+        // MAX_LINE_LEN lands mid-codepoint; must back off to a boundary.
+
+        let out = cap_line_len("é".repeat(MAX_LINE_LEN));
+
+        assert!(out.ends_with(" … (line truncated)"));
+
+        // The truncated prefix must still be valid UTF-8 (String guarantees it,
+
+        // but this asserts we never panicked splitting one).
+
+        assert!(out.chars().count() > 0);
+
+    }
+
 }

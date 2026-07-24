@@ -67,6 +67,15 @@ const BRANCH_COL_MIN=96, BRANCH_COL_MAX=260, BRANCH_PAD_L=12, COL_HANDLE=5, MIN_
 // in total before the message text begins — so the bar reads as separated from
 // both the graph and the text (see draw()'s tag pass).
 const RBAR_INSET=2, MSG_TEXT_PAD=11;
+// Hard length caps against pathological input. Line/commit COUNT is capped
+// upstream, but a single string's LENGTH is not: a commit summary can be an
+// arbitrarily long pasted paragraph, and a diff line can be a whole minified
+// file on one line. Both feed synchronous main-thread work — the canvas label
+// truncation is O(len) per row per frame (worst case O(len^2)) and highlight()
+// is O(len) with its output injected via {@html} — so without a cap a single
+// pathological string freezes the WKWebView main thread hard enough to force a
+// quit. No readable label/line approaches these; longer is truncated to fit.
+const LABEL_MAX=220, HIGHLIGHT_MAX=4000;
 // Right-edge gutter reserved for the sha (was the ONLY thing living there —
 // hence the old bare "96") plus the author-name preview added alongside it
 // (see draw()'s row loop / authorOf() above): 96 for the sha itself, 8px gap,
@@ -465,7 +474,7 @@ function draw(){
       // adding the author name here without widening this would have let a
       // long commit message visually collide with it.
       ctx.font=Math.round(12.5*Math.min(1.25,layout.zoom))+"px "+FONT_UI; ctx.fillStyle=theme.text; ctx.textAlign="left";
-      let s=msgOf(r); const maxw=W-cx-AUTHOR_GUTTER;
+      let s=msgOf(r); if(s.length>LABEL_MAX) s=s.slice(0,LABEL_MAX); const maxw=W-cx-AUTHOR_GUTTER;
       if(ctx.measureText(s).width>maxw){while(s.length>4&&ctx.measureText(s+"…").width>maxw)s=s.slice(0,-1);s+="…";}
       ctx.fillText(s,cx,y);
       ctx.fillStyle=theme.muted; ctx.textAlign="right"; ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px ui-monospace,monospace";
@@ -475,7 +484,7 @@ function draw(){
       // larger, UI-font-not-mono) style so it doesn't read as part of the
       // hash itself; truncated the same way the message above is.
       ctx.font=Math.round(11*Math.min(1.2,layout.zoom))+"px "+FONT_UI;
-      let a=authorOf(r); const maxAuthorW=AUTHOR_GUTTER-96-8;
+      let a=authorOf(r); if(a.length>LABEL_MAX) a=a.slice(0,LABEL_MAX); const maxAuthorW=AUTHOR_GUTTER-96-8;
       if(ctx.measureText(a).width>maxAuthorW){while(a.length>1&&ctx.measureText(a+"…").width>maxAuthorW)a=a.slice(0,-1);a+="…";}
       ctx.fillText(a,W-14-shaW-8,y);
       ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px ui-monospace,monospace";
@@ -543,7 +552,7 @@ function drawChip(x,y,label,kind,maxWidth,colorOverride){
   ctx.font=layout.chipFont;
   const pad=6;
   if(maxWidth!=null&&maxWidth<=pad*2+8) return x;
-  let text=label;
+  let text=label.length>LABEL_MAX?label.slice(0,LABEL_MAX):label;
   if(maxWidth!=null){
     const textMax=maxWidth-pad*2;
     if(ctx.measureText(text).width>textMax){
@@ -1126,7 +1135,13 @@ const GRAMMARS={
      ["fn",/[A-Za-z_$][\w$]*(?=\s*\()/y],["num",/\b0x[\da-fA-F]+|\b\d+(?:\.\d+)?\b/y],["punc",/[{}()\[\];,.:?=<>+\-*/%&|!~]+/y]],
   generic:[["com",/#[^\n]*|\/\/[^\n]*/y],["str",/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/y],["num",/\b\d+(?:\.\d+)?\b/y],["punc",/[{}()\[\];,.:=<>+\-*/%]+/y]],
 };
-function highlight(src,lang){const rules=GRAMMARS[lang]||GRAMMARS.generic;let i=0,out="";
+function highlight(src,lang){
+  // Cap the line length before tokenising (O(len)) and injecting via {@html}:
+  // line COUNT is capped upstream but length is not, so a minified/generated
+  // one-line file (a multi-MB single line) would tokenise megabytes and build
+  // hundreds of thousands of DOM nodes synchronously — a hard main-thread freeze.
+  if(src.length>HIGHLIGHT_MAX) return esc(src.slice(0,HIGHLIGHT_MAX))+'<span class="mut"> … (line truncated)</span>';
+  const rules=GRAMMARS[lang]||GRAMMARS.generic;let i=0,out="";
   outer:while(i<src.length){for(const [type,re] of rules){re.lastIndex=i;const m=re.exec(src);
     if(m&&m.index===i){out+=`<span class="tok-${type}">${esc(m[0])}</span>`;i+=m[0].length||1;continue outer;}}
     out+=esc(src[i]);i++;} return out;}
