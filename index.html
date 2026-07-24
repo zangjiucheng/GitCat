@@ -251,6 +251,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-item.current{background:color-mix(in srgb,var(--accent) 14%,transparent)}
 .ref-item.current::before{content:"";position:absolute;left:10px;top:50%;transform:translateY(-50%);width:5px;height:5px;border-radius:50%;background:var(--accent)}
 .ref-item .rname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Hover tooltip showing a truncated ref name in full (see Sidebar.svelte's
+   onRefHover). position:fixed so it escapes .ref-scroll/.sidebar overflow and
+   extends past the sidebar's right edge over the graph. max-width only caps a
+   pathologically long name (still far wider than the sidebar). */
+.rname-tip{position:fixed;z-index:9000;pointer-events:none;max-width:min(560px,80vw);
+  background:var(--elevated);color:var(--text);border:1px solid var(--border);border-radius:6px;
+  padding:4px 9px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  box-shadow:0 6px 20px rgba(0,0,0,.4)}
 .ref-item.current .rname{font-weight:700}
 .ref-item .ab{flex:none;white-space:nowrap;font-family:var(--mono);font-size:10px;color:var(--muted)}
 .ref-item .ab .up{color:var(--success)} .ref-item .ab .dn{color:var(--danger)}

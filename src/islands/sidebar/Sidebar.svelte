@@ -18,6 +18,23 @@
   let newSubmoduleEl: HTMLInputElement | undefined = $state();
   let newSubmoduleFormEl: HTMLDivElement | undefined = $state();
   let submoduleMenuEl: HTMLDivElement | undefined = $state();
+
+  // Full-name tooltip for a truncated ref name (branch / remote / tag /
+  // submodule). A position:fixed pill (see .rname-tip) so it escapes
+  // .ref-scroll's overflow clip and can extend PAST the sidebar's right edge
+  // over the graph, rather than being cut off. One delegated handler over the
+  // whole list; only shown when the name is actually ellipsized (scrollWidth >
+  // clientWidth), so short names never get a redundant tip.
+  let nameTip = $state<{ text: string; x: number; y: number } | null>(null);
+  function onRefHover(e: MouseEvent) {
+    const el = (e.target as HTMLElement | null)?.closest?.(".rname") as HTMLElement | null;
+    if (el && el.scrollWidth > el.clientWidth + 1) {
+      const r = el.getBoundingClientRect();
+      nameTip = { text: (el.textContent ?? "").trim(), x: r.left, y: r.bottom + 3 };
+    } else {
+      nameTip = null;
+    }
+  }
   let mergeMenuEl: HTMLDivElement | undefined = $state();
   let dirtyCheckoutMenuEl: HTMLDivElement | undefined = $state();
   let checkoutConfirmEl: HTMLDivElement | undefined = $state();
@@ -166,7 +183,13 @@
     <button class="show-all" title="Hide every branch except the current one, then pick a few back in" onclick={() => sidebarCtrl.hideAllBranches(bridge.CUR_REPO as unknown as string)}>Hide all branches</button>
   </div>
 </div>
-<div class="ref-scroll" id="refScroll" data-vimnav-list>
+<!-- The mouseover handler only drives a decorative "full name" tooltip for
+     truncated rows; the name itself is already in the DOM (read by screen
+     readers regardless of visual ellipsis), so no keyboard/role equivalent is
+     needed for it. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_mouse_events_have_key_events -->
+<div class="ref-scroll" id="refScroll" data-vimnav-list onmouseover={onRefHover} onmouseleave={() => (nameTip = null)} onfocusout={() => (nameTip = null)}>
   <details class="ref-group" open>
     <summary><span class="tw">&#9656;</span>Local<span class="count" id="cntLocal">{sidebarCtrl.locals.length}</span></summary>
     <div class="ref-list" id="refLocal">
@@ -767,4 +790,8 @@
     <button onclick={() => { const p = sm.path, st = sm.status; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.deinitSubmodule(p, st); }}>Deinit</button>
     <button class="danger" onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.removeSubmodule(p); }}>Remove&#8230;</button>
   </div>
+{/if}
+
+{#if nameTip}
+  <div class="rname-tip" style="left:{nameTip.x}px;top:{nameTip.y}px">{nameTip.text}</div>
 {/if}
