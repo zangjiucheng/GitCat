@@ -249,7 +249,7 @@ function recomputeLayout(){
   layout.rowH=Math.max(11,Math.round(ROW_H_BASE*z));
   layout.laneW=LANE_W_BASE*(0.85+0.15*z);
   layout.dotR=DOT_R_BASE*(0.85+0.15*z);
-  layout.chipFont=Math.round(11*Math.min(1.3,z))+"px "+FONT_UI;
+  layout.chipFont="600 "+Math.round(11.5*Math.min(1.3,z))+"px "+FONT_UI;
   // Left branch/tag column width: ~19% of the graph, clamped to [MIN,MAX], but
   // never so wide that the graph lanes + subject lose their room — collapses to 0
   // (inline chips, the pre-column behaviour) when the window is too narrow.
@@ -555,11 +555,14 @@ function drawChip(x,y,label,kind,maxWidth,colorOverride){
       text+="…";
     }
   }
-  const w=ctx.measureText(text).width+pad*2, h=Math.round(15*Math.min(1.25,layout.zoom));
+  const w=ctx.measureText(text).width+pad*2, h=Math.round(16.5*Math.min(1.25,layout.zoom));
   ctx.beginPath(); if(ctx.roundRect)ctx.roundRect(x,y-h/2,w,h,4);else ctx.rect(x,y-h/2,w,h);
-  ctx.fillStyle=col; ctx.globalAlpha=kind==="head"?0.92:0.16; ctx.fill(); ctx.globalAlpha=1;
+  ctx.fillStyle=col; ctx.globalAlpha=kind==="head"?0.95:0.26; ctx.fill(); ctx.globalAlpha=1;
   ctx.lineWidth=1; ctx.strokeStyle=col; ctx.stroke();
-  ctx.fillStyle=kind==="head"?theme.bg:col; ctx.textAlign="left"; ctx.fillText(text,x+pad,y+0.5);
+  // Non-head labels draw their text in the bright theme.text (NOT the branch
+  // colour on a same-colour tint, which read as low-contrast/blurry) — the colour
+  // identity stays in the border + fill tint. head stays dark-on-solid.
+  ctx.fillStyle=kind==="head"?theme.bg:theme.text; ctx.textAlign="left"; ctx.fillText(text,x+pad,y+0.5);
   return x+w;
 }
 function drawDragGhost(){
