@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tamaGalleryCtrl, POSES, poseImg } from "./tamagallery.svelte.ts";
   import Sparkles from "@lucide/svelte/icons/sparkles";
+  import { t } from "../../i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && tamaGalleryCtrl.open) tamaGalleryCtrl.close();
@@ -14,8 +15,8 @@
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" src={poseImg("happy")} alt="Tama, delighted you found this" /></div>
       <div>
-        <h3>You found Tama's gallery! <Sparkles class="ico" size={15} aria-hidden="true" /></h3>
-        <p>Every pose she wears around the app &#8212; click one to see her wear it right now, in the corner. にゃ〜</p>
+        <h3>{t("tamagallery.title")} <Sparkles class="ico" size={15} aria-hidden="true" /></h3>
+        <p>{t("tamagallery.subtitle")}</p>
       </div>
     </div>
     <div class="modal-body">
@@ -29,7 +30,7 @@
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" onclick={() => tamaGalleryCtrl.close()}>Close</button>
+      <button class="btn ghost" onclick={() => tamaGalleryCtrl.close()}>{t("common.close")}</button>
     </div>
   </div>
 </div>
