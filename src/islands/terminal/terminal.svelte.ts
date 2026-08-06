@@ -26,7 +26,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);

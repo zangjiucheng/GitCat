@@ -5,7 +5,7 @@
   // `.stat-bar`/`.fh-caveat` verbatim (see index.html's own REPOSITORY
   // SUMMARY doc comment) — only the 4-section layout itself (`.rs-*`) is new.
   import { repoSummaryCtrl } from "./reposummary.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && repoSummaryCtrl.open) repoSummaryCtrl.close();

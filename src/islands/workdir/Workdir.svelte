@@ -5,7 +5,7 @@
   import { sidebarCtrl } from "../sidebar/sidebar.svelte.ts";
   import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
   import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import Eye from "@lucide/svelte/icons/eye";
   import History from "@lucide/svelte/icons/history";
   import ExternalLink from "@lucide/svelte/icons/external-link";

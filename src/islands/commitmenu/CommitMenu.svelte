@@ -1,6 +1,6 @@
 <script lang="ts">
   import { commitMenuCtrl } from "./commitmenu.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   let popEl: HTMLDivElement | undefined = $state();
   let branchInputEl: HTMLInputElement | undefined = $state();

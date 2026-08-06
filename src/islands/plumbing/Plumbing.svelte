@@ -1,7 +1,7 @@
 <script lang="ts">
   import { plumbing } from "./plumbing.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   let revInput = $state("");
 

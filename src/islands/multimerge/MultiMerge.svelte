@@ -2,7 +2,7 @@
   import { multimergeCtrl } from "./multimerge.svelte.ts";
   import type { MultiMergeMode, MultiMergeStrategy } from "./multimerge.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && multimergeCtrl.open && !multimergeCtrl.busy) multimergeCtrl.close();

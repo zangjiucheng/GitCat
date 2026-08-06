@@ -10,7 +10,7 @@
   // index.html's FILE HISTORY block doc comment for that convention).
   import { danglingRecoveryCtrl } from "./danglingrecovery.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key !== "Escape" || !danglingRecoveryCtrl.open) return;

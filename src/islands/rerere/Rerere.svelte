@@ -5,7 +5,7 @@
   // index.html's own doc comment on the old DRAWER section.
   import { rerereCtrl } from "./rerere.svelte.ts";
   import { IN_TAURI } from "../../ipc/env";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   function onToggle(e: Event) {
     rerereCtrl.setEnabled((e.currentTarget as HTMLInputElement).checked);

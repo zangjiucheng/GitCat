@@ -13,7 +13,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 import { open } from "@tauri-apps/plugin-dialog";
 import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";

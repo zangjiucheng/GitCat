@@ -22,7 +22,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 import type { Plugin, PluginContext, PlaceholderCtx } from "../../ipc/bindings";
 import type { ActionItem } from "../cmdk/cmdk.svelte.ts";
 

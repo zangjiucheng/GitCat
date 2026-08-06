@@ -29,7 +29,7 @@ import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { open } from "@tauri-apps/plugin-dialog";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 class ApplyPatchState {
   busy = $state(false);

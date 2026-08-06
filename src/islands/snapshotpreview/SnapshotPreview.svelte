@@ -6,7 +6,7 @@
   // showAt(), not here — this popover is the compact half of the "Both" preview.
   import { snapshotPreviewCtrl } from "./snapshotpreview.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   let popEl: HTMLDivElement | undefined = $state();
 

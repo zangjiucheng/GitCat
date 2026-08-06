@@ -14,7 +14,7 @@
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 import type { CommitDetail } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { blameCtrl } from "../blame/blame.svelte.ts";

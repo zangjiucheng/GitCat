@@ -19,7 +19,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { FilterRepoBackupInfo, FilterRepoPreview, FilterRepoResult } from "../../ipc/bindings";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 export type FilterRepoStep = "scope" | "preview" | "confirm" | "result" | "restore";
 

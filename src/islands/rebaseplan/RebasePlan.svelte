@@ -2,7 +2,7 @@
   import { rebasePlanCtrl } from "./rebaseplan.svelte.ts";
   import type { PlanAction } from "./rebaseplan.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   const ACTIONS: PlanAction[] = ["pick", "edit", "squash", "fixup", "drop"];
 

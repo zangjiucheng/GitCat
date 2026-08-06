@@ -7,7 +7,7 @@
   import { snapshotPreviewCtrl } from "../snapshotpreview/snapshotpreview.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import type { SubmoduleInfo } from "../../ipc/bindings";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import Folder from "@lucide/svelte/icons/folder";
   import Zap from "@lucide/svelte/icons/zap";
   import Clipboard from "@lucide/svelte/icons/clipboard";

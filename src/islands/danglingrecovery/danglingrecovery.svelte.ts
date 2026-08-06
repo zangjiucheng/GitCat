@@ -33,7 +33,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 import type { DanglingCommit } from "../../ipc/bindings";
 
 // Canned demo rows (design-mode only) — same spirit as reflog.svelte.ts's own

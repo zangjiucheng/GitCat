@@ -11,7 +11,7 @@
   // the per-widget bits (headings, paragraphs, the command-output preformatted
   // block).
   import { pluginPanelsCtrl } from "./pluginpanels.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && pluginPanelsCtrl.open) pluginPanelsCtrl.close();

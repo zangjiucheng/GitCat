@@ -7,7 +7,7 @@
   // silent window-level keydown listener. See vimnav.svelte.ts for why the
   // whole dispatch decision lives in the controller rather than here.
   import { vimnavCtrl, handleGlobalKeydown } from "./vimnav.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 </script>
 
 <svelte:window on:keydown={handleGlobalKeydown} />

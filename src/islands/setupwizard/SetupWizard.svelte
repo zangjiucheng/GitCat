@@ -24,7 +24,7 @@
   // too so dropping a different folder onto it re-picks, rather than needing
   // a separate footer button once something's chosen.
   import { setupWizardCtrl, type SetupWizardStep } from "./setupwizard.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import Folder from "@lucide/svelte/icons/folder";
 
   const STEP_ORDER: SetupWizardStep[] = ["welcome", "pick", "identity", "done"];

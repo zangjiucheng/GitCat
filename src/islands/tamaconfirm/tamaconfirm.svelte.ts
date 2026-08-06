@@ -13,7 +13,7 @@
 // Promise-based (like the mainlinepicker chooser) so a caller reads as a plain
 // `const ok = await tamaConfirmCtrl.ask({...})`.
 
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 type Kind = "info" | "warning" | "danger";
 

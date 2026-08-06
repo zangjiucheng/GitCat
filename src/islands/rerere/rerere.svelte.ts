@@ -14,7 +14,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 import type { RerereStatus } from "../../ipc/bindings";
 
 /// One row the view renders (reuses the existing .rr-row/.h/.rr-badge/.mut

@@ -5,7 +5,7 @@
   // the topbar) by src/main.ts — the row collapses to nothing when `visible` is
   // false, so a plain repo with no submodules shows no strip at all.
   import { submoduleNavCtrl as ctrl, horizontalWheelDelta, type TreeNode } from "./submodulenav.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   // Let a plain vertical mouse wheel scroll the strip left/right when it
   // overflows (lots of sibling submodules). Trackpad horizontal gestures

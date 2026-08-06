@@ -7,7 +7,7 @@
   // Bisect), NOT the generic #dangerScrim/armDanger flow.
   import { filterRepoCtrl, REWRITE_PHRASE, RESTORE_PHRASE } from "./filterrepo.svelte.ts";
   import { IN_TAURI } from "../../ipc/env";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
 
   const STEP_ORDER = ["scope", "preview", "confirm", "result"] as const;

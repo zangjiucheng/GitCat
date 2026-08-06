@@ -10,7 +10,7 @@
   // Workdir's prose-sized commit-message box. Only the small `.rf-tabs`/
   // `.rf-tab` toggle is new (see index.html's own doc comment on it).
   import { repoFilesCtrl, type RepoFileName } from "./repofiles.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   const FILES: RepoFileName[] = [".gitignore", ".mailmap"];
 

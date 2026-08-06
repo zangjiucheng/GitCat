@@ -1,7 +1,7 @@
 <script lang="ts">
   import { syncProgressCtrl } from "./syncprogress.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   let logEl: HTMLElement | undefined = $state();
 

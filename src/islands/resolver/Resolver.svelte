@@ -2,7 +2,7 @@
   import { resolver } from "./resolver.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import { IN_TAURI } from "../../ipc/env";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
 
   // ext -> highlight grammar key (was langForConflict)

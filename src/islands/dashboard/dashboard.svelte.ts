@@ -43,7 +43,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { open } from "@tauri-apps/plugin-dialog";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 import type { DashboardRepoStatus, TrackedRepo } from "../../ipc/bindings";
 
 export type DashboardRow = {

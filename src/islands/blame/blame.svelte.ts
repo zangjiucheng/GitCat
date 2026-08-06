@@ -24,7 +24,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 import type { BlameHunkRow, FileBlame } from "../../ipc/bindings";
 
 // One flattened display row per line of `data.lines` — built fresh from

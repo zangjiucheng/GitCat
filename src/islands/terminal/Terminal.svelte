@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { terminalCtrl } from "./terminal.svelte.ts";
   import { IN_TAURI } from "../../ipc/env";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import { Terminal as XTerm } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";

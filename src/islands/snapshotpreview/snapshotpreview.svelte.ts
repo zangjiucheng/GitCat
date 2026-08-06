@@ -21,7 +21,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import type { CommitDetail, Snapshot } from "../../ipc/bindings";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 // Popover size budget, used only to clamp its anchor inside the viewport.
 const POP_W = 320;

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fileHistoryCtrl } from "./filehistory.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && fileHistoryCtrl.open) fileHistoryCtrl.close();

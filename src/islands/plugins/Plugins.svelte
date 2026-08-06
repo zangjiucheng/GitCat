@@ -6,7 +6,7 @@
   // ExternalTools); the two-pane split + list rows are the only bespoke styling
   // (the scoped style block below). All state + management is in plugins.svelte.ts.
   import { pluginsCtrl, pluginContribution } from "./plugins.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import Trash2 from "@lucide/svelte/icons/trash-2";
 
   function onKeydown(e: KeyboardEvent) {

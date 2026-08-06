@@ -48,7 +48,7 @@ import { resetHeadCtrl } from "../resethead/resethead.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { save } from "@tauri-apps/plugin-dialog";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 type MenuView = "menu" | "branch" | "tag";
 

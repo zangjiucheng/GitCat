@@ -11,7 +11,7 @@
   import { aboutCtrl } from "./about.svelte.ts";
   import { updaterCtrl } from "../updater/updater.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import Link from "@lucide/svelte/icons/link";
 
   function onKeydown(e: KeyboardEvent) {

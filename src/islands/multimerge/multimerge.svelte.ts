@@ -65,7 +65,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 import type { LocalBranch, MergeResult } from "../../ipc/bindings";
 
 export type MultiMergeMode = "octopus" | "sequential";

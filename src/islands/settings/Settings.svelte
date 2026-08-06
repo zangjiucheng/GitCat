@@ -24,8 +24,8 @@
   import { playTamaSound } from "../../legacy/sound.ts";
   import { updaterCtrl } from "../updater/updater.svelte.ts";
   import { aboutCtrl } from "../about/about.svelte.ts";
-  import { t, locale, setLocale, LOCALES } from "../../i18n/i18n.svelte.ts";
-  import type { Locale } from "../../i18n/i18n.svelte.ts";
+  import { t, locale, setLocale, LOCALES } from "@/i18n/i18n.svelte.ts";
+  import type { Locale } from "@/i18n/i18n.svelte.ts";
 
   // Switching update channel: persist the choice, then immediately surface what's
   // available on the NEWLY-selected channel — turning nightly ON offers the

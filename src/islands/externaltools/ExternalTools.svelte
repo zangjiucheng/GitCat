@@ -6,7 +6,7 @@
   // doc comment on the MODALS section), the two-input-per-row shape mirroring
   // Remotes' own "name" + "URL" add-row.
   import { externalToolsCtrl } from "./externaltools.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && externalToolsCtrl.open) externalToolsCtrl.close();

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { dashboardCtrl, repoBasename, isWslPath } from "./dashboard.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   // The search box, focused once per open (see the effect) so typing narrows
   // the list immediately — reset to undefined between opens by Svelte itself.

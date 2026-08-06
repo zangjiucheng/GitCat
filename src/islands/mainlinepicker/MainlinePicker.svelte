@@ -1,7 +1,7 @@
 <script lang="ts">
   import { mainlinePickerCtrl } from "./mainlinepicker.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   // Parent 1 is the branch the merge was made ON (merged into); parent 2 is the
   // branch merged in. Spell that out so the choice isn't just "1 or 2".

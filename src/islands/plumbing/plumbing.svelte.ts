@@ -17,7 +17,7 @@
 import { commands } from "../../ipc/bindings";
 import type { PlumbingObject } from "../../ipc/bindings";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 // A single fabricated commit — good enough to demo the result-panel shape in
 // the browser design-mode prototype (no backend, no repo).

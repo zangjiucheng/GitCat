@@ -17,7 +17,7 @@ import { commands } from "../../ipc/bindings";
 import { IN_TAURI } from "../../ipc/env";
 import { submoduleCanOpen } from "../sidebar/sidebar.svelte.ts";
 import type { SubmoduleInfo } from "../../ipc/bindings";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 function basename(p: string): string {
   return p.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || p;

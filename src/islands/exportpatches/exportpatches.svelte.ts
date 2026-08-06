@@ -31,7 +31,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { save } from "@tauri-apps/plugin-dialog";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 // Mirrors patch.rs's own `validate_rev` shape (empty / leading-dash) — a
 // clearer, immediate in-form error rather than waiting on a round trip for

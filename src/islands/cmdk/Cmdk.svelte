@@ -1,7 +1,7 @@
 <script lang="ts">
   import { cmdkCtrl, shortSha, CMD_CAP } from "./cmdk.svelte.ts";
   import { isTextInputFocused } from "../vimnav/vimnav.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   let inputEl: HTMLInputElement | undefined = $state();
   let listEl: HTMLDivElement | undefined = $state();

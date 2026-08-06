@@ -44,7 +44,7 @@ import { updaterCtrl } from "../updater/updater.svelte.ts";
 import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 export const CMD_CAP = 50;
 const CMD_BUF = 250;

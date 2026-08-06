@@ -33,7 +33,7 @@ import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
 // i18n for the vanilla top-bar/loading chrome. This module isn't Svelte-
 // reactive, so t() is called imperatively (applyStaticI18n below + the busy
 // labels in doFetch/doPull/doPush) and re-run on i18nEvents "change".
-import { t, i18nEvents } from "../i18n/i18n.svelte.ts";
+import { t, i18nEvents } from "@/i18n/i18n.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;

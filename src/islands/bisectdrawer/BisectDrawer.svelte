@@ -1,7 +1,7 @@
 <script lang="ts">
   import { bisectDrawerCtrl } from "./bisectdrawer.svelte.ts";
   import { bisectCtrl } from "../bisect/bisect.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && bisectDrawerCtrl.open && !bisectCtrl.busy) bisectDrawerCtrl.close();

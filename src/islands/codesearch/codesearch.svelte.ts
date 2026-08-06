@@ -24,7 +24,7 @@ import { IN_TAURI } from "../../ipc/env";
 import type { CodeSearchMatch, CodeSearchResults } from "../../ipc/bindings";
 import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
 import { blameCtrl } from "../blame/blame.svelte.ts";
-import { t } from "../../i18n/i18n.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 // Demo data (design-mode only) — a small canned result list, same spirit as
 // every other island's DEMO constant, so the browser preview still shows a

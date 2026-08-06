@@ -1,7 +1,7 @@
 <script lang="ts">
   import { bisectCtrl } from "./bisect.svelte.ts";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   // Escape hides the panel non-destructively — the bisect keeps running in the
   // backend; re-open via the drawer "Start bisect".

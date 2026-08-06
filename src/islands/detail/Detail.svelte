@@ -6,7 +6,7 @@
   import { resolver } from "../resolver/resolver.svelte.ts";
   import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
   import { settingsCtrl } from "../settings/settings.svelte.ts";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import { fade } from "svelte/transition";
   import Folder from "@lucide/svelte/icons/folder";
   import ChevronsDownUp from "@lucide/svelte/icons/chevrons-down-up";

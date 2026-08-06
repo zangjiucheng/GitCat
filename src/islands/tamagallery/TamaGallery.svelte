@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tamaGalleryCtrl, POSES, poseImg } from "./tamagallery.svelte.ts";
   import Sparkles from "@lucide/svelte/icons/sparkles";
-  import { t } from "../../i18n/i18n.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && tamaGalleryCtrl.open) tamaGalleryCtrl.close();
