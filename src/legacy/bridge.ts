@@ -63,6 +63,15 @@ export {
   // Hoisted `function`, so no TDZ risk (same reasoning as select/openRepo above).
   goToUncommitted,
   goToHead,
+  // Jump to a commit by full oid — the sidebar's click-to-jump (see
+  // sidebar.svelte.ts's jumpToRef). Returns false when no loaded row has that
+  // oid, leaving the "why not" message to the caller, which knows the ref name.
+  goToOid,
+  // Whether the current graph load has finished streaming. Read by jumpToRef to
+  // tell "not loaded yet" from "not in the graph at all". A mid-file `export
+  // let` in legacy/main.ts, so this live re-export is TDZ-safe — same reasoning
+  // as CUR_REPO above.
+  graphStreamComplete,
   openHelpPage,
   // Focus mode — collapse/restore both side panels (⌘\); a hoisted function too.
   toggleFocusMode,

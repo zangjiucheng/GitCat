@@ -1566,10 +1566,29 @@ function goToHead(){
     if(l.some&&l.some(x=>x&&x.kind==="head")){ hr=r; break; }
   }
   if(hr<0){ Tama.warn("Couldn't locate HEAD in the loaded graph."); return; }
-  select(hr);
-  state.scrollTarget=clampScroll(hr*layout.rowH-(view.cssH-bandH())/2);
+  focusRow(hr);
+}
+// Select `row`, centre it in the scrollable viewport (below the pinned band —
+// see bandH()), and put keyboard focus on the canvas so the arrow keys keep
+// working from where you landed. Shared by every "take me to this commit"
+// entry point so they can't drift apart.
+function focusRow(row){
+  select(row);
+  state.scrollTarget=clampScroll(row*layout.rowH-(view.cssH-bandH())/2);
   dirty=true;
   try{cv.focus()}catch(_){}
+}
+// Jump to a commit by its FULL 40-char oid. Joins on BACKEND.oids (parallel to
+// rows), never on rows[].sha — that one is a 7-char short hash, so a full oid
+// would never match it, and truncating to compare would collide on a large
+// repo and land on the wrong commit. Returns whether a row was found: the
+// caller knows which ref it was chasing and owns the "not here" message.
+function goToOid(oid){
+  if(!oid||!BACKEND||!BACKEND.oids) return false;
+  const row=BACKEND.oids.indexOf(oid);
+  if(row<0) return false;
+  focusRow(row);
+  return true;
 }
 // In-app Help page (#helpScrim / index.html) — opened from ⌘K ▸ Help. Toggles the
 // scrim's `.on` class (same show/hide the other scrim modals use); closes on the
@@ -2296,7 +2315,7 @@ let graphRequestSeq=0;
 //                 HEAD oid (moved ⇒ recompute dimming), and whole-ref-set
 //                 signature (unchanged + HEAD unchanged ⇒ pure worktree change).
 let loadedOids=new Set();
-let graphStreamComplete=false;
+export let graphStreamComplete=false;
 let lastLoadTruncated=false;
 let loadedSeedTips=new Set();
 let loadedHeadOid=null;
@@ -3112,7 +3131,7 @@ const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>c
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, goToOid, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
