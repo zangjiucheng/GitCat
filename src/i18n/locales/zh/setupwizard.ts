@@ -1,6 +1,8 @@
 // 设置向导文案。键会变成 `setupwizard.<key>`。
 export default {
   title: "来帮你完成初始设置",
+  sub_language: "先选一下语言吧,之后也可以在设置里改。",
+  continue: "继续",
   sub_welcome: "はじめまして!我来帮你打开第一个仓库。",
   sub_pick: "选择包含你想操作的仓库的那个文件夹。",
   sub_identity: "这个仓库还没有设置 commit 身份 —— 我可以只为它设置一个。",

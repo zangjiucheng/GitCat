@@ -24,10 +24,10 @@
   // too so dropping a different folder onto it re-picks, rather than needing
   // a separate footer button once something's chosen.
   import { setupWizardCtrl, type SetupWizardStep } from "./setupwizard.svelte.ts";
-  import { t } from "@/i18n/i18n.svelte.ts";
+  import { t, locale, setLocale, LOCALES, type Locale } from "@/i18n/i18n.svelte.ts";
   import Folder from "@lucide/svelte/icons/folder";
 
-  const STEP_ORDER: SetupWizardStep[] = ["welcome", "pick", "identity", "done"];
+  const STEP_ORDER: SetupWizardStep[] = ["language", "welcome", "pick", "identity", "done"];
 
   function stepIndex(): number {
     return STEP_ORDER.indexOf(setupWizardCtrl.step);
@@ -64,7 +64,9 @@
       <div>
         <h3>{t("setupwizard.title")}</h3>
         <p>
-          {#if setupWizardCtrl.step === "welcome"}
+          {#if setupWizardCtrl.step === "language"}
+            {t("setupwizard.sub_language")}
+          {:else if setupWizardCtrl.step === "welcome"}
             {t("setupwizard.sub_welcome")}
           {:else if setupWizardCtrl.step === "pick"}
             {t("setupwizard.sub_pick")}
@@ -84,7 +86,17 @@
     </div>
 
     <div class="modal-body">
-      {#if setupWizardCtrl.step === "welcome"}
+      {#if setupWizardCtrl.step === "language"}
+        <div class="lang-pick" style="display:flex; gap:10px; flex-wrap:wrap">
+          {#each LOCALES as l (l.id)}
+            <button
+              class="btn {locale() === l.id ? '' : 'ghost'}"
+              style="min-width:130px; justify-content:center"
+              aria-pressed={locale() === l.id}
+              onclick={() => setLocale(l.id as Locale)}>{l.label}</button>
+          {/each}
+        </div>
+      {:else if setupWizardCtrl.step === "welcome"}
         <div class="modal-steplist">
           <div class="row">
             <span class="n">1</span>
@@ -148,8 +160,12 @@
     </div>
 
     <div class="modal-foot">
-      {#if setupWizardCtrl.step === "welcome"}
+      {#if setupWizardCtrl.step === "language"}
         <button class="btn ghost" onclick={() => setupWizardCtrl.skip()}>{t("setupwizard.skip")}</button>
+        <button class="btn" onclick={() => setupWizardCtrl.toWelcome()}>{t("setupwizard.continue")}</button>
+      {:else if setupWizardCtrl.step === "welcome"}
+        <button class="btn ghost" onclick={() => setupWizardCtrl.skip()}>{t("setupwizard.skip")}</button>
+        <button class="btn ghost" onclick={() => setupWizardCtrl.backToLanguage()}>{t("setupwizard.back")}</button>
         <button class="btn" onclick={() => setupWizardCtrl.toPick()}>{t("setupwizard.get_started")}</button>
       {:else if setupWizardCtrl.step === "pick"}
         <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>{t("setupwizard.skip")}</button>

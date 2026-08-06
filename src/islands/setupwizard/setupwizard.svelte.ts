@@ -27,7 +27,11 @@ import * as bridge from "../../legacy/bridge";
 import type { GitIdentity } from "../../ipc/bindings";
 import { t } from "@/i18n/i18n.svelte.ts";
 
-export type SetupWizardStep = "welcome" | "pick" | "identity" | "done";
+// "language" is the first step — a brand-new user picks their language before
+// anything else, so the rest of onboarding (and the whole app) is in it. The
+// picker calls setLocale directly (live switch), so this controller stays
+// locale-agnostic; it only owns the step + navigation.
+export type SetupWizardStep = "language" | "welcome" | "pick" | "identity" | "done";
 
 // Canned data for design-mode (!IN_TAURI), same spirit as every other
 // island's DEMO_* constants, so the browser preview still demos the full flow.
@@ -40,7 +44,7 @@ class SetupWizardState {
   open = $state(false);
   busy = $state(false); // re-entrancy lock (dialog / IPC in flight)
   demo = $state(false);
-  step = $state<SetupWizardStep>("welcome");
+  step = $state<SetupWizardStep>("language");
   tamaImg = $state("");
 
   // ── pick step ──────────────────────────────────────────────────────────
@@ -92,6 +96,16 @@ class SetupWizardState {
     this.demo = true;
     this.tamaImg = bridge.TAMA_IMG.hero;
     this.open = true;
+  }
+
+  // language -> welcome (the picker itself calls setLocale; this just advances)
+  toWelcome() {
+    this.step = "welcome";
+  }
+
+  backToLanguage() {
+    if (this.busy) return; // don't jump steps under an in-flight validate/save/open
+    this.step = "language";
   }
 
   toPick() {
@@ -333,7 +347,7 @@ class SetupWizardState {
   }
 
   private resetWizard() {
-    this.step = "welcome";
+    this.step = "language";
     this.repoPath = null;
     this.pathError = "";
     this.identity = null;

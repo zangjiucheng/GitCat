@@ -1,6 +1,8 @@
 // Setup wizard strings. Keys become `setupwizard.<key>`.
 export default {
   title: "Let's get you set up",
+  sub_language: "First, pick your language. You can change it later in Settings.",
+  continue: "Continue",
   sub_welcome: "はじめまして! I'll help you open your first repository.",
   sub_pick: "Choose the folder that has the repository you want to work in.",
   sub_identity: "This repository has no commit identity yet — I can set one just for it.",
