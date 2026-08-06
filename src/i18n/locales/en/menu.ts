@@ -1,0 +1,58 @@
+// Native OS menu labels (macOS app menu / Windows-Linux menu bar). Pushed to
+// Rust (src-tauri/src/menu.rs) via syncNativeMenu in legacy/main.ts, which maps
+// each key to a menu-item id / `sub.*` submenu title. Predefined items
+// (Cut/Copy/Paste/Quit/Minimize/…) are localized by the OS, so not listed here.
+// Keys become `menu.<key>`.
+export default {
+  // Submenu titles
+  file: "File",
+  repository: "Repository",
+  edit: "Edit",
+  view: "View",
+  tools: "Tools",
+  window: "Window",
+  help: "Help",
+  search: "Search",
+  history: "History",
+  patches: "Patches",
+
+  // Items
+  about: "About GitCat",
+  open_repo: "Open Repository…",
+  close_repo: "Close Repository",
+  new_branch: "New Branch…",
+  fetch: "Fetch",
+  pull: "Pull",
+  push: "Push",
+  refresh: "Refresh",
+  toggle_theme: "Toggle Theme",
+  cmdk: "Command Palette…",
+  code_search: "Search Code…",
+  pickaxe_search: "Search Commit Content…",
+  bisect: "Bisect…",
+  reflog: "Reflog…",
+  rerere: "Rerere…",
+  plumbing: "Plumbing…",
+  repo_summary: "Repository Summary…",
+  dangling_recovery: "Dangling Commits…",
+  export_patches: "Export Patches…",
+  apply_patch: "Apply Patch…",
+  remotes: "Manage Remotes…",
+  repositories: "Repositories…",
+  external_tools: "External Tools…",
+  plugins: "Plugins…",
+  settings: "Settings…",
+  repo_files: "Repo Files (.gitignore / .mailmap)…",
+  uncommitted_changes: "Uncommitted Changes",
+  pull_merge: "Pull (Merge)",
+  pull_rebase: "Pull (Rebase)",
+  open_terminal: "Open Terminal",
+  force_push_lease: "Force Push (Safe)",
+  force_push_override: "Force Push (Override Remote)",
+  reset_head: "Reset HEAD to Commit…",
+  filter_repo: "Rewrite History (filter-repo)…",
+  new_window: "New Window",
+  open_github: "GitCat on GitHub",
+  report_issue: "Report an Issue…",
+  check_updates: "Check for Updates…",
+};
