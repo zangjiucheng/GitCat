@@ -14,7 +14,7 @@
 //
 // SCOPE / LIMITATION: `load_graph`'s lane/color/gap layout is a genuine DAG
 // layout algorithm that lives in src-tauri/src/layout.rs — reimplementing it
-// here would just be a second, drifting copy of that logic. `loadGraph()`
+// here would just be a second, drifting copy of that logic. `loadGraphBatch()`
 // below instead returns a deliberately simplified single-lane rendering (real
 // commits, real shas, real refs — no real multi-lane merge geometry). That's
 // enough to assert on DOM text (commit list, sidebar refs, detail panel) but
@@ -82,33 +82,48 @@ function refsBySha(repo: TempRepo): Map<string, RefChip[]> {
   return map;
 }
 
-// Deliberately single-lane — see file header's SCOPE note.
-function loadGraph(repo: TempRepo, limit: number | null) {
+// Deliberately single-lane — see file header's SCOPE note. Shaped as ONE
+// complete "graph-batch" payload (see bindings.ts's GraphBatch doc comment):
+// `load_graph` itself only hands back `{ generation }`, the real data arrives
+// over the "graph-batch" event, which legacy/main.ts listens for directly on
+// `window.__TAURI__.event.listen` (not through the invoke-shimmed
+// "plugin:event|listen" path) — so this fixture repo's whole history is
+// delivered as a single done:true batch rather than returned from the
+// invoke call the way the rest of this file's handlers work.
+function loadGraphBatch(repo: TempRepo, generation: number) {
   const rows = log(repo);
   const chips = refsBySha(repo);
-  const capped = limit ? rows.slice(0, limit) : rows;
-  const n = capped.length;
+  const n = rows.length;
   return {
-    n,
-    lane: capped.map(() => 0),
-    color: capped.map(() => 0),
-    merge: capped.map((r) => (r.parents.length > 1 ? 1 : 0)),
-    gapStart: new Array(n + 1).fill(0),
-    gapTop: [],
-    gapBot: [],
-    gapColor: [],
-    rows: capped.map((r) => ({
-      sha: r.sha,
+    generation,
+    rows: rows.map((r) => ({
+      // CommitMeta.sha is only the 7-char short prefix — the full oid rides
+      // alongside in `oids`, parallel by index (see GraphBatch's own doc
+      // comment). goToOid joins on THAT, not this, so a test asserting the
+      // full-oid join has to go through this shape, not a shortcut.
+      sha: r.sha.slice(0, 7),
       subject: r.subject,
       an: r.an,
       cm: r.cm,
       refs: chips.get(r.sha) ?? [],
       merge: r.parents.length > 1,
+      ancestor: false,
     })),
+    oids: rows.map((r) => r.sha),
+    lane: rows.map(() => 0),
+    color: rows.map(() => 0),
+    merge: rows.map((r) => (r.parents.length > 1 ? 1 : 0)),
+    gapCounts: rows.map(() => 0),
+    gapTop: [],
+    gapBot: [],
+    gapColor: [],
     ncol: 7,
     laneCount: 1,
-    layoutMs: 0,
-    readMs: 0,
+    totalSoFar: n,
+    done: true,
+    elapsedMs: 0,
+    error: null,
+    truncated: false,
   };
 }
 
@@ -198,7 +213,7 @@ function dashboardRepoStatus(repo: TempRepo) {
   };
 }
 
-function makeInvokeHandler(repo: TempRepo) {
+function makeInvokeHandler(repo: TempRepo, page: Page) {
   // Starts EMPTY on purpose: a test that means to open a repo has to go through
   // the picker like a user does, rather than finding its repo pre-tracked.
   const tracked: { path: string; lastOpenedAt: number | null }[] = [];
@@ -259,8 +274,16 @@ function makeInvokeHandler(repo: TempRepo) {
           copyright: "",
           website: "",
         };
-      case "load_graph":
-        return loadGraph(repo, args?.limit ?? null);
+      // Real return value is just `{ generation }` — the actual rows arrive
+      // over "graph-batch" (see loadGraphBatch's own doc comment), so this
+      // fires that event on the page directly instead of answering it here.
+      case "load_graph": {
+        const batch = loadGraphBatch(repo, args.requestId);
+        await page.evaluate((payload) => {
+          (window as any).__e2eListeners?.["graph-batch"]?.forEach((cb: any) => cb({ payload }));
+        }, batch);
+        return null;
+      }
       case "list_refs":
         return listRefs(repo);
       case "list_snapshots":
@@ -293,7 +316,7 @@ function makeInvokeHandler(repo: TempRepo) {
 
 /** Wires the mock Tauri bridge into `page` and returns once the app can see IN_TAURI === true. */
 async function installTauriMock(page: Page, repo: TempRepo): Promise<void> {
-  await page.exposeFunction("__e2eInvoke", makeInvokeHandler(repo));
+  await page.exposeFunction("__e2eInvoke", makeInvokeHandler(repo, page));
   await page.addInitScript((repoDir: string) => {
     // Skip the first-run setup wizard (src/islands/setupwizard) — it auto-opens
     // over the hero card whenever IN_TAURI is true and no repo is open yet,
@@ -312,10 +335,20 @@ async function installTauriMock(page: Page, repo: TempRepo): Promise<void> {
     w.__TAURI__ = {
       core: { invoke: w.__TAURI_INTERNALS__.invoke },
       event: {
-        // main.ts's raw `window.__TAURI__.event.listen("menu-action"/"repo-changed", ...)` —
-        // no test here drives the native app menu or the file-watcher, so this
-        // just registers and returns a no-op unlisten.
-        listen: async (_event: string, _cb: unknown) => () => {},
+        // main.ts's raw `window.__TAURI__.event.listen("menu-action"/"repo-changed"/
+        // "graph-batch", ...)`. Most of those never fire in this harness (no native
+        // app menu, no file-watcher) — but "graph-batch" DOES: the load_graph case
+        // above dispatches it straight into `__e2eListeners`, so this has to actually
+        // record the callback rather than being a pure no-op.
+        listen: async (event: string, cb: unknown) => {
+          const listeners = (w.__e2eListeners ??= {});
+          (listeners[event] ??= []).push(cb);
+          return () => {
+            const arr = listeners[event];
+            const i = arr ? arr.indexOf(cb) : -1;
+            if (i >= 0) arr.splice(i, 1);
+          };
+        },
       },
       dialog: {
         // Stands in for the native "Open a Git repository" folder picker.
