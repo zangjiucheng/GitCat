@@ -815,7 +815,11 @@ class SidebarState {
       return;
     }
     if (bridge.goToOid(sha)) return;
-    if (!bridge.graphStreamComplete) {
+    // graphStreamComplete is only ever flipped true from onGraphBatch's `done`
+    // handling, which is wired up solely inside the IN_TAURI event listener —
+    // in plain-browser design mode it never runs, so graphStreamComplete stays
+    // permanently false and this branch would otherwise always win.
+    if (IN_TAURI && !bridge.graphStreamComplete) {
       bridge.tama.warn("Still loading the graph — try " + name + " again in a moment.");
       return;
     }

@@ -134,7 +134,7 @@ export {
   // re-export TDZ-safety as setTamaEnabled/applyTamaSkin above.
   setTamaMotionPreset,
   setTamaPoseOverrides,
-  // "graph-batch" event handler — src/main.ts's own event listener forwards
+  // "graph-batch" event handler — legacy/main.ts's own event listener forwards
   // every batch here (mirrors "repo-changed"/refreshFromExternalChange's own
   // shape). Hoisted `function`, no TDZ risk (same reasoning as
   // openRepo/pickRepo above).

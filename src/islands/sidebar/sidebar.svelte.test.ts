@@ -2657,10 +2657,24 @@ describe("jumpToRef (click a sidebar ref -> select its tip commit)", () => {
   });
 
   it("says the graph is still loading when the stream hasn't finished", () => {
+    // graphStreamComplete only ever flips true from the real app's IN_TAURI-gated
+    // stream handling — this scenario is specifically the real app mid-stream, not
+    // design mode (which never takes this branch; see the next test).
+    mockInTauri = true;
     mockStreamComplete = false;
     vi.mocked(bridge.goToOid).mockReturnValue(false);
     sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));
     expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("Still loading"));
+  });
+
+  it("design mode never claims the graph is still loading (there's no real stream) — falls through to the unreachable-commit hint", () => {
+    mockInTauri = false;
+    mockStreamComplete = false;
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));
+    const msg = vi.mocked(bridge.tama.warn).mock.calls[0][0] as string;
+    expect(msg).not.toContain("Still loading");
+    expect(msg).toContain("main");
   });
 
   it("points an unticked branch at its checkbox", () => {

@@ -1570,8 +1570,10 @@ function goToHead(){
 }
 // Select `row`, centre it in the scrollable viewport (below the pinned band —
 // see bandH()), and put keyboard focus on the canvas so the arrow keys keep
-// working from where you landed. Shared by every "take me to this commit"
-// entry point so they can't drift apart.
+// working from where you landed. Shared by goToHead and goToOid. onGraphBatch's
+// pendingReselect restore deliberately keeps its own copy of this recipe
+// instead of calling focusRow — it must not steal focus to the canvas after a
+// background reload.
 function focusRow(row){
   select(row);
   state.scrollTarget=clampScroll(row*layout.rowH-(view.cssH-bandH())/2);
@@ -2416,7 +2418,7 @@ async function startGraphStream(path){
 // openRepo below, so a new window (?repo=) whose first graph load fires during
 // boot can't miss early batches.
 if(IN_TAURI) window.__TAURI__.event.listen("graph-batch", (e)=>onGraphBatch(e.payload));
-// "graph-batch" event handler (registered once in src/main.ts, mirroring its
+// "graph-batch" event handler (registered once in legacy/main.ts, mirroring its
 // own "repo-changed" listener) — grows BACKEND/G with one incremental slice
 // at a time as the backend's revwalk+layout produces it, instead of the old
 // "wait for one giant response, then populate everything at once" shape.
@@ -2683,7 +2685,7 @@ async function openRepo(path){
     const bp=$(".branch-pill"); if(bp) bp.style.display="";
     // MISS only: BACKEND is empty at this point (startGraphStream() just reset
     // it) — this paints the canvas's OWN empty/reset state immediately;
-    // onGraphBatch() (registered in src/main.ts) takes over from here as
+    // onGraphBatch() (registered in legacy/main.ts) takes over from here as
     // "graph-batch" events stream in, growing BACKEND/G and eventually
     // showing the "Loaded N commits…" toast itself once the walk finishes. On a
     // cache HIT the restored graph is already on screen — nothing to reset.

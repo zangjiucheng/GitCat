@@ -493,6 +493,13 @@
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
               sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
             }}
+            oncontextmenu={(e) => {
+              e.preventDefault();
+              if (!sidebarCtrl.busy) {
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
+              }
+            }}
           >
             <input
               type="checkbox"
@@ -515,6 +522,21 @@
               }}>{#if sidebarCtrl.copiedBranch === r.name}✓{:else}<Clipboard class="ico" size={12} aria-hidden="true" />{/if}</button
             >
             {#if sidebarCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
+            <!-- A remote row's only action is checkout (there's no remote "branch
+                 actions" menu to open), so its ⋮ jumps straight to the checkout
+                 confirm instead of a menu — this keeps that action reachable
+                 without a mouse, now that Enter/Space on the row jumps instead. -->
+            <button
+              class="ref-menu"
+              title="Checkout this remote branch"
+              aria-label={"Checkout " + r.name}
+              disabled={sidebarCtrl.busy}
+              onclick={(e) => {
+                e.stopPropagation();
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
+              }}>&#8942;</button
+            >
           </div>
           {/if}
         {/each}

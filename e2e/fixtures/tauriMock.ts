@@ -61,10 +61,19 @@ function log(repo: TempRepo): CommitRow[] {
 
 function refsBySha(repo: TempRepo): Map<string, RefChip[]> {
   const head = repo.git("symbolic-ref", "-q", "--short", "HEAD").trim() || null;
-  const raw = repo.git("for-each-ref", "--format=%(objectname)%09%(refname)");
+  // %(*objectname) is the dereferenced (peeled) oid — git only fills it in for
+  // an ANNOTATED tag, empty for everything else — so it's the commit oid for a
+  // lightweight tag/branch/remote, and %(objectname) alone would be the tag
+  // OBJECT's own oid for an annotated one. Same peel the real backend does via
+  // `tag_foreach … peel_to_commit`. %(objectname) (never empty) comes FIRST,
+  // not %(*objectname) — repo.git() .trim()s its output, and an empty leading
+  // field would otherwise donate its separator tab to that trim, shifting
+  // every field on the very first line by one.
+  const raw = repo.git("for-each-ref", "--format=%(objectname)%09%(*objectname)%09%(refname)");
   const map = new Map<string, RefChip[]>();
   for (const line of raw ? raw.split("\n") : []) {
-    const [sha, refname] = line.split("\t");
+    const [direct, peeled, refname] = line.split("\t");
+    const sha = peeled || direct;
     let chip: RefChip | null = null;
     if (refname.startsWith("refs/heads/")) {
       const name = refname.slice("refs/heads/".length);
@@ -139,10 +148,13 @@ function listRefs(repo: TempRepo) {
     const [name, sha] = line.split("\t");
     return { name, sha };
   });
-  const tagsRaw = repo.git("for-each-ref", "--format=%(refname:short)%09%(objectname)", "refs/tags/");
+  // Peel annotated tags to their commit, same as refsBySha above — a tag's
+  // sha is load-bearing now that clicking it jumps by oid (goToOid joins on
+  // the commit oid, never the tag object's own oid).
+  const tagsRaw = repo.git("for-each-ref", "--format=%(refname:short)%09%(*objectname)%09%(objectname)", "refs/tags/");
   const tags = (tagsRaw ? tagsRaw.split("\n").filter(Boolean) : []).map((line) => {
-    const [name, sha] = line.split("\t");
-    return { name, sha };
+    const [name, peeled, direct] = line.split("\t");
+    return { name, sha: peeled || direct };
   });
   return { head, locals, remotes, tags };
 }
@@ -279,10 +291,23 @@ function makeInvokeHandler(repo: TempRepo, page: Page) {
       // fires that event on the page directly instead of answering it here.
       case "load_graph": {
         const batch = loadGraphBatch(repo, args.requestId);
-        await page.evaluate((payload) => {
-          (window as any).__e2eListeners?.["graph-batch"]?.forEach((cb: any) => cb({ payload }));
-        }, batch);
-        return null;
+        // Deliver the batch AFTER this invoke resolves, not before: the real
+        // backend never fires "graph-batch" synchronously from inside its own
+        // load_graph response. Firing it here (pre-return) let onGraphBatch —
+        // including its whole `done` branch — run while startGraphStream's
+        // `await tinvoke("load_graph", …)` was still pending, i.e. before
+        // openRepo assigns CUR_REPO and before loadGraph(0). setTimeout(…,0)
+        // queues the dispatch as a macrotask so this invoke's own promise
+        // settles first, reproducing the real "empty canvas, then batches
+        // arrive" ordering.
+        setTimeout(() => {
+          void page
+            .evaluate((payload) => {
+              (window as any).__e2eListeners?.["graph-batch"]?.forEach((cb: any) => cb({ payload }));
+            }, batch)
+            .catch(() => {});
+        }, 0);
+        return { generation: args.requestId };
       }
       case "list_refs":
         return listRefs(repo);
@@ -297,6 +322,32 @@ function makeInvokeHandler(repo: TempRepo, page: Page) {
       case "watch_repo":
       case "unwatch_repo":
         return null;
+      // Fired unconditionally on every `done:true` batch (see onGraphBatch in
+      // legacy/main.ts): recomputeAncestorsAsync's positional dimming recompute.
+      // `n` MUST equal the number of loaded rows — a mismatch makes the caller
+      // re-enter the whole load via `reloadGraph(true)` (see AncestorFlags's own
+      // doc comment in src/ipc/bindings.ts).
+      case "head_ancestor_flags": {
+        const rows = log(repo);
+        return { n: rows.length, flags: rows.map(() => false) };
+      }
+      // Also fired unconditionally on every `done:true` batch:
+      // snapshotGraphBaseline's fast-refresh baseline (see FastRefresh in
+      // src/ipc/bindings.ts). refChips reuses refsBySha's already-peeled shas
+      // (see A6) so this stays byte-for-byte consistent with loadGraphBatch's
+      // own refs.
+      case "graph_fast_refresh": {
+        const headOid = repo.git("rev-parse", "HEAD").trim() || null;
+        const { locals, remotes } = listRefs(repo);
+        const seedTips = [...locals, ...remotes].map((b) => b.sha);
+        const chips = refsBySha(repo);
+        return {
+          headOid,
+          seedTips,
+          refSig: JSON.stringify([headOid, seedTips.slice().sort()]),
+          refChips: [...chips.entries()],
+        };
+      }
       // @tauri-apps/api/event's listen/unlisten/emit — no test here drives a
       // live backend->frontend event, so these are inert stubs.
       case "plugin:event|listen":
