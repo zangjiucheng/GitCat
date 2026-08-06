@@ -9,9 +9,14 @@ vi.mock("../../legacy/bridge", () => ({
   updateBranchPill: vi.fn(),
   relTime: (t: number) => t + "s ago",
   enterSubmodule: vi.fn(),
+  goToOid: vi.fn(() => true),
+  get graphStreamComplete() {
+    return mockStreamComplete;
+  },
 }));
 
 let mockInTauri = false;
+let mockStreamComplete = true;
 vi.mock("../../ipc/env", () => ({
   get IN_TAURI() {
     return mockInTauri;
@@ -120,6 +125,7 @@ function resetAll() {
   sidebarCtrl.newSubmodulePath = "";
   sidebarCtrl.newSubmoduleBranch = "";
   mockInTauri = false;
+  mockStreamComplete = true;
   vi.clearAllMocks();
   // Default: no submodules, so the many pre-existing "refresh"/checkout/etc.
   // tests below that never touch submodule_status at all don't have to care
@@ -2634,5 +2640,57 @@ describe("sidebar folder collapse state", () => {
     expect(sidebarCtrl.folderPaths("tag")).toEqual([]);
     sidebarCtrl.tags = [{ name: "v1/rc1", sha: "1" }];
     expect(sidebarCtrl.folderPaths("tag")).toEqual(["v1"]);
+  });
+});
+
+describe("jumpToRef (click a sidebar ref -> select its tip commit)", () => {
+  beforeEach(() => {
+    mockStreamComplete = true;
+    vi.mocked(bridge.goToOid).mockReturnValue(true);
+  });
+
+  it("hands the ref's full 40-char sha to the graph, untouched", () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    sidebarCtrl.jumpToRef("local", "feature/x", sha);
+    expect(bridge.goToOid).toHaveBeenCalledWith(sha);
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+  });
+
+  it("says the graph is still loading when the stream hasn't finished", () => {
+    mockStreamComplete = false;
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("Still loading"));
+  });
+
+  it("points an unticked branch at its checkbox", () => {
+    sidebarCtrl.visibleLocal = ["main"]; // feature/x is filtered out
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "feature/x", "b".repeat(40));
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("checkbox"));
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("feature/x"));
+  });
+
+  it("never tells a TAG to tick a checkbox — tags have none, and never seed the walk", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("tag", "v1.0.0", "c".repeat(40));
+    const msg = vi.mocked(bridge.tama.warn).mock.calls[0][0] as string;
+    expect(msg).toContain("v1.0.0");
+    expect(msg).not.toContain("checkbox");
+  });
+
+  it("a TICKED branch that still isn't there is reported as unreachable, not as hidden", () => {
+    sidebarCtrl.visibleLocal = null; // no filter: everything is ticked
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "main", "d".repeat(40));
+    const msg = vi.mocked(bridge.tama.warn).mock.calls[0][0] as string;
+    expect(msg).not.toContain("checkbox");
+    expect(msg).toContain("main");
+  });
+
+  it("warns without calling the graph at all when the ref carries no sha", () => {
+    sidebarCtrl.jumpToRef("local", "main", "");
+    expect(bridge.goToOid).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalled();
   });
 });

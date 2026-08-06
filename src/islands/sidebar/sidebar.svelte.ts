@@ -800,6 +800,32 @@ class SidebarState {
     return set === null || set.includes(name);
   }
 
+  // Click a ref row -> select its tip commit in the graph. The question is
+  // "is this commit among the loaded rows?", never "is this branch ticked?":
+  // the walk seeds from the visible branches and then follows their whole
+  // ancestry, so an unticked branch that's already merged into a visible one
+  // is in the graph and jumps just fine, with no reload.
+  //
+  // Three different situations all end in "no row for this oid" and only one
+  // is a checkbox problem, so the message says which — a tag has no checkbox
+  // to tick, and a branch that simply hasn't streamed in yet is already ticked.
+  jumpToRef(section: RefSection, name: string, sha: string): void {
+    if (!sha) {
+      bridge.tama.warn(name + " has no commit to jump to.");
+      return;
+    }
+    if (bridge.goToOid(sha)) return;
+    if (!bridge.graphStreamComplete) {
+      bridge.tama.warn("Still loading the graph — try " + name + " again in a moment.");
+      return;
+    }
+    if ((section === "local" || section === "remote") && !this.isBranchVisible(section, name)) {
+      bridge.tama.warn(name + " isn't shown in the graph — tick its checkbox to load it.");
+      return;
+    }
+    bridge.tama.warn(name + " isn't in the loaded graph — no branch currently shown reaches its commit.");
+  }
+
   get isFiltering(): boolean {
     return this.visibleLocal !== null || this.visibleRemote !== null;
   }
