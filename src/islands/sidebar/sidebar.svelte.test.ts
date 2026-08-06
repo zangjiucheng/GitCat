@@ -130,6 +130,10 @@ function resetAll() {
   // care about this" reasoning as submoduleStatus above — only the
   // "branch visibility" describe block overrides this per-test.
   vi.mocked(commands.getVisibleBranches).mockResolvedValue(ok({ local: null, remote: null, auto: false }));
+  // Default: persisting succeeds. persistVisibleBranches checks this Result and
+  // skips the graph reload when it failed, so without a default every test that
+  // changes visibility would take the failure path instead.
+  vi.mocked(commands.setVisibleBranches).mockResolvedValue(ok(null));
 }
 
 beforeEach(() => {
@@ -257,7 +261,8 @@ describe("branch visibility", () => {
     await sidebarCtrl.toggleBranchVisible("/repo", "local", "dev");
     expect(sidebarCtrl.visibleLocal).toEqual(["main"]);
     expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", false, ["main"], null);
-    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    // forceFull — see persistVisibleBranches' own doc comment.
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true, true);
   });
 
   it("toggleBranchVisible: a manual toggle turns auto mode off (grabbing the wheel exits autopilot)", async () => {
@@ -297,7 +302,7 @@ describe("branch visibility", () => {
     expect(sidebarCtrl.visibleLocal).toBeNull();
     expect(sidebarCtrl.visibleRemote).toBeNull();
     expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", false, null, null);
-    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true, true);
   });
 
   it("hideAllBranches sets both sets to [] (not null) AND turns off auto mode, and persists", async () => {
@@ -312,7 +317,65 @@ describe("branch visibility", () => {
     expect(sidebarCtrl.visibleLocal).toEqual([]);
     expect(sidebarCtrl.visibleRemote).toEqual([]);
     expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", false, [], []);
-    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true, true);
+  });
+
+  // REGRESSION: every visibility change must force a FULL graph reload.
+  //
+  // A visibility change decides which commits the graph walks from, so it adds
+  // or removes rows — something reloadGraph's fast path cannot express, since
+  // all it does is remap ref chips over rows that are already loaded. Omitting
+  // forceFull once left the filter persisted and applied while the graph kept
+  // every commit, because a visibility toggle moves no ref and does not move
+  // HEAD, so that path classified it as a pure working-tree change and returned
+  // successfully having done nothing.
+  //
+  // Asserted per entry point rather than once, since each reaches
+  // persistVisibleBranches by its own route.
+  it.each([
+    ["toggleBranchVisible", () => sidebarCtrl.toggleBranchVisible("/repo", "local", "dev")],
+    ["showAllBranches", () => sidebarCtrl.showAllBranches("/repo")],
+    ["hideAllBranches", () => sidebarCtrl.hideAllBranches("/repo")],
+    ["toggleAutoMode", () => sidebarCtrl.toggleAutoMode("/repo")],
+  ])("%s forces a full graph reload, never the fast path", async (_name, act) => {
+    mockInTauri = true;
+    vi.mocked(commands.branchMergeStatus).mockResolvedValue(ok({ defaultBranch: "main", merged: [] }));
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+      { name: "dev", sha: "b", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+    ];
+    await act();
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true, true);
+    // Never the fast-path-eligible single-argument form.
+    expect(bridge.reloadGraph).not.toHaveBeenCalledWith(true);
+  });
+
+  // The flip side of forcing a full reload: a full reload is expensive, and it
+  // ends by re-reading the persisted filter. If persisting failed there is
+  // nothing new to walk to, so paying for the walk would only put the old
+  // picture back on screen — with the checkbox silently snapping back and no
+  // word to the user about why.
+  it.each([
+    ["a rejected Result", () => vi.mocked(commands.setVisibleBranches).mockResolvedValue({ status: "error", error: "read-only registry" })],
+    ["a thrown error", () => vi.mocked(commands.setVisibleBranches).mockRejectedValue(new Error("ipc down"))],
+  ])("a visibility change that fails to persist (%s) warns instead of reloading the graph", async (_name, failPersist) => {
+    mockInTauri = true;
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+      { name: "dev", sha: "b", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+    ];
+    failPersist();
+    // What the backend still has: the unfiltered state the toggle tried to leave.
+    vi.mocked(commands.getVisibleBranches).mockResolvedValue(ok({ local: null, remote: null, auto: false }));
+
+    await sidebarCtrl.toggleBranchVisible("/repo", "local", "dev");
+
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("Couldn't save"));
+    // Re-read from the backend, so the sidebar shows the filter that's really
+    // stored rather than the one it failed to store.
+    expect(commands.getVisibleBranches).toHaveBeenCalledWith("/repo");
+    expect(sidebarCtrl.visibleLocal).toBeNull();
   });
 
   it("hideAllBranches makes isBranchVisible false for every branch", async () => {

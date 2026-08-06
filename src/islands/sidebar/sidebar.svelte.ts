@@ -975,12 +975,29 @@ class SidebarState {
 
   private async persistVisibleBranches(repo: string): Promise<void> {
     if (!IN_TAURI || !repo) return; // design-mode: local state only, nothing to persist/reload
+    let persisted = false;
     try {
-      await commands.setVisibleBranches(repo, this.autoMode, this.visibleLocal, this.visibleRemote);
+      const res = await commands.setVisibleBranches(repo, this.autoMode, this.visibleLocal, this.visibleRemote);
+      if (res.status === "ok") persisted = true;
+      else console.error("set_visible_branches", res.error);
     } catch (e) {
       console.error("set_visible_branches", e);
     }
-    await bridge.reloadGraph(true);
+    if (!persisted) {
+      // Nothing was stored, so the graph already matches the filter the backend
+      // would walk with — reloading would spend a whole re-walk arriving back at
+      // the same picture. Say so instead, and put the checkboxes back on the
+      // persisted truth so the sidebar can't show a filter that isn't there.
+      bridge.tama.warn("Couldn't save which branches to show.");
+      await this.refreshVisibleBranches(repo);
+      return;
+    }
+    // forceFull is load-bearing: which branches are visible decides which
+    // commits the walk seeds from, so this ADDS OR REMOVES ROWS. reloadGraph's
+    // fast path only remaps ref chips over rows that are already loaded, so it
+    // has no way to express that; without forceFull the filter is persisted and
+    // the graph silently keeps every commit.
+    await bridge.reloadGraph(true, true);
   }
 
   private async refreshSubmodules(repo: string) {
@@ -2125,6 +2142,12 @@ class SidebarState {
     try {
       const res = await commands.renameBranch(bridge.CUR_REPO as unknown as string, from, to);
       if (res && res.ok) {
+        // Keep a renamed branch in the visible set under its new name, and
+        // persist that directly for the same reason confirmNewBranch does (see
+        // its own comment): the reloadGraph(true) below is the only reload. It
+        // stays on the fast path deliberately — a rename moves no commit, so no
+        // row appears or disappears and there is nothing for a full re-walk to
+        // find, unlike a visibility change.
         if (this.visibleLocal !== null && this.visibleLocal.includes(from)) {
           this.visibleLocal = this.visibleLocal.map((b) => (b === from ? to : b));
           try {

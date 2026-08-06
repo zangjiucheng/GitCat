@@ -2893,9 +2893,10 @@ async function tryFastRefresh(){
   // Advance the baseline before any async work / re-entrant refresh sees it.
   loadedSeedTips=curTipSet; loadedHeadOid=cur.headOid; lastRefSig=cur.refSig;
   // Pill + refs tree + auto-visibility (keeps its own sameLocal&&sameRemote echo
-  // guard — a checkout that auto-hides a branch queues one more pass that Gate B
-  // then turns into a full reload). Safety.refresh keeps the undo count current
-  // for the DAG-preserving mutations that still take a snapshot (e.g. checkout).
+  // guard — a checkout that auto-hides a branch persists that, which reloads the
+  // graph in full on its own, so this fast pass must not be the last word on
+  // which rows are shown). Safety.refresh keeps the undo count current for the
+  // DAG-preserving mutations that still take a snapshot (e.g. checkout).
   await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
   if(headMoved) recomputeAncestorsAsync();
   return true;
