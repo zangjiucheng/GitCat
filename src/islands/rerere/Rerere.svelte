@@ -5,6 +5,7 @@
   // index.html's own doc comment on the old DRAWER section.
   import { rerereCtrl } from "./rerere.svelte.ts";
   import { IN_TAURI } from "../../ipc/env";
+  import { t } from "../../i18n/i18n.svelte.ts";
 
   function onToggle(e: Event) {
     rerereCtrl.setEnabled((e.currentTarget as HTMLInputElement).checked);
@@ -21,18 +22,18 @@
   <div class="modal rerere">
     <div class="modal-head">
       <div>
-        <h3>Rerere &#8212; recorded conflict resolutions</h3>
-        <p>Reuse a resolution git has already recorded, next time the same conflict shows up.</p>
+        <h3>{t("rerere.title")}</h3>
+        <p>{t("rerere.subtitle")}</p>
       </div>
     </div>
     <div class="modal-body">
       <div class="rr-row">
-        <label class="cp-x" title="git config rerere.enabled — repo-local only, never --global">
+        <label class="cp-x" title={t("rerere.toggle_title")}>
           <input type="checkbox" checked={rerereCtrl.enabled} disabled={rerereCtrl.busy || !rerereCtrl.vm} onchange={onToggle} />
-          rerere {rerereCtrl.enabled ? "on" : "off"}
+          rerere {rerereCtrl.enabled ? t("rerere.on") : t("rerere.off")}
         </label>
         {#if rerereCtrl.busy}
-          <span class="mut"><span class="spinner"></span> Saving&#8230;</span>
+          <span class="mut"><span class="spinner"></span> {t("rerere.saving")}</span>
         {:else}
           <span class="mut">{rerereCtrl.sourceNote}</span>
         {/if}
@@ -41,32 +42,32 @@
       {#if !rerereCtrl.vm}
         <div class="rr-row">
           <span class="mut"
-            >{#if rerereCtrl.busy}<span class="spinner"></span> Loading&#8230;{:else if IN_TAURI}Open a repository to see recorded resolutions.{:else}Loading&#8230;{/if}</span
+            >{#if rerereCtrl.busy}<span class="spinner"></span> {t("common.loading")}{:else if IN_TAURI}{t("rerere.open_repo_hint")}{:else}{t("common.loading")}{/if}</span
           >
         </div>
       {:else}
         {#if rerereCtrl.vm.liveConflict}
-          <div class="rr-row"><span class="mut">Conflict in progress — rerere is tracking {rerereCtrl.vm.livePaths.length} path(s) below.</span></div>
+          <div class="rr-row"><span class="mut">{t("rerere.live_conflict", { n: rerereCtrl.vm.livePaths.length })}</span></div>
         {/if}
         {#each rerereCtrl.rows as row (row.key)}
           <div class="rr-row">
             <span class="h">{row.label}</span>
             {#if row.resolved}
-              <span class="rr-badge">resolution recorded</span>
+              <span class="rr-badge">{t("rerere.badge_recorded")}</span>
             {:else}
-              <span class="mut">pending &#8212; not yet resolved</span>
+              <span class="mut">{t("rerere.pending")}</span>
             {/if}
-            {#if row.isPath}<span class="mut">live</span>{/if}
+            {#if row.isPath}<span class="mut">{t("rerere.live")}</span>{/if}
           </div>
         {:else}
           <div class="rr-row">
-            <span class="mut">No resolutions recorded yet &#8212; git rerere records one the first time you resolve a repeatable conflict by hand.</span>
+            <span class="mut">{t("rerere.empty")}</span>
           </div>
         {/each}
       {/if}
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" onclick={() => rerereCtrl.close()}>Close</button>
+      <button class="btn ghost" onclick={() => rerereCtrl.close()}>{t("common.close")}</button>
     </div>
   </div>
 </div>

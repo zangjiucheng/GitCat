@@ -11,6 +11,7 @@
   // the per-widget bits (headings, paragraphs, the command-output preformatted
   // block).
   import { pluginPanelsCtrl } from "./pluginpanels.svelte.ts";
+  import { t } from "../../i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && pluginPanelsCtrl.open) pluginPanelsCtrl.close();
@@ -30,9 +31,9 @@
 <div class="scrim" class:on={pluginPanelsCtrl.open} onclick={onScrimClick}>
   <div class="modal pluginpanel">
     <div class="modal-head">
-      <div class="modal-tama"><img class="tama-pic" src={pluginPanelsCtrl.tamaImg} alt="Tama, curious" /></div>
+      <div class="modal-tama"><img class="tama-pic" src={pluginPanelsCtrl.tamaImg} alt={t("pluginpanels.tama_alt")} /></div>
       <div>
-        <h3>{pluginPanelsCtrl.panel?.title ?? "Plugin panel"}</h3>
+        <h3>{pluginPanelsCtrl.panel?.title ?? t("pluginpanels.default_title")}</h3>
         {#if pluginPanelsCtrl.pluginName}<p>{pluginPanelsCtrl.pluginName}</p>{/if}
       </div>
     </div>
@@ -51,7 +52,7 @@
                 disabled={pluginPanelsCtrl.runningButtons[item.command]}
                 onclick={() => pluginPanelsCtrl.runButton(pluginPanelsCtrl.pluginId, item.command)}
               >
-                {#if pluginPanelsCtrl.runningButtons[item.command]}<span class="spinner"></span> Running&#8230;{:else}{item.label}{/if}
+                {#if pluginPanelsCtrl.runningButtons[item.command]}<span class="spinner"></span> {t("pluginpanels.running")}{:else}{item.label}{/if}
               </button>
             </div>
           {:else if item.type === "command-output"}
@@ -62,15 +63,15 @@
                 <button
                   class="pp-rerun"
                   disabled={out?.running}
-                  title="Run again"
+                  title={t("pluginpanels.rerun_title")}
                   onclick={() => pluginPanelsCtrl.runCommandOutput(i)}
                 >
-                  {#if out?.running}<span class="spinner"></span> Running&#8230;{:else}&#8635; Re-run{/if}
+                  {#if out?.running}<span class="spinner"></span> {t("pluginpanels.running")}{:else}&#8635; {t("pluginpanels.rerun")}{/if}
                 </button>
               </div>
               {#if out?.error}<div class="pp-out-err">{out.error}</div>{/if}
               {#if out?.running && !out?.text}
-                <pre class="pp-pre mut"><span class="spinner"></span> Running&#8230;</pre>
+                <pre class="pp-pre mut"><span class="spinner"></span> {t("pluginpanels.running")}</pre>
               {:else}
                 <pre class="pp-pre">{out?.text ?? ""}</pre>
               {/if}
@@ -78,12 +79,12 @@
           {/if}
         {/each}
         {#if panel.items.length === 0}
-          <p class="pp-text mut">This panel is empty.</p>
+          <p class="pp-text mut">{t("pluginpanels.empty")}</p>
         {/if}
       {/if}
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" onclick={() => pluginPanelsCtrl.close()}>Close</button>
+      <button class="btn ghost" onclick={() => pluginPanelsCtrl.close()}>{t("common.close")}</button>
     </div>
   </div>
 </div>

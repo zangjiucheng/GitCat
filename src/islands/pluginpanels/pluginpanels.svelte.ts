@@ -31,6 +31,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t } from "../../i18n/i18n.svelte.ts";
 import { parseTamaReaction, pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import type { Plugin, PluginPanel, PlaceholderCtx } from "../../ipc/bindings";
 import type { ActionItem } from "../cmdk/cmdk.svelte.ts";
@@ -170,7 +171,7 @@ class PluginPanelsState {
     if (!p || !panel) {
       // The registry changed out from under an already-open palette (plugin
       // removed/disabled between listing and clicking) — fail soft.
-      bridge.tama.warn("That plugin panel is no longer available.");
+      bridge.tama.warn(t("pluginpanels.gone"));
       return;
     }
     this.pluginId = pluginId;
@@ -222,14 +223,14 @@ class PluginPanelsState {
 
     if (!IN_TAURI) {
       // Design-mode preview: no backend to run against.
-      this.setOutput(index, { running: false, text: `(demo) output of “${item.command}” would appear here.`, error: null });
+      this.setOutput(index, { running: false, text: t("pluginpanels.demo_output", { command: item.command }), error: null });
       return;
     }
 
     try {
       const res = await commands.runPluginCommand(pluginId, item.command, this.ctx());
       if (res.status !== "ok") {
-        this.setOutput(index, { running: false, text: "", error: String(res.error ?? "Command failed.") });
+        this.setOutput(index, { running: false, text: "", error: String(res.error ?? t("pluginpanels.err_command_failed")) });
         return;
       }
       const out = res.data;
@@ -243,10 +244,10 @@ class PluginPanelsState {
         text: out.stdout ?? "",
         // Show the stdout regardless; a non-zero exit adds a small note beside
         // it rather than replacing the (often still useful) output.
-        error: out.success ? null : `Exited ${out.exitCode ?? "on a signal"}.`,
+        error: out.success ? null : t("pluginpanels.exited", { code: out.exitCode ?? t("pluginpanels.on_a_signal") }),
       });
     } catch (e) {
-      this.setOutput(index, { running: false, text: "", error: "Command failed — " + e });
+      this.setOutput(index, { running: false, text: "", error: t("pluginpanels.err_command_failed_detail", { err: String(e) }) });
     }
   }
 

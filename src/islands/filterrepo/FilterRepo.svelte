@@ -7,6 +7,7 @@
   // Bisect), NOT the generic #dangerScrim/armDanger flow.
   import { filterRepoCtrl, REWRITE_PHRASE, RESTORE_PHRASE } from "./filterrepo.svelte.ts";
   import { IN_TAURI } from "../../ipc/env";
+  import { t } from "../../i18n/i18n.svelte.ts";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
 
   const STEP_ORDER = ["scope", "preview", "confirm", "result"] as const;
@@ -44,12 +45,12 @@
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" src={filterRepoCtrl.tamaImg} alt="Tama, alarmed" /></div>
       <div>
-        <h3>Rewrite history &#8212; filter-repo</h3>
+        <h3>{t("filterrepo.title")}</h3>
         <p>
           {#if filterRepoCtrl.step === "restore"}
-            Restore a previous pre-rewrite backup.
+            {t("filterrepo.sub_restore")}
           {:else}
-            This rewrites every commit touching the selected paths. It cannot be undone with a normal Undo.
+            {t("filterrepo.sub_default")}
           {/if}
         </p>
       </div>
@@ -66,7 +67,7 @@
     <div class="modal-body">
       {#if filterRepoCtrl.step === "scope"}
         <div class="confirm-type">
-          <label for="filterRepoPaths">Path(s) to filter (one per line, or comma-separated):</label>
+          <label for="filterRepoPaths">{t("filterrepo.scope_label")}</label>
           <textarea
             id="filterRepoPaths"
             rows="6"
@@ -76,12 +77,12 @@
             bind:value={filterRepoCtrl.pathsText}
           ></textarea>
         </div>
-        <label class="cp-x" style="margin-top:10px" title={filterRepoCtrl.invert ? "Remove the listed paths from history, keep everything else (e.g. purge a leaked secret file)" : "Keep ONLY the listed paths — deletes everything else in history"}>
+        <label class="cp-x" style="margin-top:10px" title={filterRepoCtrl.invert ? t("filterrepo.invert_title_on") : t("filterrepo.invert_title_off")}>
           <input type="checkbox" bind:checked={filterRepoCtrl.invert} />
           {#if filterRepoCtrl.invert}
-            Remove these paths, keep everything else (e.g. purge a secret file)
+            {t("filterrepo.invert_label_on")}
           {:else}
-            Keep ONLY these paths — deletes everything else in history
+            {t("filterrepo.invert_label_off")}
           {/if}
         </label>
         {#if filterRepoCtrl.previewError}
@@ -90,45 +91,45 @@
       {:else if filterRepoCtrl.step === "preview"}
         {#if filterRepoCtrl.preview}
           <div class="pl-kv">
-            <div><span class="mut">current branch</span> <span class="mono">{filterRepoCtrl.preview.currentBranch || "(detached)"}</span></div>
-            <div><span class="mut">total commits</span> {filterRepoCtrl.preview.totalCommits}</div>
-            <div><span class="mut">commits touching scope</span> {filterRepoCtrl.preview.touchedCommits}</div>
-            <div><span class="mut">scope</span> <span class="mono">{filterRepoCtrl.pathList.join(", ")}</span> — {filterRepoCtrl.invert ? "will be removed, everything else kept" : "will be KEPT, everything else removed"}</div>
+            <div><span class="mut">{t("filterrepo.pv_current_branch")}</span> <span class="mono">{filterRepoCtrl.preview.currentBranch || "(detached)"}</span></div>
+            <div><span class="mut">{t("filterrepo.pv_total_commits")}</span> {filterRepoCtrl.preview.totalCommits}</div>
+            <div><span class="mut">{t("filterrepo.pv_touched")}</span> {filterRepoCtrl.preview.touchedCommits}</div>
+            <div><span class="mut">{t("filterrepo.pv_scope")}</span> <span class="mono">{filterRepoCtrl.pathList.join(", ")}</span> — {filterRepoCtrl.invert ? t("filterrepo.scope_removed") : t("filterrepo.scope_kept")}</div>
           </div>
           {#if !filterRepoCtrl.preview.available}
             <div class="pl-err">
-              git-filter-repo is not installed — install it (<code>pip install git-filter-repo</code>) before continuing. The wizard cannot proceed past this step.
+              {t("filterrepo.not_installed_pre")}<code>pip install git-filter-repo</code>{t("filterrepo.not_installed_post")}
             </div>
           {:else}
             <div class="will-lose">
-              <h5>What this will rewrite</h5>
+              <h5>{t("filterrepo.will_rewrite")}</h5>
               <ul>
-                <li>Rewrites <code>{filterRepoCtrl.preview.touchedCommits}</code> of <code>{filterRepoCtrl.preview.totalCommits}</code> commits on <code>{filterRepoCtrl.preview.currentBranch || "(detached)"}</code></li>
-                <li>Every commit hash after the earliest touched commit changes</li>
-                <li>Original SHAs become unreachable once the backup expires</li>
+                <li>{t("filterrepo.pv_li_rewrites", { touched: filterRepoCtrl.preview.touchedCommits, total: filterRepoCtrl.preview.totalCommits, branch: filterRepoCtrl.preview.currentBranch || "(detached)" })}</li>
+                <li>{t("filterrepo.pv_li_hashes")}</li>
+                <li>{t("filterrepo.pv_li_shas")}</li>
               </ul>
             </div>
             <div class="backup-note">
-              <RotateCcw class="ico" size={14} aria-hidden="true" /> A verified backup bundle is saved <b>before</b> filter-repo ever runs &#8594; full pre-rewrite state stays recoverable via Restore.
+              <RotateCcw class="ico" size={14} aria-hidden="true" /> {t("filterrepo.backup_note_pre")}<b>{t("filterrepo.backup_note_bold")}</b>{t("filterrepo.backup_note_post")}
             </div>
           {/if}
         {/if}
       {:else if filterRepoCtrl.step === "confirm"}
         {#if filterRepoCtrl.busy}
           <div class="backup-note" style="display:flex;align-items:center;gap:8px">
-            <span class="spinner"></span> Rewriting history&#8230; this can take a while for large repos. Don&#8217;t close GitCat.
+            <span class="spinner"></span> {t("filterrepo.confirm_rewriting")}
           </div>
         {:else}
           <div class="will-lose">
-            <h5>What this will rewrite</h5>
+            <h5>{t("filterrepo.will_rewrite")}</h5>
             <ul>
-              <li>Rewrites <code>{filterRepoCtrl.preview?.touchedCommits ?? 0}</code> commits on <code>{filterRepoCtrl.preview?.currentBranch || "(detached)"}</code></li>
-              <li>Scope: <code>{filterRepoCtrl.pathList.join(", ")}</code> — {filterRepoCtrl.invert ? "removed, everything else kept" : "KEPT, everything else removed"}</li>
+              <li>{t("filterrepo.cf_li_rewrites", { touched: filterRepoCtrl.preview?.touchedCommits ?? 0, branch: filterRepoCtrl.preview?.currentBranch || "(detached)" })}</li>
+              <li>{t("filterrepo.cf_li_scope", { scope: filterRepoCtrl.pathList.join(", "), outcome: filterRepoCtrl.invert ? t("filterrepo.cf_scope_removed") : t("filterrepo.cf_scope_kept") })}</li>
             </ul>
           </div>
-          <div class="backup-note"><RotateCcw class="ico" size={14} aria-hidden="true" /> Pre-op backup is saved and verified first &#8594; full pre-rewrite state stays recoverable.</div>
+          <div class="backup-note"><RotateCcw class="ico" size={14} aria-hidden="true" /> {t("filterrepo.cf_backup_note")}</div>
           <div class="confirm-type">
-            <label for="filterRepoConfirm">Type <b class="mono">{REWRITE_PHRASE}</b> to arm the rewrite:</label>
+            <label for="filterRepoConfirm">{t("filterrepo.confirm_type_pre")}<b class="mono">{REWRITE_PHRASE}</b>{t("filterrepo.confirm_type_post")}</label>
             <input
               id="filterRepoConfirm"
               placeholder={REWRITE_PHRASE}
@@ -145,23 +146,23 @@
           </div>
           {#if filterRepoCtrl.result.backupBundle}
             <div class="pl-kv">
-              <div><span class="mut">backup bundle</span> <span class="mono">{filterRepoCtrl.result.backupBundle}</span></div>
+              <div><span class="mut">{t("filterrepo.res_backup_bundle")}</span> <span class="mono">{filterRepoCtrl.result.backupBundle}</span></div>
               {#if filterRepoCtrl.result.commitsBefore != null}
-                <div><span class="mut">commits before</span> {filterRepoCtrl.result.commitsBefore}</div>
+                <div><span class="mut">{t("filterrepo.res_commits_before")}</span> {filterRepoCtrl.result.commitsBefore}</div>
               {/if}
               {#if filterRepoCtrl.result.commitsAfter != null}
-                <div><span class="mut">commits after</span> {filterRepoCtrl.result.commitsAfter}</div>
+                <div><span class="mut">{t("filterrepo.res_commits_after")}</span> {filterRepoCtrl.result.commitsAfter}</div>
               {/if}
             </div>
           {/if}
         {/if}
       {:else if filterRepoCtrl.step === "restore"}
         {#if filterRepoCtrl.backupsLoading}
-          <div class="mut pl-empty"><span class="spinner"></span> Loading backups&#8230;</div>
+          <div class="mut pl-empty"><span class="spinner"></span> {t("filterrepo.restore_loading")}</div>
         {:else if filterRepoCtrl.backupsError}
           <div class="pl-err">{filterRepoCtrl.backupsError}</div>
         {:else if filterRepoCtrl.backups.length === 0}
-          <div class="mut pl-empty">No backups recorded yet — a backup is created automatically the first time you run filter-repo.</div>
+          <div class="mut pl-empty">{t("filterrepo.restore_none")}</div>
         {:else}
           <div class="cf-files" id="filterRepoBackupList" class:busy={filterRepoCtrl.restoreBusy} data-vimnav-list>
             {#each filterRepoCtrl.backups as b (b.id)}
@@ -173,17 +174,17 @@
                 onclick={() => filterRepoCtrl.selectBackup(b.id)}
                 onkeydown={(e) => (e.key === "Enter" || e.key === " ") && filterRepoCtrl.selectBackup(b.id)}
               >
-                <span class="cf-name">{fmtTs(b.ts)} &#183; {b.headBranch || "(detached)"} @ {shortSha(b.headSha)} &#183; {b.refCount} ref(s)</span>
+                <span class="cf-name">{fmtTs(b.ts)} &#183; {b.headBranch || "(detached)"} @ {shortSha(b.headSha)} &#183; {t("filterrepo.restore_row_refs", { n: b.refCount })}</span>
               </div>
             {/each}
           </div>
           {#if filterRepoCtrl.selectedBackup}
             <div class="pl-kv">
-              <div><span class="mut">bundle</span> <span class="mono">{filterRepoCtrl.selectedBackup.bundlePath}</span></div>
-              <div><span class="mut">description</span> {filterRepoCtrl.selectedBackup.description}</div>
+              <div><span class="mut">{t("filterrepo.restore_bundle")}</span> <span class="mono">{filterRepoCtrl.selectedBackup.bundlePath}</span></div>
+              <div><span class="mut">{t("filterrepo.restore_description")}</span> {filterRepoCtrl.selectedBackup.description}</div>
             </div>
             <div class="confirm-type">
-              <label for="filterRepoRestoreConfirm">Type <b class="mono">{RESTORE_PHRASE}</b> to restore this backup (this discards the current state):</label>
+              <label for="filterRepoRestoreConfirm">{t("filterrepo.confirm_type_pre")}<b class="mono">{RESTORE_PHRASE}</b>{t("filterrepo.restore_type_post")}</label>
               <input
                 id="filterRepoRestoreConfirm"
                 placeholder={RESTORE_PHRASE}
@@ -197,7 +198,7 @@
         {/if}
         {#if filterRepoCtrl.restoreBusy}
           <div class="backup-note" style="margin-top:10px;display:flex;align-items:center;gap:8px">
-            <span class="spinner"></span> Restoring backup&#8230; don&#8217;t close GitCat.
+            <span class="spinner"></span> {t("filterrepo.restore_busy")}
           </div>
         {/if}
         {#if filterRepoCtrl.restoreResult}
@@ -210,28 +211,28 @@
 
     <div class="modal-foot">
       {#if filterRepoCtrl.step === "scope"}
-        <button class="btn ghost" onclick={() => filterRepoCtrl.close()}>Cancel</button>
-        <button class="btn ghost" onclick={() => (filterRepoCtrl.demo ? filterRepoCtrl.openRestoreDemo() : filterRepoCtrl.openRestore())}>Restore from backup&#8230;</button>
+        <button class="btn ghost" onclick={() => filterRepoCtrl.close()}>{t("common.cancel")}</button>
+        <button class="btn ghost" onclick={() => (filterRepoCtrl.demo ? filterRepoCtrl.openRestoreDemo() : filterRepoCtrl.openRestore())}>{t("filterrepo.restore_from_backup")}</button>
         <button class="btn" disabled={!filterRepoCtrl.canPreview} onclick={() => filterRepoCtrl.runPreview()}
-          >{#if filterRepoCtrl.busy}<span class="spinner"></span> Previewing…{:else}Next: Preview{/if}</button
+          >{#if filterRepoCtrl.busy}<span class="spinner"></span> {t("filterrepo.previewing")}{:else}{t("filterrepo.next_preview")}{/if}</button
         >
       {:else if filterRepoCtrl.step === "preview"}
-        <button class="btn ghost" onclick={() => filterRepoCtrl.backToScope()}>Back</button>
-        <button class="btn" disabled={!filterRepoCtrl.canProceedToConfirm} onclick={() => filterRepoCtrl.proceedToConfirm()}>Next: Confirm</button>
+        <button class="btn ghost" onclick={() => filterRepoCtrl.backToScope()}>{t("filterrepo.back")}</button>
+        <button class="btn" disabled={!filterRepoCtrl.canProceedToConfirm} onclick={() => filterRepoCtrl.proceedToConfirm()}>{t("filterrepo.next_confirm")}</button>
       {:else if filterRepoCtrl.step === "confirm"}
-        <button class="btn ghost" disabled={filterRepoCtrl.busy} onclick={() => filterRepoCtrl.backToPreview()}>Back</button>
+        <button class="btn ghost" disabled={filterRepoCtrl.busy} onclick={() => filterRepoCtrl.backToPreview()}>{t("filterrepo.back")}</button>
         <button class="btn danger" disabled={!filterRepoCtrl.canRun} onclick={() => filterRepoCtrl.runFilterRepo()}
-          >{#if filterRepoCtrl.busy}<span class="spinner"></span> Rewriting…{:else}Rewrite history{/if}</button
+          >{#if filterRepoCtrl.busy}<span class="spinner"></span> {t("filterrepo.rewriting")}{:else}{t("filterrepo.rewrite_history")}{/if}</button
         >
       {:else if filterRepoCtrl.step === "result"}
         {#if filterRepoCtrl.result && !filterRepoCtrl.result.ok}
-          <button class="btn ghost" onclick={() => (filterRepoCtrl.demo ? filterRepoCtrl.openRestoreDemo() : filterRepoCtrl.openRestore())}>Restore from backup&#8230;</button>
+          <button class="btn ghost" onclick={() => (filterRepoCtrl.demo ? filterRepoCtrl.openRestoreDemo() : filterRepoCtrl.openRestore())}>{t("filterrepo.restore_from_backup")}</button>
         {/if}
-        <button class="btn" onclick={() => filterRepoCtrl.close()}>Close</button>
+        <button class="btn" onclick={() => filterRepoCtrl.close()}>{t("common.close")}</button>
       {:else if filterRepoCtrl.step === "restore"}
-        <button class="btn ghost" disabled={filterRepoCtrl.restoreBusy} onclick={() => filterRepoCtrl.close()}>Close</button>
+        <button class="btn ghost" disabled={filterRepoCtrl.restoreBusy} onclick={() => filterRepoCtrl.close()}>{t("common.close")}</button>
         <button class="btn danger" disabled={!filterRepoCtrl.canRestore} onclick={() => filterRepoCtrl.runRestore()}
-          >{#if filterRepoCtrl.restoreBusy}<span class="spinner"></span> Restoring…{:else}Restore backup{/if}</button
+          >{#if filterRepoCtrl.restoreBusy}<span class="spinner"></span> {t("filterrepo.restoring")}{:else}{t("filterrepo.restore_backup")}{/if}</button
         >
       {/if}
     </div>

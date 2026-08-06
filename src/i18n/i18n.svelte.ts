@@ -17,12 +17,13 @@ export const LOCALES: { id: Locale; label: string }[] = [
   { id: "zh", label: "中文" },
 ];
 
-// `import.meta.glob` is a Vite feature; cast defensively so this typechecks even
-// if `vite/client` ambient types aren't in scope for svelte-check.
+// Per-namespace dicts. `import.meta.glob` MUST be called DIRECTLY — Vite only
+// static-replaces the literal `import.meta.glob(...)` call form; aliasing it to a
+// variable leaves it undefined at runtime (throws on load / under vitest). Typed
+// by vite/client (src/vite-env.d.ts).
 type GlobMod = { default?: Record<string, string> };
-const glob = (import.meta as unknown as { glob: (p: string, o?: unknown) => Record<string, GlobMod> }).glob;
-const enModules = glob("./locales/en/*.ts", { eager: true });
-const zhModules = glob("./locales/zh/*.ts", { eager: true });
+const enModules = import.meta.glob("./locales/en/*.ts", { eager: true }) as Record<string, GlobMod>;
+const zhModules = import.meta.glob("./locales/zh/*.ts", { eager: true }) as Record<string, GlobMod>;
 
 function build(mods: Record<string, GlobMod>): Record<string, string> {
   const out: Record<string, string> = {};
@@ -78,11 +79,11 @@ export function setLocale(loc: Locale): void {
  * to the English string, then the key itself, so a missing translation never
  * blanks the UI.
  */
-export function t(key: string, params?: Record<string, string | number>): string {
+export function t(key: string, params?: Record<string, string | number | null | undefined>): string {
   let s = DICTS[current][key] ?? DICTS.en[key] ?? key;
   if (params) {
     for (const [k, v] of Object.entries(params)) {
-      s = s.split(`{${k}}`).join(String(v));
+      s = s.split(`{${k}}`).join(v == null ? "" : String(v));
     }
   }
   return s;

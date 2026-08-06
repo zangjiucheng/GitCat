@@ -1,5 +1,6 @@
 <script lang="ts">
   import { reflogCtrl } from "./reflog.svelte.ts";
+  import { t } from "../../i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && reflogCtrl.open) reflogCtrl.close();
@@ -11,19 +12,19 @@
 <div class="scrim" class:on={reflogCtrl.open}>
   <div class="modal reflog">
     <div class="modal-head">
-      <div class="modal-tama"><img class="tama-pic" src={reflogCtrl.tamaImg} alt="Tama, curious" /></div>
+      <div class="modal-tama"><img class="tama-pic" src={reflogCtrl.tamaImg} alt={t("reflog.tama_alt")} /></div>
       <div>
-        <h3>Reflog &#8212; rescue a historical HEAD</h3>
-        <p>Every HEAD move this repo remembers, newest first. Restoring snapshots first, so it's itself undoable.</p>
+        <h3>{t("reflog.title")}</h3>
+        <p>{t("reflog.subtitle")}</p>
       </div>
     </div>
     <div class="modal-body">
       {#if reflogCtrl.loading}
-        <div class="log-row"><span class="spinner"></span><span class="msg mut">Loading reflog&#8230;</span></div>
+        <div class="log-row"><span class="spinner"></span><span class="msg mut">{t("reflog.loading_list")}</span></div>
       {:else if reflogCtrl.error}
         <div class="log-row"><span class="ic">&#9888;</span><span class="msg mut">{reflogCtrl.error}</span></div>
       {:else if reflogCtrl.entries.length === 0}
-        <div class="log-row"><span class="msg mut">No reflog entries yet.</span></div>
+        <div class="log-row"><span class="msg mut">{t("reflog.empty")}</span></div>
       {:else}
         {#each reflogCtrl.entries as e (e.index)}
           <div class="log-row">
@@ -31,14 +32,14 @@
             <span class="sel">{e.sha}</span>
             <span class="msg">{reflogCtrl.label(e)}</span>
             <button class="go" disabled={reflogCtrl.busy} onclick={() => reflogCtrl.restore(e.index)}
-              >{#if reflogCtrl.restoringIndex === e.index}<span class="spinner"></span> Restoring&#8230;{:else}Restore here{/if}</button
+              >{#if reflogCtrl.restoringIndex === e.index}<span class="spinner"></span> {t("reflog.restoring")}{:else}{t("reflog.restore_here")}{/if}</button
             >
           </div>
         {/each}
       {/if}
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" disabled={reflogCtrl.busy} onclick={() => reflogCtrl.close()}>Close</button>
+      <button class="btn ghost" disabled={reflogCtrl.busy} onclick={() => reflogCtrl.close()}>{t("common.close")}</button>
     </div>
   </div>
 </div>

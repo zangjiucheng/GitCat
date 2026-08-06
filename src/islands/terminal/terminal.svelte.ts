@@ -26,6 +26,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t } from "../../i18n/i18n.svelte.ts";
 
 function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
@@ -49,7 +50,7 @@ class TerminalState {
   // Entry point (Tools menu / ⌘K / CmdOrCtrl+`).
   async toggle(repo: string): Promise<void> {
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("terminal.open_repo_first"));
       return;
     }
     if (this.sessionId && this.repo === repo) {
@@ -107,14 +108,14 @@ class TerminalState {
     try {
       const res = await commands.terminalSpawn(repo);
       if (res.status === "error") {
-        bridge.tama.warn(String(res.error ?? "Could not open a terminal."));
+        bridge.tama.warn(String(res.error ?? t("terminal.err_open")));
         this.open = false;
         return;
       }
       this.sessionId = res.data;
       this.armListeners(res.data);
     } catch (e) {
-      bridge.tama.warn("Could not open a terminal — " + e);
+      bridge.tama.warn(t("terminal.err_open_e", { e: String(e) }));
       this.open = false;
     } finally {
       this.busy = false;

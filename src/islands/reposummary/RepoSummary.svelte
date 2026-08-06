@@ -5,6 +5,7 @@
   // `.stat-bar`/`.fh-caveat` verbatim (see index.html's own REPOSITORY
   // SUMMARY doc comment) — only the 4-section layout itself (`.rs-*`) is new.
   import { repoSummaryCtrl } from "./reposummary.svelte.ts";
+  import { t } from "../../i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && repoSummaryCtrl.open) repoSummaryCtrl.close();
@@ -22,28 +23,27 @@
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" src={repoSummaryCtrl.tamaImg} alt="Tama, curious" /></div>
       <div>
-        <h3>Repository Summary</h3>
+        <h3>{t("reposummary.title")}</h3>
         <p>
-          A quick orientation from <code>git log</code> itself: which files see the most churn, who's actually maintaining this repo,
-          how active it's been over time, and where the recurring trouble spots are.
+          {t("reposummary.subtitle_pre")}<code>git log</code>{t("reposummary.subtitle_post")}
         </p>
       </div>
     </div>
     <div class="modal-body">
       {#if repoSummaryCtrl.loading}
-        <div class="log-row"><span class="spinner"></span><span class="msg mut">Reading git log&#8230; this can take a moment on a large repo.</span></div>
+        <div class="log-row"><span class="spinner"></span><span class="msg mut">{t("reposummary.loading")}</span></div>
       {:else if repoSummaryCtrl.error}
         <div class="log-row"><span class="ic">&#9888;</span><span class="msg mut">{repoSummaryCtrl.error}</span></div>
       {:else if !repoSummaryCtrl.summary || repoSummaryCtrl.summary.totalCommits === 0}
         <div class="log-row">
-          <span class="msg mut">No commits in the last {repoSummaryCtrl.summary?.windowDays ?? 365} days &#8212; nothing to summarize yet.</span>
+          <span class="msg mut">{t("reposummary.none", { days: repoSummaryCtrl.summary?.windowDays ?? 365 })}</span>
         </div>
       {:else}
         {@const s = repoSummaryCtrl.summary}
         <section class="rs-section">
-          <h4>Churn Hotspots <span class="mut" style="font-weight:400;font-size:11px">most-changed files, last {s.windowDays} days</span></h4>
+          <h4>{t("reposummary.churn_title")} <span class="mut" style="font-weight:400;font-size:11px">{t("reposummary.churn_sub", { days: s.windowDays })}</span></h4>
           {#if s.churn.length === 0}
-            <p class="mut">No file changes in this window.</p>
+            <p class="mut">{t("reposummary.churn_empty")}</p>
           {:else}
             <div class="rs-list">
               {#each s.churn as f (f.path)}
@@ -58,9 +58,9 @@
         </section>
 
         <section class="rs-section">
-          <h4>Contributors <span class="rs-chip">Bus factor: {s.busFactor}</span></h4>
+          <h4>{t("reposummary.contributors_title")} <span class="rs-chip">{t("reposummary.bus_factor", { n: s.busFactor })}</span></h4>
           {#if s.contributors.length === 0}
-            <p class="mut">No contributors in this window.</p>
+            <p class="mut">{t("reposummary.contributors_empty")}</p>
           {:else}
             <div class="rs-list">
               {#each s.contributors as c (c.name + c.email)}
@@ -75,15 +75,15 @@
         </section>
 
         <section class="rs-section">
-          <h4>Monthly Activity</h4>
+          <h4>{t("reposummary.monthly_title")}</h4>
           {#if s.monthly.length === 0}
-            <p class="mut">No commits in this window.</p>
+            <p class="mut">{t("reposummary.monthly_empty")}</p>
           {:else}
             {@const maxMonthly = Math.max(1, ...s.monthly.map((m) => m.commits))}
             <div class="rs-months">
               {#each s.monthly as m (m.month)}
                 <div class="rs-month">
-                  <div class="rs-month-bar" style="height:{pct(m.commits, maxMonthly)}%" title="{m.month}: {m.commits} commit{m.commits === 1 ? '' : 's'}"></div>
+                  <div class="rs-month-bar" style="height:{pct(m.commits, maxMonthly)}%" title={t("reposummary.month_tooltip", { month: m.month, n: m.commits })}></div>
                   <span class="rs-month-label mut">{m.month}</span>
                 </div>
               {/each}
@@ -92,18 +92,21 @@
         </section>
 
         <section class="rs-section">
-          <h4>Problem Areas</h4>
-          <p class="mut fh-caveat" title="Keyword-based heuristic over commit subjects (fix/bug/hotfix/regression/revert/…) — not a classifier. Real false positives and false negatives are expected.">
-            &#9432; heuristic, not a precise classifier
+          <h4>{t("reposummary.problem_title")}</h4>
+          <p class="mut fh-caveat" title={t("reposummary.problem_caveat_title")}>
+            &#9432; {t("reposummary.problem_caveat")}
           </p>
           {#if s.problemAreas.revertOrHotfixCommits > 0}
             <p class="mut">
-              {s.problemAreas.revertOrHotfixCommits} of {s.problemAreas.totalCommits} commits ({pct(s.problemAreas.revertOrHotfixCommits, s.problemAreas.totalCommits)}%)
-              were reverts or hotfixes.
+              {t("reposummary.problem_reverts", {
+                n: s.problemAreas.revertOrHotfixCommits,
+                total: s.problemAreas.totalCommits,
+                pct: pct(s.problemAreas.revertOrHotfixCommits, s.problemAreas.totalCommits),
+              })}
             </p>
           {/if}
           {#if s.problemAreas.files.length === 0}
-            <p class="mut">No recurring problem files found.</p>
+            <p class="mut">{t("reposummary.problem_empty")}</p>
           {:else}
             <div class="rs-list">
               {#each s.problemAreas.files as f (f.path)}
@@ -118,12 +121,12 @@
         </section>
 
         {#if s.truncated}
-          <p class="mut">&#8230; truncated (capped) &#8212; showing a partial picture of a very large history.</p>
+          <p class="mut">{t("reposummary.truncated")}</p>
         {/if}
       {/if}
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" onclick={() => repoSummaryCtrl.close()}>Close</button>
+      <button class="btn ghost" onclick={() => repoSummaryCtrl.close()}>{t("common.close")}</button>
     </div>
   </div>
 </div>

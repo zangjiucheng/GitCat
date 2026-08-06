@@ -2,20 +2,14 @@
   import { multimergeCtrl } from "./multimerge.svelte.ts";
   import type { MultiMergeMode, MultiMergeStrategy } from "./multimerge.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import { t } from "../../i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && multimergeCtrl.open && !multimergeCtrl.busy) multimergeCtrl.close();
   }
 
-  const MODES: { value: MultiMergeMode; label: string; hint: string }[] = [
-    { value: "sequential", label: "Sequential", hint: "Merge one at a time — each conflict is resolvable normally" },
-    { value: "octopus", label: "Octopus", hint: "One commit for every branch — but ANY conflict fails the whole merge" },
-  ];
-  const STRATEGIES: { value: MultiMergeStrategy; label: string }[] = [
-    { value: "auto", label: "Auto (fast-forward when possible)" },
-    { value: "no-ff", label: "Always create a merge commit" },
-    { value: "ff-only", label: "Fast-forward only" },
-  ];
+  const MODES: MultiMergeMode[] = ["sequential", "octopus"];
+  const STRATEGIES: MultiMergeStrategy[] = ["auto", "no-ff", "ff-only"];
 </script>
 
 <svelte:window on:keydown={onKeydown} />
@@ -23,17 +17,19 @@
 <div class="scrim" class:on={multimergeCtrl.open}>
   <div class="modal multimerge">
     <div class="modal-head">
-      <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.alarm} alt="Tama, alarmed" /></div>
+      <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.alarm} alt={t("multimerge.tama_alt")} /></div>
       <div>
-        <h3>Merge Multiple Branches</h3>
-        <p>Pick two or more branches to merge into the current branch.</p>
+        <h3>{t("multimerge.title")}</h3>
+        <p>{t("multimerge.subtitle")}</p>
       </div>
     </div>
     <div class="modal-body">
       {#if multimergeCtrl.resuming}
         <p class="mut">
-          A sequential merge queue is already in progress &#8212; {multimergeCtrl.queueDoneList.length} merged,
-          {multimergeCtrl.queueRemaining.length + (multimergeCtrl.queueCurrent ? 1 : 0)} left.
+          {t("multimerge.resume_status", {
+            done: multimergeCtrl.queueDoneList.length,
+            left: multimergeCtrl.queueRemaining.length + (multimergeCtrl.queueCurrent ? 1 : 0),
+          })}
         </p>
         <div class="mm-list">
           {#each multimergeCtrl.queueDoneList as sha}
@@ -62,7 +58,7 @@
               {/if}
             </label>
           {:else}
-            <div class="mm-empty mut">No other local branches to merge.</div>
+            <div class="mm-empty mut">{t("multimerge.empty")}</div>
           {/each}
         </div>
         <div class="mm-mode">
@@ -70,12 +66,12 @@
             <button
               type="button"
               class="mm-mode-btn"
-              class:on={multimergeCtrl.mode === m.value}
+              class:on={multimergeCtrl.mode === m}
               disabled={multimergeCtrl.busy}
-              title={m.hint}
-              onclick={() => multimergeCtrl.setMode(m.value)}
+              title={t("multimerge.mode_hint_" + m)}
+              onclick={() => multimergeCtrl.setMode(m)}
             >
-              {m.label}
+              {t("multimerge.mode_" + m)}
             </button>
           {/each}
           {#if multimergeCtrl.mode === "sequential"}
@@ -83,43 +79,40 @@
               class="mm-strategy"
               value={multimergeCtrl.strategy}
               disabled={multimergeCtrl.busy}
-              aria-label="Merge strategy"
+              aria-label={t("multimerge.strategy_aria")}
               onchange={(e) => multimergeCtrl.setStrategy((e.currentTarget as HTMLSelectElement).value as MultiMergeStrategy)}
             >
               {#each STRATEGIES as s}
-                <option value={s.value}>{s.label}</option>
+                <option value={s}>{t("multimerge.strategy_" + s)}</option>
               {/each}
             </select>
           {/if}
         </div>
         {#if multimergeCtrl.mode === "octopus"}
-          <p class="mm-caveat mut">
-            Octopus creates one commit naming every branch &#8212; but git can't resolve a conflict across more than two
-            branches at once, so any conflict aborts the whole merge untouched. Use Sequential if you expect conflicts.
-          </p>
+          <p class="mm-caveat mut">{t("multimerge.octopus_caveat")}</p>
         {/if}
       {/if}
     </div>
     <div class="modal-foot">
       {#if multimergeCtrl.resuming}
         <button class="btn ghost" disabled={multimergeCtrl.busy} onclick={() => multimergeCtrl.resumeCancel()}
-          >{#if multimergeCtrl.busy}<span class="spinner"></span> Cancelling…{:else}Cancel queue{/if}</button
+          >{#if multimergeCtrl.busy}<span class="spinner"></span> {t("multimerge.cancelling")}{:else}{t("multimerge.cancel_queue")}{/if}</button
         >
         <button
           class="btn"
           style="background:var(--accent2);border-color:var(--accent2)"
           disabled={multimergeCtrl.busy}
           onclick={() => multimergeCtrl.resumeContinue()}
-          >{#if multimergeCtrl.busy}<span class="spinner"></span> Continuing…{:else}Continue{/if}</button
+          >{#if multimergeCtrl.busy}<span class="spinner"></span> {t("multimerge.continuing")}{:else}{t("multimerge.continue")}{/if}</button
         >
       {:else}
-        <button class="btn ghost" disabled={multimergeCtrl.busy} onclick={() => multimergeCtrl.close()}>Cancel</button>
+        <button class="btn ghost" disabled={multimergeCtrl.busy} onclick={() => multimergeCtrl.close()}>{t("common.cancel")}</button>
         <button
           class="btn"
           style="background:var(--accent2);border-color:var(--accent2)"
           disabled={!multimergeCtrl.canMerge}
           onclick={() => multimergeCtrl.merge()}
-          >{#if multimergeCtrl.busy}<span class="spinner"></span> Merging…{:else}Merge {multimergeCtrl.selectedCount} branch{multimergeCtrl.selectedCount === 1 ? "" : "es"}{/if}</button
+          >{#if multimergeCtrl.busy}<span class="spinner"></span> {t("multimerge.merging")}{:else}{multimergeCtrl.selectedCount === 1 ? t("multimerge.merge_one", { n: multimergeCtrl.selectedCount }) : t("multimerge.merge_many", { n: multimergeCtrl.selectedCount })}{/if}</button
         >
       {/if}
     </div>

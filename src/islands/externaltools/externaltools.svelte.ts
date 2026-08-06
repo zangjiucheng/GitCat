@@ -30,6 +30,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t } from "../../i18n/i18n.svelte.ts";
 import type { ExternalTool, NamedTool, ToolKind, ToolSettings } from "../../ipc/bindings";
 
 class ExternalToolsState {
@@ -107,8 +108,8 @@ class ExternalToolsState {
     return kind === "diff" ? this.activeDiffToolId : kind === "merge" ? this.activeMergeToolId : this.activeCommitToolId;
   }
 
-  isActive(t: NamedTool): boolean {
-    return this.activeIdFor(t.kind) === t.id;
+  isActive(tool: NamedTool): boolean {
+    return this.activeIdFor(tool.kind) === tool.id;
   }
 
   private applyActive(kind: ToolKind, id: string | null): void {
@@ -125,12 +126,12 @@ class ExternalToolsState {
     this.formCmd = "";
   }
 
-  startEditTool(t: NamedTool): void {
-    this.editingId = t.id;
-    this.formId = t.id;
-    this.formName = t.name;
-    this.formKind = t.kind;
-    this.formCmd = t.cmd;
+  startEditTool(tool: NamedTool): void {
+    this.editingId = tool.id;
+    this.formId = tool.id;
+    this.formName = tool.name;
+    this.formKind = tool.kind;
+    this.formCmd = tool.cmd;
   }
 
   // Add or update (upsert by id) — the same contract as `save_named_tool`.
@@ -142,18 +143,18 @@ class ExternalToolsState {
     // Match the backend's non-blank requirements; give the obvious answer
     // without a round trip (server-side validation still backs this up).
     if (!id || !name || !cmd) {
-      this.error = "A named tool needs an id, a name and a command.";
+      this.error = t("externaltools.err_need_fields");
       return;
     }
     const tool: NamedTool = { id, name, kind: this.formKind, cmd };
     const wasEditing = this.editingId !== null;
 
     if (!IN_TAURI || this.demo) {
-      const i = this.tools.findIndex((t) => t.id === id);
-      this.tools = i >= 0 ? this.tools.map((t) => (t.id === id ? tool : t)) : [...this.tools, tool];
+      const i = this.tools.findIndex((item) => item.id === id);
+      this.tools = i >= 0 ? this.tools.map((item) => (item.id === id ? tool : item)) : [...this.tools, tool];
       this.resetToolForm();
       bridge.tama.set("hint");
-      bridge.tama.say((wasEditing ? "Updated " : "Added ") + name + " (demo).");
+      bridge.tama.say(wasEditing ? t("externaltools.demo_updated", { name }) : t("externaltools.demo_added", { name }));
       return;
     }
 
@@ -164,12 +165,12 @@ class ExternalToolsState {
       if (res.status === "ok") {
         this.applySettings(res.data);
         this.resetToolForm();
-        bridge.tama.say((wasEditing ? "Updated " : "Added ") + name + ".");
+        bridge.tama.say(wasEditing ? t("externaltools.saved_updated", { name }) : t("externaltools.saved_added", { name }));
       } else {
-        this.error = String(res.error ?? "Could not save the tool.");
+        this.error = String(res.error ?? t("externaltools.err_save_tool"));
       }
     } catch (e) {
-      this.error = "Could not save the tool — " + e;
+      this.error = t("externaltools.err_save_tool_detail", { err: String(e) });
     } finally {
       this.toolsBusy = false;
     }
@@ -179,7 +180,7 @@ class ExternalToolsState {
     if (this.toolsBusy) return;
 
     if (!IN_TAURI || this.demo) {
-      this.tools = this.tools.filter((t) => t.id !== id);
+      this.tools = this.tools.filter((item) => item.id !== id);
       if (this.activeDiffToolId === id) this.activeDiffToolId = null;
       if (this.activeMergeToolId === id) this.activeMergeToolId = null;
       if (this.activeCommitToolId === id) this.activeCommitToolId = null;
@@ -195,10 +196,10 @@ class ExternalToolsState {
         this.applySettings(res.data);
         if (this.editingId === id) this.resetToolForm();
       } else {
-        this.error = String(res.error ?? "Could not remove the tool.");
+        this.error = String(res.error ?? t("externaltools.err_remove_tool"));
       }
     } catch (e) {
-      this.error = "Could not remove the tool — " + e;
+      this.error = t("externaltools.err_remove_tool_detail", { err: String(e) });
     } finally {
       this.toolsBusy = false;
     }
@@ -206,8 +207,8 @@ class ExternalToolsState {
 
   // Click a row's "Active" toggle: select it for its kind, or, if it's already
   // active, clear the selection (fall back to the singleton/git config).
-  async toggleActive(t: NamedTool): Promise<void> {
-    await this.setActive(t.kind, this.isActive(t) ? null : t.id);
+  async toggleActive(tool: NamedTool): Promise<void> {
+    await this.setActive(tool.kind, this.isActive(tool) ? null : tool.id);
   }
 
   async setActive(kind: ToolKind, id: string | null): Promise<void> {
@@ -225,10 +226,10 @@ class ExternalToolsState {
       if (res.status === "ok") {
         this.applySettings(res.data);
       } else {
-        this.error = String(res.error ?? "Could not set the active tool.");
+        this.error = String(res.error ?? t("externaltools.err_set_active"));
       }
     } catch (e) {
-      this.error = "Could not set the active tool — " + e;
+      this.error = t("externaltools.err_set_active_detail", { err: String(e) });
     } finally {
       this.toolsBusy = false;
     }
@@ -252,10 +253,10 @@ class ExternalToolsState {
       if (res.status === "ok") {
         this.applySettings(res.data);
       } else {
-        this.error = String(res.error ?? "Could not load external tool settings.");
+        this.error = String(res.error ?? t("externaltools.err_load"));
       }
     } catch (e) {
-      this.error = "Could not load external tool settings — " + e;
+      this.error = t("externaltools.err_load_detail", { err: String(e) });
     } finally {
       this.loading = false;
     }
@@ -269,7 +270,7 @@ class ExternalToolsState {
   async suggestOllama(): Promise<void> {
     if (this.suggesting || this.saving) return;
     if (!IN_TAURI) {
-      bridge.tama.say("ollama detection needs the desktop app (demo).");
+      bridge.tama.say(t("externaltools.demo_ollama"));
       return;
     }
     this.suggesting = true;
@@ -280,15 +281,15 @@ class ExternalToolsState {
         if (res.data) {
           this.commitCmd = res.data;
           bridge.tama.set("hint");
-          bridge.tama.say("Filled an ollama default — review it and hit Save.", 4200);
+          bridge.tama.say(t("externaltools.ollama_filled"), 4200);
         } else {
-          this.error = "Couldn't find ollama with a pulled model. If it isn't installed, install it and run `ollama pull <model>`. If it IS installed (common on Windows right after installing), restart GitCat so it picks up your updated PATH, then try again — or just type your own command below.";
+          this.error = t("externaltools.err_ollama_not_found");
         }
       } else {
-        this.error = String(res.error ?? "Couldn't check for ollama.");
+        this.error = String(res.error ?? t("externaltools.err_ollama_check"));
       }
     } catch (e) {
-      this.error = "Couldn't check for ollama — " + e;
+      this.error = t("externaltools.err_ollama_check_detail", { err: String(e) });
     } finally {
       this.suggesting = false;
     }
@@ -308,7 +309,7 @@ class ExternalToolsState {
   async save(): Promise<void> {
     if (this.saving) return;
     if (!IN_TAURI || this.demo) {
-      bridge.tama.say("This is where your external tool preferences would save (demo).");
+      bridge.tama.say(t("externaltools.demo_save"));
       this.open = false;
       return;
     }
@@ -322,13 +323,13 @@ class ExternalToolsState {
       );
       if (res.status === "ok") {
         this.applySettings(res.data);
-        bridge.tama.say("External tool preferences saved.");
+        bridge.tama.say(t("externaltools.saved_prefs"));
         this.open = false;
       } else {
-        this.error = String(res.error ?? "Could not save external tool settings.");
+        this.error = String(res.error ?? t("externaltools.err_save_settings"));
       }
     } catch (e) {
-      this.error = "Could not save external tool settings — " + e;
+      this.error = t("externaltools.err_save_settings_detail", { err: String(e) });
     } finally {
       this.saving = false;
     }
@@ -346,16 +347,16 @@ class ExternalToolsState {
   //     (see tool_settings.rs's module doc).
   async openDiff(repo: string, file: string, staged: boolean, fromRev: string | null = null, toRev: string | null = null): Promise<void> {
     if (!IN_TAURI) {
-      bridge.tama.say("This is where " + file + " would open in your external diff tool (demo).");
+      bridge.tama.say(t("externaltools.demo_open_diff", { file }));
       return;
     }
     try {
       const res = await commands.openDiffTool(repo, file, staged, fromRev, toRev);
       if (res.status === "error") {
-        bridge.tama.warn(String(res.error ?? "Could not open the external diff tool."));
+        bridge.tama.warn(String(res.error ?? t("externaltools.err_open_diff")));
       }
     } catch (e) {
-      bridge.tama.warn("Could not open the external diff tool — " + e);
+      bridge.tama.warn(t("externaltools.err_open_diff_detail", { err: String(e) }));
     }
   }
 }

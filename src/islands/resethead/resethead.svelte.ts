@@ -30,6 +30,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { ICON_BACKUP, ICON_WARNING } from "../../legacy/icons";
+import { t } from "../../i18n/i18n.svelte.ts";
 
 type ResetMode = "soft" | "mixed" | "hard";
 
@@ -46,19 +47,23 @@ const HASH_INPUT_STYLE =
   "width:100%;box-sizing:border-box;padding:7px 10px;margin:4px 0 2px;border-radius:8px;" +
   "border:1px solid rgba(128,128,128,.45);background:rgba(128,128,128,.08);color:inherit;font:inherit";
 
-// The mode picker — a trusted constant (no user input interpolated), injected
-// as innerHTML into the scrim's "what happens" box. `mixed` pre-checked.
-const MODE_RADIOS =
-  "<h5>Reset mode</h5>" +
-  `<label style="${RADIO_LABEL_STYLE}"><input type="radio" name="${MODE_NAME}" value="soft" style="${RADIO_STYLE}"><span><b>Soft</b> — move HEAD only; keep the index and every working-tree change.</span></label>` +
-  `<label style="${RADIO_LABEL_STYLE}"><input type="radio" name="${MODE_NAME}" value="mixed" checked style="${RADIO_STYLE}"><span><b>Mixed</b> — move HEAD and unstage, but keep your working-tree files <em>(git's default)</em>.</span></label>` +
-  `<label style="${RADIO_LABEL_STYLE}"><input type="radio" name="${MODE_NAME}" value="hard" style="${RADIO_STYLE}"><span><b>Hard</b> — move HEAD and <b>discard every staged &amp; unstaged change</b>. Uncommitted work is lost with no Undo.</span></label>`;
+// The mode picker — trusted markup (no user input interpolated), injected as
+// innerHTML into the scrim's "what happens" box. `mixed` pre-checked. Built as
+// a function (not a module const) so t() resolves at open time, re-picking the
+// active locale on every arm. The translated label already carries its own
+// <b>…</b>, so it drops straight into the <span>.
+function modeRadios(): string {
+  return (
+    "<h5>" + t("resethead.reset_mode_head") + "</h5>" +
+    `<label style="${RADIO_LABEL_STYLE}"><input type="radio" name="${MODE_NAME}" value="soft" style="${RADIO_STYLE}"><span>${t("resethead.mode_soft")}</span></label>` +
+    `<label style="${RADIO_LABEL_STYLE}"><input type="radio" name="${MODE_NAME}" value="mixed" checked style="${RADIO_STYLE}"><span>${t("resethead.mode_mixed")}</span></label>` +
+    `<label style="${RADIO_LABEL_STYLE}"><input type="radio" name="${MODE_NAME}" value="hard" style="${RADIO_STYLE}"><span>${t("resethead.mode_hard")}</span></label>`
+  );
+}
 
-const NOTE =
-  ICON_BACKUP +
-  " I snapshot where HEAD is now first, so ⌘Z/Undo can move it back — as long as your working tree is clean. " +
-  ICON_WARNING +
-  " A <b>hard</b> reset additionally throws away uncommitted changes, and those are NOT covered by the snapshot.";
+function resetNote(): string {
+  return ICON_BACKUP + " " + t("resethead.note_snapshot") + " " + ICON_WARNING + " " + t("resethead.note_hard");
+}
 
 function selectedMode(): ResetMode {
   const el = document.querySelector(`input[name="${MODE_NAME}"]:checked`) as HTMLInputElement | null;
@@ -83,25 +88,21 @@ class ResetHeadState {
   resetToKnownCommit(repo: string, sha: string, shortSha: string, subject: string) {
     if (this.busy) return;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("resethead.open_repo_first"));
       return;
     }
     bridge.tama.set("danger");
-    bridge.tama.say("Resetting HEAD to " + shortSha + " — type the short sha to arm it.", 6000);
+    bridge.tama.say(t("resethead.arm_say_known", { sha: shortSha }), 6000);
     bridge.armDanger({
-      title: "Reset HEAD to " + shortSha,
+      title: t("resethead.title_known", { sha: shortSha }),
       steps: false,
-      desc:
-        "Moves the current branch (HEAD) to " +
-        shortSha +
-        (subject ? " — “" + subject + "”" : "") +
-        ". Any commits currently ahead of it stop being on your branch (they stay recoverable until git eventually prunes them). Pick how much of your working state to keep below.",
-      lose: MODE_RADIOS,
-      note: NOTE,
+      desc: t("resethead.desc_known", { sha: shortSha, subject: subject ? " — “" + subject + "”" : "" }),
+      lose: modeRadios(),
+      note: resetNote(),
       name: shortSha,
       typeNoun: "short SHA",
       typeVerb: "confirm the reset",
-      confirmLabel: "Reset HEAD",
+      confirmLabel: t("resethead.confirm"),
       onConfirm: async () => {
         await this.doReset(repo, sha, selectedMode(), shortSha);
       },
@@ -114,29 +115,28 @@ class ResetHeadState {
   promptForHash(repo: string) {
     if (this.busy) return;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("resethead.open_repo_first"));
       return;
     }
     bridge.tama.set("danger");
-    bridge.tama.say("Reset HEAD to any commit — paste a hash, pick a mode, type “reset” to arm.", 6000);
+    bridge.tama.say(t("resethead.arm_say_hash"), 6000);
     bridge.armDanger({
-      title: "Reset HEAD to a commit",
+      title: t("resethead.title_hash"),
       steps: false,
-      desc:
-        "Moves the current branch (HEAD) to the commit you name below. Accepts a full or abbreviated hash, or any ref like HEAD~2 or origin/main — I resolve it and refuse anything that isn't a commit.",
+      desc: t("resethead.desc_hash"),
       lose:
-        "<h5>Commit to reset to</h5>" +
-        `<input id="${HASH_ID}" placeholder="commit hash or ref — a1b2c3d, HEAD~2, origin/main" spellcheck="false" autocomplete="off" style="${HASH_INPUT_STYLE}"/>` +
-        MODE_RADIOS,
-      note: NOTE,
+        "<h5>" + t("resethead.commit_to_reset") + "</h5>" +
+        `<input id="${HASH_ID}" placeholder="${t("resethead.hash_placeholder")}" spellcheck="false" autocomplete="off" style="${HASH_INPUT_STYLE}"/>` +
+        modeRadios(),
+      note: resetNote(),
       name: "reset",
       typeNoun: "word",
       typeVerb: "confirm",
-      confirmLabel: "Reset HEAD",
+      confirmLabel: t("resethead.confirm"),
       onConfirm: async () => {
         const target = typedHash();
         if (!target) {
-          bridge.tama.warn("Enter a commit hash or ref to reset to.");
+          bridge.tama.warn(t("resethead.enter_hash"));
           return;
         }
         // Short, readable label for the toasts; the backend echoes the real
@@ -153,24 +153,24 @@ class ResetHeadState {
   private async doReset(repo: string, target: string, mode: ResetMode, label: string) {
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
-      bridge.tama.say("Reset HEAD to " + label + " (" + mode + ", demo).");
+      bridge.tama.say(t("resethead.demo_reset", { label, mode }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     bridge.tama.set("thinking");
-    bridge.tama.say("Resetting HEAD to " + label + "…");
+    bridge.tama.say(t("resethead.resetting", { label }));
     try {
       const res = await commands.resetHeadToCommit(repo, target, mode);
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Reset HEAD to " + label + ".", 3200);
+        bridge.tama.say(res.message || t("resethead.reset_done", { label }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't reset to " + label + ".");
+        bridge.tama.warn((res && res.message) || t("resethead.reset_failed", { label }));
       }
     } catch (e) {
-      bridge.tama.warn("Reset failed — " + e);
+      bridge.tama.warn(t("resethead.reset_failed_e", { error: String(e) }));
       console.error(e);
     } finally {
       this.busy = false;

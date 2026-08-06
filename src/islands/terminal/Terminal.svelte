@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { terminalCtrl } from "./terminal.svelte.ts";
   import { IN_TAURI } from "../../ipc/env";
+  import { t } from "../../i18n/i18n.svelte.ts";
   import { Terminal as XTerm } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
@@ -130,19 +131,19 @@
 <div class="term-drawer" class:on={terminalCtrl.open}>
   <div class="term-drag" role="separator" aria-orientation="horizontal" onpointerdown={onDragStart}></div>
   <div class="term-head">
-    <span class="term-title"><span class="term-ic" aria-hidden="true">&gt;_</span> Terminal</span>
+    <span class="term-title"><span class="term-ic" aria-hidden="true">&gt;_</span> {t("terminal.title")}</span>
     {#if terminalCtrl.exited}
-      <span class="term-exited">process exited</span>
-      <button class="term-btn" onclick={() => terminalCtrl.restart()}>&#8635; Restart</button>
+      <span class="term-exited">{t("terminal.exited")}</span>
+      <button class="term-btn" onclick={() => terminalCtrl.restart()}>&#8635; {t("terminal.restart_btn")}</button>
     {/if}
-    <button class="term-x" title="Close" aria-label="Close terminal" onclick={() => terminalCtrl.closeSession()}>&#10005;</button>
+    <button class="term-x" title={t("common.close")} aria-label={t("terminal.aria_close")} onclick={() => terminalCtrl.closeSession()}>&#10005;</button>
   </div>
   <div class="term-body">
     <div class="term-xterm" bind:this={containerEl}></div>
     {#if !IN_TAURI}
-      <div class="term-overlay mut">This is where a real shell would run, at <b>{terminalCtrl.repo}</b> (demo).</div>
+      <div class="term-overlay mut">{t("terminal.demo_pre")}<b>{terminalCtrl.repo}</b>{t("terminal.demo_post")}</div>
     {:else if terminalCtrl.busy}
-      <div class="term-overlay mut"><span class="spinner"></span> starting a shell&#8230;</div>
+      <div class="term-overlay mut"><span class="spinner"></span> {t("terminal.starting")}</div>
     {/if}
   </div>
 </div>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { exportPatchesCtrl } from "./exportpatches.svelte.ts";
+  import { t } from "../../i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && exportPatchesCtrl.open) exportPatchesCtrl.close();
@@ -16,8 +17,8 @@
   <div class="modal remotes">
     <div class="modal-head">
       <div>
-        <h3>Export Patches</h3>
-        <p>Export a commit range as one combined <code>.patch</code> file (<code>git format-patch</code>) to share or email.</p>
+        <h3>{t("exportpatches.title")}</h3>
+        <p>{t("exportpatches.subtitle_pre")}<code>.patch</code>{t("exportpatches.subtitle_mid")}<code>git format-patch</code>{t("exportpatches.subtitle_post")}</p>
       </div>
     </div>
     <div class="modal-body">
@@ -25,7 +26,7 @@
         <input
           type="text"
           class="mono"
-          placeholder="from&#8230; e.g. origin/main"
+          placeholder={t("exportpatches.ph_from")}
           bind:value={exportPatchesCtrl.from}
           disabled={exportPatchesCtrl.busy}
           spellcheck="false"
@@ -35,7 +36,7 @@
         <input
           type="text"
           class="mono"
-          placeholder="to&#8230; e.g. HEAD"
+          placeholder={t("exportpatches.ph_to")}
           bind:value={exportPatchesCtrl.to}
           disabled={exportPatchesCtrl.busy}
           spellcheck="false"
@@ -43,7 +44,7 @@
           onkeydown={onFieldKeydown}
         />
         <div class="nb-row">
-          <span class="mut">Every commit after &#8220;from&#8221; up to and including &#8220;to&#8221;.</span>
+          <span class="mut">{t("exportpatches.range_hint")}</span>
           {#if exportPatchesCtrl.busy}<span class="spinner"></span>{/if}
         </div>
         {#if exportPatchesCtrl.error}
@@ -52,9 +53,9 @@
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" disabled={exportPatchesCtrl.busy} onclick={() => exportPatchesCtrl.close()}>Cancel</button>
+      <button class="btn ghost" disabled={exportPatchesCtrl.busy} onclick={() => exportPatchesCtrl.close()}>{t("common.cancel")}</button>
       <button class="btn" disabled={exportPatchesCtrl.busy} onclick={() => exportPatchesCtrl.confirm()}
-        >{#if exportPatchesCtrl.busy}<span class="spinner"></span> Exporting&#8230;{:else}Export&#8230;{/if}</button
+        >{#if exportPatchesCtrl.busy}<span class="spinner"></span> {t("exportpatches.exporting")}{:else}{t("exportpatches.export_btn")}{/if}</button
       >
     </div>
   </div>

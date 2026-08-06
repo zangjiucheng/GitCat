@@ -98,6 +98,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { workdirCtrl } from "../workdir/workdir.svelte.ts";
 import { mainlinePickerCtrl } from "../mainlinepicker/mainlinepicker.svelte.ts";
+import { t } from "../../i18n/i18n.svelte.ts";
 import type { ApplyPatchResult, ConflictFile, ConflictHunk, MergeResult, MergeSquashResult, PickResult, RebaseResult, RevertResult, StashResolveResult, WorkdirResult } from "../../ipc/bindings";
 
 // specta generates `side: string`; keep the precise union at the call boundary.
@@ -169,9 +170,9 @@ const SKIP_OPS: Partial<Record<ResolverOp, (repo: string) => Promise<OpResult>>>
 // Op-flavored copy (modal title, banners, fallback messages). Keeping these
 // keyed by op — rather than scattered ternaries — is what makes `applyOutcome`
 // /`openConflict`/`abort`/`continue` op-agnostic below.
-const MSG: Record<ResolverOp, {
+type OpMsg = {
   title: string;
-  verb: string; // "Cherry-pick" | "Merge" — for the default error fallback
+  verb: string;
   clean: (sha: string) => string;
   empty: string;
   conflictBanner: (sha: string, n: number) => string;
@@ -179,130 +180,45 @@ const MSG: Record<ResolverOp, {
   abortMsg: string;
   continueSay: string;
   continueCheer: string;
-}> = {
-  "cherry-pick": {
-    title: "Cherry-pick hit a conflict",
-    verb: "Cherry-pick",
-    clean: (sha) => "Cherry-picked " + (sha || "") + ".",
-    empty: "Already applied — nothing to pick.",
-    conflictBanner: (sha, n) =>
-      n
-        ? "Picking " + (sha || "the commit") + " conflicts in " + n + " file" + (n === 1 ? "" : "s") +
-          ". Pick a side per file, then Continue — or Abort."
-        : "Cherry-pick of " + (sha || "the commit") + " needs review — resolve, then Continue, or Abort.",
-    cheer: 'Cherry-pick applied. <span class="jp">よし!</span>',
-    abortMsg: "Pick aborted — HEAD unchanged.",
-    continueSay: "Conflict resolved — cherry-pick committed.",
-    continueCheer: 'Conflict resolved — pick committed. <span class="jp">よし!</span>',
-  },
-  merge: {
-    title: "Merge hit a conflict",
-    verb: "Merge",
-    clean: (sha) => "Merged " + (sha || "") + ".",
-    empty: "Already up to date — nothing to merge.",
-    conflictBanner: (sha, n) =>
-      n
-        ? "Merging " + (sha || "the commit") + " conflicts in " + n + " file" + (n === 1 ? "" : "s") +
-          ". Pick a side per file, then Continue — or Abort."
-        : "Merge of " + (sha || "the commit") + " needs review — resolve, then Continue, or Abort.",
-    cheer: 'Merge applied. <span class="jp">よし!</span>',
-    abortMsg: "Merge aborted — HEAD unchanged.",
-    continueSay: "Conflict resolved — merge committed.",
-    continueCheer: 'Conflict resolved — merge committed. <span class="jp">よし!</span>',
-  },
-  rebase: {
-    title: "Rebase hit a conflict",
-    verb: "Rebase",
-    clean: (sha) => "Rebased onto " + (sha || "") + ".",
-    empty: "Already up to date — nothing to rebase.",
-    conflictBanner: (sha, n) =>
-      n
-        ? "Rebasing onto " + (sha || "the target") + " conflicts in " + n + " file" + (n === 1 ? "" : "s") +
-          ". Pick a side per file, then Continue — or Skip this commit, or Abort."
-        : "Rebase onto " + (sha || "the target") + " needs review — resolve, then Continue, Skip, or Abort.",
-    cheer: 'Rebase complete. <span class="jp">よし!</span>',
-    abortMsg: "Rebase aborted — back to the pre-rebase state.",
-    continueSay: "Conflict resolved — rebase continuing.",
-    continueCheer: 'Conflict resolved — rebase continuing. <span class="jp">よし!</span>',
-  },
-  revert: {
-    title: "Revert hit a conflict",
-    verb: "Revert",
-    clean: (sha) => "Reverted " + (sha || "") + ".",
-    empty: "Nothing to revert — that change isn't present.",
-    conflictBanner: (sha, n) =>
-      n
-        ? "Reverting " + (sha || "the commit") + " conflicts in " + n + " file" + (n === 1 ? "" : "s") +
-          ". Pick a side per file, then Continue — or Abort."
-        : "Revert of " + (sha || "the commit") + " needs review — resolve, then Continue, or Abort.",
-    cheer: 'Revert applied. <span class="jp">よし!</span>',
-    abortMsg: "Revert aborted — HEAD unchanged.",
-    continueSay: "Conflict resolved — revert committed.",
-    continueCheer: 'Conflict resolved — revert committed. <span class="jp">よし!</span>',
-  },
-  // No sha of its own (a stash conflict is keyed by stash index, not a
-  // commit) — `sha` args below are always "". `clean`/`empty` are near-dead
-  // fallbacks: stash_conflict_abort/continue always populate `message`
-  // (StashResolveResult never omits it), and "empty" can't happen at all for
-  // this op (see StashResolveResult's doc comment) — kept only so this entry
-  // type-checks against the same shape every other op uses.
-  stash: {
-    title: "Stash conflict",
-    verb: "Stash",
-    clean: () => "Stash conflict resolved.",
-    empty: "Nothing to finish — already resolved.",
-    conflictBanner: (_sha, n) =>
-      n
-        ? "That stash conflicts in " + n + " file" + (n === 1 ? "" : "s") +
-          ". Pick a side per file, then Continue — or Abort."
-        : "That stash needs review — resolve, then Continue, or Abort.",
-    cheer: 'Stash conflict resolved. <span class="jp">よし!</span>',
-    abortMsg: "Reset back to before the stash was applied.",
-    continueSay: "Conflict resolved — stash finished.",
-    continueCheer: 'Conflict resolved — stash finished. <span class="jp">よし!</span>',
-  },
-  // `clean`/`empty` are near-dead fallbacks here too (same rationale as
-  // stash's own comment above): a successful squash — from `merge_squash`
-  // OR from resolving this op's own conflict — reports "staged", never
-  // "clean" (see MergeSquashResult's own doc: squash never commits), which
-  // `applyOutcome` routes to `openSquashStaged` instead of this table at all.
-  "merge-squash": {
-    title: "Squash-merge hit a conflict",
-    verb: "Squash",
-    clean: (sha) => "Squashed " + (sha || "") + " into the index.",
-    empty: "Already up to date — nothing to squash.",
-    conflictBanner: (sha, n) =>
-      n
-        ? "Squashing " + (sha || "the commit") + " conflicts in " + n + " file" + (n === 1 ? "" : "s") +
-          ". Pick a side per file, then Continue — or Abort."
-        : "Squashing " + (sha || "the commit") + " needs review — resolve, then Continue, or Abort.",
-    cheer: 'Squash staged. <span class="jp">よし!</span>',
-    abortMsg: "Squash-merge conflict aborted — back to the pre-squash state.",
-    continueSay: "Conflict resolved — squash staged, write a commit message to finish.",
-    continueCheer: 'Conflict resolved — squash staged. <span class="jp">よし!</span>',
-  },
-  // No sha of its own either (an apply_patch call is keyed by a patch FILE,
-  // not a single commit — it can apply many) — `sha` args are always "" (see
-  // applypatch.svelte.ts's `openFromResult` call). `clean`/`empty` are near-
-  // dead fallbacks (same rationale as stash/merge-squash's own comments
-  // above): `apply_patch`/`am_continue` always populate `message` themselves
-  // (see patch.rs's doc — there's no "nothing to do" success state for `am`
-  // at all), so the table's own copy is essentially unreachable.
-  am: {
-    title: "Applying the patch hit a conflict",
-    verb: "Patch apply",
-    clean: () => "Applied the patch.",
-    empty: "Nothing to apply — the patch produced no changes.",
-    conflictBanner: (_sha, n) =>
-      n
-        ? "Applying the patch conflicts in " + n + " file" + (n === 1 ? "" : "s") +
-          ". Resolve them, then Continue — or Skip this commit, or Abort."
-        : "Applying the patch needs review — resolve, then Continue, Skip, or Abort.",
-    cheer: 'Patch applied. <span class="jp">よし!</span>',
-    abortMsg: "Patch apply aborted — back to the pre-apply state.",
-    continueSay: "Conflict resolved — continuing to apply the patch.",
-    continueCheer: 'Conflict resolved — patch apply continuing. <span class="jp">よし!</span>',
-  },
+  couldNotStart: string;
+};
+
+// i18n-backed op copy: every field reads t() at ACCESS time (getters/methods),
+// not module-load time, so a language switch mid-conflict re-resolves each
+// toast/banner. `seg` is the op's key segment under the "resolver" namespace;
+// `targetKey` is the "the commit"/"the target" fallback when no sha is known;
+// `hasSha` is false for ops with no sha of their own (stash/am).
+function makeMsg(seg: string, targetKey: string, hasSha: boolean): OpMsg {
+  const k = (name: string): string => "resolver." + seg + "." + name;
+  return {
+    get title() { return t(k("title")); },
+    get verb() { return t(k("verb")); },
+    clean: (sha: string) => t(k("clean"), { sha: sha || "" }),
+    get empty() { return t(k("empty")); },
+    conflictBanner: (sha: string, n: number) => {
+      const target = hasSha ? (sha || t("resolver." + targetKey)) : "";
+      if (n) {
+        const files = n === 1 ? t("resolver.n_file_one", { n }) : t("resolver.n_file_other", { n });
+        return t(k("conflict_files"), { target, files });
+      }
+      return t(k("conflict_review"), { target });
+    },
+    get cheer() { return t(k("cheer")); },
+    get abortMsg() { return t(k("abort_msg")); },
+    get continueSay() { return t(k("continue_say")); },
+    get continueCheer() { return t(k("continue_cheer")); },
+    get couldNotStart() { return t(k("could_not_start")); },
+  };
+}
+
+const MSG: Record<ResolverOp, OpMsg> = {
+  "cherry-pick": makeMsg("pick", "the_commit", true),
+  merge: makeMsg("merge", "the_commit", true),
+  rebase: makeMsg("rebase", "the_target", true),
+  revert: makeMsg("revert", "the_commit", true),
+  stash: makeMsg("stash", "the_commit", false),
+  "merge-squash": makeMsg("squash", "the_commit", true),
+  am: makeMsg("am", "the_commit", false),
 };
 
 class ResolverState {
@@ -440,7 +356,7 @@ class ResolverState {
   // Modal title — "Cherry-pick hit a conflict" | "Merge hit a conflict", or
   // (interactive rebase only) "Rebase paused to edit a commit" while `.editing`.
   get title(): string {
-    if (this.editing) return "Rebase paused to edit a commit";
+    if (this.editing) return t("resolver.editing_title");
     return MSG[this.op].title;
   }
 
@@ -468,7 +384,7 @@ class ResolverState {
   async startPick(repo: string, sha: string, recordOrigin: boolean) {
     if (this.busy) return;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("resolver.open_repo_first"));
       return;
     }
     // A merge commit can't be cherry-picked without a mainline parent (`-m`).
@@ -480,11 +396,11 @@ class ResolverState {
         mainline = await mainlinePickerCtrl.choose(sha, p.data);
         if (mainline == null) return; // user cancelled the chooser
       } else if (p.status === "error") {
-        bridge.tama.warn("Couldn't read the commit's parents — " + p.error);
+        bridge.tama.warn(t("resolver.parents_read_failed", { error: p.error }));
         return;
       }
     } catch (e) {
-      bridge.tama.warn("Couldn't read the commit's parents — " + e);
+      bridge.tama.warn(t("resolver.parents_read_failed", { error: String(e) }));
       return;
     }
     await this.runPick(repo, sha, recordOrigin, mainline);
@@ -505,7 +421,7 @@ class ResolverState {
       const res = await commands.cherryPick(repo, sha, recordOrigin, mainline);
       await this.applyOutcome(res, sha, () => this.runPick(repo, sha, recordOrigin, mainline));
     } catch (e) {
-      bridge.tama.warn("Cherry-pick failed — " + e);
+      bridge.tama.warn(t("resolver.pick_failed", { error: String(e) }));
     } finally {
       this.busy = false;
     }
@@ -524,7 +440,7 @@ class ResolverState {
   async startMerge(repo: string, sha: string, strategy?: string | null) {
     if (this.busy) return;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("resolver.open_repo_first"));
       return;
     }
     this.demo = false;
@@ -538,7 +454,7 @@ class ResolverState {
       const res = await commands.mergeStart(repo, sha, strategy ?? null);
       await this.applyOutcome(res, sha, () => this.startMerge(repo, sha, strategy));
     } catch (e) {
-      bridge.tama.warn("Merge failed — " + e);
+      bridge.tama.warn(t("resolver.merge_failed", { error: String(e) }));
     } finally {
       this.busy = false;
     }
@@ -555,7 +471,7 @@ class ResolverState {
   async startMergeSquash(repo: string, sha: string) {
     if (this.busy) return;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("resolver.open_repo_first"));
       return;
     }
     this.demo = false;
@@ -567,7 +483,7 @@ class ResolverState {
       const res = await commands.mergeSquash(repo, sha);
       await this.applyOutcome(res, sha);
     } catch (e) {
-      bridge.tama.warn("Squash failed — " + e);
+      bridge.tama.warn(t("resolver.squash_failed", { error: String(e) }));
     } finally {
       this.busy = false;
     }
@@ -579,7 +495,7 @@ class ResolverState {
   async startRebase(repo: string, onto: string) {
     if (this.busy) return;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("resolver.open_repo_first"));
       return;
     }
     this.demo = false;
@@ -593,7 +509,7 @@ class ResolverState {
       const res = await commands.rebaseStart(repo, onto);
       await this.applyOutcome(res, onto, () => this.startRebase(repo, onto));
     } catch (e) {
-      bridge.tama.warn("Rebase failed — " + e);
+      bridge.tama.warn(t("resolver.rebase_failed", { error: String(e) }));
     } finally {
       this.busy = false;
     }
@@ -619,7 +535,7 @@ class ResolverState {
   private async pullWithStrategy(repo: string, op: "merge" | "rebase") {
     if (this.busy) return;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("resolver.open_repo_first"));
       return;
     }
     this.busy = true;
@@ -627,32 +543,32 @@ class ResolverState {
     try {
       const r = await commands.currentUpstream(repo);
       if (r.status !== "ok") {
-        bridge.tama.warn(r.error || "Could not read the current branch's upstream.");
+        bridge.tama.warn(r.error || t("resolver.upstream_read_failed"));
         this.busy = false;
         return;
       }
       upstream = r.data;
     } catch (e) {
-      bridge.tama.warn("Could not read the current branch's upstream — " + e);
+      bridge.tama.warn(t("resolver.upstream_read_failed_e", { error: String(e) }));
       this.busy = false;
       return;
     }
     if (!upstream) {
-      bridge.tama.warn("This branch has no upstream to pull from.");
+      bridge.tama.warn(t("resolver.no_upstream"));
       this.busy = false;
       return;
     }
     bridge.tama.set("thinking");
-    bridge.tama.say("Fetching…");
+    bridge.tama.say(t("resolver.fetching"));
     try {
       const f = await commands.fetch(repo, null);
       if (!f.ok) {
-        bridge.tama.warn(f.message || "Fetch failed — pull aborted.");
+        bridge.tama.warn(f.message || t("resolver.fetch_failed_pull"));
         this.busy = false;
         return;
       }
     } catch (e) {
-      bridge.tama.warn("Fetch failed — pull aborted. " + e);
+      bridge.tama.warn(t("resolver.fetch_failed_pull_e", { error: String(e) }));
       this.busy = false;
       return;
     }
@@ -675,7 +591,7 @@ class ResolverState {
   async startRevert(repo: string, sha: string, signoff = false) {
     if (this.busy) return;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("resolver.open_repo_first"));
       return;
     }
     this.demo = false;
@@ -689,7 +605,7 @@ class ResolverState {
       const res = await commands.revertStart(repo, sha, signoff);
       await this.applyOutcome(res, sha, () => this.startRevert(repo, sha, signoff));
     } catch (e) {
-      bridge.tama.warn("Revert failed — " + e);
+      bridge.tama.warn(t("resolver.revert_failed", { error: String(e) }));
     } finally {
       this.busy = false;
     }
@@ -748,13 +664,13 @@ class ResolverState {
         break;
       default: // "error"
         if (retry && "blockedByLocalChanges" in res && res.blockedByLocalChanges) {
-          this.dirtyBlock = { message: res.message || msg.verb + " could not start.", verb: msg.verb, retry };
+          this.dirtyBlock = { message: res.message || msg.couldNotStart, verb: msg.verb, retry };
         } else if (await this.openIfInProgress(this.repo)) {
           // The refusal was "another op is already in progress" — instead of a
           // dead-end warning, surface THAT op's resolver (Abort/Continue) so the
           // user can clear it here rather than reaching for the command line.
         } else {
-          bridge.tama.warn(res.message || msg.verb + " could not start.");
+          bridge.tama.warn(res.message || msg.couldNotStart);
         }
         break;
     }
@@ -819,7 +735,7 @@ class ResolverState {
     this.reset();
     this.editing = true;
     this.tamaImg = bridge.TAMA_IMG.alarm;
-    this.sub = res.message || "Rebase paused to edit a commit — amend it, then Continue.";
+    this.sub = res.message || t("resolver.editing_sub");
     if (res.backupRef) this.backupRef = res.backupRef;
     this.open = true;
   }
@@ -891,10 +807,12 @@ class ResolverState {
     this.reset();
     this.tamaImg = bridge.TAMA_IMG.alarm;
     const n = files.length;
-    this.sub =
-      "A " + op + " is already in progress" +
-      (n ? " (" + n + " conflicted file" + (n === 1 ? "" : "s") + ")" : "") +
-      " — resolve" + (n ? " them" : "") + ", then Continue, or Abort to back it out.";
+    this.sub = n
+      ? t("resolver.in_progress_files", {
+          op,
+          files: n === 1 ? t("resolver.conflicted_one", { n }) : t("resolver.conflicted_other", { n }),
+        })
+      : t("resolver.in_progress_none", { op });
     // Populate directly from the status we already read — no second round-trip.
     // (openConflict's file list comes from the start RESULT and it refresh()es;
     // here the single conflict_status read above is already authoritative.)
@@ -904,7 +822,7 @@ class ResolverState {
     if (this.selected != null) void this.loadHunks();
     this.open = true;
     bridge.tama.set("rescue");
-    bridge.tama.say("Found a " + op + " already in progress — resolve or abort it here.", 5000);
+    bridge.tama.say(t("resolver.in_progress_found", { op }), 5000);
     return true;
   }
 
@@ -922,7 +840,7 @@ class ResolverState {
     bridge.selectWorkdir();
     workdirCtrl.message = res.suggestedMessage || "";
     bridge.tama.set("hint");
-    bridge.tama.say(res.message || "Squashed — write a commit message to finish.", 4200);
+    bridge.tama.say(res.message || t("resolver.squash_staged"), 4200);
   }
 
   // Public entry for a stash-apply/pop conflict (workdir.svelte.ts's
@@ -991,7 +909,7 @@ class ResolverState {
       this.selected = nx?.path ?? null;
       this.clearHunks();
       void this.loadHunks();
-      bridge.tama.say("Took " + side + " for " + f.path + " (demo).");
+      bridge.tama.say(t("resolver.demo_took", { side, path: f.path }));
       return;
     }
     if (this.busy) return;
@@ -999,9 +917,9 @@ class ResolverState {
     this.activeAction = side;
     try {
       const r = await commands.resolveConflictFile(this.repo, f.path, side);
-      if (!r.ok) bridge.tama.warn(r.message || "Could not resolve " + f.path);
+      if (!r.ok) bridge.tama.warn(r.message || t("resolver.resolve_failed", { path: f.path }));
     } catch (e) {
-      bridge.tama.warn("Resolve failed — " + e);
+      bridge.tama.warn(t("resolver.resolve_failed_e", { error: String(e) }));
       return;
     } finally {
       this.busy = false;
@@ -1027,7 +945,7 @@ class ResolverState {
       this.selected = nx?.path ?? null;
       this.clearHunks();
       void this.loadHunks();
-      bridge.tama.say("Resolved " + f.path + " with the external tool (demo).");
+      bridge.tama.say(t("resolver.demo_resolved_tool", { path: f.path }));
       return;
     }
     if (this.busy) return;
@@ -1044,16 +962,13 @@ class ResolverState {
         // in Tools ▸ External Tools" pointer for anyone who does want their own.
         if (/no external merge tool configured/i.test(r.message || "")) {
           bridge.tama.set("hint");
-          bridge.tama.say(
-            "No external merge tool is set up — but you don't need one: resolve right here with Take ours / Take theirs, or edit the conflict hunks below. (To use your own — VS Code, Meld, … — add it in Tools ▸ External Tools.)",
-            7000,
-          );
+          bridge.tama.say(t("resolver.no_tool_hint"), 7000);
         } else {
-          bridge.tama.warn(r.message || "Could not resolve " + f.path + " with the external tool.");
+          bridge.tama.warn(r.message || t("resolver.tool_resolve_failed", { path: f.path }));
         }
       }
     } catch (e) {
-      bridge.tama.warn("Resolve with external tool failed — " + e);
+      bridge.tama.warn(t("resolver.tool_resolve_failed_e", { error: String(e) }));
       return;
     } finally {
       this.busy = false;
@@ -1096,7 +1011,7 @@ class ResolverState {
       // land against whichever file is current by the time it resolves.
       if (this.current?.path !== f.path) return;
       if (r.status !== "ok") {
-        bridge.tama.warn(r.error || "Could not load this file's conflict hunks.");
+        bridge.tama.warn(r.error || t("resolver.hunks_load_failed"));
         return;
       }
       this.editBinary = r.data.binary;
@@ -1106,7 +1021,7 @@ class ResolverState {
       // freely replaceable via useSide() or direct typing either way.
       this.editValues = r.data.hunks.map((h) => (h.kind === "context" ? (h.context ?? "") : (h.ours ?? "")));
     } catch (e) {
-      bridge.tama.warn("Could not load this file's conflict hunks — " + e);
+      bridge.tama.warn(t("resolver.hunks_load_failed_e", { error: String(e) }));
     } finally {
       this.editLoading = false;
     }
@@ -1153,7 +1068,7 @@ class ResolverState {
       this.selected = nx?.path ?? null;
       this.clearHunks();
       void this.loadHunks();
-      bridge.tama.say("Saved your edited resolution for " + f.path + " (demo).");
+      bridge.tama.say(t("resolver.demo_saved", { path: f.path }));
       return;
     }
     if (this.busy) return;
@@ -1162,10 +1077,10 @@ class ResolverState {
     const content = this.editJoined;
     try {
       const r = await commands.resolveConflictHunks(this.repo, f.path, content);
-      if (!r.ok) bridge.tama.warn(r.message || "Could not save your resolution for " + f.path);
+      if (!r.ok) bridge.tama.warn(r.message || t("resolver.save_failed", { path: f.path }));
       else this.clearHunks();
     } catch (e) {
-      bridge.tama.warn("Save failed — " + e);
+      bridge.tama.warn(t("resolver.save_failed_e", { error: String(e) }));
       return;
     } finally {
       this.busy = false;
@@ -1191,7 +1106,7 @@ class ResolverState {
     if (this.demo) {
       this.close();
       bridge.tama.set("hint");
-      bridge.tama.say("Skipped this commit (demo).");
+      bridge.tama.say(t("resolver.demo_skipped"));
       return;
     }
     if (this.busy) return;
@@ -1216,7 +1131,7 @@ class ResolverState {
       }
     } catch (e) {
       this.tamaImg = bridge.TAMA_IMG.alarm;
-      bridge.tama.warn("Skip failed — " + e);
+      bridge.tama.warn(t("resolver.skip_failed_e", { error: String(e) }));
     } finally {
       this.busy = false;
       this.activeAction = null;
@@ -1253,11 +1168,11 @@ class ResolverState {
         onQueueAbort?.();
       } else {
         this.tamaImg = bridge.TAMA_IMG.alarm;
-        bridge.tama.warn((r && r.message) || "Abort failed — try again, or abort from the command line.");
+        bridge.tama.warn((r && r.message) || t("resolver.abort_failed"));
       }
     } catch (e) {
       this.tamaImg = bridge.TAMA_IMG.alarm;
-      bridge.tama.warn("Abort failed — " + e);
+      bridge.tama.warn(t("resolver.abort_failed_e", { error: String(e) }));
     } finally {
       this.busy = false;
       this.activeAction = null;
@@ -1296,7 +1211,7 @@ class ResolverState {
       }
     } catch (e) {
       this.tamaImg = bridge.TAMA_IMG.alarm;
-      bridge.tama.warn("Continue failed — " + e);
+      bridge.tama.warn(t("resolver.continue_failed_e", { error: String(e) }));
     } finally {
       this.busy = false;
       this.activeAction = null;
@@ -1318,12 +1233,10 @@ class ResolverState {
   //     Aborts. Still fire one warn too (mirrored to the top-of-modal toast).
   private showConflictOrStuck(message: string | null | undefined) {
     if (this.files.length === 0) {
-      this.stuckMessage =
-        message ||
-        "Couldn't create the commit — a pre-commit/commit-msg hook or commit signing may have failed. Fix that, then press Continue again, or Abort.";
+      this.stuckMessage = message || t("resolver.stuck_commit");
       bridge.tama.warn(this.stuckMessage);
     } else {
-      bridge.tama.warn(message || "Still conflicted — resolve the remaining files.");
+      bridge.tama.warn(message || t("resolver.still_conflicted"));
     }
   }
 
@@ -1359,20 +1272,20 @@ class ResolverState {
       this.dirtyBlock = null;
       this.dirtyBlockStuck = null;
       bridge.tama.set("hint");
-      bridge.tama.say((reapply ? "Stashed, retried, and reapplied " : "Stashed and retried ") + "(demo).");
+      bridge.tama.say(reapply ? t("resolver.demo_stash_reapply") : t("resolver.demo_stash"));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     bridge.tama.set("thinking");
-    bridge.tama.say("Stashing your changes…");
+    bridge.tama.say(t("resolver.stashing"));
     try {
       const repo = this.repo;
       // Stash EVERYTHING (tracked + untracked) so the retry below is
       // guaranteed unblocked regardless of which collision shape (modified,
       // staged, untracked) made the tree dirty in the first place — same
       // rationale as sidebar.svelte.ts's stashThenSwitch.
-      const stashRes = await commands.stashSave(repo, "Auto-stash before retrying " + MSG[this.op].verb.toLowerCase(), true);
+      const stashRes = await commands.stashSave(repo, t("resolver.autostash", { verb: MSG[this.op].verb.toLowerCase() }), true);
       // "Nothing to stash" is NOT a real failure here, even though the op
       // itself just refused — `stash_save` only sees what `git status` sees
       // (tracked/staged/untracked changes), while the block can come from
@@ -1389,7 +1302,7 @@ class ResolverState {
         // is invisible the whole time this modal's `.scrim` (z-index 300)
         // is on top of it, which is exactly the state we're still in here
         // (dirtyBlock is deliberately NOT cleared on this path).
-        this.dirtyBlockStuck = stashRes.message || "Couldn't stash your changes — nothing was retried.";
+        this.dirtyBlockStuck = stashRes.message || t("resolver.stash_failed");
         return;
       }
       // EMPIRICALLY VERIFIED: a path staged as an embedded git repository
@@ -1406,11 +1319,7 @@ class ResolverState {
       const statusRes = await commands.workdirStatus(repo);
       if (statusRes.status === "ok" && (statusRes.data.staged.length || statusRes.data.unstaged.length)) {
         const stuck = [...statusRes.data.staged, ...statusRes.data.unstaged].map((e) => e.path).join(", ");
-        this.dirtyBlockStuck =
-          "Stashing didn't clear " +
-          stuck +
-          " — retrying would just hit the same wall. This is often a submodule staged without a matching " +
-          ".gitmodules entry (git's own stash can't touch it); unstage or properly re-add it as a submodule, then try again.";
+        this.dirtyBlockStuck = t("resolver.stash_didnt_clear", { paths: stuck });
         return;
       }
       this.dirtyBlock = null;
@@ -1419,7 +1328,7 @@ class ResolverState {
       // startRebase/startRevert each take this SAME lock themselves at their
       // own top, so holding it here would make retry() silently no-op.
       this.busy = false;
-      bridge.tama.say("Retrying…");
+      bridge.tama.say(t("resolver.retrying"));
       await block.retry();
       // If the retry landed on a real conflict/editing pause, or hit ANOTHER
       // block (rare, but the retried op's own result routes back through
@@ -1434,10 +1343,10 @@ class ResolverState {
       if (this.open || this.dirtyBlock || nothingToStash) return;
       if (!reapply) {
         bridge.tama.set("hint");
-        bridge.tama.say("Your changes are stashed — see Manage Stash.", 3200);
+        bridge.tama.say(t("resolver.changes_stashed"), 3200);
         return;
       }
-      bridge.tama.say("Reapplying your changes…");
+      bridge.tama.say(t("resolver.reapplying"));
       // Fetch the just-created stash's own sha so stash_pop's optional
       // identity check can catch a race — it's always stash@{0} here since
       // nothing else has stashed since (same as stashThenSwitch's own).
@@ -1447,14 +1356,14 @@ class ResolverState {
       const popRes = await commands.stashPop(repo, 0, expectedSha);
       if (popRes.ok) {
         bridge.tama.set("celebrate");
-        bridge.tama.say("Done — your changes are back. にゃ〜", 3200);
+        bridge.tama.say(t("resolver.changes_back"), 3200);
       } else if (popRes.conflictedFiles && popRes.conflictedFiles.length) {
         await this.openStashConflict(repo, popRes);
       } else {
-        bridge.tama.warn(popRes.message || "Couldn't reapply your stashed changes — they're kept in the stash list.");
+        bridge.tama.warn(popRes.message || t("resolver.reapply_failed"));
       }
     } catch (e) {
-      bridge.tama.warn("Retry failed — " + e);
+      bridge.tama.warn(t("resolver.retry_failed_e", { error: String(e) }));
     } finally {
       this.busy = false;
     }
@@ -1469,14 +1378,14 @@ class ResolverState {
     this.backupRef = "refs/gitgui/backup/…demo";
     this.sub =
       kind === "merge"
-        ? "Merging " + sha + " into HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed."
+        ? t("resolver.demo_sub_merge", { sha })
         : kind === "merge-squash"
-          ? "Squashing " + sha + " into the index conflicts in src/auth/token.ts. Snapshot …demo sealed."
+          ? t("resolver.demo_sub_squash", { sha })
           : kind === "rebase"
-            ? "Rebasing onto " + sha + " conflicts in src/auth/token.ts. Snapshot …demo sealed."
+            ? t("resolver.demo_sub_rebase", { sha })
             : kind === "revert"
-              ? "Reverting " + sha + " conflicts in src/auth/token.ts. Snapshot …demo sealed."
-              : "Picking " + sha + " onto HEAD conflicts in src/auth/token.ts. Snapshot …demo sealed.";
+              ? t("resolver.demo_sub_revert", { sha })
+              : t("resolver.demo_sub_pick", { sha });
     this.files = FAKE.map((f) => ({ ...f }));
     this.selected = FAKE[0].path;
     this.remaining = new Set([FAKE[0].path]);

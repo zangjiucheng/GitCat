@@ -1,6 +1,7 @@
 <script lang="ts">
   import { cmdkCtrl, shortSha, CMD_CAP } from "./cmdk.svelte.ts";
   import { isTextInputFocused } from "../vimnav/vimnav.svelte.ts";
+  import { t } from "../../i18n/i18n.svelte.ts";
 
   let inputEl: HTMLInputElement | undefined = $state();
   let listEl: HTMLDivElement | undefined = $state();
@@ -89,14 +90,14 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- Mouse-only dismiss convenience; Escape on the auto-focused input below is the keyboard equivalent (same split as the original vanilla implementation). -->
   <div class="cmdk-scrim" id="cmdkScrim" onclick={() => cmdkCtrl.close()}></div>
-  <div class="cmdk-panel" role="dialog" aria-modal="true" aria-label="Command palette">
+  <div class="cmdk-panel" role="dialog" aria-modal="true" aria-label={t("cmdk.aria_palette")}>
     <div class="cmdk-inp">
       <span class="mag">&#9906;</span>
       <input
         id="cmdkInput"
         bind:this={inputEl}
         type="text"
-        placeholder="Search commits, refs, actions&#8230;"
+        placeholder={t("cmdk.search_ph")}
         spellcheck="false"
         autocomplete="off"
         autocorrect="off"
@@ -115,13 +116,13 @@
       class="cmdk-list"
       id="cmdkList"
       role="listbox"
-      aria-label="Results"
+      aria-label={t("cmdk.aria_results")}
       bind:this={listEl}
       onclick={onListClick}
       onmousemove={onListMousemove}
     >
       {#if !cmdkCtrl.results.length}
-        <div class="cmdk-empty">{cmdkCtrl.hasData ? "No matching commits, refs, or actions" : "No commits loaded — open a repository"}</div>
+        <div class="cmdk-empty">{cmdkCtrl.hasData ? t("cmdk.empty_nomatch") : t("cmdk.empty_norepo")}</div>
       {:else}
         {#each cmdkCtrl.results as it, i (it.type + ":" + (it.type === "ref" ? it.name : it.type === "action" ? it.id : it.row))}
           <div class="cmdk-row" class:on={i === cmdkCtrl.sel} data-i={i} role="option" aria-selected={i === cmdkCtrl.sel}>
@@ -148,9 +149,13 @@
       {/if}
     </div>
     <div class="cmdk-foot">
-      <span><kbd>&#8593;</kbd><kbd>&#8595;</kbd> navigate</span><span><kbd>&#8629;</kbd> jump</span>
+      <span><kbd>&#8593;</kbd><kbd>&#8595;</kbd> {t("cmdk.foot_navigate")}</span><span><kbd>&#8629;</kbd> {t("cmdk.foot_jump")}</span>
       <span class="sp" id="cmdkCount"
-        >{cmdkCtrl.results.length ? cmdkCtrl.results.length + (cmdkCtrl.results.length >= CMD_CAP ? "+" : "") + " result" + (cmdkCtrl.results.length === 1 ? "" : "s") : ""}</span
+        >{cmdkCtrl.results.length
+          ? t(cmdkCtrl.results.length === 1 ? "cmdk.result_one" : "cmdk.result_other", {
+              n: cmdkCtrl.results.length + (cmdkCtrl.results.length >= CMD_CAP ? "+" : ""),
+            })
+          : ""}</span
       >
     </div>
   </div>

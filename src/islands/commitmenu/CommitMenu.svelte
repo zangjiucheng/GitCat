@@ -1,5 +1,6 @@
 <script lang="ts">
   import { commitMenuCtrl } from "./commitmenu.svelte.ts";
+  import { t } from "../../i18n/i18n.svelte.ts";
 
   let popEl: HTMLDivElement | undefined = $state();
   let branchInputEl: HTMLInputElement | undefined = $state();
@@ -67,26 +68,24 @@
           <span class="spinner"></span><span class="mut">{commitMenuCtrl.pendingLabel}</span>
         </div>
       {:else}
-        <button onclick={() => commitMenuCtrl.cherryPick()}>Cherry-pick onto HEAD</button>
-        <button onclick={() => commitMenuCtrl.merge()}>Merge into HEAD</button>
+        <button onclick={() => commitMenuCtrl.cherryPick()}>{t("commitmenu.cherry_pick")}</button>
+        <button onclick={() => commitMenuCtrl.merge()}>{t("commitmenu.merge")}</button>
         <button
           disabled={commitMenuCtrl.isMerge}
-          title={commitMenuCtrl.isMerge ? "Can't revert a merge commit (needs --mainline, which isn't supported)" : undefined}
-          onclick={() => commitMenuCtrl.revert()}>Revert commit</button
+          title={commitMenuCtrl.isMerge ? t("commitmenu.revert_disabled_title") : undefined}
+          onclick={() => commitMenuCtrl.revert()}>{t("commitmenu.revert")}</button
         >
-        <button class="danger" onclick={() => commitMenuCtrl.resetHere()}>Reset HEAD to here&#8230;</button>
+        <button class="danger" onclick={() => commitMenuCtrl.resetHere()}>{t("commitmenu.reset_here")}</button>
         <button
           disabled={commitMenuCtrl.isMerge}
-          title={commitMenuCtrl.isMerge
-            ? "Can't export a merge commit as a single patch — use Export Patches\u{2026} with an explicit range instead"
-            : undefined}
-          onclick={() => commitMenuCtrl.exportAsPatch()}>Export as Patch&#8230;</button
+          title={commitMenuCtrl.isMerge ? t("commitmenu.export_disabled_title") : undefined}
+          onclick={() => commitMenuCtrl.exportAsPatch()}>{t("commitmenu.export_patch")}</button
         >
-        <button onclick={() => commitMenuCtrl.startBranchHere()}>Create branch here&#8230;</button>
-        <button onclick={() => commitMenuCtrl.startTagHere()}>Create tag here&#8230;</button>
-        <button onclick={() => commitMenuCtrl.copyShortSha()}>Copy SHA (short)</button>
-        <button onclick={() => commitMenuCtrl.copyFullSha()}>Copy full SHA</button>
-        <button onclick={() => commitMenuCtrl.copyMessage()}>Copy commit message</button>
+        <button onclick={() => commitMenuCtrl.startBranchHere()}>{t("commitmenu.create_branch")}</button>
+        <button onclick={() => commitMenuCtrl.startTagHere()}>{t("commitmenu.create_tag")}</button>
+        <button onclick={() => commitMenuCtrl.copyShortSha()}>{t("commitmenu.copy_short")}</button>
+        <button onclick={() => commitMenuCtrl.copyFullSha()}>{t("commitmenu.copy_full")}</button>
+        <button onclick={() => commitMenuCtrl.copyMessage()}>{t("commitmenu.copy_message")}</button>
       {/if}
     {:else if commitMenuCtrl.view === "branch"}
       <div class="nb-form" class:busy={commitMenuCtrl.busy}>
@@ -94,14 +93,14 @@
           class="nb-input"
           bind:this={branchInputEl}
           bind:value={commitMenuCtrl.branchName}
-          placeholder="branch name&#8230;"
+          placeholder={t("commitmenu.ph_branch")}
           spellcheck="false"
           autocomplete="off"
           disabled={commitMenuCtrl.busy}
           onkeydown={onBranchKeydown}
         />
         <div class="nb-row">
-          <span class="mut">at {commitMenuCtrl.shortSha} &#183; Enter to create, Esc to cancel</span>
+          <span class="mut">{t("commitmenu.at_hint", { sha: commitMenuCtrl.shortSha })}</span>
           {#if commitMenuCtrl.busy}<span class="spinner"></span>{/if}
         </div>
       </div>
@@ -111,7 +110,7 @@
           class="nb-input"
           bind:this={tagInputEl}
           bind:value={commitMenuCtrl.tagName}
-          placeholder="tag name&#8230;"
+          placeholder={t("commitmenu.ph_tag")}
           spellcheck="false"
           autocomplete="off"
           disabled={commitMenuCtrl.busy}
@@ -120,14 +119,14 @@
         <input
           class="nb-input"
           bind:value={commitMenuCtrl.tagMessage}
-          placeholder="message (optional &#8212; annotated tag)&#8230;"
+          placeholder={t("commitmenu.ph_tag_message")}
           spellcheck="false"
           autocomplete="off"
           disabled={commitMenuCtrl.busy}
           onkeydown={onTagKeydown}
         />
         <div class="nb-row">
-          <span class="mut">at {commitMenuCtrl.shortSha} &#183; Enter to create, Esc to cancel</span>
+          <span class="mut">{t("commitmenu.at_hint", { sha: commitMenuCtrl.shortSha })}</span>
           {#if commitMenuCtrl.busy}<span class="spinner"></span>{/if}
         </div>
       </div>

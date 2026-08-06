@@ -17,6 +17,7 @@
 import { commands } from "../../ipc/bindings";
 import type { PlumbingObject } from "../../ipc/bindings";
 import { IN_TAURI } from "../../ipc/env";
+import { t } from "../../i18n/i18n.svelte.ts";
 
 // A single fabricated commit — good enough to demo the result-panel shape in
 // the browser design-mode prototype (no backend, no repo).
@@ -58,7 +59,7 @@ class PlumbingState {
     this.rev = r;
     if (!r) {
       this.result = null;
-      this.error = "Enter a rev, sha, or ref to inspect.";
+      this.error = t("plumbing.err_enter_rev");
       return;
     }
 
@@ -75,7 +76,7 @@ class PlumbingState {
     this.demo = false;
     if (!repo) {
       this.result = null;
-      this.error = "Open a repository first.";
+      this.error = t("plumbing.open_repo_first");
       return;
     }
     if (this.busy) return;

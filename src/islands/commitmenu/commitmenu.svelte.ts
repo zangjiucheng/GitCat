@@ -48,6 +48,7 @@ import { resetHeadCtrl } from "../resethead/resethead.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { save } from "@tauri-apps/plugin-dialog";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
+import { t } from "../../i18n/i18n.svelte.ts";
 
 type MenuView = "menu" | "branch" | "tag";
 
@@ -177,7 +178,7 @@ class CommitMenuState {
       return;
     }
     this.busy = true;
-    this.pendingLabel = "Cherry-picking…";
+    this.pendingLabel = t("commitmenu.pending_cherry");
     try {
       await resolver.startPick(repo, sha, false); // ---- real pick onto HEAD (Svelte island) ----
     } finally {
@@ -197,7 +198,7 @@ class CommitMenuState {
       return;
     }
     this.busy = true;
-    this.pendingLabel = "Merging…";
+    this.pendingLabel = t("commitmenu.pending_merge");
     try {
       await resolver.startMerge(repo, sha); // ---- real merge into HEAD (Svelte island) ----
     } finally {
@@ -218,7 +219,7 @@ class CommitMenuState {
       return;
     }
     this.busy = true;
-    this.pendingLabel = "Reverting…";
+    this.pendingLabel = t("commitmenu.pending_revert");
     try {
       await resolver.startRevert(repo, sha); // ---- real revert onto HEAD (Svelte island) ----
     } finally {
@@ -249,34 +250,34 @@ class CommitMenuState {
     this.close();
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
-      bridge.tama.say("Exported " + shortSha + " as a patch (demo).");
+      bridge.tama.say(t("commitmenu.say_demo_export", { sha: shortSha }));
       return;
     }
     let dest: string | null;
     try {
       dest = await save({
-        title: "Export Patch",
+        title: t("commitmenu.dlg_export"),
         defaultPath: shortSha + "-" + slugify(subject) + ".patch",
         filters: [{ name: "Patch files", extensions: ["patch"] }],
       });
     } catch (e) {
-      bridge.tama.warn("Could not open the save dialog — " + e);
+      bridge.tama.warn(t("commitmenu.err_save_dialog", { e: String(e) }));
       console.error(e);
       return;
     }
     if (!dest) return; // user cancelled the dialog
     bridge.tama.set("thinking");
-    bridge.tama.say("Exporting " + shortSha + "…");
+    bridge.tama.say(t("commitmenu.say_exporting", { sha: shortSha }));
     try {
       const res = await commands.exportPatch(repo, null, sha, dest);
       if (res && res.ok) {
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Exported " + shortSha + ".", 3600);
+        bridge.tama.say(res.message || t("commitmenu.say_exported", { sha: shortSha }), 3600);
       } else {
-        bridge.tama.warn((res && res.message) || "Could not export " + shortSha + ".");
+        bridge.tama.warn((res && res.message) || t("commitmenu.warn_export_failed", { sha: shortSha }));
       }
     } catch (e) {
-      bridge.tama.warn("Export failed — " + e);
+      bridge.tama.warn(t("commitmenu.err_export", { e: String(e) }));
       console.error(e);
     }
   }
@@ -357,24 +358,24 @@ class CommitMenuState {
     if (!IN_TAURI) {
       this.close();
       bridge.tama.set("hint");
-      bridge.tama.say("Created " + name + " at " + shortSha + " (demo).");
+      bridge.tama.say(t("commitmenu.say_demo_branch", { name, sha: shortSha }));
       return;
     }
     this.busy = true;
     bridge.tama.set("thinking");
-    bridge.tama.say("Creating " + name + "…");
+    bridge.tama.say(t("commitmenu.say_creating_branch", { name }));
     try {
       const res = await commands.createBranch(repo, name, sha, true);
       if (res && res.ok) {
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Branch " + name + " created.", 3200);
+        bridge.tama.say(res.message || t("commitmenu.say_branch_created", { name }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't create " + name + ".");
+        bridge.tama.warn((res && res.message) || t("commitmenu.warn_branch_failed", { name }));
       }
     } catch (e) {
-      bridge.tama.warn("Create failed — " + e);
+      bridge.tama.warn(t("commitmenu.err_create", { e: String(e) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -410,24 +411,24 @@ class CommitMenuState {
     if (!IN_TAURI) {
       this.close();
       bridge.tama.set("hint");
-      bridge.tama.say("Created tag " + name + " at " + shortSha + " (demo).");
+      bridge.tama.say(t("commitmenu.say_demo_tag", { name, sha: shortSha }));
       return;
     }
     this.busy = true;
     bridge.tama.set("thinking");
-    bridge.tama.say("Creating tag " + name + "…");
+    bridge.tama.say(t("commitmenu.say_creating_tag", { name }));
     try {
       const res = await commands.createTag(repo, name, sha, message);
       if (res && res.ok) {
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Tag " + name + " created.", 3200);
+        bridge.tama.say(res.message || t("commitmenu.say_tag_created", { name }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't create tag " + name + ".");
+        bridge.tama.warn((res && res.message) || t("commitmenu.warn_tag_failed", { name }));
       }
     } catch (e) {
-      bridge.tama.warn("Create failed — " + e);
+      bridge.tama.warn(t("commitmenu.err_create", { e: String(e) }));
       console.error(e);
     } finally {
       this.busy = false;

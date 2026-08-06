@@ -22,6 +22,7 @@ import { IN_TAURI } from "../../ipc/env";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { commands } from "../../ipc/bindings";
 import { loadSettings } from "../settings/settings.svelte.ts";
+import { t } from "../../i18n/i18n.svelte.ts";
 
 type Phase = "idle" | "checking" | "up-to-date" | "available" | "downloading" | "ready" | "error";
 
@@ -65,7 +66,7 @@ class UpdaterState {
       const nightly = loadSettings().useNightlyChannel;
       const res = await commands.checkForUpdate(nightly);
       if (res.status === "error") {
-        this.error = "Couldn't check for updates — " + res.error;
+        this.error = t("updater.check_failed", { err: res.error });
         this.phase = silent ? "idle" : "error";
         return;
       }
@@ -88,7 +89,7 @@ class UpdaterState {
       this.notes = data.notes || null;
       this.phase = "available";
     } catch (e) {
-      this.error = "Couldn't check for updates — " + e;
+      this.error = t("updater.check_failed", { err: String(e) });
       this.phase = silent ? "idle" : "error";
     }
   }
@@ -112,7 +113,7 @@ class UpdaterState {
       });
       this.phase = "ready";
     } catch (e) {
-      this.error = "Download failed — " + e;
+      this.error = t("updater.download_failed", { err: String(e) });
       this.phase = "error";
     }
   }

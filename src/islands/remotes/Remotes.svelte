@@ -1,5 +1,6 @@
 <script lang="ts">
   import { remotesCtrl, ADD_REMOTE_MARKER } from "./remotes.svelte.ts";
+  import { t } from "../../i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && remotesCtrl.open) remotesCtrl.close();
@@ -32,17 +33,17 @@
   <div class="modal remotes">
     <div class="modal-head">
       <div>
-        <h3>Manage Remotes</h3>
-        <p>Add, rename, edit the URL, or remove a configured remote.</p>
+        <h3>{t("remotes.title")}</h3>
+        <p>{t("remotes.subtitle")}</p>
       </div>
     </div>
     <div class="modal-body">
       {#if remotesCtrl.loading}
-        <div class="log-row"><span class="spinner"></span><span class="msg mut">Loading remotes&#8230;</span></div>
+        <div class="log-row"><span class="spinner"></span><span class="msg mut">{t("remotes.loading")}</span></div>
       {:else if remotesCtrl.error}
         <div class="log-row"><span class="ic">&#9888;</span><span class="msg mut">{remotesCtrl.error}</span></div>
       {:else if remotesCtrl.remotes.length === 0}
-        <div class="log-row"><span class="msg mut">No remotes configured yet.</span></div>
+        <div class="log-row"><span class="msg mut">{t("remotes.empty")}</span></div>
       {:else}
         <div class="rm-list">
           {#each remotesCtrl.remotes as r (r.name)}
@@ -58,8 +59,8 @@
                 />
                 <div class="nb-row">
                   {#if remotesCtrl.busy && remotesCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
-                  <button class="btn" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.confirmRename()}>Save</button>
-                  <button class="btn ghost" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.cancelRename()}>Cancel</button>
+                  <button class="btn" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.confirmRename()}>{t("common.save")}</button>
+                  <button class="btn ghost" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.cancelRename()}>{t("common.cancel")}</button>
                 </div>
               </div>
             {:else if remotesCtrl.editingUrlName === r.name}
@@ -75,20 +76,19 @@
                 />
                 <div class="nb-row">
                   {#if remotesCtrl.busy && remotesCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
-                  <button class="btn" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.confirmEditUrl()}>Save</button>
-                  <button class="btn ghost" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.cancelEditUrl()}>Cancel</button>
+                  <button class="btn" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.confirmEditUrl()}>{t("common.save")}</button>
+                  <button class="btn ghost" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.cancelEditUrl()}>{t("common.cancel")}</button>
                 </div>
               </div>
             {:else if remotesCtrl.removingName === r.name}
               <div class="rm-item rm-confirm">
                 <span class="msg"
-                  >Remove <b>{r.name}</b> and its remote-tracking branches?{#if r.pushUrl} Its separate push URL ({r.pushUrl}) will be
-                  permanently lost — there's no undo for this.{/if}</span
+                  >{t("remotes.remove_confirm_pre")}<b>{r.name}</b>{t("remotes.remove_confirm_post")}{#if r.pushUrl} {t("remotes.remove_confirm_pushurl", { url: r.pushUrl })}{/if}</span
                 >
                 {#if remotesCtrl.busy && remotesCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
                 <div class="rm-act">
-                  <button class="danger" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.confirmRemove(r.name)}>Remove</button>
-                  <button disabled={remotesCtrl.busy} onclick={() => remotesCtrl.cancelRemove()}>Cancel</button>
+                  <button class="danger" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.confirmRemove(r.name)}>{t("common.remove")}</button>
+                  <button disabled={remotesCtrl.busy} onclick={() => remotesCtrl.cancelRemove()}>{t("common.cancel")}</button>
                 </div>
               </div>
             {:else}
@@ -96,13 +96,13 @@
                 <div class="rm-main">
                   <span class="rm-name">{r.name}</span>
                   <span class="rm-url mono mut" title={r.url}>{r.url}</span>
-                  {#if r.pushUrl}<span class="row-chip remote" title="Distinct push URL: {r.pushUrl}">push url</span>{/if}
+                  {#if r.pushUrl}<span class="row-chip remote" title={t("remotes.pushurl_tooltip", { url: r.pushUrl })}>{t("remotes.pushurl_chip")}</span>{/if}
                 </div>
                 {#if remotesCtrl.busy && remotesCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
                 <div class="rm-act">
-                  <button disabled={remotesCtrl.busy} onclick={() => remotesCtrl.startRename(r.name)}>Rename</button>
-                  <button disabled={remotesCtrl.busy} onclick={() => remotesCtrl.startEditUrl(r.name, r.url)}>Edit URL</button>
-                  <button disabled={remotesCtrl.busy} onclick={() => remotesCtrl.startRemove(r.name)}>Remove</button>
+                  <button disabled={remotesCtrl.busy} onclick={() => remotesCtrl.startRename(r.name)}>{t("remotes.rename")}</button>
+                  <button disabled={remotesCtrl.busy} onclick={() => remotesCtrl.startEditUrl(r.name, r.url)}>{t("remotes.edit_url")}</button>
+                  <button disabled={remotesCtrl.busy} onclick={() => remotesCtrl.startRemove(r.name)}>{t("common.remove")}</button>
                 </div>
               </div>
             {/if}
@@ -114,7 +114,7 @@
         <div class="rm-form" class:busy={remotesCtrl.busy}>
           <input
             type="text"
-            placeholder="name&#8230; e.g. origin"
+            placeholder={t("remotes.add_name_ph")}
             bind:value={remotesCtrl.newName}
             disabled={remotesCtrl.busy}
             spellcheck="false"
@@ -124,7 +124,7 @@
           <input
             type="text"
             class="mono"
-            placeholder="URL&#8230;"
+            placeholder={t("remotes.add_url_ph")}
             bind:value={remotesCtrl.newUrl}
             disabled={remotesCtrl.busy}
             spellcheck="false"
@@ -133,13 +133,13 @@
           />
           <div class="nb-row">
             {#if remotesCtrl.busy && remotesCtrl.busyTarget === ADD_REMOTE_MARKER}<span class="spinner"></span>{/if}
-            <button class="btn" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.addRemote()}>&#65291; Add remote</button>
+            <button class="btn" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.addRemote()}>&#65291; {t("remotes.add_btn")}</button>
           </div>
         </div>
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.close()}>Close</button>
+      <button class="btn ghost" disabled={remotesCtrl.busy} onclick={() => remotesCtrl.close()}>{t("common.close")}</button>
     </div>
   </div>
 </div>

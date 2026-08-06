@@ -1,6 +1,7 @@
 <script lang="ts">
   import { plumbing } from "./plumbing.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import { t } from "../../i18n/i18n.svelte.ts";
 
   let revInput = $state("");
 
@@ -51,10 +52,10 @@
 <div class="scrim" class:on={plumbing.open}>
   <div class="modal plumbing">
     <div class="modal-head">
-      <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.curious} alt="Tama, curious" /></div>
+      <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.curious} alt={t("plumbing.tama_alt")} /></div>
       <div>
-        <h3>Plumbing &#8212; inspect a raw object</h3>
-        <p>Type a rev, sha, branch, or tag to see the raw commit, tree, blob, or tag object it resolves to.</p>
+        <h3>{t("plumbing.title")}</h3>
+        <p>{t("plumbing.subtitle")}</p>
       </div>
     </div>
     <div class="modal-body">
@@ -63,14 +64,14 @@
     <input
       class="pl-input mono"
       type="text"
-      placeholder="rev, sha, branch, tag… e.g. HEAD~2, HEAD:path/to/file, a1b2c3d"
+      placeholder={t("plumbing.input_placeholder")}
       spellcheck="false"
       autocomplete="off"
       autocorrect="off"
       bind:value={revInput}
     />
     <button class="btn" type="submit" disabled={plumbing.busy}>
-      {plumbing.busy ? "Inspecting…" : "Inspect"}
+      {plumbing.busy ? t("plumbing.inspecting") : t("plumbing.inspect_btn")}
     </button>
   </form>
 
@@ -89,13 +90,13 @@
       {#if r.kind === "commit"}
         <div class="who-split">
           <div class="who">
-            <h4>Author</h4>
+            <h4>{t("plumbing.author")}</h4>
             <div class="nm">{r.author.name}</div>
             <div class="em">{r.author.email}</div>
             <div class="dt">{fmtTime(r.author.time)}</div>
           </div>
           <div class="who">
-            <h4>Committer</h4>
+            <h4>{t("plumbing.committer")}</h4>
             <div class="nm">{r.committer.name}</div>
             <div class="em">{r.committer.email}</div>
             <div class="dt">{fmtTime(r.committer.time)}</div>
@@ -108,7 +109,7 @@
             {#if r.parents.length}
               {#each r.parents as p (p)}<span class="mono pl-parent">{p}</span>{/each}
             {:else}
-              <span class="mut">(root commit — no parents)</span>
+              <span class="mut">{t("plumbing.root_commit")}</span>
             {/if}
           </div>
         </div>
@@ -122,30 +123,30 @@
               <span class="badge mono">{e.mode} · {e.kind} · {e.oid.slice(0, 10)}</span>
             </div>
           {:else}
-            <div class="mut" style="padding:8px">empty tree</div>
+            <div class="mut" style="padding:8px">{t("plumbing.empty_tree")}</div>
           {/each}
         </div>
       {:else if r.kind === "blob"}
         <div class="pl-kv">
-          <div><span class="mut">size</span> {fmtBytes(r.size)}</div>
-          <div><span class="mut">binary</span> {r.isBinary ? "yes" : "no"}</div>
+          <div><span class="mut">{t("plumbing.size")}</span> {fmtBytes(r.size)}</div>
+          <div><span class="mut">{t("plumbing.binary")}</span> {r.isBinary ? t("plumbing.yes") : t("plumbing.no")}</div>
         </div>
         {#if r.isBinary}
-          <div class="mut" style="padding:10px 0">Binary content not shown.</div>
+          <div class="mut" style="padding:10px 0">{t("plumbing.binary_not_shown")}</div>
         {:else}
           <pre class="pl-msg pl-blob">{r.content ?? ""}</pre>
-          {#if r.truncated}<div class="mut" style="margin-top:4px">(truncated)</div>{/if}
+          {#if r.truncated}<div class="mut" style="margin-top:4px">{t("plumbing.truncated")}</div>{/if}
         {/if}
       {:else if r.kind === "tag"}
         <div class="who-split single">
           <div class="who">
-            <h4>Tagger</h4>
+            <h4>{t("plumbing.tagger")}</h4>
             {#if r.tagger}
               <div class="nm">{r.tagger.name}</div>
               <div class="em">{r.tagger.email}</div>
               <div class="dt">{fmtTime(r.tagger.time)}</div>
             {:else}
-              <div class="mut">(no tagger recorded)</div>
+              <div class="mut">{t("plumbing.no_tagger")}</div>
             {/if}
           </div>
         </div>
@@ -161,14 +162,13 @@
     </div>
   {:else if !plumbing.error}
     <div class="mut pl-empty">
-      Type a rev, sha, branch, or tag above and press Inspect to see the raw commit, tree, blob, or tag object it
-      resolves to.
+      {t("plumbing.empty_hint")}
     </div>
   {/if}
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" onclick={() => plumbing.close()}>Close</button>
+      <button class="btn ghost" onclick={() => plumbing.close()}>{t("common.close")}</button>
     </div>
   </div>
 </div>

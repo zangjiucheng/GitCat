@@ -29,6 +29,7 @@ import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { open } from "@tauri-apps/plugin-dialog";
+import { t } from "../../i18n/i18n.svelte.ts";
 
 class ApplyPatchState {
   busy = $state(false);
@@ -37,36 +38,36 @@ class ApplyPatchState {
   async applyPatch(repo: string): Promise<void> {
     if (this.busy) return;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("applypatch.open_repo_first"));
       return;
     }
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
-      bridge.tama.say("Applied patch (demo).");
+      bridge.tama.say(t("applypatch.say_demo"));
       return;
     }
     let picked: string | string[] | null;
     try {
       picked = await open({
-        title: "Apply Patch",
+        title: t("applypatch.dlg_apply"),
         multiple: false,
         filters: [{ name: "Patch files", extensions: ["patch", "mbox", "eml", "txt"] }],
       });
     } catch (e) {
-      bridge.tama.warn("Could not open the file dialog — " + e);
+      bridge.tama.warn(t("applypatch.err_file_dialog", { e: String(e) }));
       console.error(e);
       return;
     }
     if (!picked || Array.isArray(picked)) return; // cancelled (Array.isArray is defensive-only — multiple:false never returns one)
     this.busy = true;
     bridge.tama.set("thinking");
-    bridge.tama.say("Applying patch…");
+    bridge.tama.say(t("applypatch.say_applying"));
     bridge.tama.event("mutation.caution", { count: 1 });
     try {
       const res = await commands.applyPatch(repo, picked);
       await resolver.openFromResult(repo, res, "", "am");
     } catch (e) {
-      bridge.tama.warn("Apply patch failed — " + e);
+      bridge.tama.warn(t("applypatch.err_apply", { e: String(e) }));
       console.error(e);
     } finally {
       this.busy = false;

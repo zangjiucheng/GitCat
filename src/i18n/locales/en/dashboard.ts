@@ -1,0 +1,36 @@
+// Repositories dashboard strings. Keys become `dashboard.<key>`.
+export default {
+  title: "Repositories",
+  subtitle: "Every repository you've tracked, at a glance — branch, sync state, and whether it's dirty.",
+  loading_repos: "Loading tracked repositories…",
+  empty: "Nothing tracked yet — open a repository, or add one below.",
+  search_ph: "Search repositories… (name, path, or branch)",
+  no_match: "No repositories match “{q}”.",
+  wsl_tip: "This repository lives inside WSL — network commands route through wsl.exe for credential resolution",
+  detached: "detached",
+  dirty: "dirty",
+  dirty_tip: "Uncommitted changes",
+  conflicted: "conflicted",
+  conflicted_tip: "{n} conflicted file(s)",
+  reading_status: "reading status…",
+  open: "Open",
+  new_window: "New Window",
+  new_window_tip: "Open this repository in a separate window, keeping whatever's open here",
+  add: "Add repository…",
+  // Native folder-picker dialog title
+  add_dialog_title: "Add a repository to track",
+  // Tama toasts / demo-mode messages authored here
+  demo_pick: "This is where you'd pick a folder to track (demo).",
+  demo_open: "This is where {name} would open (demo).",
+  demo_open_window: "This is where {name} would open in a new window (demo).",
+  // Error fallbacks (shown when the backend returns no message of its own)
+  err_list: "Could not list tracked repositories.",
+  err_list_e: "Could not list tracked repositories — {err}",
+  err_status: "Could not read this repository's status.",
+  err_status_e: "Could not read this repository's status — {err}",
+  err_dialog: "Could not open the folder dialog — {err}",
+  err_add: "Could not add that repository.",
+  err_add_e: "Could not add that repository — {err}",
+  err_remove: "Could not remove that repository from the list.",
+  err_remove_e: "Could not remove that repository from the list — {err}",
+};
