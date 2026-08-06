@@ -30,6 +30,10 @@ import { dlog } from "../devlog";
 // change via STATE_SOUND — see sound.ts's own header for why this is a leaf
 // module main.ts imports FROM, never the reverse.
 import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
+// i18n for the vanilla top-bar/loading chrome. This module isn't Svelte-
+// reactive, so t() is called imperatively (applyStaticI18n below + the busy
+// labels in doFetch/doPull/doPush) and re-run on i18nEvents "change".
+import { t, i18nEvents } from "../i18n/i18n.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -1952,13 +1956,13 @@ async function doFetch(){
   if(!IN_TAURI){ Tama.set("hint"); Tama.say("Fetched (demo). にゃ〜",3200); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
-  setSyncButtonsBusy("fetchBtn","Fetching…");
+  setSyncButtonsBusy("fetchBtn",t("topbar.fetching"));
   Tama.set("syncing"); Tama.say("Fetching…");
   // Open the live-progress modal and start listening BEFORE invoking, so the
   // first "remote: Counting objects…" segment isn't missed. fetch_stream is the
   // streaming twin of fetch (same result); the ambient auto-fetch timer and the
   // pull-with-strategy flows still use the silent, non-modal `fetch`.
-  await syncProgressCtrl.begin("Fetching…","fetch");
+  await syncProgressCtrl.begin(t("topbar.fetching"),"fetch");
   try{
     const res=await tinvoke("fetch_stream",{path:CUR_REPO,remote:null});
     syncProgressCtrl.settle(!!(res&&res.ok),(res&&res.message)||"");
@@ -1971,9 +1975,9 @@ async function doPull(){
   if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pulled (demo). にゃ〜",3200); cheer('Pulled (demo). <span class="jp">にゃ〜</span>',tamaPose("happy")); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
-  setSyncButtonsBusy("pullBtn","Pulling…");
+  setSyncButtonsBusy("pullBtn",t("topbar.pulling"));
   Tama.set("syncing"); Tama.say("Pulling…");
-  await syncProgressCtrl.begin("Pulling…","pull");
+  await syncProgressCtrl.begin(t("topbar.pulling"),"pull");
   try{
     const res=await tinvoke("pull_stream",{path:CUR_REPO});
     syncProgressCtrl.settle(!!(res&&res.ok),(res&&res.message)||"");
@@ -1986,7 +1990,7 @@ async function doPush(){
   if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pushed (demo). にゃ〜",3200); cheer('Pushed (demo). <span class="jp">にゃ〜</span>',tamaPose("happy")); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
-  setSyncButtonsBusy("pushBtn","Pushing…");
+  setSyncButtonsBusy("pushBtn",t("topbar.pushing"));
   Tama.set("syncing"); Tama.say("Pushing…");
   try{
     const res=await tinvoke("push",{path:CUR_REPO});
@@ -2359,7 +2363,7 @@ let loadingPillTimer=null;
 function setGraphLoadingPill(on,count){
   const p=$("#loadingPill"); if(!p) return;
   if(on){
-    const l=$("#loadingPillLabel"); if(l) l.textContent = count!=null&&count>0 ? "Loading… "+count.toLocaleString() : "Loading…";
+    const l=$("#loadingPillLabel"); if(l) l.textContent = count!=null&&count>0 ? t("topbar.loading")+" "+count.toLocaleString() : t("topbar.loading");
     // Delay the reveal so a repo that loads in well under this never flashes the
     // pill — only a genuinely-still-loading stream (which clears the timer late)
     // ever actually shows it.
@@ -3036,7 +3040,7 @@ function bootEmpty(){
   // from their static HTML placeholders. Now that closeRepo() (below) can
   // call it AFTER a repo was open, leaving these alone would keep showing the
   // just-closed repo's name and branch as if it were still open.
-  const pick=$(".repo-pick .repo-name"); if(pick) pick.textContent="Open a repository…";
+  const pick=$(".repo-pick .repo-name"); if(pick) pick.textContent=t("topbar.repo_pick_empty");
   const wslTag=$("#repoWslTag"); if(wslTag) wslTag.style.display="none";
   const bp=$(".branch-pill"); if(bp) bp.style.display="none";
   dirty=true;
@@ -3108,6 +3112,32 @@ if(!IN_TAURI) setTimeout(()=>{Tama.event("snapshot.surfaced");Tama.say("Safety M
    13) ⌘K COMMAND PALETTE — now a Svelte island (src/islands/cmdk).
    ============================================================ */
 const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>cmdkCtrl.show());
+
+/* ============================================================
+   i18n — the top-bar/loading/help chrome lives as static markup in
+   index.html (not a Svelte island), so its translations are carried on
+   data-i18n* attributes and applied imperatively here: data-i18n sets
+   textContent, -html sets innerHTML (for prose with inline <b>/<kbd>),
+   -title/-ph/-aria set the matching attribute. Applied once at boot and
+   re-applied on every language switch (islands re-render themselves via t()).
+   ============================================================ */
+function applyStaticI18n(root=document){
+  root.querySelectorAll("[data-i18n]").forEach(el=>{ el.textContent=t(el.getAttribute("data-i18n")); });
+  root.querySelectorAll("[data-i18n-html]").forEach(el=>{ el.innerHTML=t(el.getAttribute("data-i18n-html")); });
+  root.querySelectorAll("[data-i18n-title]").forEach(el=>{ el.title=t(el.getAttribute("data-i18n-title")); });
+  root.querySelectorAll("[data-i18n-ph]").forEach(el=>{ el.setAttribute("placeholder",t(el.getAttribute("data-i18n-ph"))); });
+  root.querySelectorAll("[data-i18n-aria]").forEach(el=>{ el.setAttribute("aria-label",t(el.getAttribute("data-i18n-aria"))); });
+}
+applyStaticI18n();
+// Live language switch (即时生效): the canvas text is drawn, not DOM, and these
+// chrome nodes aren't reactive — so on a switch re-apply the attributes, refresh
+// the empty-state repo label, invalidate the scroll-blit buffer, and force a
+// full repaint. Islands wired through t() re-render on their own.
+i18nEvents.addEventListener("change",()=>{
+  applyStaticI18n();
+  const pick=$(".repo-pick .repo-name"); if(pick && !CUR_REPO) pick.textContent=t("topbar.repo_pick_empty");
+  bufferValid=false; dirty=true;
+});
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
