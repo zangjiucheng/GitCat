@@ -319,7 +319,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    them instead — pushing the badge away from the right edge it's aligned to.
    `display:flex` centres the lucide icon in the box. */
 .ref-group>summary .fold-btn{margin-left:4px;display:flex;align-items:center}
-.ref-item{display:flex;align-items:center;gap:8px;padding:5px 8px 5px calc(24px + var(--depth) * 12px);border-radius:6px;cursor:pointer;position:relative}
+.ref-item{display:flex;align-items:center;gap:8px;padding:5px 8px 5px calc(24px + var(--depth) * 12px);border-radius:6px;cursor:pointer;position:relative;user-select:none}
 .ref-item:hover{background:var(--elevated)}
 .ref-item.current{background:color-mix(in srgb,var(--accent) 14%,transparent)}
 /* Tracks --depth with the row's own padding, so the "you are here" dot stays in

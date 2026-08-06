@@ -312,12 +312,18 @@
           role="button"
           tabindex="0"
           onclick={(e) => {
-            if ((e.target as HTMLElement).closest(".ref-menu") || isCur || sidebarCtrl.busy) return;
-            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            sidebarCtrl.openCheckoutConfirm(b.name, false, r.left, r.bottom + 4);
+            if ((e.target as HTMLElement).closest(".ref-menu")) return;
+            sidebarCtrl.jumpToRef("local", b.name, b.sha);
           }}
           onkeydown={(e) => {
-            if ((e.key !== "Enter" && e.key !== " ") || isCur || sidebarCtrl.busy) return;
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault(); // Space would otherwise ALSO scroll the ref list
+            sidebarCtrl.jumpToRef("local", b.name, b.sha);
+          }}
+          ondblclick={(e) => {
+            // The checkbox/copy-name onclick handlers stopPropagation on click only —
+            // dblclick is a separate event that still bubbles here, so it needs its own guard.
+            if ((e.target as HTMLElement).closest(".ref-menu, .rb-check, .copy-name") || isCur || sidebarCtrl.busy) return;
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
             sidebarCtrl.openCheckoutConfirm(b.name, false, r.left, r.bottom + 4);
           }}
@@ -474,12 +480,16 @@
             role="button"
             tabindex="0"
             onclick={(e) => {
-              if (sidebarCtrl.busy) return;
-              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
+              if ((e.target as HTMLElement).closest(".ref-menu")) return;
+              sidebarCtrl.jumpToRef("remote", r.name, r.sha);
             }}
             onkeydown={(e) => {
-              if ((e.key !== "Enter" && e.key !== " ") || sidebarCtrl.busy) return;
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault(); // Space would otherwise ALSO scroll the ref list
+              sidebarCtrl.jumpToRef("remote", r.name, r.sha);
+            }}
+            ondblclick={(e) => {
+              if ((e.target as HTMLElement).closest(".ref-menu, .rb-check, .copy-name") || sidebarCtrl.busy) return;
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
               sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
             }}
@@ -556,7 +566,15 @@
           data-tag={t.name}
           role="button"
           tabindex="0"
-          onkeydown={(e) => (e.key === "Enter" || e.key === " ") && !sidebarCtrl.busy && sidebarCtrl.openTagMenu(t.name, e.currentTarget as HTMLElement)}
+          onclick={(e) => {
+            if ((e.target as HTMLElement).closest(".ref-menu")) return;
+            sidebarCtrl.jumpToRef("tag", t.name, t.sha);
+          }}
+          onkeydown={(e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault(); // Space would otherwise ALSO scroll the ref list
+            sidebarCtrl.jumpToRef("tag", t.name, t.sha);
+          }}
           oncontextmenu={(e) => {
             e.preventDefault();
             if (!sidebarCtrl.busy) sidebarCtrl.openTagMenu(t.name, e.currentTarget as HTMLElement);
