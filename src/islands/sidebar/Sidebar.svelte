@@ -317,10 +317,11 @@
           }}
           onkeydown={(e) => {
             // Fires during bubble, so a descendant's own Enter/Space (the ⋮
-            // button, the visibility checkbox) reaches this handler too — bail
-            // before touching the event unless it originated on the row itself,
-            // or preventDefault below would cancel that descendant's own
-            // activation instead of just suppressing the list's Space-scrolls.
+            // button, the visibility checkbox, the copy-name button) reaches
+            // this handler too — bail before touching the event unless it
+            // originated on the row itself, or preventDefault below would
+            // cancel that descendant's own activation instead of just
+            // suppressing the list's Space-scrolls.
             if (e.target !== e.currentTarget) return;
             if (e.key !== "Enter" && e.key !== " ") return;
             e.preventDefault(); // Space would otherwise ALSO scroll the ref list
@@ -491,10 +492,11 @@
             }}
             onkeydown={(e) => {
               // Fires during bubble, so a descendant's own Enter/Space (the ⋮
-              // button, the visibility checkbox) reaches this handler too — bail
-              // before touching the event unless it originated on the row itself,
-              // or preventDefault below would cancel that descendant's own
-              // activation instead of just suppressing the list's Space-scrolls.
+              // button, the visibility checkbox, the copy-name button) reaches
+              // this handler too — bail before touching the event unless it
+              // originated on the row itself, or preventDefault below would
+              // cancel that descendant's own activation instead of just
+              // suppressing the list's Space-scrolls.
               if (e.target !== e.currentTarget) return;
               if (e.key !== "Enter" && e.key !== " ") return;
               e.preventDefault(); // Space would otherwise ALSO scroll the ref list
@@ -1010,14 +1012,17 @@
   </div>
 {/if}
 
-<!-- A branch row's double-click, right-click, or its own ⋮ button opens
-     this instead of checking out directly on a single click/Enter (see
-     CheckoutConfirm's own doc comment) — a stray click that misses the
-     visibility checkbox right next to it, or just brushes the row, used to
-     switch branches with zero recourse. Reuses `.ref-pop.cm-pop`/
-     `.cm-head` verbatim, same as the dirty-tree chooser above; no Cancel
-     button, matching every OTHER popover here (menu/tagMenu/submoduleMenu/
-     mergeMenu/dirtyCheckoutMenu) — outside-click dismisses it. -->
+<!-- Opens on any branch row's double-click, and on a remote row's
+     right-click/⋮ — a local row's right-click/⋮ open the branch menu
+     instead, whose Checkout button calls checkout() immediately with no
+     confirm (see CheckoutConfirm's own doc comment). On the routes that
+     do lead here, this popover is the guard against a stray click — one
+     that misses the visibility checkbox right next to the row, or just
+     brushes it — switching branches with zero recourse. Reuses
+     `.ref-pop.cm-pop`/`.cm-head` verbatim, same as the dirty-tree chooser
+     above; no Cancel button, matching every OTHER popover here
+     (menu/tagMenu/submoduleMenu/mergeMenu/dirtyCheckoutMenu) —
+     outside-click dismisses it. -->
 {#if sidebarCtrl.checkoutConfirm}
   {@const cc = sidebarCtrl.checkoutConfirm}
   <div class="ref-pop cm-pop" bind:this={checkoutConfirmEl} style="left:{cc.x}px;top:{cc.y}px">

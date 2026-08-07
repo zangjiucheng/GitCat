@@ -346,6 +346,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-list{display:flex;flex-direction:column}
 .ref-item .ref-menu{margin-left:auto;opacity:0;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;border-radius:4px;flex:none}
 .ref-item:hover .ref-menu{opacity:1}
+/* A row's own Enter/Space now jumps rather than opening this menu (see
+   Sidebar.svelte's onkeydown), so the ⋮ button is the only keyboard route
+   to Checkout/etc left on the row — a keyboard user tabbing onto it needs
+   to actually SEE it light up, not just click-hover users. */
 .ref-item:focus-within .ref-menu{opacity:1}
 .ref-item .ref-menu:hover{background:var(--elevated);color:var(--text)}
 .ref-item.current .ref-menu{opacity:.65}
@@ -365,6 +369,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-item .copy-name{flex:none;opacity:0;border:none;background:transparent;color:var(--muted);cursor:pointer;
   font-size:11px;line-height:1;padding:2px 4px;border-radius:4px}
 .ref-item:hover .copy-name{opacity:1}
+/* Same keyboard-visibility reasoning as .ref-item:focus-within .ref-menu
+   above: without this, tabbing onto the copy button leaves the focused
+   control invisible while its sibling ⋮ lights up instead. */
+.ref-item:focus-within .copy-name{opacity:1}
 .ref-item .copy-name:hover{background:var(--elevated);color:var(--text)}
 .ref-item.new-branch:hover{background:color-mix(in srgb,var(--accent) 12%,transparent)}
 /* Any row mid-checkout/delete dims and stops accepting clicks — the
@@ -422,10 +430,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .sub-item .rname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* The row's own "⋮" popover trigger — .ref-menu is otherwise only scoped to
    `.ref-item .ref-menu` (branches/tags, which share that class); submodule
-   rows use a different class, so this mirrors that rule verbatim rather than
-   rendering with no fade/hover styling at all. */
+   rows use a different class, so this mirrors those rules verbatim
+   (including the focus-within reveal — a submodule row is tabindex="0"
+   with the same keyboard-only-route-to-the-menu problem as a ref row)
+   rather than rendering with no fade/hover/focus styling at all. */
 .sub-item .ref-menu{margin-left:auto;opacity:0;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;border-radius:4px;flex:none}
 .sub-item:hover .ref-menu{opacity:1}
+.sub-item:focus-within .ref-menu{opacity:1}
 .sub-item .ref-menu:hover{background:var(--elevated);color:var(--text)}
 .sub-status{font-size:10px;font-weight:600;padding:1px 7px;border-radius:var(--r-pill);flex:none;white-space:nowrap}
 .sub-status[data-status="clean"]{background:color-mix(in srgb,var(--success) 16%,transparent);color:var(--success)}

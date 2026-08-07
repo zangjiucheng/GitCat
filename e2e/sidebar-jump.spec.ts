@@ -76,3 +76,61 @@ test("Enter on a branch row's own ⋮ button opens the branch menu, not a graph 
 
   await expect(page.locator(".ref-pop")).toContainText("Checkout");
 });
+
+test("Enter on a branch row itself still jumps to its tip", async ({ page, repo }) => {
+  repo.writeFile("README.md", "# fixture\n");
+  repo.commit("Initial commit");
+  repo.branch("feature/widget");
+  repo.checkout("feature/widget");
+  repo.writeFile("widget.ts", "export const widget = 1;\n");
+  repo.commit("Add the widget"); // feature/widget's tip, NOT main's
+  repo.checkout("main");
+
+  await page.goto("/");
+  await page.locator(".repo-pick").click();
+  await page.locator(".db-add").click();
+  await expect(page.locator("#cntLocal")).toHaveText("2");
+
+  const featureFolder = page
+    .locator("#refLocal .ref-folder")
+    .filter({ has: page.locator(".rname", { hasText: /^feature$/ }) });
+  await featureFolder.click();
+
+  // The previous test pins that a DESCENDANT's own Enter (the ⋮ button)
+  // isn't hijacked by the row's onkeydown guard — this pins the other half:
+  // the row's OWN Enter must still fire the jump. A guard that over-fired
+  // (e.g. dropped the `e.target !== e.currentTarget` check entirely) would
+  // pass that test while silently killing the keyboard jump on every row.
+  await page.locator('#refLocal [data-branch="feature/widget"]').focus();
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator("#detail")).toContainText("Add the widget");
+});
+
+test("a remote row's own ⋮ button opens the checkout confirm", async ({ page, repo }) => {
+  repo.writeFile("README.md", "# fixture\n");
+  repo.commit("Initial commit");
+  // The fixture's only remote branch — a plain ref write is enough, since
+  // the mock's list_refs (tauriMock.ts) reads refs/remotes/* straight off
+  // disk the same way a real `git for-each-ref` would; no actual remote or
+  // fetch is needed for the sidebar to render it.
+  repo.git("update-ref", "refs/remotes/origin/main", "HEAD");
+
+  await page.goto("/");
+  await page.locator(".repo-pick").click();
+  await page.locator(".db-add").click();
+  await expect(page.locator("#cntRemote")).toHaveText("1");
+
+  // Unlike Local's <details>, Remote's starts closed — expand it before its
+  // row is reachable at all. Click the twisty rather than the summary's
+  // bounding-box centre, which could land on one of its own manage buttons.
+  const remoteGroup = page.locator("details.ref-group", { has: page.locator("#refRemote") });
+  await remoteGroup.locator("summary .tw").click();
+
+  await page.locator("#refRemote .ref-item .ref-menu").click();
+
+  // Same pinning rationale as the double-click case above: `.ref-pop` is
+  // shared by eight popovers, and only checkoutConfirm's own heading reads
+  // "Switch to <name>?".
+  await expect(page.locator(".ref-pop")).toContainText("Switch to origin/main?");
+});

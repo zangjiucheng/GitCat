@@ -228,15 +228,18 @@ export type PushMenu = { name: string; x: number; y: number };
 // popover's own "N files would be overwritten: …" copy.
 export type DirtyCheckoutMenu = { name: string; startPoint: string | null; files: string[]; x: number; y: number };
 // A branch row's click/Enter jumps the graph to that ref's tip rather than
-// checking out — checkout instead opens this small popover (via double-click,
-// right-click, or the row's own ⋮ button), so a misdirected single click
-// (aiming for the visibility checkbox right next to it, or just brushing the
-// row) can no longer switch branches with zero recourse. Only the popover's
-// own "Switch" button actually calls checkout/checkoutRemote. `remote`
-// mirrors DirtyCheckoutMenu's own local-vs-remote-ref shape: false calls
-// plain `checkout` (an existing local branch row), true calls
-// `checkoutRemote` (a remote row, which may still need to CREATE a local
-// branch first).
+// checking out — checkout instead opens this small popover. Reached by
+// double-click on any branch row (local or remote), and by a remote row's
+// right-click/⋮; a local row's right-click/⋮ open the branch menu instead,
+// whose own Checkout button calls `checkout` immediately with no confirm at
+// all. So this popover guards against a misdirected click switching
+// branches with zero recourse only on the routes that lead here (aiming for
+// the visibility checkbox right next to the row, or just brushing it).
+// Only the popover's own "Switch" button actually calls
+// checkout/checkoutRemote. `remote` mirrors DirtyCheckoutMenu's own
+// local-vs-remote-ref shape: false calls plain `checkout` (an existing
+// local branch row), true calls `checkoutRemote` (a remote row, which may
+// still need to CREATE a local branch first).
 export type CheckoutConfirm = { name: string; remote: boolean; x: number; y: number };
 
 // Which action (if any) a submodule row's status affords — a pure, exported
@@ -2249,7 +2252,8 @@ class SidebarState {
     this.dirtyCheckoutMenu = null;
   }
 
-  // Opened by a branch row's double-click, right-click, or its own ⋮ button
+  // Opened by any branch row's double-click, and by a remote row's own
+  // right-click/⋮ (a local row's right-click/⋮ open the branch menu instead)
   // — see CheckoutConfirm's own doc comment for why checkout doesn't fire
   // directly from a single click/Enter on the row. Reuses whatever (x, y)
   // the row's own bounding rect already produced, same as

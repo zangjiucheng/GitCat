@@ -1572,10 +1572,12 @@ function goToHead(){
 }
 // Select `row`, centre it in the scrollable viewport (below the pinned band —
 // see bandH()), and put keyboard focus on the canvas so the arrow keys keep
-// working from where you landed. Shared by goToHead and goToOid. onGraphBatch's
-// pendingReselect restore deliberately keeps its own copy of this recipe
-// instead of calling focusRow — it must not steal focus to the canvas after a
-// background reload.
+// working from where you landed. Shared by goToHead and goToOid. Not the only
+// copy of this recipe, though: onGraphBatch's pendingReselect restore
+// deliberately keeps its own copy instead of calling focusRow (it must not
+// steal focus to the canvas after a background reload), and cmdk.svelte.ts's
+// own ⌘K jump keeps a third copy with a deliberately different, off-centre
+// scroll factor.
 function focusRow(row){
   select(row);
   state.scrollTarget=clampScroll(row*layout.rowH-(view.cssH-bandH())/2);
