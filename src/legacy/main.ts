@@ -2422,8 +2422,7 @@ async function startGraphStream(path){
 // openRepo below, so a new window (?repo=) whose first graph load fires during
 // boot can't miss early batches.
 if(IN_TAURI) window.__TAURI__.event.listen("graph-batch", (e)=>onGraphBatch(e.payload));
-// "graph-batch" event handler (registered once in legacy/main.ts, mirroring its
-// own "repo-changed" listener) — grows BACKEND/G with one incremental slice
+// "graph-batch" event handler — grows BACKEND/G with one incremental slice
 // at a time as the backend's revwalk+layout produces it, instead of the old
 // "wait for one giant response, then populate everything at once" shape.
 //

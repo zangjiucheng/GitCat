@@ -1430,9 +1430,9 @@ describe("openDirtyCheckoutMenu / closeDirtyCheckoutMenu (#34)", () => {
 
 // A branch row's own click/Enter jumps the graph to that ref's tip rather
 // than checking out — checkout instead opens this confirm popover, via
-// double-click on any row, or a remote row's right-click/⋮ (a local row's
-// right-click/⋮ open the branch menu instead; see CheckoutConfirm's own doc
-// comment).
+// double-click on any branch row (local or remote), or a remote row's
+// right-click/⋮ (a local row's right-click/⋮ open the branch menu instead;
+// see CheckoutConfirm's own doc comment).
 describe("openCheckoutConfirm / closeCheckoutConfirm", () => {
   it("positions the popover clamped to the viewport width", () => {
     sidebarCtrl.openCheckoutConfirm("feature", false, window.innerWidth, 40);
