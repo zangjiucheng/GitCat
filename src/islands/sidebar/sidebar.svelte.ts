@@ -194,8 +194,8 @@ export type TagMenu = { name: string; x: number; y: number };
 // (Open/Sync/Init+update-or-Update/Deinit/Remove) plus its status chip and
 // path — at the sidebar's normal width these simply don't fit and got
 // silently clipped (found via visual inspection, not a report). Fixed by
-// collapsing everything but the row itself (click = Open, mirroring how a
-// branch row's own click already means "checkout") into a "⋮" popover,
+// collapsing everything but the row itself (click = Open, same as a branch
+// row's own click jumps the graph to that ref's tip) into a "⋮" popover,
 // exactly like BranchMenu/TagMenu above. Captures status/absolutePath at
 // open-time (like BranchMenu captures isCurrent) rather than re-deriving
 // them from `path` inside the popover, so the popover's own buttons never
@@ -227,14 +227,16 @@ export type PushMenu = { name: string; x: number; y: number };
 // same way. `files` is `WriteResult.conflictingFiles` verbatim, for the
 // popover's own "N files would be overwritten: …" copy.
 export type DirtyCheckoutMenu = { name: string; startPoint: string | null; files: string[]; x: number; y: number };
-// A branch row's click/Enter no longer checks out immediately — a
-// misdirected click (aiming for the visibility checkbox right next to it, or
-// just brushing the row) used to switch branches with zero recourse. It
-// opens this small popover instead; only the popover's own "Switch" button
-// actually calls checkout/checkoutRemote. `remote` mirrors DirtyCheckoutMenu's
-// own local-vs-remote-ref shape: false calls plain `checkout` (an existing
-// local branch row), true calls `checkoutRemote` (a remote row, which may
-// still need to CREATE a local branch first).
+// A branch row's click/Enter jumps the graph to that ref's tip rather than
+// checking out — checkout instead opens this small popover (via double-click,
+// right-click, or the row's own ⋮ button), so a misdirected single click
+// (aiming for the visibility checkbox right next to it, or just brushing the
+// row) can no longer switch branches with zero recourse. Only the popover's
+// own "Switch" button actually calls checkout/checkoutRemote. `remote`
+// mirrors DirtyCheckoutMenu's own local-vs-remote-ref shape: false calls
+// plain `checkout` (an existing local branch row), true calls
+// `checkoutRemote` (a remote row, which may still need to CREATE a local
+// branch first).
 export type CheckoutConfirm = { name: string; remote: boolean; x: number; y: number };
 
 // Which action (if any) a submodule row's status affords — a pure, exported
@@ -815,10 +817,13 @@ class SidebarState {
       return;
     }
     if (bridge.goToOid(sha)) return;
-    // graphStreamComplete is only ever flipped true from onGraphBatch's `done`
-    // handling, which is wired up solely inside the IN_TAURI event listener —
-    // in plain-browser design mode it never runs, so graphStreamComplete stays
-    // permanently false and this branch would otherwise always win.
+    // graphStreamComplete is only ever flipped true from Tauri-only paths:
+    // onGraphBatch's `done` handling (wired up solely inside an IN_TAURI
+    // branch), and restoreGraphFromCache — which only sets it when it hits a
+    // cache entry, and an entry can only exist if some earlier onGraphBatch
+    // `done` already set it true. In plain-browser design mode neither path
+    // ever fires/hits, so graphStreamComplete stays permanently false and
+    // this branch would otherwise always win.
     if (IN_TAURI && !bridge.graphStreamComplete) {
       bridge.tama.warn("Still loading the graph — try " + name + " again in a moment.");
       return;
@@ -1504,8 +1509,8 @@ class SidebarState {
 
   // Same click-to-copy + brief "copied" feedback shape as copySnapshotSha
   // above (and Detail.svelte's own commit-hash copy) — a dedicated hover-
-  // revealed button next to .rname, not the row's own click (which already
-  // means "check out this branch"; stealing that gesture for copy would
+  // revealed button next to .rname, not the row's own click (which jumps the
+  // graph to this ref's tip; stealing that gesture for copy would
   // shrink/replace a much more frequently used action).
   copyBranchName(name: string) {
     copyToClipboard(name);
@@ -2244,9 +2249,10 @@ class SidebarState {
     this.dirtyCheckoutMenu = null;
   }
 
-  // Opened by a branch row's own click/Enter — see CheckoutConfirm's own doc
-  // comment for why checkout no longer fires directly from the row. Reuses
-  // whatever (x, y) the row's own bounding rect already produced, same as
+  // Opened by a branch row's double-click, right-click, or its own ⋮ button
+  // — see CheckoutConfirm's own doc comment for why checkout doesn't fire
+  // directly from a single click/Enter on the row. Reuses whatever (x, y)
+  // the row's own bounding rect already produced, same as
   // openMergeMenu/openDirtyCheckoutMenu above.
   openCheckoutConfirm(name: string, remote: boolean, x: number, y: number) {
     this.menu = null; // only one popover open at a time

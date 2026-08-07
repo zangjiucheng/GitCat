@@ -334,8 +334,7 @@ function makeInvokeHandler(repo: TempRepo, page: Page) {
       // Also fired unconditionally on every `done:true` batch:
       // snapshotGraphBaseline's fast-refresh baseline (see FastRefresh in
       // src/ipc/bindings.ts). refChips reuses refsBySha's already-peeled shas
-      // (see A6) so this stays byte-for-byte consistent with loadGraphBatch's
-      // own refs.
+      // so this stays byte-for-byte consistent with loadGraphBatch's own refs.
       case "graph_fast_refresh": {
         const headOid = repo.git("rev-parse", "HEAD").trim() || null;
         const { locals, remotes } = listRefs(repo);
@@ -348,8 +347,11 @@ function makeInvokeHandler(repo: TempRepo, page: Page) {
           refChips: [...chips.entries()],
         };
       }
-      // @tauri-apps/api/event's listen/unlisten/emit — no test here drives a
-      // live backend->frontend event, so these are inert stubs.
+      // @tauri-apps/api/event's listen/unlisten/emit — still inert stubs, but
+      // not because no test drives a live backend->frontend event: load_graph
+      // now dispatches one (the "graph-batch" event above). It goes over the
+      // raw `window.__TAURI__.event` shim rather than this invoke-shimmed
+      // "plugin:event|listen" path, so nothing here ever calls these.
       case "plugin:event|listen":
         return Math.floor(Math.random() * 1e9);
       case "plugin:event|unlisten":

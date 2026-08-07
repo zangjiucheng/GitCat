@@ -1428,8 +1428,10 @@ describe("openDirtyCheckoutMenu / closeDirtyCheckoutMenu (#34)", () => {
   });
 });
 
-// A branch row's own click/Enter no longer checks out immediately — it opens
-// this confirm popover instead (see CheckoutConfirm's own doc comment).
+// A branch row's own click/Enter jumps the graph to that ref's tip rather
+// than checking out — checkout instead opens this confirm popover, via
+// double-click, right-click, or the row's own ⋮ button (see CheckoutConfirm's
+// own doc comment).
 describe("openCheckoutConfirm / closeCheckoutConfirm", () => {
   it("positions the popover clamped to the viewport width", () => {
     sidebarCtrl.openCheckoutConfirm("feature", false, window.innerWidth, 40);

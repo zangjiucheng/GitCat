@@ -346,6 +346,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-list{display:flex;flex-direction:column}
 .ref-item .ref-menu{margin-left:auto;opacity:0;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;border-radius:4px;flex:none}
 .ref-item:hover .ref-menu{opacity:1}
+.ref-item:focus-within .ref-menu{opacity:1}
 .ref-item .ref-menu:hover{background:var(--elevated);color:var(--text)}
 .ref-item.current .ref-menu{opacity:.65}
 .ref-item .rname.nb{color:var(--accent);font-weight:600}
@@ -358,9 +359,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-item .rb-check{flex:none;margin:0;cursor:pointer}
 .ref-item .rb-check:disabled{cursor:default;opacity:.6}
 /* Copy-branch-name — sits right after .rname, hover-revealed like
-   .ref-menu (same opacity:0/1 idiom), but its OWN click never checks out
-   the row: the row's own click already means "check out this branch", so
-   copy needs a distinct, small target rather than stealing that gesture. */
+   .ref-menu (same opacity:0/1 idiom), but its OWN click doesn't jump to the
+   ref's tip like the row's own click does: copy needs a distinct, small
+   target rather than stealing that gesture. */
 .ref-item .copy-name{flex:none;opacity:0;border:none;background:transparent;color:var(--muted);cursor:pointer;
   font-size:11px;line-height:1;padding:2px 4px;border-radius:4px}
 .ref-item:hover .copy-name{opacity:1}
@@ -2136,7 +2137,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
       </section>
       <section>
         <h4>Branches &amp; tags</h4>
-        <p><b>Right-click a branch label</b> in the graph for branch management (checkout, push, merge, rebase, reset, delete). <b>Right-click a remote</b> label (origin/&#8230;) to check it out as a local branch. Hover a label to see its full name. The left <b>sidebar</b> lists every branch and tag &#8212; click one to check it out; the checkboxes show or hide branches in the graph.</p>
+        <p><b>Right-click a branch label</b> in the graph for branch management (checkout, push, merge, rebase, reset, delete). <b>Right-click a remote</b> label (origin/&#8230;) to check it out as a local branch. Hover a label to see its full name. The left <b>sidebar</b> lists every branch and tag &#8212; click one to jump the graph to its tip commit, double-click (or right-click, or its &#8942; button) to check it out; the checkboxes show or hide branches in the graph.</p>
       </section>
       <section>
         <h4>Uncommitted changes</h4>

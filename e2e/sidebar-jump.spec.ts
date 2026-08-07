@@ -26,8 +26,10 @@ test("clicking a branch in the sidebar selects its tip commit in the graph", asy
   // Canvas selection isn't in the DOM, but select(row) drives the detail
   // panel — so the panel is a faithful read of which row got selected. The
   // subject text is unique to feature/widget's tip (main's tip is "Initial
-  // commit"), so this only passes if goToOid joined on the FULL 40-char oid
-  // rather than some truncated prefix that could collide.
+  // commit"), so this proves goToOid's 40-char join against the row shas
+  // isn't silently broken by a width mismatch (e.g. comparing against a
+  // 7-char prefix) — though with only two commits in this fixture, a
+  // truncated-prefix implementation would happen to pass too.
   await expect(page.locator("#detail")).toContainText("Add the widget");
 });
 
@@ -51,4 +53,26 @@ test("double-clicking a branch still opens the checkout confirm", async ({ page,
   // what actually pins THIS popover, for THIS branch, not just any of the
   // eight lighting up.
   await expect(page.locator(".ref-pop")).toContainText("Switch to release?");
+});
+
+test("Enter on a branch row's own ⋮ button opens the branch menu, not a graph jump", async ({ page, repo }) => {
+  repo.writeFile("README.md", "# fixture\n");
+  repo.commit("Initial commit");
+  repo.branch("release");
+
+  await page.goto("/");
+  await page.locator(".repo-pick").click();
+  await page.locator(".db-add").click();
+  await expect(page.locator("#cntLocal")).toHaveText("2");
+
+  // Focus the row's own "Branch actions" ⋮ button directly (rather than
+  // Tab-ing there) and press Enter on IT, not the row. The row's onkeydown
+  // fires during bubble regardless of which descendant the key event
+  // started on, so an unguarded preventDefault there would cancel the
+  // button's own Enter-activates-click default action and jump the graph
+  // instead of opening the menu — the regression this test guards against.
+  await page.locator('#refLocal [data-branch="release"] .ref-menu').focus();
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator(".ref-pop")).toContainText("Checkout");
 });

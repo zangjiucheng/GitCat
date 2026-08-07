@@ -316,6 +316,12 @@
             sidebarCtrl.jumpToRef("local", b.name, b.sha);
           }}
           onkeydown={(e) => {
+            // Fires during bubble, so a descendant's own Enter/Space (the ⋮
+            // button, the visibility checkbox) reaches this handler too — bail
+            // before touching the event unless it originated on the row itself,
+            // or preventDefault below would cancel that descendant's own
+            // activation instead of just suppressing the list's Space-scrolls.
+            if (e.target !== e.currentTarget) return;
             if (e.key !== "Enter" && e.key !== " ") return;
             e.preventDefault(); // Space would otherwise ALSO scroll the ref list
             sidebarCtrl.jumpToRef("local", b.name, b.sha);
@@ -484,6 +490,12 @@
               sidebarCtrl.jumpToRef("remote", r.name, r.sha);
             }}
             onkeydown={(e) => {
+              // Fires during bubble, so a descendant's own Enter/Space (the ⋮
+              // button, the visibility checkbox) reaches this handler too — bail
+              // before touching the event unless it originated on the row itself,
+              // or preventDefault below would cancel that descendant's own
+              // activation instead of just suppressing the list's Space-scrolls.
+              if (e.target !== e.currentTarget) return;
               if (e.key !== "Enter" && e.key !== " ") return;
               e.preventDefault(); // Space would otherwise ALSO scroll the ref list
               sidebarCtrl.jumpToRef("remote", r.name, r.sha);
@@ -523,9 +535,9 @@
             >
             {#if sidebarCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
             <!-- A remote row's only action is checkout (there's no remote "branch
-                 actions" menu to open), so its ⋮ jumps straight to the checkout
-                 confirm instead of a menu — this keeps that action reachable
-                 without a mouse, now that Enter/Space on the row jumps instead. -->
+                 actions" menu to open), so its ⋮ opens the checkout confirm
+                 directly instead of a menu — this keeps that action reachable
+                 without a mouse. -->
             <button
               class="ref-menu"
               title="Checkout this remote branch"
@@ -593,6 +605,12 @@
             sidebarCtrl.jumpToRef("tag", t.name, t.sha);
           }}
           onkeydown={(e) => {
+            // Fires during bubble, so a descendant's own Enter/Space (the ⋮
+            // button) reaches this handler too — bail before touching the
+            // event unless it originated on the row itself, or preventDefault
+            // below would cancel that descendant's own activation instead of
+            // just suppressing the list's Space-scrolls.
+            if (e.target !== e.currentTarget) return;
             if (e.key !== "Enter" && e.key !== " ") return;
             e.preventDefault(); // Space would otherwise ALSO scroll the ref list
             sidebarCtrl.jumpToRef("tag", t.name, t.sha);
@@ -710,9 +728,11 @@
                Deinit/Remove) plus the status chip and path simply don't fit
                the sidebar's width and were silently getting clipped. Mirrors
                the branch row's own "click the row = primary action, ⋮ =
-               everything else" convention exactly — clicking anywhere on an
-               openable row (canOpen) calls Open, same as clicking a branch
-               row checks it out. -->
+               everything else" convention — clicking anywhere on an openable
+               row (canOpen) calls Open, same as clicking a branch row jumps
+               the graph to its tip (a submodule row's only single-click
+               action is Open, so there's no second gesture to disambiguate
+               from the way there is on a branch row). -->
           <div
             class="sub-item"
             class:busy={sidebarCtrl.busy}
@@ -990,10 +1010,11 @@
   </div>
 {/if}
 
-<!-- A branch row's own click/Enter opens this instead of checking out
-     directly (see CheckoutConfirm's own doc comment) — a stray click that
-     misses the visibility checkbox right next to it, or just brushes the
-     row, used to switch branches with zero recourse. Reuses `.ref-pop.cm-pop`/
+<!-- A branch row's double-click, right-click, or its own ⋮ button opens
+     this instead of checking out directly on a single click/Enter (see
+     CheckoutConfirm's own doc comment) — a stray click that misses the
+     visibility checkbox right next to it, or just brushes the row, used to
+     switch branches with zero recourse. Reuses `.ref-pop.cm-pop`/
      `.cm-head` verbatim, same as the dirty-tree chooser above; no Cancel
      button, matching every OTHER popover here (menu/tagMenu/submoduleMenu/
      mergeMenu/dirtyCheckoutMenu) — outside-click dismisses it. -->

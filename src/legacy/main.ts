@@ -1069,7 +1069,8 @@ cv.addEventListener("contextmenu",(e)=>{
     if(br){ sidebarCtrl.openMenuAt(br.label, br.kind==="head", null, e.clientX, e.clientY); return; }
     // A remote-tracking branch label (e.g. origin/main, upstream/3.13) → the
     // sidebar's checkout-confirm, which creates a local branch tracking it —
-    // the same action clicking that remote in the sidebar performs.
+    // the same popover double-clicking (or right-clicking, or the ⋮ button
+    // on) that remote in the sidebar opens.
     const rem=rowRefs.find(r=>r&&r.kind==="remote");
     if(rem){ sidebarCtrl.openCheckoutConfirm(rem.label, true, e.clientX, e.clientY); return; }
   }
@@ -1555,9 +1556,10 @@ function selectWorkdir(){ state.selectedRow=-2; workdirCtrl.select(CUR_REPO); di
 // best-effort, same convention as cmdk's own jump().
 function goToUncommitted(){ selectWorkdir(); state.scrollTarget=0; try{cv.focus()}catch(_){} }
 // Jump to the current commit (HEAD = the current branch's tip). Finds HEAD's row
-// across ALL loaded rows (the "head"-kind ref), selects it, and centres it in the
-// scrollable viewport (same recipe reloadGraph's own reselect uses). No-op if
-// HEAD isn't among the loaded commits (detached/off-screen-only-in-history).
+// across ALL loaded rows (the "head"-kind ref), then hands off to focusRow to
+// select it, centre it in the scrollable viewport, and focus the canvas. Warns
+// via Tama instead (rather than focusRow) if HEAD isn't among the loaded
+// commits (detached/off-screen-only-in-history).
 function goToHead(){
   if(!G||!G.N) return;
   let hr=-1;
