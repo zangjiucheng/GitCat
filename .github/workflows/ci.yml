@@ -26,6 +26,17 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Limit the GITHUB_TOKEN to the least privilege this suite actually needs.
+# Without an explicit block the token defaults to broad, mostly-write scopes
+# (CodeQL flags this as actions/missing-workflow-permissions). Every job here
+# only builds and tests: `actions/checkout` needs `contents: read`, and nothing
+# writes back to the repo. The e2e job's `upload-artifact` uses the Actions
+# runtime token, not GITHUB_TOKEN scopes, and `$GITHUB_STEP_SUMMARY` is a plain
+# env-file write, so neither needs anything beyond read. Declared at workflow
+# level so it applies to all four jobs (rust, rust-windows, frontend, e2e).
+permissions:
+  contents: read
+
 jobs:
   # Builds/tests the Rust core (src-tauri, crate `gitcat_lib`).
   # Independent of the `frontend` job below so the two run in parallel.
