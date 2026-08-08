@@ -43,7 +43,7 @@ import { aboutCtrl } from "../about/about.svelte.ts";
 import { updaterCtrl } from "../updater/updater.svelte.ts";
 import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";
-import { IN_TAURI, IS_MAC } from "../../ipc/env";
+import { IN_TAURI } from "../../ipc/env";
 import { commands } from "../../ipc/bindings";
 
 export const CMD_CAP = 50;
@@ -325,11 +325,10 @@ const ACTIONS: ActionItem[] = [
       updaterCtrl.check();
     },
   },
-  // "Install 'gitcat' command in PATH" — macOS only (Linux packages already put
-  // gitcat on PATH; Windows is a follow-up). VS Code puts its own `code`
-  // installer in the palette too. Hidden off macOS / in browser design mode so
-  // it never shows where install_cli_shim can only return an error.
-  ...(IN_TAURI && IS_MAC
+  // "Install 'gitcat' command in PATH" — macOS/Linux/Windows, the way VS Code
+  // puts its own `code` installer in the palette. Hidden in browser design mode
+  // (no backend), where install_cli_shim could only return an error.
+  ...(IN_TAURI
     ? [
         {
           type: "action",

@@ -116,7 +116,13 @@ gitcat ~/src/my-project  # open a repo by path
 
 A relative path resolves against your current directory. If the folder isn't a git repository, GitCat still opens and tells you so, rather than loading nothing.
 
-This needs the `gitcat` command on your `PATH`. The Linux packages install it there for you. On macOS, open GitCat and run **Install 'gitcat' command** from Settings > Command line (or from ⌘K); it adds a small launcher to `/usr/local/bin` that opens the app without blocking your terminal. On Windows the binary lives inside the installed app for now (add its folder to `PATH` by hand; an installer is a planned follow-up).
+This needs the `gitcat` command on your `PATH`. Open GitCat and run **Install 'gitcat' command** from Settings > Command line (or from ⌘K) on any platform; it writes a small launcher that opens the app without blocking your terminal:
+
+- **macOS** — `/usr/local/bin/gitcat` (you may be asked for your password).
+- **Linux** — `~/.local/bin/gitcat` (make sure that folder is on your `PATH`). The `.deb`/`.rpm` packages already put `gitcat` on `PATH` too, so this is mainly for the AppImage.
+- **Windows** — `gitcat.cmd` under `%LOCALAPPDATA%\Microsoft\WindowsApps`, which is on `PATH` by default.
+
+Open a new terminal afterwards so it picks up the change.
 
 ## Development
 
