@@ -170,13 +170,20 @@ jobs:
   # otherwise unverified until a tagged release runs the 6-platform matrix. This
   # catches a Windows-only compile break on the PR instead.
   #
-  # The smoke test is `--lib` (library unit tests) ONLY: those are Windows-clean
-  # (the handful of Unix-only ones are #[cfg(unix)]-guarded), and it runs the
-  # platform-agnostic cli_shim launcher tests. The integration tests under
-  # tests/ (submodule / repo_registry / repo_files) use std::os::unix APIs with
-  # no cfg guard, so they don't compile on Windows yet — making that suite
-  # Windows-portable is a separate follow-up, deliberately out of scope here so
-  # this job stays a reliable compile guard rather than a flaky full test run.
+  # Compile-only, on purpose:
+  #  - `cargo build` covers the app/library binary.
+  #  - `cargo test --lib --no-run` additionally COMPILES the library unit-test
+  #    code on Windows (Windows-clean: the handful of Unix-only cases are
+  #    #[cfg(unix)]-guarded), catching a Windows test-compile break too. `--lib`
+  #    skips the tests/ integration suite (submodule / repo_registry /
+  #    repo_files), which uses unguarded std::os::unix APIs and doesn't compile
+  #    on Windows yet (a separate follow-up).
+  #  - We deliberately do NOT run the tests. The Tauri library's test binary
+  #    transitively links the WebView2/wry native stack and fails to resolve a
+  #    DLL entry point at startup on a stock runner (exit 0xc0000139,
+  #    STATUS_ENTRYPOINT_NOT_FOUND) before any test executes. The cli_shim
+  #    launcher tests are platform-agnostic pure functions already run by the
+  #    Linux `rust` job, so running them here would add nothing regardless.
   # No apt/system-deps step: Windows runners ship the MSVC toolchain and WebView2
   # SDK, and libgit2-sys builds its vendored copy with `cc`, same as on Linux.
   rust-windows:
@@ -200,8 +207,8 @@ jobs:
       - name: Build
         run: cargo build --locked
 
-      - name: Smoke-test (library unit tests, incl. the cli_shim launcher tests)
-        run: cargo test --locked --lib cli_shim
+      - name: Compile library unit tests (no-run; see job comment)
+        run: cargo test --locked --lib --no-run
 
       - name: Build examples
         run: cargo build --examples --locked
