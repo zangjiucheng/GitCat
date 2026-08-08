@@ -105,6 +105,19 @@ Download the installer for your platform from the [Releases page](https://github
 > - **macOS**: right-click the app → **Open** the first time to get past Gatekeeper.
 > - **Windows**: click **More info** → **Run anyway** on the SmartScreen prompt.
 
+## Open from the command line
+
+Point GitCat at a repo straight from a terminal, the way `code .` works in VS Code:
+
+```bash
+gitcat .                 # open the repo in the current directory
+gitcat ~/src/my-project  # open a repo by path
+```
+
+A relative path resolves against your current directory. If the folder isn't a git repository, GitCat still opens and tells you so, rather than loading nothing.
+
+This needs the `gitcat` binary on your `PATH`. The Linux packages put it there; on macOS and Windows it currently lives inside the installed app (a shortcut to add `gitcat` to `PATH` is a planned follow-up).
+
 ## Development
 
 Requires [Rust](https://www.rust-lang.org/tools/install), [Node](https://nodejs.org) 22+, and [pnpm](https://pnpm.io) 10. On Linux, Tauri also needs WebKitGTK/GTK3 dev headers at build time — see `.github/workflows/*.yml` for the apt packages, or on NixOS run `nix develop` to drop into a shell with everything (Rust, Node, pnpm, WebKitGTK, and friends) already wired up via `flake.nix`.
