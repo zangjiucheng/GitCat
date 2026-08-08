@@ -1,0 +1,11 @@
+# Revisions git blame should skip — bulk, mechanical commits (line-ending or
+# whitespace normalization) whose lines are not the real "last meaningful change".
+#
+# GitHub applies this file automatically. Locally, enable it once with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# ONLY add commits that are PURE reformatting (no content edits), or blame will
+# hide real changes.
+
+# Normalize all line endings to LF (see .gitattributes)
+0433ac1b82c8cb05f9e69db0fe7f5a28faba9fe0

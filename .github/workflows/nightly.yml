@@ -1,7 +1,20 @@
 name: Nightly
 
-# Daily build of the OPT-IN nightly channel — but ONLY when `main` has advanced
-# since the last nightly. Produces a single macOS Apple Silicon bundle built with
+# Daily build of the OPT-IN nightly channel FROM THE `dev` BRANCH — but ONLY when
+# `dev` has advanced since the last nightly. `main` is the stable, PR-only release
+# branch; the bleeding-edge nightly tracks `dev` instead: the GATE job checks out
+# `ref: dev`, captures that tip's sha, and the build jobs check out THAT sha (not
+# the moving branch tip) so the artifacts, the embedded version, and the release's
+# target_commitish all agree even if dev advances mid-run.
+#
+# IMPORTANT: `schedule` runs a workflow ONLY from the DEFAULT branch's copy of the
+# file. main is the default branch, so THIS file must live on main for the daily
+# cron to build dev — `ref: dev` inside it selects dev for the actual build. (dev
+# keeps its own copy too, but that one only drives manual workflow_dispatch runs
+# from dev.) Keep the two copies in sync.
+#
+# Produces a macOS (Apple Silicon) bundle plus a best-effort
+# Windows (x86_64) one, built with
 # `--features nightly` (max-verbosity Trace logging — see lib.rs), published to a
 # ROLLING `nightly` PRERELEASE that carries its own `latest.json` at
 # releases/download/nightly/latest.json. Deliberately separate from the stable
@@ -15,7 +28,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: "Build even if main hasn't advanced since the last nightly"
+        description: "Build even if dev hasn't advanced since the last nightly"
         type: boolean
         default: false
 
@@ -40,6 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: dev # the nightly channel tracks dev, not the default branch
           fetch-depth: 0
       - name: Gate on new commits + compute the nightly version
         id: gate
@@ -64,7 +78,7 @@ jobs:
           LAST=$(gh release view nightly --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null | sed -n 's/^nightly-sha: //p' | head -1 || true)
           if [ "$LAST" = "$HEAD" ] && [ "${{ inputs.force }}" != "true" ]; then
             echo "should_build=false" >> "$GITHUB_OUTPUT"
-            echo "main hasn't advanced since the last nightly ($HEAD) — skipping."
+            echo "dev hasn't advanced since the last nightly ($HEAD) — skipping."
           else
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           fi
@@ -119,10 +133,10 @@ jobs:
     runs-on: macos-latest # Apple Silicon (arm64)
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.gate.outputs.sha }} # the EXACT commit the gate captured + versioned, not the moving dev tip
       - name: Install pnpm
         uses: pnpm/action-setup@v6
-        with:
-          version: 10
       - name: Install Node
         uses: actions/setup-node@v6
         with:
@@ -162,13 +176,76 @@ jobs:
           releaseId: ${{ needs.prepare.outputs.release_id }}
           args: --features nightly --target aarch64-apple-darwin
 
+  # Windows (x86_64) nightly. ADDITIVE / best-effort: `finalize` gates on the
+  # macOS `build` succeeding and uses `always()`, so a broken Windows leg just
+  # means that night's nightly ships macOS-only. Mirrors the macOS job's steps
+  # (own cache key + Windows target); the version-bump step runs under `bash`
+  # (Git Bash: jq/sed/`/tmp` are all present on the windows runner) so the same
+  # unix one-liners work.
+  #
+  # NSIS ONLY (`--bundles nsis`): the nightly VERSION carries a semver pre-release
+  # identifier (…-nightly.<date>.<sha>), and the MSI/WiX target REJECTS that —
+  # "pre-release identifier ... must be numeric-only and cannot be greater than
+  # 65535 for msi target" (the <date> is > 65535 and the sha isn't numeric). MSI
+  # product versions are numeric major.minor.build only, with no semver notion of
+  # a pre-release, so a nightly simply can't be an MSI. NSIS has no such rule and
+  # produces a perfectly good `-setup.exe` (+ .sig) updater artifact, so the
+  # nightly channel ships NSIS on Windows. (Stable release.yml still builds both,
+  # because a tagged release version has no pre-release identifier.)
+  build_windows:
+    name: Windows (x86_64)
+    needs: [gate, prepare]
+    if: needs.gate.outputs.should_build == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.gate.outputs.sha }} # the EXACT commit the gate captured + versioned, not the moving dev tip
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install Rust stable (x86_64-pc-windows-msvc)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: nightly-x86_64-pc-windows-msvc
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply the nightly version
+        shell: bash
+        run: |
+          VERSION="${{ needs.gate.outputs.version }}"
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > /tmp/tc.json && mv /tmp/tc.json src-tauri/tauri.conf.json
+          sed -i.bak -E "s/^version = \"[^\"]+\"/version = \"$VERSION\"/" src-tauri/Cargo.toml && rm -f src-tauri/Cargo.toml.bak
+      - name: Build + upload to the nightly release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.prepare.outputs.release_id }}
+          args: --features nightly --target x86_64-pc-windows-msvc --bundles nsis
+
   # Publish the draft (keeping the prerelease flag) — this creates the `nightly`
   # tag and makes releases/download/nightly/latest.json resolve. NEVER drop the
   # prerelease flag: that would let it show up as the stable "latest".
   finalize:
     name: Publish the nightly release
-    needs: [gate, prepare, build]
-    if: needs.gate.outputs.should_build == 'true'
+    needs: [gate, prepare, build, build_windows]
+    # always() + an explicit macOS-build gate so a FAILED best-effort Windows leg
+    # can't stop the macOS nightly from publishing. build_windows is in `needs`
+    # only to make finalize WAIT for it (so a slow Windows upload lands in the
+    # draft before publish); its result is intentionally not required.
+    if: always() && needs.gate.outputs.should_build == 'true' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Publish (undraft, keep prerelease)

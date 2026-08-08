@@ -27,6 +27,7 @@
 //! sourced from argv instead of always being present/absent based on which
 //! code path created the window.
 
+use std::path::Path;
 use std::process::Command;
 
 use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder, Wry};
@@ -39,22 +40,76 @@ const WINDOW_H: f64 = 900.0;
 const WINDOW_MIN_W: f64 = 960.0;
 const WINDOW_MIN_H: f64 = 600.0;
 
-fn window_url(repo_path: Option<&str>) -> WebviewUrl {
-    match repo_path {
-        Some(p) => {
-            let encoded = percent_encoding::utf8_percent_encode(p, percent_encoding::NON_ALPHANUMERIC).to_string();
-            WebviewUrl::App(format!("index.html?repo={encoded}").into())
-        }
-        None => WebviewUrl::App("index.html".into()),
+fn enc(p: &str) -> String {
+    percent_encoding::utf8_percent_encode(p, percent_encoding::NON_ALPHANUMERIC).to_string()
+}
+
+/// What this process was launched to open, derived from its `argv[1]`.
+#[cfg_attr(test, derive(Debug))]
+enum InitialArg {
+    /// No path argument — a plain double-click launch, or `spawn_new_window(None)`.
+    None,
+    /// An existing git repo at this path — open it (`?repo=`).
+    Repo(String),
+    /// A path WAS given but it is not a git repo (or can't be resolved) — still
+    /// open a window, but hand the frontend a hint to show (`?repoError=`).
+    NotRepo(String),
+}
+
+fn window_url(arg: &InitialArg) -> WebviewUrl {
+    match arg {
+        InitialArg::Repo(p) => WebviewUrl::App(format!("index.html?repo={}", enc(p)).into()),
+        InitialArg::NotRepo(p) => WebviewUrl::App(format!("index.html?repoError={}", enc(p)).into()),
+        InitialArg::None => WebviewUrl::App("index.html".into()),
     }
 }
 
-/// This PROCESS's own repo argument (`argv[1]`) — `None` for a normal
-/// double-click launch, `Some(path)` when spawned by `spawn_new_window`
-/// below. Read directly from `std::env::args()` (not any Tauri state) since
-/// it's needed before the app/window even exists.
-fn initial_repo_arg() -> Option<String> {
-    std::env::args().nth(1)
+/// Classify this process's repo argument. Pure over its input so it can be
+/// unit-tested; `initial_arg()` below feeds it `std::env::args().nth(1)` (read
+/// directly, not from Tauri state, since it's needed before the app/window even
+/// exists).
+///
+/// `code .`-style ergonomics: a RELATIVE path is resolved against the launch CWD
+/// (normalizing `.`/`..`/symlinks) so `gitcat .` and `gitcat ../other` work from
+/// a terminal; an ABSOLUTE path is used verbatim (no canonicalization) so a repo
+/// handed over by `spawn_new_window` keeps the exact identity the registry tracks
+/// it under. A leading-`-` arg is ignored — nothing here takes flags, and
+/// askpass mode is env-gated, not argv-gated (see askpass.rs). A path that
+/// resolves to a real git repo is `Repo`; one that exists but isn't a repo, or
+/// can't be resolved at all, is `NotRepo` so the user is told rather than left
+/// staring at a window that silently opened nothing.
+fn classify_initial_arg(raw: Option<String>) -> InitialArg {
+    let raw = match raw {
+        Some(r) if !r.is_empty() && !r.starts_with('-') => r,
+        _ => return InitialArg::None,
+    };
+    let abs = if Path::new(&raw).is_absolute() {
+        raw.clone()
+    } else {
+        // Relative: resolve against the CWD. canonicalize requires the path to
+        // exist, so a bogus relative arg falls through to the NotRepo hint with
+        // its original text (the most useful thing to show the user).
+        match std::fs::canonicalize(&raw).ok().and_then(|p| p.to_str().map(str::to_string)) {
+            Some(a) => a,
+            None => return InitialArg::NotRepo(raw),
+        }
+    };
+    // Validate with the SAME opener every backend read uses — `trust::open_repo`,
+    // which auto-trusts libgit2's "dubious ownership" refusal for WSL/UNC/network
+    // paths (see trust.rs) and is what `load_graph` and the setup wizard's
+    // pick-a-repo step both go through. A raw `Repository::open` here would reject
+    // a valid WSL/network repo the app opens fine, wrongly hinting "not a git
+    // repository" for both `gitcat <wsl-path>` and the Dashboard's "Open in New
+    // Window" (which routes through this same classifier via spawn_new_window).
+    if crate::trust::open_repo(&abs).is_ok() {
+        InitialArg::Repo(abs)
+    } else {
+        InitialArg::NotRepo(abs)
+    }
+}
+
+fn initial_arg() -> InitialArg {
+    classify_initial_arg(std::env::args().nth(1))
 }
 
 /// Called once, from `run()`'s own `.setup()` hook — creates THIS process's
@@ -64,7 +119,15 @@ fn initial_repo_arg() -> Option<String> {
 /// collision to worry about), pointed at whichever repo (if any) this
 /// process was launched with.
 pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
-    WebviewWindowBuilder::new(app, "main", window_url(initial_repo_arg().as_deref()))
+    let arg = initial_arg();
+    // Best-effort terminal hint for `gitcat <not-a-repo>`, visible when launched
+    // from a shell (a GUI double-click has no attached terminal — there the
+    // in-app hint via ?repoError=, surfaced by legacy/main.ts's boot dispatch,
+    // is the real one).
+    if let InitialArg::NotRepo(p) = &arg {
+        eprintln!("gitcat: {p} is not a git repository");
+    }
+    WebviewWindowBuilder::new(app, "main", window_url(&arg))
         .title(WINDOW_TITLE)
         .inner_size(WINDOW_W, WINDOW_H)
         .min_inner_size(WINDOW_MIN_W, WINDOW_MIN_H)
@@ -140,7 +203,7 @@ pub fn spawn_new_window(repo_path: Option<&str>) {
 /// binary such as `cargo tauri dev`'s `target/debug/gitcat`, where `open -a`
 /// has no bundle to launch and the caller falls back to a direct spawn.
 #[cfg(target_os = "macos")]
-fn macos_app_bundle(exe: &std::path::Path) -> Option<std::path::PathBuf> {
+pub(crate) fn macos_app_bundle(exe: &std::path::Path) -> Option<std::path::PathBuf> {
     let macos = exe.parent()?; // <Name>.app/Contents/MacOS
     let contents = macos.parent()?; // <Name>.app/Contents
     let bundle = contents.parent()?; // <Name>.app
@@ -162,4 +225,66 @@ fn macos_app_bundle(exe: &std::path::Path) -> Option<std::path::PathBuf> {
 #[specta::specta]
 pub fn open_repo_in_new_window(path: String) {
     spawn_new_window(Some(&path));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git2::Repository;
+    use std::path::PathBuf;
+
+    // A fresh, unique temp dir path (not created). Nanosecond + pid keeps
+    // parallel test runs from colliding — same pattern as the temp dirs the
+    // rest of the backend's tests use.
+    fn unique_tmp(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("gitcat-initialarg-{tag}-{}-{nanos}", std::process::id()))
+    }
+
+    #[test]
+    fn none_for_no_arg_empty_or_flag() {
+        assert!(matches!(classify_initial_arg(None), InitialArg::None));
+        assert!(matches!(classify_initial_arg(Some(String::new())), InitialArg::None));
+        assert!(matches!(classify_initial_arg(Some("--help".into())), InitialArg::None));
+        assert!(matches!(classify_initial_arg(Some("-v".into())), InitialArg::None));
+    }
+
+    #[test]
+    fn repo_for_an_existing_git_repo_kept_verbatim() {
+        let dir = unique_tmp("repo");
+        std::fs::create_dir_all(&dir).unwrap();
+        Repository::init(&dir).unwrap();
+        let abs = dir.to_str().unwrap().to_string();
+        // Absolute path passed through verbatim (no canonicalization), so the
+        // opened path is exactly what the caller gave — see classify's doc.
+        assert!(matches!(classify_initial_arg(Some(abs.clone())), InitialArg::Repo(p) if p == abs));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn not_repo_for_a_plain_directory() {
+        let dir = unique_tmp("plain");
+        std::fs::create_dir_all(&dir).unwrap();
+        let abs = dir.to_str().unwrap().to_string();
+        assert!(matches!(classify_initial_arg(Some(abs.clone())), InitialArg::NotRepo(p) if p == abs));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn not_repo_for_a_missing_absolute_path() {
+        let missing = unique_tmp("missing").to_str().unwrap().to_string();
+        assert!(matches!(classify_initial_arg(Some(missing.clone())), InitialArg::NotRepo(p) if p == missing));
+    }
+
+    #[test]
+    fn window_url_carries_repo_vs_error_vs_none() {
+        assert!(matches!(window_url(&InitialArg::None), WebviewUrl::App(p) if p.to_str() == Some("index.html")));
+        let repo = window_url(&InitialArg::Repo("/tmp/x y".into()));
+        assert!(matches!(&repo, WebviewUrl::App(p) if p.to_str().unwrap().starts_with("index.html?repo=") && p.to_str().unwrap().contains("%20")));
+        let err = window_url(&InitialArg::NotRepo("/tmp/x y".into()));
+        assert!(matches!(&err, WebviewUrl::App(p) if p.to_str().unwrap().starts_with("index.html?repoError=")));
+    }
 }

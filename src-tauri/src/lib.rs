@@ -23,6 +23,7 @@ pub mod git_rebase; // M6 (stage 2): linear rebase onto a target + continue / sk
 pub mod git_revert; // M6 (stage 3): revert a single commit onto HEAD + continue / abort
 pub mod identity; // Setup wizard: repo-local git identity (user.name/user.email) check + fix
 pub mod layout;
+pub mod maintenance; // optional background `git maintenance run --auto`, triggered by the frontend's idle timer (opt-in, off by default)
 pub mod menu; // native app menu (File/Edit/View/Window/Help)
 pub mod model;
 pub mod patch; // format-patch export + git am --3way apply (with am's own continue/skip/abort)
@@ -37,10 +38,14 @@ pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
 pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 deinit/remove
 pub mod terminal; // "Open Terminal": a real PTY-backed shell embedded in GitCat's own UI
+pub mod plugin_exec; // PER-40: plugin command executor + placeholder grammar (declarative, external-process plugins)
+pub mod plugin_lua; // PER-56: embedded Luau plugin scripting runtime (sandboxed, curated host API)
+pub mod plugin_registry; // PER-39: app-level plugin registry (plugins.json under app_config_dir) + install/enable/remove CRUD
 pub mod tool_settings; // backlog #12: external diff/merge tool settings + delegate entirely to `git difftool`/`git mergetool`
 pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious ownership"
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
 pub mod windows; // multi-window: spawn a fresh, fully independent GitCat process, optionally pointed directly at a repo
+pub mod cli_shim; // "Install 'gitcat' command in PATH": writes a VS Code `code`-style launcher (macOS /usr/local/bin, Linux ~/.local/bin, Windows WindowsApps)
 pub mod updater; // channel-aware "check for updates" (stable vs nightly endpoint + downgrade-allowing comparator)
 pub mod wsl; // routes git_remote.rs's/submodule.rs's network commands through wsl.exe on a WSL-path repo, so credentials resolve inside the distro
 
@@ -114,6 +119,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // calls it.
         git_remote::fetch,
         git_remote::pull,
+        // Optional background repo housekeeping (`git maintenance run --auto`),
+        // fired by the frontend's idle timer when autoMaintenanceEnabled is on.
+        maintenance::run_git_maintenance,
         // Streaming twins of fetch/pull: same behaviour, but force git
         // --progress and emit "sync-progress" events so the topbar/menu
         // Fetch/Pull can show a live progress modal (see doFetch/doPull).
@@ -305,6 +313,19 @@ fn specta_builder() -> Builder<tauri::Wry> {
         tool_settings::suggest_commit_msg_command,
         tool_settings::open_diff_tool,
         tool_settings::resolve_conflict_with_external_tool,
+        // PER-44: multiple named diff/merge/commit tools (list + active selection)
+        tool_settings::save_named_tool,
+        tool_settings::remove_named_tool,
+        tool_settings::set_active_tool,
+        // PER-39/40: plugin system foundation — local registry CRUD + the
+        // hardened external-process command executor (placeholder grammar).
+        plugin_registry::list_plugins,
+        plugin_registry::set_plugin_enabled,
+        plugin_registry::install_plugin_from_path,
+        plugin_registry::remove_plugin,
+        plugin_registry::load_plugin_skin, // PER-47: load a plugin's Tama skin (pose assets → data URIs)
+        plugin_exec::run_plugin_command,
+        plugin_exec::run_hooks, // PER-43: run enabled plugins' hooks for a lifecycle event
         // Repo-root file editors (backlog #14, final item): view/edit .gitignore
         // and .mailmap directly — allow-listed to exactly these two names, see
         // repo_files.rs's own module doc.
@@ -320,6 +341,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // generic "New Window" menu item is handled entirely in Rust, see
         // menu.rs's own handle_event — no command round trip for that path).
         windows::open_repo_in_new_window,
+        // "Install 'gitcat' command in PATH" (macOS/Linux/Windows): writes a
+        // `code`-style launcher so `gitcat <folder>` works from a terminal.
+        cli_shim::install_cli_shim,
     ])
     // `GraphBatch` is never a command's own parameter/return type — it's ONLY
     // ever emitted over the raw `"graph-batch"` event (see commands::stream_graph

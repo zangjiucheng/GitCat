@@ -6,14 +6,36 @@ on:
   # branch double-runs the whole suite (once per event) on every commit to an
   # open PR. Restricting push to main is the standard fix: main itself is
   # never a PR head here, so it can't double-fire the other way either.
+  #
+  # Docs-only changes are handled entirely by docs.yml (VitePress build + Pages
+  # deploy) and cannot affect the Rust core or the Svelte app, so skip this whole
+  # suite when EVERY changed file is under docs/. `paths-ignore` skips a run only
+  # when ALL changed files match, so a mixed code+docs commit still runs full CI.
+  # (package.json / pnpm-lock.yaml are NOT under docs/, so a real dependency
+  # change still triggers both this suite and docs.yml, as it should.)
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
   pull_request:
+    paths-ignore:
+      - "docs/**"
 
 # Cancel superseded runs on the same branch/PR to save CI minutes.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+# Limit the GITHUB_TOKEN to the least privilege this suite actually needs.
+# Without an explicit block the token defaults to broad, mostly-write scopes
+# (CodeQL flags this as actions/missing-workflow-permissions). Every job here
+# only builds and tests: `actions/checkout` needs `contents: read`, and nothing
+# writes back to the repo. The e2e job's `upload-artifact` uses the Actions
+# runtime token, not GITHUB_TOKEN scopes, and `$GITHUB_STEP_SUMMARY` is a plain
+# env-file write, so neither needs anything beyond read. Declared at workflow
+# level so it applies to all four jobs (rust, rust-windows, frontend, e2e).
+permissions:
+  contents: read
 
 jobs:
   # Builds/tests the Rust core (src-tauri, crate `gitcat_lib`).
@@ -153,6 +175,55 @@ jobs:
       - name: Build examples
         run: cargo build --examples --locked
 
+  # Builds the Rust core on Windows. Its reason to exist: the `rust` job above
+  # only compiles Linux, so any `#[cfg(target_os = "windows")]` code path (e.g.
+  # cli_shim::windows_install, plus windows.rs / procutil.rs / wsl.rs) is
+  # otherwise unverified until a tagged release runs the 6-platform matrix. This
+  # catches a Windows-only compile break on the PR instead.
+  #
+  # Compile-only, on purpose:
+  #  - `cargo build` covers the app/library binary.
+  #  - `cargo test --lib --no-run` additionally COMPILES the library unit-test
+  #    code on Windows (Windows-clean: the handful of Unix-only cases are
+  #    #[cfg(unix)]-guarded), catching a Windows test-compile break too. `--lib`
+  #    skips the tests/ integration suite (submodule / repo_registry /
+  #    repo_files), which uses unguarded std::os::unix APIs and doesn't compile
+  #    on Windows yet (a separate follow-up).
+  #  - We deliberately do NOT run the tests. The Tauri library's test binary
+  #    transitively links the WebView2/wry native stack and fails to resolve a
+  #    DLL entry point at startup on a stock runner (exit 0xc0000139,
+  #    STATUS_ENTRYPOINT_NOT_FOUND) before any test executes. The cli_shim
+  #    launcher tests are platform-agnostic pure functions already run by the
+  #    Linux `rust` job, so running them here would add nothing regardless.
+  # No apt/system-deps step: Windows runners ship the MSVC toolchain and WebView2
+  # SDK, and libgit2-sys builds its vendored copy with `cc`, same as on Linux.
+  rust-windows:
+    name: Rust (Windows build)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Compile library unit tests (no-run; see job comment)
+        run: cargo test --locked --lib --no-run
+
+      - name: Build examples
+        run: cargo build --examples --locked
+
   # Type-checks/builds/tests the Svelte 5 frontend.
   # Independent of the `rust` job above so the two run in parallel.
   frontend:
@@ -166,8 +237,6 @@ jobs:
       # `pnpm store path` to locate what to cache.
       - name: Install pnpm
         uses: pnpm/action-setup@v6
-        with:
-          version: 10
 
       - name: Install Node
         uses: actions/setup-node@v6
@@ -186,3 +255,72 @@ jobs:
 
       - name: Test (vitest)
         run: pnpm test
+
+  # Runs the Playwright suite in e2e/, which has existed (and been CI-aware —
+  # see playwright.config.ts's own `process.env.CI` branches for retries,
+  # forbidOnly and reuseExistingServer) without anything ever running it.
+  #
+  # Its own job rather than more steps on `frontend` above, for two reasons: it
+  # needs a browser download that the type-check/unit-test path has no use for,
+  # so a flake there would otherwise hold up results those steps already
+  # produced; and this way the two run in parallel like `rust` and `frontend`
+  # already do.
+  #
+  # This covers the real Svelte frontend in a real browser with the IPC boundary
+  # mocked (e2e/fixtures/tauriMock.ts), NOT the packaged Tauri app — Playwright
+  # can't drive Tauri's native webview. See that file's header for the scope
+  # this does and doesn't reach.
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # No `version` input — package.json's `packageManager` field is the one
+      # declaration now (same as the frontend job above since #15; specifying
+      # both makes pnpm/action-setup fail with "Multiple versions of pnpm
+      # specified").
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Keyed on the lockfile because that is what pins @playwright/test, and a
+      # browser build only works with the driver it shipped for. A miss just
+      # re-downloads.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      # Chromium only — playwright.config.ts declares exactly one project. The
+      # system libraries from --with-deps are NOT part of the cached path above,
+      # so this step still has to run on a cache hit; with the browser already
+      # present it just installs those.
+      - name: Install Playwright browser + system deps
+        run: pnpm exec playwright install --with-deps chromium
+
+      # The fixtures shell out to a real `git` (see e2e/fixtures/tempRepo.ts) and
+      # set identity per repo, so the runner needs no global git config.
+      - name: Test (playwright)
+        run: pnpm test:e2e
+
+      # Only on failure: the HTML report is the whole point of a red e2e run, and
+      # traces (trace: "on-first-retry") only exist when something retried.
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

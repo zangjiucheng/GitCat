@@ -9,12 +9,22 @@
   // chrome ExternalTools/SetupWizard reuse). The Git Identity section
   // mirrors SetupWizard's own identity step markup closely — see
   // settings.svelte.ts's header doc for why.
-  import { settingsCtrl, CURATED_CONFIG_FIELDS, AUTO_FETCH_INTERVAL_OPTIONS, SETTINGS_TABS } from "./settings.svelte.ts";
-  import type { ThemeMode, SnapshotRetentionMode, GraphLabelPriority } from "./settings.svelte.ts";
+  import {
+    settingsCtrl,
+    CURATED_CONFIG_FIELDS,
+    AUTO_FETCH_INTERVAL_OPTIONS,
+    SETTINGS_TABS,
+    TAMA_MOTION_PRESETS,
+    TAMA_POSE_OPTIONS,
+    TAMA_MOMENT_FIELDS,
+    tamaPoseLabel,
+  } from "./settings.svelte.ts";
+  import type { ThemeMode, SnapshotRetentionMode, GraphLabelPriority, TamaMotionPreset } from "./settings.svelte.ts";
   import type { ConfigScope } from "../../ipc/bindings";
   import { playTamaSound } from "../../legacy/sound.ts";
   import { updaterCtrl } from "../updater/updater.svelte.ts";
   import { aboutCtrl } from "../about/about.svelte.ts";
+  import { IN_TAURI } from "../../ipc/env";
 
   // Switching update channel: persist the choice, then immediately surface what's
   // available on the NEWLY-selected channel — turning nightly ON offers the
@@ -132,9 +142,75 @@
         <input type="checkbox" checked={settingsCtrl.useNightlyChannel} onchange={onNightlyToggle} />
         Use nightly builds
       </label>
-      <div class="mut" style="font-size:11.5px;margin:0 0 14px 26px;line-height:1.5">
+      <div class="mut" style="font-size:11.5px;margin:0 0 10px 26px;line-height:1.5">
         Unstable daily builds with verbose debug logging. You can switch back to the latest stable release at any time.
       </div>
+      <!-- Manual update: the same updaterCtrl state machine the About panel and
+           the Help ▸ Check for Updates item drive, inline here so an update can
+           be checked, downloaded, and installed without leaving Settings. -->
+      <div style="margin:0 0 14px">
+        {#if updaterCtrl.phase === "idle"}
+          <button class="btn ghost" onclick={() => updaterCtrl.check()}>Check for updates now</button>
+        {:else if updaterCtrl.phase === "checking"}
+          <span class="mut" style="font-size:12.5px"><span class="spinner"></span> Checking for updates&#8230;</span>
+        {:else if updaterCtrl.phase === "up-to-date"}
+          <span class="mut" style="font-size:12.5px">
+            You're up to date. <button class="btn ghost" style="padding:2px 8px;font-size:11px" onclick={() => updaterCtrl.dismiss()}>OK</button>
+          </span>
+        {:else if updaterCtrl.phase === "available"}
+          <div style="border:1px solid var(--border);border-radius:var(--r-control);padding:10px 12px;max-width:340px">
+            <div style="font-size:12.5px"><b>v{updaterCtrl.version}</b> is available <span class="mut">(you have v{updaterCtrl.currentVersion})</span></div>
+            {#if updaterCtrl.notes}
+              <p class="mut" style="font-size:11.5px;white-space:pre-wrap;margin:6px 0 0;max-height:120px;overflow:auto">{updaterCtrl.notes}</p>
+            {/if}
+            <div style="display:flex;gap:8px;margin-top:10px">
+              <button class="btn ghost" onclick={() => updaterCtrl.dismiss()}>Not now</button>
+              <button class="btn" onclick={() => updaterCtrl.downloadAndInstall()}>Download &amp; Install</button>
+            </div>
+          </div>
+        {:else if updaterCtrl.phase === "downloading"}
+          <div style="border:1px solid var(--border);border-radius:var(--r-control);padding:10px 12px;max-width:340px">
+            {#if updaterCtrl.progress != null}
+              <div style="height:6px;border-radius:3px;background:var(--elevated);overflow:hidden">
+                <div style="height:100%;width:{updaterCtrl.progress}%;background:var(--accent);transition:width .15s"></div>
+              </div>
+              <span class="mut" style="font-size:11.5px">Downloading&#8230; {updaterCtrl.progress}%</span>
+            {:else}
+              <span class="mut" style="font-size:12.5px"><span class="spinner"></span> Downloading&#8230;</span>
+            {/if}
+          </div>
+        {:else if updaterCtrl.phase === "ready"}
+          <div style="border:1px solid var(--border);border-radius:var(--r-control);padding:10px 12px;max-width:340px">
+            <div style="font-size:12.5px">Update downloaded &#8212; restart to finish installing.</div>
+            <div style="margin-top:10px"><button class="btn" onclick={() => updaterCtrl.restart()}>Restart Now</button></div>
+          </div>
+        {:else if updaterCtrl.phase === "error"}
+          <span class="mut" style="font-size:12.5px">
+            {updaterCtrl.error} <button class="btn ghost" style="padding:2px 8px;font-size:11px" onclick={() => updaterCtrl.dismiss()}>Dismiss</button>
+          </span>
+        {/if}
+      </div>
+
+      {#if IN_TAURI}
+        <!-- Command line: adds a `gitcat` launcher to a folder on PATH so a repo
+             can be opened from any terminal, VS Code's `code .` style. Works on
+             macOS, Linux, and Windows (see cli_shim.rs / install_cli_shim). -->
+        <h4 class="d-lab">Command line</h4>
+        <p class="mut" style="font-size:11.5px;margin:0 0 8px">
+          Add a <code>gitcat</code> command to your PATH so you can open a repository from any terminal, the way <code>code .</code> works in VS Code. It opens the app without blocking your terminal. On macOS you may be asked for your password.
+        </p>
+        <div style="margin:0 0 14px">
+          <button class="btn ghost" disabled={settingsCtrl.cliInstalling} onclick={() => settingsCtrl.installCliCommand()}>
+            {#if settingsCtrl.cliInstalling}<span class="spinner"></span> Installing&#8230;{:else}Install 'gitcat' command{/if}
+          </button>
+          {#if settingsCtrl.cliInstallOk}
+            <div class="mut" style="font-size:11.5px;margin-top:8px">{settingsCtrl.cliInstallOk}</div>
+          {/if}
+          {#if settingsCtrl.cliInstallError}
+            <div class="pl-err" style="margin-top:8px">{settingsCtrl.cliInstallError}</div>
+          {/if}
+        </div>
+      {/if}
 
       <h4 class="d-lab">Auto-fetch</h4>
       <label
@@ -161,6 +237,23 @@
           </select>
         </div>
       {/if}
+
+      <h4 class="d-lab">Maintenance</h4>
+      <label
+        class="set-toggle"
+        style="margin-bottom:8px"
+        title="Runs 'git maintenance run --auto' in the background while GitCat is idle, keeping the repo's object database tidy (commit-graph, gc, repack) so the graph and status stay fast. --auto only does work that's actually due; it never changes history, the working tree, or touches a remote."
+      >
+        <input
+          type="checkbox"
+          checked={settingsCtrl.autoMaintenanceEnabled}
+          onchange={(e) => settingsCtrl.setAutoMaintenanceEnabled((e.target as HTMLInputElement).checked)}
+        />
+        Run git maintenance in the background when idle
+      </label>
+      <div class="mut" style="font-size:11.5px;margin:0 0 14px 26px;line-height:1.5">
+        Keeps the repository's object database tidy (commit-graph, gc, repack) so everyday operations stay fast — only while the app sits idle, and only the work git decides is actually due. Off by default.
+      </div>
 
       <h4 class="d-lab">Snapshots</h4>
       <p class="mut" style="font-size:11.5px;margin:0 0 8px">
@@ -248,6 +341,70 @@
           disabled={!settingsCtrl.soundEffectsEnabled}
           onclick={() => playTamaSound("celebrate", { bypassCooldown: true })}>Test</button
         >
+      </div>
+
+      <h4 class="d-lab">Skin</h4>
+      <p class="mut" style="font-size:11.5px;margin:0 0 8px">
+        Choose a look &#8212; and voice &#8212; for Tama: her default painted portraits, one of the bundled characters, or a skin shipped by an installed plugin.
+      </p>
+      <div class="rm-form" style="margin-bottom:6px;max-width:260px">
+        <select
+          value={settingsCtrl.tamaSkinPluginId ?? ""}
+          disabled={settingsCtrl.tamaSkinBusy}
+          onchange={(e) => settingsCtrl.setTamaSkin((e.target as HTMLSelectElement).value || null)}
+        >
+          <option value="">Default (built-in)</option>
+          {#each settingsCtrl.builtinSkins as s (s.id)}
+            <option value={s.id}>{s.name}</option>
+          {/each}
+          {#each settingsCtrl.skinnablePlugins as p (p.id)}
+            <option value={p.id}>{p.name}</option>
+          {/each}
+        </select>
+      </div>
+      {#if settingsCtrl.tamaSkinError}
+        <div class="pl-err" style="margin-bottom:8px">{settingsCtrl.tamaSkinError}</div>
+      {/if}
+      <div style="margin-bottom:8px"></div>
+
+      <h4 class="d-lab">Motion</h4>
+      <p class="mut" style="font-size:11.5px;margin:0 0 8px">
+        How lively Tama's idle motion and reactions feel. <b>Default</b> keeps her current behavior.
+      </p>
+      <div class="rm-form" style="margin-bottom:14px;max-width:220px">
+        <select
+          value={settingsCtrl.tamaMotionPreset}
+          onchange={(e) => settingsCtrl.setTamaMotionPreset((e.target as HTMLSelectElement).value as TamaMotionPreset)}
+        >
+          {#each TAMA_MOTION_PRESETS as p (p.value)}
+            <option value={p.value}>{p.label}</option>
+          {/each}
+        </select>
+      </div>
+
+      <h4 class="d-lab">Expressions</h4>
+      <p class="mut" style="font-size:11.5px;margin:0 0 8px">
+        Pick which face Tama makes for each moment. Leave one on <b>Default</b> to keep her built-in look.
+      </p>
+      <div class="rm-form">
+        {#each TAMA_MOMENT_FIELDS as m (m.state)}
+          <label for={"tama-mood-" + m.state} style="font-size:12px;color:var(--muted)" title={m.hint}>{m.label}</label>
+          <select
+            id={"tama-mood-" + m.state}
+            value={settingsCtrl.tamaPoseOverride(m.state)}
+            onchange={(e) => settingsCtrl.setTamaPoseOverride(m.state, (e.target as HTMLSelectElement).value)}
+          >
+            <option value="">Default ({tamaPoseLabel(m.pose)})</option>
+            {#each TAMA_POSE_OPTIONS as pose (pose.value)}
+              <option value={pose.value}>{pose.label}</option>
+            {/each}
+          </select>
+        {/each}
+      </div>
+      <div style="margin-top:10px;margin-bottom:8px">
+        <button class="btn ghost" disabled={!settingsCtrl.hasTamaPoseOverrides} onclick={() => settingsCtrl.resetTamaPoseOverrides()}>
+          Reset expressions
+        </button>
       </div>
       {/if}
 
@@ -410,6 +567,7 @@
         {/if}
       {/if}
       {/if}
+
     </div>
     <div class="modal-foot">
       <button class="btn ghost" disabled={settingsCtrl.identitySaving} onclick={() => settingsCtrl.close()}>Close</button>

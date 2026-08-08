@@ -299,10 +299,32 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-group>summary .manage-btn{margin-left:4px;border:none;background:transparent;color:var(--muted);
   cursor:pointer;font-size:13px;line-height:1;padding:2px 4px;border-radius:4px;flex:none}
 .ref-group>summary .manage-btn:hover{background:var(--panel);color:var(--text)}
-.ref-item{display:flex;align-items:center;gap:8px;padding:5px 8px 5px 24px;border-radius:6px;cursor:pointer;position:relative}
+/* Ref folder tree (buildRefRows in sidebar.svelte.ts). --depth is set inline
+   per row; folder and leaf rows each indent by the same 12px per level from
+   their own base, so nesting is legible at a glance. It defaults to 0, which is
+   what keeps any .ref-item rendered OUTSIDE the tree (the "＋ New branch…" row,
+   the submodule/snapshot sections) at its original flat inset. */
+.ref-item,.ref-folder{--depth:0}
+.ref-folder{display:flex;align-items:center;gap:6px;cursor:pointer;border-radius:6px;
+  padding:4px 8px 4px calc(10px + var(--depth) * 12px);color:var(--muted);font-weight:600;font-size:11px;user-select:none}
+.ref-folder:hover{background:var(--elevated);color:var(--text)}
+.ref-folder .tw{transition:transform .15s;color:var(--muted);transform:rotate(90deg);flex:none}
+.ref-folder.collapsed .tw{transform:none}
+.ref-folder .rname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ref-folder .count{font-family:var(--mono);font-size:10px;background:var(--elevated);padding:0 6px;border-radius:var(--r-pill);flex:none}
+.ref-folder:hover .count{background:var(--panel)}
+/* Collapse-all/expand-all on a section summary. `margin-left:4px` to sit beside
+   the count badge, NOT `auto`: .count above already claims the row's free space
+   with an auto margin, and a second auto margin would split that space between
+   them instead — pushing the badge away from the right edge it's aligned to.
+   `display:flex` centres the lucide icon in the box. */
+.ref-group>summary .fold-btn{margin-left:4px;display:flex;align-items:center}
+.ref-item{display:flex;align-items:center;gap:8px;padding:5px 8px 5px calc(24px + var(--depth) * 12px);border-radius:6px;cursor:pointer;position:relative}
 .ref-item:hover{background:var(--elevated)}
 .ref-item.current{background:color-mix(in srgb,var(--accent) 14%,transparent)}
-.ref-item.current::before{content:"";position:absolute;left:10px;top:50%;transform:translateY(-50%);width:5px;height:5px;border-radius:50%;background:var(--accent)}
+/* Tracks --depth with the row's own padding, so the "you are here" dot stays in
+   the current branch's gutter instead of the outermost one when it's nested. */
+.ref-item.current::before{content:"";position:absolute;left:calc(10px + var(--depth) * 12px);top:50%;transform:translateY(-50%);width:5px;height:5px;border-radius:50%;background:var(--accent)}
 .ref-item .rname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Hover tooltip showing a truncated ref name in full (see Sidebar.svelte's
    onRefHover). position:fixed so it escapes .ref-scroll/.sidebar overflow and
@@ -321,7 +343,6 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-item .ab{flex:none;white-space:nowrap;font-family:var(--mono);font-size:10px;color:var(--muted)}
 .ref-item .ab .up{color:var(--success)} .ref-item .ab .dn{color:var(--danger)}
 .ref-item .dot{width:8px;height:8px;border-radius:50%;flex:none}
-.remote-head{padding:4px 8px 4px 24px;font-size:11px;color:var(--muted);font-weight:600;display:flex;gap:6px;align-items:center}
 .ref-list{display:flex;flex-direction:column}
 .ref-item .ref-menu{margin-left:auto;opacity:0;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;border-radius:4px;flex:none}
 .ref-item:hover .ref-menu{opacity:1}

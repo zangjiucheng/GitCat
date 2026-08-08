@@ -14,6 +14,10 @@
   function onFieldKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") void externalToolsCtrl.save();
   }
+
+  function onToolFieldKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") void externalToolsCtrl.saveTool();
+  }
 </script>
 
 <svelte:window on:keydown={onKeydown} />
@@ -115,6 +119,82 @@
           &#10024; button). GitCat talks to no AI itself; the command is entirely yours. Works: <code>opencommit --dry-run</code>, a script/LLM
           CLI. Won't work: interactive tools like <code>aicommit2</code> that prompt you and commit themselves.
         </p>
+
+        <h4 class="d-lab" style="margin-top:18px">Named tools</h4>
+        <p class="mut" style="font-size:11.5px;margin:0 0 8px">
+          Save any number of named tools and mark one <b>active</b> per kind. An active named tool takes precedence over the single fields above,
+          which stay as the fallback.
+        </p>
+        {#if externalToolsCtrl.tools.length === 0}
+          <div class="log-row"><span class="msg mut">No named tools yet &#8212; add one below.</span></div>
+        {:else}
+          <div class="rm-list">
+            {#each externalToolsCtrl.tools as t (t.id)}
+              <div class="rm-item">
+                <div class="rm-main">
+                  <span class="rm-name">{t.name}</span>
+                  <span class="row-chip">{t.kind}</span>
+                  <span class="rm-url mono mut" title={t.cmd}>{t.cmd}</span>
+                  {#if externalToolsCtrl.isActive(t)}<span class="row-chip head">active</span>{/if}
+                </div>
+                <div class="rm-act">
+                  <button disabled={externalToolsCtrl.toolsBusy} onclick={() => externalToolsCtrl.toggleActive(t)}>
+                    {externalToolsCtrl.isActive(t) ? "Deactivate" : "Use"}
+                  </button>
+                  <button disabled={externalToolsCtrl.toolsBusy} onclick={() => externalToolsCtrl.startEditTool(t)}>Edit</button>
+                  <button class="danger" disabled={externalToolsCtrl.toolsBusy} onclick={() => externalToolsCtrl.removeTool(t.id)}>Remove</button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+
+        <div class="rm-add">
+          <div class="rm-form" class:busy={externalToolsCtrl.toolsBusy}>
+            <input
+              type="text"
+              placeholder="id&#8230; e.g. vscode-diff (lowercase, digits, hyphens)"
+              bind:value={externalToolsCtrl.formId}
+              disabled={externalToolsCtrl.toolsBusy || externalToolsCtrl.editingId !== null}
+              spellcheck="false"
+              autocomplete="off"
+              onkeydown={onToolFieldKeydown}
+            />
+            <input
+              type="text"
+              placeholder="name&#8230; e.g. VS Code (diff)"
+              bind:value={externalToolsCtrl.formName}
+              disabled={externalToolsCtrl.toolsBusy}
+              spellcheck="false"
+              autocomplete="off"
+              onkeydown={onToolFieldKeydown}
+            />
+            <select bind:value={externalToolsCtrl.formKind} disabled={externalToolsCtrl.toolsBusy}>
+              <option value="diff">Diff tool</option>
+              <option value="merge">Merge tool</option>
+              <option value="commit">Commit message command</option>
+            </select>
+            <input
+              type="text"
+              class="mono"
+              placeholder="command&#8230; (diff/merge use $LOCAL/$REMOTE/$BASE/$MERGED)"
+              bind:value={externalToolsCtrl.formCmd}
+              disabled={externalToolsCtrl.toolsBusy}
+              spellcheck="false"
+              autocomplete="off"
+              onkeydown={onToolFieldKeydown}
+            />
+            <div class="nb-row">
+              {#if externalToolsCtrl.toolsBusy}<span class="spinner"></span>{/if}
+              <button class="btn" disabled={externalToolsCtrl.toolsBusy} onclick={() => externalToolsCtrl.saveTool()}>
+                {#if externalToolsCtrl.editingId !== null}Update tool{:else}&#65291; Add tool{/if}
+              </button>
+              {#if externalToolsCtrl.editingId !== null}
+                <button class="btn ghost" disabled={externalToolsCtrl.toolsBusy} onclick={() => externalToolsCtrl.resetToolForm()}>Cancel</button>
+              {/if}
+            </div>
+          </div>
+        </div>
       {/if}
     </div>
     <div class="modal-foot">

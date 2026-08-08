@@ -68,7 +68,17 @@ vi.mock("../resolver/resolver.svelte.ts", () => ({
 import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
-import { sidebarCtrl, submoduleAction, submoduleNeedsForceConfirm, submoduleCanOpen, SUBMODULES_ALL, SUBMODULES_SYNC_ALL } from "./sidebar.svelte.ts";
+import {
+  sidebarCtrl,
+  submoduleAction,
+  submoduleNeedsForceConfirm,
+  submoduleCanOpen,
+  SUBMODULES_ALL,
+  SUBMODULES_SYNC_ALL,
+  buildRefRows,
+  refFolderPaths,
+  remoteHead,
+} from "./sidebar.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
@@ -78,6 +88,7 @@ function err(error: string): { status: "error"; error: string } {
 }
 
 function resetAll() {
+  sidebarCtrl.folderOpen = {};
   sidebarCtrl.locals = [];
   sidebarCtrl.remotes = [];
   sidebarCtrl.tags = [];
@@ -119,6 +130,10 @@ function resetAll() {
   // care about this" reasoning as submoduleStatus above — only the
   // "branch visibility" describe block overrides this per-test.
   vi.mocked(commands.getVisibleBranches).mockResolvedValue(ok({ local: null, remote: null, auto: false }));
+  // Default: persisting succeeds. persistVisibleBranches checks this Result and
+  // skips the graph reload when it failed, so without a default every test that
+  // changes visibility would take the failure path instead.
+  vi.mocked(commands.setVisibleBranches).mockResolvedValue(ok(null));
 }
 
 beforeEach(() => {
@@ -246,7 +261,8 @@ describe("branch visibility", () => {
     await sidebarCtrl.toggleBranchVisible("/repo", "local", "dev");
     expect(sidebarCtrl.visibleLocal).toEqual(["main"]);
     expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", false, ["main"], null);
-    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    // forceFull — see persistVisibleBranches' own doc comment.
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true, true);
   });
 
   it("toggleBranchVisible: a manual toggle turns auto mode off (grabbing the wheel exits autopilot)", async () => {
@@ -286,7 +302,7 @@ describe("branch visibility", () => {
     expect(sidebarCtrl.visibleLocal).toBeNull();
     expect(sidebarCtrl.visibleRemote).toBeNull();
     expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", false, null, null);
-    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true, true);
   });
 
   it("hideAllBranches sets both sets to [] (not null) AND turns off auto mode, and persists", async () => {
@@ -301,7 +317,65 @@ describe("branch visibility", () => {
     expect(sidebarCtrl.visibleLocal).toEqual([]);
     expect(sidebarCtrl.visibleRemote).toEqual([]);
     expect(commands.setVisibleBranches).toHaveBeenCalledWith("/repo", false, [], []);
-    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true, true);
+  });
+
+  // REGRESSION: every visibility change must force a FULL graph reload.
+  //
+  // A visibility change decides which commits the graph walks from, so it adds
+  // or removes rows — something reloadGraph's fast path cannot express, since
+  // all it does is remap ref chips over rows that are already loaded. Omitting
+  // forceFull once left the filter persisted and applied while the graph kept
+  // every commit, because a visibility toggle moves no ref and does not move
+  // HEAD, so that path classified it as a pure working-tree change and returned
+  // successfully having done nothing.
+  //
+  // Asserted per entry point rather than once, since each reaches
+  // persistVisibleBranches by its own route.
+  it.each([
+    ["toggleBranchVisible", () => sidebarCtrl.toggleBranchVisible("/repo", "local", "dev")],
+    ["showAllBranches", () => sidebarCtrl.showAllBranches("/repo")],
+    ["hideAllBranches", () => sidebarCtrl.hideAllBranches("/repo")],
+    ["toggleAutoMode", () => sidebarCtrl.toggleAutoMode("/repo")],
+  ])("%s forces a full graph reload, never the fast path", async (_name, act) => {
+    mockInTauri = true;
+    vi.mocked(commands.branchMergeStatus).mockResolvedValue(ok({ defaultBranch: "main", merged: [] }));
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+      { name: "dev", sha: "b", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+    ];
+    await act();
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true, true);
+    // Never the fast-path-eligible single-argument form.
+    expect(bridge.reloadGraph).not.toHaveBeenCalledWith(true);
+  });
+
+  // The flip side of forcing a full reload: a full reload is expensive, and it
+  // ends by re-reading the persisted filter. If persisting failed there is
+  // nothing new to walk to, so paying for the walk would only put the old
+  // picture back on screen — with the checkbox silently snapping back and no
+  // word to the user about why.
+  it.each([
+    ["a rejected Result", () => vi.mocked(commands.setVisibleBranches).mockResolvedValue({ status: "error", error: "read-only registry" })],
+    ["a thrown error", () => vi.mocked(commands.setVisibleBranches).mockRejectedValue(new Error("ipc down"))],
+  ])("a visibility change that fails to persist (%s) warns instead of reloading the graph", async (_name, failPersist) => {
+    mockInTauri = true;
+    sidebarCtrl.locals = [
+      { name: "main", sha: "a", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+      { name: "dev", sha: "b", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+    ];
+    failPersist();
+    // What the backend still has: the unfiltered state the toggle tried to leave.
+    vi.mocked(commands.getVisibleBranches).mockResolvedValue(ok({ local: null, remote: null, auto: false }));
+
+    await sidebarCtrl.toggleBranchVisible("/repo", "local", "dev");
+
+    expect(bridge.reloadGraph).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("Couldn't save"));
+    // Re-read from the backend, so the sidebar shows the filter that's really
+    // stored rather than the one it failed to store.
+    expect(commands.getVisibleBranches).toHaveBeenCalledWith("/repo");
+    expect(sidebarCtrl.visibleLocal).toBeNull();
   });
 
   it("hideAllBranches makes isBranchVisible false for every branch", async () => {
@@ -2204,5 +2278,361 @@ describe("copyBranchName", () => {
     vi.advanceTimersByTime(400); // dev's own 900ms timeout
     expect(sidebarCtrl.copiedBranch).toBe("");
     vi.useRealTimers();
+  });
+});
+
+// ── ref folder tree (Git-Fork-style "/"-segmented hierarchy) ────────────────
+// buildRefRows/refFolderPaths/remoteHead are pure module-level functions, so
+// these drive them directly with plain string fixtures — no controller state,
+// no DOM, no mocked commands.
+
+describe("remoteHead", () => {
+  it("takes the remote name off the front", () => {
+    expect(remoteHead("origin/feature/x")).toBe("origin");
+    expect(remoteHead("upstream/main")).toBe("upstream");
+  });
+
+  it("returns null for a name with no remote prefix, rather than guessing one", () => {
+    expect(remoteHead("main")).toBeNull();
+  });
+});
+
+describe("buildRefRows", () => {
+  const never = () => false;
+  const id = (s: string) => s;
+
+  it("renders a flat ref list as plain depth-0 leaves, sorted by name", () => {
+    const rows = buildRefRows(["main", "dev"], id, never);
+    expect(rows).toEqual([
+      { kind: "leaf", path: "dev", label: "dev", depth: 0, item: "dev" },
+      { kind: "leaf", path: "main", label: "main", depth: 0, item: "main" },
+    ]);
+  });
+
+  it("groups a shared prefix into a folder and shows only the last segment on the leaf", () => {
+    const rows = buildRefRows(["feature/a", "feature/b"], id, never);
+    expect(rows).toEqual([
+      { kind: "folder", path: "feature", label: "feature", depth: 0, count: 2, collapsed: false },
+      { kind: "leaf", path: "feature/a", label: "a", depth: 1, item: "feature/a" },
+      { kind: "leaf", path: "feature/b", label: "b", depth: 1, item: "feature/b" },
+    ]);
+  });
+
+  it("keeps the leaf's FULL name in path so row hooks (data-branch, checkout) still address the real ref", () => {
+    const rows = buildRefRows(["feature/some-work"], id, never);
+    const leaf = rows.find((r) => r.kind === "leaf")!;
+    expect(leaf.path).toBe("feature/some-work");
+    expect(leaf.label).toBe("some-work");
+  });
+
+  it("nests arbitrarily deep, one folder per segment", () => {
+    const rows = buildRefRows(["fix/win/askpass"], id, never);
+    expect(rows).toEqual([
+      { kind: "folder", path: "fix", label: "fix", depth: 0, count: 1, collapsed: false },
+      { kind: "folder", path: "fix/win", label: "win", depth: 1, count: 1, collapsed: false },
+      { kind: "leaf", path: "fix/win/askpass", label: "askpass", depth: 2, item: "fix/win/askpass" },
+    ]);
+  });
+
+  it("puts every folder before every plain branch at the same level", () => {
+    // `alpha` sorts before `zeta` alphabetically, but it's a LEAF — folders
+    // come first regardless, so the structure of a level is all at its top.
+    const rows = buildRefRows(["zeta/b", "alpha", "zeta/a"], id, never);
+    expect(rows.map((r) => `${r.kind}:${r.label}`)).toEqual(["folder:zeta", "leaf:a", "leaf:b", "leaf:alpha"]);
+  });
+
+  it("sorts folders A-Z and leaves A-Z independently, at every level", () => {
+    const rows = buildRefRows(["z/9", "z/1", "b/x", "m", "a"], id, never);
+    expect(rows.map((r) => `${r.kind}:${r.label}`)).toEqual([
+      "folder:b",
+      "leaf:x",
+      "folder:z",
+      "leaf:1",
+      "leaf:9",
+      "leaf:a",
+      "leaf:m",
+    ]);
+  });
+
+  it("re-sorts regardless of the order items arrive in", () => {
+    const forwards = buildRefRows(["a/1", "a/2", "b"], id, never).map((r) => r.label);
+    const backwards = buildRefRows(["b", "a/2", "a/1"], id, never).map((r) => r.label);
+    expect(backwards).toEqual(forwards);
+  });
+
+  it("sorts numerically, so release/10 comes after release/2 rather than before it", () => {
+    // Plain lexicographic ordering puts "10" before "2", which is actively
+    // wrong for the version-like names this grouping exists to tidy up.
+    const rows = buildRefRows(["release/10", "release/2", "release/1"], id, never);
+    expect(rows.filter((r) => r.kind === "leaf").map((r) => r.label)).toEqual(["1", "2", "10"]);
+  });
+
+  it("sorts case-insensitively, so Fix/ and fix/ don't land far apart", () => {
+    const rows = buildRefRows(["beta", "Alpha", "gamma"], id, never);
+    expect(rows.map((r) => r.label)).toEqual(["Alpha", "beta", "gamma"]);
+  });
+
+  it("counts every leaf at or below a folder, including nested ones", () => {
+    const rows = buildRefRows(["r/1/a", "r/1/b", "r/2/c"], id, never);
+    const byPath = Object.fromEntries(rows.filter((r) => r.kind === "folder").map((r) => [r.path, r.count]));
+    expect(byPath).toEqual({ r: 3, "r/1": 2, "r/2": 1 });
+  });
+
+  it("a collapsed folder still reports its count but emits none of its descendants", () => {
+    const rows = buildRefRows(["feature/a", "feature/b", "main"], id, (p) => p === "feature");
+    expect(rows).toEqual([
+      { kind: "folder", path: "feature", label: "feature", depth: 0, count: 2, collapsed: true },
+      { kind: "leaf", path: "main", label: "main", depth: 0, item: "main" },
+    ]);
+  });
+
+  it("collapses nested folders independently of their parent", () => {
+    const rows = buildRefRows(["a/b/c", "a/d"], id, (p) => p === "a/b");
+    expect(rows.map((r) => r.kind + ":" + r.path)).toEqual(["folder:a", "folder:a/b", "leaf:a/d"]);
+  });
+
+  it("forceExpand overrides collapsed state without clearing it (filter-active behavior)", () => {
+    const collapsed = (p: string) => p === "feature";
+    const folded = buildRefRows(["feature/a"], id, collapsed);
+    expect(folded).toHaveLength(1); // just the folder row
+
+    const forced = buildRefRows(["feature/a"], id, collapsed, true);
+    expect(forced.map((r) => r.kind)).toEqual(["folder", "leaf"]);
+    // The folder still reports itself as expanded while forced, so the view's
+    // twisty doesn't render "closed" over visible children.
+    expect(forced[0]).toMatchObject({ kind: "folder", collapsed: false });
+  });
+
+  it("works on objects via getName, exposing the original item on the leaf", () => {
+    const items = [{ name: "feature/x", sha: "abc" }];
+    const rows = buildRefRows(items, (b) => b.name, never);
+    const leaf = rows.find((r) => r.kind === "leaf")!;
+    expect(leaf.item).toBe(items[0]);
+  });
+
+  it("drops empty segments instead of rendering a blank folder row", () => {
+    // git rejects these ref names; pure defensiveness for a hand-typed fixture.
+    const rows = buildRefRows(["a//b", "trailing/"], id, never);
+    expect(rows).toEqual([
+      { kind: "folder", path: "a", label: "a", depth: 0, count: 1, collapsed: false },
+      { kind: "leaf", path: "a//b", label: "b", depth: 1, item: "a//b" },
+      { kind: "leaf", path: "trailing/", label: "trailing", depth: 0, item: "trailing/" },
+    ]);
+  });
+
+  it("ignores a name that is nothing but separators", () => {
+    expect(buildRefRows(["//"], id, never)).toEqual([]);
+  });
+
+  it("returns an empty list for no items", () => {
+    expect(buildRefRows([], id, never)).toEqual([]);
+  });
+
+  it("a folder and a leaf can share a name without colliding", () => {
+    const rows = buildRefRows(["release", "release/1.0"], id, never);
+    // The folder wins the ordering (folders always precede leaves); the
+    // same-named leaf still renders, it just follows.
+    expect(rows.map((r) => r.kind + ":" + r.path)).toEqual(["folder:release", "leaf:release/1.0", "leaf:release"]);
+  });
+});
+
+describe("refFolderPaths", () => {
+  it("lists every folder at every nesting level, deduplicated, in first-appearance order", () => {
+    expect(refFolderPaths(["a/b/c", "a/d", "z/e"], (s) => s)).toEqual(["a", "a/b", "z"]);
+  });
+
+  it("returns nothing for a flat list (so the collapse-all control can hide itself)", () => {
+    expect(refFolderPaths(["main", "dev"], (s) => s)).toEqual([]);
+  });
+});
+
+describe("sidebar folder collapse state", () => {
+  beforeEach(() => {
+    sidebarCtrl.folderOpen = {};
+    sidebarCtrl.locals = [];
+    sidebarCtrl.remotes = [];
+    sidebarCtrl.tags = [];
+    sidebarCtrl.head = null;
+  });
+
+  it("starts every folder CLOSED with no interaction at all", () => {
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(true);
+    expect(sidebarCtrl.isFolderCollapsed("remote", "origin/feature")).toBe(true);
+    expect(sidebarCtrl.isFolderCollapsed("tag", "v1")).toBe(true);
+  });
+
+  it("but a REMOTE's own node starts OPEN, so opening the section shows branches", () => {
+    // The Remotes section is a <details> that's already shut until clicked;
+    // leaving the remotes shut too would mean two clicks before one branch
+    // appears. Only the remote itself — folders nested inside it stay closed.
+    expect(sidebarCtrl.isFolderCollapsed("remote", "origin")).toBe(false);
+    expect(sidebarCtrl.isFolderCollapsed("remote", "origin/feature")).toBe(true);
+    expect(sidebarCtrl.isFolderCollapsed("remote", "origin/feature/win")).toBe(true);
+  });
+
+  it("an explicit collapse of a remote sticks, overriding its open-by-default", () => {
+    sidebarCtrl.toggleFolder("remote", "origin");
+    expect(sidebarCtrl.isFolderCollapsed("remote", "origin")).toBe(true);
+  });
+
+  it("toggles a folder open then closed again", () => {
+    sidebarCtrl.toggleFolder("local", "feature");
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(false);
+    sidebarCtrl.toggleFolder("local", "feature");
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(true);
+  });
+
+  it("keys by section, so the same folder name under Local/Remotes/Tags folds independently", () => {
+    sidebarCtrl.toggleFolder("local", "feature");
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(false);
+    expect(sidebarCtrl.isFolderCollapsed("remote", "origin/feature")).toBe(true);
+    expect(sidebarCtrl.isFolderCollapsed("tag", "feature")).toBe(true);
+  });
+
+  it("keeps the folders leading to the CURRENT branch open by default", () => {
+    // Collapsing everything by default is the point, but the "you are here"
+    // marker on HEAD is a headline orientation feature — burying it on every
+    // launch would trade clutter for disorientation.
+    sidebarCtrl.head = "feature/win/mine";
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(false);
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature/win")).toBe(false);
+    expect(sidebarCtrl.isFolderCollapsed("local", "other")).toBe(true);
+  });
+
+  it("does not treat a folder whose name merely PREFIXES the current branch as on its path", () => {
+    sidebarCtrl.head = "featureful";
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(true);
+  });
+
+  it("applies the HEAD exception only to Local — remotes and tags have no current of their own", () => {
+    sidebarCtrl.head = "feature/x";
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(false);
+    expect(sidebarCtrl.isFolderCollapsed("remote", "origin/feature")).toBe(true);
+    expect(sidebarCtrl.isFolderCollapsed("tag", "feature")).toBe(true);
+  });
+
+  it("lets an explicit collapse of the HEAD folder stick, overriding the default", () => {
+    sidebarCtrl.head = "feature/x";
+    sidebarCtrl.toggleFolder("local", "feature");
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(true);
+  });
+
+  // The two halves of refreshRefs' repo-change guard, exercised THROUGH
+  // refresh() — poking folderOpen directly would keep passing with the guard
+  // deleted, which is exactly the regression these exist to catch. Paths like
+  // `local:feature` recur in every repo, so a fold carried across a switch
+  // would silently apply one repo's folds to the next.
+  it("switching repos through refresh() clears folder state left by the previous repo", async () => {
+    mockInTauri = true;
+    const refs = ok({
+      head: "main",
+      locals: [{ name: "feature/x", sha: "1", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }],
+      remotes: [],
+      tags: [],
+    });
+    vi.mocked(commands.listRefs).mockResolvedValue(refs);
+
+    await sidebarCtrl.refresh("/repo-a");
+    sidebarCtrl.toggleFolder("local", "feature"); // explicitly OPENED in repo-a
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(false);
+
+    await sidebarCtrl.refresh("/repo-b");
+    expect(sidebarCtrl.folderOpen).toEqual({});
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(true); // back to the default
+  });
+
+  it("re-refreshing the SAME repo preserves the user's folds (the guard clears on change only)", async () => {
+    mockInTauri = true;
+    const refs = ok({
+      head: "main",
+      locals: [{ name: "feature/x", sha: "1", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }],
+      remotes: [],
+      tags: [],
+    });
+    vi.mocked(commands.listRefs).mockResolvedValue(refs);
+
+    await sidebarCtrl.refresh("/repo-a");
+    sidebarCtrl.toggleFolder("local", "feature");
+
+    // Every mutation path ends in another refresh of the same repo — a
+    // checkout or commit must not snap the tree shut.
+    await sidebarCtrl.refresh("/repo-a");
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(false);
+  });
+
+  it("collapse-all folds every nested folder of one section, leaving other sections untouched", () => {
+    sidebarCtrl.locals = [
+      { name: "feature/win/a", sha: "1", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+      { name: "main", sha: "2", ahead: null, behind: null, upstream: null, lastCommitTime: NOW },
+    ];
+    sidebarCtrl.toggleFolder("remote", "origin/keepme"); // explicitly OPENED
+
+    sidebarCtrl.setAllFoldersCollapsed("local", true);
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(true);
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature/win")).toBe(true);
+    expect(sidebarCtrl.isFolderCollapsed("remote", "origin/keepme")).toBe(false); // other section survives
+  });
+
+  it("collapse-all also overrides the HEAD default, rather than leaving that one folder open", () => {
+    sidebarCtrl.head = "feature/x";
+    sidebarCtrl.locals = [{ name: "feature/x", sha: "1", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];
+    sidebarCtrl.setAllFoldersCollapsed("local", true);
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(true);
+  });
+
+  it("expand-all opens every folder of this section only", () => {
+    sidebarCtrl.locals = [{ name: "feature/win/a", sha: "1", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];
+    sidebarCtrl.remotes = [{ name: "origin/other/y", sha: "1" }];
+    sidebarCtrl.setAllFoldersCollapsed("local", false);
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature")).toBe(false);
+    expect(sidebarCtrl.isFolderCollapsed("local", "feature/win")).toBe(false);
+    expect(sidebarCtrl.isFolderCollapsed("remote", "origin/other")).toBe(true); // untouched
+  });
+
+  it("makes each remote its own outermost folder, so two remotes' same-named folders fold apart", () => {
+    // REGRESSION: remote rows once grouped on the ref with its remote stripped,
+    // which gave both of these a folder path of just `feature` — folding either
+    // one silently folded the other.
+    sidebarCtrl.remotes = [
+      { name: "origin/feature/x", sha: "1" },
+      { name: "upstream/feature/y", sha: "2" },
+    ];
+    expect(sidebarCtrl.folderPaths("remote")).toEqual(["origin", "origin/feature", "upstream", "upstream/feature"]);
+
+    sidebarCtrl.toggleFolder("remote", "origin/feature");
+    expect(sidebarCtrl.isFolderCollapsed("remote", "origin/feature")).toBe(false);
+    expect(sidebarCtrl.isFolderCollapsed("remote", "upstream/feature")).toBe(true);
+  });
+
+  it("remote collapse-all reaches every remote and every folder inside it", () => {
+    sidebarCtrl.remotes = [
+      { name: "origin/feature/x", sha: "1" },
+      { name: "upstream/feature/y", sha: "2" },
+    ];
+    sidebarCtrl.setAllFoldersCollapsed("remote", false);
+    for (const p of ["origin", "origin/feature", "upstream", "upstream/feature"]) {
+      expect(sidebarCtrl.isFolderCollapsed("remote", p)).toBe(false);
+    }
+  });
+
+  it("a remote ref with no remote prefix at all yields no folder", () => {
+    sidebarCtrl.remotes = [{ name: "weird", sha: "1" }];
+    expect(sidebarCtrl.folderPaths("remote")).toEqual([]);
+  });
+
+  it("folderPaths is empty until a ref actually has a folder — the collapse-all control hides on that", () => {
+    expect(sidebarCtrl.folderPaths("local")).toEqual([]);
+    sidebarCtrl.locals = [{ name: "main", sha: "1", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];
+    expect(sidebarCtrl.folderPaths("local")).toEqual([]);
+    sidebarCtrl.locals = [{ name: "feature/a", sha: "1", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];
+    expect(sidebarCtrl.folderPaths("local")).toEqual(["feature"]);
+  });
+
+  it("folderPaths covers Tags too", () => {
+    expect(sidebarCtrl.folderPaths("tag")).toEqual([]);
+    sidebarCtrl.tags = [{ name: "v1.0", sha: "1" }];
+    expect(sidebarCtrl.folderPaths("tag")).toEqual([]);
+    sidebarCtrl.tags = [{ name: "v1/rc1", sha: "1" }];
+    expect(sidebarCtrl.folderPaths("tag")).toEqual(["v1"]);
   });
 });

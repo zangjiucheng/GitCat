@@ -4,7 +4,24 @@
   // is purely presentation. Rendered into #submoduleNavMount (a grid row under
   // the topbar) by src/main.ts — the row collapses to nothing when `visible` is
   // false, so a plain repo with no submodules shows no strip at all.
-  import { submoduleNavCtrl as ctrl, type TreeNode } from "./submodulenav.svelte.ts";
+  import { submoduleNavCtrl as ctrl, horizontalWheelDelta, type TreeNode } from "./submodulenav.svelte.ts";
+
+  // Let a plain vertical mouse wheel scroll the strip left/right when it
+  // overflows (lots of sibling submodules). Trackpad horizontal gestures
+  // (deltaX) already scroll it natively, so those are left untouched.
+  function onStripWheel(e: WheelEvent): void {
+    const el = e.currentTarget as HTMLElement;
+    const dx = horizontalWheelDelta({
+      deltaX: e.deltaX,
+      deltaY: e.deltaY,
+      deltaMode: e.deltaMode,
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+    });
+    if (!dx) return;
+    el.scrollLeft += dx;
+    e.preventDefault();
+  }
 
   // Human label for a submodule status, reused by the tree popover's tooltip.
   function statusLabel(s: string): string {
@@ -22,7 +39,7 @@
 </script>
 
 {#if ctrl.visible}
-  <div class="subnav-inner">
+  <div class="subnav-inner" onwheel={onStripWheel}>
     <button
       class="sn-tree-btn"
       class:on={ctrl.treeOpen}

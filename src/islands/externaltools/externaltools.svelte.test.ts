@@ -20,6 +20,9 @@ vi.mock("../../ipc/bindings", () => ({
     setToolSettings: vi.fn(),
     openDiffTool: vi.fn(),
     suggestCommitMsgCommand: vi.fn(),
+    saveNamedTool: vi.fn(),
+    removeNamedTool: vi.fn(),
+    setActiveTool: vi.fn(),
   },
 }));
 
@@ -43,7 +46,16 @@ function err(error: string): { status: "error"; error: string } {
 }
 
 function settings(partial: Partial<ToolSettings> = {}): ToolSettings {
-  return { diffTool: null, mergeTool: null, commitMsgCommand: null, ...partial };
+  return {
+    diffTool: null,
+    mergeTool: null,
+    commitMsgCommand: null,
+    tools: [],
+    activeDiffToolId: null,
+    activeMergeToolId: null,
+    activeCommitToolId: null,
+    ...partial,
+  };
 }
 
 function resetCtrl() {
@@ -58,6 +70,12 @@ function resetCtrl() {
   externalToolsCtrl.mergeCmd = "";
   externalToolsCtrl.commitCmd = "";
   externalToolsCtrl.suggesting = false;
+  externalToolsCtrl.tools = [];
+  externalToolsCtrl.activeDiffToolId = null;
+  externalToolsCtrl.activeMergeToolId = null;
+  externalToolsCtrl.activeCommitToolId = null;
+  externalToolsCtrl.toolsBusy = false;
+  externalToolsCtrl.resetToolForm();
   mockInTauri = true;
   vi.clearAllMocks();
 }
@@ -317,5 +335,153 @@ describe("suggestOllama — one-click prefill of an ollama commit-message comman
     mockInTauri = false;
     await externalToolsCtrl.suggestOllama();
     expect(commands.suggestCommitMsgCommand).not.toHaveBeenCalled();
+  });
+});
+
+// PER-44: named tools — add / remove / select active, alongside the singleton
+// fields. Each CRUD command returns the whole ToolSettings, which the
+// controller re-applies (same re-render-without-a-round-trip contract as
+// remotes).
+describe("named tools (PER-44)", () => {
+  it("refresh() loads the named-tools list and the active selection into state", async () => {
+    vi.mocked(commands.getToolSettings).mockResolvedValueOnce(
+      ok(
+        settings({
+          tools: [
+            { id: "vscode", name: "VS Code", kind: "diff", cmd: "code --diff $LOCAL $REMOTE" },
+            { id: "kdiff3", name: "KDiff3", kind: "merge", cmd: "kdiff3 $BASE $LOCAL $REMOTE -o $MERGED" },
+          ],
+          activeDiffToolId: "vscode",
+        }),
+      ),
+    );
+
+    await externalToolsCtrl.refresh();
+
+    expect(externalToolsCtrl.tools).toHaveLength(2);
+    expect(externalToolsCtrl.activeDiffToolId).toBe("vscode");
+    expect(externalToolsCtrl.isActive({ id: "vscode", name: "VS Code", kind: "diff", cmd: "x" })).toBe(true);
+    expect(externalToolsCtrl.isActive({ id: "kdiff3", name: "KDiff3", kind: "merge", cmd: "x" })).toBe(false);
+  });
+
+  it("saveTool() upserts via saveNamedTool and re-applies the backend's returned settings", async () => {
+    externalToolsCtrl.formId = "  vscode  ";
+    externalToolsCtrl.formName = "  VS Code  ";
+    externalToolsCtrl.formKind = "diff";
+    externalToolsCtrl.formCmd = "  code --diff $LOCAL $REMOTE  ";
+    vi.mocked(commands.saveNamedTool).mockResolvedValueOnce(
+      ok(settings({ tools: [{ id: "vscode", name: "VS Code", kind: "diff", cmd: "code --diff $LOCAL $REMOTE" }] })),
+    );
+
+    await externalToolsCtrl.saveTool();
+
+    // Sent trimmed; the id field is the upsert key.
+    expect(commands.saveNamedTool).toHaveBeenCalledWith({ id: "vscode", name: "VS Code", kind: "diff", cmd: "code --diff $LOCAL $REMOTE" });
+    expect(externalToolsCtrl.tools).toHaveLength(1);
+    // The form resets after a successful save.
+    expect(externalToolsCtrl.formId).toBe("");
+    expect(externalToolsCtrl.editingId).toBeNull();
+  });
+
+  it("saveTool() with any blank field is a local validation error, no IPC call", async () => {
+    externalToolsCtrl.formId = "vscode";
+    externalToolsCtrl.formName = "";
+    externalToolsCtrl.formCmd = "code";
+
+    await externalToolsCtrl.saveTool();
+
+    expect(commands.saveNamedTool).not.toHaveBeenCalled();
+    expect(externalToolsCtrl.error).toContain("id, a name and a command");
+  });
+
+  it("saveTool() surfaces a backend validation error (e.g. bad id charset)", async () => {
+    externalToolsCtrl.formId = "vscode";
+    externalToolsCtrl.formName = "VS Code";
+    externalToolsCtrl.formCmd = "code";
+    vi.mocked(commands.saveNamedTool).mockResolvedValueOnce(err('Tool id "my.tool" must start with a lowercase letter'));
+
+    await externalToolsCtrl.saveTool();
+
+    expect(externalToolsCtrl.error).toContain("must start with a lowercase letter");
+    // On error the form is NOT reset (the user can fix and retry).
+    expect(externalToolsCtrl.formId).toBe("vscode");
+  });
+
+  it("startEditTool() loads a tool into the form and pins its id; Update keeps id fixed", async () => {
+    externalToolsCtrl.startEditTool({ id: "vscode", name: "VS Code", kind: "diff", cmd: "code --diff $LOCAL $REMOTE" });
+    expect(externalToolsCtrl.editingId).toBe("vscode");
+    expect(externalToolsCtrl.formName).toBe("VS Code");
+
+    externalToolsCtrl.formCmd = "code --wait --diff $LOCAL $REMOTE";
+    vi.mocked(commands.saveNamedTool).mockResolvedValueOnce(
+      ok(settings({ tools: [{ id: "vscode", name: "VS Code", kind: "diff", cmd: "code --wait --diff $LOCAL $REMOTE" }] })),
+    );
+    await externalToolsCtrl.saveTool();
+    expect(commands.saveNamedTool).toHaveBeenCalledWith({ id: "vscode", name: "VS Code", kind: "diff", cmd: "code --wait --diff $LOCAL $REMOTE" });
+  });
+
+  it("removeTool() calls removeNamedTool and re-applies the returned settings", async () => {
+    externalToolsCtrl.tools = [{ id: "vscode", name: "VS Code", kind: "diff", cmd: "code" }];
+    vi.mocked(commands.removeNamedTool).mockResolvedValueOnce(ok(settings()));
+
+    await externalToolsCtrl.removeTool("vscode");
+
+    expect(commands.removeNamedTool).toHaveBeenCalledWith("vscode");
+    expect(externalToolsCtrl.tools).toHaveLength(0);
+  });
+
+  it("toggleActive() selects an inactive tool, then clears it when already active", async () => {
+    const tool = { id: "vscode", name: "VS Code", kind: "diff" as const, cmd: "code" };
+    externalToolsCtrl.tools = [tool];
+
+    // Not active yet -> selects it.
+    vi.mocked(commands.setActiveTool).mockResolvedValueOnce(ok(settings({ tools: [tool], activeDiffToolId: "vscode" })));
+    await externalToolsCtrl.toggleActive(tool);
+    expect(commands.setActiveTool).toHaveBeenLastCalledWith("diff", "vscode");
+    expect(externalToolsCtrl.activeDiffToolId).toBe("vscode");
+
+    // Now active -> toggling clears it (null).
+    vi.mocked(commands.setActiveTool).mockResolvedValueOnce(ok(settings({ tools: [tool], activeDiffToolId: null })));
+    await externalToolsCtrl.toggleActive(tool);
+    expect(commands.setActiveTool).toHaveBeenLastCalledWith("diff", null);
+    expect(externalToolsCtrl.activeDiffToolId).toBeNull();
+  });
+
+  it("re-entrancy: a named-tool op already in flight ignores a second call", async () => {
+    externalToolsCtrl.toolsBusy = true;
+    externalToolsCtrl.formId = "vscode";
+    externalToolsCtrl.formName = "VS Code";
+    externalToolsCtrl.formCmd = "code";
+
+    await externalToolsCtrl.saveTool();
+    await externalToolsCtrl.removeTool("vscode");
+    await externalToolsCtrl.setActive("diff", "vscode");
+
+    expect(commands.saveNamedTool).not.toHaveBeenCalled();
+    expect(commands.removeNamedTool).not.toHaveBeenCalled();
+    expect(commands.setActiveTool).not.toHaveBeenCalled();
+  });
+
+  it("design mode (!IN_TAURI): named-tool CRUD mutates locally with no IPC call", async () => {
+    mockInTauri = false;
+    externalToolsCtrl.demo = true;
+    externalToolsCtrl.formId = "vscode";
+    externalToolsCtrl.formName = "VS Code";
+    externalToolsCtrl.formKind = "diff";
+    externalToolsCtrl.formCmd = "code --diff $LOCAL $REMOTE";
+
+    await externalToolsCtrl.saveTool();
+    expect(commands.saveNamedTool).not.toHaveBeenCalled();
+    expect(externalToolsCtrl.tools).toHaveLength(1);
+
+    await externalToolsCtrl.setActive("diff", "vscode");
+    expect(commands.setActiveTool).not.toHaveBeenCalled();
+    expect(externalToolsCtrl.activeDiffToolId).toBe("vscode");
+
+    await externalToolsCtrl.removeTool("vscode");
+    expect(commands.removeNamedTool).not.toHaveBeenCalled();
+    expect(externalToolsCtrl.tools).toHaveLength(0);
+    // Removing the active tool clears the selection locally too.
+    expect(externalToolsCtrl.activeDiffToolId).toBeNull();
   });
 });

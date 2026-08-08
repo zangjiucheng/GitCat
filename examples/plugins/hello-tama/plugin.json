@@ -1,0 +1,15 @@
+{
+  "id": "hello-tama",
+  "name": "Hello Tama",
+  "version": "1.0.0",
+  "description": "A minimal example command: it greets you and nudges Tama's mood through the ::gitcat.tama reaction protocol.",
+  "commands": [
+    {
+      "id": "greet",
+      "label": "Hello: Greet me (and cheer up Tama)",
+      "run": "echo \"::gitcat.tama ok Hello from your plugin!\"",
+      "context": "none",
+      "placement": "palette"
+    }
+  ]
+}

@@ -4,7 +4,7 @@ import { bisectCtrl } from "../islands/bisect/bisect.svelte.ts";
 import { cmdkCtrl } from "../islands/cmdk/cmdk.svelte.ts";
 import { detailCtrl } from "../islands/detail/detail.svelte.ts";
 import { bisectDrawerCtrl } from "../islands/bisectdrawer/bisectdrawer.svelte.ts";
-import { loadSettings, saveSettings, pruneSnapshotsPerPolicy } from "../islands/settings/settings.svelte.ts";
+import { loadSettings, saveSettings, pruneSnapshotsPerPolicy, applyPersistedTamaSkin, applyPersistedTamaMotion } from "../islands/settings/settings.svelte.ts";
 import { sidebarCtrl } from "../islands/sidebar/sidebar.svelte.ts";
 import { workdirCtrl } from "../islands/workdir/workdir.svelte.ts";
 import { commitMenuCtrl } from "../islands/commitmenu/commitmenu.svelte.ts";
@@ -15,6 +15,7 @@ import { orderRefs } from "./reforder.ts";
 import { LruCache } from "./graphcache.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
 import { repoSummaryCtrl } from "../islands/reposummary/reposummary.svelte.ts";
+import { pluginHooksCtrl } from "../islands/pluginhooks/pluginhooks.svelte.ts";
 import { syncProgressCtrl } from "../islands/syncprogress/syncprogress.svelte.ts";
 import { tamaConfirmCtrl } from "../islands/tamaconfirm/tamaconfirm.svelte.ts";
 // Hidden Easter egg — see its own header doc + this file's click-counter
@@ -28,7 +29,7 @@ import { dlog } from "../devlog";
 // TamaMascot.set() below plays a short synthesized chime on a real state
 // change via STATE_SOUND — see sound.ts's own header for why this is a leaf
 // module main.ts imports FROM, never the reverse.
-import { playTamaSound, STATE_SOUND } from "./sound.ts";
+import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -1213,6 +1214,75 @@ const Safety={ count:214, lastAt:performance.now()-2*60*1000, snaps:[], pad(n){r
   teleAgo(){ if(IN_TAURI){ return this.snaps.length ? relTime(this.snaps[0].ts).replace(" ago","") : "—"; }
     const m=Math.max(0,Math.round((performance.now()-this.lastAt)/60000)); return m<1?"just now":m+"m"; } };
 
+// Additive, subscribable event bus for every Tama event. TamaMascot.event()
+// emit()s here at the TOP of its switch (see below), so islands can observe the
+// exact same stream the mascot reacts to WITHOUT touching the ~28 existing
+// `bridge.tama.event(...)` call sites. Declared as a MID-FILE `export const`
+// (same live-binding shape as CUR_REPO/NAV_STACK) so bridge.ts's
+// `export { tamaBus } from "./main"` re-exports it cleanly. A subscriber that
+// throws is isolated (logged, iteration over a snapshot) — it can never break
+// emit() or the app, and never blocks the mascot's own reaction or Safety.seal.
+// NOTE ordering: emit() fires at the TOP of event(), BEFORE the switch runs
+// Safety.seal()/the pose change — so a subscriber observes PRE-reaction state.
+// Future consumers (PER-43 hooks / PER-46 reactions) should read what they need
+// from `payload`, not from Safety/DOM globals (not yet updated at emit time),
+// and must stay observe-only (never re-enter Tama.event() from a subscriber).
+export const tamaBus = (() => { const subs = []; return { subscribe(fn){ subs.push(fn); return () => { const i = subs.indexOf(fn); if (i >= 0) subs.splice(i, 1); }; }, emit(name, payload){ for (const fn of subs.slice()) { try { fn(name, payload); } catch (e) { console.error("tamaBus subscriber failed", e); } } } }; })();
+
+// ── Tama skin overlay (PER-47) ──────────────────────────────────────────────
+// A plugin-provided skin (commands.loadPluginSkin, applied via the Settings
+// skin picker) can override SOME or ALL of the 8 built-in poses. `activeTamaSkin`
+// is a plain poseKey->dataUri map, EMPTY by default; every read of a pose image
+// goes through tamaPose(), so a skin overlays the built-ins while TAMA_IMG stays
+// the always-present fallback for any pose the skin doesn't provide. Additive:
+// TamaMascot / POSE / TAMA_IMG itself are untouched. Declared BEFORE
+// `const Tama = new TamaMascot(...)` below so the constructor's own set("idle")
+// already resolves through it (activeTamaSkin={} is initialised at eval time,
+// well before that construction).
+let activeTamaSkin = {};
+// Hoisted `function` (TDZ-safe, same as select/openRepo) so bridge.ts can
+// `export { tamaPose } from "./main"` and the Tama Gallery renders the ACTIVE
+// skin's poses too (see tamagallery.svelte.ts's poseImg). `activeSkin[key] ??
+// built-in` — a skin key present but nullish still falls back to the painted art.
+export function tamaPose(key){ return activeTamaSkin[key] ?? TAMA_IMG[key]; }
+// Overlay / clear the active skin. Mid-file `export const` (same live-binding
+// shape as tamaBus/CUR_REPO), so bridge.ts re-exports them cleanly. Each also
+// repaints the mascot's CURRENT pose immediately (through the accessor) so a
+// live skin swap from Settings is visible without waiting for the next FSM
+// state change — pure DOM, TamaMascot itself is never touched.
+// PER-53: an optional 2nd arg sets the character's VOICE PITCH too (see
+// sound.ts's setVoicePitch) — a built-in character or plugin skin ships its own
+// voicePitch alongside its poses, so applying a skin swaps both the look and the
+// sound in one call. Omitted/undefined means "no pitch change" (resets to 1.0),
+// so the existing single-arg callers (and any skin without a voicePitch) keep
+// Tama's default voice; clearTamaSkin() likewise restores the painted portraits
+// AND the 1.0 default voice.
+export const applyTamaSkin = (poses, voicePitch) => { activeTamaSkin = (poses && typeof poses === "object") ? { ...poses } : {}; setVoicePitch(voicePitch ?? 1); repaintTamaSkin(); };
+export const clearTamaSkin = () => { activeTamaSkin = {}; setVoicePitch(1); repaintTamaSkin(); };
+function repaintTamaSkin(){
+  const spr=$("#sprite"); if(spr && spr.dataset.pose) spr.src=tamaPose(spr.dataset.pose);
+  const d=$("#dangerTamaImg"); if(d) d.src=tamaPose("alarm");
+  const c=$("#tamaCheerImg"); if(c) c.src=tamaPose("happy");
+}
+
+// ── Tama pose overrides + motion presets (PER-54) ───────────────────────────
+// Purely additive, frontend-only customization. Both settings default to their
+// no-op value, so with NO override map AND the "default" preset the mascot
+// behaves byte-for-byte as before. The Settings island persists these in
+// localStorage (gitcat.settings) and drives them through
+// bridge.setTamaPoseOverrides / bridge.setTamaMotionPreset (re-exported from
+// bridge.ts, same live-binding shape as applyTamaSkin/tamaBus). Declared BEFORE
+// `class TamaMascot` / `new TamaMascot(...)` so the constructor's own
+// set("idle") already reads them at their initial (no-op) values — no TDZ.
+const TAMA_POSE_KEYS = new Set(["hero","curious","confident","thinking","happy","alarm","shocked","sleep"]);
+// FSM-state -> poseKey. EMPTY = no overrides = the built-in POSE map below.
+// set() resolves `activeTamaPoseOverrides[state] ?? POSE[state]` (see _pose()).
+let activeTamaPoseOverrides = {};
+// Motion preset: scales the sticky/dwell auto-revert hold and swaps the idle
+// behavior. scale 1 + no idle loop == today's "default".
+let activeTamaMotionPreset = "default";
+let tamaDwellScale = 1;
+
 class TamaMascot{
   static STATES={idle:{sticky:false},sleep:{sticky:false},hint:{sticky:false,dwell:3200},thinking:{sticky:true},warn:{sticky:true},danger:{sticky:true},celebrate:{sticky:false,dwell:3600},rescue:{sticky:true},
     // confused: a real operation FAILURE (see warn() below — distinct from
@@ -1237,28 +1307,29 @@ class TamaMascot{
   // intentionally share one).
   static POSE={idle:"curious",sleep:"sleep",hint:"curious",thinking:"thinking",warn:"shocked",danger:"alarm",celebrate:"happy",rescue:"confident",confused:"shocked",curious:"curious",syncing:"thinking",greeting:"hero"};
   constructor(el){this.nook=el.nook;this.sprite=el.sprite;this.spriteWrap=el.spriteWrap;this.line=el.line;this.tele=el.tele;this.topToast=el.topToast;
-    this.sticky=null;this.toastT=null;this.topToastT=null;this.dwellT=null;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
+    this.sticky=null;this.toastT=null;this.topToastT=null;this.dwellT=null;this._animT=null;this._animDirty=false;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
   // Only touches the portrait's `src` when the resolved pose actually
   // changed (several states share one pose — see POSE above) — a real
   // "pop" (shrink+fade out via .swap, swap src, overshoot back in via
   // .swap-in — see index.html's own spriteSwapOut/spriteSwapIn keyframes),
   // skipped entirely under reduced-motion (immediate swap, no animation).
-  set(s){clearTimeout(this.dwellT);const cfg=TamaMascot.STATES[s]||TamaMascot.STATES.idle;
-    const pose=TamaMascot.POSE[s]||"curious";
+  set(s){clearTimeout(this.dwellT);this._stopAnimation();const cfg=TamaMascot.STATES[s]||TamaMascot.STATES.idle;
+    const pose=this._pose(s);
     if(this.sprite.dataset.pose!==pose){
       this.sprite.dataset.pose=pose;
-      if(this.reduced){ this.sprite.src=TAMA_IMG[pose]; }
+      if(this.reduced){ this.sprite.src=tamaPose(pose); }
       else{
         this.sprite.classList.remove("swap-in"); this.sprite.classList.add("swap");
         setTimeout(()=>{
-          this.sprite.src=TAMA_IMG[pose];
+          this.sprite.src=tamaPose(pose);
           this.sprite.classList.remove("swap");
           void this.sprite.offsetWidth;
           this.sprite.classList.add("swap-in");
           setTimeout(()=>this.sprite.classList.remove("swap-in"),240);
         },110);
       }
-    }
+    }else if(this._animDirty){ this.sprite.src=tamaPose(pose); } // an idle animation left a non-resting frame on the same pose — restore it
+    this._animDirty=false;
     // Sound plays on a real FSM-STATE change, not a pose change (several
     // states above intentionally share one pose) — captured before
     // overwriting dataset.state so re-entering the same state (e.g. two
@@ -1267,8 +1338,27 @@ class TamaMascot{
     this.nook.dataset.state=s;
     if(prevState!==s){const kind=STATE_SOUND[s];if(kind)playTamaSound(kind);}
     if(cfg.sticky)this.sticky=s;
-    if(!cfg.sticky&&cfg.dwell)this.dwellT=setTimeout(()=>this.set(this.sticky||"idle"),cfg.dwell);
+    if(!cfg.sticky&&cfg.dwell)this.dwellT=setTimeout(()=>this.set(this.sticky||"idle"),cfg.dwell*tamaDwellScale);
     if(!cfg.sticky&&!cfg.dwell)this.sticky=null;}
+  // PER-54: resolve a state's pose through the active override map, falling
+  // back to the built-in POSE table (and "curious" for any unknown state, as
+  // before). Empty override map => identical to `TamaMascot.POSE[s]||"curious"`.
+  _pose(s){return activeTamaPoseOverrides[s] ?? TamaMascot.POSE[s] ?? "curious";}
+  // PER-54: repaint the CURRENT state's pose immediately (no swap animation),
+  // so a live override change from Settings shows without waiting for the next
+  // FSM transition — same immediate-swap shape as repaintTamaSkin().
+  repaintCurrentPose(){const pose=this._pose(this.nook.dataset.state);if(this.sprite.dataset.pose!==pose){this.sprite.dataset.pose=pose;this.sprite.src=tamaPose(pose);}}
+  // PER-54 animation runner: step the sprite through a sequence of poseKeys via
+  // tamaPose() on a timer. INTERRUPTIBLE — set() calls _stopAnimation() at its
+  // top, so any real state change cancels a running animation cleanly. Skipped
+  // entirely under reduced-motion. loop=true keeps cycling (the idle behavior);
+  // loop=false plays the sequence once. Only touches .src (never dataset.pose),
+  // so set()'s restore path (_animDirty) repaints the resting frame afterward.
+  playTamaAnimation(frames,frameMs,loop){this._stopAnimation();if(this.reduced)return;if(!Array.isArray(frames))return;const seq=frames.filter(f=>TAMA_POSE_KEYS.has(f));if(!seq.length)return;const ms=Math.max(60,frameMs||300);let i=0;const step=()=>{this.sprite.src=tamaPose(seq[i%seq.length]);this._animDirty=true;i++;if(!loop&&i>=seq.length){this._animT=null;return;}this._animT=setTimeout(step,ms);};step();}
+  _stopAnimation(){if(this._animT){clearTimeout(this._animT);this._animT=null;}}
+  // Repaint the resting pose after an animation dirtied .src (used when the idle
+  // loop is torn down, e.g. switching away from the "lively" preset).
+  _restoreRestingPose(){if(!this._animDirty)return;const pose=this._pose(this.nook.dataset.state);this.sprite.dataset.pose=pose;this.sprite.src=tamaPose(pose);this._animDirty=false;}
   // ms is a FLOOR, not the actual dwell — every caller below passes a fixed
   // guess (3200 default, up to 6000 for the danger copy), but the message
   // text itself was never a factor, so a long message could get yanked away
@@ -1302,6 +1392,7 @@ class TamaMascot{
   nod(){if(this.reduced)return;this.sprite.classList.remove("nod");void this.sprite.offsetWidth;this.sprite.classList.add("nod");}
   setInteracting(on){this.nook.classList.toggle("is-interacting",on);}
   event(name,p={}){
+    tamaBus.emit(name,p);
     switch(name){
       case "fetch.upToDate": case "checkout.clean": this.nod(); return null;
       case "commit.created": Safety.seal(); this._tele(); return null;
@@ -1367,6 +1458,52 @@ function scheduleGlance(){
   },8000+Math.random()*6000);
 }
 scheduleGlance();
+
+// ── PER-54 setters (mid-file export functions, re-exported from bridge.ts) ───
+// A subtle periodic pose-glance driver used ONLY by the "lively" preset. It
+// fires a short one-shot glance sequence through the animation runner while the
+// mascot is genuinely idle (idle state, cursor at rest, not reduced-motion), so
+// the corner has a little life without constant motion. Fully torn down by
+// stopTamaIdleLoop() (any non-lively preset), which also restores the resting
+// pose. Independent of the CSS-transform scheduleGlance() above.
+let tamaIdleTimer=null;
+function stopTamaIdleLoop(){ if(tamaIdleTimer){ clearInterval(tamaIdleTimer); tamaIdleTimer=null; } Tama._stopAnimation(); Tama._restoreRestingPose(); }
+function startTamaIdleLoop(){
+  stopTamaIdleLoop();
+  if(Tama.reduced) return; // reduced-motion: don't schedule an interval that can only ever no-op
+  tamaIdleTimer=setInterval(()=>{
+    const n=$("#nook");
+    if(!n||Tama.reduced||n.dataset.state!=="idle"||Tama._animT!=null) return;
+    if(performance.now()-Tama.lastMove<4000) return;
+    // idle-pose → thinking → idle-pose: a quick "look around", then settle back.
+    Tama.playTamaAnimation([Tama._pose("idle"),"thinking",Tama._pose("idle")],260,false);
+  },9000);
+}
+// bridge.setTamaMotionPreset — "default"|"calm"|"lively". "default" restores
+// today's behavior exactly (dwell scale 1, no idle loop). "calm" holds poses a
+// bit longer (1.5×) with no idle loop; "lively" shortens holds (0.7×) and adds
+// the subtle idle glance loop above. Unknown values fall back to "default".
+// Hoisted `export function` (TDZ-safe), re-exported from bridge.ts.
+export function setTamaMotionPreset(preset){
+  const p=(preset==="calm"||preset==="lively")?preset:"default";
+  activeTamaMotionPreset=p;
+  if(p==="calm"){ tamaDwellScale=1.5; stopTamaIdleLoop(); }
+  else if(p==="lively"){ tamaDwellScale=0.7; startTamaIdleLoop(); }
+  else{ tamaDwellScale=1; stopTamaIdleLoop(); }
+}
+// bridge.setTamaPoseOverrides — a map of FSM-state -> poseKey. Non-string
+// values and poseKeys not among the 8 valid ones are ignored; {} clears all
+// overrides (back to the built-in POSE map). Repaints the current pose
+// immediately so a live change from Settings is visible without waiting for the
+// next FSM transition. Hoisted `export function`, re-exported from bridge.ts.
+export function setTamaPoseOverrides(overrides){
+  const next={};
+  if(overrides&&typeof overrides==="object"){
+    for(const k in overrides){ const v=overrides[k]; if(typeof v==="string"&&TAMA_POSE_KEYS.has(v)) next[k]=v; }
+  }
+  activeTamaPoseOverrides=next;
+  Tama.repaintCurrentPose();
+}
 
 // Hidden Easter egg: click the portrait itself 7 times within 2.5s to open
 // Tama Gallery (src/islands/tamagallery) — every pose in one grid, click a
@@ -1712,12 +1849,12 @@ $("#themeBtn").addEventListener("click",()=>{
 });
 // painted-Tama celebration popover
 let cheerT=null;
-function cheer(msg,img: string|null=null){ $("#tamaCheerTxt").innerHTML=msg; $("#tamaCheerImg").src=img||TAMA_IMG.happy; const c=$("#tamaCheer"); c.classList.add("show");
+function cheer(msg,img: string|null=null){ $("#tamaCheerTxt").innerHTML=msg; $("#tamaCheerImg").src=img||tamaPose("happy"); const c=$("#tamaCheer"); c.classList.add("show");
   clearTimeout(cheerT); cheerT=setTimeout(()=>c.classList.remove("show"),3600); }
 // global undo (undo-is-itself-undoable)
 async function globalUndo(){
   if(!IN_TAURI){ Tama.event("undo.performed",{hash:hhex(1)}); pulseTick(0);
-    cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>',TAMA_IMG.confident); return; }
+    cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>',tamaPose("confident")); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first — there's nothing to undo yet."); return; }
   // Bug-B fix: right after a successful stash apply/pop, the working tree is
   // dirty in a way the generic undo_last can never rewind — nothing at the
@@ -1760,7 +1897,7 @@ async function globalUndo(){
       else await reloadGraph(true);
       const to=(res.restoredTo||"").slice(0,7);
       Tama.event("undo.performed",{hash:to||hhex(1)}); pulseTick(0);
-      cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>',TAMA_IMG.confident);
+      cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>',tamaPose("confident"));
     } else if(!useStashUndo && /uncommitted changes/i.test((res&&res.message)||"")){
       // Undo refused because the working tree is dirty (its reset --hard would
       // DISCARD those changes — see safety.rs's undo()). Offer to keep them:
@@ -1780,7 +1917,7 @@ async function globalUndo(){
           await workdirCtrl.refreshStatus(CUR_REPO); await workdirCtrl.refreshStashes(CUR_REPO);
           const to=(r2.restoredTo||"").slice(0,7);
           Tama.event("undo.performed",{hash:to||hhex(1)}); pulseTick(0);
-          cheer('Rewound — <b>kept your changes</b>. <span class="jp">やったー♪</span>',TAMA_IMG.confident);
+          cheer('Rewound — <b>kept your changes</b>. <span class="jp">やったー♪</span>',tamaPose("confident"));
           if(r2.message) Tama.say(r2.message,4600);
         } else { Tama.warn((r2&&r2.message)||"Undo (with stash) failed."); }
       } else { Tama.say("Undo cancelled — your uncommitted changes are untouched.",3200); }
@@ -1831,7 +1968,7 @@ async function doFetch(){
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPull(){
-  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pulled (demo). にゃ〜",3200); cheer('Pulled (demo). <span class="jp">にゃ〜</span>',TAMA_IMG.happy); return; }
+  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pulled (demo). にゃ〜",3200); cheer('Pulled (demo). <span class="jp">にゃ〜</span>',tamaPose("happy")); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
   setSyncButtonsBusy("pullBtn","Pulling…");
@@ -1840,13 +1977,13 @@ async function doPull(){
   try{
     const res=await tinvoke("pull_stream",{path:CUR_REPO});
     syncProgressCtrl.settle(!!(res&&res.ok),(res&&res.message)||"");
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pulled.",3200); cheer(res.message||"Pulled.",TAMA_IMG.happy); }
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pulled.",3200); cheer(res.message||"Pulled.",tamaPose("happy")); }
     else Tama.warn((res&&res.message)||"Pull failed.");
   }catch(e){ syncProgressCtrl.settle(false,String(e)); Tama.warn("Pull failed — "+e); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPush(){
-  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pushed (demo). にゃ〜",3200); cheer('Pushed (demo). <span class="jp">にゃ〜</span>',TAMA_IMG.happy); return; }
+  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pushed (demo). にゃ〜",3200); cheer('Pushed (demo). <span class="jp">にゃ〜</span>',tamaPose("happy")); return; }
   if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
   if(syncBusy) return; syncBusy=true;
   setSyncButtonsBusy("pushBtn","Pushing…");
@@ -1858,7 +1995,7 @@ async function doPush(){
     // moves the remote-tracking ref but not local HEAD, so nothing else picks
     // it up. reloadGraph's tail refreshes the sidebar too (and the incremental
     // path keeps this cheap — no commits changed).
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pushed.",3200); cheer(res.message||"Pushed.",TAMA_IMG.happy); }
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pushed.",3200); cheer(res.message||"Pushed.",tamaPose("happy")); }
     else Tama.warn((res&&res.message)||"Push failed.");
   }catch(e){ Tama.warn("Push failed — "+e); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
@@ -2369,6 +2506,15 @@ function onGraphBatch(payload){
     // "is this commit loaded?", so a truncated load forces full reloads).
     graphStreamComplete=true;
     lastLoadTruncated=!!payload.truncated;
+    // The `ancestor`/dimming bit is no longer computed during the stream — that
+    // needed an up-front full HEAD-ancestor revwalk that delayed the very first
+    // frame (see commands.rs `stream_graph_core`). Now that the whole set is
+    // loaded, fill the dimming in OFF the critical path via the same positional
+    // recompute a checkout already uses. Skipped on a walk error: a partial graph
+    // would otherwise trip recomputeAncestorsAsync's n-guard into a resync reload
+    // of an already-degraded load. (On success/truncated, BACKEND.n is final and
+    // head_ancestor_flags honours the same cap, so the counts line up.)
+    if(!payload.error) recomputeAncestorsAsync();
     dlog("graph", "stream DONE gen", payload.generation, "—", BACKEND.n, "commits in", payload.elapsedMs.toFixed(0)+"ms", payload.truncated?"(truncated)":"", payload.error?("error: "+payload.error):"");
     // Establish the fast-refresh baseline (seed tips / HEAD oid / ref signature)
     // for THIS load, generation-guarded so a newer load's baseline can't be
@@ -2581,6 +2727,9 @@ async function openRepo(path){
     // and self-contained (own try/catch), so it can never block opening the
     // repo — same as watch_repo/track_repo_opened above.
     await repoSummaryCtrl.maybeAutoShow(path);
+    // PER-43: fire plugin lifecycle hooks for this open (repo-opened / -switched).
+    // Fire-and-forget observers — never blocks the open (own async + try/catch).
+    pluginHooksCtrl.onRepoOpened(path);
     return true;
   }catch(e){ setGraphLoadingPill(false); Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); return false; }
   finally{ openRepoBusy=false; if(pickBtn){ pickBtn.disabled=false; if(pickSpinner) pickSpinner.remove(); } if(graphLoading) graphLoading.style.display="none"; }
@@ -2740,9 +2889,10 @@ async function tryFastRefresh(){
   // Advance the baseline before any async work / re-entrant refresh sees it.
   loadedSeedTips=curTipSet; loadedHeadOid=cur.headOid; lastRefSig=cur.refSig;
   // Pill + refs tree + auto-visibility (keeps its own sameLocal&&sameRemote echo
-  // guard — a checkout that auto-hides a branch queues one more pass that Gate B
-  // then turns into a full reload). Safety.refresh keeps the undo count current
-  // for the DAG-preserving mutations that still take a snapshot (e.g. checkout).
+  // guard — a checkout that auto-hides a branch persists that, which reloads the
+  // graph in full on its own, so this fast pass must not be the last word on
+  // which rows are shown). Safety.refresh keeps the undo count current for the
+  // DAG-preserving mutations that still take a snapshot (e.g. checkout).
   await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
   if(headMoved) recomputeAncestorsAsync();
   return true;
@@ -2923,7 +3073,14 @@ applyThemeMode(loadSettings().themeMode);
 setGraphShowAllTags(loadSettings().showAllCommitTags);
 setGraphLabelPriority(loadSettings().graphLabelPriority);
 setTamaEnabled(loadSettings().tamaEnabled);
-$("#dangerTamaImg").src=TAMA_IMG.alarm; $("#tamaCheerImg").src=TAMA_IMG.happy;
+// PER-47: re-apply a persisted Tama skin at boot. Fire-and-forget + self-gates
+// on IN_TAURI internally; if the skin's plugin was removed/disabled or its load
+// fails, it stays silently on the built-in poses (a decorative skin is never
+// worth a startup toast). Async, so the two static images below paint the
+// built-ins first and repaintTamaSkin() swaps them once the skin resolves.
+void applyPersistedTamaSkin();
+applyPersistedTamaMotion(); // PER-54: re-apply the persisted motion preset + pose overrides at boot
+$("#dangerTamaImg").src=tamaPose("alarm"); $("#tamaCheerImg").src=tamaPose("happy");
 // Window resize re-renders live (standard); the panel-divider drag is what
 // avoids a live reflow — it moves only a guide line and commits the width once
 // on release (see wireResizeHandle), so this observer fires just once per
@@ -2939,10 +3096,19 @@ if(IN_TAURI){
   // flashes the empty hero state first. URLSearchParams.get() already
   // returns the fully percent-decoded value — no separate decodeURIComponent
   // needed (that would double-decode a path containing a literal '%').
-  const initialRepo=new URLSearchParams(location.search).get("repo");
+  const params=new URLSearchParams(location.search);
+  const initialRepo=params.get("repo");
+  // `gitcat <path>` where <path> isn't a git repo: windows.rs validated the
+  // launch argument and, rather than a `?repo=`, handed us `?repoError=<path>`.
+  // Boot the empty hero (so the app is usable — pick a real folder) and name the
+  // offending path, VS Code-style.
+  const repoError=params.get("repoError");
   // openRepo() derives NAV_STACK + refreshes the submodule-nav strip itself, so a
   // repo opened by deep-link that happens to be a submodule shows its context too.
-  if(initialRepo) openRepo(initialRepo); else bootEmpty();
+  // On failure (e.g. the repo became inaccessible between the launch-time check
+  // and now) fall back to the empty hero rather than a stranded blank frame.
+  if(initialRepo){ openRepo(initialRepo).then(ok=>{ if(!ok) bootEmpty(); }); }
+  else { bootEmpty(); if(repoError) Tama.warn(`"${repoError}" is not a git repository.`, 6000); }
 }
 else { loadGraph(10000); }          // plain browser (design mode): synthetic demo data
 requestAnimationFrame(tick);

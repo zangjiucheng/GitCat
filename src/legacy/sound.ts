@@ -29,6 +29,27 @@ import { loadSettings } from "../islands/settings/settings.svelte.ts";
 
 export type TamaSoundKind = "hint" | "warn" | "danger" | "celebrate" | "greeting" | "copy";
 
+// ── Per-character voice pitch (PER-53) ──────────────────────────────────────
+// A single module-level multiplier applied to EVERY synthesized frequency (see
+// tone() below), so a Tama skin can give its character a subtly different voice
+// without touching any individual PLAYERS entry — Momo sits a touch higher, Sora
+// a touch lower, the built-in painted Tama stays at 1.0. Set from legacy/main.ts's
+// applyTamaSkin(poses, voicePitch)/clearTamaSkin() (bridge.applyTamaSkin's 2nd
+// arg), and re-exported through legacy/bridge.ts as `setTamaVoicePitch` for any
+// island that wants to drive it directly. Clamped to the SAME [0.5, 2.0] window
+// the plugin-skin loader uses (voicePitch outside that reads as broken/mistuned
+// rather than "a different character"); a null/undefined/non-finite value means
+// "no change" and resets to 1.0 — never left assigned straight to a real
+// oscillator's frequency, which would throw on a non-finite value.
+const MIN_VOICE_PITCH = 0.5;
+const MAX_VOICE_PITCH = 2.0;
+let voicePitchMult = 1;
+
+export function setVoicePitch(mult: number | null | undefined): void {
+  const m = typeof mult === "number" && Number.isFinite(mult) ? mult : 1;
+  voicePitchMult = Math.min(MAX_VOICE_PITCH, Math.max(MIN_VOICE_PITCH, m));
+}
+
 // Maps each FSM state (TamaMascot.STATES' own keys) to which sound plays on
 // ENTERING it — states not listed here play nothing. "greeting" gets its
 // own warm little welcome chime now (previously aliased to "hint", which
@@ -103,7 +124,11 @@ function tone(ctx: AudioContext, master: GainNode, freq: number, dur: number, pe
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = type;
-  osc.frequency.value = jitter(freq, 0.01);
+  // The per-character voice-pitch multiplier scales the base frequency of every
+  // voice here (fundamentals AND warmTone's detuned unison partner), so a skin's
+  // whole sound vocabulary shifts together; detuneCents stays a RELATIVE offset
+  // (in cents) so the unison-detune character is preserved at any pitch.
+  osc.frequency.value = jitter(freq * voicePitchMult, 0.01);
   osc.detune.value = detuneCents;
   const t0 = ctx.currentTime + delay + (timingJitterSec ?? Math.random() * 0.008);
   const peakG = jitter(peak, 0.07);

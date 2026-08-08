@@ -33,6 +33,7 @@ import { codeSearchCtrl } from "../codesearch/codesearch.svelte.ts";
 import { openBisectEntry } from "../bisectdrawer/bisectdrawer.svelte.ts";
 import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
 import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
+import { pluginsCtrl } from "../plugins/plugins.svelte.ts";
 import { settingsCtrl } from "../settings/settings.svelte.ts";
 import { danglingRecoveryCtrl } from "../danglingrecovery/danglingrecovery.svelte.ts";
 import { repoFilesCtrl } from "../repofiles/repofiles.svelte.ts";
@@ -40,7 +41,10 @@ import { filterRepoCtrl } from "../filterrepo/filterrepo.svelte.ts";
 import { multimergeCtrl } from "../multimerge/multimerge.svelte.ts";
 import { aboutCtrl } from "../about/about.svelte.ts";
 import { updaterCtrl } from "../updater/updater.svelte.ts";
+import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
+import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
+import { commands } from "../../ipc/bindings";
 
 export const CMD_CAP = 50;
 const CMD_BUF = 250;
@@ -51,8 +55,30 @@ type CmdItem = { type: "commit"; row: number; subject: string; sha: string; auth
 // graph (unchecked in the sidebar's branch-visibility). It has no row; picking it
 // makes it visible instead of jumping (see jump()).
 type RefItem = { type: "ref"; name: string; kind: string; row: number; sha: string; hidden?: boolean };
-type ActionItem = { type: "action"; id: string; label: string; hint: string; run: () => void };
+// Exported so the plugin-commands controller can build entries of this exact
+// shape (plugincommands.svelte.ts imports it type-only, to avoid a runtime
+// import cycle with this module).
+export type ActionItem = { type: "action"; id: string; label: string; hint: string; run: () => void };
 export type CmdkResult = CmdItem | RefItem | ActionItem;
+
+// Backs the macOS-only "Install 'gitcat' command in PATH" action below. Writes
+// a `code`-style launcher via the Rust command and reports the outcome as a
+// Tama toast (the same say/warn pair the setup wizard and sidebar already use).
+async function installGitcatCommand(): Promise<void> {
+  try {
+    const res = await commands.installCliShim();
+    if (res.status === "ok") {
+      bridge.tama.say(
+        `Installed the gitcat command at ${res.data}. Open a new terminal and run gitcat . inside any repo. にゃ〜`,
+        6000,
+      );
+    } else {
+      bridge.tama.warn(res.error || "Couldn't install the gitcat command.", 6000);
+    }
+  } catch (e) {
+    bridge.tama.warn("Couldn't install the gitcat command. " + e, 6000);
+  }
+}
 
 // Small and fixed — every entry always shown when the query is empty, or
 // matched by label+hint the same way refs/commits are matched by their own
@@ -179,6 +205,15 @@ const ACTIONS: ActionItem[] = [
     hint: "Configure a diff/merge tool to open from GitCat's own UI",
     run: () => externalToolsCtrl.show(),
   },
+  // Plugins manager — app-level like External Tools (no repo needed), its own
+  // VS Code Extensions-style view (see plugins.svelte.ts).
+  {
+    type: "action",
+    id: "plugins",
+    label: "Plugins",
+    hint: "Enable, disable, remove, or install GitCat plugins",
+    run: () => pluginsCtrl.show(),
+  },
   // App Settings: theme/cherry-pick-default/auto-update-check prefs plus a
   // Git Identity section — repo-scoped like Reflog/Rerere (forwards
   // bridge.CUR_REPO) since that identity section needs to know which repo,
@@ -290,6 +325,20 @@ const ACTIONS: ActionItem[] = [
       updaterCtrl.check();
     },
   },
+  // "Install 'gitcat' command in PATH" — macOS/Linux/Windows, the way VS Code
+  // puts its own `code` installer in the palette. Hidden in browser design mode
+  // (no backend), where install_cli_shim could only return an error.
+  ...(IN_TAURI
+    ? [
+        {
+          type: "action",
+          id: "install-cli",
+          label: "Install 'gitcat' Command in PATH",
+          hint: "Open a repo from any terminal: gitcat . (like VS Code's code)",
+          run: () => void installGitcatCommand(),
+        } as ActionItem,
+      ]
+    : []),
 ];
 
 function esc(s: unknown): string {
@@ -427,6 +476,18 @@ class CmdkState {
     for (const a of ACTIONS) {
       if (!toks.length || matchToks((a.label + " " + a.hint).toLowerCase(), toks)) res.push(a);
     }
+    // Plugin-contributed commands (PER-42) are matched by label+hint exactly
+    // like the static ACTIONS above; they're lazily loaded on palette open
+    // (see show()), so this is empty until listPlugins() resolves.
+    for (const a of pluginCommandsCtrl.actions) {
+      if (!toks.length || matchToks((a.label + " " + a.hint).toLowerCase(), toks)) res.push(a);
+    }
+    // Plugin-contributed PANELS (PER-45) — one entry per declared panel, matched
+    // by label+hint exactly like the commands above and lazily loaded on the
+    // same palette open (see show()).
+    for (const a of pluginPanelsCtrl.actions) {
+      if (!toks.length || matchToks((a.label + " " + a.hint).toLowerCase(), toks)) res.push(a);
+    }
     if (!toks.length) {
       for (let i = 0; i < this.refs.length && res.length < REF_DEFAULT; i++) res.push(this.refs[i]);
     } else {
@@ -510,6 +571,15 @@ class CmdkState {
     }
     this.open = true;
     this.filter("");
+    // Lazily pull in plugin-contributed palette commands AND panels, then
+    // re-run the current filter so they appear (both cached after the first
+    // open). Two independent lazy loads, each re-filters when it resolves.
+    void pluginCommandsCtrl.ensureLoaded().then(() => {
+      if (this.open) this.filter(this.query);
+    });
+    void pluginPanelsCtrl.ensureLoaded().then(() => {
+      if (this.open) this.filter(this.query);
+    });
   }
 
   close() {
@@ -522,3 +592,18 @@ class CmdkState {
 }
 
 export const cmdkCtrl = new CmdkState();
+
+// Review nit: when the plugin registry is force-reloaded (install/enable/
+// disable), refresh an already-open palette in place so the change shows up
+// without reopening ⌘K. Wired here (not via a cmdkCtrl import inside
+// plugincommands) to keep that module free of a runtime cycle back into this one.
+pluginCommandsCtrl.onActionsChanged = () => {
+  if (cmdkCtrl.open) cmdkCtrl.filter(cmdkCtrl.query);
+};
+// Same live-refresh seam for plugin PANELS (PER-45) — a force reload of the
+// panel registry (install/enable/remove) re-filters an already-open palette in
+// place. Wired here, not via a cmdkCtrl import inside pluginpanels, to keep
+// that module free of a runtime cycle back into this one.
+pluginPanelsCtrl.onActionsChanged = () => {
+  if (cmdkCtrl.open) cmdkCtrl.filter(cmdkCtrl.query);
+};

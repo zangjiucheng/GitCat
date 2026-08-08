@@ -18,7 +18,11 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Bind IPv4 loopback (not the default `localhost`, which macOS resolves to
+    // IPv6 ::1) so it matches tauri.conf.json's devUrl 127.0.0.1:1420 — otherwise
+    // the `tauri dev` readiness poll waits forever even though Vite is up.
+    // TAURI_DEV_HOST still wins for LAN/mobile dev.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",

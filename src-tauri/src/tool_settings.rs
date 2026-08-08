@@ -89,7 +89,15 @@ use crate::procutil::NoConsoleWindowExt;
 use crate::safety::{self, GitOut};
 
 const FILE_NAME: &str = "external_tools.json";
-const SCHEMA_VERSION: u32 = 1;
+// v1: singletons only (diff_tool/merge_tool/commit_msg_command).
+// v2 (PER-44): adds a managed LIST of NAMED tools (`tools`) plus a per-kind
+// active selection (`active_*_tool_id`). The bump is LOSSLESS and one-way:
+// every new field is `#[serde(default)]` on `SettingsFile`, so a v1 file
+// (which simply lacks them) deserializes with an empty list / no active
+// selection and behaves EXACTLY as before — the singletons are never dropped.
+// A v1 file is silently rewritten as v2 on the next `save_to`. See
+// `load_from`'s migration note.
+const SCHEMA_VERSION: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // Payloads
@@ -124,6 +132,50 @@ pub struct ExternalTool {
     pub cmd: Option<String>,
 }
 
+/// Which invocation slot a [`NamedTool`] plugs into. Serialized lowercase
+/// (`"diff"`/`"merge"`/`"commit"`) so it reads naturally both on disk and as a
+/// TS string-union over the IPC boundary.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolKind {
+    /// An external diff tool (drives `git difftool`, like [`ToolSettings::diff_tool`]).
+    Diff,
+    /// An external merge tool (drives `git mergetool`, like [`ToolSettings::merge_tool`]).
+    Merge,
+    /// A print-only commit-message command (like [`ToolSettings::commit_msg_command`]).
+    Commit,
+}
+
+/// One of possibly-many NAMED external tools the user has configured (PER-44).
+/// Generalizes the three legacy SINGLETONS (`diff_tool`/`merge_tool`/
+/// `commit_msg_command`) into a managed list keyed by a stable, unique [`id`].
+#[derive(Serialize, Deserialize, Clone, Debug, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedTool {
+    /// Stable, UNIQUE identifier matching `^[a-z0-9][a-z0-9-]*$` (validated by
+    /// [`normalize_named_tool`]). Two jobs: it's the list's primary key for
+    /// upsert/remove/active-selection, AND — for a diff/merge tool — it is
+    /// reused VERBATIM as the git `difftool.<id>.cmd=`/`mergetool.<id>.cmd=`
+    /// config SUBSECTION name at invocation time. That charset is a deliberate
+    /// subset of [`ExternalTool::name`]'s (lowercase, no `_`, no leading `-`,
+    /// crucially NO `.`) so it is unambiguous in git's dotted `-c` shorthand —
+    /// see that field's doc for why a literal `.` there is unescapable.
+    pub id: String,
+    /// A free-form human label shown in the UI. Unlike [`id`] it carries NO git
+    /// charset constraint (it never reaches a git config key), only a
+    /// non-blank check.
+    pub name: String,
+    /// Which slot this tool feeds — see [`ToolKind`].
+    pub kind: ToolKind,
+    /// The command. For a diff/merge tool this is the `difftool`/`mergetool`
+    /// `cmd` override (git's `$LOCAL`/`$REMOTE`/`$BASE`/`$MERGED` placeholders);
+    /// for a commit tool it's the print-only shell command (see
+    /// [`ToolSettings::commit_msg_command`]). Required (a named tool with no
+    /// command is meaningless) — same user-authored trust boundary as every
+    /// other `cmd` in this module.
+    pub cmd: String,
+}
+
 /// App-level (NOT per-repo) tool preferences — a personal cross-repo setting
 /// exactly like a real git client's tool prefs, persisted as one small JSON
 /// file under `app_config_dir()`.
@@ -142,6 +194,21 @@ pub struct ToolSettings {
     /// Unlike a tool `name`, this has no git-subsection charset constraint, so
     /// it's a plain trimmed string (blank => `None` => the feature is unset).
     pub commit_msg_command: Option<String>,
+    /// PER-44: the managed list of NAMED tools, generalizing the three
+    /// singletons above. Empty on a v1 file / first run (see [`load_from`]'s
+    /// migration note) — in which case resolution behaves EXACTLY as before.
+    #[serde(default)]
+    pub tools: Vec<NamedTool>,
+    /// The [`NamedTool::id`] of the currently-ACTIVE diff/merge/commit tool,
+    /// or `None` to fall through to the matching singleton (then git config).
+    /// See [`configured_diff_tool`]/[`configured_merge_tool`]/
+    /// [`resolve_commit_command`] for the precedence.
+    #[serde(default)]
+    pub active_diff_tool_id: Option<String>,
+    #[serde(default)]
+    pub active_merge_tool_id: Option<String>,
+    #[serde(default)]
+    pub active_commit_tool_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -153,6 +220,22 @@ struct SettingsFile {
     // field existed) load fine without bumping SCHEMA_VERSION.
     #[serde(default)]
     commit_msg_command: Option<String>,
+    // PER-44 (v2). Every field below is `#[serde(default)]` for the SAME
+    // reason `repo_registry::TrackedRepo`'s later fields are: `external_tools.
+    // json` is an already-persisted, versioned file, so a v1 file (which lacks
+    // these keys entirely) MUST still deserialize — without the defaults it
+    // would trip `load_from`'s corrupt-file recovery and silently discard the
+    // user's existing singleton tool settings on upgrade. This is the whole
+    // migration: no explicit version-branching is needed, serde defaults fill
+    // the gap and `save_to` rewrites the file as v2 on the next mutation.
+    #[serde(default)]
+    tools: Vec<NamedTool>,
+    #[serde(default)]
+    active_diff_tool_id: Option<String>,
+    #[serde(default)]
+    active_merge_tool_id: Option<String>,
+    #[serde(default)]
+    active_commit_tool_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -192,10 +275,18 @@ pub fn load_from(path: &Path) -> Result<ToolSettings, String> {
         Err(e) => return Err(format!("Could not read {}: {e}", path.display())),
     };
     match serde_json::from_str::<SettingsFile>(&text) {
+        // The v1 -> v2 migration is entirely serde-default-driven: a v1 file
+        // lacks `tools`/`active_*`, so they arrive here as an empty list / None
+        // and the singletons pass through untouched — identical behavior. See
+        // `SettingsFile`'s own comment.
         Ok(file) => Ok(ToolSettings {
             diff_tool: file.diff_tool,
             merge_tool: file.merge_tool,
             commit_msg_command: file.commit_msg_command,
+            tools: file.tools,
+            active_diff_tool_id: file.active_diff_tool_id,
+            active_merge_tool_id: file.active_merge_tool_id,
+            active_commit_tool_id: file.active_commit_tool_id,
         }),
         Err(_) => {
             let now = std::time::SystemTime::now()
@@ -233,6 +324,10 @@ pub fn save_to(path: &Path, settings: &ToolSettings) -> Result<(), String> {
         diff_tool: settings.diff_tool.clone(),
         merge_tool: settings.merge_tool.clone(),
         commit_msg_command: settings.commit_msg_command.clone(),
+        tools: settings.tools.clone(),
+        active_diff_tool_id: settings.active_diff_tool_id.clone(),
+        active_merge_tool_id: settings.active_merge_tool_id.clone(),
+        active_commit_tool_id: settings.active_commit_tool_id.clone(),
     };
     let json = serde_json::to_string_pretty(&file).map_err(|e| format!("Could not serialize: {e}"))?;
     let mut tmp_name = path.as_os_str().to_os_string();
@@ -258,6 +353,117 @@ pub fn normalize_tool(t: Option<ExternalTool>) -> Result<Option<ExternalTool>, S
     }
     let cmd = t.cmd.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
     Ok(Some(ExternalTool { name, cmd }))
+}
+
+/// Is `id` a valid [`NamedTool::id`] — i.e. matches `^[a-z0-9][a-z0-9-]*$`?
+/// This is deliberately STRICTER than [`normalize_tool`]'s `name` charset (no
+/// uppercase, no `_`) so the id is safe to embed verbatim as a git config
+/// subsection — see [`NamedTool::id`]'s doc.
+pub fn is_valid_tool_id(id: &str) -> bool {
+    let mut chars = id.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Trim + validate one [`NamedTool`]: `id` must be non-blank and match the
+/// git-subsection-safe charset (see [`is_valid_tool_id`]); `name` and `cmd`
+/// must be non-blank. `pub` for the same integration-testability reason as
+/// [`normalize_tool`].
+pub fn normalize_named_tool(t: NamedTool) -> Result<NamedTool, String> {
+    let id = t.id.trim().to_string();
+    if id.is_empty() {
+        return Err("A tool id is required.".into());
+    }
+    if !is_valid_tool_id(&id) {
+        return Err(format!(
+            "Tool id {id:?} must start with a lowercase letter or digit and contain only lowercase letters, digits and '-'."
+        ));
+    }
+    let name = t.name.trim().to_string();
+    if name.is_empty() {
+        return Err("A tool name is required.".into());
+    }
+    let cmd = t.cmd.trim().to_string();
+    if cmd.is_empty() {
+        return Err("A tool command is required.".into());
+    }
+    Ok(NamedTool { id, name, kind: t.kind, cmd })
+}
+
+// ---------------------------------------------------------------------------
+// Named-tool list mutations (pure `&mut ToolSettings` helpers — no AppHandle,
+// no I/O — so both the `#[tauri::command]`s below AND the integration suite
+// exercise the exact same logic; same split rationale as `load_from`/`save_to`).
+// ---------------------------------------------------------------------------
+
+/// Add `tool` (validated/normalized) or, if a tool with the same `id` already
+/// exists, replace it in place (upsert). `id` is the whole list's unique key.
+pub fn upsert_named_tool(settings: &mut ToolSettings, tool: NamedTool) -> Result<(), String> {
+    let tool = normalize_named_tool(tool)?;
+    match settings.tools.iter_mut().find(|t| t.id == tool.id) {
+        Some(existing) => *existing = tool,
+        None => settings.tools.push(tool),
+    }
+    Ok(())
+}
+
+/// Remove the tool with `id` from the list AND clear any per-kind active
+/// selection that pointed at it (so a stale `active_*_tool_id` can never
+/// dangle at a removed tool — resolution then correctly falls back to the
+/// singleton/git config).
+pub fn remove_named_tool_from(settings: &mut ToolSettings, id: &str) {
+    settings.tools.retain(|t| t.id != id);
+    if settings.active_diff_tool_id.as_deref() == Some(id) {
+        settings.active_diff_tool_id = None;
+    }
+    if settings.active_merge_tool_id.as_deref() == Some(id) {
+        settings.active_merge_tool_id = None;
+    }
+    if settings.active_commit_tool_id.as_deref() == Some(id) {
+        settings.active_commit_tool_id = None;
+    }
+}
+
+/// Set (or, with `id: None`, clear) the active tool for `kind`. A non-`None`
+/// `id` MUST refer to an existing tool of that same kind, else `Err` — this
+/// stops the active selection ever pointing at a tool that isn't there.
+pub fn set_active_tool_in(settings: &mut ToolSettings, kind: ToolKind, id: Option<String>) -> Result<(), String> {
+    if let Some(id) = &id {
+        if !settings.tools.iter().any(|t| t.kind == kind && &t.id == id) {
+            return Err(format!("No {} tool with id {id:?} exists.", kind_label(kind)));
+        }
+    }
+    match kind {
+        ToolKind::Diff => settings.active_diff_tool_id = id,
+        ToolKind::Merge => settings.active_merge_tool_id = id,
+        ToolKind::Commit => settings.active_commit_tool_id = id,
+    }
+    Ok(())
+}
+
+/// Lowercase human label for a kind, for user-facing messages.
+fn kind_label(kind: ToolKind) -> &'static str {
+    match kind {
+        ToolKind::Diff => "diff",
+        ToolKind::Merge => "merge",
+        ToolKind::Commit => "commit",
+    }
+}
+
+/// The currently-ACTIVE named tool of `kind`, if one is selected AND still
+/// present in the list. Returns `None` when no selection is set OR it dangles
+/// (which `remove_named_tool_from` prevents, but a hand-edited file could
+/// still produce — treated as "no active tool", falling back gracefully).
+fn active_named_tool(settings: &ToolSettings, kind: ToolKind) -> Option<&NamedTool> {
+    let active_id = match kind {
+        ToolKind::Diff => settings.active_diff_tool_id.as_deref(),
+        ToolKind::Merge => settings.active_merge_tool_id.as_deref(),
+        ToolKind::Commit => settings.active_commit_tool_id.as_deref(),
+    }?;
+    settings.tools.iter().find(|t| t.kind == kind && t.id == active_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +497,47 @@ fn resolve_from_gitconfig(path: &str, key: &str) -> Option<ExternalTool> {
     }
     let name = out.stdout.trim();
     (!name.is_empty()).then(|| ExternalTool { name: name.to_string(), cmd: None })
+}
+
+/// Convert a diff/merge [`NamedTool`] into the [`ExternalTool`] shape the argv
+/// builders/resolvers already speak: the tool's `id` becomes the git tool
+/// NAME (a valid `difftool.<id>.cmd=`/`mergetool.<id>.cmd=` subsection — see
+/// [`NamedTool::id`]) and its `cmd` the override.
+fn named_tool_as_external(t: &NamedTool) -> ExternalTool {
+    ExternalTool { name: t.id.clone(), cmd: Some(t.cmd.clone()) }
+}
+
+/// The diff tool to hand `open_diff_tool_inner` as its `configured` argument,
+/// applying the PER-44 precedence's first two tiers: ACTIVE named diff tool >
+/// the legacy singleton `diff_tool`. The final `> git config diff.tool` tier
+/// happens INSIDE [`resolve_diff_tool`] when this returns `None`, so existing
+/// behavior (no named tools => singleton or gitconfig, exactly as before) is
+/// preserved. `pub` so the integration suite can drive the full precedence
+/// against a real repo.
+pub fn configured_diff_tool(settings: &ToolSettings) -> Option<ExternalTool> {
+    active_named_tool(settings, ToolKind::Diff)
+        .map(named_tool_as_external)
+        .or_else(|| settings.diff_tool.clone())
+}
+
+/// Merge-tool peer of [`configured_diff_tool`]: ACTIVE named merge tool >
+/// singleton `merge_tool` > (inside [`resolve_merge_tool`]) `git config
+/// merge.tool`.
+pub fn configured_merge_tool(settings: &ToolSettings) -> Option<ExternalTool> {
+    active_named_tool(settings, ToolKind::Merge)
+        .map(named_tool_as_external)
+        .or_else(|| settings.merge_tool.clone())
+}
+
+/// The commit-message command to run: ACTIVE named commit tool's `cmd` > the
+/// legacy singleton `commit_msg_command` (blank => unset). There is no git
+/// config tier for this one (git has no `commit.msgcommand`). `None` => no
+/// generator configured at all.
+pub fn resolve_commit_command(settings: &ToolSettings) -> Option<String> {
+    active_named_tool(settings, ToolKind::Commit)
+        .map(|t| t.cmd.clone())
+        .or_else(|| settings.commit_msg_command.clone())
+        .filter(|c| !c.trim().is_empty())
 }
 
 // ---------------------------------------------------------------------------
@@ -402,9 +649,12 @@ pub fn get_tool_settings(app: AppHandle<Wry>) -> Result<ToolSettings, String> {
     load_from(&settings_path(&app)?)
 }
 
-/// Whole-form overwrite (the settings modal always submits both slots at
-/// once) — no read-modify-write needed, unlike `repo_registry`'s list
-/// mutations, but still lock-guarded for the same cheap-insurance reason.
+/// Overwrite the three legacy SINGLETON slots (the settings modal always
+/// submits all of them at once). Now a READ-modify-write (it was a whole-value
+/// overwrite before PER-44): it loads the current settings first so it only
+/// touches the singleton fields and PRESERVES the named-tools list + active
+/// selections — otherwise saving the singleton form would silently wipe every
+/// named tool the user had configured. Still lock-guarded, same as before.
 /// JS: `commands.setToolSettings(diffTool, mergeTool, commitMsgCommand)`.
 #[tauri::command]
 #[specta::specta]
@@ -416,13 +666,57 @@ pub fn set_tool_settings(
 ) -> Result<ToolSettings, String> {
     let _guard = settings_lock().lock().unwrap_or_else(|e| e.into_inner());
     let path = settings_path(&app)?;
-    let settings = ToolSettings {
-        diff_tool: normalize_tool(diff_tool)?,
-        merge_tool: normalize_tool(merge_tool)?,
-        // Just trim; blank => None (feature unset). No charset check — it's an
-        // arbitrary shell command, not a git-subsection name.
-        commit_msg_command: commit_msg_command.map(|c| c.trim().to_string()).filter(|c| !c.is_empty()),
-    };
+    let mut settings = load_from(&path)?;
+    settings.diff_tool = normalize_tool(diff_tool)?;
+    settings.merge_tool = normalize_tool(merge_tool)?;
+    // Just trim; blank => None (feature unset). No charset check — it's an
+    // arbitrary shell command, not a git-subsection name.
+    settings.commit_msg_command = commit_msg_command.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
+    save_to(&path, &settings)?;
+    Ok(settings)
+}
+
+// ---------------------------------------------------------------------------
+// Commands: named-tool CRUD (PER-44). The whole updated `ToolSettings` is
+// returned from each (like `repo_registry`'s list mutations) so the frontend
+// re-renders without a second round-trip. Listing is via `get_tool_settings`.
+// ---------------------------------------------------------------------------
+
+/// Add a new named tool, or update an existing one with the same `id` (upsert).
+/// JS: `commands.saveNamedTool(tool)`.
+#[tauri::command]
+#[specta::specta]
+pub fn save_named_tool(app: AppHandle<Wry>, tool: NamedTool) -> Result<ToolSettings, String> {
+    let _guard = settings_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let path = settings_path(&app)?;
+    let mut settings = load_from(&path)?;
+    upsert_named_tool(&mut settings, tool)?;
+    save_to(&path, &settings)?;
+    Ok(settings)
+}
+
+/// Remove the named tool with `id` (and clear it as any kind's active
+/// selection). JS: `commands.removeNamedTool(id)`.
+#[tauri::command]
+#[specta::specta]
+pub fn remove_named_tool(app: AppHandle<Wry>, id: String) -> Result<ToolSettings, String> {
+    let _guard = settings_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let path = settings_path(&app)?;
+    let mut settings = load_from(&path)?;
+    remove_named_tool_from(&mut settings, &id);
+    save_to(&path, &settings)?;
+    Ok(settings)
+}
+
+/// Select (or, with `id: None`, clear) the active tool for a kind.
+/// JS: `commands.setActiveTool(kind, id)`.
+#[tauri::command]
+#[specta::specta]
+pub fn set_active_tool(app: AppHandle<Wry>, kind: ToolKind, id: Option<String>) -> Result<ToolSettings, String> {
+    let _guard = settings_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let path = settings_path(&app)?;
+    let mut settings = load_from(&path)?;
+    set_active_tool_in(&mut settings, kind, id)?;
     save_to(&path, &settings)?;
     Ok(settings)
 }
@@ -444,9 +738,9 @@ pub fn set_tool_settings(
 #[tauri::command]
 #[specta::specta]
 pub async fn generate_commit_message(app: AppHandle<Wry>, path: String) -> Result<String, String> {
-    let cmd = load_from(&settings_path(&app)?)?
-        .commit_msg_command
-        .filter(|c| !c.trim().is_empty())
+    // Precedence: ACTIVE named commit tool > legacy `commit_msg_command`
+    // singleton (see `resolve_commit_command`).
+    let cmd = resolve_commit_command(&load_from(&settings_path(&app)?)?)
         .ok_or_else(|| {
             "No commit-message command is set up. Add one in Tools ▸ External Tools (e.g. `aicommit`) — GitCat runs it and drops the output here; it talks to no AI itself.".to_string()
         })?;
@@ -746,7 +1040,9 @@ pub async fn open_diff_tool(
 ) -> Result<(), String> {
     crate::blocking::run_blocking(move || {
         let settings = load_from(&settings_path(&app)?)?;
-        open_diff_tool_inner(settings.diff_tool, &path, &file, staged, from_rev, to_rev)
+        // ACTIVE named diff tool > singleton `diff_tool` (then, inside the
+        // inner, > git config diff.tool) — see `configured_diff_tool`.
+        open_diff_tool_inner(configured_diff_tool(&settings), &path, &file, staged, from_rev, to_rev)
     })
     .await
 }
@@ -823,7 +1119,9 @@ pub async fn resolve_conflict_with_external_tool(app: AppHandle<Wry>, path: Stri
             Ok(s) => s,
             Err(e) => return conflict::ResolveResult { ok: false, remaining: 0, message: e },
         };
-        resolve_conflict_with_external_tool_inner(settings.merge_tool, &path, &file)
+        // ACTIVE named merge tool > singleton `merge_tool` (then, inside the
+        // inner, > git config merge.tool) — see `configured_merge_tool`.
+        resolve_conflict_with_external_tool_inner(configured_merge_tool(&settings), &path, &file)
     })
     .await
 }
@@ -1070,6 +1368,7 @@ mod tests {
             diff_tool: Some(ExternalTool { name: "meld".into(), cmd: None }),
             merge_tool: Some(ExternalTool { name: "mytool".into(), cmd: Some("mytool $BASE $LOCAL $REMOTE $MERGED".into()) }),
             commit_msg_command: Some("aicommit".into()),
+            ..Default::default()
         };
         save_to(&path, &settings).expect("save_to failed");
 
@@ -1140,6 +1439,178 @@ mod tests {
         let normalized = normalize_tool(Some(t)).unwrap().unwrap();
         assert_eq!(normalized.name, "meld");
         assert_eq!(normalized.cmd.as_deref(), Some("cat $LOCAL"));
+    }
+
+    // -----------------------------------------------------------------------
+    // PER-44: named tools — validation, list mutations, resolver precedence,
+    // and the v1 -> v2 lossless migration.
+    // -----------------------------------------------------------------------
+
+    fn diff_tool(id: &str, cmd: &str) -> NamedTool {
+        NamedTool { id: id.into(), name: format!("{id} label"), kind: ToolKind::Diff, cmd: cmd.into() }
+    }
+
+    #[test]
+    fn normalize_named_tool_validates_id_name_and_cmd() {
+        // Good: id trimmed, still valid; name/cmd trimmed.
+        let ok = normalize_named_tool(NamedTool {
+            id: "  my-diff2  ".into(),
+            name: "  My Diff  ".into(),
+            kind: ToolKind::Diff,
+            cmd: "  code --wait --diff $LOCAL $REMOTE  ".into(),
+        })
+        .unwrap();
+        assert_eq!(ok.id, "my-diff2");
+        assert_eq!(ok.name, "My Diff");
+        assert_eq!(ok.cmd, "code --wait --diff $LOCAL $REMOTE");
+
+        // Bad id charsets: a dot (unescapable in git's -c subsection shorthand),
+        // uppercase, underscore, and a leading hyphen are all rejected.
+        for bad in ["my.tool", "MyTool", "my_tool", "-tool", ""] {
+            assert!(
+                normalize_named_tool(NamedTool { id: bad.into(), name: "n".into(), kind: ToolKind::Diff, cmd: "c".into() }).is_err(),
+                "id {bad:?} should be rejected"
+            );
+        }
+        // Blank name and blank cmd are each rejected.
+        assert!(normalize_named_tool(NamedTool { id: "ok".into(), name: "  ".into(), kind: ToolKind::Diff, cmd: "c".into() }).is_err());
+        assert!(normalize_named_tool(NamedTool { id: "ok".into(), name: "n".into(), kind: ToolKind::Diff, cmd: "  ".into() }).is_err());
+    }
+
+    #[test]
+    fn upsert_named_tool_adds_then_updates_in_place_by_id() {
+        let mut s = ToolSettings::default();
+        upsert_named_tool(&mut s, diff_tool("vscode", "code --diff $LOCAL $REMOTE")).unwrap();
+        upsert_named_tool(&mut s, NamedTool { id: "meldy".into(), name: "Meld".into(), kind: ToolKind::Merge, cmd: "meld".into() }).unwrap();
+        assert_eq!(s.tools.len(), 2);
+        // Same id => replace in place, not append.
+        upsert_named_tool(&mut s, diff_tool("vscode", "code --new $LOCAL $REMOTE")).unwrap();
+        assert_eq!(s.tools.len(), 2);
+        assert_eq!(s.tools.iter().find(|t| t.id == "vscode").unwrap().cmd, "code --new $LOCAL $REMOTE");
+    }
+
+    #[test]
+    fn set_active_tool_in_requires_an_existing_tool_of_that_kind() {
+        let mut s = ToolSettings::default();
+        upsert_named_tool(&mut s, diff_tool("vscode", "code --diff $LOCAL $REMOTE")).unwrap();
+        // Selecting a diff tool that exists: ok.
+        set_active_tool_in(&mut s, ToolKind::Diff, Some("vscode".into())).unwrap();
+        assert_eq!(s.active_diff_tool_id.as_deref(), Some("vscode"));
+        // Selecting it as a MERGE tool (wrong kind) is rejected.
+        assert!(set_active_tool_in(&mut s, ToolKind::Merge, Some("vscode".into())).is_err());
+        // An unknown id is rejected.
+        assert!(set_active_tool_in(&mut s, ToolKind::Diff, Some("nope".into())).is_err());
+        // Clearing (None) always ok.
+        set_active_tool_in(&mut s, ToolKind::Diff, None).unwrap();
+        assert!(s.active_diff_tool_id.is_none());
+    }
+
+    #[test]
+    fn removing_the_active_tool_clears_the_active_selection() {
+        let mut s = ToolSettings::default();
+        upsert_named_tool(&mut s, diff_tool("vscode", "code --diff $LOCAL $REMOTE")).unwrap();
+        set_active_tool_in(&mut s, ToolKind::Diff, Some("vscode".into())).unwrap();
+        remove_named_tool_from(&mut s, "vscode");
+        assert!(s.tools.is_empty());
+        assert!(s.active_diff_tool_id.is_none(), "a removed tool must not stay selected as active");
+    }
+
+    #[test]
+    fn configured_diff_tool_precedence_active_named_then_singleton_then_none() {
+        // No named tools, no singleton => None (would fall through to gitconfig).
+        let mut s = ToolSettings::default();
+        assert!(configured_diff_tool(&s).is_none());
+
+        // Singleton only => the singleton.
+        s.diff_tool = Some(ExternalTool { name: "meld".into(), cmd: None });
+        assert_eq!(configured_diff_tool(&s).unwrap().name, "meld");
+
+        // An active named diff tool OUTRANKS the singleton, and is exposed with
+        // its `id` as the git tool name and its `cmd` as the override.
+        upsert_named_tool(&mut s, diff_tool("vscode", "code --diff $LOCAL $REMOTE")).unwrap();
+        set_active_tool_in(&mut s, ToolKind::Diff, Some("vscode".into())).unwrap();
+        let resolved = configured_diff_tool(&s).unwrap();
+        assert_eq!(resolved.name, "vscode");
+        assert_eq!(resolved.cmd.as_deref(), Some("code --diff $LOCAL $REMOTE"));
+
+        // Deselecting the named tool falls back to the singleton again.
+        set_active_tool_in(&mut s, ToolKind::Diff, None).unwrap();
+        assert_eq!(configured_diff_tool(&s).unwrap().name, "meld");
+    }
+
+    #[test]
+    fn resolve_commit_command_precedence_active_named_then_singleton() {
+        let mut s = ToolSettings::default();
+        assert!(resolve_commit_command(&s).is_none());
+
+        s.commit_msg_command = Some("aicommit".into());
+        assert_eq!(resolve_commit_command(&s).as_deref(), Some("aicommit"));
+
+        upsert_named_tool(&mut s, NamedTool {
+            id: "ollama".into(),
+            name: "Ollama".into(),
+            kind: ToolKind::Commit,
+            cmd: "git diff --staged | ollama run x".into(),
+        })
+        .unwrap();
+        set_active_tool_in(&mut s, ToolKind::Commit, Some("ollama".into())).unwrap();
+        assert_eq!(resolve_commit_command(&s).as_deref(), Some("git diff --staged | ollama run x"));
+    }
+
+    #[test]
+    fn v1_file_migrates_losslessly_keeping_its_singletons() {
+        // A byte-for-byte v1 file: singletons present, NO tools/active_* keys.
+        let dir = temp_dir("v1-migrate");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(FILE_NAME);
+        std::fs::write(
+            &path,
+            r#"{"version":1,"diff_tool":{"name":"meld","cmd":null},"merge_tool":{"name":"kdiff3","cmd":null},"commit_msg_command":"aicommit"}"#,
+        )
+        .unwrap();
+
+        let s = load_from(&path).expect("a v1 file must still load, not trip corrupt-recovery");
+        // Singletons survive untouched.
+        assert_eq!(s.diff_tool.as_ref().unwrap().name, "meld");
+        assert_eq!(s.merge_tool.as_ref().unwrap().name, "kdiff3");
+        assert_eq!(s.commit_msg_command.as_deref(), Some("aicommit"));
+        // New fields default empty — behavior is identical to before.
+        assert!(s.tools.is_empty());
+        assert!(s.active_diff_tool_id.is_none() && s.active_merge_tool_id.is_none() && s.active_commit_tool_id.is_none());
+        // The file is NOT rewritten just by reading it (a rename-aside would
+        // have removed it) — it's still there.
+        assert!(path.exists());
+
+        // Re-saving upgrades it to v2 while still preserving the singletons.
+        save_to(&path, &s).unwrap();
+        let reloaded = load_from(&path).unwrap();
+        assert_eq!(reloaded.diff_tool.as_ref().unwrap().name, "meld");
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("\"version\": 2"), "save must rewrite as v2: {raw}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn named_tools_round_trip_through_save_and_load() {
+        let dir = temp_dir("named-roundtrip");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(FILE_NAME);
+
+        let mut s = ToolSettings::default();
+        upsert_named_tool(&mut s, diff_tool("vscode", "code --diff $LOCAL $REMOTE")).unwrap();
+        upsert_named_tool(&mut s, NamedTool { id: "p4".into(), name: "P4Merge".into(), kind: ToolKind::Merge, cmd: "p4merge".into() }).unwrap();
+        set_active_tool_in(&mut s, ToolKind::Diff, Some("vscode".into())).unwrap();
+        save_to(&path, &s).unwrap();
+
+        let loaded = load_from(&path).unwrap();
+        assert_eq!(loaded.tools.len(), 2);
+        assert_eq!(loaded.active_diff_tool_id.as_deref(), Some("vscode"));
+        let vscode = loaded.tools.iter().find(|t| t.id == "vscode").unwrap();
+        assert_eq!(vscode.kind, ToolKind::Diff);
+        assert_eq!(vscode.cmd, "code --diff $LOCAL $REMOTE");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

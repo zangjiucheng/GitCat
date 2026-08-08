@@ -206,6 +206,11 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
         // "reachable any time, no repo needed" shape as Repositories just
         // above (see externaltools.svelte.ts's own header doc).
         let external_tools = MenuItemBuilder::with_id("external-tools", "External Tools\u{2026}").build(app)?;
+        // Plugins manager — the installed-plugin registry (enable/disable/
+        // remove/install), a VS Code Extensions-style view. App-level like
+        // Repositories/External Tools just around it (no repo needed), so it
+        // sits in the same group (see plugins.svelte.ts).
+        let plugins = MenuItemBuilder::with_id("plugins", "Plugins\u{2026}").build(app)?;
         // App Settings (theme, cherry-pick record-origin default,
         // auto-check-updates toggle, and a Git Identity section scoped to
         // whichever repo is open) — same "reachable any time, no repo
@@ -277,6 +282,7 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
             .separator()
             .item(&repositories)
             .item(&external_tools)
+            .item(&plugins)
             .item(&settings)
             .separator()
             .item(&uncommitted_changes)
@@ -356,7 +362,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // logic in Rust.
         id @ ("open-repo" | "close-repo" | "new-branch" | "toggle-theme" | "cmdk" | "fetch" | "pull" | "push" | "refresh" | "about"
         | "bisect" | "reflog" | "rerere" | "plumbing" | "repo-summary" | "remotes" | "export-patches" | "apply-patch"
-        | "pickaxe-search" | "code-search" | "repositories" | "external-tools" | "settings" | "dangling-recovery"
+        | "pickaxe-search" | "code-search" | "repositories" | "external-tools" | "plugins" | "settings" | "dangling-recovery"
         | "repo-files" | "uncommitted-changes" | "pull-merge" | "pull-rebase" | "open-terminal" | "reset-head"
         | "force-push-lease" | "force-push-override" | "filter-repo" | "check-for-updates") => {
             let _ = app.emit("menu-action", id);

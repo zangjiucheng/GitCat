@@ -1,0 +1,25 @@
+# Enforce LF line endings everywhere.
+#
+# `text=auto` lets git auto-detect text vs binary; `eol=lf` forces text files to
+# LF both in the repository AND on checkout — so a Windows working tree can never
+# reintroduce CRLF, and every contributor commits LF regardless of their local
+# core.autocrlf. This is the authoritative rule; .editorconfig just nudges
+# editors to match.
+* text=auto eol=lf
+
+# Binary assets — never normalize (belt-and-suspenders over git's own auto
+# detection, so a renormalize can never corrupt them).
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.mp4   binary
+*.webm  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.glb   binary
+*.wasm  binary

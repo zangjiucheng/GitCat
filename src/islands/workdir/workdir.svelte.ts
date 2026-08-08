@@ -1024,6 +1024,13 @@ class WorkdirState {
       if (res.ok) {
         this.message = "";
         this.amend = false;
+        // Fire the commit-created lifecycle event: this is what runs plugin
+        // `commit-created` hooks (PER-43, via the Tama event bus) AND the
+        // event() handler's Safety.seal()/_tele() snapshot-badge refresh. GitCat's
+        // own commit path historically signalled with set/say directly, so this
+        // event went unemitted (both the hook and the badge refresh were dead);
+        // the set("celebrate") right below keeps the celebratory pose.
+        bridge.tama.event("commit.created");
         bridge.tama.set("celebrate");
         bridge.tama.say(res.message || "Committed.", 3200);
         await bridge.reloadGraph(true);

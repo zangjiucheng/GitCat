@@ -105,9 +105,36 @@ Download the installer for your platform from the [Releases page](https://github
 > - **macOS**: right-click the app → **Open** the first time to get past Gatekeeper.
 > - **Windows**: click **More info** → **Run anyway** on the SmartScreen prompt.
 
+## Open from the command line
+
+Point GitCat at a repo straight from a terminal, the way `code .` works in VS Code:
+
+```bash
+gitcat .                 # open the repo in the current directory
+gitcat ~/src/my-project  # open a repo by path
+```
+
+A relative path resolves against your current directory. If the folder isn't a git repository, GitCat still opens and tells you so, rather than loading nothing.
+
+This needs the `gitcat` command on your `PATH`. Open GitCat and run **Install 'gitcat' command** from Settings > Command line (or from ⌘K) on any platform; it writes a small launcher that opens the app without blocking your terminal:
+
+- **macOS** — `/usr/local/bin/gitcat` (you may be asked for your password).
+- **Linux** — `~/.local/bin/gitcat` (make sure that folder is on your `PATH`). The `.deb`/`.rpm` packages already put `gitcat` on `PATH` too, so this is mainly for the AppImage.
+- **Windows** — `gitcat.cmd` under `%LOCALAPPDATA%\Microsoft\WindowsApps`, which is on `PATH` by default.
+
+Open a new terminal afterwards so it picks up the change.
+
 ## Development
 
-Requires [Rust](https://www.rust-lang.org/tools/install), [Node](https://nodejs.org) 22+, and [pnpm](https://pnpm.io). On Linux, Tauri also needs WebKitGTK/GTK3 dev headers at build time — see `.github/workflows/*.yml` for the apt packages, or on NixOS run `nix develop` to drop into a shell with everything (Rust, Node, pnpm, WebKitGTK, and friends) already wired up via `flake.nix`.
+Requires [Rust](https://www.rust-lang.org/tools/install), [Node](https://nodejs.org) 22+, and [pnpm](https://pnpm.io) 10. On Linux, Tauri also needs WebKitGTK/GTK3 dev headers at build time — see `.github/workflows/*.yml` for the apt packages, or on NixOS run `nix develop` to drop into a shell with everything (Rust, Node, pnpm, WebKitGTK, and friends) already wired up via `flake.nix`.
+
+The exact pnpm version lives in `package.json`'s `packageManager` field, which is what keeps `pnpm-lock.yaml` from being rewritten by whichever pnpm you happen to have. Any pnpm 10 honours it on its own. Older pnpm does not — it will run as itself and fail here — so if you have pnpm 9 or none at all, let corepack (bundled with Node) handle it:
+
+```bash
+corepack enable pnpm
+```
+
+Then, from the repo root:
 
 ```bash
 pnpm install
@@ -122,6 +149,7 @@ Other useful commands:
 pnpm check          # svelte-check (type-check the frontend)
 pnpm build          # build the frontend
 pnpm test           # vitest (frontend unit tests)
+pnpm test:e2e       # playwright (real browser, mocked IPC — see e2e/fixtures/tauriMock.ts)
 pnpm docs:dev       # run the docs site (docs/) locally at localhost:5173
 
 cd src-tauri

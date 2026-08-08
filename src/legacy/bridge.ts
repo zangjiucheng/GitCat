@@ -12,7 +12,22 @@ export {
   cheer,
   highlight,
   Tama as tama,
+  // Additive, subscribable Tama event bus (legacy/main.ts) — islands call
+  // `bridge.tamaBus.subscribe(fn)` to observe the SAME event stream the mascot
+  // reacts to. A mid-file `export const` in legacy/main.ts, so this live
+  // re-export is TDZ-safe (same reasoning as CUR_REPO above); the ~28 existing
+  // `bridge.tama.event(...)` call sites are untouched.
+  tamaBus,
   TAMA_IMG,
+  // Tama skin registry (PER-47): a plugin skin overlays some/all of the 8
+  // built-in poses. `applyTamaSkin(poses)` / `clearTamaSkin()` are mid-file
+  // `export const`s and `tamaPose(key)` a mid-file `export function` in
+  // legacy/main.ts — same live-re-export TDZ-safety as tamaBus/CUR_REPO above.
+  // The settings skin picker calls apply/clear; tamagallery reads tamaPose so
+  // the gallery shows the ACTIVE skin's poses (built-ins are the fallback).
+  applyTamaSkin,
+  clearTamaSkin,
+  tamaPose,
   requestRedraw,
   // the open repo's absolute path (or null when none is open) — a live
   // binding (see the file header): read it as `bridge.CUR_REPO` at call time,
@@ -101,6 +116,15 @@ export {
   // class immediately, same live-re-export safety as applyThemeMode/
   // setGraphShowAllTags above (hoisted `function`, no TDZ risk).
   setTamaEnabled,
+  // PER-54 Tama customization (frontend-only, persisted by the Settings island
+  // in localStorage gitcat.settings). setTamaMotionPreset("default"|"calm"|
+  // "lively") scales the sticky/dwell auto-revert hold + swaps the idle
+  // behavior; setTamaPoseOverrides({state:poseKey,…}) overrides which of the 8
+  // painted poses each FSM state shows ({} = no overrides = built-in POSE map).
+  // Both are mid-file hoisted `export function`s in legacy/main.ts — same live-
+  // re-export TDZ-safety as setTamaEnabled/applyTamaSkin above.
+  setTamaMotionPreset,
+  setTamaPoseOverrides,
   // "graph-batch" event handler — src/main.ts's own event listener forwards
   // every batch here (mirrors "repo-changed"/refreshFromExternalChange's own
   // shape). Hoisted `function`, no TDZ risk (same reasoning as
@@ -135,3 +159,12 @@ export {
   demoBisectStatus,
   demoBisectMark,
 } from "../islands/bisectdrawer/bisectdrawer.svelte.ts";
+
+// PER-53: Tama's per-character voice-pitch multiplier lives in the leaf
+// legacy/sound.ts (it can't import from legacy/main.ts — see sound.ts's own
+// header), so it's re-exported here directly from ./sound rather than through
+// ./main. legacy/main.ts's applyTamaSkin(poses, voicePitch)/clearTamaSkin()
+// already drive it for the skin picker; this seam lets an island set the pitch
+// on its own if it ever needs to. Named `setTamaVoicePitch` to match the other
+// `setTama*` bridge verbs (setTamaEnabled above).
+export { setVoicePitch as setTamaVoicePitch } from "./sound.ts";

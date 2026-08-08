@@ -145,6 +145,13 @@ const DEMO_LOCALS: LocalBranch[] = [
   { name: "feat/inline-diff", sha: "b2c3d4e", ahead: null, behind: 3, upstream: "origin/feat/inline-diff", lastCommitTime: Date.now() / 1000 - 5 * 86400 },
   { name: "fix/lane-cull", sha: "c3d4e5f", ahead: null, behind: null, upstream: null, lastCommitTime: Date.now() / 1000 - 1 * 86400 },
   { name: "release/0.3", sha: "d4e5f60", ahead: null, behind: null, upstream: null, lastCommitTime: Date.now() / 1000 - 200 * 86400 },
+  // Two more release lines so the ref tree's numeric ordering (see
+  // compareRefLabels) has something real to demonstrate, the same way
+  // release/0.3's own timestamp above demonstrates Auto's staleness cutoff:
+  // `1.9` must sort BEFORE `1.10`, which plain lexicographic ordering gets
+  // backwards.
+  { name: "release/1.9", sha: "d4e5f61", ahead: null, behind: null, upstream: null, lastCommitTime: Date.now() / 1000 - 30 * 86400 },
+  { name: "release/1.10", sha: "d4e5f62", ahead: null, behind: null, upstream: null, lastCommitTime: Date.now() / 1000 - 12 * 86400 },
 ];
 const DEMO_REMOTES: SimpleRef[] = [
   { name: "origin/main", sha: "a1b2c3d" },
@@ -152,11 +159,20 @@ const DEMO_REMOTES: SimpleRef[] = [
   { name: "origin/topic/rerere", sha: "e5f6071" },
   { name: "upstream/main", sha: "f60718a" },
   { name: "upstream/dev", sha: "60718a9" },
+  // A second remote tracking the SAME branch name as origin — a `feat/` folder
+  // under each remote's own node. Deliberate: their collapse state has to stay
+  // separate, and this is what a fork configured with an upstream looks like.
+  { name: "upstream/feat/inline-diff", sha: "b2c3d4e" },
 ];
 const DEMO_TAGS: SimpleRef[] = [
   { name: "v0.3.0", sha: "a1b2c3d" },
   { name: "v0.2.0", sha: "718a9bc" },
   { name: "nightly-2026-07-05", sha: "18a9bcd" },
+  // Release candidates under a shared prefix — tags are grouped by the same
+  // "/" tree as branches, and without a path-like tag here the preview would
+  // never show that.
+  { name: "v1.0/rc1", sha: "8a9bcde" },
+  { name: "v1.0/rc2", sha: "a9bcdef" },
 ];
 // Deliberately one of each of the 5 classify_status outcomes (see
 // src-tauri/src/submodule.rs) so the browser design-mode preview actually
@@ -318,6 +334,181 @@ export const SUBMODULES_ALL = "__submodules__";
 // same `submodulesRecursive` toggle.
 export const SUBMODULES_SYNC_ALL = "__submodules_sync__";
 
+// ── ref folder tree (Git-Fork-style "/"-segmented hierarchy) ───────────────
+//
+// Branch names are conventionally path-like (`feature/some-work`,
+// `release/1.0`, `fix/win/askpass`). Rendered as one flat list of full names, a
+// few dozen of them read as undifferentiated noise: the shared prefix repeats on
+// every row while the part that distinguishes them is what an ellipsis truncates
+// away first. So each `/`-separated segment except the last becomes a
+// collapsible FOLDER and a leaf row shows only its own last segment — the way
+// Git Fork, Sourcetree and VS Code all group them.
+//
+// Deliberately produces a FLAT, pre-ordered row array rather than a nested
+// structure: Svelte 5 can render a recursive tree via self-referencing
+// snippets, but a flat list keeps the view a single ordinary `{#each}` (so
+// every existing per-row concern — the visibility checkbox, `data-branch`
+// hooks the legacy layer/vimnav already query, the context menu, the busy
+// spinner — stays exactly where it was), and makes the whole grouping a pure
+// function this file can unit-test directly with no DOM at all.
+//
+// A one-segment name (`main`) is a depth-0 leaf and never gets a folder, so a
+// repo that doesn't use `/` at all renders byte-identically to before.
+export type RefRow<T> =
+  | { kind: "folder"; path: string; label: string; depth: number; count: number; collapsed: boolean }
+  | { kind: "leaf"; path: string; label: string; depth: number; item: T };
+
+/**
+ * Which sidebar list a folder path belongs to. Folder open/closed state is
+ * keyed by this (see `folderOpen`) so `feature/` under Local and `feature/`
+ * under Remotes fold independently — they're different lists that happen to
+ * share a naming convention, not one thing shown twice.
+ */
+export type RefSection = "local" | "remote" | "tag";
+
+// Internal tree shape, collapsed into `RefRow[]` by the walk at the end of
+// `buildRefRows`.
+type TreeDir<T> = {
+  dirs: Map<string, TreeDir<T>>;
+  leaves: { label: string; path: string; item: T }[];
+};
+
+function emptyDir<T>(): TreeDir<T> {
+  return { dirs: new Map(), leaves: [] };
+}
+
+// Row ordering WITHIN each folder level: every folder first (A-Z), then every
+// plain branch (A-Z). Folders-before-leaves is what Git Fork, Sourcetree and
+// VS Code's explorer all do, and it's what makes a deep tree scannable — the
+// structure is all at the top of each level instead of interleaved with leaves.
+//
+// Compares ONE segment against another (`walk` splits before calling in), so
+// `numeric: true` is what puts `2` before `10` under a shared `release/` — plain
+// lexicographic orders "10" first, which is actively wrong for the version-like
+// names this grouping exists to tidy up.
+//
+// `sensitivity: "base"` makes it case-insensitive: git ref names ARE
+// case-sensitive, but a list where `Fix/` sorts miles away from `fix/` reads as
+// broken to anyone scanning it alphabetically.
+export function compareRefLabels(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+/**
+ * Group `items` into a flat, render-ready row list by splitting each item's
+ * name on "/".
+ *
+ * `getName` returns the name to group by. Callers are expected to pass the ref's
+ * FULL name, which is what makes a remote's own name the outermost folder
+ * (`origin` > `feature` > `some-work`) exactly as it reads on screen.
+ *
+ * `isCollapsed(path)` is asked per folder using the folder's own full path
+ * (e.g. `feature/win`), so nested folders collapse independently.
+ *
+ * `forceExpand` renders every folder open regardless of `isCollapsed` — used
+ * while a ref filter is active, so surviving matches can never be hidden
+ * inside a folder the user collapsed earlier (the same thing VS Code's
+ * explorer and Git Fork's own filter box do). Collapsed state is NOT cleared,
+ * so it comes back intact once the filter is emptied.
+ *
+ * Rows are ordered per level by `compareRefLabels`: folders A-Z first, then
+ * plain refs A-Z. The caller's incoming order is deliberately NOT preserved, so
+ * the rendered order doesn't depend on how the backend enumerated refs.
+ *
+ * Empty-segment noise (`a//b`, a stray trailing "/") is dropped rather than
+ * producing a blank folder row. Git rejects those ref names, so this is pure
+ * defensiveness against a hand-written fixture, not a path a real repo reaches.
+ */
+export function buildRefRows<T>(
+  items: T[],
+  getName: (item: T) => string,
+  isCollapsed: (path: string) => boolean,
+  forceExpand = false,
+): RefRow<T>[] {
+  const root = emptyDir<T>();
+
+  for (const item of items) {
+    const segments = getName(item).split("/").filter((s) => s !== "");
+    if (segments.length === 0) continue;
+    const leafLabel = segments[segments.length - 1];
+    let dir = root;
+    for (const seg of segments.slice(0, -1)) {
+      let next = dir.dirs.get(seg);
+      if (!next) {
+        next = emptyDir<T>();
+        dir.dirs.set(seg, next);
+      }
+      dir = next;
+    }
+    dir.leaves.push({ label: leafLabel, path: getName(item), item });
+  }
+
+  // Total leaves at or below a folder — drives its count badge, so a collapsed
+  // folder still tells you how much it's hiding.
+  function countLeaves(dir: TreeDir<T>): number {
+    let n = dir.leaves.length;
+    for (const child of dir.dirs.values()) n += countLeaves(child);
+    return n;
+  }
+
+  const rows: RefRow<T>[] = [];
+  function walk(dir: TreeDir<T>, depth: number, prefix: string): void {
+    // Folders first, A-Z …
+    for (const seg of [...dir.dirs.keys()].sort(compareRefLabels)) {
+      const child = dir.dirs.get(seg)!;
+      const path = prefix ? `${prefix}/${seg}` : seg;
+      const collapsed = !forceExpand && isCollapsed(path);
+      rows.push({ kind: "folder", path, label: seg, depth, count: countLeaves(child), collapsed });
+      // A collapsed folder contributes its own row (with its count) but none of
+      // its descendants — that's the whole point of collapsing, and it also
+      // means the view never renders rows it would just have to hide.
+      if (!collapsed) walk(child, depth + 1, path);
+    }
+    // … then the plain branches at this level, A-Z.
+    for (const leaf of [...dir.leaves].sort((a, b) => compareRefLabels(a.label, b.label))) {
+      rows.push({ kind: "leaf", path: leaf.path, label: leaf.label, depth, item: leaf.item });
+    }
+  }
+  walk(root, 0, "");
+  return rows;
+}
+
+/**
+ * The remote a remote-tracking ref belongs to (`origin/feature/x` -> `origin`),
+ * or `null` for a name with no remote prefix at all.
+ *
+ * The tree itself doesn't need this — it groups remotes by their full name, so
+ * the remote falls out as the outermost folder on its own. This is for the one
+ * thing that is per-remote rather than per-folder: the lane colour every one of
+ * a remote's branch dots shares.
+ */
+export function remoteHead(name: string): string | null {
+  const slash = name.indexOf("/");
+  return slash === -1 ? null : name.slice(0, slash);
+}
+
+/**
+ * Every folder path in `items`, at every nesting level (`feature`,
+ * `feature/win`, …) — what "collapse all" needs in order to fold the whole
+ * tree in one click without first having to render it.
+ */
+export function refFolderPaths<T>(items: T[], getName: (item: T) => string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const segments = getName(item).split("/").filter((s) => s !== "");
+    let prefix = "";
+    for (const seg of segments.slice(0, -1)) {
+      prefix = prefix ? `${prefix}/${seg}` : seg;
+      if (!seen.has(prefix)) {
+        seen.add(prefix);
+        out.push(prefix);
+      }
+    }
+  }
+  return out;
+}
+
 class SidebarState {
   locals = $state<LocalBranch[]>([]);
   remotes = $state<SimpleRef[]>([]);
@@ -345,6 +536,107 @@ class SidebarState {
   autoMode = $state(false);
   snapshots = $state<Snapshot[]>([]);
   filter = $state("");
+  // EXPLICIT folder open/closed choices in the ref tree (see buildRefRows),
+  // keyed "<section>:<folderPath>" — `local:feature`, `remote:feature`,
+  // `tag:v1` — so the same folder name under Local, Remotes and Tags folds
+  // independently rather than in lockstep.
+  //
+  // Only folders the user actually CLICKED appear here (`true` = opened by
+  // hand). An absent key means "still at the default", and the default is
+  // CLOSED — see `folderOpenByDefault`. Storing the exception rather than the
+  // full state is what lets the default itself have a rule (the HEAD path,
+  // below) without a click being indistinguishable from that rule.
+  //
+  // A plain object, not a Set/Map: `$state` tracks a reassigned object without
+  // needing svelte/reactivity's wrappers, and it stays small (folder count, not
+  // branch count).
+  //
+  // Scoped to ONE repo and never written to disk. This controller is a
+  // singleton that every repo reuses, so the map is cleared whenever the open
+  // repo changes (see `refreshRefs`) — without that, collapsing `origin` in one
+  // repo would silently collapse it in the next one opened, since paths like
+  // `remote:origin` are identical across repos. Not persisted either: collapse
+  // state is cheap to re-establish by hand, while a tree restored into a shape
+  // that doesn't match what you left is harder to make sense of than a default
+  // that's always the same.
+  folderOpen = $state<Record<string, boolean>>({});
+  // The repo `folderOpen` currently describes, so a change of repo can clear it.
+  private folderOpenRepo: string | null = null;
+
+  /**
+   * Whether a folder starts open with no user interaction at all.
+   *
+   * Closed by default — that's the point of the grouping, since a repo with a
+   * dozen `feature/*` branches should open as a short list of folders rather
+   * than the flat wall it replaced. Two exceptions, both for folders that are
+   * containers rather than naming-convention buckets:
+   *
+   *   * A REMOTE's own node (a remote-section path with no "/" in it). It isn't
+   *     a bucket the user invented, it's the thing the section is about, and the
+   *     section's own disclosure already has to be opened first — so shutting
+   *     the remotes as well would put two clicks between the user and any
+   *     branch. Folders NESTED inside a remote get the normal closed default.
+   *   * The folders leading to the CURRENT branch, in Local. The sidebar's "you
+   *     are here" marker on HEAD is a headline orientation feature; hiding the
+   *     current branch inside a folded folder on every launch would trade one
+   *     kind of clutter for a worse kind of disorientation. Local only —
+   *     remotes and tags have no "current" of their own.
+   */
+  folderOpenByDefault(section: RefSection, path: string): boolean {
+    if (section === "remote") return !path.includes("/");
+    return section === "local" && this.head !== null && this.head.startsWith(`${path}/`);
+  }
+
+  isFolderCollapsed(section: RefSection, path: string): boolean {
+    const explicit = this.folderOpen[`${section}:${path}`];
+    if (explicit !== undefined) return !explicit;
+    return !this.folderOpenByDefault(section, path);
+  }
+
+  toggleFolder(section: RefSection, path: string): void {
+    // Writes an explicit entry either way — after a click, this folder no
+    // longer follows the default (so collapsing the HEAD folder sticks).
+    const wasCollapsed = this.isFolderCollapsed(section, path);
+    this.folderOpen = { ...this.folderOpen, [`${section}:${path}`]: wasCollapsed };
+  }
+
+  /**
+   * Every folder path of one section, keyed exactly the way its rows key their
+   * own collapse state — so "collapse all" and "is every folder folded?" can
+   * never disagree with what a click on one folder does.
+   *
+   * Uniform across sections because all three render one tree over the ref's
+   * FULL name. For remotes that means the remote itself is the outermost folder
+   * (`origin`, then `origin/feature`), which is both how it looks on screen and
+   * what keeps `feature/` under two different remotes from colliding.
+   */
+  folderPaths(section: RefSection): string[] {
+    if (section === "local") return refFolderPaths(this.locals, (b) => b.name);
+    if (section === "tag") return refFolderPaths(this.tags, (t) => t.name);
+    return refFolderPaths(this.remotes, (r) => r.name);
+  }
+
+  /**
+   * Fold/unfold every folder of one section at once. Mirrors the
+   * "Hide all branches"/"Show all branches" pair already in the filter bar:
+   * one click to get to a clean slate, one to get everything back.
+   *
+   * Writes an explicit entry for every folder in BOTH directions (rather than
+   * clearing keys for the collapse case) so the result is exactly what was
+   * asked for — clearing would hand folders back to `folderOpenByDefault`,
+   * leaving the HEAD path open right after a "collapse all".
+   *
+   * The folder list comes from the section's CURRENT refs (`folderPaths`)
+   * rather than from whatever happens to be rendered, so it reaches nested
+   * folders too — including ones inside an already-collapsed folder that isn't
+   * on screen at all.
+   */
+  setAllFoldersCollapsed(section: RefSection, collapsed: boolean): void {
+    const next = { ...this.folderOpen };
+    for (const path of this.folderPaths(section)) next[`${section}:${path}`] = !collapsed;
+    this.folderOpen = next;
+  }
+
   busy = $state(false);
   // Which row `busy` applies to (a local branch name or a full remote ref
   // like "origin/main") — lets the view spinner-out just the one row being
@@ -463,6 +755,13 @@ class SidebarState {
   }
 
   private async refreshRefs(repo: string) {
+    // Folder collapse state describes one repo's tree; the paths it keys on
+    // (`remote:origin`, `local:feature`) recur in every repo, so carrying it
+    // across a switch would silently apply one repo's folds to the next.
+    if (this.folderOpenRepo !== repo) {
+      this.folderOpen = {};
+      this.folderOpenRepo = repo;
+    }
     try {
       const r = await commands.listRefs(repo);
       if (r.status !== "ok") {
@@ -676,12 +975,29 @@ class SidebarState {
 
   private async persistVisibleBranches(repo: string): Promise<void> {
     if (!IN_TAURI || !repo) return; // design-mode: local state only, nothing to persist/reload
+    let persisted = false;
     try {
-      await commands.setVisibleBranches(repo, this.autoMode, this.visibleLocal, this.visibleRemote);
+      const res = await commands.setVisibleBranches(repo, this.autoMode, this.visibleLocal, this.visibleRemote);
+      if (res.status === "ok") persisted = true;
+      else console.error("set_visible_branches", res.error);
     } catch (e) {
       console.error("set_visible_branches", e);
     }
-    await bridge.reloadGraph(true);
+    if (!persisted) {
+      // Nothing was stored, so the graph already matches the filter the backend
+      // would walk with — reloading would spend a whole re-walk arriving back at
+      // the same picture. Say so instead, and put the checkboxes back on the
+      // persisted truth so the sidebar can't show a filter that isn't there.
+      bridge.tama.warn("Couldn't save which branches to show.");
+      await this.refreshVisibleBranches(repo);
+      return;
+    }
+    // forceFull is load-bearing: which branches are visible decides which
+    // commits the walk seeds from, so this ADDS OR REMOVES ROWS. reloadGraph's
+    // fast path only remaps ref chips over rows that are already loaded, so it
+    // has no way to express that; without forceFull the filter is persisted and
+    // the graph silently keeps every commit.
+    await bridge.reloadGraph(true, true);
   }
 
   private async refreshSubmodules(repo: string) {
@@ -1826,6 +2142,12 @@ class SidebarState {
     try {
       const res = await commands.renameBranch(bridge.CUR_REPO as unknown as string, from, to);
       if (res && res.ok) {
+        // Keep a renamed branch in the visible set under its new name, and
+        // persist that directly for the same reason confirmNewBranch does (see
+        // its own comment): the reloadGraph(true) below is the only reload. It
+        // stays on the fast path deliberately — a rename moves no commit, so no
+        // row appears or disappears and there is nothing for a full re-walk to
+        // find, unlike a visibility change.
         if (this.visibleLocal !== null && this.visibleLocal.includes(from)) {
           this.visibleLocal = this.visibleLocal.map((b) => (b === from ? to : b));
           try {

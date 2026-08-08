@@ -254,6 +254,62 @@ describe("playTamaSound", () => {
     });
   });
 
+  // ── per-character voice pitch ────────────────────────────────────────────
+  // hint is a single bare tone at 659.25 Hz, so oscInstances[0].frequency.value
+  // is exactly what tone() assigned: jitter(659.25 * multiplier, ±1%). Each
+  // assertion allows for that ±1% jitter window.
+  describe("voice pitch", () => {
+    const HINT_HZ = 659.25;
+    function within(actual: number, expected: number): void {
+      expect(actual).toBeGreaterThan(expected * 0.98);
+      expect(actual).toBeLessThan(expected * 1.02);
+    }
+
+    it("defaults to an unscaled 1.0 multiplier when setVoicePitch was never called", async () => {
+      const { playTamaSound } = await import("./sound.ts");
+
+      playTamaSound("hint");
+
+      within(oscInstances[0].frequency.value, HINT_HZ);
+    });
+
+    it("scales every synthesized frequency by the set multiplier", async () => {
+      const { playTamaSound, setVoicePitch } = await import("./sound.ts");
+
+      setVoicePitch(1.5);
+      playTamaSound("hint");
+
+      within(oscInstances[0].frequency.value, HINT_HZ * 1.5);
+    });
+
+    it("clamps an out-of-range multiplier into [0.5, 2.0]", async () => {
+      const { playTamaSound, setVoicePitch } = await import("./sound.ts");
+
+      setVoicePitch(10); // clamps up to 2.0
+      playTamaSound("hint");
+      within(oscInstances[oscInstances.length - 1].frequency.value, HINT_HZ * 2);
+
+      perfNow += 1000; // past the replay cooldown so the second hint isn't suppressed
+      setVoicePitch(0.1); // clamps down to 0.5
+      playTamaSound("hint");
+      within(oscInstances[oscInstances.length - 1].frequency.value, HINT_HZ * 0.5);
+    });
+
+    it("treats null/undefined/non-finite as 'no change' (resets to 1.0)", async () => {
+      const { playTamaSound, setVoicePitch } = await import("./sound.ts");
+
+      setVoicePitch(2);
+      setVoicePitch(null); // back to the default 1.0
+      playTamaSound("hint");
+      within(oscInstances[oscInstances.length - 1].frequency.value, HINT_HZ);
+
+      perfNow += 1000;
+      setVoicePitch(Number.NaN); // still 1.0, never assigned as a non-finite freq
+      playTamaSound("hint");
+      within(oscInstances[oscInstances.length - 1].frequency.value, HINT_HZ);
+    });
+  });
+
   // ── per-kind replay cooldown ─────────────────────────────────────────────
   describe("replay cooldown", () => {
     it("suppresses an immediate repeat of the SAME kind (no simulated time elapsed)", async () => {

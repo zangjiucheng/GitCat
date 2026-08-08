@@ -30,7 +30,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import type { ExternalTool, ToolSettings } from "../../ipc/bindings";
+import type { ExternalTool, NamedTool, ToolKind, ToolSettings } from "../../ipc/bindings";
 
 class ExternalToolsState {
   open = $state(false);
@@ -55,16 +55,36 @@ class ExternalToolsState {
   commitCmd = $state("");
   suggesting = $state(false); // suggestCommitMsgCommand() (ollama detection) in flight
 
+  // PER-44: the managed list of NAMED tools (alongside the singleton fields
+  // above), plus the active selection per kind. `applySettings` keeps these in
+  // sync with the backend after every CRUD call (each returns the whole
+  // ToolSettings, same re-render-without-a-round-trip contract as remotes).
+  tools = $state<NamedTool[]>([]);
+  activeDiffToolId = $state<string | null>(null);
+  activeMergeToolId = $state<string | null>(null);
+  activeCommitToolId = $state<string | null>(null);
+  toolsBusy = $state(false); // a named-tool add/remove/select in flight — re-entrancy lock
+
+  // Add/edit-a-named-tool inline form. `editingId` is null for "add", or the
+  // id of the tool being edited (its id field then stays fixed — id is the
+  // upsert key). Save upserts by id, exactly like `save_named_tool` server-side.
+  formId = $state("");
+  formName = $state("");
+  formKind = $state<ToolKind>("diff");
+  formCmd = $state("");
+  editingId = $state<string | null>(null);
+
   // Entry point (Tools menu / ⌘K). Always re-fetches — same "never trust
   // stale settings across a reopen" discipline as every other on-demand
   // modal in this app (rerere/remotes/reflog's own `show()`s).
   show(): void {
     this.open = true;
+    this.resetToolForm();
     void this.refresh();
   }
 
   close(): void {
-    if (this.saving) return; // mid-save — same guard as every other modal's Close
+    if (this.saving || this.toolsBusy) return; // mid-write — same guard as every other modal's Close
     this.open = false;
   }
 
@@ -74,6 +94,144 @@ class ExternalToolsState {
     this.mergeName = s.mergeTool?.name ?? "";
     this.mergeCmd = s.mergeTool?.cmd ?? "";
     this.commitCmd = s.commitMsgCommand ?? "";
+    this.tools = s.tools ?? [];
+    this.activeDiffToolId = s.activeDiffToolId ?? null;
+    this.activeMergeToolId = s.activeMergeToolId ?? null;
+    this.activeCommitToolId = s.activeCommitToolId ?? null;
+  }
+
+  // --- Named tools (PER-44) -------------------------------------------------
+
+  // The active tool id for a kind — drives each row's "Active" indicator.
+  activeIdFor(kind: ToolKind): string | null {
+    return kind === "diff" ? this.activeDiffToolId : kind === "merge" ? this.activeMergeToolId : this.activeCommitToolId;
+  }
+
+  isActive(t: NamedTool): boolean {
+    return this.activeIdFor(t.kind) === t.id;
+  }
+
+  private applyActive(kind: ToolKind, id: string | null): void {
+    if (kind === "diff") this.activeDiffToolId = id;
+    else if (kind === "merge") this.activeMergeToolId = id;
+    else this.activeCommitToolId = id;
+  }
+
+  resetToolForm(): void {
+    this.editingId = null;
+    this.formId = "";
+    this.formName = "";
+    this.formKind = "diff";
+    this.formCmd = "";
+  }
+
+  startEditTool(t: NamedTool): void {
+    this.editingId = t.id;
+    this.formId = t.id;
+    this.formName = t.name;
+    this.formKind = t.kind;
+    this.formCmd = t.cmd;
+  }
+
+  // Add or update (upsert by id) — the same contract as `save_named_tool`.
+  async saveTool(): Promise<void> {
+    if (this.toolsBusy) return;
+    const id = this.formId.trim();
+    const name = this.formName.trim();
+    const cmd = this.formCmd.trim();
+    // Match the backend's non-blank requirements; give the obvious answer
+    // without a round trip (server-side validation still backs this up).
+    if (!id || !name || !cmd) {
+      this.error = "A named tool needs an id, a name and a command.";
+      return;
+    }
+    const tool: NamedTool = { id, name, kind: this.formKind, cmd };
+    const wasEditing = this.editingId !== null;
+
+    if (!IN_TAURI || this.demo) {
+      const i = this.tools.findIndex((t) => t.id === id);
+      this.tools = i >= 0 ? this.tools.map((t) => (t.id === id ? tool : t)) : [...this.tools, tool];
+      this.resetToolForm();
+      bridge.tama.set("hint");
+      bridge.tama.say((wasEditing ? "Updated " : "Added ") + name + " (demo).");
+      return;
+    }
+
+    this.toolsBusy = true;
+    this.error = "";
+    try {
+      const res = await commands.saveNamedTool(tool);
+      if (res.status === "ok") {
+        this.applySettings(res.data);
+        this.resetToolForm();
+        bridge.tama.say((wasEditing ? "Updated " : "Added ") + name + ".");
+      } else {
+        this.error = String(res.error ?? "Could not save the tool.");
+      }
+    } catch (e) {
+      this.error = "Could not save the tool — " + e;
+    } finally {
+      this.toolsBusy = false;
+    }
+  }
+
+  async removeTool(id: string): Promise<void> {
+    if (this.toolsBusy) return;
+
+    if (!IN_TAURI || this.demo) {
+      this.tools = this.tools.filter((t) => t.id !== id);
+      if (this.activeDiffToolId === id) this.activeDiffToolId = null;
+      if (this.activeMergeToolId === id) this.activeMergeToolId = null;
+      if (this.activeCommitToolId === id) this.activeCommitToolId = null;
+      if (this.editingId === id) this.resetToolForm();
+      return;
+    }
+
+    this.toolsBusy = true;
+    this.error = "";
+    try {
+      const res = await commands.removeNamedTool(id);
+      if (res.status === "ok") {
+        this.applySettings(res.data);
+        if (this.editingId === id) this.resetToolForm();
+      } else {
+        this.error = String(res.error ?? "Could not remove the tool.");
+      }
+    } catch (e) {
+      this.error = "Could not remove the tool — " + e;
+    } finally {
+      this.toolsBusy = false;
+    }
+  }
+
+  // Click a row's "Active" toggle: select it for its kind, or, if it's already
+  // active, clear the selection (fall back to the singleton/git config).
+  async toggleActive(t: NamedTool): Promise<void> {
+    await this.setActive(t.kind, this.isActive(t) ? null : t.id);
+  }
+
+  async setActive(kind: ToolKind, id: string | null): Promise<void> {
+    if (this.toolsBusy) return;
+
+    if (!IN_TAURI || this.demo) {
+      this.applyActive(kind, id);
+      return;
+    }
+
+    this.toolsBusy = true;
+    this.error = "";
+    try {
+      const res = await commands.setActiveTool(kind, id);
+      if (res.status === "ok") {
+        this.applySettings(res.data);
+      } else {
+        this.error = String(res.error ?? "Could not set the active tool.");
+      }
+    } catch (e) {
+      this.error = "Could not set the active tool — " + e;
+    } finally {
+      this.toolsBusy = false;
+    }
   }
 
   async refresh(): Promise<void> {

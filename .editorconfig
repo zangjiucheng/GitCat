@@ -1,0 +1,8 @@
+# Editor defaults. The authoritative line-ending enforcement is .gitattributes
+# (git normalizes on commit); this just tells editors to save LF + UTF-8 so the
+# working tree matches and diffs stay clean.
+root = true
+
+[*]
+end_of_line = lf
+charset = utf-8

@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "license": "GPL-3.0-or-later",
   "type": "module",
+  "packageManager": "pnpm@10.34.5",
   "scripts": {
     "dev": "vite",
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
@@ -41,7 +42,7 @@
     "svelte": "^5.56.4",
     "svelte-check": "^4.7.1",
     "typescript": "~5.6.2",
-    "vite": "^6.0.3",
+    "vite": "^6.4.3",
     "vitepress": "^1.6.4",
     "vitest": "4.1.10"
   }

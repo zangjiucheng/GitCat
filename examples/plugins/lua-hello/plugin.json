@@ -1,0 +1,16 @@
+{
+  "id": "lua-hello",
+  "name": "Hello (Luau)",
+  "version": "1.0.0",
+  "description": "A minimal Luau-scripted plugin: a command whose handler reads HEAD via the git() host function and nudges Tama.",
+  "lua": "main.lua",
+  "commands": [
+    {
+      "id": "hello",
+      "label": "Luau: Say hello (and cheer up Tama)",
+      "handler": "hello",
+      "context": "repo",
+      "placement": "palette"
+    }
+  ]
+}
