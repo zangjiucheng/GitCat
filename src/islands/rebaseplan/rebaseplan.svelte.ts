@@ -32,6 +32,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
+import { t } from "@/i18n/i18n.svelte.ts";
 import type { PlanCommit, RebaseResult, TodoItem } from "../../ipc/bindings";
 
 export type PlanAction = "pick" | "squash" | "fixup" | "drop" | "edit";
@@ -76,7 +77,7 @@ class RebasePlanState {
       return;
     }
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("rebaseplan.open_repo_first"));
       return;
     }
     this.demo = false;
@@ -88,16 +89,16 @@ class RebasePlanState {
       if (r.status === "ok") {
         if (!r.data.length) {
           bridge.tama.set("hint");
-          bridge.tama.say("Already up to date with " + onto + " — nothing to plan.", 4200);
+          bridge.tama.say(t("rebaseplan.up_to_date", { onto }), 4200);
           return;
         }
         this.rows = r.data.map((c) => ({ ...c, action: "pick" as PlanAction }));
         this.open = true;
       } else {
-        bridge.tama.warn(r.error || "Could not list commits to plan.");
+        bridge.tama.warn(r.error || t("rebaseplan.list_failed"));
       }
     } catch (e) {
-      bridge.tama.warn("Could not list commits to plan — " + e);
+      bridge.tama.warn(t("rebaseplan.list_failed_e", { error: String(e) }));
     } finally {
       this.busy = false;
     }
@@ -147,8 +148,8 @@ class RebasePlanState {
     if (this.demo) {
       this.close();
       bridge.tama.set("celebrate");
-      bridge.tama.say("Interactive rebase applied (demo).", 3200);
-      bridge.cheer('Interactive rebase complete. <span class="jp">よし!</span>');
+      bridge.tama.say(t("rebaseplan.demo_applied"), 3200);
+      bridge.cheer(t("rebaseplan.cheer"));
       return;
     }
     const repo = this.repo;
@@ -160,7 +161,7 @@ class RebasePlanState {
       const res = await commands.rebaseInteractiveStart(repo, onto, todo);
       await this.applyOutcome(res);
     } catch (e) {
-      bridge.tama.warn("Interactive rebase failed — " + e);
+      bridge.tama.warn(t("rebaseplan.failed_e", { error: String(e) }));
     } finally {
       this.busy = false;
     }
@@ -173,14 +174,14 @@ class RebasePlanState {
         await bridge.reloadGraph(true);
         bridge.tama.event("snapshot.surfaced");
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Interactive rebase complete.", 4200);
-        bridge.cheer('Interactive rebase complete. <span class="jp">よし!</span>');
+        bridge.tama.say(res.message || t("rebaseplan.complete"), 4200);
+        bridge.cheer(t("rebaseplan.cheer"));
         break;
       case "empty":
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.set("hint");
-        bridge.tama.say(res.message || "Already up to date — nothing to rebase.", 4200);
+        bridge.tama.say(res.message || t("rebaseplan.up_to_date_empty"), 4200);
         break;
       case "conflict":
       case "editing":
@@ -190,7 +191,7 @@ class RebasePlanState {
         await resolver.openFromResult(this.repo, res, this.onto, "rebase");
         break;
       default: // "error"
-        bridge.tama.warn(res.message || "Interactive rebase could not start.");
+        bridge.tama.warn(res.message || t("rebaseplan.could_not_start"));
         break;
     }
   }

@@ -33,6 +33,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import type { PickaxeMatch, PickaxeResults } from "../../ipc/bindings";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 export type PickaxeMode = "added-removed" | "diff-match" | "author";
 
@@ -110,7 +111,7 @@ class PickaxeSearchState {
     const q = this.query.trim();
     if (!q) {
       this.data = null;
-      this.error = "Enter something to search for.";
+      this.error = t("pickaxesearch.err_enter_query");
       return;
     }
 
@@ -124,7 +125,7 @@ class PickaxeSearchState {
 
     if (!this.repo) {
       this.data = null;
-      this.error = "Open a repository first.";
+      this.error = t("pickaxesearch.open_repo_first");
       return;
     }
 
@@ -143,11 +144,11 @@ class PickaxeSearchState {
         this.error = "";
       } else {
         this.data = null;
-        this.error = String(res.error ?? "Search failed.");
+        this.error = String(res.error ?? t("pickaxesearch.err_search"));
       }
     } catch (e) {
       this.data = null;
-      this.error = "Search failed — " + e;
+      this.error = t("pickaxesearch.err_search_e", { e: String(e) });
     } finally {
       this.busy = false;
     }
@@ -180,7 +181,7 @@ class PickaxeSearchState {
     const row = this.rowForSha(sha.slice(0, 7));
     this.close();
     if (row == null) {
-      bridge.tama.warn("commit not loaded in the current graph");
+      bridge.tama.warn(t("pickaxesearch.warn_not_loaded"));
       return;
     }
     const G: any = bridge.G;

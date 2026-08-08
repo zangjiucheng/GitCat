@@ -1,6 +1,7 @@
 <script lang="ts">
   import { codeSearchCtrl } from "./codesearch.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import Eye from "@lucide/svelte/icons/eye";
   import History from "@lucide/svelte/icons/history";
 
@@ -32,8 +33,8 @@
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.curious} alt="Tama, curious" /></div>
       <div>
-        <h3>Search Code&#8230;</h3>
-        <p>Full-text search the code as it's currently checked out (or a chosen historical commit) &#8212; not just commit messages or diffs.</p>
+        <h3>{t("codesearch.title")}</h3>
+        <p>{t("codesearch.subtitle")}</p>
       </div>
     </div>
     <div class="modal-body">
@@ -41,22 +42,22 @@
         <input
           type="text"
           class="mono"
-          placeholder="search text&#8230;"
+          placeholder={t("codesearch.ph_search")}
           bind:value={codeSearchCtrl.query}
           disabled={codeSearchCtrl.busy}
           spellcheck="false"
           autocomplete="off"
         />
         <div class="nb-row">
-          <label class="cp-x" title="Match the exact case of what you typed">
+          <label class="cp-x" title={t("codesearch.case_title")}>
             <input type="checkbox" bind:checked={codeSearchCtrl.caseSensitive} disabled={codeSearchCtrl.busy} />
-            case sensitive
+            {t("codesearch.case_label")}
           </label>
         </div>
         <input
           type="text"
           class="mono"
-          placeholder="optional: search at a historical commit (sha/ref) — blank = current checkout"
+          placeholder={t("codesearch.ph_commit")}
           bind:value={codeSearchCtrl.atCommit}
           disabled={codeSearchCtrl.busy}
           spellcheck="false"
@@ -64,7 +65,7 @@
         />
         <div class="nb-row">
           <button class="btn" type="submit" disabled={codeSearchCtrl.busy}>
-            {#if codeSearchCtrl.busy}<span class="spinner"></span> Searching&#8230;{:else}Search{/if}
+            {#if codeSearchCtrl.busy}<span class="spinner"></span> {t("codesearch.searching")}{:else}{t("codesearch.search_btn")}{/if}
           </button>
         </div>
         {#if codeSearchCtrl.error}
@@ -74,7 +75,7 @@
 
       {#if codeSearchCtrl.data}
         {#if codeSearchCtrl.data.matches.length === 0}
-          <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">no matches found</code></div>
+          <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{t("codesearch.no_matches")}</code></div>
         {:else}
           <div class="cs-list">
             {#each codeSearchCtrl.data.matches as m, i (m.path + ':' + m.line + ':' + i)}
@@ -82,20 +83,20 @@
                 <span class="cs-loc mono">{m.path}<span class="mut">:{m.line}</span></span>
                 <code class="cs-snippet mono">{m.text.trim()}</code>
                 <span class="cs-act">
-                  <button class="wd-act" title="Blame {m.path}" onclick={() => codeSearchCtrl.openBlame(m)}><Eye class="ico" size={14} aria-hidden="true" /></button>
-                  <button class="wd-act" title="History of {m.path}" onclick={() => codeSearchCtrl.openHistory(m)}><History class="ico" size={14} aria-hidden="true" /></button>
+                  <button class="wd-act" title={t("codesearch.blame_title", { path: m.path })} onclick={() => codeSearchCtrl.openBlame(m)}><Eye class="ico" size={14} aria-hidden="true" /></button>
+                  <button class="wd-act" title={t("codesearch.history_title", { path: m.path })} onclick={() => codeSearchCtrl.openHistory(m)}><History class="ico" size={14} aria-hidden="true" /></button>
                 </span>
               </div>
             {/each}
             {#if codeSearchCtrl.data.truncated}
-              <div class="cs-row mut" style="cursor:default">&#8230; truncated (search capped)</div>
+              <div class="cs-row mut" style="cursor:default">{t("codesearch.truncated")}</div>
             {/if}
           </div>
         {/if}
       {/if}
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" disabled={codeSearchCtrl.busy} onclick={() => codeSearchCtrl.close()}>Close</button>
+      <button class="btn ghost" disabled={codeSearchCtrl.busy} onclick={() => codeSearchCtrl.close()}>{t("common.close")}</button>
     </div>
   </div>
 </div>

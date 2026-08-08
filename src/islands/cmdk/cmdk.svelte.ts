@@ -44,6 +44,7 @@ import { updaterCtrl } from "../updater/updater.svelte.ts";
 import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 export const CMD_CAP = 50;
 const CMD_BUF = 250;
@@ -62,106 +63,110 @@ export type CmdkResult = CmdItem | RefItem | ActionItem;
 
 // Small and fixed — every entry always shown when the query is empty, or
 // matched by label+hint the same way refs/commits are matched by their own
-// text (see matchToks below).
-const ACTIONS: ActionItem[] = [
-  { type: "action", id: "bisect", label: "Bisect", hint: "Find the first bad commit", run: () => openBisectEntry() },
+// text (see matchToks below). Built as a FUNCTION (not a module-level const)
+// so each label/hint is translated with the CURRENT locale on every rebuild —
+// filter() calls this, so a language switch is reflected the next time the
+// palette filters (i.e. the next open / keystroke).
+function buildActions(): ActionItem[] {
+  return [
+  { type: "action", id: "bisect", label: t("cmdk.bisect"), hint: t("cmdk.bisect_h"), run: () => openBisectEntry() },
   {
     type: "action",
     id: "reflog",
-    label: "Reflog",
-    hint: "Browse and restore a historical HEAD",
+    label: t("cmdk.reflog"),
+    hint: t("cmdk.reflog_h"),
     run: () => reflogCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "rerere",
-    label: "Rerere",
-    hint: "Recorded conflict-resolution status",
+    label: t("cmdk.rerere"),
+    hint: t("cmdk.rerere_h"),
     run: () => rerereCtrl.show(bridge.CUR_REPO as unknown as string),
   },
-  { type: "action", id: "plumbing", label: "Plumbing", hint: "Inspect a raw commit, tree, blob, or tag", run: () => plumbing.show() },
+  { type: "action", id: "plumbing", label: t("cmdk.plumbing"), hint: t("cmdk.plumbing_h"), run: () => plumbing.show() },
   {
     type: "action",
     id: "repo-summary",
-    label: "Repository Summary",
-    hint: "Churn hotspots, contributor ranking, monthly activity, problem areas",
+    label: t("cmdk.repo_summary"),
+    hint: t("cmdk.repo_summary_h"),
     run: () => repoSummaryCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "uncommitted-changes",
-    label: "Uncommitted Changes",
-    hint: "Jump to the working tree — stage hunks or lines, then commit (⌘⇧U)",
+    label: t("cmdk.uncommitted"),
+    hint: t("cmdk.uncommitted_h"),
     run: () => bridge.goToUncommitted(),
   },
   {
     type: "action",
     id: "goto-head",
-    label: "Jump to HEAD",
-    hint: "Scroll to and select the current commit (current branch tip) (⌘⇧H)",
+    label: t("cmdk.goto_head"),
+    hint: t("cmdk.goto_head_h"),
     run: () => bridge.goToHead(),
   },
   {
     type: "action",
     id: "focus-mode",
-    label: "Toggle Focus Mode",
-    hint: "Collapse both side panels for a full-width graph (⌘\\)",
+    label: t("cmdk.focus_mode"),
+    hint: t("cmdk.focus_mode_h"),
     run: () => bridge.toggleFocusMode(),
   },
   {
     type: "action",
     id: "shortcuts",
-    label: "Keyboard Shortcuts",
-    hint: "Show every keybinding (or press ?)",
+    label: t("cmdk.shortcuts"),
+    hint: t("cmdk.shortcuts_h"),
     run: () => vimnavCtrl.openHelp(),
   },
   {
     type: "action",
     id: "help",
-    label: "Help",
-    hint: "How to use GitCat — the graph, actions, and shortcuts",
+    label: t("cmdk.help"),
+    hint: t("cmdk.help_h"),
     run: () => bridge.openHelpPage(),
   },
   {
     type: "action",
     id: "remotes",
-    label: "Manage Remotes",
-    hint: "Add, rename, edit the URL, or remove a configured remote",
+    label: t("cmdk.remotes"),
+    hint: t("cmdk.remotes_h"),
     run: () => remotesCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "export-patches",
-    label: "Export Patches",
-    hint: "Export a commit range as a single .patch file (git format-patch)",
+    label: t("cmdk.export_patches"),
+    hint: t("cmdk.export_patches_h"),
     run: () => exportPatchesCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "apply-patch",
-    label: "Apply Patch",
-    hint: "Apply a .patch file someone gave you (git am)",
+    label: t("cmdk.apply_patch"),
+    hint: t("cmdk.apply_patch_h"),
     run: () => applyPatchCtrl.applyPatch(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "pickaxe-search",
-    label: "Search Commit Content",
-    hint: "Find commits whose diff touched a string or pattern (git log -S / -G)",
+    label: t("cmdk.pickaxe"),
+    hint: t("cmdk.pickaxe_h"),
     run: () => pickaxeSearchCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "author-search",
-    label: "Search commits by author",
-    hint: "Every commit by an author across all history (git log --author)",
+    label: t("cmdk.author_search"),
+    hint: t("cmdk.author_search_h"),
     run: () => pickaxeSearchCtrl.showAuthor(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "code-search",
-    label: "Search Code",
-    hint: "Full-text search the current checkout (or a chosen historical commit) (⌘F)",
+    label: t("cmdk.code_search"),
+    hint: t("cmdk.code_search_h"),
     run: () => codeSearchCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   // Multi-repository dashboard (backlog #11): the ONE action here that does
@@ -171,8 +176,8 @@ const ACTIONS: ActionItem[] = [
   {
     type: "action",
     id: "repositories",
-    label: "Repositories",
-    hint: "See every tracked repo's branch/status at a glance, and jump into one",
+    label: t("cmdk.repositories"),
+    hint: t("cmdk.repositories_h"),
     run: () => dashboardCtrl.show(),
   },
   // Pluggable external diff/merge tools (backlog #12): like Repositories just
@@ -181,8 +186,8 @@ const ACTIONS: ActionItem[] = [
   {
     type: "action",
     id: "external-tools",
-    label: "External Tools",
-    hint: "Configure a diff/merge tool to open from GitCat's own UI",
+    label: t("cmdk.external_tools"),
+    hint: t("cmdk.external_tools_h"),
     run: () => externalToolsCtrl.show(),
   },
   // Plugins manager — app-level like External Tools (no repo needed), its own
@@ -190,8 +195,8 @@ const ACTIONS: ActionItem[] = [
   {
     type: "action",
     id: "plugins",
-    label: "Plugins",
-    hint: "Enable, disable, remove, or install GitCat plugins",
+    label: t("cmdk.plugins"),
+    hint: t("cmdk.plugins_h"),
     run: () => pluginsCtrl.show(),
   },
   // App Settings: theme/cherry-pick-default/auto-update-check prefs plus a
@@ -201,8 +206,8 @@ const ACTIONS: ActionItem[] = [
   {
     type: "action",
     id: "settings",
-    label: "Settings",
-    hint: "Theme, cherry-pick defaults, update checks, and this repo's git identity",
+    label: t("cmdk.settings"),
+    hint: t("cmdk.settings_h"),
     run: () => settingsCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   // fsck-based dangling-object recovery (backlog #13): repo-scoped like
@@ -211,8 +216,8 @@ const ACTIONS: ActionItem[] = [
   {
     type: "action",
     id: "dangling-recovery",
-    label: "Dangling Commits",
-    hint: "Recover a commit no ref points to anymore (git fsck)",
+    label: t("cmdk.dangling"),
+    hint: t("cmdk.dangling_h"),
     run: () => danglingRecoveryCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   // .gitignore / .mailmap in-app editors (backlog #14, the FINAL backlog
@@ -221,8 +226,8 @@ const ACTIONS: ActionItem[] = [
   {
     type: "action",
     id: "repo-files",
-    label: "Repo Files",
-    hint: "Edit .gitignore or .mailmap without leaving GitCat",
+    label: t("cmdk.repo_files"),
+    hint: t("cmdk.repo_files_h"),
     run: () => repoFilesCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   // Multi-branch merge (octopus or sequential — see multimerge.svelte.ts's
@@ -232,50 +237,50 @@ const ACTIONS: ActionItem[] = [
   {
     type: "action",
     id: "multi-merge",
-    label: "Merge Multiple Branches",
-    hint: "Pick several branches and merge them all into the current branch at once",
+    label: t("cmdk.multi_merge"),
+    hint: t("cmdk.multi_merge_h"),
     run: () => multimergeCtrl.show(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "pull-merge",
-    label: "Pull (Merge)",
-    hint: "Fetch, then merge the upstream branch into the current branch",
+    label: t("cmdk.pull_merge"),
+    hint: t("cmdk.pull_merge_h"),
     run: () => resolver.pullMerge(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "pull-rebase",
-    label: "Pull (Rebase)",
-    hint: "Fetch, then rebase the current branch onto its upstream",
+    label: t("cmdk.pull_rebase"),
+    hint: t("cmdk.pull_rebase_h"),
     run: () => resolver.pullRebase(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "open-terminal",
-    label: "Open Terminal",
-    hint: "Toggle the built-in terminal at this repository's root",
+    label: t("cmdk.open_terminal"),
+    hint: t("cmdk.open_terminal_h"),
     run: () => terminalCtrl.toggle(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "reset-head",
-    label: "Reset HEAD to commit",
-    hint: "Move the current branch to any commit hash or ref (soft / mixed / hard)",
+    label: t("cmdk.reset_head"),
+    hint: t("cmdk.reset_head_h"),
     run: () => resetHeadCtrl.promptForHash(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "force-push-lease",
-    label: "Force Push (Safe)",
-    hint: "--force-with-lease: refuses if the remote moved since the last fetch",
+    label: t("cmdk.force_push_lease"),
+    hint: t("cmdk.force_push_lease_h"),
     run: () => forcePushCtrl.forcePushLease(bridge.CUR_REPO as unknown as string),
   },
   {
     type: "action",
     id: "force-push-override",
-    label: "Force Push (Override Remote)",
-    hint: "Raw --force: unconditionally overwrites the remote branch",
+    label: t("cmdk.force_push_override"),
+    hint: t("cmdk.force_push_override_h"),
     run: () => forcePushCtrl.forcePushOverride(bridge.CUR_REPO as unknown as string),
   },
   // git-filter-repo (backlog M5c): used to be its own permanent red topbar
@@ -287,8 +292,8 @@ const ACTIONS: ActionItem[] = [
   {
     type: "action",
     id: "filter-repo",
-    label: "Rewrite History (filter-repo)",
-    hint: "Scope, preview, and typed-confirm a git-filter-repo rewrite — the one irreversible-by-Undo operation",
+    label: t("cmdk.filter_repo"),
+    hint: t("cmdk.filter_repo_h"),
     run: () => (IN_TAURI ? filterRepoCtrl.start(bridge.CUR_REPO as unknown as string) : filterRepoCtrl.openDemo()),
   },
   // Opens the SAME in-app About panel the update check/install UI lives in
@@ -298,14 +303,15 @@ const ACTIONS: ActionItem[] = [
   {
     type: "action",
     id: "check-for-updates",
-    label: "Check for Updates…",
-    hint: "See what's installed and check GitHub Releases for a newer signed build",
+    label: t("cmdk.check_updates"),
+    hint: t("cmdk.check_updates_h"),
     run: () => {
       aboutCtrl.show();
       updaterCtrl.check();
     },
   },
-];
+  ];
+}
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
@@ -439,7 +445,7 @@ class CmdkState {
     const toks = trimmed ? trimmed.split(/\s+/) : [];
     this.toks = toks;
     const res: CmdkResult[] = [];
-    for (const a of ACTIONS) {
+    for (const a of buildActions()) {
       if (!toks.length || matchToks((a.label + " " + a.hint).toLowerCase(), toks)) res.push(a);
     }
     // Plugin-contributed commands (PER-42) are matched by label+hint exactly

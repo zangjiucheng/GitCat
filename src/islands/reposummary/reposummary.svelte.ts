@@ -21,6 +21,7 @@ import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import type { RepoSummary } from "../../ipc/bindings";
 import { detailCtrl } from "../detail/detail.svelte.ts";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 // Canned demo data (design-mode only) — same spirit as reflog.svelte.ts's own
 // DEMO constant, so the browser preview still shows a populated modal without
@@ -110,11 +111,11 @@ class RepoSummaryState {
           this.error = "";
         } else {
           this.summary = null;
-          this.error = String(r.error ?? "Could not summarize this repository.");
+          this.error = String(r.error ?? t("reposummary.err_summarize"));
         }
       } catch (e) {
         this.summary = null;
-        this.error = "Could not summarize this repository — " + e;
+        this.error = t("reposummary.err_summarize_e", { e: String(e) });
       }
     } finally {
       this.loading = false;

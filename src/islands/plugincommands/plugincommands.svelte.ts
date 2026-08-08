@@ -22,6 +22,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t } from "@/i18n/i18n.svelte.ts";
 import type { Plugin, PluginContext, PlaceholderCtx } from "../../ipc/bindings";
 import type { ActionItem } from "../cmdk/cmdk.svelte.ts";
 
@@ -196,7 +197,7 @@ class PluginCommandsState {
           type: "action",
           id: `plugin:${p.id}:${c.id}`,
           label: c.label,
-          hint: `Plugin · ${p.name}`,
+          hint: t("plugincommands.hint", { name: p.name }),
           run: () => void this.invoke(p.id, c.id, c.context),
         });
       }
@@ -213,7 +214,7 @@ class PluginCommandsState {
   async invoke(pluginId: string, commandId: string, context?: PluginContext): Promise<void> {
     const repo = bridge.CUR_REPO as unknown as string | null;
     if (!repo) {
-      bridge.tama.warn("Open a repository first to run a plugin command.");
+      bridge.tama.warn(t("plugincommands.open_repo_first"));
       return;
     }
     const ctx: PlaceholderCtx = { repo, sha: null, file: null, files: [], diff: null, branch: null, ref: null };
@@ -222,13 +223,13 @@ class PluginCommandsState {
       if (sha) ctx.sha = sha;
     }
     if (!IN_TAURI) {
-      bridge.tama.say("This is where the plugin command would run (demo).");
+      bridge.tama.say(t("plugincommands.demo_run"));
       return;
     }
     try {
       const res = await commands.runPluginCommand(pluginId, commandId, ctx);
       if (res.status !== "ok") {
-        bridge.tama.warn(String(res.error ?? "Plugin command failed."));
+        bridge.tama.warn(String(res.error ?? t("plugincommands.err_failed")));
         return;
       }
       const out = res.data;
@@ -248,12 +249,12 @@ class PluginCommandsState {
       // shown verbatim.
       const text = this.truncate(stripTamaDirectives(out.stdout || "").trim());
       if (out.success) {
-        bridge.tama.say(text || "Plugin command finished.");
+        bridge.tama.say(text || t("plugincommands.finished"));
       } else {
-        bridge.tama.warn(text || `Plugin command exited ${out.exitCode ?? "on a signal"}.`);
+        bridge.tama.warn(text || t("plugincommands.exited", { code: out.exitCode ?? t("plugincommands.on_a_signal") }));
       }
     } catch (e) {
-      bridge.tama.warn("Plugin command failed — " + e);
+      bridge.tama.warn(t("plugincommands.err_failed_detail", { err: String(e) }));
     }
   }
 

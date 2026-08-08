@@ -33,6 +33,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t } from "@/i18n/i18n.svelte.ts";
 import type { DanglingCommit } from "../../ipc/bindings";
 
 // Canned demo rows (design-mode only) — same spirit as reflog.svelte.ts's own
@@ -124,12 +125,12 @@ class DanglingRecoveryState {
         } else {
           this.commits = [];
           this.truncated = false;
-          this.error = String(r.error ?? "Could not run git fsck.");
+          this.error = String(r.error ?? t("danglingrecovery.err_fsck"));
         }
       } catch (e) {
         this.commits = [];
         this.truncated = false;
-        this.error = "Could not run git fsck — " + e;
+        this.error = t("danglingrecovery.err_fsck_reason", { reason: String(e) });
       }
     } finally {
       this.loading = false;
@@ -175,21 +176,21 @@ class DanglingRecoveryState {
       this.cancelRecover();
       this.tamaImg = bridge.TAMA_IMG.confident;
       bridge.tama.set("celebrate");
-      const msg = "Recovered " + shortSha + " as " + name + " (demo).";
+      const msg = t("danglingrecovery.recovered_demo", { sha: shortSha, name });
       bridge.tama.say(msg, 4200);
       bridge.cheer(msg, bridge.TAMA_IMG.confident);
       return;
     }
 
     if (!this.repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("danglingrecovery.open_repo_first"));
       return;
     }
 
     this.busy = true;
     this.busyTarget = sha;
     bridge.tama.set("thinking");
-    bridge.tama.say("Recovering " + shortSha + " as " + name + "…");
+    bridge.tama.say(t("danglingrecovery.say_recovering", { sha: shortSha, name }));
     try {
       // checkout:false — see module doc. create_branch itself re-validates
       // the sha still resolves (a resolution failure surfaces as a clean
@@ -200,17 +201,17 @@ class DanglingRecoveryState {
         await bridge.reloadGraph(true);
         this.tamaImg = bridge.TAMA_IMG.confident;
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Recovered as " + name + ".", 3600);
-        bridge.cheer(res.message || "Recovered as " + name + ".", bridge.TAMA_IMG.confident);
+        bridge.tama.say(res.message || t("danglingrecovery.recovered_as", { name }), 3600);
+        bridge.cheer(res.message || t("danglingrecovery.recovered_as", { name }), bridge.TAMA_IMG.confident);
         // Re-pull: the recovered commit is no longer dangling now that a real
         // ref points at it — without this, a stale row would keep offering to
         // "recover" something that's already been recovered.
         await this.refresh(this.repo);
       } else {
-        bridge.tama.warn((res && res.message) || "Could not recover " + shortSha + ".");
+        bridge.tama.warn((res && res.message) || t("danglingrecovery.err_could_not_recover", { sha: shortSha }));
       }
     } catch (e) {
-      bridge.tama.warn("Recover failed — " + e);
+      bridge.tama.warn(t("danglingrecovery.err_recover_reason", { reason: String(e) }));
     } finally {
       this.busy = false;
       this.busyTarget = null;

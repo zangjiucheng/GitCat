@@ -24,9 +24,10 @@
   // too so dropping a different folder onto it re-picks, rather than needing
   // a separate footer button once something's chosen.
   import { setupWizardCtrl, type SetupWizardStep } from "./setupwizard.svelte.ts";
+  import { t, locale, setLocale, LOCALES, type Locale } from "@/i18n/i18n.svelte.ts";
   import Folder from "@lucide/svelte/icons/folder";
 
-  const STEP_ORDER: SetupWizardStep[] = ["welcome", "pick", "identity", "done"];
+  const STEP_ORDER: SetupWizardStep[] = ["language", "welcome", "pick", "identity", "done"];
 
   function stepIndex(): number {
     return STEP_ORDER.indexOf(setupWizardCtrl.step);
@@ -61,16 +62,18 @@
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" src={setupWizardCtrl.tamaImg} alt="Tama" /></div>
       <div>
-        <h3>Let's get you set up</h3>
+        <h3>{t("setupwizard.title")}</h3>
         <p>
-          {#if setupWizardCtrl.step === "welcome"}
-            はじめまして! I'll help you open your first repository.
+          {#if setupWizardCtrl.step === "language"}
+            {t("setupwizard.sub_language")}
+          {:else if setupWizardCtrl.step === "welcome"}
+            {t("setupwizard.sub_welcome")}
           {:else if setupWizardCtrl.step === "pick"}
-            Choose the folder that has the repository you want to work in.
+            {t("setupwizard.sub_pick")}
           {:else if setupWizardCtrl.step === "identity"}
-            This repository has no commit identity yet — I can set one just for it.
+            {t("setupwizard.sub_identity")}
           {:else}
-            All set — ready to open the graph.
+            {t("setupwizard.sub_done")}
           {/if}
         </p>
       </div>
@@ -83,19 +86,29 @@
     </div>
 
     <div class="modal-body">
-      {#if setupWizardCtrl.step === "welcome"}
+      {#if setupWizardCtrl.step === "language"}
+        <div class="lang-pick" style="display:flex; gap:10px; flex-wrap:wrap">
+          {#each LOCALES as l (l.id)}
+            <button
+              class="btn {locale() === l.id ? '' : 'ghost'}"
+              style="min-width:130px; justify-content:center"
+              aria-pressed={locale() === l.id}
+              onclick={() => setLocale(l.id as Locale)}>{l.label}</button>
+          {/each}
+        </div>
+      {:else if setupWizardCtrl.step === "welcome"}
         <div class="modal-steplist">
           <div class="row">
             <span class="n">1</span>
-            <span class="txt">Pick a repository<span class="mut">Point me at a folder on your machine</span></span>
+            <span class="txt">{t("setupwizard.step1_title")}<span class="mut">{t("setupwizard.step1_sub")}</span></span>
           </div>
           <div class="row">
             <span class="n">2</span>
-            <span class="txt">Confirm who you are<span class="mut">Only for that repo — your global git identity is never touched</span></span>
+            <span class="txt">{t("setupwizard.step2_title")}<span class="mut">{t("setupwizard.step2_sub")}</span></span>
           </div>
           <div class="row">
             <span class="n">3</span>
-            <span class="txt">Jump into the graph<span class="mut">You're ready to go</span></span>
+            <span class="txt">{t("setupwizard.step3_title")}<span class="mut">{t("setupwizard.step3_sub")}</span></span>
           </div>
         </div>
       {:else if setupWizardCtrl.step === "pick"}
@@ -113,11 +126,11 @@
           {#if setupWizardCtrl.repoPath}
             <div class="t mono">{setupWizardCtrl.repoPath}</div>
             <div class="sub">
-              {#if setupWizardCtrl.busy}<span class="spinner"></span> Checking&#8230;{:else}Click, or drop another folder, to change it{/if}
+              {#if setupWizardCtrl.busy}<span class="spinner"></span> {t("setupwizard.checking")}{:else}{t("setupwizard.change_hint")}{/if}
             </div>
           {:else}
-            <div class="t">Drop a folder here</div>
-            <div class="sub">or click to browse for one</div>
+            <div class="t">{t("setupwizard.drop_here")}</div>
+            <div class="sub">{t("setupwizard.or_browse")}</div>
           {/if}
         </div>
         {#if setupWizardCtrl.pathError}
@@ -125,20 +138,20 @@
         {/if}
       {:else if setupWizardCtrl.step === "identity"}
         <div class="confirm-type">
-          <label for="swName">Name</label>
+          <label for="swName">{t("setupwizard.name_label")}</label>
           <input id="swName" autocomplete="off" spellcheck="false" bind:value={setupWizardCtrl.nameInput} />
-          <label for="swEmail" style="margin-top:8px">Email</label>
+          <label for="swEmail" style="margin-top:8px">{t("setupwizard.email_label")}</label>
           <input id="swEmail" autocomplete="off" spellcheck="false" bind:value={setupWizardCtrl.emailInput} />
         </div>
-        <p class="hero-hint">Written only to this repository's <code>.git/config</code> — your global git identity is never touched.</p>
+        <p class="hero-hint">{t("setupwizard.identity_hint_pre")}<code>.git/config</code>{t("setupwizard.identity_hint_post")}</p>
         {#if setupWizardCtrl.saveError}
           <div class="pl-err">{setupWizardCtrl.saveError}</div>
         {/if}
       {:else if setupWizardCtrl.step === "done"}
         {#if setupWizardCtrl.identity?.configured}
-          <div class="backup-note">Identity: <span class="mono">{setupWizardCtrl.identity.name} &lt;{setupWizardCtrl.identity.email}&gt;</span></div>
+          <div class="backup-note">{t("setupwizard.done_identity")} <span class="mono">{setupWizardCtrl.identity.name} &lt;{setupWizardCtrl.identity.email}&gt;</span></div>
         {:else}
-          <p class="mut">No identity set — you can add one later with <code>git config user.name</code>/<code>user.email</code>.</p>
+          <p class="mut">{t("setupwizard.done_no_identity_pre")}<code>git config user.name</code>/<code>user.email</code>{t("setupwizard.done_no_identity_post")}</p>
         {/if}
         {#if setupWizardCtrl.finishError}
           <div class="pl-err" style="margin-top:10px">{setupWizardCtrl.finishError}</div>
@@ -147,23 +160,27 @@
     </div>
 
     <div class="modal-foot">
-      {#if setupWizardCtrl.step === "welcome"}
-        <button class="btn ghost" onclick={() => setupWizardCtrl.skip()}>Skip</button>
-        <button class="btn" onclick={() => setupWizardCtrl.toPick()}>Get started</button>
+      {#if setupWizardCtrl.step === "language"}
+        <button class="btn ghost" onclick={() => setupWizardCtrl.skip()}>{t("setupwizard.skip")}</button>
+        <button class="btn" onclick={() => setupWizardCtrl.toWelcome()}>{t("setupwizard.continue")}</button>
+      {:else if setupWizardCtrl.step === "welcome"}
+        <button class="btn ghost" onclick={() => setupWizardCtrl.skip()}>{t("setupwizard.skip")}</button>
+        <button class="btn ghost" onclick={() => setupWizardCtrl.backToLanguage()}>{t("setupwizard.back")}</button>
+        <button class="btn" onclick={() => setupWizardCtrl.toPick()}>{t("setupwizard.get_started")}</button>
       {:else if setupWizardCtrl.step === "pick"}
-        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>Skip</button>
-        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.backToWelcome()}>Back</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>{t("setupwizard.skip")}</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.backToWelcome()}>{t("setupwizard.back")}</button>
       {:else if setupWizardCtrl.step === "identity"}
-        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>Skip setup</button>
-        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.backToPick()}>Back</button>
-        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skipIdentity()}>Not now</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>{t("setupwizard.skip_setup")}</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.backToPick()}>{t("setupwizard.back")}</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skipIdentity()}>{t("setupwizard.not_now")}</button>
         <button class="btn" disabled={!setupWizardCtrl.canSave} onclick={() => setupWizardCtrl.saveIdentity()}
-          >{#if setupWizardCtrl.busy}<span class="spinner"></span> Saving&#8230;{:else}Save &amp; continue{/if}</button
+          >{#if setupWizardCtrl.busy}<span class="spinner"></span> {t("setupwizard.saving")}{:else}{t("setupwizard.save_continue")}{/if}</button
         >
       {:else if setupWizardCtrl.step === "done"}
-        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>Skip</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>{t("setupwizard.skip")}</button>
         <button class="btn" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.finish()}
-          >{#if setupWizardCtrl.busy}<span class="spinner"></span> Opening&#8230;{:else}Open repository &#8594;{/if}</button
+          >{#if setupWizardCtrl.busy}<span class="spinner"></span> {t("setupwizard.opening")}{:else}{t("setupwizard.open_repo")}{/if}</button
         >
       {/if}
     </div>

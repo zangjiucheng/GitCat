@@ -10,6 +10,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t } from "@/i18n/i18n.svelte.ts";
 import { ICON_WARNING, ICON_CHERRY } from "../../legacy/icons";
 import type { ReflogEntry } from "../../ipc/bindings";
 
@@ -114,11 +115,11 @@ class ReflogState {
           this.error = "";
         } else {
           this.entries = [];
-          this.error = String(r.error ?? "Could not read the reflog.");
+          this.error = String(r.error ?? t("reflog.err_read"));
         }
       } catch (e) {
         this.entries = [];
-        this.error = "Could not read the reflog — " + e;
+        this.error = t("reflog.err_read_reason", { reason: String(e) });
       }
     } finally {
       this.loading = false;
@@ -137,14 +138,14 @@ class ReflogState {
       const picked = this.entries.find((e) => e.index === index);
       this.tamaImg = bridge.TAMA_IMG.confident;
       bridge.tama.set("celebrate");
-      const msg = "Restored to " + (picked?.sha ?? "that entry") + " (demo).";
+      const msg = t("reflog.restored_demo", { target: picked?.sha ?? t("reflog.that_entry") });
       bridge.tama.say(msg, 4200);
       bridge.cheer(msg, bridge.TAMA_IMG.confident);
       return;
     }
 
     if (!this.repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("reflog.open_repo_first"));
       return;
     }
 
@@ -156,16 +157,16 @@ class ReflogState {
         await bridge.reloadGraph(true);
         this.tamaImg = bridge.TAMA_IMG.confident;
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Restored.", 4200);
-        bridge.cheer(res.message || "Restored.", bridge.TAMA_IMG.confident);
+        bridge.tama.say(res.message || t("reflog.restored"), 4200);
+        bridge.cheer(res.message || t("reflog.restored"), bridge.TAMA_IMG.confident);
         // Re-pull: the restore itself moved HEAD, so the reflog now has a
         // fresh entry on top (and indices have shifted).
         await this.refresh(this.repo);
       } else {
-        bridge.tama.warn(res.message || "Restore failed — try again.");
+        bridge.tama.warn(res.message || t("reflog.restore_failed"));
       }
     } catch (e) {
-      bridge.tama.warn("Restore failed — " + e);
+      bridge.tama.warn(t("reflog.restore_failed_reason", { reason: String(e) }));
     } finally {
       this.busy = false;
       this.restoringIndex = null;

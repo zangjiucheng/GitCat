@@ -340,6 +340,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // generic "New Window" menu item is handled entirely in Rust, see
         // menu.rs's own handle_event — no command round trip for that path).
         windows::open_repo_in_new_window,
+        // Native-menu i18n (PER-80): the frontend pushes the current locale's
+        // menu labels here so Rust rebuilds + swaps the OS menu (menu.rs).
+        menu::set_app_menu,
     ])
     // `GraphBatch` is never a command's own parameter/return type — it's ONLY
     // ever emitted over the raw `"graph-batch"` event (see commands::stream_graph
@@ -537,7 +540,10 @@ pub fn run() {
         // invoke_handler is the tauri-specta equivalent of generate_handler! —
         // command runtime behavior (Ok resolves / Err rejects) is unchanged.
         .invoke_handler(builder.invoke_handler())
-        .menu(|app| menu::build(app))
+        // English default menu at startup (empty labels → English fallbacks);
+        // the frontend pushes the current locale's labels via `set_app_menu`
+        // once it boots (see syncNativeMenu in legacy/main.ts).
+        .menu(|app| menu::build(app, &std::collections::HashMap::new()))
         .on_menu_event(menu::handle_event)
         .setup(move |app| {
             builder.mount_events(app);

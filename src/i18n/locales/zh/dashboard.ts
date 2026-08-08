@@ -1,0 +1,36 @@
+// 仓库面板文案。键会变成 `dashboard.<key>`。
+export default {
+  title: "仓库",
+  subtitle: "一眼看清你跟踪过的每个仓库 — 分支、同步状态,以及是否有未提交改动。",
+  loading_repos: "正在加载已跟踪的仓库…",
+  empty: "还没有跟踪任何仓库 — 打开一个仓库,或在下方添加。",
+  search_ph: "搜索仓库…(名称、路径或分支)",
+  no_match: "没有仓库匹配“{q}”。",
+  wsl_tip: "这个仓库位于 WSL 内 — 网络命令会经由 wsl.exe 路由以完成凭据解析",
+  detached: "分离",
+  dirty: "有改动",
+  dirty_tip: "有未提交的更改",
+  conflicted: "冲突",
+  conflicted_tip: "{n} 个冲突文件",
+  reading_status: "正在读取状态…",
+  open: "打开",
+  new_window: "新窗口",
+  new_window_tip: "在单独的窗口中打开这个仓库,当前这里打开的内容保持不变",
+  add: "添加仓库…",
+  // 系统文件夹选择对话框标题
+  add_dialog_title: "添加一个要跟踪的仓库",
+  // 此处编写的 Tama 提示 / 演示模式消息
+  demo_pick: "这里可以选择要跟踪的文件夹(演示)。",
+  demo_open: "这里会打开 {name}(演示)。",
+  demo_open_window: "这里会在新窗口中打开 {name}(演示)。",
+  // 错误兜底文案(当后端未返回自己的消息时显示)
+  err_list: "无法列出已跟踪的仓库。",
+  err_list_e: "无法列出已跟踪的仓库 — {err}",
+  err_status: "无法读取这个仓库的状态。",
+  err_status_e: "无法读取这个仓库的状态 — {err}",
+  err_dialog: "无法打开文件夹选择对话框 — {err}",
+  err_add: "无法添加该仓库。",
+  err_add_e: "无法添加该仓库 — {err}",
+  err_remove: "无法把该仓库从列表中移除。",
+  err_remove_e: "无法把该仓库从列表中移除 — {err}",
+};

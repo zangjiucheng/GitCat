@@ -31,14 +31,15 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { save } from "@tauri-apps/plugin-dialog";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 // Mirrors patch.rs's own `validate_rev` shape (empty / leading-dash) — a
 // clearer, immediate in-form error rather than waiting on a round trip for
 // the backend to say the same thing.
 function revError(label: string, s: string): string {
   const v = s.trim();
-  if (!v) return label + ": enter a revision.";
-  if (v.startsWith("-")) return label + ": can't start with ‘-’.";
+  if (!v) return t("exportpatches.err_enter_rev", { label });
+  if (v.startsWith("-")) return t("exportpatches.err_leading_dash", { label });
   return "";
 }
 
@@ -93,7 +94,7 @@ class ExportPatchesState {
     if (this.busy) return;
     const repo = this.repo;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("exportpatches.open_repo_first"));
       return;
     }
     const from = this.from.trim();
@@ -112,35 +113,35 @@ class ExportPatchesState {
     if (!IN_TAURI) {
       this.open = false;
       bridge.tama.set("celebrate");
-      bridge.tama.say("Exported patches (demo).");
+      bridge.tama.say(t("exportpatches.say_demo"));
       return;
     }
     let dest: string | null;
     try {
       dest = await save({
-        title: "Export Patches",
+        title: t("exportpatches.dlg_export"),
         defaultPath: fileSafe(from) + ".." + fileSafe(to) + ".patch",
         filters: [{ name: "Patch files", extensions: ["patch"] }],
       });
     } catch (e) {
-      this.error = "Could not open the save dialog — " + e;
+      this.error = t("exportpatches.err_save_dialog", { e: String(e) });
       return;
     }
     if (!dest) return; // user cancelled the dialog — leave the form as-is
     this.busy = true;
     bridge.tama.set("thinking");
-    bridge.tama.say("Exporting patches…");
+    bridge.tama.say(t("exportpatches.say_exporting"));
     try {
       const res = await commands.exportPatch(repo, from, to, dest);
       if (res && res.ok) {
         this.open = false;
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Exported.", 3600);
+        bridge.tama.say(res.message || t("exportpatches.say_exported"), 3600);
       } else {
-        this.error = (res && res.message) || "Export failed.";
+        this.error = (res && res.message) || t("exportpatches.err_export");
       }
     } catch (e) {
-      this.error = "Export failed — " + e;
+      this.error = t("exportpatches.err_export_e", { e: String(e) });
     } finally {
       this.busy = false;
     }

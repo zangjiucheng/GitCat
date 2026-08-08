@@ -40,6 +40,7 @@ import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { sidebarCtrl } from "../sidebar/sidebar.svelte.ts";
 import { ICON_BACKUP, ICON_WARNING } from "../../legacy/icons";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
@@ -68,59 +69,39 @@ class ForcePushState {
   private arm(repo: string, lease: boolean) {
     if (this.busy) return;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("forcepush.open_repo_first"));
       return;
     }
     const branch = sidebarCtrl.head;
     if (!branch) {
-      bridge.tama.warn("HEAD isn't on a branch — nothing to force-push.");
+      bridge.tama.warn(t("forcepush.no_branch"));
       return;
     }
     bridge.tama.set("danger");
     if (lease) {
-      bridge.tama.say(
-        "Force-pushing " + branch + " — type the branch name to arm it. This refuses if the remote moved since my last fetch.",
-        6000,
-      );
+      bridge.tama.say(t("forcepush.arm_say_lease", { branch }), 6000);
       bridge.armDanger({
-        title: "Force push (safe) — " + branch,
+        title: t("forcepush.title_lease", { branch }),
         steps: false,
-        desc:
-          "This overwrites " +
-          branch +
-          "'s position on the remote with your local history — the usual fix after rebasing or amending a commit you'd already pushed. Unlike a raw force, it refuses instead of overwriting if the remote has anything this repo doesn't already know about (e.g. someone else pushed since your last fetch).",
-        lose:
-          "<h5>What happens</h5><ul><li>Overwrites <code>" +
-          esc(branch) +
-          "</code> on the remote to match your local branch</li><li>Refuses cleanly, with no changes made, if the remote moved since your last fetch — fetch and reconcile first, then retry</li><li>Nothing local changes — HEAD, your branch, and your working tree are untouched</li></ul>",
-        note:
-          ICON_BACKUP + " This only touches the REMOTE — there's nothing local for ⌘Z/Undo to protect here. If it succeeds and it did overwrite prior remote commits, they have no in-app recovery path.",
+        desc: t("forcepush.desc_lease", { branch }),
+        lose: t("forcepush.lose_lease", { branch: esc(branch) }),
+        note: ICON_BACKUP + " " + t("forcepush.note_lease"),
         name: branch,
-        confirmLabel: "Force push",
+        confirmLabel: t("forcepush.confirm_lease"),
         onConfirm: async () => {
           await this.doForcePush(repo, true, branch);
         },
       });
     } else {
-      bridge.tama.say(
-        "Force-pushing " + branch + " — type the branch name to arm it. This overwrites the remote NO MATTER WHAT is there.",
-        6000,
-      );
+      bridge.tama.say(t("forcepush.arm_say_override", { branch }), 6000);
       bridge.armDanger({
-        title: "Force push — override remote — " + branch,
+        title: t("forcepush.title_override", { branch }),
         steps: false,
-        desc:
-          "This unconditionally overwrites " +
-          branch +
-          " on the remote with your local history, even if someone else has pushed commits your local repo doesn't have. Those commits can be permanently discarded with NO recovery path from inside GitCat — only use this if you're certain nobody else's work is on the line.",
-        lose:
-          "<h5>What happens</h5><ul><li>Overwrites <code>" +
-          esc(branch) +
-          "</code> on the remote to match your local branch, no matter what is currently there</li><li>Any commits on the remote that your local repo doesn't have are discarded, permanently, the moment this succeeds</li><li>Nothing local changes — HEAD, your branch, and your working tree are untouched</li></ul>",
-        note:
-          ICON_WARNING + " This can destroy OTHER PEOPLE'S work on the remote with no way back from inside GitCat — Safety Manager/Undo only ever protects this repo's own LOCAL refs, never anything already pushed. Prefer Force Push (Safe) unless you specifically need to override someone else's changes.",
+        desc: t("forcepush.desc_override", { branch }),
+        lose: t("forcepush.lose_override", { branch: esc(branch) }),
+        note: ICON_WARNING + " " + t("forcepush.note_override"),
         name: branch,
-        confirmLabel: "Force push (override)",
+        confirmLabel: t("forcepush.confirm_override"),
         onConfirm: async () => {
           await this.doForcePush(repo, false, branch);
         },
@@ -131,13 +112,13 @@ class ForcePushState {
   private async doForcePush(repo: string, lease: boolean, branch: string) {
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
-      bridge.tama.say("Force-pushed " + branch + " (demo).");
+      bridge.tama.say(t("forcepush.demo_pushed", { branch }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     bridge.tama.set("thinking");
-    bridge.tama.say("Force-pushing " + branch + "…");
+    bridge.tama.say(t("forcepush.pushing", { branch }));
     try {
       const res = await commands.forcePush(repo, lease);
       if (res && res.ok) {
@@ -147,12 +128,12 @@ class ForcePushState {
         // live — same as doPush()/pushBranch(). Cheap: no local commits change.
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Force-pushed " + branch + ".", 3200);
+        bridge.tama.say(res.message || t("forcepush.pushed", { branch }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Force push failed.");
+        bridge.tama.warn((res && res.message) || t("forcepush.failed"));
       }
     } catch (e) {
-      bridge.tama.warn("Force push failed — " + e);
+      bridge.tama.warn(t("forcepush.failed_e", { error: String(e) }));
       console.error(e);
     } finally {
       this.busy = false;

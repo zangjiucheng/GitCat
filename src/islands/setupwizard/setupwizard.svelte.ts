@@ -25,8 +25,13 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { GitIdentity } from "../../ipc/bindings";
+import { t } from "@/i18n/i18n.svelte.ts";
 
-export type SetupWizardStep = "welcome" | "pick" | "identity" | "done";
+// "language" is the first step — a brand-new user picks their language before
+// anything else, so the rest of onboarding (and the whole app) is in it. The
+// picker calls setLocale directly (live switch), so this controller stays
+// locale-agnostic; it only owns the step + navigation.
+export type SetupWizardStep = "language" | "welcome" | "pick" | "identity" | "done";
 
 // Canned data for design-mode (!IN_TAURI), same spirit as every other
 // island's DEMO_* constants, so the browser preview still demos the full flow.
@@ -39,7 +44,7 @@ class SetupWizardState {
   open = $state(false);
   busy = $state(false); // re-entrancy lock (dialog / IPC in flight)
   demo = $state(false);
-  step = $state<SetupWizardStep>("welcome");
+  step = $state<SetupWizardStep>("language");
   tamaImg = $state("");
 
   // ── pick step ──────────────────────────────────────────────────────────
@@ -93,6 +98,16 @@ class SetupWizardState {
     this.open = true;
   }
 
+  // language -> welcome (the picker itself calls setLocale; this just advances)
+  toWelcome() {
+    this.step = "welcome";
+  }
+
+  backToLanguage() {
+    if (this.busy) return; // don't jump steps under an in-flight validate/save/open
+    this.step = "language";
+  }
+
   toPick() {
     this.pathError = "";
     this.step = "pick";
@@ -130,12 +145,12 @@ class SetupWizardState {
         const w = window as unknown as { __TAURI__?: any };
         const d = w.__TAURI__?.dialog;
         dir = d?.open
-          ? await d.open({ directory: true, title: "Open a Git repository" })
+          ? await d.open({ directory: true, title: t("setupwizard.dlg_open") })
           : await w.__TAURI__.core.invoke("plugin:dialog|open", {
-              options: { directory: true, title: "Open a Git repository" },
+              options: { directory: true, title: t("setupwizard.dlg_open") },
             });
       } catch (e) {
-        this.pathError = "Dialog error — " + e;
+        this.pathError = t("setupwizard.err_dialog", { e: String(e) });
         return;
       }
       if (!dir) return; // user cancelled the native picker — stay on "pick"
@@ -212,7 +227,7 @@ class SetupWizardState {
           this.identity = r.data;
         } else {
           this.identity = null;
-          this.pathError = String(r.error ?? "That doesn't look like a git repository.");
+          this.pathError = String(r.error ?? t("setupwizard.err_not_repo"));
           return;
         }
       }
@@ -231,7 +246,7 @@ class SetupWizardState {
       // as an unhandled rejection, leaving the user stranded on "pick" with no
       // message. Surface it as pathError like every other pick-step failure.
       this.identity = null;
-      this.pathError = "That doesn't look like a git repository — " + e;
+      this.pathError = t("setupwizard.err_not_repo_e", { e: String(e) });
     }
   }
 
@@ -257,10 +272,10 @@ class SetupWizardState {
         this.identity = { name, email, configured: true, local: true };
         this.step = "done";
       } else {
-        this.saveError = res.message || "Could not set the repository identity.";
+        this.saveError = res.message || t("setupwizard.err_set_identity");
       }
     } catch (e) {
-      this.saveError = "Could not set the repository identity — " + e;
+      this.saveError = t("setupwizard.err_set_identity_e", { e: String(e) });
     } finally {
       this.busy = false;
     }
@@ -278,7 +293,7 @@ class SetupWizardState {
     if (this.demo) {
       // Never call bridge.openRepo in demo mode: there is no real Tauri
       // backend to hit, and tinvoke has no IN_TAURI guard of its own.
-      bridge.tama.say("This is where your repository's graph would open. にゃ〜 (demo)", 4200);
+      bridge.tama.say(t("setupwizard.say_demo_open"), 4200);
       this.open = false;
       this.busy = false;
       this.markDismissed();
@@ -294,7 +309,7 @@ class SetupWizardState {
       this.markDismissed();
     } else {
       this.tamaImg = bridge.TAMA_IMG.hero;
-      this.finishError = "Couldn't open the repository — please try again.";
+      this.finishError = t("setupwizard.err_open_repo");
     }
     this.busy = false;
   }
@@ -328,11 +343,11 @@ class SetupWizardState {
     // when the openRepo attempt above failed — point at both ways back in,
     // since the empty-state hero card's own button is easy to miss right
     // after a modal closes.
-    bridge.tama.say("No rush — open a repository anytime via the folder icon or the repo name ▾ up top. にゃ〜", 4200);
+    bridge.tama.say(t("setupwizard.say_skip"), 4200);
   }
 
   private resetWizard() {
-    this.step = "welcome";
+    this.step = "language";
     this.repoPath = null;
     this.pathError = "";
     this.identity = null;
