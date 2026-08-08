@@ -164,6 +164,55 @@ jobs:
       - name: Build examples
         run: cargo build --examples --locked
 
+  # Builds the Rust core on Windows. Its reason to exist: the `rust` job above
+  # only compiles Linux, so any `#[cfg(target_os = "windows")]` code path (e.g.
+  # cli_shim::windows_install, plus windows.rs / procutil.rs / wsl.rs) is
+  # otherwise unverified until a tagged release runs the 6-platform matrix. This
+  # catches a Windows-only compile break on the PR instead.
+  #
+  # Compile-only, on purpose:
+  #  - `cargo build` covers the app/library binary.
+  #  - `cargo test --lib --no-run` additionally COMPILES the library unit-test
+  #    code on Windows (Windows-clean: the handful of Unix-only cases are
+  #    #[cfg(unix)]-guarded), catching a Windows test-compile break too. `--lib`
+  #    skips the tests/ integration suite (submodule / repo_registry /
+  #    repo_files), which uses unguarded std::os::unix APIs and doesn't compile
+  #    on Windows yet (a separate follow-up).
+  #  - We deliberately do NOT run the tests. The Tauri library's test binary
+  #    transitively links the WebView2/wry native stack and fails to resolve a
+  #    DLL entry point at startup on a stock runner (exit 0xc0000139,
+  #    STATUS_ENTRYPOINT_NOT_FOUND) before any test executes. The cli_shim
+  #    launcher tests are platform-agnostic pure functions already run by the
+  #    Linux `rust` job, so running them here would add nothing regardless.
+  # No apt/system-deps step: Windows runners ship the MSVC toolchain and WebView2
+  # SDK, and libgit2-sys builds its vendored copy with `cc`, same as on Linux.
+  rust-windows:
+    name: Rust (Windows build)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Compile library unit tests (no-run; see job comment)
+        run: cargo test --locked --lib --no-run
+
+      - name: Build examples
+        run: cargo build --examples --locked
+
   # Type-checks/builds/tests the Svelte 5 frontend.
   # Independent of the `rust` job above so the two run in parallel.
   frontend:

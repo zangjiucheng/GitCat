@@ -45,6 +45,7 @@ pub mod tool_settings; // backlog #12: external diff/merge tool settings + deleg
 pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious ownership"
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
 pub mod windows; // multi-window: spawn a fresh, fully independent GitCat process, optionally pointed directly at a repo
+pub mod cli_shim; // "Install 'gitcat' command in PATH": writes a VS Code `code`-style launcher (macOS /usr/local/bin, Linux ~/.local/bin, Windows WindowsApps)
 pub mod updater; // channel-aware "check for updates" (stable vs nightly endpoint + downgrade-allowing comparator)
 pub mod wsl; // routes git_remote.rs's/submodule.rs's network commands through wsl.exe on a WSL-path repo, so credentials resolve inside the distro
 
@@ -340,6 +341,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // generic "New Window" menu item is handled entirely in Rust, see
         // menu.rs's own handle_event — no command round trip for that path).
         windows::open_repo_in_new_window,
+        // "Install 'gitcat' command in PATH" (macOS/Linux/Windows): writes a
+        // `code`-style launcher so `gitcat <folder>` works from a terminal.
+        cli_shim::install_cli_shim,
     ])
     // `GraphBatch` is never a command's own parameter/return type — it's ONLY
     // ever emitted over the raw `"graph-batch"` event (see commands::stream_graph
