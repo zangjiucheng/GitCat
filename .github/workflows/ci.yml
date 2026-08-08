@@ -168,12 +168,15 @@ jobs:
   # only compiles Linux, so any `#[cfg(target_os = "windows")]` code path (e.g.
   # cli_shim::windows_install, plus windows.rs / procutil.rs / wsl.rs) is
   # otherwise unverified until a tagged release runs the 6-platform matrix. This
-  # catches a Windows-only compile break on the PR instead. Deliberately
-  # build-plus-smoke-test rather than a full `cargo test`: `cargo test cli_shim`
-  # still COMPILES every test target on Windows (so a Windows-only test compile
-  # error is caught too) but only RUNS the platform-agnostic cli_shim launcher
-  # tests, so the PR isn't coupled to the whole suite's runtime portability on
-  # Windows (temp-path/git-behaviour differences), which is a separate concern.
+  # catches a Windows-only compile break on the PR instead.
+  #
+  # The smoke test is `--lib` (library unit tests) ONLY: those are Windows-clean
+  # (the handful of Unix-only ones are #[cfg(unix)]-guarded), and it runs the
+  # platform-agnostic cli_shim launcher tests. The integration tests under
+  # tests/ (submodule / repo_registry / repo_files) use std::os::unix APIs with
+  # no cfg guard, so they don't compile on Windows yet — making that suite
+  # Windows-portable is a separate follow-up, deliberately out of scope here so
+  # this job stays a reliable compile guard rather than a flaky full test run.
   # No apt/system-deps step: Windows runners ship the MSVC toolchain and WebView2
   # SDK, and libgit2-sys builds its vendored copy with `cc`, same as on Linux.
   rust-windows:
@@ -197,8 +200,8 @@ jobs:
       - name: Build
         run: cargo build --locked
 
-      - name: Smoke-test (compiles all tests on Windows, runs the cli_shim launcher tests)
-        run: cargo test --locked cli_shim
+      - name: Smoke-test (library unit tests, incl. the cli_shim launcher tests)
+        run: cargo test --locked --lib cli_shim
 
       - name: Build examples
         run: cargo build --examples --locked
