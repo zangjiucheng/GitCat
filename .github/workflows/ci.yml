@@ -195,3 +195,72 @@ jobs:
 
       - name: Test (vitest)
         run: pnpm test
+
+  # Runs the Playwright suite in e2e/, which has existed (and been CI-aware —
+  # see playwright.config.ts's own `process.env.CI` branches for retries,
+  # forbidOnly and reuseExistingServer) without anything ever running it.
+  #
+  # Its own job rather than more steps on `frontend` above, for two reasons: it
+  # needs a browser download that the type-check/unit-test path has no use for,
+  # so a flake there would otherwise hold up results those steps already
+  # produced; and this way the two run in parallel like `rust` and `frontend`
+  # already do.
+  #
+  # This covers the real Svelte frontend in a real browser with the IPC boundary
+  # mocked (e2e/fixtures/tauriMock.ts), NOT the packaged Tauri app — Playwright
+  # can't drive Tauri's native webview. See that file's header for the scope
+  # this does and doesn't reach.
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # No `version` input — package.json's `packageManager` field is the one
+      # declaration now (same as the frontend job above since #15; specifying
+      # both makes pnpm/action-setup fail with "Multiple versions of pnpm
+      # specified").
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Keyed on the lockfile because that is what pins @playwright/test, and a
+      # browser build only works with the driver it shipped for. A miss just
+      # re-downloads.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      # Chromium only — playwright.config.ts declares exactly one project. The
+      # system libraries from --with-deps are NOT part of the cached path above,
+      # so this step still has to run on a cache hit; with the browser already
+      # present it just installs those.
+      - name: Install Playwright browser + system deps
+        run: pnpm exec playwright install --with-deps chromium
+
+      # The fixtures shell out to a real `git` (see e2e/fixtures/tempRepo.ts) and
+      # set identity per repo, so the runner needs no global git config.
+      - name: Test (playwright)
+        run: pnpm test:e2e
+
+      # Only on failure: the HTML report is the whole point of a red e2e run, and
+      # traces (trace: "on-first-retry") only exist when something retried.
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

@@ -10,7 +10,11 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: process.env.CI ? "github" : "list",
+  // On CI, both: "github" annotates the failing line in the PR diff, "html"
+  // writes playwright-report/ for ci.yml's failure-only artifact upload (which
+  // is where the traces below actually become readable). Locally, just "list" —
+  // `pnpm exec playwright show-report` is on demand.
+  reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL: "http://localhost:1420",
     trace: "on-first-retry",

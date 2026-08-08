@@ -130,6 +130,7 @@ Other useful commands:
 pnpm check          # svelte-check (type-check the frontend)
 pnpm build          # build the frontend
 pnpm test           # vitest (frontend unit tests)
+pnpm test:e2e       # playwright (real browser, mocked IPC — see e2e/fixtures/tauriMock.ts)
 pnpm docs:dev       # run the docs site (docs/) locally at localhost:5173
 
 cd src-tauri
