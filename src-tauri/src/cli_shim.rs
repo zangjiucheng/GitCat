@@ -58,10 +58,21 @@ pub fn install_cli_shim() -> Result<String, String> {
 
 // ── Pure launcher builders (compiled + unit-tested on every platform) ────────
 
+/// POSIX single-quote a string so it's safe to bake into an `sh` script no
+/// matter what it contains: wrap in single quotes, and turn each embedded
+/// single quote into the `'\''` idiom (close quote, escaped quote, reopen).
+/// Single quotes disable every shell metacharacter ($, `, \, "...), so an
+/// install path with any of them can't break or hijack the launcher.
+#[cfg(any(unix, test))]
+fn sh_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// macOS launcher body. `bundle` is the absolute path to the `.app`, baked in at
 /// install time so it keeps working even when GitCat isn't in `/Applications`.
 #[cfg(any(target_os = "macos", test))]
 fn macos_launcher(bundle: &str) -> String {
+    let bundle = sh_single_quote(bundle);
     format!(
         r#"#!/bin/sh
 # GitCat command-line launcher. Installed by GitCat (Settings > Command line, or
@@ -71,7 +82,7 @@ fn macos_launcher(bundle: &str) -> String {
 # Opens GitCat through LaunchServices so the terminal returns right away and the
 # new window takes keyboard focus. A relative path is resolved against the
 # current directory first, because `open` starts the app from a different one.
-BUNDLE="{bundle}"
+BUNDLE={bundle}
 if [ $# -eq 0 ]; then
   exec open -n -a "$BUNDLE"
 fi
@@ -91,6 +102,7 @@ exec open -n -a "$BUNDLE" --args "$target"
 /// shell's working directory, so `gitcat .` resolves without extra work.
 #[cfg(any(target_os = "linux", test))]
 fn unix_launcher(bin: &str) -> String {
+    let bin = sh_single_quote(bin);
     format!(
         r#"#!/bin/sh
 # GitCat command-line launcher. Installed by GitCat (Settings > Command line, or
@@ -100,15 +112,18 @@ fn unix_launcher(bin: &str) -> String {
 # Runs GitCat in the background so this terminal returns right away. The app
 # inherits this shell's working directory, so a relative path (gitcat .)
 # resolves against where you ran it.
-nohup "{bin}" "$@" >/dev/null 2>&1 &
+nohup {bin} "$@" >/dev/null 2>&1 &
 "#
     )
 }
 
 /// Windows `gitcat.cmd` shim. `exe` is the absolute path to `gitcat.exe`. CRLF
-/// line endings for a batch file.
+/// line endings for a batch file. A Windows filename can't contain `"`, `<`,
+/// `>`, or `|`, so quoting covers everything except `%`, which batch expands —
+/// double it to keep a path like `C:\100%\gitcat.exe` literal.
 #[cfg(any(target_os = "windows", test))]
 fn windows_cmd_shim(exe: &str) -> String {
+    let exe = exe.replace('%', "%%");
     format!(
         "@echo off\r\n\
 rem GitCat command-line launcher. Installed by GitCat (Settings > Command line,\r\n\
@@ -176,10 +191,12 @@ fn macos_admin_install(script: &str) -> Result<(), String> {
     let staged = staged
         .to_str()
         .ok_or_else(|| "Temp path isn't valid UTF-8.".to_string())?;
-    // Single-quote the paths so the shell treats them literally; a temp or
-    // target path here never contains a single quote.
+    // Single-quote every path (via the same helper the launchers use) so the
+    // elevated shell treats them literally, whatever $TMPDIR expands to.
+    let staged_q = sh_single_quote(staged);
+    let target_q = sh_single_quote(TARGET);
     let shell =
-        format!("mkdir -p /usr/local/bin && cp '{staged}' '{TARGET}' && chmod 755 '{TARGET}'");
+        format!("mkdir -p /usr/local/bin && cp {staged_q} {target_q} && chmod 755 {target_q}");
     // Wrap in an AppleScript string literal (escape backslashes then quotes).
     let apple = format!(
         "do shell script \"{}\" with administrator privileges",
@@ -267,7 +284,8 @@ mod tests {
     fn macos_launcher_is_non_blocking_and_focus_correct() {
         let s = macos_launcher("/Applications/GitCat.app");
         assert!(s.starts_with("#!/bin/sh"));
-        assert!(s.contains(r#"BUNDLE="/Applications/GitCat.app""#));
+        // Single-quoted so an arbitrary install path can't break the script.
+        assert!(s.contains("BUNDLE='/Applications/GitCat.app'"));
         // LaunchServices launch = non-blocking + correct keyboard focus.
         assert!(s.contains("open -n -a"));
         // A relative path is anchored to the caller's CWD before hand-off.
@@ -277,17 +295,19 @@ mod tests {
     }
 
     #[test]
-    fn macos_launcher_bakes_bundle_path_verbatim() {
-        let s = macos_launcher("/Users/me/Apps/GitCat.app");
-        assert!(s.contains(r#"BUNDLE="/Users/me/Apps/GitCat.app""#));
+    fn macos_launcher_neutralizes_shell_metacharacters_in_the_path() {
+        // A `$` in the bundle path must NOT be expanded — single quotes keep it
+        // literal, so the launcher still resolves the real bundle.
+        let s = macos_launcher("/Users/me/$HOME weird/GitCat.app");
+        assert!(s.contains("BUNDLE='/Users/me/$HOME weird/GitCat.app'"));
     }
 
     #[test]
     fn linux_launcher_backgrounds_and_keeps_args() {
         let s = unix_launcher("/usr/bin/gitcat");
         assert!(s.starts_with("#!/bin/sh"));
-        // Backgrounded (non-blocking) + detached from SIGHUP.
-        assert!(s.contains("nohup \"/usr/bin/gitcat\""));
+        // Backgrounded (non-blocking) + detached from SIGHUP, path single-quoted.
+        assert!(s.contains("nohup '/usr/bin/gitcat'"));
         assert!(s.contains(r#""$@""#));
         assert!(s.trim_end().ends_with('&'));
     }
@@ -295,7 +315,14 @@ mod tests {
     #[test]
     fn linux_launcher_handles_an_appimage_path_with_spaces() {
         let s = unix_launcher("/home/me/Apps/GitCat x86_64.AppImage");
-        assert!(s.contains(r#"nohup "/home/me/Apps/GitCat x86_64.AppImage" "$@""#));
+        assert!(s.contains(r#"nohup '/home/me/Apps/GitCat x86_64.AppImage' "$@""#));
+    }
+
+    #[test]
+    fn sh_single_quote_escapes_an_embedded_single_quote() {
+        // The classic hazard: a path segment that itself contains a quote.
+        assert_eq!(sh_single_quote("/Users/o'brien/x"), r"'/Users/o'\''brien/x'");
+        assert_eq!(sh_single_quote("plain"), "'plain'");
     }
 
     #[test]
@@ -306,5 +333,13 @@ mod tests {
         assert!(s.contains(r#"start "" /D "%CD%" "C:\Program Files\GitCat\gitcat.exe" %*"#));
         // Batch files want CRLF line endings.
         assert!(s.contains("\r\n"));
+    }
+
+    #[test]
+    fn windows_shim_doubles_percent_in_the_path() {
+        // `%` is batch's one in-quotes metacharacter; a path with it must be
+        // doubled so `start` still receives the real path.
+        let s = windows_cmd_shim(r"C:\100%\gitcat.exe");
+        assert!(s.contains(r#""C:\100%%\gitcat.exe""#));
     }
 }
