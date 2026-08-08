@@ -12,13 +12,16 @@
 // `window.__TAURI_INTERNALS__.invoke(cmd, args)`) for handlers that shell
 // out to a real `git` binary against a TempRepo fixture.
 //
-// SCOPE / LIMITATION: `load_graph`'s lane/color/gap layout is a genuine DAG
-// layout algorithm that lives in src-tauri/src/layout.rs — reimplementing it
-// here would just be a second, drifting copy of that logic. `loadGraph()`
-// below instead returns a deliberately simplified single-lane rendering (real
-// commits, real shas, real refs — no real multi-lane merge geometry). That's
-// enough to assert on DOM text (commit list, sidebar refs, detail panel) but
-// NOT on visual lane/merge-graph placement — tests that need the latter
+// SCOPE / LIMITATION: the real `load_graph` returns almost immediately (null);
+// history arrives as `"graph-batch"` events (see legacy/main.ts's
+// startGraphStream/onGraphBatch). This mock mirrors that protocol: the Node
+// handler builds one simplified batch, and the page-side invoke wrapper emits
+// it on `"graph-batch"` after `load_graph` resolves. Lane/color/gap layout is a
+// genuine DAG algorithm in src-tauri/src/layout.rs — reimplementing it here
+// would just be a second, drifting copy. The batch below is deliberately
+// single-lane (real commits, real shas, real refs — no real multi-lane merge
+// geometry). That's enough to assert on DOM text (detail hero, sidebar refs)
+// but NOT on visual lane/merge-graph placement — tests that need the latter
 // should go through the real app instead.
 //
 // Add a new command by adding a `case` in `makeInvokeHandler` below; an
@@ -82,33 +85,42 @@ function refsBySha(repo: TempRepo): Map<string, RefChip[]> {
   return map;
 }
 
-// Deliberately single-lane — see file header's SCOPE note.
-function loadGraph(repo: TempRepo, limit: number | null) {
+// One final GraphBatch for the whole fixture history — deliberately
+// single-lane (see file header's SCOPE note). Shape matches model.rs's
+// GraphBatch (camelCase), not the old one-shot GraphData `load_graph` used
+// to return.
+function graphBatch(repo: TempRepo, requestId: number) {
   const rows = log(repo);
   const chips = refsBySha(repo);
-  const capped = limit ? rows.slice(0, limit) : rows;
-  const n = capped.length;
+  const n = rows.length;
   return {
-    n,
-    lane: capped.map(() => 0),
-    color: capped.map(() => 0),
-    merge: capped.map((r) => (r.parents.length > 1 ? 1 : 0)),
-    gapStart: new Array(n + 1).fill(0),
-    gapTop: [],
-    gapBot: [],
-    gapColor: [],
-    rows: capped.map((r) => ({
-      sha: r.sha,
+    generation: requestId,
+    rows: rows.map((r) => ({
+      sha: r.sha.slice(0, 7),
       subject: r.subject,
       an: r.an,
       cm: r.cm,
       refs: chips.get(r.sha) ?? [],
       merge: r.parents.length > 1,
+      // Fixture walks are tiny; treating every row as a HEAD ancestor is
+      // enough for the detail-hero / canvas path the e2e suite asserts on.
+      ancestor: true,
     })),
+    oids: rows.map((r) => r.sha),
+    lane: rows.map(() => 0),
+    color: rows.map(() => 0),
+    merge: rows.map((r) => (r.parents.length > 1 ? 1 : 0)),
+    gapCounts: rows.map(() => 0),
+    gapTop: [],
+    gapBot: [],
+    gapColor: [],
     ncol: 7,
     laneCount: 1,
-    layoutMs: 0,
-    readMs: 0,
+    totalSoFar: n,
+    done: true,
+    elapsedMs: 0,
+    error: null,
+    truncated: false,
   };
 }
 
@@ -259,8 +271,11 @@ function makeInvokeHandler(repo: TempRepo) {
           copyright: "",
           website: "",
         };
+      // Returns a GraphBatch payload for the page-side invoke wrapper, which
+      // emits it on `"graph-batch"` and resolves `load_graph` itself as null
+      // (matching commands::load_graph — data never comes back on the invoke).
       case "load_graph":
-        return loadGraph(repo, args?.limit ?? null);
+        return graphBatch(repo, args.requestId);
       case "list_refs":
         return listRefs(repo);
       case "list_snapshots":
@@ -274,8 +289,9 @@ function makeInvokeHandler(repo: TempRepo) {
       case "watch_repo":
       case "unwatch_repo":
         return null;
-      // @tauri-apps/api/event's listen/unlisten/emit — no test here drives a
-      // live backend->frontend event, so these are inert stubs.
+      // @tauri-apps/api/event's listen/unlisten/emit via invoke — unused by the
+      // graph stream (that goes through window.__TAURI__.event.listen below).
+      // No test here drives these, so they stay inert stubs.
       case "plugin:event|listen":
         return Math.floor(Math.random() * 1e9);
       case "plugin:event|unlisten":
@@ -300,8 +316,25 @@ async function installTauriMock(page: Page, repo: TempRepo): Promise<void> {
     // which would otherwise block every `.repo-pick` click behind its scrim.
     localStorage.setItem("gitcat.setupWizardDismissed", "1");
     const w = window as any;
+    // Real listener registry — openRepo()'s graph path registers
+    // `listen("graph-batch", …)` and grows BACKEND only from those events.
+    // A no-op listen left the canvas empty while sidebar IPC still passed.
+    const listeners = new Map<string, Set<(event: { event: string; payload: unknown }) => void>>();
+    const emit = (event: string, payload: unknown) => {
+      for (const cb of listeners.get(event) ?? []) cb({ event, payload });
+    };
+    const invoke = async (cmd: string, args: unknown) => {
+      if (cmd === "load_graph") {
+        // Node builds the batch; we emit it and resolve null so the frontend
+        // exercises the same startGraphStream → onGraphBatch path as production.
+        const batch = await w.__e2eInvoke(cmd, args);
+        queueMicrotask(() => emit("graph-batch", batch));
+        return null;
+      }
+      return w.__e2eInvoke(cmd, args);
+    };
     w.__TAURI_INTERNALS__ = {
-      invoke: (cmd: string, args: unknown) => w.__e2eInvoke(cmd, args),
+      invoke,
       // Minimal Channel support: nothing in this harness streams over a
       // channel yet (see file header's SCOPE note), so these just need to
       // not throw.
@@ -310,12 +343,22 @@ async function installTauriMock(page: Page, repo: TempRepo): Promise<void> {
       convertFileSrc: (path: string) => path,
     };
     w.__TAURI__ = {
-      core: { invoke: w.__TAURI_INTERNALS__.invoke },
+      core: { invoke },
       event: {
-        // main.ts's raw `window.__TAURI__.event.listen("menu-action"/"repo-changed", ...)` —
-        // no test here drives the native app menu or the file-watcher, so this
-        // just registers and returns a no-op unlisten.
-        listen: async (_event: string, _cb: unknown) => () => {},
+        // legacy/main.ts listens for "graph-batch" (and menu-action /
+        // repo-changed). Graph batches are emitted from invoke("load_graph")
+        // above; the other events stay unused by this harness.
+        listen: async (event: string, cb: (event: { event: string; payload: unknown }) => void) => {
+          let set = listeners.get(event);
+          if (!set) {
+            set = new Set();
+            listeners.set(event, set);
+          }
+          set.add(cb);
+          return () => {
+            set!.delete(cb);
+          };
+        },
       },
       dialog: {
         // Stands in for the native "Open a Git repository" folder picker.
