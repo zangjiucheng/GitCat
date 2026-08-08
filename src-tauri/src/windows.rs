@@ -30,7 +30,6 @@
 use std::path::Path;
 use std::process::Command;
 
-use git2::Repository;
 use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder, Wry};
 
 use crate::procutil::NoConsoleWindowExt;
@@ -95,7 +94,14 @@ fn classify_initial_arg(raw: Option<String>) -> InitialArg {
             None => return InitialArg::NotRepo(raw),
         }
     };
-    if Repository::open(&abs).is_ok() {
+    // Validate with the SAME opener every backend read uses — `trust::open_repo`,
+    // which auto-trusts libgit2's "dubious ownership" refusal for WSL/UNC/network
+    // paths (see trust.rs) and is what `load_graph` and the setup wizard's
+    // pick-a-repo step both go through. A raw `Repository::open` here would reject
+    // a valid WSL/network repo the app opens fine, wrongly hinting "not a git
+    // repository" for both `gitcat <wsl-path>` and the Dashboard's "Open in New
+    // Window" (which routes through this same classifier via spawn_new_window).
+    if crate::trust::open_repo(&abs).is_ok() {
         InitialArg::Repo(abs)
     } else {
         InitialArg::NotRepo(abs)
@@ -224,6 +230,7 @@ pub fn open_repo_in_new_window(path: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git2::Repository;
     use std::path::PathBuf;
 
     // A fresh, unique temp dir path (not created). Nanosecond + pid keeps
