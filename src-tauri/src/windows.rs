@@ -203,7 +203,7 @@ pub fn spawn_new_window(repo_path: Option<&str>) {
 /// binary such as `cargo tauri dev`'s `target/debug/gitcat`, where `open -a`
 /// has no bundle to launch and the caller falls back to a direct spawn.
 #[cfg(target_os = "macos")]
-fn macos_app_bundle(exe: &std::path::Path) -> Option<std::path::PathBuf> {
+pub(crate) fn macos_app_bundle(exe: &std::path::Path) -> Option<std::path::PathBuf> {
     let macos = exe.parent()?; // <Name>.app/Contents/MacOS
     let contents = macos.parent()?; // <Name>.app/Contents
     let bundle = contents.parent()?; // <Name>.app

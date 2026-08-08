@@ -24,6 +24,7 @@
   import { playTamaSound } from "../../legacy/sound.ts";
   import { updaterCtrl } from "../updater/updater.svelte.ts";
   import { aboutCtrl } from "../about/about.svelte.ts";
+  import { IS_MAC } from "../../ipc/env";
 
   // Switching update channel: persist the choice, then immediately surface what's
   // available on the NEWLY-selected channel — turning nightly ON offers the
@@ -189,6 +190,28 @@
           </span>
         {/if}
       </div>
+
+      {#if IS_MAC}
+        <!-- Command line: adds a `gitcat` launcher to /usr/local/bin so a repo
+             can be opened from any terminal, VS Code's `code .` style. macOS
+             only — Linux packages already put gitcat on PATH; Windows is a
+             follow-up (see cli_shim.rs / install_cli_shim). -->
+        <h4 class="d-lab">Command line</h4>
+        <p class="mut" style="font-size:11.5px;margin:0 0 8px">
+          Add a <code>gitcat</code> command to your PATH so you can open a repository from any terminal, the way <code>code .</code> works in VS Code. Installs a small launcher to <code>/usr/local/bin</code> (you may be asked for your password).
+        </p>
+        <div style="margin:0 0 14px">
+          <button class="btn ghost" disabled={settingsCtrl.cliInstalling} onclick={() => settingsCtrl.installCliCommand()}>
+            {#if settingsCtrl.cliInstalling}<span class="spinner"></span> Installing&#8230;{:else}Install 'gitcat' command{/if}
+          </button>
+          {#if settingsCtrl.cliInstallOk}
+            <div class="mut" style="font-size:11.5px;margin-top:8px">{settingsCtrl.cliInstallOk}</div>
+          {/if}
+          {#if settingsCtrl.cliInstallError}
+            <div class="pl-err" style="margin-top:8px">{settingsCtrl.cliInstallError}</div>
+          {/if}
+        </div>
+      {/if}
 
       <h4 class="d-lab">Auto-fetch</h4>
       <label

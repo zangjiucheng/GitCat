@@ -105,8 +105,18 @@ mount(SetupWizard, { target: document.body });
 // by this point (module evaluation order). Only a FIRST run, not every launch
 // with no repo open — hasBeenDismissed() persists across launches (see
 // setupwizard.svelte.ts) once the user has skipped or finished it once.
+// A launch that names a repo — `gitcat <folder>` from a terminal, the
+// Dashboard's "Open in New Window", or a submodule deep-link — carries a
+// ?repo= (or ?repoError= when the path isn't a repo) query param, and is never
+// a first-run onboarding moment. bridge.CUR_REPO is still null here (legacy/
+// main.ts kicks off openRepo() without awaiting it, and CUR_REPO is only set
+// after it resolves), so gate on the launch arg itself; otherwise the wizard
+// pops on top of the very repo the user explicitly asked to open.
+const launchParams = new URLSearchParams(location.search);
+const launchedWithRepoArg = launchParams.has("repo") || launchParams.has("repoError");
 if (IN_TAURI) {
-  if (!bridge.CUR_REPO && !setupWizardCtrl.hasBeenDismissed()) setupWizardCtrl.start();
+  if (!bridge.CUR_REPO && !launchedWithRepoArg && !setupWizardCtrl.hasBeenDismissed())
+    setupWizardCtrl.start();
 } else {
   setupWizardCtrl.openDemo();
 }
