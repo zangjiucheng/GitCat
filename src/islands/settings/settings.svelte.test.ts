@@ -36,6 +36,7 @@ vi.mock("../../legacy/bridge", () => ({
   applyThemeMode: vi.fn(),
   setGraphShowAllTags: vi.fn(),
   setGraphLabelPriority: vi.fn(),
+  setGraphLabelLayout: vi.fn(),
   setTamaEnabled: vi.fn(),
   applyTamaSkin: vi.fn(),
   clearTamaSkin: vi.fn(),
@@ -243,6 +244,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       soundEffectsVolume: 1,
       showAllCommitTags: false,
       graphLabelPriority: "tag",
+      graphLabelLayout: "inline",
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
       autoMaintenanceEnabled: false,
@@ -270,6 +272,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       soundEffectsVolume: 0.9,
       showAllCommitTags: false,
       graphLabelPriority: "tag",
+      graphLabelLayout: "inline",
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
       autoMaintenanceEnabled: false,
@@ -295,6 +298,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       soundEffectsVolume: 1,
       showAllCommitTags: false,
       graphLabelPriority: "tag",
+      graphLabelLayout: "inline",
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
       autoMaintenanceEnabled: false,
@@ -329,6 +333,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       soundEffectsVolume: 1,
       showAllCommitTags: false,
       graphLabelPriority: "tag",
+      graphLabelLayout: "inline",
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
       autoMaintenanceEnabled: false,
@@ -488,6 +493,16 @@ describe("setThemeMode / setCherryPickRecordOriginDefault / setAutoCheckUpdates 
     expect(settingsCtrl.graphLabelPriority).toBe("branch");
     expect(loadSettings().graphLabelPriority).toBe("branch");
     expect(bridge.setGraphLabelPriority).toHaveBeenCalledWith("branch");
+  });
+
+  it("graphLabelLayout defaults to inline, persists, and pushes to the canvas live", () => {
+    expect(settingsCtrl.graphLabelLayout).toBe("inline");
+
+    settingsCtrl.setGraphLabelLayout("column");
+
+    expect(settingsCtrl.graphLabelLayout).toBe("column");
+    expect(loadSettings().graphLabelLayout).toBe("column");
+    expect(bridge.setGraphLabelLayout).toHaveBeenCalledWith("column");
   });
 
   it("setTamaEnabled updates state, persists, and applies via bridge.setTamaEnabled", () => {

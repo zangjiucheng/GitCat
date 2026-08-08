@@ -1,19 +1,21 @@
-// Pure ordering for a commit's ref chips in the graph gutter — extracted from
-// legacy/main.ts's canvas code (which has no unit tests: it boots the whole app
-// on import) so the priority + rotation logic can actually be tested.
+// Pure ordering for a commit's ref chips — the graph's ref labels, in either
+// layout (inline or the left column) — extracted from legacy/main.ts's canvas
+// code (which has no unit tests: it boots the whole app on import) so the
+// priority + rotation logic can actually be tested.
 //
 // The backend (git_read.rs::collect_refs) already hands us each commit's refs
-// stably sorted tag -> head -> branch -> remote. Two knobs sit on top of that:
+// stably sorted tag -> head -> branch -> remote. One knob sits on top of that:
 //
 //   * `tagsFirst` — the global "label priority" preference. `true` keeps the
-//     backend order (a commit's tag wins the one visible slot on a narrow
-//     gutter); `false` promotes the checked-out branch / local branches ahead
+//     backend order (a commit's tag wins the one visible slot when only one
+//     fits); `false` promotes the checked-out branch / local branches ahead
 //     of tags for people who'd rather see the branch there.
-//   * `rot` — a per-commit rotation the user clicks up via the "+N" overflow
-//     chip, so any ref that doesn't fit can be spun to the front. It's applied
-//     AFTER the priority sort, so cycling walks the displayed order.
 //
-// Both are display-only; nothing here mutates the input.
+// The per-commit "+N" overflow rotation is a separate concern, handled by
+// rotateChips below on the MERGED display list (never here) — see its own
+// comment for why.
+//
+// Display-only; nothing here mutates the input.
 
 export type RefKind = "head" | "branch" | "tag" | "remote" | string;
 export interface Chip {
@@ -28,19 +30,86 @@ const TAG_FIRST: Record<string, number> = { tag: 0, head: 1, branch: 2, remote: 
 // come before tags; remotes still trail.
 const BRANCH_FIRST: Record<string, number> = { head: 0, branch: 1, tag: 2, remote: 3 };
 
-// A copy of `refs`, stably reordered by the chosen priority then rotated left by
-// `rot` (any integer; negative and out-of-range values wrap). Empty in, empty
+// A copy of `refs`, stably reordered by the chosen priority. Empty in, empty
 // out. Never mutates the argument.
-export function orderRefs<T extends Chip>(refs: readonly T[] | null | undefined, tagsFirst: boolean, rot = 0): T[] {
+export function orderRefs<T extends Chip>(refs: readonly T[] | null | undefined, tagsFirst: boolean): T[] {
   if (!refs || refs.length === 0) return [];
   const pri = tagsFirst ? TAG_FIRST : BRANCH_FIRST;
   // Stable sort by kind priority: decorate with the original index so equal
   // kinds keep their incoming relative order (two tags stay in backend order).
-  const sorted = refs
+  return refs
     .map((r, i) => ({ r, i }))
     .sort((a, b) => (pri[a.r.kind] ?? 9) - (pri[b.r.kind] ?? 9) || a.i - b.i)
     .map((x) => x.r);
-  const n = sorted.length;
-  const k = ((rot % n) + n) % n; // normalise into [0, n)
-  return k === 0 ? sorted : sorted.slice(k).concat(sorted.slice(0, k));
+}
+
+// One DISPLAY chip, possibly standing for several co-located refs. The graph
+// paints `label` once with a monitor glyph when `local` and a cloud glyph when
+// `remote` — so a local branch sitting exactly on its remote counterpart reads
+// as one "[🖥☁ name]" chip instead of two chips saying the same name twice.
+// `refs` keeps every member (display order) for the hover tooltip and the
+// label context menu, which still act on real refs, never on the merged label.
+export interface MergedChip {
+  label: string;
+  kind: RefKind;
+  local: boolean;
+  remote: boolean;
+  refs: Chip[];
+}
+
+// Fold a commit's ordered ref list into display chips: a remote named
+// `<remote>/<name>` merges into the local branch/head chip labelled `<name>`
+// on the same commit (several remotes fold into that same chip); everything
+// else passes through one-to-one. Matching strips only the FIRST path segment
+// (the remote name) — `origin/feat/x` pairs with local `feat/x`. Entry order is
+// first appearance in the input, so the caller's priority sort (orderRefs)
+// still decides what leads. Pure: never mutates the input.
+export function mergeRefChips<T extends Chip>(refs: readonly T[]): MergedChip[] {
+  // Empty in, empty out — this runs per visible row on every frame, and most
+  // rows have no refs, so skip the Map/array allocations below entirely.
+  if (!refs.length) return [];
+  // Index every local (branch/head) ref by name in its OWN full pass first,
+  // before the fold-remotes-in pass below — so a remote that appears EARLIER
+  // in the input than its matching local (e.g. backend order happens to list
+  // `origin/main` before `main`) still finds it: pairing must not depend on
+  // input order.
+  const localByName = new Map<string, MergedChip>();
+  for (const r of refs) {
+    if (r.kind === "branch" || r.kind === "head") {
+      const entry: MergedChip = { label: r.label, kind: r.kind, local: true, remote: false, refs: [r] };
+      localByName.set(r.label, entry);
+    }
+  }
+  const merged: MergedChip[] = [];
+  const emitted = new Set<MergedChip>();
+  for (const r of refs) {
+    if (r.kind === "branch" || r.kind === "head") {
+      const entry = localByName.get(r.label)!;
+      if (!emitted.has(entry)) { emitted.add(entry); merged.push(entry); }
+      continue;
+    }
+    if (r.kind === "remote") {
+      const slash = r.label.indexOf("/");
+      const name = slash >= 0 ? r.label.slice(slash + 1) : r.label;
+      const home = localByName.get(name);
+      if (home) { home.remote = true; home.refs.push(r); continue; }
+    }
+    merged.push({ label: r.label, kind: r.kind, local: false, remote: r.kind === "remote", refs: [r] });
+  }
+  return merged;
+}
+
+// Rotate `list` left by `rot` places (any integer; negative and out-of-range
+// values wrap into [0, n)). Empty in, empty out. Never mutates the argument.
+//
+// Lives here rather than inline in main.ts's displayChipsFor because rotation
+// must walk the MERGED display list (what's actually painted — a local+remote
+// pair folded into one chip counts once), never the raw per-commit ref list;
+// keeping the math next to mergeRefChips makes that dependency obvious and
+// lets both be exercised by the same unit tests.
+export function rotateChips<T>(list: readonly T[], rot: number): T[] {
+  const n = list.length;
+  if (n === 0) return [];
+  const k = ((rot % n) + n) % n;
+  return k === 0 ? list.slice() : list.slice(k).concat(list.slice(0, k));
 }
