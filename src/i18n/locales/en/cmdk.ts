@@ -74,4 +74,6 @@ export default {
   filter_repo_h: "Scope, preview, and typed-confirm a git-filter-repo rewrite — the one irreversible-by-Undo operation",
   check_updates: "Check for Updates…",
   check_updates_h: "See what's installed and check GitHub Releases for a newer signed build",
+  install_cli: "Install 'gitcat' Command in PATH",
+  install_cli_h: "Open a repo from any terminal: gitcat . (like VS Code's code)",
 };

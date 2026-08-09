@@ -30,8 +30,9 @@ import { t } from "@/i18n/i18n.svelte.ts";
 // "language" is the first step — a brand-new user picks their language before
 // anything else, so the rest of onboarding (and the whole app) is in it. The
 // picker calls setLocale directly (live switch), so this controller stays
-// locale-agnostic; it only owns the step + navigation.
-export type SetupWizardStep = "language" | "welcome" | "pick" | "identity" | "done";
+// locale-agnostic; it only owns the step + navigation. "cli" is the optional
+// install-the-gitcat-command step (from dev), between identity and done.
+export type SetupWizardStep = "language" | "welcome" | "pick" | "identity" | "cli" | "done";
 
 // Canned data for design-mode (!IN_TAURI), same spirit as every other
 // island's DEMO_* constants, so the browser preview still demos the full flow.
@@ -58,6 +59,15 @@ class SetupWizardState {
   nameInput = $state("");
   emailInput = $state("");
   saveError = $state("");
+
+  // ── command-line step ────────────────────────────────────────────────────
+  // Optional "install the gitcat command in PATH" step, VS Code onboarding
+  // style. App-level, not tied to the picked repo — see cli_shim.rs. Its own
+  // in-flight + result state, separate from `busy` (which gates repo/identity
+  // IPC) so a slow install can't be mistaken for the repo opening.
+  cliInstalling = $state(false);
+  cliInstalledPath = $state("");
+  cliError = $state("");
 
   // ── done step ───────────────────────────────────────────────────────────
   finishError = $state("");
@@ -231,12 +241,15 @@ class SetupWizardState {
           return;
         }
       }
+      // Populate the identity inputs regardless of which branch we take, so the
+      // identity step is correct whether reached forward (unconfigured) or via
+      // Back from the command-line step (a configured repo skips it forward).
+      this.nameInput = this.identity.name ?? "";
+      this.emailInput = this.identity.email ?? "";
+      this.saveError = "";
       if (this.identity.configured) {
-        this.step = "done";
+        this.step = "cli";
       } else {
-        this.nameInput = this.identity.name ?? "";
-        this.emailInput = this.identity.email ?? "";
-        this.saveError = "";
         this.step = "identity";
       }
     } catch (e) {
@@ -251,8 +264,8 @@ class SetupWizardState {
   }
 
   skipIdentity() {
-    if (this.busy) return; // don't jump to done under an in-flight saveIdentity
-    this.step = "done";
+    if (this.busy) return; // don't jump ahead under an in-flight saveIdentity
+    this.step = "cli";
   }
 
   async saveIdentity() {
@@ -264,13 +277,13 @@ class SetupWizardState {
       const email = this.emailInput.trim();
       if (this.demo) {
         this.identity = { name, email, configured: true, local: true };
-        this.step = "done";
+        this.step = "cli";
         return;
       }
       const res = await commands.setGitIdentity(this.repoPath, name, email);
       if (res.ok) {
         this.identity = { name, email, configured: true, local: true };
-        this.step = "done";
+        this.step = "cli";
       } else {
         this.saveError = res.message || t("setupwizard.err_set_identity");
       }
@@ -279,6 +292,44 @@ class SetupWizardState {
     } finally {
       this.busy = false;
     }
+  }
+
+  // ── command-line step (optional) ─────────────────────────────────────────
+  // Install the `gitcat` command in PATH, VS Code onboarding style. Skippable:
+  // toDone() moves on whether or not it ran, and Back returns to the identity
+  // step (always populated by validate(), even for a repo that skipped it).
+  async installCli() {
+    if (this.busy || this.cliInstalling) return;
+    this.cliInstalling = true;
+    this.cliError = "";
+    this.cliInstalledPath = "";
+    try {
+      if (this.demo) {
+        // No real backend in design mode — show the shape of a success.
+        this.cliInstalledPath = "/usr/local/bin/gitcat";
+        return;
+      }
+      const res = await commands.installCliShim();
+      if (res.status === "ok") {
+        this.cliInstalledPath = res.data;
+      } else {
+        this.cliError = res.error || "Couldn't install the gitcat command.";
+      }
+    } catch (e) {
+      this.cliError = "Couldn't install the gitcat command. " + e;
+    } finally {
+      this.cliInstalling = false;
+    }
+  }
+
+  backToIdentity() {
+    if (this.busy || this.cliInstalling) return;
+    this.step = "identity";
+  }
+
+  toDone() {
+    if (this.busy || this.cliInstalling) return;
+    this.step = "done";
   }
 
   // ── done -> hand off into the real graph view ───────────────────────────
@@ -354,6 +405,9 @@ class SetupWizardState {
     this.nameInput = "";
     this.emailInput = "";
     this.saveError = "";
+    this.cliInstalling = false;
+    this.cliInstalledPath = "";
+    this.cliError = "";
     this.finishError = "";
     this.busy = false;
     this.open = false;

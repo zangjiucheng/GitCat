@@ -6,6 +6,7 @@ export default {
   sub_welcome: "はじめまして!我来帮你打开第一个仓库。",
   sub_pick: "选择包含你想操作的仓库的那个文件夹。",
   sub_identity: "这个仓库还没有设置 commit 身份 —— 我可以只为它设置一个。",
+  sub_cli: "可选:添加一个 <code>gitcat</code> 命令,这样你就能从终端打开仓库了。",
   sub_done: "都准备好了 —— 可以打开提交图了。",
   step1_title: "选择一个仓库",
   step1_sub: "指给我你电脑上的一个文件夹",

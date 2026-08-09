@@ -6,6 +6,7 @@ export default {
   sub_welcome: "はじめまして! I'll help you open your first repository.",
   sub_pick: "Choose the folder that has the repository you want to work in.",
   sub_identity: "This repository has no commit identity yet — I can set one just for it.",
+  sub_cli: "Optional: add a <code>gitcat</code> command so you can open repos from the terminal.",
   sub_done: "All set — ready to open the graph.",
   step1_title: "Pick a repository",
   step1_sub: "Point me at a folder on your machine",

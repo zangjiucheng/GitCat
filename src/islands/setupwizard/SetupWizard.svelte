@@ -27,7 +27,7 @@
   import { t, locale, setLocale, LOCALES, type Locale } from "@/i18n/i18n.svelte.ts";
   import Folder from "@lucide/svelte/icons/folder";
 
-  const STEP_ORDER: SetupWizardStep[] = ["language", "welcome", "pick", "identity", "done"];
+  const STEP_ORDER: SetupWizardStep[] = ["language", "welcome", "pick", "identity", "cli", "done"];
 
   function stepIndex(): number {
     return STEP_ORDER.indexOf(setupWizardCtrl.step);
@@ -72,6 +72,8 @@
             {t("setupwizard.sub_pick")}
           {:else if setupWizardCtrl.step === "identity"}
             {t("setupwizard.sub_identity")}
+          {:else if setupWizardCtrl.step === "cli"}
+            {@html t("setupwizard.sub_cli")}
           {:else}
             {t("setupwizard.sub_done")}
           {/if}
@@ -147,6 +149,16 @@
         {#if setupWizardCtrl.saveError}
           <div class="pl-err">{setupWizardCtrl.saveError}</div>
         {/if}
+      {:else if setupWizardCtrl.step === "cli"}
+        <p class="hero-hint" style="margin-top:0">
+          Install a <code>gitcat</code> command so you can open a repository from any terminal, the way <code>code .</code> works in VS Code. It opens the app without blocking your terminal, and you can always do this later from Settings.
+        </p>
+        {#if setupWizardCtrl.cliInstalledPath}
+          <div class="backup-note">Installed to <span class="mono">{setupWizardCtrl.cliInstalledPath}</span>. Open a new terminal and run <code>gitcat .</code></div>
+        {/if}
+        {#if setupWizardCtrl.cliError}
+          <div class="pl-err" style="margin-top:10px">{setupWizardCtrl.cliError}</div>
+        {/if}
       {:else if setupWizardCtrl.step === "done"}
         {#if setupWizardCtrl.identity?.configured}
           <div class="backup-note">{t("setupwizard.done_identity")} <span class="mono">{setupWizardCtrl.identity.name} &lt;{setupWizardCtrl.identity.email}&gt;</span></div>
@@ -177,6 +189,16 @@
         <button class="btn" disabled={!setupWizardCtrl.canSave} onclick={() => setupWizardCtrl.saveIdentity()}
           >{#if setupWizardCtrl.busy}<span class="spinner"></span> {t("setupwizard.saving")}{:else}{t("setupwizard.save_continue")}{/if}</button
         >
+      {:else if setupWizardCtrl.step === "cli"}
+        <button class="btn ghost" disabled={setupWizardCtrl.cliInstalling} onclick={() => setupWizardCtrl.backToIdentity()}>Back</button>
+        {#if setupWizardCtrl.cliInstalledPath}
+          <button class="btn" onclick={() => setupWizardCtrl.toDone()}>Continue &#8594;</button>
+        {:else}
+          <button class="btn ghost" disabled={setupWizardCtrl.cliInstalling} onclick={() => setupWizardCtrl.toDone()}>Not now</button>
+          <button class="btn" disabled={setupWizardCtrl.cliInstalling} onclick={() => setupWizardCtrl.installCli()}
+            >{#if setupWizardCtrl.cliInstalling}<span class="spinner"></span> Installing&#8230;{:else}Install command{/if}</button
+          >
+        {/if}
       {:else if setupWizardCtrl.step === "done"}
         <button class="btn ghost" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.skip()}>{t("setupwizard.skip")}</button>
         <button class="btn" disabled={setupWizardCtrl.busy} onclick={() => setupWizardCtrl.finish()}

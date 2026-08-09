@@ -45,6 +45,7 @@ import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { t } from "@/i18n/i18n.svelte.ts";
+import { commands } from "../../ipc/bindings";
 
 export const CMD_CAP = 50;
 const CMD_BUF = 250;
@@ -60,6 +61,25 @@ type RefItem = { type: "ref"; name: string; kind: string; row: number; sha: stri
 // import cycle with this module).
 export type ActionItem = { type: "action"; id: string; label: string; hint: string; run: () => void };
 export type CmdkResult = CmdItem | RefItem | ActionItem;
+
+// Backs the macOS-only "Install 'gitcat' command in PATH" action below. Writes
+// a `code`-style launcher via the Rust command and reports the outcome as a
+// Tama toast (the same say/warn pair the setup wizard and sidebar already use).
+async function installGitcatCommand(): Promise<void> {
+  try {
+    const res = await commands.installCliShim();
+    if (res.status === "ok") {
+      bridge.tama.say(
+        `Installed the gitcat command at ${res.data}. Open a new terminal and run gitcat . inside any repo. にゃ〜`,
+        6000,
+      );
+    } else {
+      bridge.tama.warn(res.error || "Couldn't install the gitcat command.", 6000);
+    }
+  } catch (e) {
+    bridge.tama.warn("Couldn't install the gitcat command. " + e, 6000);
+  }
+}
 
 // Small and fixed — every entry always shown when the query is empty, or
 // matched by label+hint the same way refs/commits are matched by their own
@@ -310,6 +330,20 @@ function buildActions(): ActionItem[] {
       updaterCtrl.check();
     },
   },
+  // "Install 'gitcat' command in PATH" — macOS/Linux/Windows, the way VS Code
+  // puts its own `code` installer in the palette. Hidden in browser design mode
+  // (no backend), where install_cli_shim could only return an error.
+  ...(IN_TAURI
+    ? [
+        {
+          type: "action",
+          id: "install-cli",
+          label: t("cmdk.install_cli"),
+          hint: t("cmdk.install_cli_h"),
+          run: () => void installGitcatCommand(),
+        } as ActionItem,
+      ]
+    : []),
   ];
 }
 

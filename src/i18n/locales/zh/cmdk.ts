@@ -74,4 +74,6 @@ export default {
   filter_repo_h: "限定范围、预览并输入确认一次 git-filter-repo 改写 — 唯一无法用 Undo 撤销的操作",
   check_updates: "检查更新…",
   check_updates_h: "查看已安装版本,并到 GitHub Releases 检查有无更新的签名构建",
+  install_cli: "在 PATH 中安装 'gitcat' 命令",
+  install_cli_h: "在任意终端打开仓库:gitcat .(就像 VS Code 的 code)",
 };

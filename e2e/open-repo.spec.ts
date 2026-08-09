@@ -23,6 +23,12 @@ test("opening a repo populates the sidebar from the real fixture repo's refs", a
   // transient text instead of actually asserting the real chip updated.
   await expect(page.locator(".repo-pick .repo-name")).toHaveText(repoName);
 
+  // History arrives only via "graph-batch" after load_graph returns — not from
+  // the invoke itself. The detail hero's commit count is the DOM half of
+  // "onGraphBatch ran": sidebar list_refs can pass while the graph stays empty
+  // if the mock never emits batches. Two commits from the fixture above.
+  await expect(page.locator(".hero-stat .n")).toHaveText("2");
+
   // The count chip is the folder-shape-independent half of "list_refs was
   // read": it reports how many local branches came back, whatever the tree
   // does with them. (The Local <details> defaults open, so its rows render.)
