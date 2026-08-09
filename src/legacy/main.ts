@@ -11,7 +11,7 @@ import { commitMenuCtrl } from "../islands/commitmenu/commitmenu.svelte.ts";
 import { snapshotPreviewCtrl } from "../islands/snapshotpreview/snapshotpreview.svelte.ts";
 import { submoduleNavCtrl } from "../islands/submodulenav/submodulenav.svelte.ts";
 import { ribbonTickFracs, RIBBON_TOP_FRAC, RIBBON_BOT_FRAC, RIBBON_MIN_TICK_PX } from "./ribbon.ts";
-import { orderRefs, mergeRefChips, rotateChips } from "./reforder.ts";
+import { displayChips } from "./reforder.ts";
 import { LruCache } from "./graphcache.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
 import { repoSummaryCtrl } from "../islands/reposummary/reposummary.svelte.ts";
@@ -561,8 +561,7 @@ function renderContent(st, rowLo, rowHi, strip){
     // they don't all fit. In column mode (bcw>0) they live in the left
     // BRANCH/TAG gutter and the subject stays put at cx; inline (bcw===0) they
     // sit before the subject, advancing cx past whatever was drawn.
-    const bcol=LANE_COLORS[G.commitColor[r]];
-    if(bcw>0){ drawGutterChips(r,BRANCH_PAD_L,bcw-6,y,bcol,6); }
+    if(bcw>0){ drawGutterChips(r,BRANCH_PAD_L,bcw-6,y,col,6); }
     else {
       // Same breathing room after the last chip that column mode's message
       // gets after ITS divider (MSG_TEXT_PAD, applied above to cx already) —
@@ -570,8 +569,14 @@ function renderContent(st, rowLo, rowHi, strip){
       // drew (a chip, or the "+N" pill), so without this the subject starts
       // flush against that border. Only when something was drawn: an
       // unlabelled row's subject stays exactly at cx (tx+MSG_TEXT_PAD).
+      //
+      // That trailing pad is subtracted from the chips' own x-limit rather
+      // than added past it, so a row whose chips fill the limit still leaves
+      // the subject its full MIN_SUBJECT_W. Capping at
+      // W-AUTHOR_GUTTER-MIN_SUBJECT_W and THEN adding the pad would push the
+      // subject MSG_TEXT_PAD px into that floor (40 -> 29).
       const cx0=cx;
-      cx=drawGutterChips(r,cx,W-AUTHOR_GUTTER-MIN_SUBJECT_W,y,bcol,8);
+      cx=drawGutterChips(r,cx,W-AUTHOR_GUTTER-MIN_SUBJECT_W-MSG_TEXT_PAD,y,col,8);
       if(cx>cx0) cx+=MSG_TEXT_PAD;
     }
     // Skip the per-row message/author/sha text while scrolling FAST (fastScroll):
@@ -910,7 +915,12 @@ function drawGutterChips(row,x0,xLimit,y,rowColor,gap){
   }
   let endX=x0;
   for(const c of placed){ paintChip(c.x,y,c.text,c.w,c.entry,rowColor); endX=c.x+c.w; }
-  chipHit.set(row, placed.map(c=>({x0:c.x, x1:c.x+c.w, entry:c.entry})));
+  // Inline only: chipEntryAt is the per-chip hit test, and column mode never
+  // consults it (its gutter cell resolves whole-row refs instead — see labelAt
+  // and the contextmenu handler, both of which branch on branchColW first). The
+  // unconditional delete above still runs in both layouts, so switching modes
+  // can't leave a row's stale spans behind.
+  if(layout.branchColW===0) chipHit.set(row, placed.map(c=>({x0:c.x, x1:c.x+c.w, entry:c.entry})));
   if(overflow>0){
     const px=placed.length?endX+gap:x0;
     ctx.font=layout.chipFont;
@@ -1024,12 +1034,22 @@ function dividerAt(x){ const bcw=layout.branchColW;
   if(lastTx>COL_HANDLE&&Math.abs(x-lastTx)<=COL_HANDLE) return "graph";
   return null; }
 // The painted chip under screen-x `mx` in `row` (inline mode) — chipHit spans
-// are recorded per rendered row by drawGutterChips, same lifecycle as
-// overflowHit. Null over the "+N" pill or plain subject text.
+// are recorded per rendered row by drawGutterChips, which only fills them in
+// this layout. Null over the "+N" pill (overflowPillAt covers that), over plain
+// subject text, and everywhere in column mode.
 function chipEntryAt(mx,row){
   const spans=chipHit.get(row); if(!spans) return null;
   for(const s of spans) if(mx>=s.x0&&mx<=s.x1) return s.entry;
   return null;
+}
+// True when screen-x `mx` is over `row`'s "+N" overflow pill (inline mode; the
+// pill's span is recorded by drawGutterChips). The pill is a label surface just
+// like a chip — it grows the same hover tooltip (labelAt) and opens the same
+// ref menu (the contextmenu handler) — so both read it through here rather than
+// each re-testing the span.
+function overflowPillAt(mx,row){
+  const oh=overflowHit.get(row);
+  return !!oh&&mx>=oh.x0&&mx<=oh.x1;
 }
 // The ref chip(s) at screen-x `mx` in `row`'s BRANCH/TAG gutter (column mode) or
 // under a painted chip / its "+N" pill (inline mode), or null when mx isn't
@@ -1054,8 +1074,7 @@ function labelAt(mx,row){
   // tooltip.
   const e=chipEntryAt(mx,row);
   if(e) return e.refs;
-  const oh=overflowHit.get(row);
-  if(oh&&mx>=oh.x0&&mx<=oh.x1){ const l=displayChipsFor(row).flatMap(c=>c.refs); return l.length?l:null; }
+  if(overflowPillAt(mx,row)){ const l=displayChipsFor(row).flatMap(c=>c.refs); return l.length?l:null; }
   return null;
 }
 // The hover tooltip: one ref per line, each with a kind-coloured dot and a muted
@@ -1222,10 +1241,17 @@ cv.addEventListener("contextmenu",(e)=>{
   const rowRefs=rowRefsOf(row);
   const inGutter=layout.branchColW>0&&p.x<layout.branchColW;
   const chip=layout.branchColW>0?null:chipEntryAt(p.x,row);
-  if(inGutter||chip){
+  // The inline "+N" pill counts as a label surface here too — it already grows
+  // the row's full ref tooltip on hover (labelAt), so right-clicking it landing
+  // on the COMMIT menu read as a dead spot, and column mode resolves a ref from
+  // anywhere in its gutter cell including the pill.
+  const onPill=layout.branchColW===0&&overflowPillAt(p.x,row);
+  if(inGutter||chip||onPill){
     // Column mode keeps its whole-cell behaviour (any local branch on the row);
     // inline resolves to the CLICKED chip's own member refs, so right-clicking
-    // an unmatched origin/x chip can't open the menu of an unrelated local.
+    // an unmatched origin/x chip can't open the menu of an unrelated local. The
+    // pill stands for the whole row (it's the "read what's hidden" affordance,
+    // not one ref), so it falls back to rowRefs like the gutter cell.
     const pool=chip?chip.refs:rowRefs;
     const br=pool.find(r=>r&&(r.kind==="branch"||r.kind==="head"));
     if(br){ sidebarCtrl.openMenuAt(br.label, br.kind==="head", null, e.clientX, e.clientY); return; }
@@ -1985,7 +2011,9 @@ const overflowHit=new Map();
 // entry included — chipEntryAt reads this to answer "which MergedChip is
 // under this x", which feeds both the hover tooltip (labelAt) and the
 // label-context-menu's chip targeting, instead of either re-deriving layout.
-// Rebuilt per row exactly like overflowHit above.
+// Cleared per row exactly like overflowHit above, but only POPULATED inline:
+// column mode resolves refs from its whole gutter cell and never asks which
+// individual chip was hit (see drawGutterChips' gate).
 const chipHit=new Map();
 function rowSha(row){ return (BACKEND&&BACKEND.rows[row]&&BACKEND.rows[row].sha)||("r"+row); }
 // This row's refs exactly as the backend delivered them (no priority sort, no
@@ -1996,17 +2024,14 @@ function rowSha(row){ return (BACKEND&&BACKEND.rows[row]&&BACKEND.rows[row].sha)
 function rowRefsOf(row){
   return (G&&G.allRefs&&G.allRefs[row])||(G&&G.refs&&G.refs[row]?[G.refs[row]]:[]);
 }
-// The row's DISPLAY chips: priority-sorted refs, folded local+remote (see
-// reforder.ts::mergeRefChips), THEN rotated via reforder.ts::rotateChips —
-// rotation must walk what's on screen (merged entries), not raw refs, or "+N"
-// cycling would need two clicks to move past a merged pair. This is the single
-// source of truth for "what's currently shown": labelAt derives its tooltip
-// list from this (never a separately-rotated raw ref list), so the bolded
-// "current" ref always matches the chip actually on screen mid-cycle.
+// The row's DISPLAY chips. The pipeline itself (sort -> merge -> rotate, and
+// why that order) lives in reforder.ts::displayChips, where it's unit-tested;
+// this only supplies the three per-row inputs. It stays the single source of
+// truth for "what's currently shown": labelAt derives its tooltip list from
+// this (never a separately-rotated raw ref list), so the bolded "current" ref
+// always matches the chip actually on screen mid-"+N"-cycle.
 function displayChipsFor(row){
-  const list=rowRefsOf(row);
-  const merged=mergeRefChips(orderRefs(list, graphTagsFirst));
-  return rotateChips(merged, refRot.get(rowSha(row))||0);
+  return displayChips(rowRefsOf(row), graphTagsFirst, refRot.get(rowSha(row))||0);
 }
 // Spin this row's labels one place left, bringing the next hidden ref to the
 // front — the "+N" chip's click action. No-op with fewer than two refs.

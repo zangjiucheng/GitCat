@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderRefs, mergeRefChips, rotateChips, type Chip } from "./reforder.ts";
+import { displayChips, orderRefs, mergeRefChips, rotateChips, type Chip } from "./reforder.ts";
 
 // A commit carrying one of every kind, in the backend's own delivered order
 // (tag -> head -> branch -> remote, per git_read.rs::collect_refs).
@@ -133,6 +133,28 @@ describe("mergeRefChips", () => {
     expect(out[0]).toMatchObject({ label: "main", kind: "head", local: true, remote: true });
     expect(out[0].refs.map((r) => r.label)).toEqual(["main", "origin/main"]);
   });
+
+  // The single-ref fast path skips the Map/Set the general path builds (this
+  // runs per labelled visible row on every full frame, and one ref is by far
+  // the common case), so it has to produce byte-identical entries for every
+  // kind — including an unmatched remote, which must keep its full
+  // remote-qualified label rather than being unwrapped to the trailing name.
+  it("the one-ref fast path emits exactly what the general path would, per kind", () => {
+    const cases: Chip[] = [
+      { label: "main", kind: "head" },
+      { label: "wip", kind: "branch" },
+      { label: "v1.2.0", kind: "tag" },
+      { label: "origin/main", kind: "remote" },
+      { label: "weird", kind: "stash" },
+    ];
+    expect(cases.map((c) => mergeRefChips([c])[0])).toEqual([
+      { label: "main", kind: "head", local: true, remote: false, refs: [cases[0]] },
+      { label: "wip", kind: "branch", local: true, remote: false, refs: [cases[1]] },
+      { label: "v1.2.0", kind: "tag", local: false, remote: false, refs: [cases[2]] },
+      { label: "origin/main", kind: "remote", local: false, remote: true, refs: [cases[3]] },
+      { label: "weird", kind: "stash", local: false, remote: false, refs: [cases[4]] },
+    ]);
+  });
 });
 
 describe("rotateChips", () => {
@@ -168,5 +190,80 @@ describe("rotateChips", () => {
     const input = ["a", "b", "c"];
     rotateChips(input, 1);
     expect(input).toEqual(["a", "b", "c"]);
+  });
+});
+
+// The three helpers above are each tested in isolation; this block pins the
+// COMPOSITION main.ts::displayChipsFor actually renders from — priority sort,
+// then fold local+remote, then rotate — as one golden contract. Without it a
+// refactor could reorder the stages and still pass every test above.
+//
+// Worth knowing while reading these: swapping sort and merge is largely
+// invisible (merge keeps first-appearance order and preserves each entry's
+// kind, so a later sort lands in the same place), and rotating the raw list
+// instead of the merged one usually coincides too, because orderRefs always
+// sorts remotes LAST — the refs merge removes are a suffix, and dropping a
+// suffix commutes with a rotation smaller than the number of survivors. What
+// these assertions do catch is a wrong priority table, a broken fold, a
+// rotation that runs before the sort, and a rotation whose modulus is the raw
+// ref count rather than the merged chip count.
+describe("displayChips (the composed pipeline)", () => {
+  it("returns [] for empty/nullish refs at any rotation", () => {
+    expect(displayChips([], true, 0)).toEqual([]);
+    expect(displayChips(null, false, 2)).toEqual([]);
+    expect(displayChips(undefined, true, -1)).toEqual([]);
+  });
+
+  it("sorts, folds the local+remote pair, then rotates — tagsFirst", () => {
+    const out = displayChips(MIXED, true, 0);
+    expect(out.map((c) => c.label)).toEqual(["v1.2.0", "main", "feature"]);
+    expect(out.map((c) => c.kind)).toEqual(["tag", "head", "branch"]);
+    expect(out.map((c) => [c.local, c.remote])).toEqual([
+      [false, false],
+      [true, true],
+      [true, false],
+    ]);
+    // The folded chip keeps BOTH real refs, in display order — the tooltip and
+    // the label context menu act on these, never on the merged label.
+    expect(out[1].refs.map((r) => r.label)).toEqual(["main", "origin/main"]);
+  });
+
+  it("branch-first promotes head + local branches ahead of the tag", () => {
+    expect(displayChips(MIXED, false, 0).map((c) => c.label)).toEqual(["main", "feature", "v1.2.0"]);
+  });
+
+  it("rotation is applied last, to the sorted+merged list", () => {
+    expect(displayChips(MIXED, true, 1).map((c) => c.label)).toEqual(["main", "feature", "v1.2.0"]);
+    expect(displayChips(MIXED, true, 2).map((c) => c.label)).toEqual(["feature", "v1.2.0", "main"]);
+  });
+
+  it("rotation wraps on the MERGED chip count, not the raw ref count", () => {
+    // MIXED is 4 refs but 3 chips (origin/main folds into main), and cycleRefs
+    // takes its modulus from the chip count — so rot 3 must be the identity
+    // here. Wrapping on 4 would land on ["main", "feature", "v1.2.0"].
+    expect(displayChips(MIXED, true, 3).map((c) => c.label)).toEqual(["v1.2.0", "main", "feature"]);
+    expect(displayChips(MIXED, true, 4).map((c) => c.label)).toEqual(["main", "feature", "v1.2.0"]);
+  });
+
+  it("pairs a remote listed before its local, and leaves an unmatched remote alone", () => {
+    const out = displayChips(
+      [
+        { label: "origin/feature", kind: "remote" },
+        { label: "upstream/dev", kind: "remote" },
+        { label: "feature", kind: "branch" },
+      ],
+      false,
+      0,
+    );
+    expect(out.map((c) => c.label)).toEqual(["feature", "upstream/dev"]);
+    expect(out[0].refs.map((r) => r.label)).toEqual(["feature", "origin/feature"]);
+    expect([out[1].local, out[1].remote]).toEqual([false, true]);
+  });
+
+  it("does not mutate the caller's ref array", () => {
+    const input: Chip[] = MIXED.map((c) => ({ ...c }));
+    const snapshot = JSON.stringify(input);
+    displayChips(input, false, 2);
+    expect(JSON.stringify(input)).toEqual(snapshot);
   });
 });

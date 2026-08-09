@@ -68,6 +68,14 @@ export function mergeRefChips<T extends Chip>(refs: readonly T[]): MergedChip[] 
   // Empty in, empty out — this runs per visible row on every frame, and most
   // rows have no refs, so skip the Map/array allocations below entirely.
   if (!refs.length) return [];
+  // One ref is the overwhelmingly common labelled row, and it can't pair with
+  // anything, so it takes the same shortcut: no Map, no Set, no second pass.
+  // Same shape the general path below produces for a lone ref of any kind.
+  if (refs.length === 1) {
+    const r = refs[0];
+    const local = r.kind === "branch" || r.kind === "head";
+    return [{ label: r.label, kind: r.kind, local, remote: r.kind === "remote", refs: [r] }];
+  }
   // Index every local (branch/head) ref by name in its OWN full pass first,
   // before the fold-remotes-in pass below — so a remote that appears EARLIER
   // in the input than its matching local (e.g. backend order happens to list
@@ -112,4 +120,25 @@ export function rotateChips<T>(list: readonly T[], rot: number): T[] {
   if (n === 0) return [];
   const k = ((rot % n) + n) % n;
   return k === 0 ? list.slice() : list.slice(k).concat(list.slice(0, k));
+}
+
+// The whole display pipeline in one place: priority sort, THEN fold local +
+// remote pairs, THEN rotate. main.ts::displayChipsFor is a thin wrapper that
+// only supplies the row's raw refs, the tagsFirst preference and the row's
+// rotation counter, so the composition itself is unit-testable rather than
+// living in the canvas file that no test can import.
+//
+// The order of the three steps is the contract, not an implementation detail:
+//
+//   * sort BEFORE merge — merging keeps first-appearance order, so it must be
+//     handed a list that is already in priority order.
+//   * rotate LAST, over MERGED entries — a folded local+remote pair is ONE
+//     chip on screen, so cycling past it must take one click, not two, and the
+//     modulus has to be the merged count (what cycleRefs also counts).
+export function displayChips<T extends Chip>(
+  refs: readonly T[] | null | undefined,
+  tagsFirst: boolean,
+  rot: number,
+): MergedChip[] {
+  return rotateChips(mergeRefChips(orderRefs(refs, tagsFirst)), rot);
 }
