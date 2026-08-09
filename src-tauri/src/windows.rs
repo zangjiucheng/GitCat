@@ -78,6 +78,33 @@ fn window_url(arg: &InitialArg) -> WebviewUrl {
 /// resolves to a real git repo is `Repo`; one that exists but isn't a repo, or
 /// can't be resolved at all, is `NotRepo` so the user is told rather than left
 /// staring at a window that silently opened nothing.
+/// Turn a Windows extended-length "verbatim" path back into its ordinary form.
+///
+/// `std::fs::canonicalize` on Windows always returns a verbatim path: a normal
+/// drive path comes back as `\\?\C:\…`, and a UNC/network/WSL share as
+/// `\\?\UNC\server\share\…`. That prefix is valid for the Win32 file APIs, but
+/// almost everything downstream expects the plain form: libgit2's own path
+/// splitting, `git.exe -C`, the `\\wsl.localhost\…` detector in `wsl.rs`, the
+/// repo registry's path-equality checks, and the path shown in the UI. The GUI
+/// never produces a verbatim path (it opens absolute paths as-is), so a
+/// `gitcat .`-style relative launch — the one code path that runs through
+/// `canonicalize` — was the only way one ever reached the app.
+///
+/// Maps `\\?\UNC\server\share` back to `\\server\share` (so a WSL repo becomes
+/// the `\\wsl.localhost\<distro>\…` form `wsl::wsl_target` understands) and
+/// `\\?\C:\…` back to `C:\…`. A path without the prefix (every non-Windows
+/// path, and any already-plain input) is returned untouched, so this is safe to
+/// call unconditionally. Pure string work, unit-tested on every platform.
+fn strip_windows_verbatim_prefix(p: String) -> String {
+    if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = p.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        p
+    }
+}
+
 fn classify_initial_arg(raw: Option<String>) -> InitialArg {
     let raw = match raw {
         Some(r) if !r.is_empty() && !r.starts_with('-') => r,
@@ -89,8 +116,16 @@ fn classify_initial_arg(raw: Option<String>) -> InitialArg {
         // Relative: resolve against the CWD. canonicalize requires the path to
         // exist, so a bogus relative arg falls through to the NotRepo hint with
         // its original text (the most useful thing to show the user).
+        //
+        // On Windows canonicalize returns an extended-length "verbatim" path
+        // (`\\?\C:\…`); strip that prefix back to the ordinary form the rest of
+        // the app expects (see `strip_windows_verbatim_prefix`). Without this,
+        // `gitcat .` opened a `\\?\C:\…` repo that libgit2 mishandled and the
+        // graph came up blank — while `gitcat C:\abs\path` (kept verbatim above,
+        // never canonicalized) and every GUI open worked, since only a relative
+        // arg reaches canonicalize.
         match std::fs::canonicalize(&raw).ok().and_then(|p| p.to_str().map(str::to_string)) {
-            Some(a) => a,
+            Some(a) => strip_windows_verbatim_prefix(a),
             None => return InitialArg::NotRepo(raw),
         }
     };
@@ -277,6 +312,26 @@ mod tests {
     fn not_repo_for_a_missing_absolute_path() {
         let missing = unique_tmp("missing").to_str().unwrap().to_string();
         assert!(matches!(classify_initial_arg(Some(missing.clone())), InitialArg::NotRepo(p) if p == missing));
+    }
+
+    #[test]
+    fn verbatim_prefix_stripped_to_ordinary_form() {
+        // A drive-letter verbatim path (what `gitcat .` produced on Windows,
+        // and the reason the graph came up blank) collapses to the plain path.
+        assert_eq!(strip_windows_verbatim_prefix(r"\\?\C:\Users\me\proj".into()), r"C:\Users\me\proj");
+        // A UNC/WSL share verbatim path collapses to the `\\host\…` form that
+        // wsl::wsl_target recognizes, so `gitcat .` inside a WSL directory opens
+        // the right repo instead of a mangled one.
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\UNC\wsl.localhost\Ubuntu\home\me\proj".into()),
+            r"\\wsl.localhost\Ubuntu\home\me\proj"
+        );
+        assert_eq!(strip_windows_verbatim_prefix(r"\\?\UNC\server\share\dir".into()), r"\\server\share\dir");
+        // Anything without the prefix (every Unix path, any already-plain input)
+        // is returned untouched — safe to call unconditionally.
+        assert_eq!(strip_windows_verbatim_prefix("/home/me/proj".into()), "/home/me/proj");
+        assert_eq!(strip_windows_verbatim_prefix(r"C:\already\plain".into()), r"C:\already\plain");
+        assert_eq!(strip_windows_verbatim_prefix(r"\\wsl.localhost\Ubuntu\x".into()), r"\\wsl.localhost\Ubuntu\x");
     }
 
     #[test]
