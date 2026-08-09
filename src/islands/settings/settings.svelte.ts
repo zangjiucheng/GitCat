@@ -33,6 +33,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t } from "@/i18n/i18n.svelte.ts";
 import { pluginsCtrl } from "../plugins/plugins.svelte.ts";
 import { BUILTIN_SKINS, builtinSkinById, isBuiltinSkinId, type BuiltinSkin } from "./builtinskins.ts";
 import type { ConfigEntry, ConfigScope, GitIdentity, Plugin, RawConfigEntry } from "../../ipc/bindings";
@@ -475,12 +476,12 @@ class SettingsState {
     try {
       const res = await commands.installCliShim();
       if (res.status === "ok") {
-        this.cliInstallOk = `Installed at ${res.data}. Open a new terminal and run gitcat . inside any repo.`;
+        this.cliInstallOk = t("settings.cli_ok", { path: res.data });
       } else {
-        this.cliInstallError = res.error || "Couldn't install the gitcat command.";
+        this.cliInstallError = res.error || t("settings.cli_err");
       }
     } catch (e) {
-      this.cliInstallError = "Couldn't install the gitcat command. " + e;
+      this.cliInstallError = t("settings.cli_err_e", { e: String(e) });
     } finally {
       this.cliInstalling = false;
     }

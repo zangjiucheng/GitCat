@@ -69,15 +69,12 @@ async function installGitcatCommand(): Promise<void> {
   try {
     const res = await commands.installCliShim();
     if (res.status === "ok") {
-      bridge.tama.say(
-        `Installed the gitcat command at ${res.data}. Open a new terminal and run gitcat . inside any repo. にゃ〜`,
-        6000,
-      );
+      bridge.tama.say(t("cmdk.install_cli_ok", { path: res.data }), 6000);
     } else {
-      bridge.tama.warn(res.error || "Couldn't install the gitcat command.", 6000);
+      bridge.tama.warn(res.error || t("cmdk.install_cli_err"), 6000);
     }
   } catch (e) {
-    bridge.tama.warn("Couldn't install the gitcat command. " + e, 6000);
+    bridge.tama.warn(t("cmdk.install_cli_err_e", { e: String(e) }), 6000);
   }
 }
 

@@ -43,4 +43,10 @@ export default {
   say_demo_open: "你的仓库提交图就会在这里打开。にゃ〜 (演示)",
   err_open_repo: "打不开这个仓库 —— 请再试一次。",
   say_skip: "别急 —— 随时都能通过顶部的文件夹图标或仓库名 ▾ 打开仓库。にゃ〜",
+  cli_body:
+    "安装一个 <code>gitcat</code> 命令,这样你就能从任意终端打开仓库了,就像 VS Code 里的 <code>code .</code> 一样。它会打开应用而不会阻塞你的终端,之后你也随时可以在设置里安装。",
+  cli_installed: "已安装到 <span class=\"mono\">{path}</span>。打开一个新终端,运行 <code>gitcat .</code> 即可。",
+  cli_continue: "继续 →",
+  cli_installing: "安装中……",
+  cli_install_btn: "安装命令",
 };

@@ -67,4 +67,13 @@ export default {
   cheer_restored: "Backup restored.",
   warn_restore_failed: "Restore failed — try again.",
   err_restore: "Restore failed — {e}",
+  // Static placeholder prose for the generic #dangerScrim modal in index.html
+  // (title/confirm reuse `title`/`rewrite_history` above).
+  danger_desc: "This rewrites every commit on the selected refs. It cannot be undone with a normal Undo.",
+  danger_lose:
+    "<h5>What this will rewrite / lose</h5><ul><li>Rewrites <code>42</code> commits on <code>main</code> and <code>feat/inline-diff</code></li><li>Original SHAs become unreachable: <code>a1b2c3d</code> … <code>90ff210</code></li><li>GPG signatures on rewritten commits are dropped</li></ul>",
+  danger_note:
+    '<svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Pre-op backup pinned first → full pre-rewrite state stays recoverable.',
+  danger_type_label:
+    'Type the branch name <b class="mono" id="dangerTypeName">main</b> to arm the rewrite:',
 };

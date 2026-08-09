@@ -67,4 +67,13 @@ export default {
   cheer_restored: "备份已恢复。",
   warn_restore_failed: "恢复失败 —— 请重试。",
   err_restore: "恢复失败 —— {e}",
+  // index.html 中通用 #dangerScrim 弹窗的静态占位文案
+  //(标题/确认按钮复用上面的 `title`/`rewrite_history`)。
+  danger_desc: "这会重写所选 ref 上的每一个 commit。它无法用普通的撤销来还原。",
+  danger_lose:
+    "<h5>此操作会重写 / 丢失哪些内容</h5><ul><li>在 <code>main</code> 和 <code>feat/inline-diff</code> 上重写 <code>42</code> 个 commit</li><li>原始 SHA 将无法再访问:<code>a1b2c3d</code> … <code>90ff210</code></li><li>被重写 commit 上的 GPG 签名会被丢弃</li></ul>",
+  danger_note:
+    '<svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> 操作前会先固定一份备份 → 重写前的完整状态仍可找回。',
+  danger_type_label:
+    '输入分支名 <b class="mono" id="dangerTypeName">main</b> 以启用重写:',
 };

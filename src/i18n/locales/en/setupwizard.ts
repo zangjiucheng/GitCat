@@ -43,4 +43,10 @@ export default {
   say_demo_open: "This is where your repository's graph would open. にゃ〜 (demo)",
   err_open_repo: "Couldn't open the repository — please try again.",
   say_skip: "No rush — open a repository anytime via the folder icon or the repo name ▾ up top. にゃ〜",
+  cli_body:
+    "Install a <code>gitcat</code> command so you can open a repository from any terminal, the way <code>code .</code> works in VS Code. It opens the app without blocking your terminal, and you can always do this later from Settings.",
+  cli_installed: "Installed to <span class=\"mono\">{path}</span>. Open a new terminal and run <code>gitcat .</code>",
+  cli_continue: "Continue →",
+  cli_installing: "Installing…",
+  cli_install_btn: "Install command",
 };

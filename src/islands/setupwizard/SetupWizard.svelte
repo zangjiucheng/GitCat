@@ -151,10 +151,10 @@
         {/if}
       {:else if setupWizardCtrl.step === "cli"}
         <p class="hero-hint" style="margin-top:0">
-          Install a <code>gitcat</code> command so you can open a repository from any terminal, the way <code>code .</code> works in VS Code. It opens the app without blocking your terminal, and you can always do this later from Settings.
+          {@html t("setupwizard.cli_body")}
         </p>
         {#if setupWizardCtrl.cliInstalledPath}
-          <div class="backup-note">Installed to <span class="mono">{setupWizardCtrl.cliInstalledPath}</span>. Open a new terminal and run <code>gitcat .</code></div>
+          <div class="backup-note">{@html t("setupwizard.cli_installed", { path: setupWizardCtrl.cliInstalledPath })}</div>
         {/if}
         {#if setupWizardCtrl.cliError}
           <div class="pl-err" style="margin-top:10px">{setupWizardCtrl.cliError}</div>
@@ -190,13 +190,13 @@
           >{#if setupWizardCtrl.busy}<span class="spinner"></span> {t("setupwizard.saving")}{:else}{t("setupwizard.save_continue")}{/if}</button
         >
       {:else if setupWizardCtrl.step === "cli"}
-        <button class="btn ghost" disabled={setupWizardCtrl.cliInstalling} onclick={() => setupWizardCtrl.backToIdentity()}>Back</button>
+        <button class="btn ghost" disabled={setupWizardCtrl.cliInstalling} onclick={() => setupWizardCtrl.backToIdentity()}>{t("setupwizard.back")}</button>
         {#if setupWizardCtrl.cliInstalledPath}
-          <button class="btn" onclick={() => setupWizardCtrl.toDone()}>Continue &#8594;</button>
+          <button class="btn" onclick={() => setupWizardCtrl.toDone()}>{t("setupwizard.cli_continue")}</button>
         {:else}
-          <button class="btn ghost" disabled={setupWizardCtrl.cliInstalling} onclick={() => setupWizardCtrl.toDone()}>Not now</button>
+          <button class="btn ghost" disabled={setupWizardCtrl.cliInstalling} onclick={() => setupWizardCtrl.toDone()}>{t("setupwizard.not_now")}</button>
           <button class="btn" disabled={setupWizardCtrl.cliInstalling} onclick={() => setupWizardCtrl.installCli()}
-            >{#if setupWizardCtrl.cliInstalling}<span class="spinner"></span> Installing&#8230;{:else}Install command{/if}</button
+            >{#if setupWizardCtrl.cliInstalling}<span class="spinner"></span> {t("setupwizard.cli_installing")}{:else}{t("setupwizard.cli_install_btn")}{/if}</button
           >
         {/if}
       {:else if setupWizardCtrl.step === "done"}

@@ -207,13 +207,13 @@
         <!-- Command line: adds a `gitcat` launcher to a folder on PATH so a repo
              can be opened from any terminal, VS Code's `code .` style. Works on
              macOS, Linux, and Windows (see cli_shim.rs / install_cli_shim). -->
-        <h4 class="d-lab">Command line</h4>
+        <h4 class="d-lab">{t("settings.cli_h4")}</h4>
         <p class="mut" style="font-size:11.5px;margin:0 0 8px">
-          Add a <code>gitcat</code> command to your PATH so you can open a repository from any terminal, the way <code>code .</code> works in VS Code. It opens the app without blocking your terminal. On macOS you may be asked for your password.
+          {@html t("settings.cli_desc")}
         </p>
         <div style="margin:0 0 14px">
           <button class="btn ghost" disabled={settingsCtrl.cliInstalling} onclick={() => settingsCtrl.installCliCommand()}>
-            {#if settingsCtrl.cliInstalling}<span class="spinner"></span> Installing&#8230;{:else}Install 'gitcat' command{/if}
+            {#if settingsCtrl.cliInstalling}<span class="spinner"></span> {t("settings.cli_installing")}{:else}{t("settings.cli_install_btn")}{/if}
           </button>
           {#if settingsCtrl.cliInstallOk}
             <div class="mut" style="font-size:11.5px;margin-top:8px">{settingsCtrl.cliInstallOk}</div>

@@ -76,4 +76,7 @@ export default {
   check_updates_h: "查看已安装版本,并到 GitHub Releases 检查有无更新的签名构建",
   install_cli: "在 PATH 中安装 'gitcat' 命令",
   install_cli_h: "在任意终端打开仓库:gitcat .(就像 VS Code 的 code)",
+  install_cli_ok: "已把 gitcat 命令安装到 {path}。打开一个新终端,在任意仓库里运行 gitcat . 即可。にゃ〜",
+  install_cli_err: "无法安装 gitcat 命令。",
+  install_cli_err_e: "无法安装 gitcat 命令。{e}",
 };

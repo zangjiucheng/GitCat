@@ -2119,32 +2119,32 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 <!-- In-app Help page (⌘K ▸ Help). A self-contained how-to; shown/hidden from
      legacy/main.ts's openHelpPage()/closeHelpPage(). -->
 <div class="scrim" id="helpScrim">
-  <div class="modal help" role="dialog" aria-modal="true" aria-label="GitCat help">
-    <div class="modal-head"><h3>GitCat — Help</h3></div>
+  <div class="modal help" role="dialog" aria-modal="true" aria-label="GitCat help" data-i18n-aria="help.dialog_aria">
+    <div class="modal-head"><h3 data-i18n="help.title">GitCat — Help</h3></div>
     <div class="modal-body help-body">
       <section>
-        <h4>The graph</h4>
-        <p>Each row is one commit, newest at the top. The left <b>BRANCH / TAG</b> column shows the branch or tag that points at a commit; lane colours track branches. Your current commit (<b>HEAD</b>) has a bright ring and a bar down its left edge &#8212; that&#8217;s &#8220;you are here.&#8221; Commits already in your current branch are <b>dimmed</b>, so work you haven&#8217;t merged yet stands out.</p>
+        <h4 data-i18n="help.graph_h">The graph</h4>
+        <p data-i18n-html="help.graph_p">Each row is one commit, newest at the top. The left <b>BRANCH / TAG</b> column shows the branch or tag that points at a commit; lane colours track branches. Your current commit (<b>HEAD</b>) has a bright ring and a bar down its left edge &#8212; that&#8217;s &#8220;you are here.&#8221; Commits already in your current branch are <b>dimmed</b>, so work you haven&#8217;t merged yet stands out.</p>
       </section>
       <section>
-        <h4>Navigate</h4>
-        <p>Scroll or drag to move; <kbd>&#8984;</kbd>+scroll (or <kbd>+</kbd>/<kbd>-</kbd>) to zoom. <kbd>&#8984;K</kbd> opens the command palette. <kbd>&#8984;F</kbd> searches commit content, <kbd>&#8984;&#8679;F</kbd> filters refs. <kbd>&#8984;&#8679;H</kbd> jumps to HEAD, <kbd>&#8984;&#8679;U</kbd> to Uncommitted changes. <kbd>&#8984;\</kbd> toggles focus mode. Press <kbd>?</kbd> for every shortcut.</p>
+        <h4 data-i18n="help.navigate_h">Navigate</h4>
+        <p data-i18n-html="help.navigate_p">Scroll or drag to move; <kbd>&#8984;</kbd>+scroll (or <kbd>+</kbd>/<kbd>-</kbd>) to zoom. <kbd>&#8984;K</kbd> opens the command palette. <kbd>&#8984;F</kbd> searches commit content, <kbd>&#8984;&#8679;F</kbd> filters refs. <kbd>&#8984;&#8679;H</kbd> jumps to HEAD, <kbd>&#8984;&#8679;U</kbd> to Uncommitted changes. <kbd>&#8984;\</kbd> toggles focus mode. Press <kbd>?</kbd> for every shortcut.</p>
       </section>
       <section>
-        <h4>Commits</h4>
-        <p>Click a commit to see its files and diff on the right. <b>Drag</b> a commit onto another to cherry-pick it there &#8212; hold <kbd>&#8679;</kbd> while dragging to merge instead. <b>Right-click</b> a commit for cherry-pick / merge / revert / reset / create branch or tag / copy.</p>
+        <h4 data-i18n="help.commits_h">Commits</h4>
+        <p data-i18n-html="help.commits_p">Click a commit to see its files and diff on the right. <b>Drag</b> a commit onto another to cherry-pick it there &#8212; hold <kbd>&#8679;</kbd> while dragging to merge instead. <b>Right-click</b> a commit for cherry-pick / merge / revert / reset / create branch or tag / copy.</p>
       </section>
       <section>
-        <h4>Branches &amp; tags</h4>
-        <p><b>Right-click a branch label</b> in the graph for branch management (checkout, push, merge, rebase, reset, delete). <b>Right-click a remote</b> label (origin/&#8230;) to check it out as a local branch. Hover a label to see its full name. The left <b>sidebar</b> lists every branch and tag &#8212; click one to check it out; the checkboxes show or hide branches in the graph.</p>
+        <h4 data-i18n="help.branches_h">Branches &amp; tags</h4>
+        <p data-i18n-html="help.branches_p"><b>Right-click a branch label</b> in the graph for branch management (checkout, push, merge, rebase, reset, delete). <b>Right-click a remote</b> label (origin/&#8230;) to check it out as a local branch. Hover a label to see its full name. The left <b>sidebar</b> lists every branch and tag &#8212; click one to check it out; the checkboxes show or hide branches in the graph.</p>
       </section>
       <section>
-        <h4>Uncommitted changes</h4>
-        <p>The pinned top row. Stage or unstage whole files, single hunks, or single lines, then commit. You can point GitCat at your own command to generate the commit message (Tools &#9656; External Tools) &#8212; GitCat never talks to an AI itself; the command does.</p>
+        <h4 data-i18n="help.uncommitted_h">Uncommitted changes</h4>
+        <p data-i18n="help.uncommitted_p">The pinned top row. Stage or unstage whole files, single hunks, or single lines, then commit. You can point GitCat at your own command to generate the commit message (Tools &#9656; External Tools) &#8212; GitCat never talks to an AI itself; the command does.</p>
       </section>
       <section>
-        <h4>Snapshots (Safety Manager)</h4>
-        <p>GitCat quietly snapshots your repo before risky operations. The ribbon down the left lists recent snapshots &#8212; click one to preview it, so you can always find your way back.</p>
+        <h4 data-i18n="help.snapshots_h">Snapshots (Safety Manager)</h4>
+        <p data-i18n="help.snapshots_p">GitCat quietly snapshots your repo before risky operations. The ribbon down the left lists recent snapshots &#8212; click one to preview it, so you can always find your way back.</p>
       </section>
     </div>
     <div class="modal-foot"><button class="btn ghost" id="helpCloseBtn" data-i18n="common.close">Close</button></div>
@@ -2162,19 +2162,19 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   <div class="modal danger">
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" id="dangerTamaImg" alt="Tama, alarmed"></div>
-      <div><h3 id="dangerTitle">Rewrite history &#8212; filter-repo</h3><p id="dangerDesc">This rewrites every commit on the selected refs. It cannot be undone with a normal Undo.</p></div>
+      <div><h3 id="dangerTitle" data-i18n="filterrepo.title">Rewrite history &#8212; filter-repo</h3><p id="dangerDesc" data-i18n="filterrepo.danger_desc">This rewrites every commit on the selected refs. It cannot be undone with a normal Undo.</p></div>
     </div>
     <div class="msteps" id="dangerSteps"><span class="s done"></span><span class="s done"></span><span class="s now"></span></div>
     <div class="modal-body">
-      <div class="will-lose" id="dangerLose"><h5>What this will rewrite / lose</h5><ul>
+      <div class="will-lose" id="dangerLose" data-i18n-html="filterrepo.danger_lose"><h5>What this will rewrite / lose</h5><ul>
         <li>Rewrites <code>42</code> commits on <code>main</code> and <code>feat/inline-diff</code></li>
         <li>Original SHAs become unreachable: <code>a1b2c3d</code> &#8230; <code>90ff210</code></li>
         <li>GPG signatures on rewritten commits are dropped</li></ul></div>
-      <div class="backup-note" id="dangerNote"><svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Pre-op backup pinned first &#8594; full pre-rewrite state stays recoverable.</div>
-      <div class="confirm-type"><label id="dangerTypeLabel">Type the branch name <b class="mono" id="dangerTypeName">main</b> to arm the rewrite:</label>
+      <div class="backup-note" id="dangerNote" data-i18n-html="filterrepo.danger_note"><svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Pre-op backup pinned first &#8594; full pre-rewrite state stays recoverable.</div>
+      <div class="confirm-type"><label id="dangerTypeLabel" data-i18n-html="filterrepo.danger_type_label">Type the branch name <b class="mono" id="dangerTypeName">main</b> to arm the rewrite:</label>
         <input id="confirmInput" placeholder="main" spellcheck="false" autocomplete="off"></div>
     </div>
-    <div class="modal-foot"><button class="btn ghost" id="dangerCancel" data-i18n="common.cancel">Cancel</button><button class="btn danger" id="dangerGo" disabled>Rewrite history</button></div>
+    <div class="modal-foot"><button class="btn ghost" id="dangerCancel" data-i18n="common.cancel">Cancel</button><button class="btn danger" id="dangerGo" disabled data-i18n="filterrepo.rewrite_history">Rewrite history</button></div>
   </div>
 </div>
 

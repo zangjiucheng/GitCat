@@ -76,4 +76,7 @@ export default {
   check_updates_h: "See what's installed and check GitHub Releases for a newer signed build",
   install_cli: "Install 'gitcat' Command in PATH",
   install_cli_h: "Open a repo from any terminal: gitcat . (like VS Code's code)",
+  install_cli_ok: "Installed the gitcat command at {path}. Open a new terminal and run gitcat . inside any repo. にゃ〜",
+  install_cli_err: "Couldn't install the gitcat command.",
+  install_cli_err_e: "Couldn't install the gitcat command. {e}",
 };
