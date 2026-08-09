@@ -120,7 +120,7 @@ This needs the `gitcat` command on your `PATH`. Open GitCat and run **Install 'g
 
 - **macOS** — `/usr/local/bin/gitcat` (you may be asked for your password).
 - **Linux** — `~/.local/bin/gitcat` (make sure that folder is on your `PATH`). The `.deb`/`.rpm` packages already put `gitcat` on `PATH` too, so this is mainly for the AppImage.
-- **Windows** — `gitcat.cmd` under `%LOCALAPPDATA%\Microsoft\WindowsApps`, which is on `PATH` by default.
+- **Windows** — `gitcat.cmd` under `%LOCALAPPDATA%\Microsoft\WindowsApps`, which is on `PATH` by default. It also drops a `gitcat` launcher into each installed WSL distro (`~/.local/bin/gitcat`), so `gitcat .` works from a WSL shell too and opens the app on the repo at its `\\wsl.localhost\<distro>\...` path.
 
 Open a new terminal afterwards so it picks up the change.
 

@@ -27,6 +27,14 @@
 //!     `%LOCALAPPDATA%\Microsoft\WindowsApps` (user-writable and on PATH by
 //!     default). It uses `start "" /D "%CD%"` so the terminal isn't blocked and
 //!     the new process is pinned to the caller's directory for relative paths.
+//!     It ALSO best-effort installs a Linux launcher into every detected WSL
+//!     distro (`~/.local/bin/gitcat`), so `gitcat .` works from a WSL shell too
+//!     — the `.cmd` shim can't run there (WSL interop only executes PE binaries,
+//!     not batch files). That launcher converts the repo path with `wslpath -w`
+//!     and hands the resulting `\\wsl.localhost\<distro>\...` path to the Windows
+//!     app, which already routes a WSL repo through `wsl.exe` (see `wsl.rs`).
+//!     WSL being absent, or a single distro failing, is not an error — the
+//!     Windows `.cmd` is the primary result and is what the reported path names.
 //!
 //! The script-building is kept in pure functions (compiled and unit-tested on
 //! every platform via `cfg(any(target_os = …, test))`), so the fiddly launcher
@@ -63,7 +71,7 @@ pub fn install_cli_shim() -> Result<String, String> {
 /// single quote into the `'\''` idiom (close quote, escaped quote, reopen).
 /// Single quotes disable every shell metacharacter ($, `, \, "...), so an
 /// install path with any of them can't break or hijack the launcher.
-#[cfg(any(unix, test))]
+#[cfg(any(unix, target_os = "windows", test))]
 fn sh_single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
@@ -134,6 +142,80 @@ rem `start` returns immediately so this terminal isn't blocked; /D pins the new\
 rem process to the current directory so a relative path (gitcat .) resolves here.\r\n\
 start \"\" /D \"%CD%\" \"{exe}\" %*\r\n"
     )
+}
+
+/// The Linux `gitcat` launcher installed *inside* a WSL distro (at
+/// `~/.local/bin/gitcat`), so `gitcat .` works from a WSL shell too. The Windows
+/// `.cmd` shim can't be run from inside WSL — interop only executes PE binaries,
+/// not batch files — so a WSL user needs a native launcher that reaches back out
+/// to the Windows app.
+///
+/// `win_exe` is gitcat.exe's Windows path (`C:\…\gitcat.exe`), baked in and
+/// translated to the distro's own mount point with `wslpath -u` at RUN time (so
+/// it survives a distro with a non-default `/mnt` root). A directory argument is
+/// resolved to an absolute path and converted to the Windows-side form with
+/// `wslpath -w`: a repo on the distro's own filesystem becomes
+/// `\\wsl.localhost\<distro>\…` (which the app routes through `wsl.exe`, see
+/// `wsl.rs`), and a repo under `/mnt/c/…` becomes a plain `C:\…`. Backgrounded
+/// with `nohup … &` so the WSL terminal returns immediately, matching the native
+/// Linux launcher.
+#[cfg(any(target_os = "windows", test))]
+fn wsl_launcher(win_exe: &str) -> String {
+    let win_exe = sh_single_quote(win_exe);
+    format!(
+        r#"#!/bin/sh
+# GitCat command-line launcher for WSL. Installed by GitCat on Windows (Settings
+# > Command line, or the "Install 'gitcat' command" action) into each detected
+# WSL distro. Re-run that after moving or updating the app.
+#
+# Launches the Windows GitCat via interop, converting the repo path to the
+# Windows-side form the app understands. nohup + & so this terminal returns
+# right away.
+exe=$(wslpath -u {win_exe})
+if [ $# -eq 0 ]; then
+  nohup "$exe" >/dev/null 2>&1 &
+  exit 0
+fi
+target="$1"
+case "$target" in
+  -*) nohup "$exe" "$target" >/dev/null 2>&1 &
+      exit 0 ;;
+  *) resolved=$(cd "$target" 2>/dev/null && pwd); [ -n "$resolved" ] && target="$resolved" ;;
+esac
+win=$(wslpath -w "$target" 2>/dev/null) || win="$target"
+nohup "$exe" "$win" >/dev/null 2>&1 &
+"#
+    )
+}
+
+/// Parse the distro names out of `wsl.exe -l -q`'s output.
+///
+/// That command emits UTF-16LE (a long-standing `wsl.exe` quirk), so decode that
+/// when the bytes look like it — ASCII names show up as interleaved NUL bytes —
+/// and otherwise fall back to UTF-8 so a future UTF-8 `wsl.exe` still parses. One
+/// distro name per line; a leading BOM, stray NULs and surrounding whitespace are
+/// trimmed. `docker-desktop`/`docker-desktop-data` are Docker's service distros,
+/// not user environments, so they're dropped (VS Code skips them too). Pure, so
+/// it's unit-tested on every platform.
+#[cfg(any(target_os = "windows", test))]
+fn parse_wsl_list(raw: &[u8]) -> Vec<String> {
+    let odd_zeros = raw.iter().skip(1).step_by(2).filter(|&&b| b == 0).count();
+    let looks_utf16 = raw.len() >= 4 && odd_zeros * 4 >= raw.len();
+    let text = if looks_utf16 {
+        let u16s: Vec<u16> = raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        String::from_utf16_lossy(&u16s)
+    } else {
+        String::from_utf8_lossy(raw).into_owned()
+    };
+    text.lines()
+        .map(|l| l.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}' || c == '\0'))
+        .filter(|l| !l.is_empty())
+        .filter(|l| {
+            let lc = l.to_ascii_lowercase();
+            lc != "docker-desktop" && lc != "docker-desktop-data"
+        })
+        .map(|l| l.to_string())
+        .collect()
 }
 
 // ── Per-platform install glue ────────────────────────────────────────────────
@@ -273,7 +355,84 @@ fn windows_install() -> Result<String, String> {
     let target = dir.join("gitcat.cmd");
     std::fs::write(&target, windows_cmd_shim(exe))
         .map_err(|e| format!("Couldn't write {}: {e}", target.display()))?;
+
+    // Best-effort: also install a Linux launcher into each detected WSL distro so
+    // `gitcat .` works from a WSL shell. WSL being absent, or a distro failing,
+    // must NOT fail the whole install — the `.cmd` above is the primary result
+    // and is what the returned path names. Outcomes are logged, not surfaced.
+    install_wsl_launchers(exe);
+
     Ok(target.display().to_string())
+}
+
+/// Install the WSL launcher (see [`wsl_launcher`]) into every detected distro's
+/// `~/.local/bin/gitcat`. Entirely best-effort: no WSL, no distros, a timeout, or
+/// a per-distro failure all just log and move on — the caller has already written
+/// the Windows `.cmd` shim, which is the primary result.
+///
+/// The launcher is staged once in a Windows temp file; each distro then reads it
+/// through its own `wslpath -u` translation and copies it into place. Going
+/// through a file (rather than piping the script on stdin) lets EVERY `wsl.exe`
+/// call here run under [`output_with_timeout`] — `wsl.exe` interop has been
+/// observed hanging forever for real users (see that helper's own doc), and an
+/// unbounded call would strand the install with the spinner up. `~/.local/bin` is
+/// on PATH by default on Debian/Ubuntu (their `~/.profile` adds it when the
+/// directory exists), so a fresh WSL shell finds it, matching the native Linux
+/// install.
+#[cfg(target_os = "windows")]
+fn install_wsl_launchers(win_exe: &str) {
+    use crate::procutil::{output_with_timeout, NoConsoleWindowExt};
+    use std::time::Duration;
+
+    // `wsl.exe -l -q` lists installed distros. Missing wsl.exe (the feature isn't
+    // installed), a non-zero exit (no distros), or a timeout => nothing to do.
+    // Generous ceiling: the WSL service can be cold on first use.
+    let mut list_cmd = std::process::Command::new("wsl.exe");
+    list_cmd.args(["-l", "-q"]).no_console_window();
+    let distros = match output_with_timeout(list_cmd, Duration::from_secs(15)) {
+        Ok(out) if out.status.success() => parse_wsl_list(&out.stdout),
+        _ => return,
+    };
+    if distros.is_empty() {
+        return;
+    }
+
+    // A fixed temp name (like macos_admin_install's own staging file) — a button
+    // click can't realistically race itself. LF is preserved (Rust's fs::write
+    // doesn't translate line endings), which matters: a CRLF shebang would make
+    // the distro reject the script with "bad interpreter".
+    let staged = std::env::temp_dir().join("gitcat-wsl-launcher");
+    if std::fs::write(&staged, wsl_launcher(win_exe)).is_err() {
+        return;
+    }
+    let staged_win = match staged.to_str() {
+        Some(s) => s,
+        None => {
+            let _ = std::fs::remove_file(&staged);
+            return;
+        }
+    };
+    // Single-quote the Windows temp path so `wslpath -u` receives it literally,
+    // whatever %TEMP% expands to.
+    let install = format!(
+        r#"mkdir -p "$HOME/.local/bin" && cp "$(wslpath -u {})" "$HOME/.local/bin/gitcat" && chmod 755 "$HOME/.local/bin/gitcat""#,
+        sh_single_quote(staged_win)
+    );
+    for distro in &distros {
+        let mut cmd = std::process::Command::new("wsl.exe");
+        // Uniform &str elements: distro/install are String, the rest are literals.
+        cmd.args(["-d", distro.as_str(), "-e", "sh", "-c", install.as_str()])
+            .no_console_window();
+        match output_with_timeout(cmd, Duration::from_secs(20)) {
+            Ok(out) if out.status.success() => eprintln!("gitcat: installed the WSL launcher into {distro}"),
+            Ok(out) => eprintln!(
+                "gitcat: couldn't install the WSL launcher into {distro}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+            Err(e) => eprintln!("gitcat: couldn't install the WSL launcher into {distro}: {e}"),
+        }
+    }
+    let _ = std::fs::remove_file(&staged);
 }
 
 #[cfg(test)]
@@ -341,5 +500,48 @@ mod tests {
         // doubled so `start` still receives the real path.
         let s = windows_cmd_shim(r"C:\100%\gitcat.exe");
         assert!(s.contains(r#""C:\100%%\gitcat.exe""#));
+    }
+
+    #[test]
+    fn wsl_launcher_translates_paths_and_backgrounds() {
+        let s = wsl_launcher(r"C:\Program Files\GitCat\gitcat.exe");
+        assert!(s.starts_with("#!/bin/sh"));
+        // The exe path is single-quoted (spaces/metacharacters kept literal) and
+        // translated to the distro's own mount point at run time.
+        assert!(s.contains(r#"exe=$(wslpath -u 'C:\Program Files\GitCat\gitcat.exe')"#));
+        // The repo argument is converted to the Windows-side path the app expects.
+        assert!(s.contains(r#"win=$(wslpath -w "$target""#));
+        // Non-blocking: the WSL terminal returns right away.
+        assert!(s.contains("nohup \"$exe\""));
+    }
+
+    #[test]
+    fn wsl_launcher_neutralizes_shell_metacharacters_in_the_exe_path() {
+        // A `$` in the baked path must stay literal — single quotes see to that.
+        let s = wsl_launcher(r"C:\weird$name\gitcat.exe");
+        assert!(s.contains(r#"wslpath -u 'C:\weird$name\gitcat.exe'"#));
+    }
+
+    #[test]
+    fn parse_wsl_list_decodes_utf16le_and_filters_service_distros() {
+        // `wsl.exe -l -q` emits UTF-16LE; docker's service distros are dropped.
+        let raw: Vec<u8> = "Ubuntu\r\ndocker-desktop\r\nDebian\r\ndocker-desktop-data\r\n"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        assert_eq!(parse_wsl_list(&raw), vec!["Ubuntu".to_string(), "Debian".to_string()]);
+    }
+
+    #[test]
+    fn parse_wsl_list_strips_a_utf16_bom() {
+        let raw: Vec<u8> = "\u{feff}Ubuntu\r\n".encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        assert_eq!(parse_wsl_list(&raw), vec!["Ubuntu".to_string()]);
+    }
+
+    #[test]
+    fn parse_wsl_list_empty_and_utf8_fallback() {
+        assert!(parse_wsl_list(&[]).is_empty());
+        // A defensive UTF-8 fallback for a hypothetical future non-UTF-16 wsl.exe.
+        assert_eq!(parse_wsl_list(b"Ubuntu\nDebian\n"), vec!["Ubuntu".to_string(), "Debian".to_string()]);
     }
 }
