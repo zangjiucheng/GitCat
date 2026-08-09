@@ -136,23 +136,38 @@ describe("mergeRefChips", () => {
 
   // The single-ref fast path skips the Map/Set the general path builds (this
   // runs per labelled visible row on every full frame, and one ref is by far
-  // the common case), so it has to produce byte-identical entries for every
-  // kind — including an unmatched remote, which must keep its full
-  // remote-qualified label rather than being unwrapped to the trailing name.
+  // the common case), so it has to produce identical entries for every kind —
+  // including an unmatched remote, which must keep its full remote-qualified
+  // label rather than being unwrapped to the trailing name.
+  //
+  // Asserted against the general path RUN, not against copied literals: the
+  // regression this guards is someone changing one path's entry shape, and
+  // literals would happily agree with the stale one. A tag filler forces the
+  // general path without pairing with anything.
+  const ONE_OF_EACH: Chip[] = [
+    { label: "main", kind: "head" },
+    { label: "wip", kind: "branch" },
+    { label: "v1.2.0", kind: "tag" },
+    { label: "origin/main", kind: "remote" },
+    { label: "weird", kind: "stash" },
+  ];
+
   it("the one-ref fast path emits exactly what the general path would, per kind", () => {
-    const cases: Chip[] = [
-      { label: "main", kind: "head" },
-      { label: "wip", kind: "branch" },
-      { label: "v1.2.0", kind: "tag" },
-      { label: "origin/main", kind: "remote" },
-      { label: "weird", kind: "stash" },
-    ];
-    expect(cases.map((c) => mergeRefChips([c])[0])).toEqual([
-      { label: "main", kind: "head", local: true, remote: false, refs: [cases[0]] },
-      { label: "wip", kind: "branch", local: true, remote: false, refs: [cases[1]] },
-      { label: "v1.2.0", kind: "tag", local: false, remote: false, refs: [cases[2]] },
-      { label: "origin/main", kind: "remote", local: false, remote: true, refs: [cases[3]] },
-      { label: "weird", kind: "stash", local: false, remote: false, refs: [cases[4]] },
+    const FILLER: Chip = { label: "__filler", kind: "tag" };
+    for (const c of ONE_OF_EACH) {
+      const viaGeneral = mergeRefChips([c, FILLER]);
+      expect(viaGeneral).toHaveLength(2);
+      expect(mergeRefChips([c])).toEqual([viaGeneral[0]]);
+    }
+  });
+
+  it("pins the one-ref entry shape per kind", () => {
+    expect(ONE_OF_EACH.map((c) => mergeRefChips([c])[0])).toEqual([
+      { label: "main", kind: "head", local: true, remote: false, refs: [ONE_OF_EACH[0]] },
+      { label: "wip", kind: "branch", local: true, remote: false, refs: [ONE_OF_EACH[1]] },
+      { label: "v1.2.0", kind: "tag", local: false, remote: false, refs: [ONE_OF_EACH[2]] },
+      { label: "origin/main", kind: "remote", local: false, remote: true, refs: [ONE_OF_EACH[3]] },
+      { label: "weird", kind: "stash", local: false, remote: false, refs: [ONE_OF_EACH[4]] },
     ]);
   });
 });
@@ -198,13 +213,17 @@ describe("rotateChips", () => {
 // then fold local+remote, then rotate — as one golden contract. Without it a
 // refactor could reorder the stages and still pass every test above.
 //
-// Worth knowing while reading these: swapping sort and merge is largely
-// invisible (merge keeps first-appearance order and preserves each entry's
-// kind, so a later sort lands in the same place), and rotating the raw list
-// instead of the merged one usually coincides too, because orderRefs always
-// sorts remotes LAST — the refs merge removes are a suffix, and dropping a
-// suffix commutes with a rotation smaller than the number of survivors. What
-// these assertions do catch is a wrong priority table, a broken fold, a
+// Worth knowing while reading these, so nobody reads more into them than they
+// hold. Swapping sort and merge is unobservable: both orders reduce to "the
+// survivors of the fold, stably sorted by kind", since the fold preserves each
+// entry's kind and first-appearance order. Rotating the RAW list instead of the
+// merged one also coincides at small rotations — orderRefs sorts remotes last,
+// so every ref the fold removes sits in the trailing remote block, and dropping
+// them commutes with a rotation that doesn't reach past the survivors. It stops
+// coinciding once the rotation exceeds the merged count, which is what the
+// rot-4 case below pins.
+//
+// So what these assertions catch is a wrong priority table, a broken fold, a
 // rotation that runs before the sort, and a rotation whose modulus is the raw
 // ref count rather than the merged chip count.
 describe("displayChips (the composed pipeline)", () => {
@@ -239,8 +258,10 @@ describe("displayChips (the composed pipeline)", () => {
 
   it("rotation wraps on the MERGED chip count, not the raw ref count", () => {
     // MIXED is 4 refs but 3 chips (origin/main folds into main), and cycleRefs
-    // takes its modulus from the chip count — so rot 3 must be the identity
-    // here. Wrapping on 4 would land on ["main", "feature", "v1.2.0"].
+    // takes its modulus from the chip count. rot 3 is therefore the identity —
+    // that one agrees with a raw-list rotation too (see the block comment), so
+    // it's the rot-4 line that discriminates: wrapping on 4 refs would leave
+    // the list untouched instead of advancing it one place.
     expect(displayChips(MIXED, true, 3).map((c) => c.label)).toEqual(["v1.2.0", "main", "feature"]);
     expect(displayChips(MIXED, true, 4).map((c) => c.label)).toEqual(["main", "feature", "v1.2.0"]);
   });

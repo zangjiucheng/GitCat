@@ -33,7 +33,11 @@ const BRANCH_FIRST: Record<string, number> = { head: 0, branch: 1, tag: 2, remot
 // A copy of `refs`, stably reordered by the chosen priority. Empty in, empty
 // out. Never mutates the argument.
 export function orderRefs<T extends Chip>(refs: readonly T[] | null | undefined, tagsFirst: boolean): T[] {
-  if (!refs || refs.length === 0) return [];
+  // Nothing to order below two refs, and this runs per labelled visible row on
+  // every full frame — so the common one-ref row skips the decorate/sort/
+  // undecorate below (three arrays plus a wrapper object per ref) entirely,
+  // just as mergeRefChips skips its Map and Set for the same row.
+  if (!refs || refs.length < 2) return refs ? refs.slice() : [];
   const pri = tagsFirst ? TAG_FIRST : BRANCH_FIRST;
   // Stable sort by kind priority: decorate with the original index so equal
   // kinds keep their incoming relative order (two tags stay in backend order).
@@ -135,8 +139,8 @@ export function rotateChips<T>(list: readonly T[], rot: number): T[] {
 //   * rotate LAST, over MERGED entries — a folded local+remote pair is ONE
 //     chip on screen, so cycling past it must take one click, not two, and the
 //     modulus has to be the merged count (what cycleRefs also counts).
-export function displayChips<T extends Chip>(
-  refs: readonly T[] | null | undefined,
+export function displayChips(
+  refs: readonly Chip[] | null | undefined,
   tagsFirst: boolean,
   rot: number,
 ): MergedChip[] {

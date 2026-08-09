@@ -561,7 +561,7 @@ function renderContent(st, rowLo, rowHi, strip){
     // they don't all fit. In column mode (bcw>0) they live in the left
     // BRANCH/TAG gutter and the subject stays put at cx; inline (bcw===0) they
     // sit before the subject, advancing cx past whatever was drawn.
-    if(bcw>0){ drawGutterChips(r,BRANCH_PAD_L,bcw-6,y,col,6); }
+    if(bcw>0){ drawGutterChips(r,BRANCH_PAD_L,bcw-6,y,col,6,false); }
     else {
       // Same breathing room after the last chip that column mode's message
       // gets after ITS divider (MSG_TEXT_PAD, applied above to cx already) —
@@ -573,10 +573,16 @@ function renderContent(st, rowLo, rowHi, strip){
       // That trailing pad is subtracted from the chips' own x-limit rather
       // than added past it, so a row whose chips fill the limit still leaves
       // the subject its full MIN_SUBJECT_W. Capping at
-      // W-AUTHOR_GUTTER-MIN_SUBJECT_W and THEN adding the pad would push the
+      // W-AUTHOR_GUTTER-MIN_SUBJECT_W and THEN adding the pad pushed the
       // subject MSG_TEXT_PAD px into that floor (40 -> 29).
+      //
+      // Chips are the only term this controls. cx's own tx+MSG_TEXT_PAD above
+      // eats the same 11px whenever tx has been dragged out to ITS
+      // W-AUTHOR_GUTTER-MIN_SUBJECT_W clamp — on labelled and unlabelled rows
+      // alike, and long before this limit is in play. That one predates the
+      // chips and is left alone here.
       const cx0=cx;
-      cx=drawGutterChips(r,cx,W-AUTHOR_GUTTER-MIN_SUBJECT_W-MSG_TEXT_PAD,y,col,8);
+      cx=drawGutterChips(r,cx,W-AUTHOR_GUTTER-MIN_SUBJECT_W-MSG_TEXT_PAD,y,col,8,true);
       if(cx>cx0) cx+=MSG_TEXT_PAD;
     }
     // Skip the per-row message/author/sha text while scrolling FAST (fastScroll):
@@ -895,12 +901,15 @@ function fitChips(list,cap,x0,xLimit,gap){
 // last thing drawn (inline mode advances the subject past it). `rowColor` is
 // the row's lane colour — every chip tints to it in both layouts (see
 // paintChip). Reserved room for the pill (RESERVE) is generous enough for a
-// two-digit count so it always fits. Also records every placed chip's x-span
-// in chipHit (row -> spans) for chipEntryAt's hover-tooltip (labelAt) and
-// label-context-menu targeting (the contextmenu handler below), exactly like
-// overflowHit below.
+// two-digit count so it always fits. With `recordHits`, ALSO records every
+// placed chip's own x-span in chipHit (row -> spans) for chipEntryAt, which
+// answers "which chip is under this x" for the hover tooltip (labelAt) and the
+// label context menu. Only the inline call site asks for that: column mode
+// resolves refs from its whole gutter cell and never consults chipEntryAt, so
+// building the spans there would be per-frame waste. Both maps are cleared for
+// the row either way, so a layout switch can't leave stale spans behind.
 const PLUS_RESERVE=34;
-function drawGutterChips(row,x0,xLimit,y,rowColor,gap){
+function drawGutterChips(row,x0,xLimit,y,rowColor,gap,recordHits){
   overflowHit.delete(row); chipHit.delete(row);
   const list=displayChipsFor(row);
   if(!list.length) return x0;
@@ -915,12 +924,7 @@ function drawGutterChips(row,x0,xLimit,y,rowColor,gap){
   }
   let endX=x0;
   for(const c of placed){ paintChip(c.x,y,c.text,c.w,c.entry,rowColor); endX=c.x+c.w; }
-  // Inline only: chipEntryAt is the per-chip hit test, and column mode never
-  // consults it (its gutter cell resolves whole-row refs instead — see labelAt
-  // and the contextmenu handler, both of which branch on branchColW first). The
-  // unconditional delete above still runs in both layouts, so switching modes
-  // can't leave a row's stale spans behind.
-  if(layout.branchColW===0) chipHit.set(row, placed.map(c=>({x0:c.x, x1:c.x+c.w, entry:c.entry})));
+  if(recordHits) chipHit.set(row, placed.map(c=>({x0:c.x, x1:c.x+c.w, entry:c.entry})));
   if(overflow>0){
     const px=placed.length?endX+gap:x0;
     ctx.font=layout.chipFont;
@@ -1044,9 +1048,10 @@ function chipEntryAt(mx,row){
 }
 // True when screen-x `mx` is over `row`'s "+N" overflow pill (inline mode; the
 // pill's span is recorded by drawGutterChips). The pill is a label surface just
-// like a chip — it grows the same hover tooltip (labelAt) and opens the same
-// ref menu (the contextmenu handler) — so both read it through here rather than
-// each re-testing the span.
+// like a chip — it grows the same hover tooltip (labelAt), opens the same ref
+// menu (the contextmenu handler), and cycles the row on a plain click
+// (endPointer) — so all three read it through here rather than each re-testing
+// the span.
 function overflowPillAt(mx,row){
   const oh=overflowHit.get(row);
   return !!oh&&mx>=oh.x0&&mx<=oh.x1;
@@ -1166,8 +1171,8 @@ function endPointer(e){
     // A clean click on a row's "+N" overflow pill cycles that row's labels
     // (bringing the next hidden ref to the front) instead of selecting — the
     // pill is a distinct affordance, so it leaves the current selection alone.
-    if(!down.moved&&down.hit&&down.hit.row>=0){ const oh=overflowHit.get(down.hit.row);
-      if(oh&&p.x>=oh.x0&&p.x<=oh.x1){ cycleRefs(down.hit.row); down=null; state.pointerActive=false; return; } }
+    if(!down.moved&&down.hit&&down.hit.row>=0&&overflowPillAt(p.x,down.hit.row)){
+      cycleRefs(down.hit.row); down=null; state.pointerActive=false; return; }
     if(!down.moved&&down.hit){ if(down.hit.row===-2) selectWorkdir(); else select(down.hit.row); }
     else if(!down.moved&&!down.hit) deselect();
     else if(state.drag){
@@ -1238,7 +1243,6 @@ cv.addEventListener("contextmenu",(e)=>{
   // a REMOTE label opens the sidebar's checkout-confirm instead (see below);
   // tags fall through, same as anywhere else on the row (the commit dot or
   // message) → the commit menu below, unchanged.
-  const rowRefs=rowRefsOf(row);
   const inGutter=layout.branchColW>0&&p.x<layout.branchColW;
   const chip=layout.branchColW>0?null:chipEntryAt(p.x,row);
   // The inline "+N" pill counts as a label surface here too — it already grows
@@ -1247,12 +1251,20 @@ cv.addEventListener("contextmenu",(e)=>{
   // anywhere in its gutter cell including the pill.
   const onPill=layout.branchColW===0&&overflowPillAt(p.x,row);
   if(inGutter||chip||onPill){
-    // Column mode keeps its whole-cell behaviour (any local branch on the row);
-    // inline resolves to the CLICKED chip's own member refs, so right-clicking
-    // an unmatched origin/x chip can't open the menu of an unrelated local. The
-    // pill stands for the whole row (it's the "read what's hidden" affordance,
-    // not one ref), so it falls back to rowRefs like the gutter cell.
-    const pool=chip?chip.refs:rowRefs;
+    // Column mode keeps its whole-cell behaviour (any local branch on the row),
+    // and so does the "+N" pill — it stands for the row, being the "read what's
+    // hidden" affordance rather than one ref. Inline chips resolve to the
+    // CLICKED chip's own member refs instead, so right-clicking an unmatched
+    // origin/x chip can't open the menu of an unrelated local.
+    //
+    // The whole-row pool is the DISPLAY list, not the raw backend order, so
+    // this menu names the same branch labelAt's tooltip just bolded. With raw
+    // order the two could disagree the moment a row is cycled: on a commit
+    // carrying both `main` (head) and `feat`, one "+N" click makes the tooltip
+    // bold `feat` while backend order (head before branch) still handed this
+    // menu `main` — i.e. you saw one branch highlighted and got another's
+    // delete/reset menu.
+    const pool=chip?chip.refs:displayChipsFor(row).flatMap(c=>c.refs);
     const br=pool.find(r=>r&&(r.kind==="branch"||r.kind==="head"));
     if(br){ sidebarCtrl.openMenuAt(br.label, br.kind==="head", null, e.clientX, e.clientY); return; }
     // A remote-tracking branch label (e.g. origin/main, upstream/3.13) → the
@@ -2011,16 +2023,17 @@ const overflowHit=new Map();
 // entry included — chipEntryAt reads this to answer "which MergedChip is
 // under this x", which feeds both the hover tooltip (labelAt) and the
 // label-context-menu's chip targeting, instead of either re-deriving layout.
-// Cleared per row exactly like overflowHit above, but only POPULATED inline:
-// column mode resolves refs from its whole gutter cell and never asks which
-// individual chip was hit (see drawGutterChips' gate).
+// Cleared per row exactly like overflowHit above, but only POPULATED inline
+// (drawGutterChips' `recordHits`): column mode resolves refs from its whole
+// gutter cell and never asks which individual chip was hit.
 const chipHit=new Map();
 function rowSha(row){ return (BACKEND&&BACKEND.rows[row]&&BACKEND.rows[row].sha)||("r"+row); }
 // This row's refs exactly as the backend delivered them (no priority sort, no
 // rotation): the FULL list when available (allRefs), else the single primary
-// ref (refs[row]) wrapped in an array, else []. Shared by the contextmenu
-// handler's rowRefs and displayChipsFor below so this fallback chain lives in
-// one place instead of two copies that could drift apart.
+// ref (refs[row]) wrapped in an array, else []. Kept separate from
+// displayChipsFor below so that three-branch fallback stays one named thing —
+// every ref consumer now goes through displayChipsFor, and nothing else should
+// reach for raw backend order (hover and right-click disagreed when one did).
 function rowRefsOf(row){
   return (G&&G.allRefs&&G.allRefs[row])||(G&&G.refs&&G.refs[row]?[G.refs[row]]:[]);
 }
