@@ -3120,10 +3120,19 @@ if(IN_TAURI){
   // flashes the empty hero state first. URLSearchParams.get() already
   // returns the fully percent-decoded value — no separate decodeURIComponent
   // needed (that would double-decode a path containing a literal '%').
-  const initialRepo=new URLSearchParams(location.search).get("repo");
+  const params=new URLSearchParams(location.search);
+  const initialRepo=params.get("repo");
+  // `gitcat <path>` where <path> isn't a git repo: windows.rs validated the
+  // launch argument and, rather than a `?repo=`, handed us `?repoError=<path>`.
+  // Boot the empty hero (so the app is usable — pick a real folder) and name the
+  // offending path, VS Code-style.
+  const repoError=params.get("repoError");
   // openRepo() derives NAV_STACK + refreshes the submodule-nav strip itself, so a
   // repo opened by deep-link that happens to be a submodule shows its context too.
-  if(initialRepo) openRepo(initialRepo); else bootEmpty();
+  // On failure (e.g. the repo became inaccessible between the launch-time check
+  // and now) fall back to the empty hero rather than a stranded blank frame.
+  if(initialRepo){ openRepo(initialRepo).then(ok=>{ if(!ok) bootEmpty(); }); }
+  else { bootEmpty(); if(repoError) Tama.warn(`"${repoError}" is not a git repository.`, 6000); }
 }
 else { loadGraph(10000); }          // plain browser (design mode): synthetic demo data
 requestAnimationFrame(tick);

@@ -3221,6 +3221,19 @@ async terminalKill(id: string) : Promise<Result<null, string>> {
  */
 async openRepoInNewWindow(path: string) : Promise<void> {
     await TAURI_INVOKE("open_repo_in_new_window", { path });
+},
+/**
+ * JS: `commands.installCliShim()` — the ⌘K "Install 'gitcat' command" action
+ * and the Settings ▸ Command line button. Returns the installed path on
+ * success, or a human-readable error to surface as a Tama toast / inline note.
+ */
+async installCliShim() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_cli_shim") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
