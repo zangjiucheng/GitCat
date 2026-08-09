@@ -473,6 +473,34 @@ class SettingsState {
     this.activeTab = tab;
   }
 
+  // ── Command line: "Install 'gitcat' command in PATH" (macOS only) ────────
+  // Writes a `code`-style launcher via install_cli_shim (see cli_shim.rs). The
+  // view gates the whole section on IS_MAC; these fields just carry the
+  // button's in-flight + result state so the outcome shows inline right below
+  // it (the ⌘K twin of this action toasts via Tama instead).
+  cliInstalling = $state(false);
+  cliInstallOk = $state("");
+  cliInstallError = $state("");
+
+  async installCliCommand(): Promise<void> {
+    if (this.cliInstalling) return;
+    this.cliInstalling = true;
+    this.cliInstallOk = "";
+    this.cliInstallError = "";
+    try {
+      const res = await commands.installCliShim();
+      if (res.status === "ok") {
+        this.cliInstallOk = `Installed at ${res.data}. Open a new terminal and run gitcat . inside any repo.`;
+      } else {
+        this.cliInstallError = res.error || "Couldn't install the gitcat command.";
+      }
+    } catch (e) {
+      this.cliInstallError = "Couldn't install the gitcat command. " + e;
+    } finally {
+      this.cliInstalling = false;
+    }
+  }
+
   // ── app-level prefs (instant-apply, no Save button) ─────────────────────
   themeMode = $state<ThemeMode>(DEFAULTS.themeMode);
   cherryPickRecordOriginDefault = $state(DEFAULTS.cherryPickRecordOriginDefault);
