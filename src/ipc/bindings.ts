@@ -3223,6 +3223,22 @@ async openRepoInNewWindow(path: string) : Promise<void> {
     await TAURI_INVOKE("open_repo_in_new_window", { path });
 },
 /**
+ * Rebuild the native menu with frontend-supplied labels and swap it in — the
+ * runtime half of i18n for the OS menu (PER-80). Called by `syncNativeMenu` in
+ * legacy/main.ts on boot (when the locale isn't the English default) and on
+ * every language switch. `set_menu` must run on the main thread, so the actual
+ * swap is marshalled there; if a live swap is ever missed, the next launch
+ * rebuilds correctly anyway (the boot call passes the persisted locale).
+ */
+async setAppMenu(labels: Partial<{ [key in string]: string }>) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_app_menu", { labels }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.installCliShim()` — the ⌘K "Install 'gitcat' command" action
  * and the Settings ▸ Command line button. Returns the installed path on
  * success, or a human-readable error to surface as a Tama toast / inline note.

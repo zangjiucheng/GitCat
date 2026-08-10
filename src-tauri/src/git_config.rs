@@ -20,6 +20,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::git_write::WriteResult;
+use crate::i18n_err::{ierr, ierrp};
 use crate::safety::{self, GitOut};
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, specta::Type)]
@@ -37,12 +38,6 @@ impl ConfigScope {
         }
     }
 
-    fn label(self) -> &'static str {
-        match self {
-            ConfigScope::Local => "this repository",
-            ConfigScope::Global => "global",
-        }
-    }
 }
 
 /// One config key's value at each scope, plus the effective (local-wins)
@@ -87,16 +82,14 @@ pub struct RawConfigEntry {
 fn validate_key(key: &str) -> Result<(), String> {
     let key = key.trim();
     if key.is_empty() {
-        return Err("Config key must not be empty.".into());
+        return Err(ierr("err_misc.config_key_empty"));
     }
     let parts: Vec<&str> = key.split('.').collect();
     if parts.len() < 2 {
-        return Err(format!("{key:?} doesn't look like a git config key (expected e.g. \"section.key\")."));
+        return Err(ierrp("err_misc.config_key_malformed", &[("key", &format!("{key:?}"))]));
     }
     if parts.iter().any(|p| p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')) {
-        return Err(format!(
-            "{key:?} contains characters a git config key can't have here — each dot-separated part may only use letters, digits, '-' and '_'."
-        ));
+        return Err(ierrp("err_misc.config_key_charset", &[("key", &format!("{key:?}"))]));
     }
     Ok(())
 }
@@ -110,7 +103,7 @@ fn validate_key(key: &str) -> Result<(), String> {
 /// doesn't get parsed as an unknown `-x` flag instead of a literal value.
 fn validate_value(v: &str) -> Result<(), String> {
     if v.starts_with('-') {
-        return Err(format!("Refusing a value that looks like a flag: {v:?}"));
+        return Err(ierrp("err_misc.value_looks_like_flag", &[("value", &format!("{v:?}"))]));
     }
     Ok(())
 }
@@ -132,7 +125,7 @@ fn validate_value(v: &str) -> Result<(), String> {
 #[specta::specta]
 pub async fn get_git_config_values(path: String, keys: Vec<String>) -> Result<Vec<ConfigEntry>, String> {
     crate::blocking::run_blocking(move || {
-        crate::trust::open_repo(&path).map_err(|e| format!("Cannot open repository: {}", e.message()))?;
+        crate::trust::open_repo(&path).map_err(|e| ierrp("err_misc.cannot_open_repo_cap", &[("detail", e.message())]))?;
         Ok(keys.iter().map(|k| read_entry(&path, k)).collect())
     })
     .await
@@ -172,7 +165,7 @@ fn read_scoped(path: &str, key: &str, scope: &str) -> Option<String> {
 #[specta::specta]
 pub async fn list_git_config_entries(path: String, scope: ConfigScope) -> Result<Vec<RawConfigEntry>, String> {
     crate::blocking::run_blocking(move || {
-        crate::trust::open_repo(&path).map_err(|e| format!("Cannot open repository: {}", e.message()))?;
+        crate::trust::open_repo(&path).map_err(|e| ierrp("err_misc.cannot_open_repo_cap", &[("detail", e.message())]))?;
         let out = safety::run_git(&path, &["config", scope.flag(), "--list", "-z"])?;
         if !out.ok {
             // `--list` on a scope with no config file at all (e.g. no
@@ -217,7 +210,7 @@ fn parse_list_z(raw: &str) -> Vec<RawConfigEntry> {
 pub async fn set_git_config_value(path: String, key: String, value: Option<String>, scope: ConfigScope) -> WriteResult {
     crate::blocking::run_blocking(move || {
         if let Err(e) = crate::trust::open_repo(&path) {
-            return err_result(format!("Cannot open repository: {}", e.message()));
+            return err_result(ierrp("err_misc.cannot_open_repo_cap", &[("detail", e.message())]));
         }
         if let Err(msg) = validate_key(&key) {
             return err_result(msg);
@@ -235,8 +228,20 @@ pub async fn set_git_config_value(path: String, key: String, value: Option<Strin
         };
         match result {
             Ok(out) if out.ok => ok_result(match &value {
-                Some(v) => format!("Set {key} = {v:?} ({}).", scope.label()),
-                None => format!("Unset {key} ({}).", scope.label()),
+                Some(v) => ierrp(
+                    match scope {
+                        ConfigScope::Local => "err_misc.config_set_local",
+                        ConfigScope::Global => "err_misc.config_set_global",
+                    },
+                    &[("key", key), ("value", &format!("{v:?}"))],
+                ),
+                None => ierrp(
+                    match scope {
+                        ConfigScope::Local => "err_misc.config_unset_local",
+                        ConfigScope::Global => "err_misc.config_unset_global",
+                    },
+                    &[("key", key)],
+                ),
             }),
             // `git config --unset` on a key that's already unset at this
             // scope exits 5 ("you try to unset an option which does not
@@ -244,7 +249,13 @@ pub async fn set_git_config_value(path: String, key: String, value: Option<Strin
             // as a successful no-op, matching how `read_scoped` above
             // already treats "unset" as a normal, non-error outcome rather
             // than surfacing git's plumbing-level exit code as a UI error.
-            Ok(out) if value.is_none() && out.code == 5 => ok_result(format!("{key} was already unset ({}).", scope.label())),
+            Ok(out) if value.is_none() && out.code == 5 => ok_result(ierrp(
+                match scope {
+                    ConfigScope::Local => "err_misc.config_already_unset_local",
+                    ConfigScope::Global => "err_misc.config_already_unset_global",
+                },
+                &[("key", key)],
+            )),
             Ok(out) => err_result(err_msg(&out)),
             Err(e) => err_result(e),
         }
@@ -269,7 +280,7 @@ fn err_msg(o: &GitOut) -> String {
     } else if !o.stdout.is_empty() {
         o.stdout.clone()
     } else {
-        format!("git exited with status {}", o.code)
+        ierrp("err_misc.git_exited_with_status", &[("code", &o.code.to_string())])
     }
 }
 

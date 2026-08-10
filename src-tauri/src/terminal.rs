@@ -45,6 +45,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, State, Wry};
 
+use crate::i18n_err::{ierr, ierrp};
+
 struct TerminalSession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
@@ -89,7 +91,7 @@ struct TerminalExitEvent {
 /// than any git operation this app performs, so it gets no exemption.
 fn open_pty_shell(path: &str) -> Result<TerminalSession, String> {
     if let Err(e) = crate::trust::open_repo(path) {
-        return Err(format!("Cannot open repository: {}", e.message()));
+        return Err(ierrp("err_misc.cannot_open_repo_cap", &[("detail", e.message())]));
     }
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -164,7 +166,7 @@ pub async fn terminal_spawn(app: AppHandle<Wry>, registry: State<'_, TerminalReg
 #[specta::specta]
 pub fn terminal_write(registry: State<TerminalRegistry>, id: String, data: String) -> Result<(), String> {
     let mut map = registry.0.lock().unwrap();
-    let session = map.get_mut(&id).ok_or_else(|| "This terminal session has already ended.".to_string())?;
+    let session = map.get_mut(&id).ok_or_else(|| ierr("err_misc.terminal_session_ended"))?;
     session.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())
 }
 
@@ -177,7 +179,7 @@ pub fn terminal_write(registry: State<TerminalRegistry>, id: String, data: Strin
 #[specta::specta]
 pub fn terminal_resize(registry: State<TerminalRegistry>, id: String, cols: u16, rows: u16) -> Result<(), String> {
     let map = registry.0.lock().unwrap();
-    let session = map.get(&id).ok_or_else(|| "This terminal session has already ended.".to_string())?;
+    let session = map.get(&id).ok_or_else(|| ierr("err_misc.terminal_session_ended"))?;
     session.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).map_err(|e| e.to_string())
 }
 
@@ -276,7 +278,7 @@ mod tests {
         // `unwrap_err()` requires of the `Ok` type regardless of which
         // variant is actually present.
         match open_pty_shell("/no/such/path/at/all") {
-            Err(e) => assert!(e.contains("Cannot open repository")),
+            Err(e) => assert!(e.contains("err_misc.cannot_open_repo_cap")),
             Ok(_) => panic!("expected a nonexistent path to be refused before spawning anything"),
         }
     }

@@ -340,7 +340,7 @@ fn blame_binary_file_is_a_clean_refusal_not_a_panic() {
         tauri::async_runtime::block_on(blame_file(repo.path(), "bin.dat".to_string(), None, false)),
         "a binary file must refuse blame, not panic or succeed",
     );
-    assert!(err.contains("binary"), "expected a binary-refusal message, got: {err}");
+    assert!(err.contains("err_misc.file_is_binary_no_blame"), "expected a binary-refusal message, got: {err}");
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +359,7 @@ fn blame_file_missing_at_target_commit_is_a_clean_err() {
         "a file absent from the target commit must be a clean Err",
     );
     assert!(
-        err.contains("does not exist"),
+        err.contains("err_misc.path_does_not_exist"),
         "expected a 'does not exist' message, got: {err}"
     );
 
@@ -393,7 +393,7 @@ fn blame_at_head_fails_for_a_renames_new_path_when_the_rename_is_only_staged() {
         tauri::async_runtime::block_on(blame_file(repo.path(), "new.txt".to_string(), None, false)),
         "new.txt isn't in HEAD's tree yet — the rename is only staged",
     );
-    assert!(err.contains("does not exist"), "expected a 'does not exist' message, got: {err}");
+    assert!(err.contains("err_misc.path_does_not_exist"), "expected a 'does not exist' message, got: {err}");
 
     // The OLD path is exactly what Workdir.svelte's `blameTarget()` must fall
     // back to for this row, and it must blame fine (unaffected by the staged
@@ -414,7 +414,7 @@ fn blame_at_head_fails_for_a_brand_new_files_path_when_only_staged() {
         tauri::async_runtime::block_on(blame_file(repo.path(), "brand_new.txt".to_string(), None, false)),
         "a staged-but-uncommitted new file has no HEAD history to blame",
     );
-    assert!(err.contains("does not exist"), "expected a 'does not exist' message, got: {err}");
+    assert!(err.contains("err_misc.path_does_not_exist"), "expected a 'does not exist' message, got: {err}");
 }
 
 #[test]

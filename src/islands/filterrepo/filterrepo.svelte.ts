@@ -19,6 +19,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { FilterRepoBackupInfo, FilterRepoPreview, FilterRepoResult } from "../../ipc/bindings";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 
 export type FilterRepoStep = "scope" | "preview" | "confirm" | "result" | "restore";
 
@@ -118,7 +119,7 @@ class FilterRepoState {
   start(repo: string) {
     if (this.busy) return;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("filterrepo.open_repo_first"));
       return;
     }
     this.resetWizard();
@@ -143,7 +144,7 @@ class FilterRepoState {
   async runPreview() {
     if (this.busy) return;
     if (this.pathList.length === 0) {
-      this.previewError = "Select at least one path to filter.";
+      this.previewError = t("filterrepo.err_select_path");
       return;
     }
     this.previewError = "";
@@ -163,11 +164,11 @@ class FilterRepoState {
         this.step = "preview";
       } else {
         this.preview = null;
-        this.previewError = String(r.error ?? "Could not preview the filter-repo scope.");
+        this.previewError = be(r.error) || t("filterrepo.err_preview");
       }
     } catch (e) {
       this.preview = null;
-      this.previewError = "Could not preview the filter-repo scope — " + e;
+      this.previewError = t("filterrepo.err_preview_e", { e: be(String(e)) });
     } finally {
       this.busy = false;
     }
@@ -207,9 +208,10 @@ class FilterRepoState {
       this.tamaImg = bridge.TAMA_IMG.thinking;
       this.result = {
         ok: true,
-        message: `History rewritten (${DEMO_PREVIEW.totalCommits} → ${
-          DEMO_PREVIEW.totalCommits - DEMO_PREVIEW.touchedCommits
-        } commits). A verified backup was saved — use Restore if anything looks wrong. (demo)`,
+        message: t("filterrepo.say_demo_rewritten", {
+          before: DEMO_PREVIEW.totalCommits,
+          after: DEMO_PREVIEW.totalCommits - DEMO_PREVIEW.touchedCommits,
+        }),
         backupBundle: "/repo/.git/gitgui/filter-repo-backups/demo.bundle",
         commitsBefore: DEMO_PREVIEW.totalCommits,
         commitsAfter: DEMO_PREVIEW.totalCommits - DEMO_PREVIEW.touchedCommits,
@@ -227,22 +229,22 @@ class FilterRepoState {
     this.tamaImg = bridge.TAMA_IMG.thinking;
     try {
       const res = await commands.filterRepoRun(this.repo, this.pathList, this.invert);
-      this.result = res;
+      this.result = { ...res, message: be(res.message) };
       this.step = "result";
       if (res.ok) {
         await bridge.reloadGraph(true); // HEAD/history changed
         this.tamaImg = bridge.TAMA_IMG.happy;
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "History rewritten.", 4200);
-        bridge.cheer('History rewritten. <span class="jp">よし!</span>');
+        bridge.tama.say(be(res.message) || t("filterrepo.say_rewritten"), 4200);
+        bridge.cheer(t("filterrepo.cheer_rewritten"));
       } else {
         this.tamaImg = bridge.TAMA_IMG.shocked;
-        bridge.tama.warn(res.message || "filter-repo failed — see the result below.");
+        bridge.tama.warn(be(res.message) || t("filterrepo.warn_failed"));
       }
     } catch (e) {
       this.result = {
         ok: false,
-        message: "filter-repo failed — " + e,
+        message: t("filterrepo.err_run", { e: be(String(e)) }),
         backupBundle: null,
         commitsBefore: null,
         commitsAfter: null,
@@ -308,11 +310,11 @@ class FilterRepoState {
         this.backupsError = "";
       } else {
         this.backups = [];
-        this.backupsError = String(r.error ?? "Could not list backups.");
+        this.backupsError = be(r.error) || t("filterrepo.err_list_backups");
       }
     } catch (e) {
       this.backups = [];
-      this.backupsError = "Could not list backups — " + e;
+      this.backupsError = t("filterrepo.err_list_backups_e", { e: be(String(e)) });
     } finally {
       this.backupsLoading = false;
     }
@@ -335,7 +337,7 @@ class FilterRepoState {
       this.tamaImg = bridge.TAMA_IMG.thinking;
       this.restoreResult = {
         ok: true,
-        message: `Restored ${DEMO_BACKUPS[0].refCount}/${DEMO_BACKUPS[0].refCount} ref(s) from backup ${this.selectedBackupId}. (demo)`,
+        message: t("filterrepo.say_demo_restored", { n: DEMO_BACKUPS[0].refCount, id: String(this.selectedBackupId) }),
         backupBundle: DEMO_BACKUPS[0].bundlePath,
         commitsBefore: null,
         commitsAfter: DEMO_PREVIEW.totalCommits,
@@ -352,21 +354,21 @@ class FilterRepoState {
     this.tamaImg = bridge.TAMA_IMG.thinking;
     try {
       const res = await commands.filterRepoRestore(this.repo, this.selectedBackupId);
-      this.restoreResult = res;
+      this.restoreResult = { ...res, message: be(res.message) };
       if (res.ok) {
         await bridge.reloadGraph(true); // HEAD/history changed back
         this.tamaImg = bridge.TAMA_IMG.confident;
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Restored.", 4200);
-        bridge.cheer("Backup restored.");
+        bridge.tama.say(be(res.message) || t("filterrepo.say_restored"), 4200);
+        bridge.cheer(t("filterrepo.cheer_restored"));
       } else {
         this.tamaImg = bridge.TAMA_IMG.shocked;
-        bridge.tama.warn(res.message || "Restore failed — try again.");
+        bridge.tama.warn(be(res.message) || t("filterrepo.warn_restore_failed"));
       }
     } catch (e) {
       this.restoreResult = {
         ok: false,
-        message: "Restore failed — " + e,
+        message: t("filterrepo.err_restore", { e: be(String(e)) }),
         backupBundle: null,
         commitsBefore: null,
         commitsAfter: null,

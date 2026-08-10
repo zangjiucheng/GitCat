@@ -11,6 +11,7 @@
   import { aboutCtrl } from "./about.svelte.ts";
   import { updaterCtrl } from "../updater/updater.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import Link from "@lucide/svelte/icons/link";
 
   function onKeydown(e: KeyboardEvent) {
@@ -24,17 +25,17 @@
 {#if aboutCtrl.open}
   <div class="scrim on">
     <div class="modal about-modal">
-      <button class="about-close" aria-label="Close" onclick={() => aboutCtrl.close()}>&#10005;</button>
+      <button class="about-close" aria-label={t("common.close")} onclick={() => aboutCtrl.close()}>&#10005;</button>
 
       <div class="about-tama-wrap">
         <span class="about-sparkle s1">&#10022;</span>
         <span class="about-sparkle s2">&#10022;</span>
         <span class="about-sparkle s3">&#10022;</span>
-        <img class="about-tama" src={bridge.TAMA_IMG.happy} alt="Tama, GitCat's guardian" />
+        <img class="about-tama" src={bridge.TAMA_IMG.happy} alt={t("about.tama_alt")} />
       </div>
 
       {#if aboutCtrl.loading}
-        <p class="mut" style="margin-top:14px">loading&#8230;</p>
+        <p class="mut" style="margin-top:14px">{t("common.loading")}</p>
       {:else if aboutCtrl.info}
         {@const info = aboutCtrl.info}
         <h2 class="about-name">{info.name}</h2>
@@ -48,46 +49,46 @@
 
         <div class="about-update">
           {#if updaterCtrl.phase === "idle"}
-            <button class="btn ghost" onclick={() => updaterCtrl.check()}>Check for Updates&#8230;</button>
+            <button class="btn ghost" onclick={() => updaterCtrl.check()}>{t("about.check_updates")}</button>
           {:else if updaterCtrl.phase === "checking"}
-            <span class="mut"><span class="spinner"></span> Checking for updates&#8230;</span>
+            <span class="mut"><span class="spinner"></span> {t("about.checking")}</span>
           {:else if updaterCtrl.phase === "up-to-date"}
-            <span class="mut">You're up to date. <button class="linklike" onclick={() => updaterCtrl.dismiss()}>OK</button></span>
+            <span class="mut">{t("about.up_to_date")} <button class="linklike" onclick={() => updaterCtrl.dismiss()}>{t("common.ok")}</button></span>
           {:else if updaterCtrl.phase === "available"}
             <div class="about-update-card">
-              <div><b>v{updaterCtrl.version}</b> is available <span class="mut">(you have v{updaterCtrl.currentVersion})</span></div>
+              <div><b>v{updaterCtrl.version}</b> {t("about.is_available")} <span class="mut">{t("about.you_have", { v: updaterCtrl.currentVersion ?? "" })}</span></div>
               {#if updaterCtrl.notes}
                 <p class="about-update-notes">{updaterCtrl.notes}</p>
               {/if}
               <div class="about-update-actions">
-                <button class="btn ghost" onclick={() => updaterCtrl.dismiss()}>Not now</button>
-                <button class="btn" onclick={() => updaterCtrl.downloadAndInstall()}>Download &amp; Install</button>
+                <button class="btn ghost" onclick={() => updaterCtrl.dismiss()}>{t("about.not_now")}</button>
+                <button class="btn" onclick={() => updaterCtrl.downloadAndInstall()}>{t("about.download_install")}</button>
               </div>
             </div>
           {:else if updaterCtrl.phase === "downloading"}
             <div class="about-update-card">
               {#if updaterCtrl.progress != null}
                 <div class="about-update-bar"><div class="about-update-fill" style="width:{updaterCtrl.progress}%"></div></div>
-                <span class="mut">Downloading&#8230; {updaterCtrl.progress}%</span>
+                <span class="mut">{t("about.downloading", { p: updaterCtrl.progress })}</span>
               {:else}
-                <span class="mut"><span class="spinner"></span> Downloading&#8230;</span>
+                <span class="mut"><span class="spinner"></span> {t("about.downloading_plain")}</span>
               {/if}
             </div>
           {:else if updaterCtrl.phase === "ready"}
             <div class="about-update-card">
-              <div>Update downloaded &#8212; restart to finish installing.</div>
+              <div>{t("about.downloaded_restart")}</div>
               <div class="about-update-actions">
-                <button class="btn" onclick={() => updaterCtrl.restart()}>Restart Now</button>
+                <button class="btn" onclick={() => updaterCtrl.restart()}>{t("about.restart_now")}</button>
               </div>
             </div>
           {:else if updaterCtrl.phase === "error"}
-            <span class="mut">{updaterCtrl.error} <button class="linklike" onclick={() => updaterCtrl.dismiss()}>Dismiss</button></span>
+            <span class="mut">{updaterCtrl.error} <button class="linklike" onclick={() => updaterCtrl.dismiss()}>{t("about.dismiss")}</button></span>
           {/if}
         </div>
 
         <div class="modal-foot" style="justify-content:center;border-top:none;padding-top:16px">
           <button class="btn ghost" onclick={() => aboutCtrl.openWebsite()}><Link class="ico" size={14} aria-hidden="true" /> GitHub</button>
-          <button class="btn" onclick={() => aboutCtrl.close()}>Close</button>
+          <button class="btn" onclick={() => aboutCtrl.close()}>{t("common.close")}</button>
         </div>
       {/if}
     </div>

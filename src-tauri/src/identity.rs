@@ -31,6 +31,7 @@
 
 use serde::Serialize;
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::git_write::WriteResult;
 use crate::safety::{self, GitOut};
 
@@ -67,7 +68,7 @@ pub struct GitIdentity {
 pub async fn get_git_identity(path: String) -> Result<GitIdentity, String> {
     crate::blocking::run_blocking(move || {
         crate::trust::open_repo(&path)
-            .map_err(|e| format!("That doesn't look like a git repository — {}", e.message()))?;
+            .map_err(|e| ierrp("err_repo.not_a_git_repository", &[("detail", e.message())]))?;
         let local_name = read_scoped(&path, "user.name", "--local");
         let local_email = read_scoped(&path, "user.email", "--local");
         let global_name = read_scoped(&path, "user.name", "--global");
@@ -127,7 +128,7 @@ pub async fn set_git_identity(path: String, name: String, email: String) -> Writ
         if let Err(e) = crate::trust::open_repo(&path) {
             return WriteResult {
                 ok: false,
-                message: format!("Cannot open repository: {}", e.message()),
+                message: ierrp("err_repo.cannot_open_repo_cap", &[("detail", e.message())]),
                 backup_ref: None,
                 conflicting_files: Vec::new(),
             };
@@ -137,7 +138,7 @@ pub async fn set_git_identity(path: String, name: String, email: String) -> Writ
         if name.is_empty() || email.is_empty() {
             return WriteResult {
                 ok: false,
-                message: "Name and email must not be empty.".to_string(),
+                message: ierr("err_repo.name_and_email_required"),
                 backup_ref: None,
                 conflicting_files: Vec::new(),
             };
@@ -150,7 +151,7 @@ pub async fn set_git_identity(path: String, name: String, email: String) -> Writ
         }
         WriteResult {
             ok: true,
-            message: format!("Set identity for this repository: {name} <{email}>."),
+            message: ierrp("err_repo.set_identity_success", &[("name", name), ("email", email)]),
             backup_ref: None,
             conflicting_files: Vec::new(),
         }
@@ -173,7 +174,7 @@ fn err_msg(o: &GitOut) -> String {
     } else if !o.stdout.is_empty() {
         o.stdout.clone()
     } else {
-        format!("git exited with status {}", o.code)
+        ierrp("err_repo.git_exited_with_status", &[("code", &o.code.to_string())])
     }
 }
 

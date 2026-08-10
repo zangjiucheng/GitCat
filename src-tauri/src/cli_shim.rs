@@ -40,6 +40,8 @@
 //! every platform via `cfg(any(target_os = …, test))`), so the fiddly launcher
 //! text is verified even where that platform's `install()` glue can't compile.
 
+use crate::i18n_err::{ierr, ierrp};
+
 /// JS: `commands.installCliShim()` — the ⌘K "Install 'gitcat' command" action
 /// and the Settings ▸ Command line button. Returns the installed path on
 /// success, or a human-readable error to surface as a Tama toast / inline note.
@@ -60,7 +62,7 @@ pub fn install_cli_shim() -> Result<String, String> {
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
-        return Err("Installing the gitcat command from the app isn't supported on this platform yet.".to_string());
+        return Err(ierr("err_repo.cli_unsupported_platform"));
     }
 }
 
@@ -239,15 +241,15 @@ fn write_exec_unix(target: &std::path::Path, body: &str) -> std::io::Result<()> 
 fn macos_install() -> Result<String, String> {
     const TARGET: &str = "/usr/local/bin/gitcat";
     let exe = std::env::current_exe()
-        .map_err(|e| format!("Couldn't find GitCat's own program file: {e}"))?;
+        .map_err(|e| ierrp("err_repo.couldnt_find_own_program", &[("detail", &e.to_string())]))?;
     // Follow any symlink to the real binary; also confirms it exists.
     let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
     let bundle = crate::windows::macos_app_bundle(&exe).ok_or_else(|| {
-        "This only works from an installed GitCat.app. It looks like you're running an unbundled build (for example `cargo tauri dev`).".to_string()
+        ierr("err_repo.cli_macos_needs_bundle")
     })?;
     let bundle = bundle
         .to_str()
-        .ok_or_else(|| "GitCat's install path isn't valid UTF-8.".to_string())?;
+        .ok_or_else(|| ierr("err_repo.install_path_not_utf8"))?;
 
     let script = macos_launcher(bundle);
     let target = std::path::PathBuf::from(TARGET);
@@ -258,7 +260,7 @@ fn macos_install() -> Result<String, String> {
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
             macos_admin_install(&script).map(|()| TARGET.to_string())
         }
-        Err(e) => Err(format!("Couldn't write {TARGET}: {e}")),
+        Err(e) => Err(ierrp("err_repo.couldnt_write", &[("path", TARGET), ("detail", &e.to_string())])),
     }
 }
 
@@ -269,10 +271,10 @@ fn macos_install() -> Result<String, String> {
 fn macos_admin_install(script: &str) -> Result<(), String> {
     const TARGET: &str = "/usr/local/bin/gitcat";
     let staged = std::env::temp_dir().join("gitcat-cli-launcher");
-    write_exec_unix(&staged, script).map_err(|e| format!("Couldn't stage the launcher: {e}"))?;
+    write_exec_unix(&staged, script).map_err(|e| ierrp("err_repo.couldnt_stage_launcher", &[("detail", &e.to_string())]))?;
     let staged = staged
         .to_str()
-        .ok_or_else(|| "Temp path isn't valid UTF-8.".to_string())?;
+        .ok_or_else(|| ierr("err_repo.temp_path_not_utf8"))?;
     // Single-quote every path (via the same helper the launchers use) so the
     // elevated shell treats them literally, whatever $TMPDIR expands to.
     let staged_q = sh_single_quote(staged);
@@ -288,7 +290,7 @@ fn macos_admin_install(script: &str) -> Result<(), String> {
         .arg("-e")
         .arg(&apple)
         .output()
-        .map_err(|e| format!("Couldn't run the admin helper (osascript): {e}"));
+        .map_err(|e| ierrp("err_repo.couldnt_run_admin_helper", &[("detail", &e.to_string())]));
     let _ = std::fs::remove_file(staged);
     let out = out?;
     if out.status.success() {
@@ -297,11 +299,11 @@ fn macos_admin_install(script: &str) -> Result<(), String> {
         let err = String::from_utf8_lossy(&out.stderr);
         // Clicking Cancel on the password dialog is AppleScript error -128.
         if err.contains("-128") || err.contains("User canceled") {
-            Err("Installation was cancelled.".to_string())
+            Err(ierr("err_repo.installation_cancelled"))
         } else {
-            Err(format!(
-                "Couldn't install with administrator privileges: {}",
-                err.trim()
+            Err(ierrp(
+                "err_repo.couldnt_install_with_admin",
+                &[("detail", err.trim())],
             ))
         }
     }
@@ -316,45 +318,45 @@ fn linux_install() -> Result<String, String> {
         Ok(p) if !p.is_empty() => p,
         _ => {
             let exe = std::env::current_exe()
-                .map_err(|e| format!("Couldn't find GitCat's own program file: {e}"))?;
+                .map_err(|e| ierrp("err_repo.couldnt_find_own_program", &[("detail", &e.to_string())]))?;
             let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
             exe.to_str()
-                .ok_or_else(|| "GitCat's install path isn't valid UTF-8.".to_string())?
+                .ok_or_else(|| ierr("err_repo.install_path_not_utf8"))?
                 .to_string()
         }
     };
 
     let home = std::env::var("HOME")
-        .map_err(|_| "Couldn't find your home directory ($HOME).".to_string())?;
+        .map_err(|_| ierr("err_repo.couldnt_find_home"))?;
     let target = std::path::PathBuf::from(home).join(".local/bin/gitcat");
     let script = unix_launcher(&bin);
     write_exec_unix(&target, &script)
-        .map_err(|e| format!("Couldn't write {}: {e}", target.display()))?;
+        .map_err(|e| ierrp("err_repo.couldnt_write", &[("path", &target.display().to_string()), ("detail", &e.to_string())]))?;
     Ok(target.display().to_string())
 }
 
 #[cfg(target_os = "windows")]
 fn windows_install() -> Result<String, String> {
     let exe = std::env::current_exe()
-        .map_err(|e| format!("Couldn't find GitCat's own program file: {e}"))?;
+        .map_err(|e| ierrp("err_repo.couldnt_find_own_program", &[("detail", &e.to_string())]))?;
     // Don't canonicalize on Windows — it returns a `\\?\` verbatim path that
     // `start` mishandles. current_exe() is already absolute.
     let exe = exe
         .to_str()
-        .ok_or_else(|| "GitCat's install path isn't valid UTF-8.".to_string())?;
+        .ok_or_else(|| ierr("err_repo.install_path_not_utf8"))?;
 
     // %LOCALAPPDATA%\Microsoft\WindowsApps is user-writable and on PATH by
     // default on Windows 10/11 (it's where App execution aliases live), so a
     // shim there is reachable from a fresh terminal with no PATH edit.
     let local = std::env::var("LOCALAPPDATA")
-        .map_err(|_| "Couldn't find %LOCALAPPDATA%.".to_string())?;
+        .map_err(|_| ierr("err_repo.couldnt_find_localappdata"))?;
     let dir = std::path::PathBuf::from(local)
         .join("Microsoft")
         .join("WindowsApps");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't create {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir).map_err(|e| ierrp("err_repo.couldnt_create", &[("path", &dir.display().to_string()), ("detail", &e.to_string())]))?;
     let target = dir.join("gitcat.cmd");
     std::fs::write(&target, windows_cmd_shim(exe))
-        .map_err(|e| format!("Couldn't write {}: {e}", target.display()))?;
+        .map_err(|e| ierrp("err_repo.couldnt_write", &[("path", &target.display().to_string()), ("detail", &e.to_string())]))?;
 
     // Best-effort: also install a Linux launcher into each detected WSL distro so
     // `gitcat .` works from a WSL shell. WSL being absent, or a distro failing,

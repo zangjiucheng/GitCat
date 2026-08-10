@@ -10,6 +10,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { BisectStatus } from "../../ipc/bindings";
 
 // specta generates `term: string`; keep the precise union at the call boundary.
@@ -58,13 +59,12 @@ class BisectState {
     return !!this.vm && (this.vm.inProgress || !!this.vm.firstBad || this.demo);
   }
   get statText(): string {
-    if (this.done) return "converged — first bad commit isolated";
+    if (this.done) return t("bisect.stat_converged");
     const rem = this.vm?.remainingRevs ?? 0;
     const steps = this.vm?.estSteps ?? 0;
-    return (
-      rem.toLocaleString() + " revision" + (rem === 1 ? "" : "s") +
-      " left · ~" + steps + " step" + (steps === 1 ? "" : "s")
-    );
+    const revs = t(rem === 1 ? "bisect.stat_revisions_one" : "bisect.stat_revisions_other", { n: rem.toLocaleString() });
+    const stp = t(steps === 1 ? "bisect.stat_steps_one" : "bisect.stat_steps_other", { n: steps });
+    return revs + " · " + stp;
   }
   get fillPct(): number {
     if (this.done) return 100;
@@ -72,9 +72,9 @@ class BisectState {
     return Math.max(4, Math.round(100 * (1 - steps / Math.max(this.est0 || steps || 1, 1))));
   }
   get hint(): string {
-    if (this.done) return "Found the culprit. Reset to return to your branch — nothing was lost.";
-    if (this.autoRunning) return "Running your command against each commit automatically — Cancel stops it before the next step.";
-    return "Is the bug present in the commit below? Mark it Good, Bad, or Skip.";
+    if (this.done) return t("bisect.hint_done");
+    if (this.autoRunning) return t("bisect.hint_auto");
+    return t("bisect.hint_mark");
   }
   get marksDisabled(): boolean {
     return this.busy || this.autoRunning || !this.inProgress;
@@ -91,8 +91,8 @@ class BisectState {
       if (!this.cheered) {
         this.cheered = true;
         bridge.tama.set("celebrate");
-        bridge.tama.say("Found it — first bad commit " + st.firstBad.sha + ".", 4600);
-        bridge.cheer('First bad commit: <b>' + escHtml(st.firstBad.sha) + '</b>. <span class="jp">みつけた!</span>');
+        bridge.tama.say(t("bisect.say_found", { sha: st.firstBad.sha }), 4600);
+        bridge.cheer(t("bisect.cheer", { sha: escHtml(st.firstBad.sha) }));
       }
     }
   }
@@ -139,17 +139,14 @@ class BisectState {
     // Passive recovery, not an active mutation: no "thinking"/busy state —
     // just a one-time heads-up that we picked the session back up.
     bridge.tama.set("hint");
-    bridge.tama.say(
-      "Welcome back — this repo had a bisect in progress, so I've picked it back up. にゃ〜",
-      5200,
-    );
+    bridge.tama.say(t("bisect.say_welcome_back"), 5200);
   }
 
   // ── real flow (from the legacy drawer) ────────────────────────────────────
   async start(repo: string, badSha: string, goodSha: string) {
     if (this.busy) return;
     if (!repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("bisect.open_repo_first"));
       return;
     }
     this.demo = false;
@@ -159,18 +156,18 @@ class BisectState {
     this.tamaImg = bridge.TAMA_IMG.curious; // hunting for the first bad commit
     this.busy = true;
     bridge.tama.set("thinking");
-    bridge.tama.say("Starting bisect between " + goodSha + " and " + badSha + "…");
+    bridge.tama.say(t("bisect.say_starting", { good: goodSha, bad: badSha }));
     try {
       const st = await commands.bisectStart(repo, badSha, [goodSha]); // snapshots + checks out midpoint
       if (!st || st.ok === false) {
-        bridge.tama.warn("Couldn't start bisect — " + ((st && st.message) || "unknown error"));
+        bridge.tama.warn(t("bisect.warn_start_failed", { reason: be(st && st.message) || t("bisect.unknown_error") }));
         return;
       }
       await bridge.reloadGraph(true);
       await this.refresh();
       this.open = true;
     } catch (e) {
-      bridge.tama.warn("Couldn't start bisect — " + e);
+      bridge.tama.warn(t("bisect.warn_start_failed", { reason: String(e) }));
     } finally {
       this.busy = false;
     }
@@ -196,9 +193,9 @@ class BisectState {
       const st = await commands.bisectMark(this.repo, term); // HEAD moves (or converges)
       await bridge.reloadGraph(true); // rebuild rows
       await this.refresh();
-      if (st && st.ok === false) bridge.tama.warn("Bisect mark failed — " + (st.message || "try again."));
+      if (st && st.ok === false) bridge.tama.warn(t("bisect.warn_mark_failed", { reason: be(st.message) || t("bisect.try_again") }));
     } catch (e) {
-      bridge.tama.warn("Bisect mark failed — " + e);
+      bridge.tama.warn(t("bisect.warn_mark_failed", { reason: String(e) }));
     } finally {
       this.busy = false;
       this.activeTerm = null;
@@ -217,18 +214,18 @@ class BisectState {
   // uses — so the canvas gutter/ring cues update identically either way.
   async startRun(repo: string) {
     if (this.demo) {
-      bridge.tama.warn("Automated runs need a real repository — not available in the design demo.");
+      bridge.tama.warn(t("bisect.warn_auto_needs_repo"));
       return;
     }
     if (this.busy || this.autoRunning || !repo) return;
     const cmd = this.runCommand.trim();
     if (!cmd) {
-      bridge.tama.warn("Enter a command to test each commit with first.");
+      bridge.tama.warn(t("bisect.warn_enter_command"));
       return;
     }
     this.autoRunning = true;
     bridge.tama.set("thinking");
-    bridge.tama.say('Running "' + cmd + '" automatically…');
+    bridge.tama.say(t("bisect.say_running_cmd", { cmd }));
     try {
       const w = window as unknown as { __TAURI__?: any };
       this.runUnlisten =
@@ -238,9 +235,9 @@ class BisectState {
       const st = await commands.bisectRunStart(repo, cmd); // blocks until converged/aborted/cancelled
       await bridge.reloadGraph(true); // rebuild rows, mirrors mark()'s finishing touch
       this.applyStatus(st); // final status is authoritative even if an event raced it
-      if (st && st.ok === false) bridge.tama.warn("Automated bisect run stopped — " + (st.message || "try again."));
+      if (st && st.ok === false) bridge.tama.warn(t("bisect.warn_run_stopped", { reason: be(st.message) || t("bisect.try_again") }));
     } catch (e) {
-      bridge.tama.warn("Automated bisect run failed — " + e);
+      bridge.tama.warn(t("bisect.warn_run_failed", { reason: String(e) }));
     } finally {
       this.stopListening();
       this.autoRunning = false;
@@ -255,7 +252,7 @@ class BisectState {
     try {
       await commands.bisectRunCancel();
     } catch (e) {
-      bridge.tama.warn("Couldn't cancel the run — " + e);
+      bridge.tama.warn(t("bisect.warn_cancel_failed", { reason: String(e) }));
     }
   }
 
@@ -283,7 +280,7 @@ class BisectState {
       this.endReset();
       bridge.clearBisectMarks();
       bridge.tama.set("hint");
-      bridge.tama.say("Bisect ended — back on your branch.");
+      bridge.tama.say(t("bisect.say_ended_branch"));
       return;
     }
     if (this.busy || this.autoRunning) return; // cancel the automated run first
@@ -295,16 +292,16 @@ class BisectState {
     try {
       const r = await commands.bisectReset(this.repo); // restores original HEAD/branch
       if (r && r.ok === false) {
-        bridge.tama.warn("Bisect reset failed — " + (r.message || "HEAD still detached; clean the tree and retry."));
+        bridge.tama.warn(t("bisect.warn_reset_failed", { reason: be(r.message) || t("bisect.reset_detached") }));
         return;
       }
       this.endReset();
       await bridge.reloadGraph(true);
       bridge.clearBisectMarks();
       bridge.tama.set("celebrate");
-      bridge.tama.say((r && r.message) || "Bisect ended — HEAD restored to your branch.", 3600);
+      bridge.tama.say(be(r && r.message) || t("bisect.say_ended_restored"), 3600);
     } catch (e) {
-      bridge.tama.warn("Bisect reset failed — " + e);
+      bridge.tama.warn(t("bisect.warn_reset_failed", { reason: String(e) }));
     } finally {
       this.busy = false;
     }

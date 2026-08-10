@@ -1,6 +1,7 @@
 <script lang="ts">
   import { pickaxeSearchCtrl } from "./pickaxesearch.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && pickaxeSearchCtrl.open) pickaxeSearchCtrl.close();
@@ -19,11 +20,11 @@
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.curious} alt="Tama, curious" /></div>
       <div>
-        <h3>Search Commits&#8230;</h3>
+        <h3>{t("pickaxesearch.title")}</h3>
         {#if pickaxeSearchCtrl.mode === "author"}
-          <p>Find every commit by an <b>author</b> across all history (<code>git log --author</code>) &#8212; matched against name and email.</p>
+          <p>{t("pickaxesearch.sub_author_pre")}<b>{t("pickaxesearch.sub_author_bold")}</b>{t("pickaxesearch.sub_author_mid")}<code>git log --author</code>{t("pickaxesearch.sub_author_post")}</p>
         {:else}
-          <p>Find every commit whose <b>diff</b> touched a string or pattern &#8212; not just its message (<code>git log -S</code> / <code>-G</code>).</p>
+          <p>{t("pickaxesearch.sub_diff_pre")}<b>{t("pickaxesearch.sub_diff_bold")}</b>{t("pickaxesearch.sub_diff_mid")}<code>git log -S</code> / <code>-G</code>{t("pickaxesearch.sub_diff_post")}</p>
         {/if}
       </div>
     </div>
@@ -33,10 +34,10 @@
           type="text"
           class="mono"
           placeholder={pickaxeSearchCtrl.mode === "added-removed"
-            ? "search text…"
+            ? t("pickaxesearch.ph_search_text")
             : pickaxeSearchCtrl.mode === "author"
-              ? "author name or email…"
-              : "regex…"}
+              ? t("pickaxesearch.ph_author")
+              : t("pickaxesearch.ph_regex")}
           bind:value={pickaxeSearchCtrl.query}
           disabled={pickaxeSearchCtrl.busy}
           spellcheck="false"
@@ -44,27 +45,27 @@
         />
         <div class="nb-row">
           <select bind:value={pickaxeSearchCtrl.mode} disabled={pickaxeSearchCtrl.busy}>
-            <option value="added-removed">Added/removed occurrences (-S)</option>
-            <option value="diff-match">Diff line match (-G)</option>
-            <option value="author">Commits by author (--author)</option>
+            <option value="added-removed">{t("pickaxesearch.opt_added_removed")}</option>
+            <option value="diff-match">{t("pickaxesearch.opt_diff_match")}</option>
+            <option value="author">{t("pickaxesearch.opt_author")}</option>
           </select>
         </div>
         <div class="nb-row">
           {#if pickaxeSearchCtrl.mode === "added-removed"}
-            <label class="cp-x" title="Treat the search text as a regex (--pickaxe-regex) instead of a literal string">
+            <label class="cp-x" title={t("pickaxesearch.regex_title")}>
               <input type="checkbox" bind:checked={pickaxeSearchCtrl.regex} disabled={pickaxeSearchCtrl.busy} />
-              treat as regex
+              {t("pickaxesearch.regex_label")}
             </label>
           {/if}
-          <label class="cp-x" title="Walk every ref (--all), not just the current branch's own ancestry">
+          <label class="cp-x" title={t("pickaxesearch.allrefs_title")}>
             <input type="checkbox" bind:checked={pickaxeSearchCtrl.allRefs} disabled={pickaxeSearchCtrl.busy} />
-            search all branches
+            {t("pickaxesearch.allrefs_label")}
           </label>
         </div>
         <input
           type="text"
           class="mono"
-          placeholder="optional: scope to one file/path&#8230;"
+          placeholder={t("pickaxesearch.ph_file")}
           bind:value={pickaxeSearchCtrl.file}
           disabled={pickaxeSearchCtrl.busy}
           spellcheck="false"
@@ -72,7 +73,7 @@
         />
         <div class="nb-row">
           <button class="btn" type="submit" disabled={pickaxeSearchCtrl.busy}>
-            {#if pickaxeSearchCtrl.busy}<span class="spinner"></span> Searching&#8230;{:else}Search{/if}
+            {#if pickaxeSearchCtrl.busy}<span class="spinner"></span> {t("pickaxesearch.searching")}{:else}{t("pickaxesearch.search_btn")}{/if}
           </button>
         </div>
         {#if pickaxeSearchCtrl.error}
@@ -82,11 +83,11 @@
 
       {#if pickaxeSearchCtrl.data}
         {#if pickaxeSearchCtrl.data.entries.length === 0}
-          <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">no commits found matching this search</code></div>
+          <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{t("pickaxesearch.no_results")}</code></div>
         {:else}
           <div class="pk-list">
             {#each pickaxeSearchCtrl.data.entries as e (e.sha)}
-              <button class="pk-row" onclick={() => pickaxeSearchCtrl.jumpToCommit(e.sha)} title="Jump to {e.shortSha}">
+              <button class="pk-row" onclick={() => pickaxeSearchCtrl.jumpToCommit(e.sha)} title={t("pickaxesearch.row_jump", { sha: e.shortSha })}>
                 <span class="pk-sha mono">{e.shortSha}</span>
                 <span class="pk-main">
                   <span class="pk-subject">{e.subject}</span>
@@ -95,14 +96,14 @@
               </button>
             {/each}
             {#if pickaxeSearchCtrl.data.truncated}
-              <div class="pk-row mut" style="cursor:default">&#8230; truncated (search capped)</div>
+              <div class="pk-row mut" style="cursor:default">{t("pickaxesearch.truncated")}</div>
             {/if}
           </div>
         {/if}
       {/if}
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" disabled={pickaxeSearchCtrl.busy} onclick={() => pickaxeSearchCtrl.close()}>Close</button>
+      <button class="btn ghost" disabled={pickaxeSearchCtrl.busy} onclick={() => pickaxeSearchCtrl.close()}>{t("common.close")}</button>
     </div>
   </div>
 </div>

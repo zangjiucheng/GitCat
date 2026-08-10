@@ -16,6 +16,7 @@
 use git2::{IndexConflict, IndexEntry, Repository, RepositoryState};
 use serde::Serialize;
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::safety::{self, GitOut};
 
 /// Per-side line cap: a conflicted vendored/generated file can't blow up the
@@ -100,7 +101,7 @@ pub async fn conflict_status(path: String) -> Result<ConflictStatus, String> {
 
 fn conflict_status_inner(path: &str) -> Result<ConflictStatus, String> {
     let repo =
-        crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+        crate::trust::open_repo(path).map_err(|e| ierrp("err_ops.cannot_open_repo_lc", &[("detail", e.message())]))?;
     let op = detect_op(&repo).map_err(|e| e.message().to_string())?;
     let files = read_conflicts(&repo).map_err(|e| e.message().to_string())?;
     let in_progress = op != "none" || !files.is_empty();
@@ -295,13 +296,10 @@ fn cap_lines(s: &str) -> String {
 /// whole-file and hunk-level resolution paths must never drift apart on
 /// which ops are safe to mutate inside.
 fn ensure_resolvable_op(path: &str) -> Result<(), String> {
-    let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
-    let op = detect_op(&repo).map_err(|e| format!("cannot inspect repository state: {}", e.message()))?;
+    let repo = crate::trust::open_repo(path).map_err(|e| ierrp("err_ops.cannot_open_repo_lc", &[("detail", e.message())]))?;
+    let op = detect_op(&repo).map_err(|e| ierrp("err_ops.cannot_inspect_repo_state", &[("detail", e.message())]))?;
     if op != "cherry-pick" && op != "merge" && op != "rebase" && op != "revert" && op != "stash" && op != "merge-squash" && op != "am" {
-        return Err(format!(
-            "Not inside a cherry-pick, merge, rebase, revert, stash, squash-merge, or patch-apply conflict (repository state: {op}). \
-             Resolve {op} conflicts with git on the command line."
-        ));
+        return Err(ierrp("err_ops.not_in_resolvable_op", &[("op", op)]));
     }
     Ok(())
 }
@@ -337,9 +335,7 @@ fn resolve_conflict_file_inner(path: String, file: String, side: String) -> Reso
         "ours" => "--ours",
         "theirs" => "--theirs",
         other => {
-            return ResolveResult::err(format!(
-                "Unknown side {other:?} (expected \"ours\" or \"theirs\")."
-            ))
+            return ResolveResult::err(ierrp("err_ops.unknown_side", &[("side", &format!("{other:?}"))]))
         }
     };
     if let Err(e) = validate_path(&file) {
@@ -413,13 +409,13 @@ fn err_msg(o: &GitOut) -> String {
 /// message first and blocks argument smuggling via embedded newlines.
 fn validate_path(p: &str) -> Result<(), String> {
     if p.is_empty() {
-        return Err("No file specified.".into());
+        return Err(ierr("err_ops.no_file_specified"));
     }
     if p.starts_with('-') {
-        return Err(format!("Refusing a path that looks like a flag: {p:?}"));
+        return Err(ierrp("err_ops.refusing_path_like_flag", &[("path", &format!("{p:?}"))]));
     }
     if p.chars().any(|c| c == '\0' || c == '\n' || c == '\r') {
-        return Err("Path has an illegal NUL/newline character.".into());
+        return Err(ierr("err_ops.path_illegal_nul_newline"));
     }
     // ADVERSARIALLY-FOUND FIX: `p` should always be a repo-relative path
     // sourced from git's own conflict index (see `path_of`), never
@@ -435,10 +431,10 @@ fn validate_path(p: &str) -> Result<(), String> {
     // somewhere outside the repository. Rejecting both here protects every
     // caller uniformly, not just the one that currently needs it.
     if std::path::Path::new(p).is_absolute() {
-        return Err("Refusing an absolute path.".into());
+        return Err(ierr("err_ops.refusing_absolute_path"));
     }
     if std::path::Path::new(p).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-        return Err("Refusing a path containing \"..\".".into());
+        return Err(ierr("err_ops.refusing_path_dotdot"));
     }
     Ok(())
 }
@@ -502,7 +498,7 @@ fn conflict_file_hunks_inner(path: String, file: String) -> Result<ConflictFileH
     if let Err(e) = validate_path(&file) {
         return Err(e);
     }
-    let repo = crate::trust::open_repo(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+    let repo = crate::trust::open_repo(&path).map_err(|e| ierrp("err_ops.cannot_open_repo_lc", &[("detail", e.message())]))?;
     let index = repo.index().map_err(|e| e.message().to_string())?;
     // conflict_get errors (rather than returning None) when the path has no
     // conflict entry — not a "cannot inspect the repo" failure, just "there's
@@ -510,7 +506,7 @@ fn conflict_file_hunks_inner(path: String, file: String) -> Result<ConflictFileH
     // the (structurally impossible in practice, but still handled) empty case.
     let conflict = match index.conflict_get(std::path::Path::new(&file)) {
         Ok(c) => c,
-        Err(_) => return Err(format!("{file} is not conflicted.")),
+        Err(_) => return Err(ierrp("err_ops.file_not_conflicted", &[("file", &file)])),
     };
 
     let (ours, ours_binary) = stage_full_text(&repo, conflict.our.as_ref());
@@ -522,7 +518,7 @@ fn conflict_file_hunks_inner(path: String, file: String) -> Result<ConflictFileH
 
     let scratch = scratch_dir(&repo);
     if let Err(e) = std::fs::create_dir_all(&scratch) {
-        return Err(format!("cannot create scratch dir: {e}"));
+        return Err(ierrp("err_ops.cannot_create_scratch_dir", &[("detail", &e.to_string())]));
     }
     let ours_path = scratch.join("ours");
     let base_path = scratch.join("base");
@@ -532,7 +528,7 @@ fn conflict_file_hunks_inner(path: String, file: String) -> Result<ConflictFileH
         .and_then(|_| std::fs::write(&theirs_path, &theirs));
     if let Err(e) = write_result {
         let _ = std::fs::remove_dir_all(&scratch);
-        return Err(format!("cannot write scratch files: {e}"));
+        return Err(ierrp("err_ops.cannot_write_scratch_files", &[("detail", &e.to_string())]));
     }
 
     let result = safety::run_git(
@@ -559,7 +555,7 @@ fn conflict_file_hunks_inner(path: String, file: String) -> Result<ConflictFileH
     // changed identically), 1 = conflicts found (the expected/normal case),
     // 2+ = merge-file itself couldn't run (bad input, not "there's a conflict").
     if out.code != 0 && out.code != 1 {
-        return Err(if !out.stderr.is_empty() { out.stderr } else { format!("git merge-file exited with status {}", out.code) });
+        return Err(if !out.stderr.is_empty() { out.stderr } else { ierrp("err_ops.merge_file_exited_with_status", &[("code", &out.code.to_string())]) });
     }
 
     Ok(ConflictFileHunks { path: file, hunks: parse_diff3_hunks(&out.stdout)?, binary: false })
@@ -665,7 +661,7 @@ fn parse_diff3_hunks(text: &str) -> Result<Vec<ConflictHunk>, String> {
     // ours/base/theirs text, which a caller could otherwise save over the
     // real file content.
     if st != St::Context {
-        return Err("could not parse this file's conflict markers — an unterminated conflict region was found.".into());
+        return Err(ierr("err_ops.could_not_parse_conflict_markers"));
     }
     if !context.is_empty() {
         hunks.push(ConflictHunk::context(context));
@@ -724,7 +720,7 @@ fn resolve_conflict_hunks_inner(path: String, file: String, resolved_content: St
     //    from git's own conflict index rather than raw untrusted input.
     let full_path = std::path::Path::new(&path).join(&file);
     if let Err(e) = std::fs::write(&full_path, &resolved_content) {
-        return ResolveResult::err(format!("cannot write {file}: {e}"));
+        return ResolveResult::err(ierrp("err_ops.cannot_write_file", &[("file", &file), ("detail", &e.to_string())]));
     }
 
     // 2) Stage it — collapses stages 1/2/3 to a resolved stage 0, exactly

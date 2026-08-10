@@ -99,6 +99,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use git2::{Delta, DiffFindOptions, DiffOptions, FileMode, Patch, Repository, Status, StatusOptions};
 use serde::{Deserialize, Serialize};
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::model::{DiffHunkRow, DiffLineRow, FileChange};
 use crate::procutil::NoConsoleWindowExt;
 
@@ -247,7 +248,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     if no_editor {
         cmd.env("GIT_EDITOR", "true").env("GIT_SEQUENCE_EDITOR", "true");
     }
-    let o = cmd.output().map_err(|e| format!("Could not run git: {e}"))?;
+    let o = cmd.output().map_err(|e| ierrp("err_workdir.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -268,7 +269,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
 /// correctly inside the distro. A strict no-op on non-WSL paths.
 fn git_worktree(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     let envs: &[(&str, &str)] = if no_editor { &[("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")] } else { &[] };
-    let o = crate::wsl::git_command_env(path, args, envs).output().map_err(|e| format!("Could not run git: {e}"))?;
+    let o = crate::wsl::git_command_env(path, args, envs).output().map_err(|e| ierrp("err_workdir.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -332,13 +333,13 @@ fn in_progress(repo: &Repository) -> bool {
 /// but refused by staging.
 fn validate_pathspec(file: &str) -> Result<(), String> {
     if file.is_empty() {
-        return Err("File path is empty.".into());
+        return Err(ierr("err_workdir.file_path_empty"));
     }
     if file.starts_with('-') {
-        return Err(format!("Refusing a file path that looks like a flag: {file:?}"));
+        return Err(ierrp("err_workdir.file_path_looks_like_flag", &[("file", &format!("{file:?}"))]));
     }
     if file.chars().any(|c| c == '\0' || c == '\n' || c == '\r') {
-        return Err(format!("File path has an illegal NUL/CR/LF character: {file:?}"));
+        return Err(ierrp("err_workdir.file_path_illegal_char", &[("file", &format!("{file:?}"))]));
     }
     Ok(())
 }
@@ -364,7 +365,8 @@ fn literal_pathspec(file: &str) -> String {
 // to auto-trust it first — this module's own commands never did that
 // themselves.
 fn open_repo(path: &str) -> Result<Repository, WorkdirResult> {
-    crate::trust::open_repo(path).map_err(|e| WorkdirResult::err(format!("Cannot open repository: {}", e.message())))
+    crate::trust::open_repo(path)
+        .map_err(|e| WorkdirResult::err(ierrp("err_workdir.cannot_open_repo", &[("detail", e.message())])))
 }
 
 // ---------------------------------------------------------------------------
@@ -589,7 +591,8 @@ pub async fn workdir_file_diff(path: String, file: String, staged: bool) -> Resu
 }
 
 fn workdir_file_diff_inner(path: &str, file: &str, staged: bool) -> Result<FileChange, String> {
-    let repo = crate::trust::open_repo(path).map_err(|e| format!("Cannot open repository: {}", e.message()))?;
+    let repo = crate::trust::open_repo(path)
+        .map_err(|e| ierrp("err_workdir.cannot_open_repo", &[("detail", e.message())]))?;
 
     // NO `DiffOptions::pathspec` here — EMPIRICALLY VERIFIED that libgit2's
     // own pathspec matcher (unlike the git CLI's) has no `:(literal)` magic
@@ -733,10 +736,11 @@ fn workdir_file_diff_inner(path: &str, file: &str, staged: bool) -> Result<FileC
         });
     }
 
-    Err(format!(
-        "No {} changes found for {file}.",
-        if staged { "staged" } else { "unstaged" }
-    ))
+    if staged {
+        Err(ierrp("err_workdir.no_staged_changes_found", &[("file", file)]))
+    } else {
+        Err(ierrp("err_workdir.no_unstaged_changes_found", &[("file", file)]))
+    }
 }
 
 /// Tauri command: list stash entries, newest first, via
@@ -1058,20 +1062,29 @@ fn unstaged_rename_old_path(repo: &Repository, file: &str) -> Option<String> {
 /// file's "always back up before mutating" discipline.
 fn discard_unstaged_rename(path: &str, repo: &Repository, old_path: &str, new_path: &str) -> WorkdirResult {
     if let Err(e) = validate_pathspec(old_path) {
-        return WorkdirResult::err(format!("Cannot restore the old path {old_path:?}: {e}"));
+        return WorkdirResult::err(ierrp(
+            "err_workdir.cannot_restore_old_path",
+            &[("old_path", &format!("{old_path:?}")), ("detail", &e)],
+        ));
     }
 
     let backup_patch = match backup_untracked_bytes(repo, path, new_path) {
         Ok(p) => p,
-        Err(e) => return WorkdirResult::err(format!("Could not back up {new_path} before discarding, refusing: {e}")),
+        Err(e) => {
+            return WorkdirResult::err(ierrp(
+                "err_workdir.could_not_back_up_before_discarding",
+                &[("file", new_path), ("detail", &e)],
+            ))
+        }
     };
 
     if std::path::Path::new(path).join(old_path).exists() {
         if let Err(e) = backup_untracked_bytes(repo, path, old_path) {
             return WorkdirResult {
                 ok: false,
-                message: format!(
-                    "Refusing: {old_path} already exists and could not be backed up before restoring it: {e}"
+                message: ierrp(
+                    "err_workdir.refusing_old_path_exists_no_backup",
+                    &[("old_path", old_path), ("detail", &e)],
                 ),
                 conflicted_files: Vec::new(),
                 backup_ref: None,
@@ -1084,8 +1097,8 @@ fn discard_unstaged_rename(path: &str, repo: &Repository, old_path: &str, new_pa
     let old_spec = literal_pathspec(old_path);
     if let Err(msg) = match git_worktree(path, &["restore", "--worktree", "--", &old_spec], false) {
         Ok(out) if out.ok => Ok(()),
-        Ok(out) => Err(format!("Could not restore {old_path}: {}", git_msg(&out))),
-        Err(e) => Err(format!("Could not restore {old_path}: {e}")),
+        Ok(out) => Err(ierrp("err_workdir.could_not_restore_path", &[("old_path", old_path), ("detail", &git_msg(&out))])),
+        Err(e) => Err(ierrp("err_workdir.could_not_restore_path", &[("old_path", old_path), ("detail", &e)])),
     } {
         return WorkdirResult {
             ok: false,
@@ -1111,7 +1124,10 @@ fn discard_unstaged_rename(path: &str, repo: &Repository, old_path: &str, new_pa
         },
         Ok(out) => WorkdirResult {
             ok: false,
-            message: format!("Restored {old_path}, but could not remove {new_path}: {}", git_msg(&out)),
+            message: ierrp(
+                "err_workdir.restored_but_could_not_remove",
+                &[("old_path", old_path), ("new_path", new_path), ("detail", &git_msg(&out))],
+            ),
             conflicted_files: Vec::new(),
             backup_ref: None,
             backup_patch: Some(backup_patch),
@@ -1119,7 +1135,10 @@ fn discard_unstaged_rename(path: &str, repo: &Repository, old_path: &str, new_pa
         },
         Err(e) => WorkdirResult {
             ok: false,
-            message: format!("Restored {old_path}, but could not remove {new_path}: {e}"),
+            message: ierrp(
+                "err_workdir.restored_but_could_not_remove",
+                &[("old_path", old_path), ("new_path", new_path), ("detail", &e)],
+            ),
             conflicted_files: Vec::new(),
             backup_ref: None,
             backup_patch: Some(backup_patch),
@@ -1174,7 +1193,12 @@ pub async fn discard_file(path: String, file: String, untracked: bool) -> Workdi
         };
         let backup_patch = match backup_patch {
             Ok(p) => p,
-            Err(e) => return WorkdirResult::err(format!("Could not back up {file} before discarding, refusing: {e}")),
+            Err(e) => {
+                return WorkdirResult::err(ierrp(
+                    "err_workdir.could_not_back_up_before_discarding",
+                    &[("file", &file), ("detail", &e)],
+                ))
+            }
         };
 
         let spec = literal_pathspec(&file);
@@ -1484,9 +1508,6 @@ fn build_sub_patch(
     hunks: &[HunkSelection],
     reverse: bool,
 ) -> Result<BuiltPatch, String> {
-    const STALE_MSG: &str =
-        "This file's diff has changed since you last looked — refresh and try again.";
-
     let num_deltas = diff.deltas().len();
     let mut found: Option<usize> = None;
     for i in 0..num_deltas {
@@ -1508,14 +1529,12 @@ fn build_sub_patch(
         }
     }
     let Some(idx) = found else {
-        return Err(STALE_MSG.into());
+        return Err(ierr("err_workdir.stale_diff"));
     };
     let delta = diff.get_delta(idx).expect("idx was just found in this same diff");
 
     if matches!(delta.status(), Delta::Typechange) {
-        return Err(format!(
-            "{file} changed type (file <-> symlink, etc.) — line-level staging isn't supported; stage/discard the whole file instead."
-        ));
+        return Err(ierrp("err_workdir.typechange_line_staging_unsupported", &[("file", file)]));
     }
 
     // Building the `Patch` FIRST, then checking `is_binary`, exactly matches
@@ -1527,18 +1546,12 @@ fn build_sub_patch(
     // every binary file as non-binary.
     let patch = match Patch::from_diff(diff, idx) {
         Ok(Some(p)) => p,
-        Ok(None) => {
-            return Err(format!(
-                "{file} is a binary file — line-level staging isn't supported; stage/discard the whole file instead."
-            ))
-        }
+        Ok(None) => return Err(ierrp("err_workdir.binary_line_staging_unsupported", &[("file", file)])),
         Err(e) => return Err(e.message().to_string()),
     };
     let delta = diff.get_delta(idx).expect("idx was just found in this same diff");
     if delta.new_file().is_binary() || delta.old_file().is_binary() {
-        return Err(format!(
-            "{file} is a binary file — line-level staging isn't supported; stage/discard the whole file instead."
-        ));
+        return Err(ierrp("err_workdir.binary_line_staging_unsupported", &[("file", file)]));
     }
 
     let num_hunks = patch.num_hunks();
@@ -1556,13 +1569,13 @@ fn build_sub_patch(
     let mut selected: HashMap<usize, HashSet<(String, Option<u32>, Option<u32>)>> = HashMap::new();
     for req in hunks {
         let Some(fresh_idx) = fresh.iter().position(|f| f.header == req.header) else {
-            return Err(STALE_MSG.into());
+            return Err(ierr("err_workdir.stale_diff"));
         };
         for line in &req.lines {
             if line.kind != "+" && line.kind != "-" {
-                return Err(format!(
-                    "Invalid selected line kind {:?} — only \"+\"/\"-\" rows can be selected.",
-                    line.kind
+                return Err(ierrp(
+                    "err_workdir.invalid_selected_line_kind",
+                    &[("kind", &format!("{:?}", line.kind))],
                 ));
             }
             let exists = fresh[fresh_idx]
@@ -1570,7 +1583,7 @@ fn build_sub_patch(
                 .iter()
                 .any(|u| u.origin.to_string() == line.kind && u.old_no == line.old_no && u.new_no == line.new_no);
             if !exists {
-                return Err(STALE_MSG.into());
+                return Err(ierr("err_workdir.stale_diff"));
             }
         }
         let entry = selected.entry(fresh_idx).or_default();
@@ -1579,7 +1592,7 @@ fn build_sub_patch(
         }
     }
     if selected.is_empty() || selected.values().all(|s| s.is_empty()) {
-        return Err("No lines selected.".into());
+        return Err(ierr("err_workdir.no_lines_selected"));
     }
 
     // A hunk containing an `eof_marker`-bearing unit is, by definition, a
@@ -1616,10 +1629,7 @@ fn build_sub_patch(
             .filter(|u| u.origin == '+' || u.origin == '-')
             .all(|u| sel.contains(&(u.origin.to_string(), u.old_no, u.new_no)));
         if !fully_selected {
-            return Err(format!(
-                "{file}'s last line doesn't end with a newline on at least one side of this change — \
-                 partial line selection isn't supported there. Select the whole hunk (or the whole file) instead."
-            ));
+            return Err(ierrp("err_workdir.partial_no_newline_unsupported", &[("file", file)]));
         }
     }
 
@@ -1739,7 +1749,7 @@ fn build_sub_patch(
     }
 
     if hunk_count == 0 {
-        return Err("No lines selected.".into());
+        return Err(ierr("err_workdir.no_lines_selected"));
     }
 
     // File-level header — see design §2.5 for why new/deleted/renamed each
@@ -1820,14 +1830,14 @@ fn git_apply_stdin(path: &str, args: &[&str], patch: &str) -> Result<Out, String
     // a/…, b/… headers, no absolute path crosses into the distro.
     let mut cmd = crate::wsl::git_command(path, args);
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("Could not run git: {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| ierrp("err_workdir.could_not_run_git", &[("detail", &e.to_string())]))?;
     child
         .stdin
         .take()
         .expect("stdin was requested as piped")
         .write_all(patch.as_bytes())
-        .map_err(|e| format!("Could not write the patch to git apply's stdin: {e}"))?;
-    let o = child.wait_with_output().map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_workdir.could_not_write_patch_stdin", &[("detail", &e.to_string())]))?;
+    let o = child.wait_with_output().map_err(|e| ierrp("err_workdir.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -1852,7 +1862,7 @@ fn apply_selected_lines(path: &str, file: &str, hunks: &[HunkSelection], dir: Li
         return WorkdirResult::err(e);
     }
     if hunks.is_empty() || hunks.iter().all(|h| h.lines.is_empty()) {
-        return WorkdirResult::err("No lines selected.");
+        return WorkdirResult::err(ierr("err_workdir.no_lines_selected"));
     }
     let repo = match open_repo(path) {
         Ok(r) => r,
@@ -1911,8 +1921,9 @@ fn apply_selected_lines(path: &str, file: &str, hunks: &[HunkSelection], dir: Li
             let backup_patch = match backup_tracked_patch(&repo, file, true) {
                 Ok(p) => p,
                 Err(e) => {
-                    return WorkdirResult::err(format!(
-                        "Could not back up {file} before discarding, refusing: {e}"
+                    return WorkdirResult::err(ierrp(
+                        "err_workdir.could_not_back_up_before_discarding",
+                        &[("file", file), ("detail", &e)],
                     ))
                 }
             };
@@ -1981,7 +1992,7 @@ pub async fn commit(path: String, message: Option<String>, amend: Option<bool>) 
         let msg_empty = msg.trim().is_empty();
 
         if !is_amend && msg_empty {
-            return WorkdirResult::err("Commit message is empty.");
+            return WorkdirResult::err(ierr("err_workdir.commit_message_empty"));
         }
 
         let repo = match open_repo(&path) {
@@ -1990,7 +2001,7 @@ pub async fn commit(path: String, message: Option<String>, amend: Option<bool>) 
         };
         let backup = match crate::safety::snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return WorkdirResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
         };
 
         let mut args: Vec<&str> = vec!["commit"];
@@ -2043,7 +2054,7 @@ pub async fn stash_save(path: String, message: Option<String>, include_untracked
         };
         let backup = match crate::safety::snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return WorkdirResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
         };
 
         let mut args: Vec<&str> = vec!["stash", "push"];
@@ -2061,7 +2072,7 @@ pub async fn stash_save(path: String, message: Option<String>, include_untracked
                 let blob = format!("{} {}", out.stdout, out.stderr).to_lowercase();
                 if blob.contains("no local changes to save") {
                     return WorkdirResult::err_with_backup(
-                        "Nothing to stash — the working tree is clean.",
+                        ierr("err_workdir.nothing_to_stash"),
                         Some(backup),
                     );
                 }
@@ -2099,13 +2110,11 @@ fn check_stash_identity(path: &str, index: usize, expected_sha: &Option<String>)
     };
     match current_stash_sha(path, index) {
         Some(actual) if short_sha(&actual) == expected => Ok(()),
-        Some(actual) => Err(format!(
-            "stash@{{{index}}} has changed since you last looked (was {expected}, now {}) — refresh the stash list and try again.",
-            short_sha(&actual)
+        Some(actual) => Err(ierrp(
+            "err_workdir.stash_changed_since",
+            &[("index", &index.to_string()), ("expected", expected), ("actual", &short_sha(&actual))],
         )),
-        None => Err(format!(
-            "stash@{{{index}}} no longer exists — refresh the stash list and try again."
-        )),
+        None => Err(ierrp("err_workdir.stash_no_longer_exists", &[("index", &index.to_string())])),
     }
 }
 
@@ -2183,18 +2192,14 @@ fn apply_or_pop(path: &str, index: usize, pop: bool, expected_sha: Option<String
         Err(w) => return w,
     };
     if in_progress(&repo) {
-        return WorkdirResult::err(
-            "Another operation (merge/rebase/cherry-pick) is already in progress — resolve or abort it first.",
-        );
+        return WorkdirResult::err(ierr("err_workdir.another_op_in_progress"));
     }
     // `in_progress` only reads `RepositoryState`, which stays Clean for a
     // stash conflict (see module doc comment) — check unmerged paths
     // directly too, so a second apply/pop can't be run on top of one that's
     // still unresolved.
     if !unmerged_files(path).is_empty() {
-        return WorkdirResult::err(
-            "There are unresolved conflicts from a previous stash apply/pop — resolve or abort them first.",
-        );
+        return WorkdirResult::err(ierr("err_workdir.unresolved_stash_conflicts"));
     }
     // See git_merge::merge_squash's identical cleanup for the full
     // rationale: unmerged_files() being empty here proves any PRIOR
@@ -2216,7 +2221,7 @@ fn apply_or_pop(path: &str, index: usize, pop: bool, expected_sha: Option<String
 
     let backup = match crate::safety::snapshot(&repo) {
         Ok(b) => b,
-        Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
+        Err(e) => return WorkdirResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
     };
 
     let verb = if pop { "pop" } else { "apply" };
@@ -2251,13 +2256,15 @@ fn apply_or_pop(path: &str, index: usize, pop: bool, expected_sha: Option<String
             &StashConflictState { backup_ref: backup.clone(), pop, index, stash_sha, untracked_restore_failed },
         );
         let n = conflicts.len();
-        let verb_label = if pop { "Pop of" } else { "Apply of" };
+        let key = match (pop, n == 1) {
+            (false, true) => "err_workdir.stash_apply_conflict_one",
+            (false, false) => "err_workdir.stash_apply_conflict_other",
+            (true, true) => "err_workdir.stash_pop_conflict_one",
+            (true, false) => "err_workdir.stash_pop_conflict_other",
+        };
         return WorkdirResult {
             ok: false,
-            message: format!(
-                "{verb_label} {stash_ref} hit a conflict in {n} file{}. Resolve them in the Resolver, then Continue — or Abort. The stash entry is kept.",
-                if n == 1 { "" } else { "s" }
-            ),
+            message: ierrp(key, &[("stash_ref", &stash_ref), ("n", &n.to_string())]),
             conflicted_files: conflicts,
             backup_ref: Some(backup),
             backup_patch: None,
@@ -2358,7 +2365,7 @@ pub async fn stash_drop(path: String, index: usize, expected_sha: Option<String>
         }
         let backup = match crate::safety::snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return WorkdirResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
         };
 
         let stash_ref = format!("stash@{{{index}}}");
@@ -2369,7 +2376,7 @@ pub async fn stash_drop(path: String, index: usize, expected_sha: Option<String>
             Ok(r) => r,
             Err(e) => {
                 return WorkdirResult::err_with_backup(
-                    format!("Refusing to drop {stash_ref} — could not back it up first: {e}"),
+                    ierrp("err_workdir.refusing_to_drop_no_backup", &[("stash_ref", &stash_ref), ("detail", &e)]),
                     Some(backup),
                 )
             }
@@ -2455,19 +2462,18 @@ pub async fn stash_conflict_abort(path: String) -> StashResolveResult {
     crate::blocking::run_blocking(move || {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return StashResolveResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return StashResolveResult::error(ierrp("err_workdir.cannot_open_repo", &[("detail", e.message())])),
         };
         let Some(state) = read_stash_conflict_state(&repo) else {
-            return StashResolveResult::error("No stash conflict in progress to abort.");
+            return StashResolveResult::error(ierr("err_workdir.no_stash_conflict_to_abort"));
         };
 
         let target_sha = match git(&path, &["rev-parse", &state.backup_ref], false) {
             Ok(o) if o.ok && !o.stdout.is_empty() => o.stdout.trim().to_string(),
             Ok(o) => {
-                return StashResolveResult::error(format!(
-                    "Could not resolve the pre-conflict snapshot {}: {}",
-                    state.backup_ref,
-                    git_msg(&o)
+                return StashResolveResult::error(ierrp(
+                    "err_workdir.could_not_resolve_snapshot",
+                    &[("backup_ref", &state.backup_ref), ("detail", &git_msg(&o))],
                 ))
             }
             Err(e) => return StashResolveResult::error(e),
@@ -2520,10 +2526,10 @@ pub async fn stash_conflict_continue(path: String) -> StashResolveResult {
     crate::blocking::run_blocking(move || {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return StashResolveResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return StashResolveResult::error(ierrp("err_workdir.cannot_open_repo", &[("detail", e.message())])),
         };
         let Some(state) = read_stash_conflict_state(&repo) else {
-            return StashResolveResult::error("No stash conflict in progress to continue.");
+            return StashResolveResult::error(ierr("err_workdir.no_stash_conflict_to_continue"));
         };
 
         let remaining = unmerged_files(&path);
@@ -2533,9 +2539,9 @@ pub async fn stash_conflict_continue(path: String) -> StashResolveResult {
                 ok: false,
                 state: "conflict".into(),
                 conflicted_files: remaining,
-                message: format!(
-                    "Still conflicted in {n} file{}. Resolve them, then Continue — or Abort.",
-                    if n == 1 { "" } else { "s" }
+                message: ierrp(
+                    if n == 1 { "err_workdir.still_conflicted_one" } else { "err_workdir.still_conflicted_other" },
+                    &[("n", &n.to_string())],
                 ),
                 backup_ref: Some(state.backup_ref.clone()),
             };
@@ -2578,11 +2584,11 @@ pub async fn stash_conflict_continue(path: String) -> StashResolveResult {
             let stash_ref = format!("stash@{{{}}}", state.index);
             if let Err(msg) = match git(&path, &["stash", "drop", &stash_ref], false) {
                 Ok(out) if out.ok => Ok(()),
-                Ok(out) => Err(format!(
-                    "Conflict resolved, but could not drop the popped stash entry: {}",
-                    git_msg(&out)
+                Ok(out) => Err(ierrp(
+                    "err_workdir.could_not_drop_popped_stash",
+                    &[("detail", &git_msg(&out))],
                 )),
-                Err(e) => Err(format!("Conflict resolved, but could not drop the popped stash entry: {e}")),
+                Err(e) => Err(ierrp("err_workdir.could_not_drop_popped_stash", &[("detail", &e)])),
             } {
                 return StashResolveResult { ok: false, state: "error".into(), conflicted_files: Vec::new(), message: msg, backup_ref: None };
             }
@@ -2645,9 +2651,7 @@ pub async fn stash_undo_apply(path: String) -> WorkdirResult {
             Err(w) => return w,
         };
         if !unmerged_files(&path).is_empty() {
-            return WorkdirResult::err(
-                "There are unresolved conflicts from a stash apply/pop — resolve them via the Resolver (Continue/Abort) instead of Undo.",
-            );
+            return WorkdirResult::err(ierr("err_workdir.unresolved_conflicts_use_resolver"));
         }
         let dirty = match git(&path, &["status", "--porcelain"], false) {
             Ok(o) if o.ok => o.stdout,
@@ -2655,12 +2659,12 @@ pub async fn stash_undo_apply(path: String) -> WorkdirResult {
             Err(e) => return WorkdirResult::err(e),
         };
         if dirty.is_empty() {
-            return WorkdirResult::err("Working tree is already clean — nothing to undo.");
+            return WorkdirResult::err(ierr("err_workdir.working_tree_already_clean"));
         }
 
         let backup = match crate::safety::snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return WorkdirResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return WorkdirResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
         };
 
         match git_worktree(

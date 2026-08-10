@@ -24,6 +24,8 @@
   import { playTamaSound } from "../../legacy/sound.ts";
   import { updaterCtrl } from "../updater/updater.svelte.ts";
   import { aboutCtrl } from "../about/about.svelte.ts";
+  import { t, locale, setLocale, LOCALES } from "@/i18n/i18n.svelte.ts";
+  import type { Locale } from "@/i18n/i18n.svelte.ts";
   import { IN_TAURI } from "../../ipc/env";
 
   // Switching update channel: persist the choice, then immediately surface what's
@@ -68,117 +70,127 @@
   <div class="modal settings">
     <div class="modal-head">
       <div>
-        <h3>Settings</h3>
-        <p>Theme, cherry-pick defaults, update checks, and this repository's git identity.</p>
+        <h3>{t("settings.title")}</h3>
+        <p>{t("settings.subtitle")}</p>
       </div>
     </div>
     <div class="rf-tabs" role="tablist" style="padding:10px 20px 0">
-      {#each SETTINGS_TABS as t (t.id)}
+      {#each SETTINGS_TABS as tab (tab.id)}
         <button
           class="rf-tab"
-          class:sel={settingsCtrl.activeTab === t.id}
+          class:sel={settingsCtrl.activeTab === tab.id}
           role="tab"
-          aria-selected={settingsCtrl.activeTab === t.id}
-          onclick={() => settingsCtrl.setActiveTab(t.id)}
+          aria-selected={settingsCtrl.activeTab === tab.id}
+          onclick={() => settingsCtrl.setActiveTab(tab.id)}
         >
-          {t.label}
+          {t("settings.tab_" + tab.id)}
         </button>
       {/each}
     </div>
     <div class="modal-body">
       {#if settingsCtrl.activeTab === "general"}
-      <h4 class="d-lab">Appearance</h4>
+      <h4 class="d-lab">{t("settings.language")}</h4>
+      <div class="rm-form" style="margin-bottom:4px;max-width:220px">
+        <select value={locale()} onchange={(e) => setLocale((e.target as HTMLSelectElement).value as Locale)}>
+          {#each LOCALES as l (l.id)}
+            <option value={l.id}>{l.label}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="mut" style="font-size:11.5px;margin:0 0 14px">{t("settings.language_hint")}</div>
+
+      <h4 class="d-lab">{t("settings.appearance")}</h4>
       <div class="rm-form" style="margin-bottom:14px">
         <select value={settingsCtrl.themeMode} onchange={onThemeChange}>
-          <option value="system">Match system</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
+          <option value="system">{t("settings.theme_system")}</option>
+          <option value="light">{t("settings.theme_light")}</option>
+          <option value="dark">{t("settings.theme_dark")}</option>
         </select>
       </div>
 
-      <h4 class="d-lab">Graph</h4>
-      <label class="set-toggle" style="margin-bottom:14px" title="When a commit has more than one tag, draw all of them instead of just the first">
+      <h4 class="d-lab">{t("settings.graph")}</h4>
+      <label class="set-toggle" style="margin-bottom:14px" title={t("settings.show_all_tags_hint")}>
         <input
           type="checkbox"
           checked={settingsCtrl.showAllCommitTags}
           onchange={(e) => settingsCtrl.setShowAllCommitTags((e.target as HTMLInputElement).checked)}
         />
-        Show all tags on a commit
+        {t("settings.show_all_tags")}
       </label>
 
       <p class="mut" style="font-size:11.5px;margin:0 0 8px">
-        When a commit's labels don't all fit, show this kind first. Click a row's <b>+N</b> chip to cycle the rest into view.
+        {@html t("settings.label_priority_desc")}
       </p>
       <div class="rm-form" style="margin-bottom:14px;max-width:220px">
         <select
           value={settingsCtrl.graphLabelPriority}
           onchange={(e) => settingsCtrl.setGraphLabelPriority((e.target as HTMLSelectElement).value as GraphLabelPriority)}
         >
-          <option value="tag">Tags first</option>
-          <option value="branch">Branches first</option>
+          <option value="tag">{t("settings.label_priority_tags")}</option>
+          <option value="branch">{t("settings.label_priority_branches")}</option>
         </select>
       </div>
 
       <p class="mut" style="font-size:11.5px;margin:0 0 8px">
-        Inline draws a commit's ref chips right before its subject text; Left column keeps them in a separate, resizable column.
+        {t("settings.label_layout_desc")}
       </p>
       <div class="rm-form" style="margin-bottom:14px;max-width:220px">
         <select
           value={settingsCtrl.graphLabelLayout}
           onchange={(e) => settingsCtrl.setGraphLabelLayout((e.target as HTMLSelectElement).value as GraphLabelLayout)}
         >
-          <option value="inline">Inline (before the subject)</option>
-          <option value="column">Left column</option>
+          <option value="inline">{t("settings.label_layout_inline")}</option>
+          <option value="column">{t("settings.label_layout_column")}</option>
         </select>
       </div>
 
-      <h4 class="d-lab">Cherry-pick</h4>
-      <label class="set-toggle" style="margin-bottom:14px" title="Append '(cherry picked from …)' to the resulting commit message">
+      <h4 class="d-lab">{t("settings.cherrypick")}</h4>
+      <label class="set-toggle" style="margin-bottom:14px" title={t("settings.cherrypick_origin_hint")}>
         <input
           type="checkbox"
           checked={settingsCtrl.cherryPickRecordOriginDefault}
           onchange={(e) => settingsCtrl.setCherryPickRecordOriginDefault((e.target as HTMLInputElement).checked)}
         />
-        Record origin (-x) on cherry-pick
+        {t("settings.cherrypick_record_origin")}
       </label>
 
-      <h4 class="d-lab">Updates</h4>
+      <h4 class="d-lab">{t("settings.updates")}</h4>
       <label class="set-toggle" style="margin-bottom:14px">
         <input
           type="checkbox"
           checked={settingsCtrl.autoCheckUpdates}
           onchange={(e) => settingsCtrl.setAutoCheckUpdates((e.target as HTMLInputElement).checked)}
         />
-        Automatically check for updates on launch
+        {t("settings.auto_check_updates")}
       </label>
       <label class="set-toggle" style="margin-bottom:4px">
         <input type="checkbox" checked={settingsCtrl.useNightlyChannel} onchange={onNightlyToggle} />
-        Use nightly builds
+        {t("settings.use_nightly")}
       </label>
       <div class="mut" style="font-size:11.5px;margin:0 0 10px 26px;line-height:1.5">
-        Unstable daily builds with verbose debug logging. You can switch back to the latest stable release at any time.
+        {t("settings.nightly_hint")}
       </div>
       <!-- Manual update: the same updaterCtrl state machine the About panel and
            the Help ▸ Check for Updates item drive, inline here so an update can
            be checked, downloaded, and installed without leaving Settings. -->
       <div style="margin:0 0 14px">
         {#if updaterCtrl.phase === "idle"}
-          <button class="btn ghost" onclick={() => updaterCtrl.check()}>Check for updates now</button>
+          <button class="btn ghost" onclick={() => updaterCtrl.check()}>{t("settings.check_updates_now")}</button>
         {:else if updaterCtrl.phase === "checking"}
-          <span class="mut" style="font-size:12.5px"><span class="spinner"></span> Checking for updates&#8230;</span>
+          <span class="mut" style="font-size:12.5px"><span class="spinner"></span> {t("settings.checking_updates")}</span>
         {:else if updaterCtrl.phase === "up-to-date"}
           <span class="mut" style="font-size:12.5px">
-            You're up to date. <button class="btn ghost" style="padding:2px 8px;font-size:11px" onclick={() => updaterCtrl.dismiss()}>OK</button>
+            {t("settings.up_to_date")} <button class="btn ghost" style="padding:2px 8px;font-size:11px" onclick={() => updaterCtrl.dismiss()}>{t("settings.up_to_date_ok")}</button>
           </span>
         {:else if updaterCtrl.phase === "available"}
           <div style="border:1px solid var(--border);border-radius:var(--r-control);padding:10px 12px;max-width:340px">
-            <div style="font-size:12.5px"><b>v{updaterCtrl.version}</b> is available <span class="mut">(you have v{updaterCtrl.currentVersion})</span></div>
+            <div style="font-size:12.5px">{@html t("settings.update_available", { version: updaterCtrl.version, current: updaterCtrl.currentVersion })}</div>
             {#if updaterCtrl.notes}
               <p class="mut" style="font-size:11.5px;white-space:pre-wrap;margin:6px 0 0;max-height:120px;overflow:auto">{updaterCtrl.notes}</p>
             {/if}
             <div style="display:flex;gap:8px;margin-top:10px">
-              <button class="btn ghost" onclick={() => updaterCtrl.dismiss()}>Not now</button>
-              <button class="btn" onclick={() => updaterCtrl.downloadAndInstall()}>Download &amp; Install</button>
+              <button class="btn ghost" onclick={() => updaterCtrl.dismiss()}>{t("settings.not_now")}</button>
+              <button class="btn" onclick={() => updaterCtrl.downloadAndInstall()}>{t("settings.download_install")}</button>
             </div>
           </div>
         {:else if updaterCtrl.phase === "downloading"}
@@ -187,19 +199,19 @@
               <div style="height:6px;border-radius:3px;background:var(--elevated);overflow:hidden">
                 <div style="height:100%;width:{updaterCtrl.progress}%;background:var(--accent);transition:width .15s"></div>
               </div>
-              <span class="mut" style="font-size:11.5px">Downloading&#8230; {updaterCtrl.progress}%</span>
+              <span class="mut" style="font-size:11.5px">{t("settings.downloading_pct", { progress: updaterCtrl.progress })}</span>
             {:else}
-              <span class="mut" style="font-size:12.5px"><span class="spinner"></span> Downloading&#8230;</span>
+              <span class="mut" style="font-size:12.5px"><span class="spinner"></span> {t("settings.downloading")}</span>
             {/if}
           </div>
         {:else if updaterCtrl.phase === "ready"}
           <div style="border:1px solid var(--border);border-radius:var(--r-control);padding:10px 12px;max-width:340px">
-            <div style="font-size:12.5px">Update downloaded &#8212; restart to finish installing.</div>
-            <div style="margin-top:10px"><button class="btn" onclick={() => updaterCtrl.restart()}>Restart Now</button></div>
+            <div style="font-size:12.5px">{t("settings.update_downloaded")}</div>
+            <div style="margin-top:10px"><button class="btn" onclick={() => updaterCtrl.restart()}>{t("settings.restart_now")}</button></div>
           </div>
         {:else if updaterCtrl.phase === "error"}
           <span class="mut" style="font-size:12.5px">
-            {updaterCtrl.error} <button class="btn ghost" style="padding:2px 8px;font-size:11px" onclick={() => updaterCtrl.dismiss()}>Dismiss</button>
+            {updaterCtrl.error} <button class="btn ghost" style="padding:2px 8px;font-size:11px" onclick={() => updaterCtrl.dismiss()}>{t("settings.dismiss")}</button>
           </span>
         {/if}
       </div>
@@ -208,13 +220,13 @@
         <!-- Command line: adds a `gitcat` launcher to a folder on PATH so a repo
              can be opened from any terminal, VS Code's `code .` style. Works on
              macOS, Linux, and Windows (see cli_shim.rs / install_cli_shim). -->
-        <h4 class="d-lab">Command line</h4>
+        <h4 class="d-lab">{t("settings.cli_h4")}</h4>
         <p class="mut" style="font-size:11.5px;margin:0 0 8px">
-          Add a <code>gitcat</code> command to your PATH so you can open a repository from any terminal, the way <code>code .</code> works in VS Code. It opens the app without blocking your terminal. On macOS you may be asked for your password.
+          {@html t("settings.cli_desc")}
         </p>
         <div style="margin:0 0 14px">
           <button class="btn ghost" disabled={settingsCtrl.cliInstalling} onclick={() => settingsCtrl.installCliCommand()}>
-            {#if settingsCtrl.cliInstalling}<span class="spinner"></span> Installing&#8230;{:else}Install 'gitcat' command{/if}
+            {#if settingsCtrl.cliInstalling}<span class="spinner"></span> {t("settings.cli_installing")}{:else}{t("settings.cli_install_btn")}{/if}
           </button>
           {#if settingsCtrl.cliInstallOk}
             <div class="mut" style="font-size:11.5px;margin-top:8px">{settingsCtrl.cliInstallOk}</div>
@@ -225,18 +237,18 @@
         </div>
       {/if}
 
-      <h4 class="d-lab">Auto-fetch</h4>
+      <h4 class="d-lab">{t("settings.autofetch")}</h4>
       <label
         class="set-toggle"
         style="margin-bottom:8px"
-        title="Runs git fetch --all --prune on a timer while a repo is open, so ahead/behind counts and incoming remote changes stay current without a manual Pull"
+        title={t("settings.autofetch_hint")}
       >
         <input
           type="checkbox"
           checked={settingsCtrl.autoFetchEnabled}
           onchange={(e) => settingsCtrl.setAutoFetchEnabled((e.target as HTMLInputElement).checked)}
         />
-        Periodically fetch from all remotes
+        {t("settings.autofetch_toggle")}
       </label>
       {#if settingsCtrl.autoFetchEnabled}
         <div class="rm-form" style="margin-bottom:14px;max-width:220px">
@@ -245,47 +257,47 @@
             onchange={(e) => settingsCtrl.setAutoFetchIntervalMinutes(Number((e.target as HTMLSelectElement).value))}
           >
             {#each AUTO_FETCH_INTERVAL_OPTIONS as m (m)}
-              <option value={String(m)}>Every {m} minutes</option>
+              <option value={String(m)}>{t("settings.autofetch_every", { m })}</option>
             {/each}
           </select>
         </div>
       {/if}
 
-      <h4 class="d-lab">Maintenance</h4>
+      <h4 class="d-lab">{t("settings.maintenance")}</h4>
       <label
         class="set-toggle"
         style="margin-bottom:8px"
-        title="Runs 'git maintenance run --auto' in the background while GitCat is idle, keeping the repo's object database tidy (commit-graph, gc, repack) so the graph and status stay fast. --auto only does work that's actually due; it never changes history, the working tree, or touches a remote."
+        title={t("settings.maintenance_hint")}
       >
         <input
           type="checkbox"
           checked={settingsCtrl.autoMaintenanceEnabled}
           onchange={(e) => settingsCtrl.setAutoMaintenanceEnabled((e.target as HTMLInputElement).checked)}
         />
-        Run git maintenance in the background when idle
+        {t("settings.maintenance_toggle")}
       </label>
       <div class="mut" style="font-size:11.5px;margin:0 0 14px 26px;line-height:1.5">
-        Keeps the repository's object database tidy (commit-graph, gc, repack) so everyday operations stay fast — only while the app sits idle, and only the work git decides is actually due. Off by default.
+        {t("settings.maintenance_desc")}
       </div>
 
-      <h4 class="d-lab">Snapshots</h4>
+      <h4 class="d-lab">{t("settings.snapshots")}</h4>
       <p class="mut" style="font-size:11.5px;margin:0 0 8px">
-        Every history-changing action pins a recoverable backup — this is what powers &#8984;Z Undo and the Snapshots ribbon. Without cleanup they build up over time. Auto-cleanup prunes old ones each time a repo opens; the single most recent snapshot is always kept.
+        {t("settings.snapshots_desc")}
       </p>
       <div class="rm-form" style="margin-bottom:8px;max-width:300px">
         <select
           value={settingsCtrl.snapshotRetentionMode}
           onchange={(e) => settingsCtrl.setSnapshotRetentionMode((e.target as HTMLSelectElement).value as SnapshotRetentionMode)}
         >
-          <option value="off">Keep everything (no cleanup)</option>
-          <option value="count">Keep the newest N</option>
-          <option value="age">Keep the last N days</option>
-          <option value="hybrid">Hybrid — newest N or last N days</option>
+          <option value="off">{t("settings.snapshot_keep_all")}</option>
+          <option value="count">{t("settings.snapshot_keep_count")}</option>
+          <option value="age">{t("settings.snapshot_keep_age")}</option>
+          <option value="hybrid">{t("settings.snapshot_keep_hybrid")}</option>
         </select>
       </div>
       {#if settingsCtrl.snapshotRetentionMode === "count" || settingsCtrl.snapshotRetentionMode === "hybrid"}
         <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:13px">
-          Keep the newest
+          {t("settings.snapshot_count_before")}
           <input
             type="number"
             min="1"
@@ -294,12 +306,12 @@
             value={settingsCtrl.snapshotRetentionCount}
             onchange={(e) => settingsCtrl.setSnapshotRetentionCount(Number((e.target as HTMLInputElement).value))}
           />
-          snapshots
+          {t("settings.snapshot_count_after")}
         </label>
       {/if}
       {#if settingsCtrl.snapshotRetentionMode === "age" || settingsCtrl.snapshotRetentionMode === "hybrid"}
         <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:13px">
-          Keep snapshots from the last
+          {t("settings.snapshot_days_before")}
           <input
             type="number"
             min="1"
@@ -308,12 +320,12 @@
             value={settingsCtrl.snapshotRetentionDays}
             onchange={(e) => settingsCtrl.setSnapshotRetentionDays(Number((e.target as HTMLInputElement).value))}
           />
-          days
+          {t("settings.snapshot_days_after")}
         </label>
       {/if}
       {#if settingsCtrl.snapshotRetentionMode === "hybrid"}
         <p class="mut" style="font-size:11px;margin:2px 0 14px">
-          A snapshot survives if it's among the newest {settingsCtrl.snapshotRetentionCount} <b>or</b> from the last {settingsCtrl.snapshotRetentionDays} days.
+          {@html t("settings.snapshot_hybrid_note", { count: settingsCtrl.snapshotRetentionCount, days: settingsCtrl.snapshotRetentionDays })}
         </p>
       {:else}
         <div style="margin-bottom:14px"></div>
@@ -321,22 +333,22 @@
       {/if}
 
       {#if settingsCtrl.activeTab === "tama"}
-      <h4 class="d-lab">Tama</h4>
+      <h4 class="d-lab">{t("settings.tama")}</h4>
       <label
         class="set-toggle"
         style="margin-bottom:10px"
-        title="Hides Tama's portraits everywhere she appears (the corner mascot, the empty-state greeting, modal headers, the undo popover) for a plainer, more focused look. Status/error messages in the corner still show — just without the character."
+        title={t("settings.tama_show_hint")}
       >
         <input type="checkbox" checked={settingsCtrl.tamaEnabled} onchange={(e) => settingsCtrl.setTamaEnabled((e.target as HTMLInputElement).checked)} />
-        Show Tama
+        {t("settings.tama_show")}
       </label>
-      <label class="set-toggle" style="margin-bottom:10px" title="A few short synthesized chimes for her more significant moments — warnings, danger, celebrating, a copy-to-clipboard tick">
+      <label class="set-toggle" style="margin-bottom:10px" title={t("settings.sound_hint")}>
         <input
           type="checkbox"
           checked={settingsCtrl.soundEffectsEnabled}
           onchange={(e) => settingsCtrl.setSoundEffectsEnabled((e.target as HTMLInputElement).checked)}
         />
-        Play sound effects
+        {t("settings.sound_toggle")}
       </label>
       <div class="set-volume" style="margin-bottom:14px">
         <input
@@ -347,18 +359,18 @@
           value={Math.round(settingsCtrl.soundEffectsVolume * 100)}
           disabled={!settingsCtrl.soundEffectsEnabled}
           oninput={onVolumeInput}
-          aria-label="Sound effects volume"
+          aria-label={t("settings.sound_volume_aria")}
         />
         <button
           class="btn ghost"
           disabled={!settingsCtrl.soundEffectsEnabled}
-          onclick={() => playTamaSound("celebrate", { bypassCooldown: true })}>Test</button
+          onclick={() => playTamaSound("celebrate", { bypassCooldown: true })}>{t("settings.sound_test")}</button
         >
       </div>
 
-      <h4 class="d-lab">Skin</h4>
+      <h4 class="d-lab">{t("settings.skin")}</h4>
       <p class="mut" style="font-size:11.5px;margin:0 0 8px">
-        Choose a look &#8212; and voice &#8212; for Tama: her default painted portraits, one of the bundled characters, or a skin shipped by an installed plugin.
+        {t("settings.skin_desc")}
       </p>
       <div class="rm-form" style="margin-bottom:6px;max-width:260px">
         <select
@@ -366,7 +378,7 @@
           disabled={settingsCtrl.tamaSkinBusy}
           onchange={(e) => settingsCtrl.setTamaSkin((e.target as HTMLSelectElement).value || null)}
         >
-          <option value="">Default (built-in)</option>
+          <option value="">{t("settings.skin_default")}</option>
           {#each settingsCtrl.builtinSkins as s (s.id)}
             <option value={s.id}>{s.name}</option>
           {/each}
@@ -380,9 +392,9 @@
       {/if}
       <div style="margin-bottom:8px"></div>
 
-      <h4 class="d-lab">Motion</h4>
+      <h4 class="d-lab">{t("settings.motion")}</h4>
       <p class="mut" style="font-size:11.5px;margin:0 0 8px">
-        How lively Tama's idle motion and reactions feel. <b>Default</b> keeps her current behavior.
+        {@html t("settings.motion_desc")}
       </p>
       <div class="rm-form" style="margin-bottom:14px;max-width:220px">
         <select
@@ -395,9 +407,9 @@
         </select>
       </div>
 
-      <h4 class="d-lab">Expressions</h4>
+      <h4 class="d-lab">{t("settings.expressions")}</h4>
       <p class="mut" style="font-size:11.5px;margin:0 0 8px">
-        Pick which face Tama makes for each moment. Leave one on <b>Default</b> to keep her built-in look.
+        {@html t("settings.expressions_desc")}
       </p>
       <div class="rm-form">
         {#each TAMA_MOMENT_FIELDS as m (m.state)}
@@ -407,7 +419,7 @@
             value={settingsCtrl.tamaPoseOverride(m.state)}
             onchange={(e) => settingsCtrl.setTamaPoseOverride(m.state, (e.target as HTMLSelectElement).value)}
           >
-            <option value="">Default ({tamaPoseLabel(m.pose)})</option>
+            <option value="">{t("settings.expressions_pose_default", { pose: tamaPoseLabel(m.pose) })}</option>
             {#each TAMA_POSE_OPTIONS as pose (pose.value)}
               <option value={pose.value}>{pose.label}</option>
             {/each}
@@ -416,51 +428,51 @@
       </div>
       <div style="margin-top:10px;margin-bottom:8px">
         <button class="btn ghost" disabled={!settingsCtrl.hasTamaPoseOverrides} onclick={() => settingsCtrl.resetTamaPoseOverrides()}>
-          Reset expressions
+          {t("settings.reset_expressions")}
         </button>
       </div>
       {/if}
 
       {#if settingsCtrl.activeTab === "identity"}
-      <h4 class="d-lab">Git identity</h4>
+      <h4 class="d-lab">{t("settings.git_identity")}</h4>
       {#if !settingsCtrl.repo}
-        <p class="mut">Open a repository to view or edit its git identity.</p>
+        <p class="mut">{t("settings.identity_no_repo")}</p>
       {:else if settingsCtrl.identityLoading}
-        <div class="log-row"><span class="spinner"></span><span class="msg mut">Loading git identity&#8230;</span></div>
+        <div class="log-row"><span class="spinner"></span><span class="msg mut">{t("settings.identity_loading")}</span></div>
       {:else}
         {#if settingsCtrl.identityError}
           <div class="pl-err" style="margin-bottom:8px">{settingsCtrl.identityError}</div>
         {/if}
         {#if settingsCtrl.identity?.configured && !settingsCtrl.identity.local}
           <p class="mut" style="font-size:11.5px;margin:0 0 8px">
-            No identity set for this repository specifically — showing your <b>global</b> git identity below. Save to set one just for this repo instead.
+            {@html t("settings.identity_global_note")}
           </p>
         {/if}
         <div class="confirm-type">
-          <label for="setName">Name</label>
+          <label for="setName">{t("settings.identity_name")}</label>
           <input id="setName" autocomplete="off" spellcheck="false" bind:value={settingsCtrl.nameInput} disabled={settingsCtrl.identitySaving} />
-          <label for="setEmail" style="margin-top:8px">Email</label>
+          <label for="setEmail" style="margin-top:8px">{t("settings.identity_email")}</label>
           <input id="setEmail" autocomplete="off" spellcheck="false" bind:value={settingsCtrl.emailInput} disabled={settingsCtrl.identitySaving} />
         </div>
         <p class="mut" style="font-size:11.5px;margin:8px 0 0">
-          Written only to this repository's <code>.git/config</code> — your global git identity is never touched.
+          {@html t("settings.identity_local_note")}
         </p>
       {/if}
       {/if}
 
       {#if settingsCtrl.activeTab === "gitconfig"}
-      <h4 class="d-lab">Git config</h4>
+      <h4 class="d-lab">{t("settings.git_config")}</h4>
       {#if !settingsCtrl.repo}
-        <p class="mut">Open a repository to view or edit its git configuration.</p>
+        <p class="mut">{t("settings.config_no_repo")}</p>
       {:else}
         <div class="rm-form" style="margin-bottom:10px">
           <select value={settingsCtrl.configScope} onchange={onConfigScopeChange}>
-            <option value="local">This repository (.git/config)</option>
-            <option value="global">Global (~/.gitconfig — every repository)</option>
+            <option value="local">{t("settings.config_scope_local")}</option>
+            <option value="global">{t("settings.config_scope_global")}</option>
           </select>
         </div>
         {#if settingsCtrl.configLoading}
-          <div class="log-row"><span class="spinner"></span><span class="msg mut">Loading git configuration&#8230;</span></div>
+          <div class="log-row"><span class="spinner"></span><span class="msg mut">{t("settings.config_loading")}</span></div>
         {:else}
           {#if settingsCtrl.configError}
             <div class="pl-err" style="margin-bottom:8px">{settingsCtrl.configError}</div>
@@ -500,12 +512,12 @@
           </div>
 
           {#if !settingsCtrl.advancedOpen}
-            <button class="btn ghost" style="margin-top:10px" onclick={() => settingsCtrl.openAdvanced()}>Show advanced (any key)&#8230;</button>
+            <button class="btn ghost" style="margin-top:10px" onclick={() => settingsCtrl.openAdvanced()}>{t("settings.show_advanced")}</button>
           {:else}
-            <button class="btn ghost" style="margin-top:10px" onclick={() => settingsCtrl.closeAdvanced()}>Hide advanced</button>
+            <button class="btn ghost" style="margin-top:10px" onclick={() => settingsCtrl.closeAdvanced()}>{t("settings.hide_advanced")}</button>
             <div style="margin-top:8px">
               {#if settingsCtrl.advancedLoading}
-                <div class="log-row"><span class="spinner"></span><span class="msg mut">Loading&#8230;</span></div>
+                <div class="log-row"><span class="spinner"></span><span class="msg mut">{t("settings.loading")}</span></div>
               {:else}
                 {#if settingsCtrl.advancedError}
                   <div class="pl-err" style="margin-bottom:6px">{settingsCtrl.advancedError}</div>
@@ -514,7 +526,7 @@
                   <input
                     autocomplete="off"
                     spellcheck="false"
-                    placeholder="Filter keys or values&#8230;"
+                    placeholder={t("settings.filter_placeholder")}
                     bind:value={settingsCtrl.advancedFilter}
                     style="width:100%;box-sizing:border-box;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--text);font:inherit;font-size:12px;padding:6px 8px"
                   />
@@ -528,7 +540,7 @@
                       disabled={settingsCtrl.savingConfigKey === entry.key}
                       onclick={() => settingsCtrl.editAdvancedEntry(entry)}
                     >
-                      Edit
+                      {t("settings.edit")}
                     </button>
                     <button
                       class="btn ghost"
@@ -536,23 +548,22 @@
                       disabled={settingsCtrl.savingConfigKey === entry.key}
                       onclick={() => settingsCtrl.removeAdvancedEntry(entry.key)}
                     >
-                      Remove
+                      {t("settings.remove")}
                     </button>
                   </div>
                 {:else}
                   <p class="mut" style="font-size:11.5px">
-                    {#if settingsCtrl.advancedFilter.trim()}No entries match &quot;{settingsCtrl.advancedFilter.trim()}&quot;.{:else}No {settingsCtrl.configScope}
-                      config entries.{/if}
+                    {#if settingsCtrl.advancedFilter.trim()}{t("settings.no_entries_match", { filter: settingsCtrl.advancedFilter.trim() })}{:else}{t("settings.no_config_entries", { scope: settingsCtrl.configScope })}{/if}
                   </p>
                 {/each}
                 <p class="mut" style="font-size:11px;margin:8px 0 4px">
-                  Add a key, or click Edit on an existing row to update its value.
+                  {t("settings.advanced_add_hint")}
                 </p>
                 <div style="display:flex;gap:6px;align-items:center">
                   <input
                     autocomplete="off"
                     spellcheck="false"
-                    placeholder="section.key"
+                    placeholder={t("settings.advanced_key_placeholder")}
                     bind:value={settingsCtrl.newAdvancedKey}
                     disabled={settingsCtrl.savingConfigKey !== null}
                     style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--text);font:inherit;font-size:12px;padding:6px 8px"
@@ -560,7 +571,7 @@
                   <input
                     autocomplete="off"
                     spellcheck="false"
-                    placeholder="value"
+                    placeholder={t("settings.advanced_value_placeholder")}
                     bind:value={settingsCtrl.newAdvancedValue}
                     disabled={settingsCtrl.savingConfigKey !== null}
                     style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--text);font:inherit;font-size:12px;padding:6px 8px"
@@ -571,7 +582,7 @@
                     disabled={!settingsCtrl.newAdvancedKey.trim() || settingsCtrl.savingConfigKey !== null}
                     onclick={() => settingsCtrl.addAdvancedEntry()}
                   >
-                    Set
+                    {t("settings.set")}
                   </button>
                 </div>
               {/if}
@@ -583,10 +594,10 @@
 
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" disabled={settingsCtrl.identitySaving} onclick={() => settingsCtrl.close()}>Close</button>
+      <button class="btn ghost" disabled={settingsCtrl.identitySaving} onclick={() => settingsCtrl.close()}>{t("common.close")}</button>
       {#if settingsCtrl.activeTab === "identity" && settingsCtrl.repo && !settingsCtrl.identityLoading}
         <button class="btn" disabled={!settingsCtrl.canSaveIdentity} onclick={() => settingsCtrl.saveIdentity()}>
-          {#if settingsCtrl.identitySaving}<span class="spinner"></span> Saving&#8230;{:else}Save Identity{/if}
+          {#if settingsCtrl.identitySaving}<span class="spinner"></span> {t("settings.saving")}{:else}{t("settings.save_identity")}{/if}
         </button>
       {/if}
     </div>

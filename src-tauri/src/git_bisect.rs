@@ -69,6 +69,7 @@ use git2::Repository;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, Wry};
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::NoConsoleWindowExt;
 
 #[derive(Serialize, Clone, specta::Type)]
@@ -138,7 +139,7 @@ fn git(path: &str, args: &[&str]) -> Result<Out, String> {
         .env("GIT_EDITOR", "true")
         .env("GIT_SEQUENCE_EDITOR", "true")
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -160,7 +161,7 @@ fn git_worktree(path: &str, args: &[&str]) -> Result<Out, String> {
         &[("LC_ALL", "C"), ("LANGUAGE", ""), ("GIT_PAGER", "cat"), ("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")],
     )
     .output()
-    .map_err(|e| format!("Could not run git: {e}"))?;
+    .map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -194,13 +195,13 @@ fn in_progress(repo: &Repository) -> bool {
 
 fn validate_rev(rev: &str) -> Result<(), String> {
     if rev.is_empty() {
-        return Err("No commit specified.".into());
+        return Err(ierr("err_ops.no_commit_specified"));
     }
     if rev.starts_with('-') {
-        return Err(format!("Refusing a revision that looks like a flag: {rev:?}"));
+        return Err(ierrp("err_ops.refusing_rev_like_flag", &[("rev", &format!("{rev:?}"))]));
     }
     if rev.chars().any(|c| c.is_control()) {
-        return Err("Revision has a control character.".into());
+        return Err(ierr("err_ops.rev_control_char"));
     }
     Ok(())
 }
@@ -212,7 +213,7 @@ fn canonical_oid(repo: &Repository, rev: &str) -> Result<String, String> {
     repo.revparse_single(rev)
         .and_then(|o| o.peel_to_commit())
         .map(|c| c.id().to_string())
-        .map_err(|_| format!("Not a commit this repository knows: {rev:?}"))
+        .map_err(|_| ierrp("err_ops.not_a_commit", &[("rev", &format!("{rev:?}"))]))
 }
 
 fn resolve_commit(repo: &Repository, rev: &str) -> Option<CommitInfo> {
@@ -394,30 +395,25 @@ pub async fn bisect_start(path: String, bad: String, good: Vec<String>) -> Bisec
     crate::blocking::run_blocking(move || {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return BisectStatus::refused(ierrp("err_ops.cannot_open_repo", &[("detail", e.message())])),
         };
 
         if in_progress(&repo) {
             let mut s = read_status(&repo, &path);
             s.ok = false;
-            s.message = "A bisect is already in progress — reset it before starting a new one.".into();
+            s.message = ierr("err_ops.bisect_already_in_progress");
             return s;
         }
         if good.is_empty() {
-            return BisectStatus::refused("Select at least one known-good commit to bisect between.");
+            return BisectStatus::refused(ierr("err_ops.select_known_good"));
         }
 
         match git(&path, &["status", "--porcelain"]) {
             Ok(o) if !o.ok => {
-                return BisectStatus::refused(format!(
-                    "Cannot verify the working tree is clean, refusing to bisect: {}",
-                    o.stderr
-                ))
+                return BisectStatus::refused(ierrp("err_ops.cannot_verify_clean", &[("detail", &o.stderr)]))
             }
             Ok(o) if !o.stdout.is_empty() => {
-                return BisectStatus::refused(
-                    "Working tree has uncommitted changes — commit or stash before bisecting.",
-                )
+                return BisectStatus::refused(ierr("err_ops.working_tree_dirty"))
             }
             Ok(_) => {}
             Err(e) => return BisectStatus::refused(e),
@@ -438,7 +434,7 @@ pub async fn bisect_start(path: String, bad: String, good: Vec<String>) -> Bisec
         // Snapshot FIRST — never mutate without a pre-op backup. Abort if it fails.
         let backup = match crate::safety::snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return BisectStatus::refused(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return BisectStatus::refused(ierrp("err_ops.safety_snapshot_failed", &[("detail", &e)])),
         };
 
         match git_worktree(&path, &["bisect", "start"]) {
@@ -521,17 +517,15 @@ pub async fn bisect_mark(path: String, term: String) -> BisectStatus {
         let subcmd = match term.as_str() {
             "good" | "bad" | "skip" => term.as_str(),
             other => {
-                return BisectStatus::refused(format!(
-                    "Unknown mark {other:?} (expected \"good\", \"bad\", or \"skip\")."
-                ))
+                return BisectStatus::refused(ierrp("err_ops.unknown_mark", &[("mark", &format!("{other:?}"))]))
             }
         };
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return BisectStatus::refused(ierrp("err_ops.cannot_open_repo", &[("detail", e.message())])),
         };
         if !in_progress(&repo) {
-            return BisectStatus::refused("No bisect in progress — start one first.");
+            return BisectStatus::refused(ierr("err_ops.no_bisect_in_progress_start"));
         }
 
         apply_mark(&repo, &path, subcmd)
@@ -552,7 +546,7 @@ pub async fn bisect_mark(path: String, term: String) -> BisectStatus {
 pub async fn bisect_status(path: String) -> BisectStatus {
     crate::blocking::run_blocking(move || match crate::trust::open_repo(&path) {
         Ok(repo) => read_status(&repo, &path),
-        Err(e) => BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
+        Err(e) => BisectStatus::refused(ierrp("err_ops.cannot_open_repo", &[("detail", e.message())])),
     })
     .await
 }
@@ -570,7 +564,7 @@ pub async fn bisect_reset(path: String) -> BisectStatus {
     crate::blocking::run_blocking(move || {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return BisectStatus::refused(ierrp("err_ops.cannot_open_repo", &[("detail", e.message())])),
         };
         if !in_progress(&repo) {
             return BisectStatus::idle("No bisect in progress.");
@@ -767,10 +761,10 @@ pub fn run_bisect(
 ) -> BisectStatus {
     let repo = match Repository::open(path) {
         Ok(r) => r,
-        Err(e) => return BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
+        Err(e) => return BisectStatus::refused(ierrp("err_ops.cannot_open_repo", &[("detail", e.message())])),
     };
     if !in_progress(&repo) {
-        return BisectStatus::refused("No bisect in progress — start one first.");
+        return BisectStatus::refused(ierr("err_ops.no_bisect_in_progress_start"));
     }
 
     loop {
@@ -785,7 +779,7 @@ pub fn run_bisect(
             Err(e) => {
                 let mut s = read_status(&repo, path);
                 s.ok = false;
-                s.message = format!("Automated bisect run aborted — {e}.");
+                s.message = ierrp("err_ops.bisect_run_aborted", &[("detail", &e)]);
                 return s;
             }
         };
@@ -797,7 +791,7 @@ pub fn run_bisect(
             Step::Abort(reason) => {
                 let mut s = read_status(&repo, path);
                 s.ok = false;
-                s.message = format!("Automated bisect run aborted — {reason}.");
+                s.message = ierrp("err_ops.bisect_run_aborted", &[("detail", &reason)]);
                 return s;
             }
         };
@@ -888,11 +882,10 @@ pub async fn bisect_run_start(app: AppHandle<Wry>, path: String, command: String
                 Ok(repo) => {
                     let mut s = read_status(&repo, &path);
                     s.ok = false;
-                    s.message =
-                        "An automated bisect run is already in progress — cancel it before starting another.".into();
+                    s.message = ierr("err_ops.bisect_run_already_in_progress");
                     s
                 }
-                Err(e) => BisectStatus::refused(format!("Cannot open repository: {}", e.message())),
+                Err(e) => BisectStatus::refused(ierrp("err_ops.cannot_open_repo", &[("detail", e.message())])),
             },
         }
     })

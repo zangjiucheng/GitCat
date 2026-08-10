@@ -33,6 +33,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import { pluginsCtrl } from "../plugins/plugins.svelte.ts";
 import { BUILTIN_SKINS, builtinSkinById, isBuiltinSkinId, type BuiltinSkin } from "./builtinskins.ts";
 import type { ConfigEntry, ConfigScope, GitIdentity, Plugin, RawConfigEntry } from "../../ipc/bindings";
@@ -490,12 +491,12 @@ class SettingsState {
     try {
       const res = await commands.installCliShim();
       if (res.status === "ok") {
-        this.cliInstallOk = `Installed at ${res.data}. Open a new terminal and run gitcat . inside any repo.`;
+        this.cliInstallOk = t("settings.cli_ok", { path: res.data });
       } else {
-        this.cliInstallError = res.error || "Couldn't install the gitcat command.";
+        this.cliInstallError = be(res.error) || t("settings.cli_err");
       }
     } catch (e) {
-      this.cliInstallError = "Couldn't install the gitcat command. " + e;
+      this.cliInstallError = t("settings.cli_err_e", { e: String(e) });
     } finally {
       this.cliInstalling = false;
     }
@@ -674,7 +675,7 @@ class SettingsState {
         for (const e of res.data) map[e.key] = e;
         this.configEntries = map;
       } else {
-        this.configError = String(res.error ?? "Could not read this repository's git configuration.");
+        this.configError = be(res.error) || "Could not read this repository's git configuration.";
       }
     } catch (e) {
       this.configError = "Could not read this repository's git configuration — " + e;
@@ -721,7 +722,7 @@ class SettingsState {
       if (res.ok) {
         await this.refreshConfigKey(key);
       } else {
-        this.configFieldErrors = { ...this.configFieldErrors, [key]: res.message };
+        this.configFieldErrors = { ...this.configFieldErrors, [key]: be(res.message) };
       }
     } catch (e) {
       this.configFieldErrors = { ...this.configFieldErrors, [key]: "Could not save — " + e };
@@ -753,7 +754,7 @@ class SettingsState {
       if (res.status === "ok") {
         this.advancedEntries = res.data;
       } else {
-        this.advancedError = String(res.error ?? "Could not list this repository's git configuration.");
+        this.advancedError = be(res.error) || "Could not list this repository's git configuration.";
       }
     } catch (e) {
       this.advancedError = "Could not list this repository's git configuration — " + e;
@@ -770,7 +771,7 @@ class SettingsState {
       if (res.ok) {
         await this.refreshAdvanced();
       } else {
-        this.advancedError = res.message;
+        this.advancedError = be(res.message);
       }
     } catch (e) {
       this.advancedError = "Could not remove — " + e;
@@ -796,7 +797,7 @@ class SettingsState {
         this.newAdvancedValue = "";
         await this.refreshAdvanced();
       } else {
-        this.advancedError = res.message;
+        this.advancedError = be(res.message);
       }
     } catch (e) {
       this.advancedError = "Could not save — " + e;
@@ -1056,7 +1057,7 @@ class SettingsState {
         this.tamaSkinPluginId = null;
         saveSettings({ tamaSkinPluginId: null });
         bridge.clearTamaSkin();
-        this.tamaSkinError = String(res.error ?? "Could not load that Tama skin.");
+        this.tamaSkinError = be(res.error) || "Could not load that Tama skin.";
       }
     } catch (e) {
       this.tamaSkinPluginId = null;
@@ -1089,7 +1090,7 @@ class SettingsState {
         this.emailInput = r.data.email ?? "";
       } else {
         this.identity = null;
-        this.identityError = String(r.error ?? "Could not read this repository's git identity.");
+        this.identityError = be(r.error) || "Could not read this repository's git identity.";
       }
     } catch (e) {
       // getGitIdentity's binding rethrows on a real Error rejection (only a
@@ -1119,7 +1120,7 @@ class SettingsState {
         this.identity = { name, email, configured: true, local: true };
         bridge.tama.say("Git identity updated.");
       } else {
-        this.identityError = res.message || "Could not update this repository's git identity.";
+        this.identityError = be(res.message) || "Could not update this repository's git identity.";
       }
     } catch (e) {
       this.identityError = "Could not update this repository's git identity — " + e;

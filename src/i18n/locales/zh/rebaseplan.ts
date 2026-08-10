@@ -1,0 +1,27 @@
+// 交互式 rebase 规划器。键会变成 `rebaseplan.<key>`。
+export default {
+  header: "交互式 rebase 到 {onto}",
+  subtitle: "拖动排序,为每个提交选择操作,然后点击开始。",
+  tama_alt: "Tama,警觉",
+  drag_reorder: "拖动以重新排序",
+  action_aria: "{sha} 的操作",
+  action_pick: "Pick",
+  action_edit: "Edit",
+  action_squash: "Squash",
+  action_fixup: "Fixup",
+  action_drop: "Drop",
+  empty: "从这里到目标之间没有可规划的提交。",
+  start: "开始交互式 rebase",
+  starting: "开始中……",
+  // controller
+  open_repo_first: "请先打开一个仓库。",
+  up_to_date: "已经和 {onto} 保持一致 —— 没有需要规划的内容。",
+  list_failed: "无法列出要规划的提交。",
+  list_failed_e: "无法列出要规划的提交 —— {error}",
+  demo_applied: "交互式 rebase 已应用(演示)。",
+  cheer: '交互式 rebase 完成。<span class="jp">よし!</span>',
+  complete: "交互式 rebase 完成。",
+  up_to_date_empty: "已经是最新 —— 没有需要 rebase 的内容。",
+  could_not_start: "无法开始交互式 rebase。",
+  failed_e: "交互式 rebase 失败 —— {error}",
+};

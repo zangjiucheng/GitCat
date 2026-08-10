@@ -6,6 +6,7 @@
   // showAt(), not here — this popover is the compact half of the "Both" preview.
   import { snapshotPreviewCtrl } from "./snapshotpreview.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   let popEl: HTMLDivElement | undefined = $state();
 
@@ -16,9 +17,12 @@
     if (snapshotPreviewCtrl.open && e.key === "Escape") snapshotPreviewCtrl.close();
   }
 
-  const STATUS_LABEL: Record<string, string> = { A: "added", M: "modified", D: "deleted", R: "renamed", C: "copied", T: "type changed" };
+  const STATUS_KEY: Record<string, string> = { A: "added", M: "modified", D: "deleted", R: "renamed", C: "copied", T: "type_changed" };
   function statusLetter(s: string): string {
     return (s || "M").slice(0, 1).toUpperCase();
+  }
+  function statusLabel(letter: string): string {
+    return t("snapshotpreview.status_" + (STATUS_KEY[letter] || "changed"));
   }
 
   const FILE_CAP = 8;
@@ -34,31 +38,31 @@
     bind:this={popEl}
     style="left:{snapshotPreviewCtrl.x}px;top:{snapshotPreviewCtrl.y}px"
     role="dialog"
-    aria-label="Snapshot preview"
+    aria-label={t("snapshotpreview.aria_label")}
   >
     <div class="sp-head">
-      <div class="sp-title" title={snap.subject}>{snap.subject || "(no message)"}</div>
-      <button class="sp-close" aria-label="Close preview" onclick={() => snapshotPreviewCtrl.close()}>&#215;</button>
+      <div class="sp-title" title={snap.subject}>{snap.subject || t("snapshotpreview.no_message")}</div>
+      <button class="sp-close" aria-label={t("snapshotpreview.aria_close")} onclick={() => snapshotPreviewCtrl.close()}>&#215;</button>
     </div>
     <div class="sp-meta">
-      <span class="sp-sha">{(snap.sha || "").slice(0, 7) || "snapshot"}</span>
+      <span class="sp-sha">{(snap.sha || "").slice(0, 7) || t("snapshotpreview.sha_fallback")}</span>
       <span class="sp-sep">&#183;</span>
       <span>{bridge.relTime(snap.ts)}</span>
       {#if !snapshotPreviewCtrl.inGraph}
         <span class="sp-sep">&#183;</span>
-        <span class="sp-off" title="This snapshot's commit isn't in the current graph view (history was rewritten since it was taken) — previewed here instead.">not in this view</span>
+        <span class="sp-off" title={t("snapshotpreview.not_in_view_title")}>{t("snapshotpreview.not_in_view")}</span>
       {/if}
     </div>
 
     {#if snapshotPreviewCtrl.loading}
-      <div class="sp-state"><span class="spinner"></span> Loading diff&#8230;</div>
+      <div class="sp-state"><span class="spinner"></span> {t("snapshotpreview.loading_diff")}</div>
     {:else if snapshotPreviewCtrl.error}
       <div class="sp-state sp-err">{snapshotPreviewCtrl.error}</div>
     {:else if d}
       {@const shown = Math.min(d.fileTree.length, FILE_CAP)}
       {@const more = d.filesChanged - shown}
       <div class="sp-stat">
-        <span class="sp-files">{d.filesChanged} {d.filesChanged === 1 ? "file" : "files"}</span>
+        <span class="sp-files">{d.filesChanged} {d.filesChanged === 1 ? t("snapshotpreview.file_one") : t("snapshotpreview.file_many")}</span>
         {#if d.additions}<span class="sp-add">+{d.additions}</span>{/if}
         {#if d.deletions}<span class="sp-del">&#8722;{d.deletions}</span>{/if}
       </div>
@@ -66,7 +70,7 @@
         <div class="sp-files-list">
           {#each d.fileTree.slice(0, FILE_CAP) as f (f.path)}
             <div class="sp-file">
-              <span class="sp-badge sp-b-{statusLetter(f.status)}" title={STATUS_LABEL[statusLetter(f.status)] || "changed"}>{statusLetter(f.status)}</span>
+              <span class="sp-badge sp-b-{statusLetter(f.status)}" title={statusLabel(statusLetter(f.status))}>{statusLetter(f.status)}</span>
               <span class="sp-path" title={f.path}>{f.path}</span>
               <span class="sp-fstat">
                 {#if f.additions}<span class="sp-add">+{f.additions}</span>{/if}
@@ -75,11 +79,11 @@
             </div>
           {/each}
           {#if more > 0}
-            <div class="sp-more">+{more} more file{more === 1 ? "" : "s"}&#8230;</div>
+            <div class="sp-more">{more === 1 ? t("snapshotpreview.more_one", { n: more }) : t("snapshotpreview.more_many", { n: more })}</div>
           {/if}
         </div>
       {:else}
-        <div class="sp-state sp-empty">No file changes in this commit.</div>
+        <div class="sp-state sp-empty">{t("snapshotpreview.no_changes")}</div>
       {/if}
     {/if}
   </div>

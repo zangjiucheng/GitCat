@@ -85,6 +85,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Wry};
 
 use crate::conflict;
+use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::NoConsoleWindowExt;
 use crate::safety::{self, GitOut};
 
@@ -246,8 +247,9 @@ fn settings_path(app: &AppHandle<Wry>) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_config_dir()
-        .map_err(|e| format!("Could not resolve app config dir: {e}"))?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create app config dir: {e}"))?;
+        .map_err(|e| ierrp("err_tools.could_not_resolve_config_dir", &[("detail", &e.to_string())]))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| ierrp("err_tools.could_not_create_config_dir", &[("detail", &e.to_string())]))?;
     Ok(dir.join(FILE_NAME))
 }
 
@@ -272,7 +274,12 @@ pub fn load_from(path: &Path) -> Result<ToolSettings, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ToolSettings::default()),
-        Err(e) => return Err(format!("Could not read {}: {e}", path.display())),
+        Err(e) => {
+            return Err(ierrp(
+                "err_tools.could_not_read",
+                &[("path", &path.display().to_string()), ("detail", &e.to_string())],
+            ))
+        }
     };
     match serde_json::from_str::<SettingsFile>(&text) {
         // The v1 -> v2 migration is entirely serde-default-driven: a v1 file
@@ -329,12 +336,14 @@ pub fn save_to(path: &Path, settings: &ToolSettings) -> Result<(), String> {
         active_merge_tool_id: settings.active_merge_tool_id.clone(),
         active_commit_tool_id: settings.active_commit_tool_id.clone(),
     };
-    let json = serde_json::to_string_pretty(&file).map_err(|e| format!("Could not serialize: {e}"))?;
+    let json = serde_json::to_string_pretty(&file).map_err(|e| ierrp("err_tools.could_not_serialize", &[("detail", &e.to_string())]))?;
     let mut tmp_name = path.as_os_str().to_os_string();
     tmp_name.push(".tmp");
     let tmp_path = PathBuf::from(tmp_name);
-    std::fs::write(&tmp_path, &json).map_err(|e| format!("Could not write {}: {e}", tmp_path.display()))?;
-    std::fs::rename(&tmp_path, path).map_err(|e| format!("Could not finalize {}: {e}", path.display()))
+    std::fs::write(&tmp_path, &json)
+        .map_err(|e| ierrp("err_tools.could_not_write", &[("path", &tmp_path.display().to_string()), ("detail", &e.to_string())]))?;
+    std::fs::rename(&tmp_path, path)
+        .map_err(|e| ierrp("err_tools.could_not_finalize", &[("path", &path.display().to_string()), ("detail", &e.to_string())]))
 }
 
 /// Trim + validate one tool's `name`/`cmd`. Blank name => `None` (clears the
@@ -349,7 +358,7 @@ pub fn normalize_tool(t: Option<ExternalTool>) -> Result<Option<ExternalTool>, S
         return Ok(None);
     }
     if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err(format!("Tool name {name:?} may only contain letters, digits, '-' and '_'."));
+        return Err(ierrp("err_tools.tool_name_charset", &[("name", &format!("{name:?}"))]));
     }
     let cmd = t.cmd.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
     Ok(Some(ExternalTool { name, cmd }))
@@ -375,20 +384,18 @@ pub fn is_valid_tool_id(id: &str) -> bool {
 pub fn normalize_named_tool(t: NamedTool) -> Result<NamedTool, String> {
     let id = t.id.trim().to_string();
     if id.is_empty() {
-        return Err("A tool id is required.".into());
+        return Err(ierr("err_tools.tool_id_required"));
     }
     if !is_valid_tool_id(&id) {
-        return Err(format!(
-            "Tool id {id:?} must start with a lowercase letter or digit and contain only lowercase letters, digits and '-'."
-        ));
+        return Err(ierrp("err_tools.tool_id_charset", &[("id", &format!("{id:?}"))]));
     }
     let name = t.name.trim().to_string();
     if name.is_empty() {
-        return Err("A tool name is required.".into());
+        return Err(ierr("err_tools.tool_name_required"));
     }
     let cmd = t.cmd.trim().to_string();
     if cmd.is_empty() {
-        return Err("A tool command is required.".into());
+        return Err(ierr("err_tools.tool_command_required"));
     }
     Ok(NamedTool { id, name, kind: t.kind, cmd })
 }
@@ -433,7 +440,7 @@ pub fn remove_named_tool_from(settings: &mut ToolSettings, id: &str) {
 pub fn set_active_tool_in(settings: &mut ToolSettings, kind: ToolKind, id: Option<String>) -> Result<(), String> {
     if let Some(id) = &id {
         if !settings.tools.iter().any(|t| t.kind == kind && &t.id == id) {
-            return Err(format!("No {} tool with id {id:?} exists.", kind_label(kind)));
+            return Err(ierrp("err_tools.no_tool_with_id", &[("kind", kind_label(kind)), ("id", &format!("{id:?}"))]));
         }
     }
     match kind {
@@ -604,13 +611,13 @@ fn build_mergetool_argv(file: &str, tool: &ExternalTool) -> Vec<String> {
 /// guards `from_rev`/`to_rev`, not just a file path.
 fn validate_arg(s: &str) -> Result<(), String> {
     if s.is_empty() {
-        return Err("No value given.".into());
+        return Err(ierr("err_tools.no_value_given"));
     }
     if s.starts_with('-') {
-        return Err(format!("Refusing a value that looks like a flag: {s:?}"));
+        return Err(ierrp("err_tools.value_looks_like_flag", &[("value", &format!("{s:?}"))]));
     }
     if s.chars().any(|c| c == '\0' || c == '\n' || c == '\r') {
-        return Err("Value has an illegal NUL/newline character.".into());
+        return Err(ierr("err_tools.value_illegal_char"));
     }
     Ok(())
 }
@@ -632,11 +639,9 @@ fn err_msg(o: &GitOut) -> String {
     } else if !o.stdout.is_empty() {
         o.stdout.clone()
     } else {
-        format!("git exited with status {}", o.code)
+        ierrp("err_tools.git_exited_with_status", &[("code", &o.code.to_string())])
     }
 }
-
-const HINT: &str = "Set one via Tools \u{25b8} External Tools\u{2026}.";
 
 // ---------------------------------------------------------------------------
 // Commands: settings CRUD
@@ -741,9 +746,7 @@ pub async fn generate_commit_message(app: AppHandle<Wry>, path: String) -> Resul
     // Precedence: ACTIVE named commit tool > legacy `commit_msg_command`
     // singleton (see `resolve_commit_command`).
     let cmd = resolve_commit_command(&load_from(&settings_path(&app)?)?)
-        .ok_or_else(|| {
-            "No commit-message command is set up. Add one in Tools ▸ External Tools (e.g. `aicommit`) — GitCat runs it and drops the output here; it talks to no AI itself.".to_string()
-        })?;
+        .ok_or_else(|| ierr("err_tools.no_commit_command"))?;
     crate::blocking::run_blocking(move || run_commit_msg_command(&path, &cmd)).await
 }
 
@@ -768,7 +771,7 @@ fn run_commit_msg_command(path: &str, cmd: &str) -> Result<String, String> {
     };
     command.current_dir(path).no_console_window();
     let out = crate::procutil::output_with_timeout(command, COMMIT_MSG_TIMEOUT)
-        .map_err(|e| format!("Could not run the commit-message command: {e}"))?;
+        .map_err(|e| ierrp("err_tools.could_not_run_commit_command", &[("detail", &e.to_string())]))?;
     if !out.status.success() {
         // Strip ANSI first: CLIs like `ollama run` stream a spinner + cursor
         // control codes to stderr even when piped, and without this the raw
@@ -789,16 +792,14 @@ fn run_commit_msg_command(path: &str, cmd: &str) -> Result<String, String> {
         .iter()
         .any(|m| blob.contains(m));
         if looks_interactive {
-            return Err(
-                "This command is interactive — it tried to prompt for input. GitCat runs it non-interactively and reads the message from its output, so configure a command that just PRINTS a commit message and exits (e.g. pipe the staged diff to a model: `git diff --staged | ollama run <model> \"write a commit message\"`, or a small script). Interactive 'generate-and-commit' tools like aicommit2/opencommit own the whole commit themselves — use their git hook, not this box.".to_string(),
-            );
+            return Err(ierr("err_tools.interactive_command"));
         }
         let detail = if !stderr.is_empty() { stderr } else if !stdout.is_empty() { stdout } else { format!("exited with status {}", out.status.code().unwrap_or(-1)) };
-        return Err(format!("The commit-message command failed: {detail}"));
+        return Err(ierrp("err_tools.commit_command_failed", &[("detail", &detail)]));
     }
     let message = strip_ansi(&String::from_utf8_lossy(&out.stdout)).trim().to_string();
     if message.is_empty() {
-        return Err("The commit-message command produced no output.".to_string());
+        return Err(ierr("err_tools.commit_command_no_output"));
     }
     Ok(message)
 }
@@ -1066,16 +1067,15 @@ pub fn open_diff_tool_inner(
         validate_arg(r)?;
     }
     if from_rev.is_some() != to_rev.is_some() {
-        return Err("fromRev and toRev must both be given, or both omitted.".into());
+        return Err(ierr("err_tools.rev_range_both_or_neither"));
     }
     if staged && from_rev.is_some() {
-        return Err("A specific revision range and `staged` are mutually exclusive.".into());
+        return Err(ierr("err_tools.range_and_staged_exclusive"));
     }
     if let Err(e) = crate::trust::open_repo(path) {
-        return Err(format!("Cannot open repository: {}", e.message()));
+        return Err(ierrp("err_tools.cannot_open_repo_cap", &[("detail", e.message())]));
     }
-    let tool = resolve_diff_tool(path, configured)
-        .ok_or_else(|| format!("No external diff tool configured. {HINT}"))?;
+    let tool = resolve_diff_tool(path, configured).ok_or_else(|| ierr("err_tools.no_diff_tool"))?;
     let args = build_difftool_argv(file, staged, &from_rev, &to_rev, &tool);
     std::process::Command::new("git")
         .no_console_window()
@@ -1083,7 +1083,7 @@ pub fn open_diff_tool_inner(
         .arg(path)
         .args(&args)
         .spawn()
-        .map_err(|e| format!("Could not launch git difftool: {e}"))?;
+        .map_err(|e| ierrp("err_tools.could_not_launch_difftool", &[("detail", &e.to_string())]))?;
     Ok(())
 }
 
@@ -1142,10 +1142,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
         return conflict::ResolveResult {
             ok: false,
             remaining: remaining_conflicts(path),
-            message: format!(
-                "{file:?} contains a double-quote character, which git's own mergetool integration can't handle \
-                 reliably — resolve this file manually instead."
-            ),
+            message: ierrp("err_tools.filename_double_quote", &[("file", &format!("{file:?}"))]),
         };
     }
     let repo = match crate::trust::open_repo(path) {
@@ -1154,7 +1151,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
             return conflict::ResolveResult {
                 ok: false,
                 remaining: 0,
-                message: format!("Cannot open repository: {}", e.message()),
+                message: ierrp("err_tools.cannot_open_repo_cap", &[("detail", e.message())]),
             }
         }
     };
@@ -1167,7 +1164,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
             return conflict::ResolveResult {
                 ok: false,
                 remaining: 0,
-                message: format!("cannot inspect repository state: {}", e.message()),
+                message: ierrp("err_tools.cannot_inspect_repo_state", &[("detail", e.message())]),
             }
         }
     };
@@ -1175,10 +1172,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
         return conflict::ResolveResult {
             ok: false,
             remaining: 0,
-            message: format!(
-                "Not inside a cherry-pick, merge, rebase, revert, stash, squash-merge, or patch-apply conflict \
-                 (repository state: {op}). Resolve {op} conflicts with git on the command line."
-            ),
+            message: ierrp("err_tools.not_in_conflict_op", &[("op", op)]),
         };
     }
     let tool = match resolve_merge_tool(path, configured) {
@@ -1187,7 +1181,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
             return conflict::ResolveResult {
                 ok: false,
                 remaining: 0,
-                message: format!("No external merge tool configured. {HINT}"),
+                message: ierr("err_tools.no_merge_tool"),
             }
         }
     };
@@ -1203,7 +1197,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
             return conflict::ResolveResult {
                 ok: false,
                 remaining: remaining_conflicts(path),
-                message: format!("Could not run git mergetool: {e}"),
+                message: ierrp("err_tools.could_not_run_mergetool", &[("detail", &e)]),
             }
         }
     };
@@ -1231,17 +1225,13 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
             return conflict::ResolveResult {
                 ok: false,
                 remaining,
-                message: format!(
-                    "The external tool exited successfully but didn't actually change {file} — nothing was \
-                     resolved. git may still have marked it as resolved in the index; use Abort to fully \
-                     restore the original conflict rather than continuing."
-                ),
+                message: ierrp("err_tools.tool_changed_nothing", &[("file", file)]),
             };
         }
         let message = if remaining == 0 {
-            format!("Resolved {file} with the external tool. All conflicts resolved — Continue to finish.")
+            ierrp("err_tools.resolved_all_done", &[("file", file)])
         } else {
-            format!("Resolved {file} with the external tool. {remaining} file(s) still conflicted.")
+            ierrp("err_tools.resolved_some_remaining", &[("file", file), ("remaining", &remaining.to_string())])
         };
         conflict::ResolveResult { ok: true, remaining, message }
     } else {
@@ -1249,7 +1239,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
         let message = if !stderr.is_empty() {
             stderr
         } else {
-            format!("The external tool did not report a successful resolution for {file}.")
+            ierrp("err_tools.tool_no_success", &[("file", file)])
         };
         conflict::ResolveResult { ok: false, remaining, message }
     }
@@ -1422,7 +1412,7 @@ mod tests {
     fn normalize_tool_invalid_charset_rejected() {
         let t = ExternalTool { name: "diff.tool".into(), cmd: None };
         let err = normalize_tool(Some(t)).unwrap_err();
-        assert!(err.contains("letters, digits"), "unexpected message: {err}");
+        assert!(err.contains("err_tools.tool_name_charset"), "unexpected message: {err}");
     }
 
     #[test]
@@ -1713,7 +1703,7 @@ mod tests {
         let dir = temp_dir("gen-fail");
         std::fs::create_dir_all(&dir).unwrap();
         let err = run_commit_msg_command(dir.to_str().unwrap(), "echo boom >&2; exit 3").unwrap_err();
-        assert!(err.contains("failed"), "got: {err}");
+        assert!(err.contains("err_tools.commit_command_failed"), "got: {err}");
         assert!(err.contains("boom"), "should surface the command's stderr, got: {err}");
     }
 
@@ -1723,7 +1713,7 @@ mod tests {
         let dir = temp_dir("gen-empty");
         std::fs::create_dir_all(&dir).unwrap();
         let err = run_commit_msg_command(dir.to_str().unwrap(), "true").unwrap_err();
-        assert!(err.to_lowercase().contains("no output"), "got: {err}");
+        assert!(err.contains("err_tools.commit_command_no_output"), "got: {err}");
     }
 
     #[cfg(unix)]
@@ -1739,7 +1729,7 @@ mod tests {
             "echo 'Error [ERR_USE_AFTER_CLOSE]: readline was closed' >&2; exit 1",
         )
         .unwrap_err();
-        assert!(err.to_lowercase().contains("interactive"), "should flag interactivity, got: {err}");
+        assert!(err.contains("err_tools.interactive_command"), "should flag interactivity, got: {err}");
         assert!(!err.contains("ERR_USE_AFTER_CLOSE"), "should not dump the raw node stack, got: {err}");
     }
 

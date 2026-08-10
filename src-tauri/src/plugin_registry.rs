@@ -36,6 +36,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, Wry};
 
+use crate::i18n_err::{ierr, ierrp};
+
 const FILE_NAME: &str = "plugins.json";
 const SCHEMA_VERSION: u32 = 1;
 
@@ -350,8 +352,9 @@ fn plugins_path(app: &AppHandle<Wry>) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_config_dir()
-        .map_err(|e| format!("Could not resolve app config dir: {e}"))?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create app config dir: {e}"))?;
+        .map_err(|e| ierrp("err_plugins.could_not_resolve_config_dir", &[("detail", &e.to_string())]))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| ierrp("err_plugins.could_not_create_config_dir", &[("detail", &e.to_string())]))?;
     Ok(dir.join(FILE_NAME))
 }
 
@@ -370,7 +373,12 @@ pub fn load_from(path: &Path) -> Result<Vec<Plugin>, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("Could not read {}: {e}", path.display())),
+        Err(e) => {
+            return Err(ierrp(
+                "err_plugins.could_not_read",
+                &[("path", &path.display().to_string()), ("detail", &e.to_string())],
+            ))
+        }
     };
     match serde_json::from_str::<PluginsFile>(&text) {
         Ok(file) => Ok(file.plugins),
@@ -405,12 +413,17 @@ fn plugins_lock() -> &'static std::sync::Mutex<()> {
 /// corrupt `plugins.json` behind.
 pub fn save_to(path: &Path, plugins: &[Plugin]) -> Result<(), String> {
     let file = PluginsFile { version: SCHEMA_VERSION, plugins: plugins.to_vec() };
-    let json = serde_json::to_string_pretty(&file).map_err(|e| format!("Could not serialize: {e}"))?;
+    let json = serde_json::to_string_pretty(&file)
+        .map_err(|e| ierrp("err_plugins.could_not_serialize", &[("detail", &e.to_string())]))?;
     let mut tmp_name = path.as_os_str().to_os_string();
     tmp_name.push(".tmp");
     let tmp_path = PathBuf::from(tmp_name);
-    std::fs::write(&tmp_path, &json).map_err(|e| format!("Could not write {}: {e}", tmp_path.display()))?;
-    std::fs::rename(&tmp_path, path).map_err(|e| format!("Could not finalize {}: {e}", path.display()))
+    std::fs::write(&tmp_path, &json).map_err(|e| {
+        ierrp("err_plugins.could_not_write", &[("path", &tmp_path.display().to_string()), ("detail", &e.to_string())])
+    })?;
+    std::fs::rename(&tmp_path, path).map_err(|e| {
+        ierrp("err_plugins.could_not_finalize", &[("path", &path.display().to_string()), ("detail", &e.to_string())])
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -437,16 +450,13 @@ fn is_valid_id(id: &str) -> bool {
 /// registry — see [`install_from`]). `pub` so the tests exercise it directly.
 pub fn validate_manifest(plugin: &Plugin) -> Result<(), String> {
     if !is_valid_id(&plugin.id) {
-        return Err(format!(
-            "Plugin id {:?} is invalid — it must start with a lowercase letter or digit and then contain only lowercase letters, digits, and '-'.",
-            plugin.id
-        ));
+        return Err(ierrp("err_plugins.plugin_id_invalid", &[("id", &format!("{:?}", plugin.id))]));
     }
     if plugin.name.trim().is_empty() {
-        return Err("Plugin manifest is missing a non-empty name.".into());
+        return Err(ierr("err_plugins.missing_name"));
     }
     if plugin.version.trim().is_empty() {
-        return Err("Plugin manifest is missing a non-empty version.".into());
+        return Err(ierr("err_plugins.missing_version"));
     }
     // Each command/hook must declare EXACTLY ONE of a non-empty shell `run` or a
     // non-empty Luau `handler` (PER-56) — never neither, never both. A `handler`
@@ -458,34 +468,30 @@ pub fn validate_manifest(plugin: &Plugin) -> Result<(), String> {
         let has_run = non_empty(&cmd.run);
         let has_handler = non_empty(&cmd.handler);
         if has_run == has_handler {
-            return Err(format!(
-                "Plugin command {:?} must declare exactly one of a non-empty `run` (shell) or a non-empty `handler` (Luau) — {}.",
-                cmd.id,
-                if has_run { "it declares both" } else { "it declares neither" }
-            ));
+            let key = if has_run {
+                "err_plugins.cmd_exactly_one_both"
+            } else {
+                "err_plugins.cmd_exactly_one_neither"
+            };
+            return Err(ierrp(key, &[("id", &format!("{:?}", cmd.id))]));
         }
         if has_handler && !has_lua {
-            return Err(format!(
-                "Plugin command {:?} declares a Luau `handler` but the plugin declares no `lua` script file.",
-                cmd.id
-            ));
+            return Err(ierrp("err_plugins.cmd_handler_no_lua", &[("id", &format!("{:?}", cmd.id))]));
         }
     }
     for hook in &plugin.hooks {
         let has_run = non_empty(&hook.run);
         let has_handler = non_empty(&hook.handler);
         if has_run == has_handler {
-            return Err(format!(
-                "Plugin hook for event {:?} must declare exactly one of a non-empty `run` (shell) or a non-empty `handler` (Luau) — {}.",
-                hook.event,
-                if has_run { "it declares both" } else { "it declares neither" }
-            ));
+            let key = if has_run {
+                "err_plugins.hook_exactly_one_both"
+            } else {
+                "err_plugins.hook_exactly_one_neither"
+            };
+            return Err(ierrp(key, &[("event", &format!("{:?}", hook.event))]));
         }
         if has_handler && !has_lua {
-            return Err(format!(
-                "Plugin hook for event {:?} declares a Luau `handler` but the plugin declares no `lua` script file.",
-                hook.event
-            ));
+            return Err(ierrp("err_plugins.hook_handler_no_lua", &[("event", &format!("{:?}", hook.event))]));
         }
     }
     // Tama skin (PER-47): every pose key must be a built-in pose, and every
@@ -499,20 +505,27 @@ pub fn validate_manifest(plugin: &Plugin) -> Result<(), String> {
         // ([`build_skin`]) into `[VOICE_PITCH_MIN, VOICE_PITCH_MAX]`.
         if let Some(pitch) = tama.voice_pitch {
             if !pitch.is_finite() {
-                return Err(format!(
-                    "Plugin tama voicePitch {pitch} is not a finite number — it must be a finite value (a finite out-of-range value is clamped to [{VOICE_PITCH_MIN}, {VOICE_PITCH_MAX}])."
+                return Err(ierrp(
+                    "err_plugins.tama_voice_pitch_not_finite",
+                    &[
+                        ("pitch", &pitch.to_string()),
+                        ("min", &VOICE_PITCH_MIN.to_string()),
+                        ("max", &VOICE_PITCH_MAX.to_string()),
+                    ],
                 ));
             }
         }
         for (key, rel) in &tama.poses {
             if !VALID_TAMA_POSE_KEYS.contains(&key.as_str()) {
-                return Err(format!(
-                    "Plugin tama pose key {key:?} is not a built-in pose — it must be one of {VALID_TAMA_POSE_KEYS:?}.",
+                return Err(ierrp(
+                    "err_plugins.tama_pose_key_unknown",
+                    &[("key", &format!("{key:?}")), ("keys", &format!("{VALID_TAMA_POSE_KEYS:?}"))],
                 ));
             }
             if Path::new(rel).is_absolute() || rel.contains("..") {
-                return Err(format!(
-                    "Plugin tama pose {key:?} has an unsafe asset path {rel:?} — it must be a relative path inside the plugin dir (no leading '/' and no '..').",
+                return Err(ierrp(
+                    "err_plugins.tama_pose_unsafe_path",
+                    &[("key", &format!("{key:?}")), ("path", &format!("{rel:?}"))],
                 ));
             }
         }
@@ -527,56 +540,53 @@ pub fn validate_manifest(plugin: &Plugin) -> Result<(), String> {
     let mut seen_panel_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for panel in &plugin.panels {
         if !is_valid_id(&panel.id) {
-            return Err(format!(
-                "Plugin panel id {:?} is invalid — it must start with a lowercase letter or digit and then contain only lowercase letters, digits, and '-'.",
-                panel.id
-            ));
+            return Err(ierrp("err_plugins.panel_id_invalid", &[("id", &format!("{:?}", panel.id))]));
         }
         if !seen_panel_ids.insert(panel.id.as_str()) {
-            return Err(format!(
-                "Plugin has a duplicate panel id {:?} — panel ids must be unique within a plugin.",
-                panel.id
-            ));
+            return Err(ierrp("err_plugins.panel_id_duplicate", &[("id", &format!("{:?}", panel.id))]));
         }
         if panel.title.trim().is_empty() {
-            return Err(format!("Plugin panel {:?} is missing a non-empty title.", panel.id));
+            return Err(ierrp("err_plugins.panel_missing_title", &[("id", &format!("{:?}", panel.id))]));
         }
         for item in &panel.items {
             match item {
                 PanelItem::Text { text } => {
                     if text.trim().is_empty() {
-                        return Err(format!("Plugin panel {:?} has a text item with empty text.", panel.id));
+                        return Err(ierrp("err_plugins.panel_text_empty", &[("id", &format!("{:?}", panel.id))]));
                     }
                 }
                 PanelItem::Heading { text } => {
                     if text.trim().is_empty() {
-                        return Err(format!("Plugin panel {:?} has a heading item with empty text.", panel.id));
+                        return Err(ierrp("err_plugins.panel_heading_empty", &[("id", &format!("{:?}", panel.id))]));
                     }
                 }
                 PanelItem::Button { label, command } => {
                     if label.trim().is_empty() {
-                        return Err(format!("Plugin panel {:?} has a button with an empty label.", panel.id));
+                        return Err(ierrp(
+                            "err_plugins.panel_button_empty_label",
+                            &[("id", &format!("{:?}", panel.id))],
+                        ));
                     }
                     if !command_ids.contains(command.as_str()) {
-                        return Err(format!(
-                            "Plugin panel {:?} has a button referencing command {command:?}, which is not a command in this plugin.",
-                            panel.id
+                        return Err(ierrp(
+                            "err_plugins.panel_button_missing_command",
+                            &[("id", &format!("{:?}", panel.id)), ("command", &format!("{command:?}"))],
                         ));
                     }
                 }
                 PanelItem::CommandOutput { command, label } => {
                     if let Some(label) = label {
                         if label.trim().is_empty() {
-                            return Err(format!(
-                                "Plugin panel {:?} has a command-output item with an empty label.",
-                                panel.id
+                            return Err(ierrp(
+                                "err_plugins.panel_command_output_empty_label",
+                                &[("id", &format!("{:?}", panel.id))],
                             ));
                         }
                     }
                     if !command_ids.contains(command.as_str()) {
-                        return Err(format!(
-                            "Plugin panel {:?} has a command-output referencing command {command:?}, which is not a command in this plugin.",
-                            panel.id
+                        return Err(ierrp(
+                            "err_plugins.panel_command_output_missing_command",
+                            &[("id", &format!("{:?}", panel.id)), ("command", &format!("{command:?}"))],
                         ));
                     }
                 }
@@ -593,34 +603,48 @@ pub fn validate_manifest(plugin: &Plugin) -> Result<(), String> {
 /// layers those on top. `pub` for direct unit testing.
 pub fn read_and_validate_manifest(source: &Path) -> Result<Plugin, String> {
     let manifest = if source.is_dir() { source.join("plugin.json") } else { source.to_path_buf() };
-    let meta = std::fs::metadata(&manifest).map_err(|e| format!("Could not read {}: {e}", manifest.display()))?;
+    let meta = std::fs::metadata(&manifest).map_err(|e| {
+        ierrp("err_plugins.could_not_read", &[("path", &manifest.display().to_string()), ("detail", &e.to_string())])
+    })?;
     // Must be a REGULAR file. A FIFO/device/symlink-to-device reports len()==0
     // (slipping past the size cap) and could then block indefinitely or stream
     // unbounded bytes into the parser.
     if !meta.is_file() {
-        return Err(format!("Plugin manifest {} is not a regular file.", manifest.display()));
+        return Err(ierrp(
+            "err_plugins.manifest_not_regular_file",
+            &[("path", &manifest.display().to_string())],
+        ));
     }
     if meta.len() > MAX_MANIFEST_BYTES {
-        return Err(format!(
-            "Plugin manifest {} is too large ({} bytes; the limit is {MAX_MANIFEST_BYTES} bytes).",
-            manifest.display(),
-            meta.len()
+        return Err(ierrp(
+            "err_plugins.manifest_too_large",
+            &[
+                ("path", &manifest.display().to_string()),
+                ("bytes", &meta.len().to_string()),
+                ("limit", &MAX_MANIFEST_BYTES.to_string()),
+            ],
         ));
     }
     // Read through a hard byte cap (belt-and-suspenders against a TOCTOU grow
     // between the metadata check and the read): never hand more than the cap to
     // the parser, even if the file changed size since the check above.
     use std::io::Read;
-    let file = std::fs::File::open(&manifest).map_err(|e| format!("Could not read {}: {e}", manifest.display()))?;
+    let file = std::fs::File::open(&manifest).map_err(|e| {
+        ierrp("err_plugins.could_not_read", &[("path", &manifest.display().to_string()), ("detail", &e.to_string())])
+    })?;
     let mut text = String::new();
-    file.take(MAX_MANIFEST_BYTES + 1)
-        .read_to_string(&mut text)
-        .map_err(|e| format!("Could not read {}: {e}", manifest.display()))?;
+    file.take(MAX_MANIFEST_BYTES + 1).read_to_string(&mut text).map_err(|e| {
+        ierrp("err_plugins.could_not_read", &[("path", &manifest.display().to_string()), ("detail", &e.to_string())])
+    })?;
     if text.len() as u64 > MAX_MANIFEST_BYTES {
-        return Err(format!("Plugin manifest {} is too large (limit {MAX_MANIFEST_BYTES} bytes).", manifest.display()));
+        return Err(ierrp(
+            "err_plugins.manifest_too_large_limit",
+            &[("path", &manifest.display().to_string()), ("limit", &MAX_MANIFEST_BYTES.to_string())],
+        ));
     }
-    let mut plugin: Plugin =
-        serde_json::from_str(&text).map_err(|e| format!("{} is not a valid plugin manifest: {e}", manifest.display()))?;
+    let mut plugin: Plugin = serde_json::from_str(&text).map_err(|e| {
+        ierrp("err_plugins.manifest_invalid", &[("path", &manifest.display().to_string()), ("detail", &e.to_string())])
+    })?;
     validate_manifest(&plugin)?;
     // Capture the plugin's SOURCE directory (PER-47): the CANONICALIZED parent
     // of its manifest file, so a later skin load resolves relative asset paths
@@ -645,7 +669,7 @@ pub fn install_from(plugins_path: &Path, source: &Path) -> Result<Plugin, String
     let plugin = read_and_validate_manifest(source)?;
     let mut plugins = load_from(plugins_path)?;
     if plugins.iter().any(|p| p.id == plugin.id) {
-        return Err(format!("A plugin with id {:?} is already installed.", plugin.id));
+        return Err(ierrp("err_plugins.already_installed", &[("id", &format!("{:?}", plugin.id))]));
     }
     plugins.push(plugin.clone());
     save_to(plugins_path, &plugins)?;
@@ -661,7 +685,7 @@ pub fn set_enabled_in(plugins: &mut [Plugin], id: &str, enabled: bool) -> Result
             p.enabled = enabled;
             Ok(())
         }
-        None => Err(format!("No plugin with id {id:?} is installed.")),
+        None => Err(ierrp("err_plugins.no_plugin_with_id", &[("id", &format!("{id:?}"))])),
     }
 }
 
@@ -671,7 +695,7 @@ pub fn remove_from(plugins: &mut Vec<Plugin>, id: &str) -> Result<(), String> {
     let before = plugins.len();
     plugins.retain(|p| p.id != id);
     if plugins.len() == before {
-        return Err(format!("No plugin with id {id:?} is installed."));
+        return Err(ierrp("err_plugins.no_plugin_with_id", &[("id", &format!("{id:?}"))]));
     }
     Ok(())
 }
@@ -716,59 +740,78 @@ pub fn find_command(app: &AppHandle<Wry>, plugin_id: &str, command_id: &str) -> 
 /// failure is an `Err` the dispatcher surfaces as the command/hook failing (a
 /// handler with no loadable script cannot run).
 pub fn read_plugin_lua(dir: Option<&str>, lua: Option<&str>) -> Result<String, String> {
-    let dir = dir.ok_or_else(|| "Plugin has no resolvable source directory for its Luau script.".to_string())?;
+    let dir = dir.ok_or_else(|| ierr("err_plugins.lua_no_source_dir"))?;
     let rel = lua
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| "Plugin declares no `lua` script file.".to_string())?;
+        .ok_or_else(|| ierr("err_plugins.lua_no_script_file"))?;
 
     // String-level safety first (mirrors build_skin): reject an absolute path or
     // any `..` before touching the filesystem, and require the `.lua` extension.
     let rel_path = Path::new(rel);
     if rel_path.is_absolute() || rel.contains("..") {
-        return Err(format!(
-            "Plugin `lua` path {rel:?} is unsafe — it must be a relative path inside the plugin dir (no leading '/' and no '..')."
-        ));
+        return Err(ierrp("err_plugins.lua_unsafe_path", &[("path", &format!("{rel:?}"))]));
     }
     if rel_path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() != Some("lua") {
-        return Err(format!("Plugin `lua` path {rel:?} must name a `.lua` file."));
+        return Err(ierrp("err_plugins.lua_not_lua_extension", &[("path", &format!("{rel:?}"))]));
     }
 
     // Canonicalize the dir and the resolved file, then enforce containment — the
     // single SECURITY-CRITICAL check (see asset_is_within_dir's doc) that catches
     // both traversal and a symlink pointing outside the plugin dir.
     let canonical_dir = std::fs::canonicalize(dir)
-        .map_err(|e| format!("Cannot resolve plugin source dir {dir:?}: {e}"))?;
+        .map_err(|e| ierrp("err_plugins.lua_cannot_resolve_dir", &[("dir", &format!("{dir:?}")), ("detail", &e.to_string())]))?;
     let resolved = canonical_dir.join(rel_path);
-    let canonical_file = std::fs::canonicalize(&resolved)
-        .map_err(|e| format!("Cannot read plugin Luau script {}: {e}", resolved.display()))?;
+    let canonical_file = std::fs::canonicalize(&resolved).map_err(|e| {
+        ierrp("err_plugins.lua_cannot_read", &[("path", &resolved.display().to_string()), ("detail", &e.to_string())])
+    })?;
     if !asset_is_within_dir(&canonical_dir, &canonical_file) {
-        return Err(format!("Plugin Luau script {rel:?} escapes the plugin directory — refusing to load it."));
+        return Err(ierrp("err_plugins.lua_escapes_dir", &[("path", &format!("{rel:?}"))]));
     }
 
-    let meta = std::fs::metadata(&canonical_file)
-        .map_err(|e| format!("Cannot read plugin Luau script {}: {e}", canonical_file.display()))?;
+    let meta = std::fs::metadata(&canonical_file).map_err(|e| {
+        ierrp(
+            "err_plugins.lua_cannot_read",
+            &[("path", &canonical_file.display().to_string()), ("detail", &e.to_string())],
+        )
+    })?;
     if !meta.is_file() {
-        return Err(format!("Plugin Luau script {} is not a regular file.", canonical_file.display()));
+        return Err(ierrp(
+            "err_plugins.lua_not_regular_file",
+            &[("path", &canonical_file.display().to_string())],
+        ));
     }
     if meta.len() > MAX_LUA_BYTES {
-        return Err(format!(
-            "Plugin Luau script {} is too large ({} bytes; the limit is {MAX_LUA_BYTES} bytes).",
-            canonical_file.display(),
-            meta.len()
+        return Err(ierrp(
+            "err_plugins.lua_too_large",
+            &[
+                ("path", &canonical_file.display().to_string()),
+                ("bytes", &meta.len().to_string()),
+                ("limit", &MAX_LUA_BYTES.to_string()),
+            ],
         ));
     }
     // Read through a hard byte cap (belt-and-suspenders against a TOCTOU grow),
     // exactly like read_and_validate_manifest.
     use std::io::Read;
-    let file = std::fs::File::open(&canonical_file)
-        .map_err(|e| format!("Cannot read plugin Luau script {}: {e}", canonical_file.display()))?;
+    let file = std::fs::File::open(&canonical_file).map_err(|e| {
+        ierrp(
+            "err_plugins.lua_cannot_read",
+            &[("path", &canonical_file.display().to_string()), ("detail", &e.to_string())],
+        )
+    })?;
     let mut src = String::new();
-    file.take(MAX_LUA_BYTES + 1)
-        .read_to_string(&mut src)
-        .map_err(|e| format!("Cannot read plugin Luau script {}: {e}", canonical_file.display()))?;
+    file.take(MAX_LUA_BYTES + 1).read_to_string(&mut src).map_err(|e| {
+        ierrp(
+            "err_plugins.lua_cannot_read",
+            &[("path", &canonical_file.display().to_string()), ("detail", &e.to_string())],
+        )
+    })?;
     if src.len() as u64 > MAX_LUA_BYTES {
-        return Err(format!("Plugin Luau script {} is too large (limit {MAX_LUA_BYTES} bytes).", canonical_file.display()));
+        return Err(ierrp(
+            "err_plugins.lua_too_large_limit",
+            &[("path", &canonical_file.display().to_string()), ("limit", &MAX_LUA_BYTES.to_string())],
+        ));
     }
     Ok(src)
 }
@@ -786,7 +829,7 @@ pub fn plugin_lua_source(app: &AppHandle<Wry>, plugin_id: &str) -> Result<String
     let plugin = load_plugins(app)?
         .into_iter()
         .find(|p| p.id == plugin_id)
-        .ok_or_else(|| format!("No plugin with id {plugin_id:?} is installed."))?;
+        .ok_or_else(|| ierrp("err_plugins.no_plugin_with_id", &[("id", &format!("{plugin_id:?}"))]))?;
     load_plugin_lua_source(&plugin)
 }
 
@@ -994,9 +1037,9 @@ pub async fn load_plugin_skin(app: AppHandle<Wry>, plugin_id: String) -> Result<
         let plugin = load_from(&store)?
             .into_iter()
             .find(|p| p.id == plugin_id)
-            .ok_or_else(|| format!("No plugin with id {plugin_id:?} is installed."))?;
+            .ok_or_else(|| ierrp("err_plugins.no_plugin_with_id", &[("id", &format!("{plugin_id:?}"))]))?;
         if !plugin.enabled {
-            return Err(format!("Plugin {plugin_id:?} is disabled."));
+            return Err(ierrp("err_plugins.plugin_disabled", &[("id", &format!("{plugin_id:?}"))]));
         }
         Ok(build_skin(&plugin))
     })
@@ -1167,7 +1210,7 @@ mod tests {
             let mut p = sample_plugin("placeholder");
             p.id = bad.to_string();
             let err = validate_manifest(&p).unwrap_err();
-            assert!(err.contains("invalid"), "{bad:?} should be rejected, got: {err}");
+            assert!(err.contains("err_plugins.plugin_id_invalid"), "{bad:?} should be rejected, got: {err}");
         }
     }
 
@@ -1175,16 +1218,16 @@ mod tests {
     fn empty_name_version_or_run_is_rejected() {
         let mut p = sample_plugin("ok");
         p.name = "   ".into();
-        assert!(validate_manifest(&p).unwrap_err().contains("name"));
+        assert!(validate_manifest(&p).unwrap_err().contains("err_plugins.missing_name"));
 
         let mut p = sample_plugin("ok");
         p.version = "".into();
-        assert!(validate_manifest(&p).unwrap_err().contains("version"));
+        assert!(validate_manifest(&p).unwrap_err().contains("err_plugins.missing_version"));
 
         let mut p = sample_plugin("ok");
         p.commands[0].run = Some("  ".into());
         // An empty run with no handler => "neither" branch of the exactly-one rule.
-        assert!(validate_manifest(&p).unwrap_err().contains("run"));
+        assert!(validate_manifest(&p).unwrap_err().contains("err_plugins.cmd_exactly_one_neither"));
     }
 
     #[test]
@@ -1206,7 +1249,7 @@ mod tests {
 
         // Same id again => rejected, and the registry is unchanged.
         let err = install_from(&store, &manifest).expect_err("a duplicate id must be rejected");
-        assert!(err.contains("already installed"), "got: {err}");
+        assert!(err.contains("err_plugins.already_installed"), "got: {err}");
         assert_eq!(load_from(&store).unwrap().len(), 1, "a rejected install must not append");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1242,7 +1285,7 @@ mod tests {
         std::fs::write(&manifest, format!(r#"{{"id":"big","name":"Big","version":"1.0.0","description":"{big}"}}"#))
             .unwrap();
         let err = read_and_validate_manifest(&manifest).expect_err("an oversize manifest must be rejected");
-        assert!(err.contains("too large"), "got: {err}");
+        assert!(err.contains("err_plugins.manifest_too_large"), "got: {err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1290,7 +1333,7 @@ mod tests {
         assert!(plugins[1].enabled);
 
         let err = set_enabled_in(&mut plugins, "ghost", false).unwrap_err();
-        assert!(err.contains("No plugin with id"), "got: {err}");
+        assert!(err.contains("err_plugins.no_plugin_with_id"), "got: {err}");
     }
 
     #[test]
@@ -1301,7 +1344,7 @@ mod tests {
         assert_eq!(plugins[0].id, "beta");
 
         let err = remove_from(&mut plugins, "alpha").unwrap_err();
-        assert!(err.contains("No plugin with id"), "removing a missing id should error, got: {err}");
+        assert!(err.contains("err_plugins.no_plugin_with_id"), "removing a missing id should error, got: {err}");
     }
 
     #[test]
@@ -1409,7 +1452,7 @@ mod tests {
         poses.insert("wiggle".to_string(), "assets/wiggle.webp".to_string());
         p.tama = Some(PluginTama { poses, copy: HashMap::new(), voice_pitch: None });
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("wiggle") && err.contains("built-in pose"), "got: {err}");
+        assert!(err.contains("wiggle") && err.contains("err_plugins.tama_pose_key_unknown"), "got: {err}");
     }
 
     #[test]
@@ -1433,7 +1476,7 @@ mod tests {
         poses.insert("curious".to_string(), "../../etc/passwd".to_string());
         p.tama = Some(PluginTama { poses, copy: HashMap::new(), voice_pitch: None });
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("unsafe asset path"), "dotdot path should be rejected, got: {err}");
+        assert!(err.contains("err_plugins.tama_pose_unsafe_path"), "dotdot path should be rejected, got: {err}");
 
         // Absolute path.
         let mut p = sample_plugin("skin");
@@ -1444,7 +1487,7 @@ mod tests {
         poses.insert("curious".to_string(), r"C:\Windows\system32\x.webp".to_string());
         p.tama = Some(PluginTama { poses, copy: HashMap::new(), voice_pitch: None });
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("unsafe asset path"), "absolute path should be rejected, got: {err}");
+        assert!(err.contains("err_plugins.tama_pose_unsafe_path"), "absolute path should be rejected, got: {err}");
     }
 
     #[test]
@@ -1651,7 +1694,7 @@ mod tests {
             let mut p = sample_plugin("skin");
             p.tama = Some(PluginTama { poses: HashMap::new(), copy: HashMap::new(), voice_pitch: Some(bad) });
             let err = validate_manifest(&p).unwrap_err();
-            assert!(err.contains("voicePitch") && err.contains("finite"), "{bad} should be rejected, got: {err}");
+            assert!(err.contains("err_plugins.tama_voice_pitch_not_finite"), "{bad} should be rejected, got: {err}");
         }
     }
 
@@ -1749,7 +1792,10 @@ mod tests {
             items: vec![PanelItem::Button { label: "Go".into(), command: "does-not-exist".into() }],
         }];
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("does-not-exist") && err.contains("not a command"), "got: {err}");
+        assert!(
+            err.contains("does-not-exist") && err.contains("err_plugins.panel_button_missing_command"),
+            "got: {err}"
+        );
 
         // A command-output naming a dangling command is likewise rejected.
         let mut p = sample_plugin("panely");
@@ -1759,7 +1805,10 @@ mod tests {
             items: vec![PanelItem::CommandOutput { command: "ghost".into(), label: None }],
         }];
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("ghost") && err.contains("not a command"), "got: {err}");
+        assert!(
+            err.contains("ghost") && err.contains("err_plugins.panel_command_output_missing_command"),
+            "got: {err}"
+        );
 
         // A button/command-output naming the plugin's OWN existing command validates.
         let mut p = sample_plugin("panely");
@@ -1783,19 +1832,19 @@ mod tests {
             PluginPanel { id: "dup".into(), title: "Two".into(), items: vec![] },
         ];
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("duplicate panel id"), "got: {err}");
+        assert!(err.contains("err_plugins.panel_id_duplicate"), "got: {err}");
 
         // Invalid panel id charset (same rule as a plugin/command id).
         let mut p = sample_plugin("panely");
         p.panels = vec![PluginPanel { id: "Bad Id".into(), title: "X".into(), items: vec![] }];
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("panel id") && err.contains("invalid"), "got: {err}");
+        assert!(err.contains("err_plugins.panel_id_invalid"), "got: {err}");
 
         // Empty panel title.
         let mut p = sample_plugin("panely");
         p.panels = vec![PluginPanel { id: "ok".into(), title: "   ".into(), items: vec![] }];
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("title"), "got: {err}");
+        assert!(err.contains("err_plugins.panel_missing_title"), "got: {err}");
 
         // Empty required item text/label.
         let mut p = sample_plugin("panely");
@@ -1805,7 +1854,7 @@ mod tests {
             items: vec![PanelItem::Text { text: "  ".into() }],
         }];
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("empty text"), "got: {err}");
+        assert!(err.contains("err_plugins.panel_text_empty"), "got: {err}");
 
         let mut p = sample_plugin("panely");
         p.panels = vec![PluginPanel {
@@ -1814,7 +1863,7 @@ mod tests {
             items: vec![PanelItem::Button { label: "  ".into(), command: "greet".into() }],
         }];
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("empty label"), "got: {err}");
+        assert!(err.contains("err_plugins.panel_button_empty_label"), "got: {err}");
     }
 
     // -- Luau scripting (PER-56) ---------------------------------------------
@@ -1826,7 +1875,7 @@ mod tests {
         p.commands[0].run = None;
         p.commands[0].handler = None;
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("exactly one") && err.contains("neither"), "got: {err}");
+        assert!(err.contains("err_plugins.cmd_exactly_one_neither"), "got: {err}");
 
         // A command declaring BOTH => rejected ("both"). (lua present so the
         // handler-requires-lua rule isn't what trips it.)
@@ -1835,7 +1884,7 @@ mod tests {
         p.commands[0].run = Some("echo hi".into());
         p.commands[0].handler = Some("greet".into());
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("exactly one") && err.contains("both"), "got: {err}");
+        assert!(err.contains("err_plugins.cmd_exactly_one_both"), "got: {err}");
 
         // A HOOK declaring both is rejected the same way.
         let mut p = sample_plugin("lua");
@@ -1843,7 +1892,7 @@ mod tests {
         p.hooks[0].run = Some("echo done".into());
         p.hooks[0].handler = Some("onEvent".into());
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("exactly one") && err.contains("both"), "got: {err}");
+        assert!(err.contains("err_plugins.hook_exactly_one_both"), "got: {err}");
 
         // The valid shapes: a pure-run command (the sample default) and a
         // pure-handler command backed by a lua file both pass.
@@ -1867,7 +1916,7 @@ mod tests {
         p.commands[0].run = None;
         p.commands[0].handler = Some("greet".into());
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("handler") && err.contains("no `lua`"), "got: {err}");
+        assert!(err.contains("err_plugins.cmd_handler_no_lua"), "got: {err}");
 
         // Same for a hook.
         let mut p = sample_plugin("lua");
@@ -1875,7 +1924,7 @@ mod tests {
         p.hooks[0].run = None;
         p.hooks[0].handler = Some("onEvent".into());
         let err = validate_manifest(&p).unwrap_err();
-        assert!(err.contains("handler") && err.contains("no `lua`"), "got: {err}");
+        assert!(err.contains("err_plugins.hook_handler_no_lua"), "got: {err}");
     }
 
     #[test]
@@ -1938,12 +1987,12 @@ mod tests {
 
         // A `..` traversal is rejected at the string level (before any FS touch).
         let err = read_plugin_lua(Some(&canon), Some("../secret.lua")).unwrap_err();
-        assert!(err.contains("unsafe"), "a .. path must be rejected, got: {err}");
+        assert!(err.contains("err_plugins.lua_unsafe_path"), "a .. path must be rejected, got: {err}");
 
         // A non-.lua extension is rejected.
         std::fs::write(plugin_dir.join("main.txt"), b"nope").unwrap();
         let err = read_plugin_lua(Some(&canon), Some("main.txt")).unwrap_err();
-        assert!(err.contains(".lua"), "a non-.lua file must be rejected, got: {err}");
+        assert!(err.contains("err_plugins.lua_not_lua_extension"), "a non-.lua file must be rejected, got: {err}");
 
         // No dir / no lua => descriptive errors, never a panic.
         assert!(read_plugin_lua(None, Some("main.lua")).is_err());
@@ -1967,7 +2016,7 @@ mod tests {
         let canon = std::fs::canonicalize(&plugin_dir).unwrap().to_string_lossy().into_owned();
 
         let err = read_plugin_lua(Some(&canon), Some("escape.lua")).unwrap_err();
-        assert!(err.contains("escapes"), "a symlink escaping the dir must be rejected, got: {err}");
+        assert!(err.contains("err_plugins.lua_escapes_dir"), "a symlink escaping the dir must be rejected, got: {err}");
 
         let _ = std::fs::remove_dir_all(&base);
     }

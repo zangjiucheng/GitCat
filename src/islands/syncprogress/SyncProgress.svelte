@@ -1,6 +1,7 @@
 <script lang="ts">
   import { syncProgressCtrl } from "./syncprogress.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   let logEl: HTMLElement | undefined = $state();
 
@@ -23,25 +24,25 @@
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.thinking} alt="Tama, working" /></div>
       <div>
-        <h3>{syncProgressCtrl.title || "Syncing…"}</h3>
-        <p>Live output from git. This can take a while on a large remote or a WSL repo — you can close this and it keeps running.</p>
+        <h3>{syncProgressCtrl.title || t("syncprogress.title")}</h3>
+        <p>{t("syncprogress.body")}</p>
       </div>
     </div>
     <div class="modal-body">
       {#if syncProgressCtrl.lines.length}
         <pre class="mono sync-log" bind:this={logEl}>{syncProgressCtrl.lines.join("\n")}</pre>
       {:else if !syncProgressCtrl.done}
-        <div class="mut sync-empty">Starting… <span class="spinner"></span></div>
+        <div class="mut sync-empty">{t("syncprogress.starting")} <span class="spinner"></span></div>
       {/if}
 
       {#if syncProgressCtrl.error}
         <div class="pl-err sync-status">{syncProgressCtrl.error}</div>
       {:else if syncProgressCtrl.done}
-        <div class="mut sync-status">Done.</div>
+        <div class="mut sync-status">{t("syncprogress.done")}</div>
       {/if}
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" onclick={() => syncProgressCtrl.close()}>Close</button>
+      <button class="btn ghost" onclick={() => syncProgressCtrl.close()}>{t("common.close")}</button>
     </div>
   </div>
 </div>

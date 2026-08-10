@@ -6,6 +6,7 @@
   // ExternalTools); the two-pane split + list rows are the only bespoke styling
   // (the scoped style block below). All state + management is in plugins.svelte.ts.
   import { pluginsCtrl, pluginContribution } from "./plugins.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import Trash2 from "@lucide/svelte/icons/trash-2";
 
   function onKeydown(e: KeyboardEvent) {
@@ -19,22 +20,22 @@
   <div class="modal plugins-modal">
     <div class="modal-head">
       <div>
-        <h3>Plugins</h3>
-        <p>Enable, disable, or remove installed plugins — or install a new one from a file. GitCat only runs what a plugin declares; it never connects anywhere itself.</p>
+        <h3>{t("plugins.title")}</h3>
+        <p>{t("plugins.subtitle")}</p>
       </div>
     </div>
 
     <div class="pl-toolbar">
       <input
         class="pl-search"
-        placeholder="Filter plugins&#8230;"
+        placeholder={t("plugins.filter_ph")}
         autocomplete="off"
         spellcheck="false"
-        aria-label="Filter plugins"
+        aria-label={t("plugins.filter_aria")}
         bind:value={pluginsCtrl.filter}
       />
       <button class="btn" disabled={pluginsCtrl.pluginInstalling} onclick={() => pluginsCtrl.installPlugin()}>
-        {#if pluginsCtrl.pluginInstalling}<span class="spinner"></span> Installing&#8230;{:else}&#65291; Install from file&#8230;{/if}
+        {#if pluginsCtrl.pluginInstalling}<span class="spinner"></span> {t("plugins.installing")}{:else}&#65291; {t("plugins.install_from_file")}{/if}
       </button>
     </div>
     {#if pluginsCtrl.pluginsError}
@@ -43,17 +44,17 @@
 
     <div class="modal-body pl-body">
       {#if pluginsCtrl.pluginsLoading && pluginsCtrl.plugins.length === 0}
-        <div class="log-row" style="padding:24px"><span class="spinner"></span><span class="msg mut">Loading plugins&#8230;</span></div>
+        <div class="log-row" style="padding:24px"><span class="spinner"></span><span class="msg mut">{t("plugins.loading")}</span></div>
       {:else if pluginsCtrl.plugins.length === 0}
         <div class="pl-empty">
-          <p class="mut" style="font-weight:600">No plugins installed yet.</p>
+          <p class="mut" style="font-weight:600">{t("plugins.empty_title")}</p>
           <p class="mut" style="font-size:11.5px;max-width:380px;text-align:center;line-height:1.55">
-            A GitCat plugin is a <code>plugin.json</code> manifest. It can add &#8984;K commands, run on repository events, contribute panels, or reskin Tama. Install one with the button above.
+            {t("plugins.empty_desc_pre")}<code>plugin.json</code>{t("plugins.empty_desc_post")}
           </p>
         </div>
       {:else}
         <div class="pl-split">
-          <div class="pl-list" role="listbox" aria-label="Installed plugins" tabindex="-1">
+          <div class="pl-list" role="listbox" aria-label={t("plugins.installed_aria")} tabindex="-1">
             {#each pluginsCtrl.filteredPlugins as p (p.id)}
               <button
                 type="button"
@@ -64,14 +65,14 @@
                 aria-selected={pluginsCtrl.selectedId === p.id}
                 onclick={() => pluginsCtrl.select(p.id)}
               >
-                <span class="pl-dot" class:on={p.enabled !== false} title={p.enabled !== false ? "Enabled" : "Disabled"}></span>
+                <span class="pl-dot" class:on={p.enabled !== false} title={p.enabled !== false ? t("plugins.enabled") : t("plugins.disabled")}></span>
                 <span class="pl-row-main">
                   <span class="pl-row-name">{p.name}</span>
                   <span class="pl-row-ver mut">v{p.version}</span>
                 </span>
               </button>
             {:else}
-              <p class="mut" style="padding:14px 12px;font-size:12px">No plugins match &#8220;{pluginsCtrl.filter.trim()}&#8221;.</p>
+              <p class="mut" style="padding:14px 12px;font-size:12px">{t("plugins.no_match", { q: pluginsCtrl.filter.trim() })}</p>
             {/each}
           </div>
 
@@ -85,26 +86,26 @@
               </div>
               {#if p.description}<p class="pl-detail-desc">{p.description}</p>{/if}
 
-              <div class="d-lab" style="margin-top:16px">Contributes</div>
+              <div class="d-lab" style="margin-top:16px">{t("plugins.contributes")}</div>
               <ul class="pl-contrib">
-                {#if c.commands > 0}<li>{c.commands} command{c.commands === 1 ? "" : "s"} <span class="mut">(&#8984;K palette)</span></li>{/if}
-                {#if c.hooks > 0}<li>{c.hooks} lifecycle hook{c.hooks === 1 ? "" : "s"}</li>{/if}
-                {#if c.panels > 0}<li>{c.panels} panel{c.panels === 1 ? "" : "s"}</li>{/if}
-                {#if c.lua}<li>A Luau handler script</li>{/if}
-                {#if c.tama}<li>A Tama skin (look &amp; voice)</li>{/if}
+                {#if c.commands > 0}<li>{c.commands === 1 ? t("plugins.contrib_commands_one", { n: c.commands }) : t("plugins.contrib_commands_other", { n: c.commands })} <span class="mut">{t("plugins.contrib_commands_palette")}</span></li>{/if}
+                {#if c.hooks > 0}<li>{c.hooks === 1 ? t("plugins.contrib_hooks_one", { n: c.hooks }) : t("plugins.contrib_hooks_other", { n: c.hooks })}</li>{/if}
+                {#if c.panels > 0}<li>{c.panels === 1 ? t("plugins.contrib_panels_one", { n: c.panels }) : t("plugins.contrib_panels_other", { n: c.panels })}</li>{/if}
+                {#if c.lua}<li>{t("plugins.contrib_lua")}</li>{/if}
+                {#if c.tama}<li>{t("plugins.contrib_tama")}</li>{/if}
                 {#if c.commands === 0 && c.hooks === 0 && c.panels === 0 && !c.lua && !c.tama}
-                  <li class="mut">Nothing (an empty manifest)</li>
+                  <li class="mut">{t("plugins.contrib_nothing")}</li>
                 {/if}
               </ul>
 
               <div class="pl-detail-actions">
                 {#if pluginsCtrl.removingPluginId === p.id}
                   <div class="pl-confirm">
-                    <span class="pl-confirm-msg">Remove <b>{p.name}</b>? Its <code>plugin.json</code> on disk is left untouched.</span>
+                    <span class="pl-confirm-msg">{t("plugins.remove_confirm_pre")}<b>{p.name}</b>{t("plugins.remove_confirm_mid")}<code>plugin.json</code>{t("plugins.remove_confirm_post")}</span>
                     <div class="pl-confirm-act">
-                      <button class="btn ghost" disabled={pluginsCtrl.pluginBusyId === p.id} onclick={() => pluginsCtrl.cancelRemovePlugin()}>Cancel</button>
+                      <button class="btn ghost" disabled={pluginsCtrl.pluginBusyId === p.id} onclick={() => pluginsCtrl.cancelRemovePlugin()}>{t("common.cancel")}</button>
                       <button class="btn danger" disabled={pluginsCtrl.pluginBusyId === p.id} onclick={() => pluginsCtrl.confirmRemovePlugin(p.id)}>
-                        {#if pluginsCtrl.pluginBusyId === p.id}<span class="spinner"></span> {/if}Remove
+                        {#if pluginsCtrl.pluginBusyId === p.id}<span class="spinner"></span> {/if}{t("common.remove")}
                       </button>
                     </div>
                   </div>
@@ -116,23 +117,23 @@
                       class:on={p.enabled !== false}
                       role="switch"
                       aria-checked={p.enabled !== false}
-                      aria-label={p.enabled !== false ? "Disable this plugin" : "Enable this plugin"}
+                      aria-label={p.enabled !== false ? t("plugins.disable_aria") : t("plugins.enable_aria")}
                       disabled={pluginsCtrl.pluginBusyId === p.id}
                       onclick={() => pluginsCtrl.setPluginEnabled(p.id, p.enabled === false)}
                     >
                       <span class="pl-switch-knob"></span>
                     </button>
-                    <span class="pl-enable-label">{p.enabled !== false ? "Enabled" : "Disabled"}</span>
+                    <span class="pl-enable-label">{p.enabled !== false ? t("plugins.enabled") : t("plugins.disabled")}</span>
                     {#if pluginsCtrl.pluginBusyId === p.id}<span class="spinner"></span>{/if}
                   </div>
                   <span style="flex:1"></span>
                   <button class="pl-remove" disabled={pluginsCtrl.pluginBusyId === p.id} onclick={() => pluginsCtrl.startRemovePlugin(p.id)}>
-                    <Trash2 size={14} aria-hidden="true" /> Remove
+                    <Trash2 size={14} aria-hidden="true" /> {t("common.remove")}
                   </button>
                 {/if}
               </div>
             {:else}
-              <div class="pl-empty"><p class="mut">Select a plugin to see its details.</p></div>
+              <div class="pl-empty"><p class="mut">{t("plugins.select_prompt")}</p></div>
             {/if}
           </div>
         </div>
@@ -140,7 +141,7 @@
     </div>
 
     <div class="modal-foot">
-      <button class="btn ghost" onclick={() => pluginsCtrl.close()}>Close</button>
+      <button class="btn ghost" onclick={() => pluginsCtrl.close()}>{t("common.close")}</button>
     </div>
   </div>
 </div>

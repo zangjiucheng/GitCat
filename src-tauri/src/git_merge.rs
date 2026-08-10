@@ -73,6 +73,7 @@ use std::process::Command;
 use git2::Repository;
 use serde::{Deserialize, Serialize};
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::NoConsoleWindowExt;
 
 // ---------------------------------------------------------------------------
@@ -166,7 +167,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     }
     let o = cmd
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -183,7 +184,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
 /// `git`. All args here are SHAs/flags — no file-path args. No-op on non-WSL.
 fn git_worktree(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     let envs: &[(&str, &str)] = if no_editor { &[("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")] } else { &[] };
-    let o = crate::wsl::git_command_env(path, args, envs).output().map_err(|e| format!("Could not run git: {e}"))?;
+    let o = crate::wsl::git_command_env(path, args, envs).output().map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -212,13 +213,13 @@ fn git_msg(o: &Out) -> String {
 /// clean message instead of git's "unknown revision".
 fn validate_sha(sha: &str) -> Result<(), String> {
     if sha.is_empty() {
-        return Err("No commit to merge.".into());
+        return Err(ierr("err_history.no_commit_to_merge"));
     }
     if sha.starts_with('-') {
-        return Err(format!("Refusing a revision that looks like a flag: {sha:?}"));
+        return Err(ierrp("err_history.revision_looks_like_flag", &[("rev", &format!("{sha:?}"))]));
     }
     if sha.chars().any(|c| c.is_control()) {
-        return Err("Revision has a control character.".into());
+        return Err(ierr("err_history.revision_control_char"));
     }
     Ok(())
 }
@@ -399,12 +400,12 @@ pub async fn merge_start(path: String, sha: String, strategy: Option<String>) ->
         };
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return MergeResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
 
         // Refuse to stack a new merge on top of an unfinished one.
         if in_progress(&repo) {
-            return MergeResult::error("A merge is already in progress — resolve or abort it first.");
+            return MergeResult::error(ierr("err_history.merge_in_progress"));
         }
 
         merge_one(&repo, &path, &sha, extra_flag)
@@ -423,8 +424,9 @@ fn parse_strategy(strategy: Option<&str>) -> Result<Option<&'static str>, String
         None | Some("") | Some("auto") => Ok(None),
         Some("no-ff") => Ok(Some("--no-ff")),
         Some("ff-only") => Ok(Some("--ff-only")),
-        Some(other) => Err(format!(
-            "Unknown merge strategy {other:?} (expected \"auto\", \"no-ff\", or \"ff-only\")."
+        Some(other) => Err(ierrp(
+            "err_history.unknown_merge_strategy",
+            &[("strategy", &format!("{other:?}"))],
         )),
     }
 }
@@ -456,7 +458,7 @@ fn merge_one(repo: &Repository, path: &str, sha: &str, extra_flag: Option<&str>)
     // Snapshot FIRST — never mutate without a pre-op backup. If it fails, abort.
     let backup = match crate::safety::snapshot(repo) {
         Ok(b) => b,
-        Err(e) => return MergeResult::error(format!("Safety snapshot failed, aborting: {e}")),
+        Err(e) => return MergeResult::error(ierrp("err_history.snapshot_failed", &[("detail", &e)])),
     };
 
     let mut args: Vec<&str> = vec!["merge", "--no-edit", "--no-autostash"];
@@ -503,10 +505,10 @@ pub async fn merge_continue(path: String) -> MergeResult {
     crate::blocking::run_blocking(move || {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return MergeResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
         if !in_progress(&repo) {
-            return MergeResult::error("No merge in progress to continue.");
+            return MergeResult::error(ierr("err_history.no_merge_to_continue"));
         }
 
         // Name the commit being merged in (for messages) while MERGE_HEAD exists.
@@ -559,7 +561,7 @@ pub async fn merge_abort(path: String) -> MergeResult {
     crate::blocking::run_blocking(move || {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return MergeResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
         merge_abort_impl(&repo, &path)
     })
@@ -739,18 +741,14 @@ pub async fn merge_squash(path: String, sha: String) -> MergeSquashResult {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
             Err(e) => {
-                return MergeSquashResult::error(format!("Cannot open repository: {}", e.message()))
+                return MergeSquashResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())]))
             }
         };
         if other_op_in_progress(&repo) {
-            return MergeSquashResult::error(
-                "Another operation (merge/rebase/cherry-pick/revert) is already in progress — resolve or abort it first.",
-            );
+            return MergeSquashResult::error(ierr("err_history.other_op_in_progress"));
         }
         if !unmerged_files(&path).is_empty() {
-            return MergeSquashResult::error(
-                "There are unresolved conflicts already — resolve or abort them first.",
-            );
+            return MergeSquashResult::error(ierr("err_history.unresolved_conflicts_already"));
         }
         // At this point unmerged_files() is empty, which proves any PRIOR
         // conflict — of either kind — is genuinely concluded (a live one would
@@ -770,7 +768,7 @@ pub async fn merge_squash(path: String, sha: String) -> MergeSquashResult {
 
         let backup = match crate::safety::snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return MergeSquashResult::error(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return MergeSquashResult::error(ierrp("err_history.snapshot_failed", &[("detail", &e)])),
         };
 
         // git merge --squash --no-autostash --end-of-options <sha>
@@ -888,20 +886,19 @@ pub async fn merge_squash_abort(path: String) -> MergeSquashResult {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
             Err(e) => {
-                return MergeSquashResult::error(format!("Cannot open repository: {}", e.message()))
+                return MergeSquashResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())]))
             }
         };
         let Some(state) = read_merge_squash_conflict_state(&repo) else {
-            return MergeSquashResult::error("No squash-merge conflict in progress to abort.");
+            return MergeSquashResult::error(ierr("err_history.no_squash_conflict_to_abort"));
         };
 
         let target_sha = match git(&path, &["rev-parse", &state.backup_ref], false) {
             Ok(o) if o.ok && !o.stdout.is_empty() => o.stdout.trim().to_string(),
             Ok(o) => {
-                return MergeSquashResult::error(format!(
-                    "Could not resolve the pre-conflict snapshot {}: {}",
-                    state.backup_ref,
-                    git_msg(&o)
+                return MergeSquashResult::error(ierrp(
+                    "err_history.cannot_resolve_snapshot",
+                    &[("ref", &state.backup_ref), ("detail", &git_msg(&o))],
                 ))
             }
             Err(e) => return MergeSquashResult::error(e),
@@ -953,11 +950,11 @@ pub async fn merge_squash_continue(path: String) -> MergeSquashResult {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
             Err(e) => {
-                return MergeSquashResult::error(format!("Cannot open repository: {}", e.message()))
+                return MergeSquashResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())]))
             }
         };
         if read_merge_squash_conflict_state(&repo).is_none() {
-            return MergeSquashResult::error("No squash-merge conflict in progress to continue.");
+            return MergeSquashResult::error(ierr("err_history.no_squash_conflict_to_continue"));
         }
 
         let remaining = unmerged_files(&path);
@@ -1094,8 +1091,9 @@ fn validate_mode(mode: &str) -> Result<(), String> {
     if mode == "octopus" || mode == "sequential" {
         Ok(())
     } else {
-        Err(format!(
-            "Unknown merge mode {mode:?} (expected \"octopus\" or \"sequential\")."
+        Err(ierrp(
+            "err_history.unknown_merge_mode",
+            &[("mode", &format!("{mode:?}"))],
         ))
     }
 }
@@ -1158,7 +1156,7 @@ pub async fn merge_start_multi(path: String, shas: Vec<String>, mode: String, st
             return MergeResult::error(e);
         }
         if shas.len() < 2 {
-            return MergeResult::error("Pick at least two branches to merge.");
+            return MergeResult::error(ierr("err_history.pick_at_least_two"));
         }
         for sha in &shas {
             if let Err(e) = validate_sha(sha) {
@@ -1167,15 +1165,13 @@ pub async fn merge_start_multi(path: String, shas: Vec<String>, mode: String, st
         }
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return MergeResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
         if in_progress(&repo) {
-            return MergeResult::error("A merge is already in progress — resolve or abort it first.");
+            return MergeResult::error(ierr("err_history.merge_in_progress"));
         }
         if read_merge_queue_state(&repo).is_some() {
-            return MergeResult::error(
-                "A sequential merge queue is already in progress — continue or abort it first.",
-            );
+            return MergeResult::error(ierr("err_history.sequential_queue_in_progress"));
         }
 
         if mode == "octopus" {
@@ -1210,7 +1206,7 @@ pub async fn merge_start_multi(path: String, shas: Vec<String>, mode: String, st
 fn merge_octopus(repo: &Repository, path: &str, shas: &[String]) -> MergeResult {
     let backup = match crate::safety::snapshot(repo) {
         Ok(b) => b,
-        Err(e) => return MergeResult::error(format!("Safety snapshot failed, aborting: {e}")),
+        Err(e) => return MergeResult::error(ierrp("err_history.snapshot_failed", &[("detail", &e)])),
     };
     let mut args: Vec<&str> = vec!["merge", "--no-edit", "--no-autostash", "--end-of-options"];
     for sha in shas {
@@ -1340,13 +1336,13 @@ pub async fn merge_queue_continue(path: String) -> MergeResult {
     crate::blocking::run_blocking(move || {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return MergeResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
         let Some(mut st) = read_merge_queue_state(&repo) else {
-            return MergeResult::error("No sequential merge queue in progress.");
+            return MergeResult::error(ierr("err_history.no_sequential_queue"));
         };
         if in_progress(&repo) || !unmerged_files(&path).is_empty() {
-            return MergeResult::error("Finish resolving the current merge first.");
+            return MergeResult::error(ierr("err_history.finish_resolving_first"));
         }
         if let Some(cur) = st.current.clone() {
             if head_sha(&repo) == st.head_before_current {
@@ -1424,7 +1420,7 @@ pub async fn merge_queue_abort(path: String) -> MergeResult {
     crate::blocking::run_blocking(move || {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return MergeResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return MergeResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
         if read_merge_queue_state(&repo).is_none() {
             return MergeResult {

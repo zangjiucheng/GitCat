@@ -13,6 +13,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import { open } from "@tauri-apps/plugin-dialog";
 import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";
@@ -128,10 +129,10 @@ class PluginsState {
       if (res.status === "ok") {
         this.plugins = res.data;
       } else {
-        this.pluginsError = String(res.error ?? "Could not list installed plugins.");
+        this.pluginsError = be(res.error) || t("plugins.err_list");
       }
     } catch (e) {
-      this.pluginsError = "Could not list installed plugins — " + e;
+      this.pluginsError = t("plugins.err_list_detail", { err: String(e) });
     } finally {
       this.pluginsLoading = false;
       this.reconcileSelection();
@@ -142,7 +143,7 @@ class PluginsState {
     this.pluginsError = "";
     if (!IN_TAURI) {
       this.plugins = this.plugins.map((p) => (p.id === id ? { ...p, enabled } : p));
-      bridge.tama.say(`This is where ${id} would be ${enabled ? "enabled" : "disabled"} (demo).`);
+      bridge.tama.say(enabled ? t("plugins.demo_enable", { id }) : t("plugins.demo_disable", { id }));
       return;
     }
     this.pluginBusyId = id;
@@ -159,11 +160,11 @@ class PluginsState {
         await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload()]);
       } else {
         this.plugins = prev; // backend rejected — undo the optimistic flip
-        this.pluginsError = String(res.error ?? "Could not update the plugin.");
+        this.pluginsError = be(res.error) || t("plugins.err_update");
       }
     } catch (e) {
       this.plugins = prev; // backend threw — undo the optimistic flip
-      this.pluginsError = "Could not update the plugin — " + e;
+      this.pluginsError = t("plugins.err_update_detail", { err: String(e) });
     } finally {
       this.pluginBusyId = null;
     }
@@ -183,7 +184,7 @@ class PluginsState {
       this.plugins = this.plugins.filter((p) => p.id !== id);
       this.removingPluginId = null;
       this.reconcileSelection();
-      bridge.tama.say(`This is where ${id} would be removed (demo).`);
+      bridge.tama.say(t("plugins.demo_remove", { id }));
       return;
     }
     this.pluginBusyId = id;
@@ -196,10 +197,10 @@ class PluginsState {
         // Drop both its ⌘K commands AND panels immediately.
         await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload()]);
       } else {
-        this.pluginsError = String(res.error ?? "Could not remove the plugin.");
+        this.pluginsError = be(res.error) || t("plugins.err_remove");
       }
     } catch (e) {
-      this.pluginsError = "Could not remove the plugin — " + e;
+      this.pluginsError = t("plugins.err_remove_detail", { err: String(e) });
     } finally {
       this.pluginBusyId = null;
     }
@@ -214,18 +215,18 @@ class PluginsState {
     if (this.pluginInstalling) return;
     this.pluginsError = "";
     if (!IN_TAURI) {
-      bridge.tama.say("This is where you'd pick a plugin.json to install (demo).");
+      bridge.tama.say(t("plugins.demo_install"));
       return;
     }
     let picked: string | string[] | null;
     try {
       picked = await open({
-        title: "Install plugin",
+        title: t("plugins.dialog_title"),
         multiple: false,
-        filters: [{ name: "Plugin manifest (plugin.json)", extensions: ["json"] }],
+        filters: [{ name: t("plugins.dialog_filter"), extensions: ["json"] }],
       });
     } catch (e) {
-      this.pluginsError = "Could not open the file dialog — " + e;
+      this.pluginsError = t("plugins.err_dialog_detail", { err: String(e) });
       return;
     }
     if (!picked || Array.isArray(picked)) return; // cancelled (Array.isArray is defensive-only — multiple:false never returns one)
@@ -240,12 +241,12 @@ class PluginsState {
         this.selectedId = res.data.id;
         // Surface the new plugin's ⌘K commands AND panels.
         await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload()]);
-        bridge.tama.say(`Installed ${res.data.name}.`);
+        bridge.tama.say(t("plugins.installed", { name: res.data.name }));
       } else {
-        this.pluginsError = String(res.error ?? "Could not install that plugin.");
+        this.pluginsError = be(res.error) || t("plugins.err_install");
       }
     } catch (e) {
-      this.pluginsError = "Could not install that plugin — " + e;
+      this.pluginsError = t("plugins.err_install_detail", { err: String(e) });
     } finally {
       this.pluginInstalling = false;
     }

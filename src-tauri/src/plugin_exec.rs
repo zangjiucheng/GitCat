@@ -104,6 +104,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Wry};
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::NoConsoleWindowExt;
 
 // ---------------------------------------------------------------------------
@@ -369,7 +370,7 @@ fn ctx_values(ctx: &PlaceholderCtx) -> Vec<(&'static str, &str)> {
 /// [`PluginCommand`]: crate::plugin_registry::PluginCommand
 fn snapshot_before_mutation(cwd: &str) -> Result<String, String> {
     let repo = crate::trust::open_repo(cwd).map_err(|e| {
-        format!("could not open the repository to snapshot before a mutating plugin action: {}", e.message())
+        ierrp("err_plugins.could_not_open_repo_snapshot", &[("detail", &e.message().to_string())])
     })?;
     crate::safety::snapshot(&repo)
 }
@@ -408,11 +409,7 @@ pub fn run_template_with_timeout(
     #[cfg(windows)]
     {
         if let Some((tok, _)) = ctx_values(ctx).into_iter().find(|(_, v)| windows_cmd_unsafe(v)) {
-            return Err(format!(
-                "Refusing to run the plugin command on Windows: the {tok} value contains a character \
-                 unsafe for cmd.exe (one of & | < > ^ % ! \" or a newline). This is a known Windows \
-                 limitation of GitCat's plugin executor."
-            ));
+            return Err(ierrp("err_plugins.windows_cmd_unsafe_value", &[("tok", tok)]));
         }
     }
     let script = expand_placeholders(template, ctx);
@@ -427,7 +424,7 @@ pub fn run_template_with_timeout(
     };
     command.current_dir(cwd).no_console_window();
     let out = crate::procutil::output_with_timeout(command, timeout)
-        .map_err(|e| format!("Could not run the plugin command: {e}"))?;
+        .map_err(|e| ierrp("err_plugins.could_not_run_command", &[("detail", &e.to_string())]))?;
     Ok(CommandOutput {
         // Strip ANSI: CLIs (ollama, many linters, progress bars) stream cursor/
         // colour escapes even when their stdout is a pipe, not a TTY.
@@ -457,14 +454,18 @@ pub async fn run_plugin_command(
     command_id: String,
     ctx: PlaceholderCtx,
 ) -> Result<CommandOutput, String> {
-    let command = crate::plugin_registry::find_command(&app, &plugin_id, &command_id)?
-        .ok_or_else(|| format!("Plugin command {plugin_id}/{command_id} was not found or is disabled."))?;
+    let command = crate::plugin_registry::find_command(&app, &plugin_id, &command_id)?.ok_or_else(|| {
+        ierrp(
+            "err_plugins.command_not_found",
+            &[("plugin_id", plugin_id.as_str()), ("command_id", command_id.as_str())],
+        )
+    })?;
     // `repo` is required: it is both the {repo} value and the cwd to run in.
     let cwd = ctx
         .repo
         .clone()
         .filter(|p| !p.trim().is_empty())
-        .ok_or_else(|| "No repository path was provided for the plugin command.".to_string())?;
+        .ok_or_else(|| ierr("err_plugins.no_repo_for_command"))?;
     let mutates = command.mutates;
     // A command runs EITHER an embedded Luau `handler` (PER-56) or a shell `run`
     // template — EXACTLY ONE, enforced at install by validate_manifest. Decide
@@ -554,7 +555,7 @@ pub async fn run_hooks(
         .repo
         .clone()
         .filter(|p| !p.trim().is_empty())
-        .ok_or_else(|| "No repository path was provided for plugin hooks.".to_string())?;
+        .ok_or_else(|| ierr("err_plugins.no_repo_for_hooks"))?;
     let plugins = crate::plugin_registry::load_plugins(&app)?;
     // One job per enabled plugin's hook matching `event`: its action (a shell
     // `run` template, or a Luau `handler` plus the plugin's dir/lua) and whether

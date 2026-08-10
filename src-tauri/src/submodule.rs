@@ -212,6 +212,7 @@ use git2::{Diff, DiffOptions, Patch, Repository, StatusOptions, SubmoduleIgnore}
 use serde::Serialize;
 
 use crate::git_write::WriteResult;
+use crate::i18n_err::{ierr, ierrp};
 
 /// One `.gitmodules`-registered submodule row.
 #[derive(Serialize, specta::Type)]
@@ -580,7 +581,9 @@ struct GitOut {
 /// this module (like `git_remote.rs`) routes ALL of them through its
 /// WSL-aware builder rather than splitting this one helper in two.
 fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
-    let output = crate::wsl::git_command(path, args).output().map_err(|e| format!("Could not run git: {e}"))?;
+    let output = crate::wsl::git_command(path, args)
+        .output()
+        .map_err(|e| ierrp("err_remote.run_git_failed", &[("detail", &e.to_string())]))?;
     Ok(GitOut {
         ok: output.status.success(),
         code: output.status.code(),
@@ -645,7 +648,7 @@ fn git_error_message(out: &GitOut) -> String {
     } else if !out.stdout.is_empty() {
         out.stdout.clone()
     } else {
-        format!("git exited with status {:?}", out.code)
+        ierrp("err_remote.git_exited_status", &[("code", &format!("{:?}", out.code))])
     }
 }
 
@@ -667,13 +670,13 @@ fn err_result(message: impl Into<String>) -> WriteResult {
 /// it is a pathspec to git, never an option).
 fn validate_submodule_path(p: &str) -> Result<(), String> {
     if p.is_empty() {
-        return Err("Submodule path is empty.".into());
+        return Err(ierr("err_remote.submodule_path_empty"));
     }
     if p.starts_with('-') {
-        return Err(format!("Refusing a submodule path that looks like a flag: {p:?}"));
+        return Err(ierrp("err_remote.submodule_path_flag", &[("path", &format!("{p:?}"))]));
     }
     if p.chars().any(|c| c.is_control()) {
-        return Err(format!("Submodule path has a control character: {p:?}"));
+        return Err(ierrp("err_remote.submodule_path_control", &[("path", &format!("{p:?}"))]));
     }
     Ok(())
 }
@@ -827,13 +830,13 @@ pub async fn submodule_update(path: String, submodule_path: Option<String>, recu
 /// `git_write.rs`/`git_tag.rs`.
 fn validate_repository_url(url: &str) -> Result<(), String> {
     if url.is_empty() {
-        return Err("Repository URL is empty.".into());
+        return Err(ierr("err_remote.repository_url_empty"));
     }
     if url.starts_with('-') {
-        return Err(format!("Refusing a repository URL that looks like a flag: {url:?}"));
+        return Err(ierrp("err_remote.repository_url_flag", &[("url", &format!("{url:?}"))]));
     }
     if url.chars().any(|c| c.is_control()) {
-        return Err(format!("Repository URL has a control character: {url:?}"));
+        return Err(ierrp("err_remote.repository_url_control", &[("url", &format!("{url:?}"))]));
     }
     Ok(())
 }
@@ -847,17 +850,17 @@ fn validate_repository_url(url: &str) -> Result<(), String> {
 /// identical flag-injection/ref-name guard.
 fn validate_branch_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
-        return Err("Branch name is empty.".into());
+        return Err(ierr("err_remote.branch_name_empty"));
     }
     if name.starts_with('-') {
-        return Err(format!("Refusing a branch name that looks like a flag: {name:?}"));
+        return Err(ierrp("err_remote.branch_name_flag", &[("name", &format!("{name:?}"))]));
     }
     for ch in name.chars() {
         if ch.is_control() || ch == ' ' || ch == '\u{7f}' {
-            return Err(format!("Branch name has an illegal whitespace/control character: {name:?}"));
+            return Err(ierrp("err_remote.branch_name_control", &[("name", &format!("{name:?}"))]));
         }
         if matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\') {
-            return Err(format!("Branch name has an illegal character '{ch}': {name:?}"));
+            return Err(ierrp("err_remote.branch_name_illegal_char", &[("ch", &ch.to_string()), ("name", &format!("{name:?}"))]));
         }
     }
     if name.contains("..")
@@ -869,7 +872,7 @@ fn validate_branch_name(name: &str) -> Result<(), String> {
         || name.ends_with(".lock")
         || name == "@"
     {
-        return Err(format!("Not a valid branch name: {name:?}"));
+        return Err(ierrp("err_remote.branch_name_invalid", &[("name", &format!("{name:?}"))]));
     }
     Ok(())
 }
@@ -1503,13 +1506,14 @@ pub async fn submodule_deinit(path: String, submodule_path: String, force: bool)
 
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return err_removal(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return err_removal(ierrp("err_remote.cannot_open", &[("detail", e.message())])),
         };
         let backup_patch = match backup_submodule_dirty_content(&repo, &submodule_path) {
             Ok(p) => p,
             Err(e) => {
-                return err_removal(format!(
-                    "Could not back up {submodule_path}'s own uncommitted changes before force-deiniting, refusing: {e}"
+                return err_removal(ierrp(
+                    "err_remote.backup_failed_deinit",
+                    &[("path", &submodule_path), ("detail", &e)],
                 ))
             }
         };
@@ -1568,7 +1572,7 @@ pub async fn submodule_remove(path: String, submodule_path: String) -> Submodule
 
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return err_removal(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return err_removal(ierrp("err_remote.cannot_open", &[("detail", e.message())])),
         };
 
         // Resolved BEFORE any mutation — see `resolve_submodule_name`'s doc
@@ -1578,8 +1582,9 @@ pub async fn submodule_remove(path: String, submodule_path: String) -> Submodule
         let backup_patch = match backup_submodule_dirty_content(&repo, &submodule_path) {
             Ok(p) => p,
             Err(e) => {
-                return err_removal(format!(
-                    "Could not back up {submodule_path}'s own uncommitted changes before removing, refusing: {e}"
+                return err_removal(ierrp(
+                    "err_remote.backup_failed_remove",
+                    &[("path", &submodule_path), ("detail", &e)],
                 ))
             }
         };
@@ -1607,10 +1612,7 @@ pub async fn submodule_remove(path: String, submodule_path: String) -> Submodule
                         // point (git rm -f above succeeded) — say so, rather than
                         // letting a caller believe NOTHING happened.
                         return err_removal_with_backup(
-                            format!(
-                                "{submodule_path}'s gitlink was staged for removal, but {msg}. Run `git status` to see \
-                                 the partial state before retrying"
-                            ),
+                            ierrp("err_remote.gitlink_staged_but", &[("path", &submodule_path), ("detail", &msg)]),
                             backup_patch,
                         );
                     }

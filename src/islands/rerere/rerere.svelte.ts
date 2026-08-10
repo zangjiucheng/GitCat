@@ -14,6 +14,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { RerereStatus } from "../../ipc/bindings";
 
 /// One row the view renders (reuses the existing .rr-row/.h/.rr-badge/.mut
@@ -90,8 +91,8 @@ class RerereState {
   /// the user never explicitly asked for.
   get sourceNote(): string {
     if (!this.vm) return "";
-    if (this.vm.configured != null) return this.vm.configured ? "set for this repo" : "disabled for this repo";
-    return this.vm.cacheDirPresent ? "default — on (rr-cache already exists)" : "default — off";
+    if (this.vm.configured != null) return this.vm.configured ? t("rerere.source_set") : t("rerere.source_disabled");
+    return this.vm.cacheDirPresent ? t("rerere.source_default_on") : t("rerere.source_default_off");
   }
 
   get hasRepo(): boolean {
@@ -132,20 +133,20 @@ class RerereState {
     if (this.busy) return;
     if (this.demo || !IN_TAURI) {
       if (this.vm) this.vm = { ...this.vm, enabled, configured: enabled };
-      bridge.tama.say(enabled ? "Rerere enabled (demo)." : "Rerere disabled (demo).");
+      bridge.tama.say(enabled ? t("rerere.say_enabled_demo") : t("rerere.say_disabled_demo"));
       return;
     }
     if (!this.repo) {
-      bridge.tama.warn("Open a repository first.");
+      bridge.tama.warn(t("rerere.open_repo_first"));
       return;
     }
     this.busy = true;
     try {
       const r = await commands.rerereSetEnabled(this.repo, enabled);
-      if (!r.ok) bridge.tama.warn(r.message || "Could not update rerere.enabled.");
+      if (!r.ok) bridge.tama.warn(be(r.message) || t("rerere.err_update"));
       await this.refreshReal(this.repo);
     } catch (e) {
-      bridge.tama.warn("Could not update rerere.enabled — " + e);
+      bridge.tama.warn(t("rerere.err_update_reason", { reason: be(String(e)) }));
     } finally {
       this.busy = false;
     }

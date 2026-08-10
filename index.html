@@ -20,9 +20,9 @@
   --fur:#E0A75C; --fur-shade:#C88A3E; --fur-line:#6A4E2D; --ear-in:#ED96A4;
   --skin:#F9E2CA; --skin-line:#BE8C63; --eye:#B0680E; --eye-dark:#7E4A0E; --eye-lite:#E7A63E;
   --sweater:#F3E6D0; --sweater-line:#C6B088; --mouth:#B85F58;
-  --ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+  --ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
   --mono:ui-monospace,"SF Mono","Menlo","Cascadia Code","Consolas",monospace;
-  --display:"SF Pro Rounded",ui-rounded,"Nunito","Segoe UI Variable",system-ui,sans-serif;
+  --display:"SF Pro Rounded",ui-rounded,"Nunito","Segoe UI Variable",system-ui,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
   --r-card:12px; --r-panel:10px; --r-control:8px; --r-pill:999px; --r-chip:4px;
   --topbar-h:46px; --sidebar-w:264px; --detail-w:344px; --ribbon-w:46px; --nook-h:132px; --row-h:26px; --term-h:280px;
   --shadow:0 6px 20px rgba(16,18,27,.10), 0 1px 3px rgba(16,18,27,.08);
@@ -1988,7 +1988,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
              same .row-chip.wsl class/color, toggled by openRepo()/bootEmpty()
              in legacy/main.ts based on isWslPath(path) so the CURRENTLY OPEN
              repo shows the same indicator, not just tracked-but-not-open ones. -->
-        <span class="row-chip wsl" id="repoWslTag" style="display:none" title="This repository lives inside WSL — network commands route through wsl.exe for credential resolution">WSL</span>
+        <span class="row-chip wsl" id="repoWslTag" style="display:none" data-i18n-title="topbar.wsl_tip" title="This repository lives inside WSL — network commands route through wsl.exe for credential resolution">WSL</span>
         <svg class="tb-ic chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg>
       </button>
       <div class="branch-pill">
@@ -1998,29 +1998,29 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
         </svg>
         <span id="pillBranch">main</span><span class="ab" id="pillAb"><b>&#8593;2</b>&#183;<b>&#8595;0</b></span>
       </div>
-      <button class="tb-btn" id="gotoHeadBtn" title="Jump to the current commit (HEAD)  &#8984;&#8679;H" aria-label="Jump to current commit (HEAD)">
+      <button class="tb-btn" id="gotoHeadBtn" data-i18n-title="topbar.goto_head" data-i18n-aria="topbar.goto_head_aria" title="Jump to the current commit (HEAD)  &#8984;&#8679;H" aria-label="Jump to current commit (HEAD)">
         <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.6v2.4M8 12v2.4M1.6 8h2.4M12 8h2.4"/></svg>
       </button>
     </div>
     </div>
-    <div class="cmd-hint" title="Command palette"><span>Search commits, refs, actions&#8230;</span><kbd>&#8984;K</kbd></div>
+    <div class="cmd-hint" data-i18n-title="topbar.cmd_palette" title="Command palette"><span data-i18n="topbar.search_hint">Search commits, refs, actions&#8230;</span><kbd>&#8984;K</kbd></div>
     <div class="tb-right">
       <!-- Fetch/Pull/Push live here (repo ACTIONS), not next to the repo-pick/
            branch-pill cluster on the left (repo IDENTITY) — grouped with
            Undo/theme (also actions) per direct feedback that this is the
            clearer split, not "everything about the current repo together". -->
       <div class="sync-actions">
-        <button class="tb-btn" id="fetchBtn" title="Fetch — update remote-tracking refs (⌘⇧D)">
+        <button class="tb-btn" id="fetchBtn" data-i18n-title="topbar.fetch_tip" title="Fetch — update remote-tracking refs (⌘⇧D)">
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.6v3h-3"/></svg>
-          Fetch
+          <span data-i18n="topbar.fetch">Fetch</span>
         </button>
-        <button class="tb-btn" id="pullBtn" title="Pull (fast-forward only) (⌘⇧L)">
+        <button class="tb-btn" id="pullBtn" data-i18n-title="topbar.pull_tip" title="Pull (fast-forward only) (⌘⇧L)">
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.2v7.3"/><path d="M4.8 7.2 8 10.4l3.2-3.2"/><path d="M3.2 13h9.6"/></svg>
-          Pull
+          <span data-i18n="topbar.pull">Pull</span>
         </button>
-        <button class="tb-btn" id="pushBtn" title="Push (⌘⇧P)">
+        <button class="tb-btn" id="pushBtn" data-i18n-title="topbar.push_tip" title="Push (⌘⇧P)">
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.8V5.5"/><path d="M4.8 7.8 8 4.6l3.2 3.2"/><path d="M3.2 13h9.6"/></svg>
-          Push
+          <span data-i18n="topbar.push">Push</span>
         </button>
       </div>
       <!-- Manual refresh: forces the same full resync the live file-watcher
@@ -2030,7 +2030,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
            themeBtn, since it needs no verb-label swap of its own (the
            refresh it runs is near-instant and silently coalesces with any
            auto-refresh already in flight). -->
-      <button class="icon-btn" id="refreshBtn" title="Refresh — resync with the repo on disk">
+      <button class="icon-btn" id="refreshBtn" data-i18n-title="topbar.refresh_tip" title="Refresh — resync with the repo on disk">
         <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M2.5 8a5.5 5.5 0 0 1 9.6-3.7"/>
           <path d="M13.5 8a5.5 5.5 0 0 1-9.6 3.7"/>
@@ -2038,14 +2038,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
           <path d="M3.4 13.4v-3.2h3.2"/>
         </svg>
       </button>
-      <button class="tb-btn undo" id="undoBtn" title="Global Undo — Safety Manager (⌘Z)">
+      <button class="tb-btn undo" id="undoBtn" data-i18n-title="topbar.undo_tip" title="Global Undo — Safety Manager (⌘Z)">
         <span>
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h6.5a3.5 3.5 0 0 1 0 7H7.2"/><path d="M6.5 3.3 4 6l2.5 2.7"/></svg>
-          Undo
+          <span data-i18n="topbar.undo">Undo</span>
         </span>
         <span class="badge" id="undoCount">214</span>
       </button>
-      <button class="icon-btn" id="themeBtn" title="Toggle theme">
+      <button class="icon-btn" id="themeBtn" data-i18n-title="topbar.theme_tip" title="Toggle theme">
         <svg class="tb-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 2.6a5.4 5.4 0 0 1 0 10.8z" fill="currentColor"/></svg>
       </button>
     </div>
@@ -2083,7 +2083,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
       <canvas id="cv" tabindex="0"></canvas>
       <div class="graph-loading" id="graphLoading" style="display:none">
         <span class="spinner"></span>
-        <span>Loading repository&#8230;</span>
+        <span data-i18n="topbar.loading_repo">Loading repository&#8230;</span>
       </div>
       <!-- Persistent top-right loading indicator: the centered overlay above
            hides on the FIRST streamed batch, but the graph keeps streaming in
@@ -2091,7 +2091,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
            until the stream's `done`, as the "still loading" cue. -->
       <div class="loading-pill" id="loadingPill" aria-hidden="true">
         <span class="spinner"></span>
-        <span id="loadingPillLabel">Loading&#8230;</span>
+        <span id="loadingPillLabel" data-i18n="topbar.loading">Loading&#8230;</span>
       </div>
       <div class="perf" id="perf">
         <span class="perf-dev" id="perfDevTools">
@@ -2131,35 +2131,35 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 <!-- In-app Help page (⌘K ▸ Help). A self-contained how-to; shown/hidden from
      legacy/main.ts's openHelpPage()/closeHelpPage(). -->
 <div class="scrim" id="helpScrim">
-  <div class="modal help" role="dialog" aria-modal="true" aria-label="GitCat help">
-    <div class="modal-head"><h3>GitCat — Help</h3></div>
+  <div class="modal help" role="dialog" aria-modal="true" aria-label="GitCat help" data-i18n-aria="help.dialog_aria">
+    <div class="modal-head"><h3 data-i18n="help.title">GitCat — Help</h3></div>
     <div class="modal-body help-body">
       <section>
-        <h4>The graph</h4>
-        <p>Each row is one commit, newest at the top. The left <b>BRANCH / TAG</b> column shows the branch or tag that points at a commit; lane colours track branches. Your current commit (<b>HEAD</b>) has a bright ring and a bar down its left edge &#8212; that&#8217;s &#8220;you are here.&#8221; Commits already in your current branch are <b>dimmed</b>, so work you haven&#8217;t merged yet stands out.</p>
+        <h4 data-i18n="help.graph_h">The graph</h4>
+        <p data-i18n-html="help.graph_p">Each row is one commit, newest at the top. The left <b>BRANCH / TAG</b> column shows the branch or tag that points at a commit; lane colours track branches. Your current commit (<b>HEAD</b>) has a bright ring and a bar down its left edge &#8212; that&#8217;s &#8220;you are here.&#8221; Commits already in your current branch are <b>dimmed</b>, so work you haven&#8217;t merged yet stands out.</p>
       </section>
       <section>
-        <h4>Navigate</h4>
-        <p>Scroll or drag to move; <kbd>&#8984;</kbd>+scroll (or <kbd>+</kbd>/<kbd>-</kbd>) to zoom. <kbd>&#8984;K</kbd> opens the command palette. <kbd>&#8984;F</kbd> searches commit content, <kbd>&#8984;&#8679;F</kbd> filters refs. <kbd>&#8984;&#8679;H</kbd> jumps to HEAD, <kbd>&#8984;&#8679;U</kbd> to Uncommitted changes. <kbd>&#8984;\</kbd> toggles focus mode. Press <kbd>?</kbd> for every shortcut.</p>
+        <h4 data-i18n="help.navigate_h">Navigate</h4>
+        <p data-i18n-html="help.navigate_p">Scroll or drag to move; <kbd>&#8984;</kbd>+scroll (or <kbd>+</kbd>/<kbd>-</kbd>) to zoom. <kbd>&#8984;K</kbd> opens the command palette. <kbd>&#8984;F</kbd> searches commit content, <kbd>&#8984;&#8679;F</kbd> filters refs. <kbd>&#8984;&#8679;H</kbd> jumps to HEAD, <kbd>&#8984;&#8679;U</kbd> to Uncommitted changes. <kbd>&#8984;\</kbd> toggles focus mode. Press <kbd>?</kbd> for every shortcut.</p>
       </section>
       <section>
-        <h4>Commits</h4>
-        <p>Click a commit to see its files and diff on the right. <b>Drag</b> a commit onto another to cherry-pick it there &#8212; hold <kbd>&#8679;</kbd> while dragging to merge instead. <b>Right-click</b> a commit for cherry-pick / merge / revert / reset / create branch or tag / copy.</p>
+        <h4 data-i18n="help.commits_h">Commits</h4>
+        <p data-i18n-html="help.commits_p">Click a commit to see its files and diff on the right. <b>Drag</b> a commit onto another to cherry-pick it there &#8212; hold <kbd>&#8679;</kbd> while dragging to merge instead. <b>Right-click</b> a commit for cherry-pick / merge / revert / reset / create branch or tag / copy.</p>
       </section>
       <section>
-        <h4>Branches &amp; tags</h4>
-        <p><b>Right-click a branch label</b> in the graph for branch management (checkout, push, merge, rebase, reset, delete). <b>Right-click a remote</b> label (origin/&#8230;) to check it out as a local branch. Hover a label to see its full name. The left <b>sidebar</b> lists every branch and tag &#8212; click one to jump the graph to its tip commit; for a branch, double-click (or right-click, or its &#8942; button) checks it out instead; the checkboxes show or hide branches in the graph.</p>
+        <h4 data-i18n="help.branches_h">Branches &amp; tags</h4>
+        <p data-i18n-html="help.branches_p"><b>Right-click a branch label</b> in the graph for branch management (checkout, push, merge, rebase, reset, delete). <b>Right-click a remote</b> label (origin/&#8230;) to check it out as a local branch. Hover a label to see its full name. The left <b>sidebar</b> lists every branch and tag &#8212; click one to jump the graph to its tip commit; for a branch, double-click (or right-click, or its &#8942; button) checks it out instead; the checkboxes show or hide branches in the graph.</p>
       </section>
       <section>
-        <h4>Uncommitted changes</h4>
-        <p>The pinned top row. Stage or unstage whole files, single hunks, or single lines, then commit. You can point GitCat at your own command to generate the commit message (Tools &#9656; External Tools) &#8212; GitCat never talks to an AI itself; the command does.</p>
+        <h4 data-i18n="help.uncommitted_h">Uncommitted changes</h4>
+        <p data-i18n="help.uncommitted_p">The pinned top row. Stage or unstage whole files, single hunks, or single lines, then commit. You can point GitCat at your own command to generate the commit message (Tools &#9656; External Tools) &#8212; GitCat never talks to an AI itself; the command does.</p>
       </section>
       <section>
-        <h4>Snapshots (Safety Manager)</h4>
-        <p>GitCat quietly snapshots your repo before risky operations. The ribbon down the left lists recent snapshots &#8212; click one to preview it, so you can always find your way back.</p>
+        <h4 data-i18n="help.snapshots_h">Snapshots (Safety Manager)</h4>
+        <p data-i18n="help.snapshots_p">GitCat quietly snapshots your repo before risky operations. The ribbon down the left lists recent snapshots &#8212; click one to preview it, so you can always find your way back.</p>
       </section>
     </div>
-    <div class="modal-foot"><button class="btn ghost" id="helpCloseBtn">Close</button></div>
+    <div class="modal-foot"><button class="btn ghost" id="helpCloseBtn" data-i18n="common.close">Close</button></div>
   </div>
 </div>
 <!-- Tama's top-of-everything message toast — surfaces errors/results when a
@@ -2175,19 +2175,19 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   <div class="modal danger">
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" id="dangerTamaImg" alt="Tama, alarmed"></div>
-      <div><h3 id="dangerTitle">Rewrite history &#8212; filter-repo</h3><p id="dangerDesc">This rewrites every commit on the selected refs. It cannot be undone with a normal Undo.</p></div>
+      <div><h3 id="dangerTitle" data-i18n="filterrepo.title">Rewrite history &#8212; filter-repo</h3><p id="dangerDesc" data-i18n="filterrepo.danger_desc">This rewrites every commit on the selected refs. It cannot be undone with a normal Undo.</p></div>
     </div>
     <div class="msteps" id="dangerSteps"><span class="s done"></span><span class="s done"></span><span class="s now"></span></div>
     <div class="modal-body">
-      <div class="will-lose" id="dangerLose"><h5>What this will rewrite / lose</h5><ul>
+      <div class="will-lose" id="dangerLose" data-i18n-html="filterrepo.danger_lose"><h5>What this will rewrite / lose</h5><ul>
         <li>Rewrites <code>42</code> commits on <code>main</code> and <code>feat/inline-diff</code></li>
         <li>Original SHAs become unreachable: <code>a1b2c3d</code> &#8230; <code>90ff210</code></li>
         <li>GPG signatures on rewritten commits are dropped</li></ul></div>
-      <div class="backup-note" id="dangerNote"><svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Pre-op backup pinned first &#8594; full pre-rewrite state stays recoverable.</div>
-      <div class="confirm-type"><label id="dangerTypeLabel">Type the branch name <b class="mono" id="dangerTypeName">main</b> to arm the rewrite:</label>
+      <div class="backup-note" id="dangerNote" data-i18n-html="filterrepo.danger_note"><svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Pre-op backup pinned first &#8594; full pre-rewrite state stays recoverable.</div>
+      <div class="confirm-type"><label id="dangerTypeLabel" data-i18n-html="filterrepo.danger_type_label">Type the branch name <b class="mono" id="dangerTypeName">main</b> to arm the rewrite:</label>
         <input id="confirmInput" placeholder="main" spellcheck="false" autocomplete="off"></div>
     </div>
-    <div class="modal-foot"><button class="btn ghost" id="dangerCancel">Cancel</button><button class="btn danger" id="dangerGo" disabled>Rewrite history</button></div>
+    <div class="modal-foot"><button class="btn ghost" id="dangerCancel" data-i18n="common.cancel">Cancel</button><button class="btn danger" id="dangerGo" disabled data-i18n="filterrepo.rewrite_history">Rewrite history</button></div>
   </div>
 </div>
 

@@ -24,6 +24,7 @@ import { IN_TAURI } from "../../ipc/env";
 import type { CodeSearchMatch, CodeSearchResults } from "../../ipc/bindings";
 import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
 import { blameCtrl } from "../blame/blame.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 
 // Demo data (design-mode only) — a small canned result list, same spirit as
 // every other island's DEMO constant, so the browser preview still shows a
@@ -67,7 +68,7 @@ class CodeSearchState {
     const q = this.query.trim();
     if (!q) {
       this.data = null;
-      this.error = "Enter something to search for.";
+      this.error = t("codesearch.err_enter_query");
       return;
     }
 
@@ -81,7 +82,7 @@ class CodeSearchState {
 
     if (!this.repo) {
       this.data = null;
-      this.error = "Open a repository first.";
+      this.error = t("codesearch.open_repo_first");
       return;
     }
 
@@ -95,11 +96,11 @@ class CodeSearchState {
         this.error = "";
       } else {
         this.data = null;
-        this.error = String(res.error ?? "Search failed.");
+        this.error = be(res.error) || t("codesearch.err_search");
       }
     } catch (e) {
       this.data = null;
-      this.error = "Search failed — " + e;
+      this.error = t("codesearch.err_search_e", { e: be(String(e)) });
     } finally {
       this.busy = false;
     }

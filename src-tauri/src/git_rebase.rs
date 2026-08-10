@@ -123,6 +123,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use git2::{Oid, Repository, Sort};
 use serde::{Deserialize, Serialize};
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::NoConsoleWindowExt;
 
 // ---------------------------------------------------------------------------
@@ -239,7 +240,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     }
     let o = cmd
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -259,7 +260,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
 /// an interactive rebase on a WSL repo can still churn. No-op on non-WSL paths.
 fn git_worktree(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     let envs: &[(&str, &str)] = if no_editor { &[("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")] } else { &[] };
-    let o = crate::wsl::git_command_env(path, args, envs).output().map_err(|e| format!("Could not run git: {e}"))?;
+    let o = crate::wsl::git_command_env(path, args, envs).output().map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -283,7 +284,7 @@ fn git_with_env(path: &str, args: &[&str], envs: &[(&str, &str)]) -> Result<Out,
     }
     let o = cmd
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -312,13 +313,13 @@ fn git_msg(o: &Out) -> String {
 /// clean message instead of git's "unknown revision".
 fn validate_rev(rev: &str) -> Result<(), String> {
     if rev.is_empty() {
-        return Err("No target to rebase onto.".into());
+        return Err(ierr("err_history.no_rebase_target"));
     }
     if rev.starts_with('-') {
-        return Err(format!("Refusing a revision that looks like a flag: {rev:?}"));
+        return Err(ierrp("err_history.revision_looks_like_flag", &[("rev", &format!("{rev:?}"))]));
     }
     if rev.chars().any(|c| c.is_control()) {
-        return Err("Revision has a control character.".into());
+        return Err(ierr("err_history.revision_control_char"));
     }
     Ok(())
 }
@@ -399,10 +400,10 @@ static TODO_SEQ: AtomicU64 = AtomicU64::new(0);
 fn resolve_oid(repo: &Repository, rev: &str) -> Result<Oid, String> {
     let obj = repo
         .revparse_single(rev)
-        .map_err(|e| format!("Cannot resolve revision {rev:?}: {}", e.message()))?;
+        .map_err(|e| ierrp("err_history.cannot_resolve_revision", &[("rev", &format!("{rev:?}")), ("detail", e.message())]))?;
     let commit = obj
         .peel_to_commit()
-        .map_err(|e| format!("Revision {rev:?} is not a commit: {}", e.message()))?;
+        .map_err(|e| ierrp("err_history.revision_not_commit", &[("rev", &format!("{rev:?}")), ("detail", e.message())]))?;
     Ok(commit.id())
 }
 
@@ -420,9 +421,9 @@ fn commit_range(repo: &Repository, onto: Oid) -> Result<Vec<Oid>, String> {
     walk.set_sorting(Sort::TOPOLOGICAL)
         .map_err(|e| e.message().to_string())?;
     walk.push_head()
-        .map_err(|e| format!("Cannot walk from HEAD: {}", e.message()))?;
+        .map_err(|e| ierrp("err_history.cannot_walk_from_head", &[("detail", e.message())]))?;
     walk.hide(onto)
-        .map_err(|e| format!("Cannot resolve target: {}", e.message()))?;
+        .map_err(|e| ierrp("err_history.cannot_resolve_target", &[("detail", e.message())]))?;
 
     let mut oids: Vec<Oid> = Vec::new();
     for oid in walk {
@@ -489,10 +490,10 @@ fn build_todo_text(repo: &Repository, todo: &[TodoItem]) -> Result<String, Strin
     let mut text = String::new();
     for item in todo {
         let oid = Oid::from_str(&item.sha)
-            .map_err(|e| format!("Bad commit id {:?}: {}", item.sha, e.message()))?;
+            .map_err(|e| ierrp("err_history.bad_commit_id", &[("sha", &format!("{:?}", item.sha)), ("detail", e.message())]))?;
         let commit = repo
             .find_commit(oid)
-            .map_err(|e| format!("Cannot find commit {:?}: {}", item.sha, e.message()))?;
+            .map_err(|e| ierrp("err_history.cannot_find_commit", &[("sha", &format!("{:?}", item.sha)), ("detail", e.message())]))?;
         let subject: String = commit
             .summary()
             .unwrap_or("")
@@ -516,11 +517,11 @@ fn build_todo_text(repo: &Repository, todo: &[TodoItem]) -> Result<String, Strin
 /// can never collide.
 fn write_precomputed_todo(repo: &Repository, text: &str) -> Result<PathBuf, String> {
     let dir = todo_dir(repo);
-    fs::create_dir_all(&dir).map_err(|e| format!("could not create rebase-todo dir: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| ierrp("err_history.could_not_create_todo_dir", &[("detail", &e.to_string())]))?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     let seq = TODO_SEQ.fetch_add(1, Ordering::SeqCst);
     let path = dir.join(format!("{}-{}-{}-todo", now.as_secs(), now.subsec_nanos(), seq));
-    fs::write(&path, text).map_err(|e| format!("could not write precomputed todo: {e}"))?;
+    fs::write(&path, text).map_err(|e| ierrp("err_history.could_not_write_todo", &[("detail", &e.to_string())]))?;
     Ok(path)
 }
 
@@ -690,18 +691,18 @@ pub async fn rebase_start(path: String, onto: String) -> RebaseResult {
         }
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return RebaseResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
 
         // Refuse to stack a new rebase on top of an unfinished one.
         if in_progress(&repo) {
-            return RebaseResult::error("A rebase is already in progress — resolve or abort it first.");
+            return RebaseResult::error(ierr("err_history.rebase_in_progress"));
         }
 
         // Snapshot FIRST — never mutate without a pre-op backup. If it fails, abort.
         let backup = match crate::safety::snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return RebaseResult::error(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return RebaseResult::error(ierrp("err_history.snapshot_failed", &[("detail", &e)])),
         };
 
         // git rebase --no-autostash --end-of-options <onto>
@@ -766,10 +767,10 @@ pub async fn rebase_continue(path: String) -> RebaseResult {
     crate::blocking::run_blocking(move || {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return RebaseResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
         if !in_progress(&repo) {
-            return RebaseResult::error("No rebase in progress to continue.");
+            return RebaseResult::error(ierr("err_history.no_rebase_to_continue"));
         }
 
         // Name the target (for messages) while the sequencer's `onto` file exists.
@@ -819,10 +820,10 @@ pub async fn rebase_skip(path: String) -> RebaseResult {
     crate::blocking::run_blocking(move || {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return RebaseResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
         if !in_progress(&repo) {
-            return RebaseResult::error("No rebase in progress to skip a commit from.");
+            return RebaseResult::error(ierr("err_history.no_rebase_to_skip"));
         }
 
         let dropped = stopped_label(&repo, &path);
@@ -873,7 +874,7 @@ pub async fn rebase_abort(path: String) -> RebaseResult {
     crate::blocking::run_blocking(move || {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
-            Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return RebaseResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
         if !in_progress(&repo) {
             return RebaseResult {
@@ -920,7 +921,7 @@ pub async fn rebase_interactive_plan(path: String, onto: String) -> Result<Vec<P
     crate::blocking::run_blocking(move || {
         validate_rev(&onto)?;
         let repo = Repository::open(&path)
-            .map_err(|e| format!("Cannot open repository: {}", e.message()))?;
+            .map_err(|e| ierrp("err_history.cannot_open", &[("detail", e.message())]))?;
         let onto_oid = resolve_oid(&repo, &onto)?;
         let oids = commit_range(&repo, onto_oid)?;
         plan_commits(&repo, &oids)
@@ -974,12 +975,12 @@ pub async fn rebase_interactive_start(path: String, onto: String, todo: Vec<Todo
         }
         let repo = match Repository::open(&path) {
             Ok(r) => r,
-            Err(e) => return RebaseResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return RebaseResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
 
         // Refuse to stack an interactive rebase on top of an unfinished op of any kind.
         if in_progress(&repo) {
-            return RebaseResult::error("A rebase is already in progress — resolve or abort it first.");
+            return RebaseResult::error(ierr("err_history.rebase_in_progress"));
         }
 
         let onto_oid = match resolve_oid(&repo, &onto) {
@@ -994,20 +995,18 @@ pub async fn rebase_interactive_start(path: String, onto: String, todo: Vec<Todo
         };
 
         if todo.is_empty() {
-            return RebaseResult::error("Nothing to rebase — no commits between HEAD and the target.");
+            return RebaseResult::error(ierr("err_history.nothing_to_rebase"));
         }
         for item in &todo {
             if let Err(e) = validate_rev(&item.sha) {
                 return RebaseResult::error(e);
             }
             if !TODO_ACTIONS.contains(&item.action.as_str()) {
-                return RebaseResult::error(format!("Unknown rebase action: {:?}", item.action));
+                return RebaseResult::error(ierrp("err_history.unknown_rebase_action", &[("action", &format!("{:?}", item.action))]));
             }
         }
         if matches!(todo[0].action.as_str(), "squash" | "fixup") {
-            return RebaseResult::error(
-                "The first commit in the plan can't be squash/fixup — nothing precedes it to combine into.",
-            );
+            return RebaseResult::error(ierr("err_history.first_commit_squash"));
         }
         let fresh_shas: HashSet<String> = fresh.iter().map(Oid::to_string).collect();
         let todo_shas: HashSet<String> = todo.iter().map(|t| t.sha.clone()).collect();
@@ -1022,15 +1021,13 @@ pub async fn rebase_interactive_start(path: String, onto: String, todo: Vec<Todo
         // length check below catches exactly this: `todo` must have exactly one
         // row per fresh commit, no more, no fewer.
         if todo.len() != fresh.len() || todo_shas != fresh_shas {
-            return RebaseResult::error(
-                "This plan is out of date with the repository — refresh and try again.",
-            );
+            return RebaseResult::error(ierr("err_history.plan_out_of_date"));
         }
 
         // Snapshot FIRST — never mutate without a pre-op backup.
         let backup = match crate::safety::snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return RebaseResult::error(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return RebaseResult::error(ierrp("err_history.snapshot_failed", &[("detail", &e)])),
         };
 
         let todo_text = match build_todo_text(&repo, &todo) {

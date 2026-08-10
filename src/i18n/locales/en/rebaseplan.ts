@@ -1,0 +1,27 @@
+// Interactive-rebase planner. Keys become `rebaseplan.<key>`.
+export default {
+  header: "Interactive rebase onto {onto}",
+  subtitle: "Drag to reorder, pick an action per commit, then Start.",
+  tama_alt: "Tama, alarmed",
+  drag_reorder: "Drag to reorder",
+  action_aria: "Action for {sha}",
+  action_pick: "Pick",
+  action_edit: "Edit",
+  action_squash: "Squash",
+  action_fixup: "Fixup",
+  action_drop: "Drop",
+  empty: "No plannable commits between here and the target.",
+  start: "Start interactive rebase",
+  starting: "Starting…",
+  // controller
+  open_repo_first: "Open a repository first.",
+  up_to_date: "Already up to date with {onto} — nothing to plan.",
+  list_failed: "Could not list commits to plan.",
+  list_failed_e: "Could not list commits to plan — {error}",
+  demo_applied: "Interactive rebase applied (demo).",
+  cheer: 'Interactive rebase complete. <span class="jp">よし!</span>',
+  complete: "Interactive rebase complete.",
+  up_to_date_empty: "Already up to date — nothing to rebase.",
+  could_not_start: "Interactive rebase could not start.",
+  failed_e: "Interactive rebase failed — {error}",
+};

@@ -73,6 +73,7 @@
 use serde::Serialize;
 use std::process::Command;
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::model::Person;
 use crate::procutil::NoConsoleWindowExt;
 
@@ -191,11 +192,11 @@ fn pickaxe_search_inner(
     let at_sha: Option<String> = if all_refs {
         None
     } else {
-        let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+        let repo = crate::trust::open_repo(path).map_err(|e| ierrp("err_tools.cannot_open_repo", &[("detail", e.message())]))?;
         let commit = match at_commit {
             Some(sha) => repo
                 .find_commit_by_prefix(sha)
-                .map_err(|e| format!("Not a valid commit: {sha:?} ({})", e.message()))?,
+                .map_err(|e| ierrp("err_tools.not_a_valid_commit", &[("rev", &format!("{sha:?}")), ("detail", e.message())]))?,
             None => {
                 let head = repo.head().map_err(|e| e.message().to_string())?;
                 head.peel_to_commit().map_err(|e| e.message().to_string())?
@@ -215,7 +216,7 @@ fn pickaxe_search_inner(
             let short = short(&commit.id().to_string());
             let tree = commit.tree().map_err(|e| e.message().to_string())?;
             if tree.get_path(std::path::Path::new(f)).is_err() {
-                return Err(format!("{f} does not exist at {short}."));
+                return Err(ierrp("err_tools.path_does_not_exist", &[("path", f), ("short", &short)]));
             }
         }
         Some(commit.id().to_string())
@@ -280,9 +281,7 @@ fn pickaxe_flag(mode: &str, query: &str, regex: bool) -> Result<Vec<String>, Str
         // command + modal. `regex` is irrelevant (--author is always a regex),
         // so it's never forwarded — same as -G above.
         "author" => Ok(vec![format!("--author={query}")]),
-        other => Err(format!(
-            "Unknown pickaxe mode: {other:?} (expected \"added-removed\", \"diff-match\", or \"author\")."
-        )),
+        other => Err(ierrp("err_tools.unknown_pickaxe_mode", &[("mode", &format!("{other:?}"))])),
     }
 }
 
@@ -305,7 +304,7 @@ fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
         .arg(path)
         .args(args)
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_tools.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code(),
@@ -318,7 +317,7 @@ fn git_msg(o: &Out) -> String {
     if !o.stderr.is_empty() {
         o.stderr.clone()
     } else {
-        format!("git exited with status {:?}", o.code)
+        ierrp("err_tools.git_exited_with_status", &[("code", &format!("{:?}", o.code))])
     }
 }
 
@@ -357,10 +356,10 @@ fn short(sha: &str) -> String {
 ///     happens in this module's own real argv (something always follows).
 fn validate_query(query: &str) -> Result<(), String> {
     if query.is_empty() {
-        return Err("Enter something to search for.".into());
+        return Err(ierr("err_tools.enter_search_text"));
     }
     if query.contains('\u{0}') {
-        return Err("Search text has an embedded NUL byte.".into());
+        return Err(ierr("err_tools.search_text_nul"));
     }
     Ok(())
 }
@@ -373,7 +372,7 @@ fn validate_query(query: &str) -> Result<(), String> {
 /// leading-dash check.
 fn validate_file(file: &str) -> Result<(), String> {
     if file.contains('\u{0}') {
-        return Err("Path has an embedded NUL byte.".into());
+        return Err(ierr("err_tools.path_nul"));
     }
     Ok(())
 }

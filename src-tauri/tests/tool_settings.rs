@@ -308,7 +308,7 @@ fn open_diff_tool_refuses_cleanly_with_no_tool_configured() {
     repo.commit("f.txt", "x\n", "initial");
 
     let err = open_diff_tool_inner(None, &repo.path(), "f.txt", false, None, None).expect_err("must refuse with no tool configured");
-    assert!(err.contains("External Tools"), "message should point at the settings entry point: {err}");
+    assert!(err.contains("err_tools.no_diff_tool"), "message should point at the settings entry point: {err}");
     // No marker/output could possibly exist — nothing should have spawned.
 }
 
@@ -422,7 +422,7 @@ fn resolve_conflict_with_external_tool_detects_a_tool_that_reports_success_witho
     let result = resolve_conflict_with_external_tool_inner(Some(tool), &repo.path(), "shared.txt");
     assert!(!result.ok, "a tool that changed nothing must never be reported as a successful resolution");
     assert!(
-        result.message.contains("didn't actually change") || result.message.to_lowercase().contains("nothing was"),
+        result.message.contains("err_tools.tool_changed_nothing"),
         "expected a clear 'nothing was actually resolved' message, got: {}",
         result.message
     );
@@ -446,7 +446,7 @@ fn resolve_conflict_with_external_tool_refuses_a_double_quote_in_the_filename() 
     let tool = ExternalTool { name: "faketool".into(), cmd: Some("true".into()) };
     let result = resolve_conflict_with_external_tool_inner(Some(tool), &repo.path(), "a\"b.txt");
     assert!(!result.ok);
-    assert!(result.message.contains("double-quote"), "expected a clear double-quote-specific message, got: {}", result.message);
+    assert!(result.message.contains("err_tools.filename_double_quote"), "expected a clear double-quote-specific message, got: {}", result.message);
 }
 
 #[test]
@@ -454,7 +454,7 @@ fn resolve_conflict_with_external_tool_refuses_cleanly_with_no_tool_configured()
     let repo = build_conflicting_merge("mergetool_none");
     let result = resolve_conflict_with_external_tool_inner(None, &repo.path(), "shared.txt");
     assert!(!result.ok);
-    assert!(result.message.contains("External Tools"), "message should point at the settings entry point: {}", result.message);
+    assert!(result.message.contains("err_tools.no_merge_tool"), "message should point at the settings entry point: {}", result.message);
     // Refused before ever touching the conflict — still unmerged.
     let short_status = repo.must(&["status", "--short"]);
     assert_eq!(short_status.trim(), "UU shared.txt");
@@ -470,7 +470,7 @@ fn resolve_conflict_with_external_tool_refuses_outside_an_allowlisted_op() {
     let result = resolve_conflict_with_external_tool_inner(Some(tool), &repo.path(), "f.txt");
     assert!(!result.ok);
     assert!(
-        result.message.contains("Not inside a cherry-pick"),
+        result.message.contains("err_tools.not_in_conflict_op"),
         "message should explain the refusal: {}",
         result.message
     );

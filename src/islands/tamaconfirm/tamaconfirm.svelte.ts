@@ -13,6 +13,8 @@
 // Promise-based (like the mainlinepicker chooser) so a caller reads as a plain
 // `const ok = await tamaConfirmCtrl.ask({...})`.
 
+import { t } from "@/i18n/i18n.svelte.ts";
+
 type Kind = "info" | "warning" | "danger";
 
 type TamaConfirmOpts = {
@@ -27,8 +29,8 @@ class TamaConfirmState {
   open = $state(false);
   title = $state("");
   message = $state("");
-  confirmLabel = $state("Confirm");
-  cancelLabel = $state("Cancel");
+  confirmLabel = $state(t("tamaconfirm.confirm"));
+  cancelLabel = $state(t("common.cancel"));
   kind = $state<Kind>("info");
   // Resolver for the in-flight ask() promise; null when nothing is open.
   private resolveFn: ((v: boolean) => void) | null = null;
@@ -39,8 +41,8 @@ class TamaConfirmState {
     this.settle(false); // never leave a prior dialog hanging
     this.title = opts.title;
     this.message = opts.message;
-    this.confirmLabel = opts.confirmLabel ?? "Confirm";
-    this.cancelLabel = opts.cancelLabel ?? "Cancel";
+    this.confirmLabel = opts.confirmLabel ?? t("tamaconfirm.confirm");
+    this.cancelLabel = opts.cancelLabel ?? t("common.cancel");
     this.kind = opts.kind ?? "info";
     this.open = true;
     return new Promise((resolve) => {
