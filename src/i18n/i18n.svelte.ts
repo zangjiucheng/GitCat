@@ -9,6 +9,13 @@
 // namespace, so a key is `"<namespace>.<key>"`. Glob loading is deliberate: a new
 // namespace file needs NO central registry edit, which is what lets the
 // string-extraction work fan out file-by-file with no merge conflicts.
+//
+// CONTRIBUTOR POLICY: English is the SOURCE OF TRUTH. `t()` falls back zh -> en
+// -> key, so a key present only in `en/` renders fine (in English) with no zh
+// entry. A contributor who doesn't read Chinese should add ONLY the `en/` string
+// and is never blocked: zh is best-effort and can be filled in later, and there
+// is deliberately no CI gate requiring en/zh key parity. Same for the backend:
+// see `be()` below and `src-tauri/src/i18n_err.rs`.
 
 export type Locale = "en" | "zh";
 
@@ -87,4 +94,33 @@ export function t(key: string, params?: Record<string, string | number | null | 
     }
   }
   return s;
+}
+
+// Unit Separator — the delimiter the Rust side (i18n_err.rs) uses between the
+// key and its params, and between each param name and value. Never occurs in
+// real message text.
+const BE_SEP = "\u001f";
+
+/**
+ * Translate a BACKEND error string for display. App-authored Rust errors are
+ * returned in the machine-readable form `i18n:<ns>.<key>` (optionally followed
+ * by `\x1f name \x1f value` pairs) — see `src-tauri/src/i18n_err.rs`. This
+ * detects that prefix, looks the key up, and interpolates the params (reusing
+ * `t()`, so it's reactive and respects the same zh -> en -> key fallback).
+ *
+ * Anything WITHOUT the `i18n:` prefix is returned verbatim: raw `git` stderr
+ * (which the app pins to `LC_ALL=C` and cannot localize) and any not-yet-keyed
+ * app message pass straight through in English. That passthrough is exactly why
+ * an English-only contributor is never blocked — a backend message with no key
+ * still shows, just untranslated.
+ */
+export function be(err: unknown): string {
+  if (err == null) return "";
+  const s = String(err);
+  if (!s.startsWith("i18n:")) return s; // git stderr / not-yet-keyed passthrough
+  const parts = s.slice(5).split(BE_SEP);
+  const key = parts[0];
+  const params: Record<string, string> = {};
+  for (let i = 1; i + 1 < parts.length; i += 2) params[parts[i]] = parts[i + 1];
+  return t(key, params);
 }
