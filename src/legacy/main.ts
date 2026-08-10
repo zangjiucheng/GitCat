@@ -3364,11 +3364,19 @@ const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>c
    re-applied on every language switch (islands re-render themselves via t()).
    ============================================================ */
 function applyStaticI18n(root=document){
-  root.querySelectorAll("[data-i18n]").forEach(el=>{ el.textContent=t(el.getAttribute("data-i18n")); });
-  root.querySelectorAll("[data-i18n-html]").forEach(el=>{ el.innerHTML=t(el.getAttribute("data-i18n-html")); });
-  root.querySelectorAll("[data-i18n-title]").forEach(el=>{ el.title=t(el.getAttribute("data-i18n-title")); });
-  root.querySelectorAll("[data-i18n-ph]").forEach(el=>{ el.setAttribute("placeholder",t(el.getAttribute("data-i18n-ph"))); });
-  root.querySelectorAll("[data-i18n-aria]").forEach(el=>{ el.setAttribute("aria-label",t(el.getAttribute("data-i18n-aria"))); });
+  // A translation key is only ever a plain "namespace.key" identifier. Validate
+  // the attribute value against that allowlist before use: these keys are
+  // authored by us in index.html (never user input) and t() only ever returns
+  // compile-time dictionary strings, but gating on the pattern also severs the
+  // DOM-attribute -> innerHTML data flow CodeQL flags as js/xss-through-dom on
+  // the -html branch, and refuses anything that couldn't be a real key anyway.
+  const KEY_RE=/^[a-z0-9_.]+$/i;
+  const key=(el,attr)=>{ const k=el.getAttribute(attr); return k&&KEY_RE.test(k)?k:null; };
+  root.querySelectorAll("[data-i18n]").forEach(el=>{ const k=key(el,"data-i18n"); if(k!==null) el.textContent=t(k); });
+  root.querySelectorAll("[data-i18n-html]").forEach(el=>{ const k=key(el,"data-i18n-html"); if(k!==null) el.innerHTML=t(k); });
+  root.querySelectorAll("[data-i18n-title]").forEach(el=>{ const k=key(el,"data-i18n-title"); if(k!==null) el.title=t(k); });
+  root.querySelectorAll("[data-i18n-ph]").forEach(el=>{ const k=key(el,"data-i18n-ph"); if(k!==null) el.setAttribute("placeholder",t(k)); });
+  root.querySelectorAll("[data-i18n-aria]").forEach(el=>{ const k=key(el,"data-i18n-aria"); if(k!==null) el.setAttribute("aria-label",t(k)); });
 }
 applyStaticI18n();
 
