@@ -256,7 +256,7 @@ fn commit_refuses_with_empty_message_and_not_amending() {
 
     let res = tauri::async_runtime::block_on(commit(path.clone(), Some("   ".into()), None));
     assert!(!res.ok, "commit with an empty message should be refused");
-    assert!(res.message.to_lowercase().contains("empty"), "unexpected message: {}", res.message);
+    assert!(res.message.contains("err_workdir.commit_message_empty"), "unexpected message: {}", res.message);
     assert!(res.backup_ref.is_none(), "a refused, never-attempted commit must not have snapshotted");
     assert_eq!(repo.rev("HEAD").unwrap(), c0, "HEAD must not have moved");
 }
@@ -990,7 +990,7 @@ fn stage_lines_refuses_the_whole_request_when_a_hunk_header_no_longer_matches() 
     let res = tauri::async_runtime::block_on(stage_lines(path.clone(), "f.txt".into(), vec![stale]));
     assert!(!res.ok, "a stale/mismatched hunk header must be refused, not silently reinterpreted");
     assert!(
-        res.message.contains("changed since you last looked"),
+        res.message.contains("err_workdir.stale_diff"),
         "expected the staleness message, got: {}",
         res.message
     );
@@ -1024,7 +1024,7 @@ fn stage_lines_refuses_on_a_binary_file() {
     };
     let res = tauri::async_runtime::block_on(stage_lines(path.clone(), "bin.dat".into(), vec![bogus]));
     assert!(!res.ok, "line-level staging on a binary file must be refused");
-    assert!(res.message.contains("binary file"), "expected a binary-file message, got: {}", res.message);
+    assert!(res.message.contains("err_workdir.binary_line_staging_unsupported"), "expected a binary-file message, got: {}", res.message);
 }
 
 #[test]
@@ -1077,7 +1077,7 @@ fn stage_lines_refuses_a_partial_selection_of_a_final_no_trailing_newline_line()
     let res = tauri::async_runtime::block_on(stage_lines(path.clone(), "f.txt".into(), vec![sel]));
     assert!(!res.ok, "a partial selection touching a no-trailing-newline boundary must be refused, not silently applied");
     assert!(
-        res.message.contains("newline"),
+        res.message.contains("err_workdir.partial_no_newline_unsupported"),
         "refusal message should explain why (mentions newline): {}",
         res.message
     );

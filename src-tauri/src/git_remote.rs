@@ -64,6 +64,8 @@ use git2::{BranchType, Repository};
 use serde::Serialize;
 use tauri::{AppHandle, Wry};
 
+use crate::i18n_err::{ierr, ierrp};
+
 #[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteResult {
@@ -109,7 +111,9 @@ pub struct SyncProgress {
 /// EVERY call here goes through its WSL-aware routing, not just the ones
 /// that fetch/push over the network directly.
 fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
-    let output = crate::wsl::git_command(path, args).output().map_err(|e| format!("Could not run git: {e}"))?;
+    let output = crate::wsl::git_command(path, args)
+        .output()
+        .map_err(|e| ierrp("err_remote.run_git_failed", &[("detail", &e.to_string())]))?;
     Ok(GitOut {
         ok: output.status.success(),
         code: output.status.code(),
@@ -154,7 +158,7 @@ fn run_git_streaming(path: &str, args: &[&str], mut on_line: impl FnMut(&str)) -
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_remote.run_git_failed", &[("detail", &e.to_string())]))?;
 
     // Drain stdout on a sibling thread so a large stdout can't deadlock the
     // stderr read loop below (and vice versa).
@@ -184,7 +188,7 @@ fn run_git_streaming(path: &str, args: &[&str], mut on_line: impl FnMut(&str)) -
         on_line(String::from_utf8_lossy(&seg).trim_end());
     }
 
-    let status = child.wait().map_err(|e| format!("git wait failed: {e}"))?;
+    let status = child.wait().map_err(|e| ierrp("err_remote.git_wait_failed", &[("detail", &e.to_string())]))?;
     let stdout = stdout_thread.join().unwrap_or_default();
     Ok(GitOut {
         ok: status.success(),
@@ -240,22 +244,21 @@ fn git_error_message(path: &str, out: &GitOut) -> String {
     } else if !out.stdout.is_empty() {
         out.stdout.clone()
     } else {
-        format!("git exited with status {:?}", out.code)
+        ierrp("err_remote.git_exited_status", &[("code", &format!("{:?}", out.code))])
     };
     let is_wsl = crate::wsl::wsl_target(path).is_some();
     // Kept short on purpose: Tama's toast-line (index.html's .toast-line)
     // clamps to 5 wrapped lines in a ~150px-wide bubble, so a full
-    // explanation of *why* would just get silently cut off.
+    // explanation of *why* would just get silently cut off. The raw git
+    // stderr (`base`) travels as a param, unlocalized, exactly like it does
+    // in the plain-passthrough `else` arm below.
     if is_wsl && base.contains("Permission denied") && base.contains("publickey") {
-        format!(
-            "{base} (WSL skips shell init, so ssh-agent never starts — start one in a WSL terminal, \
-             or use a passphrase-less key)"
-        )
+        ierrp("err_remote.ssh_publickey_wsl_hint", &[("base", &base)])
     } else if base.contains("Host key verification failed") {
         if is_wsl {
-            format!("{base} (run any ssh/git command against this remote from a WSL terminal once to accept its host key, then retry)")
+            ierrp("err_remote.host_key_wsl_hint", &[("base", &base)])
         } else {
-            format!("{base} (run any ssh/git command against this remote from a terminal once to accept its host key, then retry)")
+            ierrp("err_remote.host_key_hint", &[("base", &base)])
         }
     } else {
         base
@@ -267,7 +270,7 @@ fn short_backup(r: &str) -> String {
 }
 
 fn open_repo(path: &str) -> Result<Repository, RemoteResult> {
-    crate::trust::open_repo(path).map_err(|e| RemoteResult::err(format!("Cannot open repository: {}", e.message())))
+    crate::trust::open_repo(path).map_err(|e| RemoteResult::err(ierrp("err_remote.cannot_open", &[("detail", e.message())])))
 }
 
 fn take_snapshot(repo: &Repository) -> Result<String, String> {
@@ -278,13 +281,13 @@ fn take_snapshot(repo: &Repository) -> Result<String, String> {
 /// for remote names ("origin", "upstream", ...) rather than branch names.
 fn validate_remote_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
-        return Err("Remote name is empty.".into());
+        return Err(ierr("err_remote.remote_name_empty"));
     }
     if name.starts_with('-') {
-        return Err(format!("Refusing a remote name that looks like a flag: {name:?}"));
+        return Err(ierrp("err_remote.remote_name_flag", &[("name", &format!("{name:?}"))]));
     }
     if name.chars().any(|c| c.is_control() || c == ' ') {
-        return Err(format!("Remote name has an illegal whitespace/control character: {name:?}"));
+        return Err(ierrp("err_remote.remote_name_control", &[("name", &format!("{name:?}"))]));
     }
     Ok(())
 }
@@ -298,17 +301,17 @@ fn validate_remote_name(name: &str) -> Result<(), String> {
 /// `delete_branch` apply.
 fn validate_branch_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
-        return Err("Branch name is empty.".into());
+        return Err(ierr("err_remote.branch_name_empty"));
     }
     if name.starts_with('-') {
-        return Err(format!("Refusing a branch name that looks like a flag: {name:?}"));
+        return Err(ierrp("err_remote.branch_name_flag", &[("name", &format!("{name:?}"))]));
     }
     for ch in name.chars() {
         if ch.is_control() || ch == ' ' || ch == '\u{7f}' {
-            return Err(format!("Branch name has an illegal whitespace/control character: {name:?}"));
+            return Err(ierrp("err_remote.branch_name_control", &[("name", &format!("{name:?}"))]));
         }
         if matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\') {
-            return Err(format!("Branch name has an illegal character '{ch}': {name:?}"));
+            return Err(ierrp("err_remote.branch_name_illegal_char", &[("ch", &ch.to_string()), ("name", &format!("{name:?}"))]));
         }
     }
     if name.contains("..")
@@ -320,7 +323,7 @@ fn validate_branch_name(name: &str) -> Result<(), String> {
         || name.ends_with(".lock")
         || name == "@"
     {
-        return Err(format!("Not a valid branch name: {name:?}"));
+        return Err(ierrp("err_remote.branch_name_invalid", &[("name", &format!("{name:?}"))]));
     }
     Ok(())
 }
@@ -336,17 +339,17 @@ fn validate_branch_name(name: &str) -> Result<(), String> {
 /// itself refuses with a confusing error).
 fn validate_tag_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
-        return Err("Tag name is empty.".into());
+        return Err(ierr("err_remote.tag_name_empty"));
     }
     if name.starts_with('-') {
-        return Err(format!("Refusing a tag name that looks like a flag: {name:?}"));
+        return Err(ierrp("err_remote.tag_name_flag", &[("name", &format!("{name:?}"))]));
     }
     for ch in name.chars() {
         if ch.is_control() || ch == ' ' || ch == '\u{7f}' {
-            return Err(format!("Tag name has an illegal whitespace/control character: {name:?}"));
+            return Err(ierrp("err_remote.tag_name_control", &[("name", &format!("{name:?}"))]));
         }
         if matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\') {
-            return Err(format!("Tag name has an illegal character '{ch}': {name:?}"));
+            return Err(ierrp("err_remote.tag_name_illegal_char", &[("ch", &ch.to_string()), ("name", &format!("{name:?}"))]));
         }
     }
     if name.contains("..")
@@ -358,7 +361,7 @@ fn validate_tag_name(name: &str) -> Result<(), String> {
         || name.ends_with(".lock")
         || name == "@"
     {
-        return Err(format!("Not a valid tag name: {name:?}"));
+        return Err(ierrp("err_remote.tag_name_invalid", &[("name", &format!("{name:?}"))]));
     }
     Ok(())
 }
@@ -474,7 +477,7 @@ pub async fn pull(path: String) -> RemoteResult {
         };
         let backup = match take_snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return RemoteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return RemoteResult::err(ierrp("err_remote.snapshot_failed", &[("detail", &e)])),
         };
         match run_git(&path, &["pull", "--ff-only"]) {
             Ok(out) if out.ok => {
@@ -512,7 +515,7 @@ pub async fn pull_stream(app: AppHandle<Wry>, path: String) -> RemoteResult {
         };
         let backup = match take_snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return RemoteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return RemoteResult::err(ierrp("err_remote.snapshot_failed", &[("detail", &e)])),
         };
         let mut emit = |line: &str| {
             crate::event_util::emit_on_main(&app, "sync-progress", SyncProgress { phase: "pull".into(), line: line.to_string() });
@@ -553,7 +556,7 @@ pub async fn pull_stream(app: AppHandle<Wry>, path: String) -> RemoteResult {
 #[specta::specta]
 pub async fn current_upstream(path: String) -> Result<Option<String>, String> {
     crate::blocking::run_blocking(move || {
-        let repo = crate::trust::open_repo(&path).map_err(|e| format!("Cannot open repository: {}", e.message()))?;
+        let repo = crate::trust::open_repo(&path).map_err(|e| ierrp("err_remote.cannot_open", &[("detail", e.message())]))?;
         let branch_name = match repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string())) {
             Some(b) => b,
             None => return Ok(None),
@@ -613,20 +616,20 @@ pub async fn reset_branch_to_upstream(path: String, branch: String) -> RemoteRes
         };
         let local = match repo.find_branch(&branch, BranchType::Local) {
             Ok(b) => b,
-            Err(_) => return RemoteResult::err(format!("No local branch named {branch:?}.")),
+            Err(_) => return RemoteResult::err(ierrp("err_remote.no_local_branch", &[("branch", &format!("{branch:?}"))])),
         };
         let upstream = match local.upstream() {
             Ok(u) => u,
-            Err(_) => return RemoteResult::err(format!("{branch} has no configured upstream to reset to.")),
+            Err(_) => return RemoteResult::err(ierrp("err_remote.branch_no_upstream_reset", &[("branch", &branch)])),
         };
         let upstream_name = match upstream.name() {
             Ok(Some(n)) => n.to_string(),
-            _ => return RemoteResult::err(format!("{branch}'s upstream name isn't valid UTF-8.")),
+            _ => return RemoteResult::err(ierrp("err_remote.upstream_name_not_utf8", &[("branch", &branch)])),
         };
 
         let backup = match take_snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return RemoteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return RemoteResult::err(ierrp("err_remote.snapshot_failed", &[("detail", &e)])),
         };
 
         let is_current = repo
@@ -681,7 +684,7 @@ pub async fn push(path: String) -> RemoteResult {
         };
         let branch = match repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string())) {
             Some(b) => b,
-            None => return RemoteResult::err("HEAD is not on a branch — nothing to push.".to_string()),
+            None => return RemoteResult::err(ierr("err_remote.head_not_on_branch_push")),
         };
         let has_upstream = repo.find_branch(&branch, BranchType::Local).ok().and_then(|b| b.upstream().ok()).is_some();
 
@@ -777,18 +780,18 @@ pub async fn force_push(path: String, lease: bool) -> RemoteResult {
         };
         let branch = match repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string())) {
             Some(b) => b,
-            None => return RemoteResult::err("HEAD is not on a branch — nothing to force-push.".to_string()),
+            None => return RemoteResult::err(ierr("err_remote.head_not_on_branch_force_push")),
         };
         let has_upstream = repo.find_branch(&branch, BranchType::Local).ok().and_then(|b| b.upstream().ok()).is_some();
         if !has_upstream {
-            return RemoteResult::err("This branch has no upstream yet — use Push to publish it first.".to_string());
+            return RemoteResult::err(ierr("err_remote.no_upstream_use_push"));
         }
         let remote = match repo.branch_upstream_remote(&format!("refs/heads/{branch}")) {
             Ok(buf) => match buf.as_str() {
                 Some(s) => s.to_string(),
-                None => return RemoteResult::err("This branch's upstream remote name isn't valid UTF-8.".to_string()),
+                None => return RemoteResult::err(ierr("err_remote.upstream_remote_not_utf8")),
             },
-            Err(e) => return RemoteResult::err(format!("Could not resolve this branch's upstream remote: {e}")),
+            Err(e) => return RemoteResult::err(ierrp("err_remote.cannot_resolve_upstream_remote", &[("detail", &e.to_string())])),
         };
 
         let flag = if lease { "--force-with-lease" } else { "--force" };
@@ -938,7 +941,7 @@ pub async fn push_branch(path: String, branch: String, remote: Option<String>, r
         };
         let local = match repo.find_branch(&branch, BranchType::Local) {
             Ok(b) => b,
-            Err(_) => return RemoteResult::err(format!("No such local branch: {branch}")),
+            Err(_) => return RemoteResult::err(ierrp("err_remote.no_such_local_branch", &[("branch", &branch)])),
         };
         let has_upstream = local.upstream().is_ok();
 
@@ -988,8 +991,9 @@ mod tests {
     #[test]
     fn git_error_message_appends_the_wsl_ssh_hint_only_on_a_wsl_path() {
         let msg = git_error_message(r"\\wsl.localhost\Ubuntu\home\jc\repo", &out("Permission denied (publickey)."));
-        assert!(msg.starts_with("Permission denied (publickey)."), "original stderr must still lead the message: {msg:?}");
-        assert!(msg.contains("ssh-agent"), "expected the WSL-specific hint appended: {msg:?}");
+        // Now an i18n key; the raw git stderr rides along verbatim as the `base` param.
+        assert!(msg.contains("err_remote.ssh_publickey_wsl_hint"), "expected the WSL-specific hint key: {msg:?}");
+        assert!(msg.contains("Permission denied (publickey)."), "original stderr must travel as a param: {msg:?}");
     }
 
     #[test]
@@ -1016,8 +1020,8 @@ mod tests {
             r"\\wsl.localhost\Ubuntu\home\jc\repo",
             &out("Host key verification failed.\r\nfatal: Could not read from remote repository."),
         );
-        assert!(msg.starts_with("Host key verification failed."), "original stderr must still lead the message: {msg:?}");
-        assert!(msg.contains("WSL terminal"), "expected the WSL-specific remediation hint: {msg:?}");
+        assert!(msg.contains("err_remote.host_key_wsl_hint"), "expected the WSL-specific host-key hint key: {msg:?}");
+        assert!(msg.contains("Host key verification failed."), "original stderr must travel as a param: {msg:?}");
     }
 
     #[test]
@@ -1026,9 +1030,9 @@ mod tests {
             r"C:\Users\jc\repo",
             &out("Host key verification failed.\r\nfatal: Could not read from remote repository."),
         );
-        assert!(msg.starts_with("Host key verification failed."), "original stderr must still lead the message: {msg:?}");
-        assert!(msg.contains("from a terminal once"), "expected the plain-path remediation hint: {msg:?}");
-        assert!(!msg.contains("WSL terminal"), "a non-WSL repo must never see the WSL-specific wording: {msg:?}");
+        assert!(msg.contains("err_remote.host_key_hint"), "expected the plain-path host-key hint key: {msg:?}");
+        assert!(msg.contains("Host key verification failed."), "original stderr must travel as a param: {msg:?}");
+        assert!(!msg.contains("host_key_wsl_hint"), "a non-WSL repo must never use the WSL-specific hint key: {msg:?}");
     }
 
     #[test]
@@ -1038,7 +1042,10 @@ mod tests {
         assert_eq!(git_error_message("/any/path", &o), "some stdout text");
 
         let empty = GitOut { ok: false, code: Some(1), stdout: String::new(), stderr: String::new() };
-        assert_eq!(git_error_message("/any/path", &empty), "git exited with status Some(1)");
+        assert_eq!(
+            git_error_message("/any/path", &empty),
+            crate::i18n_err::ierrp("err_remote.git_exited_status", &[("code", "Some(1)")])
+        );
     }
 
     // Drive `feed_progress` chunk-by-chunk (mirroring run_git_streaming's read

@@ -26,6 +26,8 @@
 use git2::{BranchType, Repository};
 use serde::Serialize;
 
+use crate::i18n_err::{ierr, ierrp};
+
 // ---------------------------------------------------------------------------
 // Payloads
 // ---------------------------------------------------------------------------
@@ -155,7 +157,7 @@ fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
     // parsing stays locale-stable. A strict no-op on non-WSL paths.
     let output = crate::wsl::git_command_env(path, args, &[("LC_ALL", "C"), ("LANGUAGE", ""), ("GIT_PAGER", "cat")])
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_workdir.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(GitOut {
         ok: output.status.success(),
         code: output.status.code(),
@@ -237,17 +239,20 @@ fn classify_switch_failure(out: &GitOut) -> WriteResult {
 /// the user gets a clear message instead of git's "not a valid branch name".
 fn validate_branch_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
-        return Err("Branch name is empty.".into());
+        return Err(ierr("err_workdir.branch_name_empty"));
     }
     if name.starts_with('-') {
-        return Err(format!("Refusing a branch name that looks like a flag: {name:?}"));
+        return Err(ierrp("err_workdir.branch_name_looks_like_flag", &[("name", &format!("{name:?}"))]));
     }
     for ch in name.chars() {
         if ch.is_control() || ch == ' ' || ch == '\u{7f}' {
-            return Err(format!("Branch name has an illegal whitespace/control character: {name:?}"));
+            return Err(ierrp("err_workdir.branch_name_illegal_whitespace", &[("name", &format!("{name:?}"))]));
         }
         if matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\') {
-            return Err(format!("Branch name has an illegal character '{ch}': {name:?}"));
+            return Err(ierrp(
+                "err_workdir.branch_name_illegal_char",
+                &[("ch", &ch.to_string()), ("name", &format!("{name:?}"))],
+            ));
         }
     }
     if name.contains("..")
@@ -259,7 +264,7 @@ fn validate_branch_name(name: &str) -> Result<(), String> {
         || name.ends_with(".lock")
         || name == "@"
     {
-        return Err(format!("Not a valid branch name: {name:?}"));
+        return Err(ierrp("err_workdir.not_valid_branch_name", &[("name", &format!("{name:?}"))]));
     }
     Ok(())
 }
@@ -269,13 +274,13 @@ fn validate_branch_name(name: &str) -> Result<(), String> {
 /// chars — `--end-of-options` handles the rest at the CLI boundary.
 fn validate_revision(rev: &str) -> Result<(), String> {
     if rev.is_empty() {
-        return Err("Start point is empty.".into());
+        return Err(ierr("err_workdir.start_point_empty"));
     }
     if rev.starts_with('-') {
-        return Err(format!("Refusing a start point that looks like a flag: {rev:?}"));
+        return Err(ierrp("err_workdir.start_point_looks_like_flag", &[("rev", &format!("{rev:?}"))]));
     }
     if rev.chars().any(|c| c.is_control()) {
-        return Err("Start point has a control character.".into());
+        return Err(ierr("err_workdir.start_point_control_char"));
     }
     Ok(())
 }
@@ -290,7 +295,7 @@ fn short_backup(r: &str) -> String {
 /// mutating command before it snapshots.
 fn open_repo(path: &str) -> Result<Repository, WriteResult> {
     crate::trust::open_repo(path)
-        .map_err(|e| WriteResult::err(format!("Cannot open repository: {}", e.message())))
+        .map_err(|e| WriteResult::err(ierrp("err_workdir.cannot_open_repo", &[("detail", e.message())])))
 }
 
 // ---------------------------------------------------------------------------
@@ -561,7 +566,7 @@ pub async fn create_branch(
         let backup = if switch {
             match take_snapshot(&repo) {
                 Ok(b) => Some(b),
-                Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+                Err(e) => return WriteResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
             }
         } else {
             None
@@ -613,7 +618,7 @@ pub async fn checkout(path: String, name: String) -> WriteResult {
         };
         let backup = match take_snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return WriteResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
         };
 
         // git switch --end-of-options <name>
@@ -669,7 +674,7 @@ pub async fn reset_head_to_commit(path: String, target: String, mode: String) ->
             "soft" => "--soft",
             "mixed" => "--mixed",
             "hard" => "--hard",
-            other => return WriteResult::err(format!("Unknown reset mode {other:?} (expected soft, mixed, or hard).")),
+            other => return WriteResult::err(ierrp("err_workdir.unknown_reset_mode", &[("mode", &format!("{other:?}"))])),
         };
         let repo = match open_repo(&path) {
             Ok(r) => r,
@@ -681,13 +686,18 @@ pub async fn reset_head_to_commit(path: String, target: String, mode: String) ->
         // commit; anything that isn't a commit-ish fails here.
         let resolved = match repo.revparse_single(&target).and_then(|o| o.peel_to_commit()) {
             Ok(c) => c.id().to_string(),
-            Err(e) => return WriteResult::err(format!("Can't resolve {target:?} to a commit: {}", e.message())),
+            Err(e) => {
+                return WriteResult::err(ierrp(
+                    "err_workdir.cannot_resolve_to_commit",
+                    &[("target", &format!("{target:?}")), ("detail", e.message())],
+                ))
+            }
         };
         let short: String = resolved.chars().take(7).collect();
         // Snapshot FIRST — never move HEAD without a backup of where it was.
         let backup = match take_snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return WriteResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
         };
         match run_git(&path, &["reset", flag, "--end-of-options", &resolved]) {
             Ok(out) if out.ok => WriteResult::ok(
@@ -768,7 +778,7 @@ pub async fn checkout_discard(path: String, name: String, start_point: Option<St
         };
         let backup = match take_snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return WriteResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
         };
 
         // -c takes <name> as its value; --end-of-options AFTER it still guards <start>.
@@ -816,9 +826,7 @@ pub async fn delete_branch(path: String, name: String, force: bool) -> WriteResu
         // Refuse to delete the checked-out branch (friendlier than git's worktree error).
         if let Ok(head) = repo.head() {
             if head.is_branch() && head.shorthand() == Some(name.as_str()) {
-                return WriteResult::err(format!(
-                    "Cannot delete {name}: it is the current branch. Switch away first."
-                ));
+                return WriteResult::err(ierrp("err_workdir.cannot_delete_current_branch", &[("name", &name)]));
             }
         }
 
@@ -832,7 +840,7 @@ pub async fn delete_branch(path: String, name: String, force: bool) -> WriteResu
 
         let backup = match take_snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return WriteResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
         };
         // Keep the deleted branch's commits reachable & recoverable (best-effort;
         // pinned under refs/gitgui/deleted/* so it is never an undo target).
@@ -876,7 +884,7 @@ pub async fn rename_branch(path: String, from: String, to: String) -> WriteResul
         };
         let backup = match take_snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return WriteResult::err(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return WriteResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
         };
 
         // git branch -m --end-of-options <from> <to>

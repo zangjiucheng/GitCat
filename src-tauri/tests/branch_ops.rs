@@ -104,7 +104,7 @@ fn create_checkout_delete_and_rename_branch() {
     let refused = tauri::async_runtime::block_on(delete_branch(path.clone(), "feature".into(), false));
     assert!(!refused.ok, "expected delete of current branch to be refused");
     assert!(
-        refused.message.to_lowercase().contains("current branch"),
+        refused.message.contains("err_workdir.cannot_delete_current_branch"),
         "unexpected refusal message: {}",
         refused.message
     );
