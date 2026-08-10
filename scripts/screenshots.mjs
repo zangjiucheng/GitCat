@@ -4,19 +4,20 @@
 //
 //   pnpm screenshots
 //
-// It starts a throwaway Vite dev server on 127.0.0.1:1420, captures into
-// docs/public/screenshots/, then shuts the server down. These are BROWSER-mode
-// shots (demo data, no native window chrome or OS menu) — good enough for docs,
-// and easy to regenerate. Swap in native captures anytime by overwriting the
-// PNGs of the same name.
+// It boots a throwaway Vite dev server on 127.0.0.1:1420 via Vite's programmatic
+// API (no child process — so it works the same on macOS/Linux/Windows and shuts
+// down cleanly), captures into docs/public/screenshots/, then closes it. These
+// are BROWSER-mode shots (demo data, no native window chrome or OS menu) — good
+// enough for docs, and easy to regenerate. Swap in native captures anytime by
+// overwriting the PNGs of the same name. Set SHOTS_OUT to capture elsewhere.
 import { chromium } from "@playwright/test";
-import { spawn } from "node:child_process";
+import { createServer } from "vite";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { mkdirSync } from "node:fs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const OUT = fileURLToPath(new URL("../docs/public/screenshots", import.meta.url));
+const OUT = process.env.SHOTS_OUT || fileURLToPath(new URL("../docs/public/screenshots", import.meta.url));
 const URL_ = "http://127.0.0.1:1420/"; // 127.0.0.1, not localhost: vite binds IPv4 (see vite.config.ts)
 // Design-mode artefacts that shouldn't appear in docs shots: the DEV badge, the
 // perf HUD overlay, and the transient top toast. Tama and her speech stay.
@@ -24,40 +25,41 @@ const HIDE = ".dev-badge,.hud,#hud,.top-toast{display:none!important}";
 
 mkdirSync(OUT, { recursive: true });
 
-// ── throwaway dev server ─────────────────────────────────────────────────────
-const vite = spawn("pnpm", ["exec", "vite", "--port", "1420", "--strictPort"], {
-  cwd: ROOT,
-  stdio: "ignore",
-  detached: true,
-});
-async function waitForServer() {
-  for (let i = 0; i < 60; i++) {
-    try {
-      const r = await fetch(URL_);
-      if (r.ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await sleep(500);
-  }
-  throw new Error("vite dev server never came up on " + URL_);
-}
-function stopServer() {
+let server;
+let browser;
+async function shutdown() {
   try {
-    process.kill(-vite.pid); // kill the whole process group
+    await browser?.close();
   } catch {
-    /* already gone */
+    /* already closed */
   }
+  try {
+    await server?.close();
+  } catch {
+    /* already closed */
+  }
+}
+// Clean up the dev server even if the run is aborted (Ctrl-C) mid-capture.
+for (const sig of ["SIGINT", "SIGTERM"]) {
+  process.on(sig, async () => {
+    await shutdown();
+    process.exit(1);
+  });
 }
 
 try {
-  await waitForServer();
-  const browser = await chromium.launch();
+  // Programmatic Vite server: no `spawn("pnpm", …)` (which fails on Windows,
+  // where pnpm is a .cmd shim) and no process-group kill (unsupported on
+  // Windows) — `server.close()` tears it down cleanly on every OS. It loads the
+  // project's vite.config.ts (root = repo root) itself, so port/host match dev.
+  server = await createServer({ root: ROOT, server: { port: 1420, strictPort: true } });
+  await server.listen();
+
+  browser = await chromium.launch();
 
   async function newPage() {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
-    const page = await ctx.newPage();
-    return page;
+    return ctx.newPage();
   }
   async function boot(page) {
     await page.goto(URL_, { waitUntil: "load" });
@@ -116,8 +118,6 @@ try {
   await zh.keyboard.press("Escape");
   await sleep(1500);
   await shot(zh, "chinese");
-
-  await browser.close();
 } finally {
-  stopServer();
+  await shutdown();
 }
