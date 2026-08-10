@@ -86,6 +86,7 @@
 // no extra branching, exactly like before this feature existed.
 
 import { commands } from "../../ipc/bindings";
+import { be, t } from "@/i18n/i18n.svelte.ts";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { rebasePlanCtrl } from "../rebaseplan/rebaseplan.svelte.ts";
@@ -988,7 +989,7 @@ class SidebarState {
       // would walk with — reloading would spend a whole re-walk arriving back at
       // the same picture. Say so instead, and put the checkboxes back on the
       // persisted truth so the sidebar can't show a filter that isn't there.
-      bridge.tama.warn("Couldn't save which branches to show.");
+      bridge.tama.warn(t("sidebar.couldnt_save_visibility"));
       await this.refreshVisibleBranches(repo);
       return;
     }
@@ -1042,7 +1043,7 @@ class SidebarState {
   async openSubmodule(path: string, absolutePath: string): Promise<void> {
     if (!IN_TAURI) {
       bridge.tama.set("hint");
-      bridge.tama.say("Opened " + absolutePath + " (demo).");
+      bridge.tama.say(t("sidebar.opened_demo", { path: absolutePath }));
       return;
     }
     if (this.busy) return;
@@ -1069,25 +1070,25 @@ class SidebarState {
   async initAndUpdateSubmodule(path: string) {
     if (!IN_TAURI) {
       bridge.tama.set("hint");
-      bridge.tama.say("Initialized + updated " + path + " (demo).");
+      bridge.tama.say(t("sidebar.init_updated_demo", { path }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = path;
     bridge.tama.set("thinking");
-    bridge.tama.say("Initializing " + path + "…");
+    bridge.tama.say(t("sidebar.initializing", { path }));
     try {
       const res = await commands.submoduleUpdate(bridge.CUR_REPO as unknown as string, path, false, true);
       if (res && res.ok) {
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Initialized " + path + ".", 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.initialized", { path }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't initialize " + path + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_initialize", { path }));
       }
     } catch (e) {
-      bridge.tama.warn("Init failed — " + e);
+      bridge.tama.warn(t("sidebar.init_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1104,25 +1105,25 @@ class SidebarState {
   async updateSubmodule(path: string) {
     if (!IN_TAURI) {
       bridge.tama.set("hint");
-      bridge.tama.say("Updated " + path + " (demo).");
+      bridge.tama.say(t("sidebar.updated_demo", { path }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = path;
     bridge.tama.set("thinking");
-    bridge.tama.say("Updating " + path + "…");
+    bridge.tama.say(t("sidebar.updating", { path }));
     try {
       const res = await commands.submoduleUpdate(bridge.CUR_REPO as unknown as string, path, false, false);
       if (res && res.ok) {
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Updated " + path + ".", 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.updated", { path }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't update " + path + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_update", { path }));
       }
     } catch (e) {
-      bridge.tama.warn("Update failed — " + e);
+      bridge.tama.warn(t("sidebar.update_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1142,25 +1143,25 @@ class SidebarState {
   async updateAllSubmodules(recursive: boolean) {
     if (!IN_TAURI) {
       bridge.tama.set("hint");
-      bridge.tama.say("Updated all submodules (demo).");
+      bridge.tama.say(t("sidebar.updated_all_demo"));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = SUBMODULES_ALL;
     bridge.tama.set("thinking");
-    bridge.tama.say("Updating submodules…");
+    bridge.tama.say(t("sidebar.updating_submodules"));
     try {
       const res = await commands.submoduleUpdate(bridge.CUR_REPO as unknown as string, null, recursive, true);
       if (res && res.ok) {
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Submodules updated.", 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.submodules_updated"), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't update submodules.");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_update_submodules"));
       }
     } catch (e) {
-      bridge.tama.warn("Update failed — " + e);
+      bridge.tama.warn(t("sidebar.update_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1206,7 +1207,7 @@ class SidebarState {
       this.newSubmodulePath = "";
       this.newSubmoduleBranch = "";
       bridge.tama.set("hint");
-      bridge.tama.say("Added submodule " + path + " (demo).");
+      bridge.tama.say(t("sidebar.added_submodule_demo", { path }));
       return;
     }
     // Keep the form open (disabled, spinnered) for the duration of the
@@ -1214,7 +1215,7 @@ class SidebarState {
     this.busy = true;
     this.busyTarget = path;
     bridge.tama.set("thinking");
-    bridge.tama.say("Adding submodule " + path + "…");
+    bridge.tama.say(t("sidebar.adding_submodule", { path }));
     try {
       const res = await commands.submoduleAdd(bridge.CUR_REPO as unknown as string, url, path, branch);
       if (res && res.ok) {
@@ -1224,12 +1225,12 @@ class SidebarState {
         this.newSubmoduleBranch = "";
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Added submodule " + path + ".", 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.added_submodule", { path }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't add submodule " + path + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_add_submodule", { path }));
       }
     } catch (e) {
-      bridge.tama.warn("Add failed — " + e);
+      bridge.tama.warn(t("sidebar.add_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1249,24 +1250,24 @@ class SidebarState {
   async syncSubmodule(path: string) {
     if (!IN_TAURI) {
       bridge.tama.set("hint");
-      bridge.tama.say("Synced " + path + " (demo).");
+      bridge.tama.say(t("sidebar.synced_demo", { path }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = path;
     bridge.tama.set("thinking");
-    bridge.tama.say("Syncing " + path + "…");
+    bridge.tama.say(t("sidebar.syncing", { path }));
     try {
       const res = await commands.submoduleSync(bridge.CUR_REPO as unknown as string, path, false);
       if (res && res.ok) {
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Synced " + path + ".", 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.synced", { path }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't sync " + path + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_sync", { path }));
       }
     } catch (e) {
-      bridge.tama.warn("Sync failed — " + e);
+      bridge.tama.warn(t("sidebar.sync_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1285,24 +1286,24 @@ class SidebarState {
   async syncAllSubmodules(recursive: boolean) {
     if (!IN_TAURI) {
       bridge.tama.set("hint");
-      bridge.tama.say("Synced all submodules (demo).");
+      bridge.tama.say(t("sidebar.synced_all_demo"));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = SUBMODULES_SYNC_ALL;
     bridge.tama.set("thinking");
-    bridge.tama.say("Syncing submodules…");
+    bridge.tama.say(t("sidebar.syncing_submodules"));
     try {
       const res = await commands.submoduleSync(bridge.CUR_REPO as unknown as string, null, recursive);
       if (res && res.ok) {
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Submodules synced.", 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.submodules_synced"), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't sync submodules.");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_sync_submodules"));
       }
     } catch (e) {
-      bridge.tama.warn("Sync failed — " + e);
+      bridge.tama.warn(t("sidebar.sync_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1324,7 +1325,7 @@ class SidebarState {
       return;
     }
     bridge.tama.set("danger");
-    bridge.tama.say("Deinitializing " + path + " — type the path to arm it. I back up its uncommitted changes first.", 6000);
+    bridge.tama.say(t("sidebar.deinit_arm", { path }), 6000);
     bridge.armDanger({
       title: "Deinit submodule — " + path,
       steps: false,
@@ -1350,14 +1351,14 @@ class SidebarState {
   private async doDeinitSubmodule(path: string, force: boolean) {
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
-      bridge.tama.say("Deinitialized " + path + " (demo).");
+      bridge.tama.say(t("sidebar.deinitialized_demo", { path }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = path;
     bridge.tama.set("thinking");
-    bridge.tama.say("Deinitializing " + path + "…");
+    bridge.tama.say(t("sidebar.deinitializing", { path }));
     try {
       let res = await commands.submoduleDeinit(bridge.CUR_REPO as unknown as string, path, force);
       // Stale-status race: the row's last-refreshed status said this was
@@ -1369,7 +1370,7 @@ class SidebarState {
         if (confirm(path + " has local modifications. Force-deinit anyway? (its uncommitted changes are backed up first)")) {
           res = await commands.submoduleDeinit(bridge.CUR_REPO as unknown as string, path, true);
         } else {
-          bridge.tama.warn("Kept " + path + " — deinit cancelled.");
+          bridge.tama.warn(t("sidebar.kept_deinit_cancelled", { path }));
           return;
         }
       }
@@ -1379,12 +1380,12 @@ class SidebarState {
         // res.message already names the backup path inline when one was
         // written ("… (backup: gitgui/submodule-backup/…)") — see
         // submodule.rs's ok_removal call sites — so no extra copy needed here.
-        bridge.tama.say(res.message || "Deinitialized " + path + ".", 4200);
+        bridge.tama.say(be(res.message) || t("sidebar.deinitialized", { path }), 4200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't deinit " + path + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_deinit", { path }));
       }
     } catch (e) {
-      bridge.tama.warn("Deinit failed — " + e);
+      bridge.tama.warn(t("sidebar.deinit_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1402,7 +1403,7 @@ class SidebarState {
   // refuse pointlessly on a dirty submodule and force a redundant round-trip.
   removeSubmodule(path: string) {
     bridge.tama.set("danger");
-    bridge.tama.say("Removing " + path + " — type the path to arm it. I back up any uncommitted changes first.", 6000);
+    bridge.tama.say(t("sidebar.remove_arm", { path }), 6000);
     bridge.armDanger({
       title: "Remove submodule — " + path,
       steps: false,
@@ -1432,14 +1433,14 @@ class SidebarState {
   private async doRemoveSubmodule(path: string) {
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
-      bridge.tama.say("Removed " + path + " (demo).");
+      bridge.tama.say(t("sidebar.removed_demo", { path }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = path;
     bridge.tama.set("thinking");
-    bridge.tama.say("Removing " + path + "…");
+    bridge.tama.say(t("sidebar.removing", { path }));
     try {
       const res = await commands.submoduleRemove(bridge.CUR_REPO as unknown as string, path);
       if (res && res.ok) {
@@ -1447,12 +1448,12 @@ class SidebarState {
         bridge.tama.set("celebrate");
         // Same "message already names the backup path inline" reasoning as
         // doDeinitSubmodule above.
-        bridge.tama.say(res.message || "Removed " + path + ".", 4200);
+        bridge.tama.say(be(res.message) || t("sidebar.removed", { path }), 4200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't remove " + path + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_remove", { path }));
       }
     } catch (e) {
-      bridge.tama.warn("Remove failed — " + e);
+      bridge.tama.warn(t("sidebar.remove_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1516,20 +1517,20 @@ class SidebarState {
   async checkout(name: string, pos?: { x: number; y: number }) {
     if (!IN_TAURI) {
       bridge.tama.set("hint");
-      bridge.tama.say("Checked out " + name + " (demo).");
+      bridge.tama.say(t("sidebar.checked_out_demo", { name }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = name;
     bridge.tama.set("thinking");
-    bridge.tama.say("Checking out " + name + "…");
+    bridge.tama.say(t("sidebar.checking_out", { name }));
     try {
       const res = await commands.checkout(bridge.CUR_REPO as unknown as string, name);
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say("On " + name + " now. にゃ〜", 3200);
+        bridge.tama.say(t("sidebar.on_branch_now", { name }), 3200);
       } else if (res && res.conflictingFiles && res.conflictingFiles.length) {
         // Dirty-tree collision (git_write.rs's `checkout` classified it via
         // `classify_switch_failure`) — offer the resolution chooser instead
@@ -1538,10 +1539,10 @@ class SidebarState {
         const p = pos ?? { x: 24, y: 80 };
         this.openDirtyCheckoutMenu(name, null, res.conflictingFiles, p.x, p.y);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't check out " + name + " — you may have uncommitted changes.");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_checkout_uncommitted", { name }));
       }
     } catch (e) {
-      bridge.tama.warn("Checkout failed — " + e);
+      bridge.tama.warn(t("sidebar.checkout_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1572,19 +1573,19 @@ class SidebarState {
     }
     if (!IN_TAURI) {
       bridge.tama.set("hint");
-      bridge.tama.say("Checked out " + shortName + " tracking " + remoteRef + " (demo).");
+      bridge.tama.say(t("sidebar.checked_out_tracking_demo", { name: shortName, remote: remoteRef }));
       return;
     }
     this.busy = true;
     this.busyTarget = remoteRef;
     bridge.tama.set("thinking");
-    bridge.tama.say("Creating " + shortName + " to track " + remoteRef + "…");
+    bridge.tama.say(t("sidebar.creating_to_track", { name: shortName, remote: remoteRef }));
     try {
       const res = await commands.createBranch(bridge.CUR_REPO as unknown as string, shortName, remoteRef, true);
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say("On " + shortName + " now, tracking " + remoteRef + ". にゃ〜", 3200);
+        bridge.tama.say(t("sidebar.on_branch_tracking_now", { name: shortName, remote: remoteRef }), 3200);
       } else if (res && res.conflictingFiles && res.conflictingFiles.length) {
         // Dirty-tree collision on `create_branch(checkout:true)` — classified
         // identically to plain `checkout`'s own (see git_write.rs's shared
@@ -1594,10 +1595,10 @@ class SidebarState {
         const p = pos ?? { x: 24, y: 80 };
         this.openDirtyCheckoutMenu(shortName, remoteRef, res.conflictingFiles, p.x, p.y);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't check out " + remoteRef + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_checkout_remote", { remote: remoteRef }));
       }
     } catch (e) {
-      bridge.tama.warn("Checkout failed — " + e);
+      bridge.tama.warn(t("sidebar.checkout_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1638,14 +1639,14 @@ class SidebarState {
   private async stashThenSwitch(name: string, startPoint: string | null, reapply: boolean) {
     if (!IN_TAURI) {
       bridge.tama.set("hint");
-      bridge.tama.say((reapply ? "Stashed, switched to, and reapplied onto " : "Stashed and switched to ") + name + " (demo).");
+      bridge.tama.say(reapply ? t("sidebar.stash_reapply_demo", { name }) : t("sidebar.stash_leave_demo", { name }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = name;
     bridge.tama.set("thinking");
-    bridge.tama.say("Stashing your changes…");
+    bridge.tama.say(t("sidebar.stashing_changes"));
     try {
       const repo = bridge.CUR_REPO as unknown as string;
       // Stash EVERYTHING (tracked + untracked) so the switch below is
@@ -1653,10 +1654,10 @@ class SidebarState {
       // staged, untracked) made the tree dirty in the first place.
       const stashRes = await commands.stashSave(repo, "Auto-stash before switching to " + name, true);
       if (!stashRes.ok) {
-        bridge.tama.warn(stashRes.message || "Couldn't stash your changes — nothing was switched.");
+        bridge.tama.warn(be(stashRes.message) || t("sidebar.couldnt_stash"));
         return;
       }
-      bridge.tama.say("Switching to " + name + "…");
+      bridge.tama.say(t("sidebar.switching_to", { name }));
       const switchRes = startPoint
         ? await commands.createBranch(repo, name, startPoint, true)
         : await commands.checkout(repo, name);
@@ -1665,16 +1666,16 @@ class SidebarState {
         // OTHER refusal (bad ref, name collision, …). The stash is untouched
         // and still recoverable via Manage Stash, so say so rather than
         // implying the changes are gone.
-        bridge.tama.warn((switchRes.message || "Couldn't switch to " + name + ".") + " Your changes are safely stashed — see Manage Stash.");
+        bridge.tama.warn((be(switchRes.message) || t("sidebar.couldnt_switch", { name })) + t("sidebar.changes_safely_stashed"));
         return;
       }
       await bridge.reloadGraph(true);
       if (!reapply) {
         bridge.tama.set("celebrate");
-        bridge.tama.say("On " + name + " now — your changes are stashed. にゃ〜", 3200);
+        bridge.tama.say(t("sidebar.on_branch_stashed", { name }), 3200);
         return;
       }
-      bridge.tama.say("Reapplying your changes…");
+      bridge.tama.say(t("sidebar.reapplying_changes"));
       // Fetch the just-created stash's own sha so stash_pop's optional
       // identity check (see stash_apply/stash_pop's own doc comment) can
       // catch a race if something else touched the stash list in between —
@@ -1685,17 +1686,17 @@ class SidebarState {
       const popRes = await commands.stashPop(repo, 0, expectedSha);
       if (popRes.ok) {
         bridge.tama.set("celebrate");
-        bridge.tama.say("On " + name + " now. にゃ〜", 3200);
+        bridge.tama.say(t("sidebar.on_branch_now", { name }), 3200);
       } else if (popRes.conflictedFiles && popRes.conflictedFiles.length) {
         // Same shared Resolver merge/pick/rebase/stash conflict already use —
         // see resolver.svelte.ts's "stash" op entry and workdir.svelte.ts's
         // applyOrPopStash, which this mirrors exactly.
         await resolver.openStashConflict(repo, popRes);
       } else {
-        bridge.tama.warn(popRes.message || "Couldn't reapply your stashed changes — they're kept in the stash list.");
+        bridge.tama.warn(be(popRes.message) || t("sidebar.couldnt_reapply"));
       }
     } catch (e) {
-      bridge.tama.warn("Checkout failed — " + e);
+      bridge.tama.warn(t("sidebar.checkout_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1722,7 +1723,7 @@ class SidebarState {
   forceDiscardCheckout(name: string, startPoint: string | null, fileCount: number) {
     const n = fileCount + " file" + (fileCount === 1 ? "" : "s");
     bridge.tama.set("danger");
-    bridge.tama.say("Switching to " + name + " will DISCARD ALL your uncommitted changes, not just the " + n + " blocking this switch — type the branch name to arm it.", 6000);
+    bridge.tama.say(t("sidebar.force_switch_arm", { name, n }), 6000);
     bridge.armDanger({
       title: "Force switch — discard changes — " + name,
       steps: false,
@@ -1754,25 +1755,25 @@ class SidebarState {
   private async doForceDiscardCheckout(name: string, startPoint: string | null) {
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
-      bridge.tama.say("Force-switched to " + name + " (demo).");
+      bridge.tama.say(t("sidebar.force_switched_demo", { name }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = name;
     bridge.tama.set("thinking");
-    bridge.tama.say("Force-switching to " + name + "…");
+    bridge.tama.say(t("sidebar.force_switching", { name }));
     try {
       const res = await commands.checkoutDiscard(bridge.CUR_REPO as unknown as string, name, startPoint);
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "On " + name + " now.", 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.on_branch_now_plain", { name }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't switch to " + name + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_switch", { name }));
       }
     } catch (e) {
-      bridge.tama.warn("Checkout failed — " + e);
+      bridge.tama.warn(t("sidebar.checkout_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1811,7 +1812,7 @@ class SidebarState {
       this.newBranchInput = "";
       this.newBranchFrom = "";
       bridge.tama.set("hint");
-      bridge.tama.say("Created " + name + (from ? " from " + from : "") + " (demo).");
+      bridge.tama.say(from ? t("sidebar.created_from_demo", { name, from }) : t("sidebar.created_demo", { name }));
       return;
     }
     // Keep the form open (disabled, spinnered — see Sidebar.svelte) for the
@@ -1821,7 +1822,7 @@ class SidebarState {
     this.busy = true;
     this.busyTarget = name;
     bridge.tama.set("thinking");
-    bridge.tama.say("Creating " + name + "…");
+    bridge.tama.say(t("sidebar.creating", { name }));
     try {
       const res = await commands.createBranch(bridge.CUR_REPO as unknown as string, name, from, true);
       if (res && res.ok) {
@@ -1845,12 +1846,12 @@ class SidebarState {
         }
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Branch " + name + " created.", 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.branch_created", { name }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't create " + name + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_create", { name }));
       }
     } catch (e) {
-      bridge.tama.warn("Create failed — " + e);
+      bridge.tama.warn(t("sidebar.create_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1860,7 +1861,7 @@ class SidebarState {
 
   deleteBranch(name: string) {
     bridge.tama.set("danger");
-    bridge.tama.say("Deleting " + name + " — type the branch name to arm it. I pin its tip first.", 6000);
+    bridge.tama.say(t("sidebar.delete_branch_arm", { name }), 6000);
     bridge.armDanger({
       title: "Delete branch — " + name,
       steps: false,
@@ -1881,33 +1882,33 @@ class SidebarState {
   private async doDeleteBranch(name: string, force: boolean) {
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
-      bridge.tama.say("Deleted " + name + " (demo).");
+      bridge.tama.say(t("sidebar.deleted_demo", { name }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = name;
     bridge.tama.set("thinking");
-    bridge.tama.say("Deleting " + name + "…");
+    bridge.tama.say(t("sidebar.deleting", { name }));
     try {
       let res = await commands.deleteBranch(bridge.CUR_REPO as unknown as string, name, force);
       if (res && !res.ok && !force && /not (fully )?merged/i.test(res.message || "")) {
         if (confirm(name + " is not fully merged. Force-delete anyway? (the tip is pinned to a backup)")) {
           res = await commands.deleteBranch(bridge.CUR_REPO as unknown as string, name, true);
         } else {
-          bridge.tama.warn("Kept " + name + " — delete cancelled.");
+          bridge.tama.warn(t("sidebar.kept_delete_cancelled", { name }));
           return;
         }
       }
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Deleted " + name + ".", 4200);
+        bridge.tama.say(be(res.message) || t("sidebar.deleted", { name }), 4200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't delete " + name + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_delete", { name }));
       }
     } catch (e) {
-      bridge.tama.warn("Delete failed — " + e);
+      bridge.tama.warn(t("sidebar.delete_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1917,7 +1918,7 @@ class SidebarState {
 
   resetToUpstream(name: string, upstream: string) {
     bridge.tama.set("danger");
-    bridge.tama.say("Resetting " + name + " to " + upstream + " — type the branch name to arm it. I pin its tip first.", 6000);
+    bridge.tama.say(t("sidebar.reset_arm", { name, upstream }), 6000);
     bridge.armDanger({
       title: "Reset " + name + " to " + upstream,
       steps: false,
@@ -1950,25 +1951,25 @@ class SidebarState {
   private async doResetToUpstream(name: string, upstream: string) {
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
-      bridge.tama.say("Reset " + name + " to " + upstream + " (demo).");
+      bridge.tama.say(t("sidebar.reset_demo", { name, upstream }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = name;
     bridge.tama.set("thinking");
-    bridge.tama.say("Resetting " + name + " to " + upstream + "…");
+    bridge.tama.say(t("sidebar.resetting", { name, upstream }));
     try {
       const res = await commands.resetBranchToUpstream(bridge.CUR_REPO as unknown as string, name);
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Reset " + name + " to " + upstream + ".", 4200);
+        bridge.tama.say(be(res.message) || t("sidebar.reset_done", { name, upstream }), 4200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't reset " + name + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_reset", { name }));
       }
     } catch (e) {
-      bridge.tama.warn("Reset failed — " + e);
+      bridge.tama.warn(t("sidebar.reset_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -2041,14 +2042,14 @@ class SidebarState {
     const target = remoteBranch && remoteBranch !== name ? `${name} to ${remoteBranch}` : name;
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
-      bridge.tama.say("Pushed " + target + " (demo).");
+      bridge.tama.say(t("sidebar.pushed_demo", { target }));
       return true;
     }
     if (this.busy) return false;
     this.busy = true;
     this.busyTarget = name;
     bridge.tama.set("thinking");
-    bridge.tama.say("Pushing " + target + "…");
+    bridge.tama.say(t("sidebar.pushing", { target }));
     try {
       const res = await commands.pushBranch(bridge.CUR_REPO as unknown as string, name, null, remoteBranch);
       if (res && res.ok) {
@@ -2060,13 +2061,13 @@ class SidebarState {
         // sidebar too).
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Pushed " + target + ".", 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.pushed", { target }), 3200);
         return true;
       }
-      bridge.tama.warn((res && res.message) || "Couldn't push " + target + ".");
+      bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_push", { target }));
       return false;
     } catch (e) {
-      bridge.tama.warn("Push failed — " + e);
+      bridge.tama.warn(t("sidebar.push_failed", { error: be(String(e)) }));
       console.error(e);
       return false;
     } finally {
@@ -2132,13 +2133,13 @@ class SidebarState {
       this.renameMenu = null;
       this.renameInput = "";
       bridge.tama.set("hint");
-      bridge.tama.say("Renamed " + from + " → " + to + " (demo).");
+      bridge.tama.say(t("sidebar.renamed_demo", { from, to }));
       return;
     }
     this.busy = true;
     this.busyTarget = from;
     bridge.tama.set("thinking");
-    bridge.tama.say("Renaming " + from + " → " + to + "…");
+    bridge.tama.say(t("sidebar.renaming", { from, to }));
     try {
       const res = await commands.renameBranch(bridge.CUR_REPO as unknown as string, from, to);
       if (res && res.ok) {
@@ -2160,12 +2161,12 @@ class SidebarState {
         this.renameInput = "";
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Renamed to " + to + ".", 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.renamed_to", { to }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't rename " + from + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_rename", { from }));
       }
     } catch (e) {
-      bridge.tama.warn("Rename failed — " + e);
+      bridge.tama.warn(t("sidebar.rename_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -2290,7 +2291,7 @@ class SidebarState {
       this.newTagMessage = "";
       this.newTagFrom = "";
       bridge.tama.set("hint");
-      bridge.tama.say("Created tag " + name + (target ? " at " + target : "") + " (demo).");
+      bridge.tama.say(target ? t("sidebar.created_tag_at_demo", { name, target }) : t("sidebar.created_tag_demo", { name }));
       return;
     }
     // Keep the form open (disabled, spinnered) for the duration of the
@@ -2298,7 +2299,7 @@ class SidebarState {
     this.busy = true;
     this.busyTarget = name;
     bridge.tama.set("thinking");
-    bridge.tama.say("Creating tag " + name + "…");
+    bridge.tama.say(t("sidebar.creating_tag", { name }));
     try {
       const res = await commands.createTag(bridge.CUR_REPO as unknown as string, name, target, message);
       if (res && res.ok) {
@@ -2308,12 +2309,12 @@ class SidebarState {
         this.newTagFrom = "";
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Tag " + name + " created.", 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.tag_created", { name }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't create tag " + name + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_create_tag", { name }));
       }
     } catch (e) {
-      bridge.tama.warn("Create failed — " + e);
+      bridge.tama.warn(t("sidebar.create_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -2323,7 +2324,7 @@ class SidebarState {
 
   deleteTag(name: string) {
     bridge.tama.set("danger");
-    bridge.tama.say("Deleting tag " + name + " — type the tag name to arm it. I pin its target first.", 6000);
+    bridge.tama.say(t("sidebar.delete_tag_arm", { name }), 6000);
     bridge.armDanger({
       title: "Delete tag — " + name,
       steps: false,
@@ -2346,25 +2347,25 @@ class SidebarState {
   private async doDeleteTag(name: string) {
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
-      bridge.tama.say("Deleted tag " + name + " (demo).");
+      bridge.tama.say(t("sidebar.deleted_tag_demo", { name }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = name;
     bridge.tama.set("thinking");
-    bridge.tama.say("Deleting tag " + name + "…");
+    bridge.tama.say(t("sidebar.deleting_tag", { name }));
     try {
       const res = await commands.deleteTag(bridge.CUR_REPO as unknown as string, name);
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Deleted tag " + name + ".", 4200);
+        bridge.tama.say(be(res.message) || t("sidebar.deleted_tag", { name }), 4200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't delete tag " + name + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_delete_tag", { name }));
       }
     } catch (e) {
-      bridge.tama.warn("Delete failed — " + e);
+      bridge.tama.warn(t("sidebar.delete_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -2375,24 +2376,24 @@ class SidebarState {
   async pushTag(name: string) {
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
-      bridge.tama.say("Pushed tag " + name + " (demo).");
+      bridge.tama.say(t("sidebar.pushed_tag_demo", { name }));
       return;
     }
     if (this.busy) return;
     this.busy = true;
     this.busyTarget = name;
     bridge.tama.set("thinking");
-    bridge.tama.say("Pushing tag " + name + "…");
+    bridge.tama.say(t("sidebar.pushing_tag", { name }));
     try {
       const res = await commands.pushTag(bridge.CUR_REPO as unknown as string, null, name);
       if (res && res.ok) {
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || "Pushed tag " + name + ".", 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.pushed_tag", { name }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || "Couldn't push tag " + name + ".");
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_push_tag", { name }));
       }
     } catch (e) {
-      bridge.tama.warn("Push failed — " + e);
+      bridge.tama.warn(t("sidebar.push_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;

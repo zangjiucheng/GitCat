@@ -7,6 +7,7 @@
   import { snapshotPreviewCtrl } from "../snapshotpreview/snapshotpreview.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import type { SubmoduleInfo } from "../../ipc/bindings";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import Folder from "@lucide/svelte/icons/folder";
   import Zap from "@lucide/svelte/icons/zap";
   import Clipboard from "@lucide/svelte/icons/clipboard";
@@ -200,7 +201,16 @@
   // its hyphens turned into spaces, rather than a separate hand-maintained
   // label map that could drift out of sync with submodule.rs's classify_status.
   function subStatusLabel(status: string): string {
-    return status.replace(/-/g, " ");
+    switch (status) {
+      case "clean": return t("sidebar.sub_status_clean");
+      case "dirty": return t("sidebar.sub_status_dirty");
+      case "out-of-date": return t("sidebar.sub_status_out_of_date");
+      case "conflicted": return t("sidebar.sub_status_conflicted");
+      case "not-initialized": return t("sidebar.sub_status_not_initialized");
+      case "removed": return t("sidebar.sub_status_removed");
+      case "unreadable": return t("sidebar.sub_status_unreadable");
+      default: return status.replace(/-/g, " ");
+    }
   }
 
   // Sidebar hover tooltip content (see index.html's [data-tip] rule) — the
@@ -211,7 +221,7 @@
     const parts: string[] = [];
     if (s.name !== s.path) parts.push(s.name);
     if (s.url) parts.push(s.url);
-    parts.push(s.workdirSha ? "@ " + s.workdirSha.slice(0, 7) : "not cloned");
+    parts.push(s.workdirSha ? "@ " + s.workdirSha.slice(0, 7) : t("sidebar.not_cloned"));
     return parts.join(" — ");
   }
 
@@ -219,7 +229,7 @@
   // rows — see submoduleAction's own doc comment) explaining why there's
   // nothing to click, rather than just a dead-looking disabled button.
   function subBlockedTip(status: string): string {
-    return "This submodule is " + subStatusLabel(status) + " — resolve it before updating.";
+    return t("sidebar.sub_blocked_tip", { status: subStatusLabel(status) });
   }
 </script>
 
@@ -228,30 +238,30 @@
 {#if !sidebarCtrl.hasRepo}
   <div class="sidebar-empty">
     <div class="ic"><Folder size={30} strokeWidth={1.3} aria-hidden="true" /></div>
-    <div class="t">No repository open</div>
-    <div class="sub">Branches, remotes, and snapshots will show up here once you open one.</div>
+    <div class="t">{t("sidebar.no_repo_open")}</div>
+    <div class="sub">{t("sidebar.no_repo_sub")}</div>
     <button class="btn" onclick={() => dashboardCtrl.show()}
-      ><Folder class="ico" size={14} aria-hidden="true" /> Open a repository&#8230;</button
+      ><Folder class="ico" size={14} aria-hidden="true" /> {t("sidebar.open_repo")}</button
     >
   </div>
 {:else}
 <div class="ref-filter">
   <div class="ref-search">
     <span class="mag">&#9906;</span>
-    <input id="refFilter" placeholder="Filter refs&#8230;" spellcheck="false" bind:value={sidebarCtrl.filter} />
+    <input id="refFilter" placeholder={t("sidebar.filter_refs")} spellcheck="false" bind:value={sidebarCtrl.filter} />
   </div>
   <div class="ref-filter-actions">
     <button
       class="auto-toggle"
       class:active={sidebarCtrl.autoMode}
-      title="Auto: show the current branch plus anything with unpushed commits, and the most recently active unmerged branches, always up to date"
+      title={t("sidebar.auto_tip")}
       onclick={() => sidebarCtrl.toggleAutoMode(bridge.CUR_REPO as unknown as string)}
-      >{#if sidebarCtrl.autoMode}<Zap class="ico" size={12} aria-hidden="true" /> {/if}Auto</button
+      >{#if sidebarCtrl.autoMode}<Zap class="ico" size={12} aria-hidden="true" /> {/if}{t("sidebar.auto")}</button
     >
     {#if sidebarCtrl.isFiltering}
-      <button class="show-all" onclick={() => sidebarCtrl.showAllBranches(bridge.CUR_REPO as unknown as string)}>Show all branches</button>
+      <button class="show-all" onclick={() => sidebarCtrl.showAllBranches(bridge.CUR_REPO as unknown as string)}>{t("sidebar.show_all_branches")}</button>
     {/if}
-    <button class="show-all" title="Hide every branch except the current one, then pick a few back in" onclick={() => sidebarCtrl.hideAllBranches(bridge.CUR_REPO as unknown as string)}>Hide all branches</button>
+    <button class="show-all" title={t("sidebar.hide_all_tip")} onclick={() => sidebarCtrl.hideAllBranches(bridge.CUR_REPO as unknown as string)}>{t("sidebar.hide_all_branches")}</button>
   </div>
 </div>
 <!-- The mouseover handler only drives a decorative "full name" tooltip for
@@ -263,15 +273,15 @@
 <div class="ref-scroll" id="refScroll" data-vimnav-list onmouseover={onRefHover} onmouseleave={() => (nameTip = null)} onfocusout={() => (nameTip = null)}>
   <details class="ref-group" open>
     <summary
-      ><span class="tw">&#9656;</span>Local<span class="count" id="cntLocal">{sidebarCtrl.locals.length}</span>
+      ><span class="tw">&#9656;</span>{t("sidebar.local")}<span class="count" id="cntLocal">{sidebarCtrl.locals.length}</span>
       {#if localFolderPaths.length > 0 && !filterActive}
         <!-- Fold/unfold every branch folder at once. Mirrors the ⋮ manage-btn's
              placement/look on the Remotes summary: preventDefault stops the
              click from also toggling this <details> open/closed. -->
         <button
           class="manage-btn fold-btn"
-          title={localAllFolded ? "Expand all branch folders" : "Collapse all branch folders"}
-          aria-label={localAllFolded ? "Expand all branch folders" : "Collapse all branch folders"}
+          title={localAllFolded ? t("sidebar.expand_branch_folders") : t("sidebar.collapse_branch_folders")}
+          aria-label={localAllFolded ? t("sidebar.expand_branch_folders") : t("sidebar.collapse_branch_folders")}
           onclick={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -331,7 +341,7 @@
             class="rb-check"
             checked={isCur || sidebarCtrl.isBranchVisible("local", b.name)}
             disabled={isCur}
-            title={isCur ? "The current branch is always shown in the graph" : "Show/hide this branch in the graph"}
+            title={isCur ? t("sidebar.current_always_shown") : t("sidebar.toggle_branch_visible")}
             onclick={(e) => {
               e.stopPropagation();
               sidebarCtrl.toggleBranchVisible(bridge.CUR_REPO as unknown as string, "local", b.name);
@@ -344,8 +354,8 @@
           <span class="rname" data-fullname={b.name}>{row.label}</span>
           <button
             class="copy-name"
-            title={sidebarCtrl.copiedBranch === b.name ? "Copied!" : "Copy branch name"}
-            aria-label="Copy branch name {b.name}"
+            title={sidebarCtrl.copiedBranch === b.name ? t("sidebar.copied") : t("sidebar.copy_branch_name")}
+            aria-label={t("sidebar.copy_branch_name_named", { name: b.name })}
             onclick={(e) => {
               e.stopPropagation();
               sidebarCtrl.copyBranchName(b.name);
@@ -361,8 +371,8 @@
           {/if}
           <button
             class="ref-menu"
-            title="Branch actions"
-            aria-label="Branch actions"
+            title={t("sidebar.branch_actions")}
+            aria-label={t("sidebar.branch_actions")}
             disabled={sidebarCtrl.busy}
             onclick={(e) => {
               e.stopPropagation();
@@ -378,24 +388,24 @@
             class="nb-input"
             bind:this={newBranchEl}
             bind:value={sidebarCtrl.newBranchInput}
-            placeholder="branch name&#8230;"
+            placeholder={t("sidebar.branch_name_placeholder")}
             spellcheck="false"
             autocomplete="off"
             disabled={sidebarCtrl.busy}
             onkeydown={onNewBranchKeydown}
           />
           <div class="nb-row">
-            <select class="nb-from" bind:value={sidebarCtrl.newBranchFrom} title="Branch from" disabled={sidebarCtrl.busy} onkeydown={onNewBranchKeydown}>
-              <option value="">from HEAD (current)</option>
+            <select class="nb-from" bind:value={sidebarCtrl.newBranchFrom} title={t("sidebar.branch_from")} disabled={sidebarCtrl.busy} onkeydown={onNewBranchKeydown}>
+              <option value="">{t("sidebar.from_head")}</option>
               {#if sidebarCtrl.locals.length}
-                <optgroup label="Local">
+                <optgroup label={t("sidebar.local")}>
                   {#each sidebarCtrl.locals as b (b.name)}
                     <option value={b.name}>{b.name}</option>
                   {/each}
                 </optgroup>
               {/if}
               {#if sidebarCtrl.remotes.length}
-                <optgroup label="Remote">
+                <optgroup label={t("sidebar.remote")}>
                   {#each sidebarCtrl.remotes as r (r.name)}
                     <option value={r.name}>{r.name}</option>
                   {/each}
@@ -407,17 +417,17 @@
         </div>
       {:else}
         <div class="ref-item new-branch" role="button" tabindex="0" onclick={() => sidebarCtrl.startNewBranch()} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.startNewBranch()}>
-          <span class="rname nb">&#65291; New branch&#8230;</span>
+          <span class="rname nb">&#65291; {t("sidebar.new_branch")}</span>
         </div>
       {/if}
     </div>
   </details>
   <details class="ref-group">
     <summary
-      ><span class="tw">&#9656;</span>Remote<span class="count" id="cntRemote">{sidebarCtrl.remotes.length}</span>{#if remoteFolderPaths.length > 0 && !filterActive}<button
+      ><span class="tw">&#9656;</span>{t("sidebar.remote")}<span class="count" id="cntRemote">{sidebarCtrl.remotes.length}</span>{#if remoteFolderPaths.length > 0 && !filterActive}<button
           class="manage-btn fold-btn"
-          title={remoteAllFolded ? "Expand all branch folders" : "Collapse all branch folders"}
-          aria-label={remoteAllFolded ? "Expand all branch folders" : "Collapse all branch folders"}
+          title={remoteAllFolded ? t("sidebar.expand_branch_folders") : t("sidebar.collapse_branch_folders")}
+          aria-label={remoteAllFolded ? t("sidebar.expand_branch_folders") : t("sidebar.collapse_branch_folders")}
           onclick={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -425,8 +435,8 @@
           }}>{#if remoteAllFolded}<ChevronsUpDown class="ico" size={12} aria-hidden="true" />{:else}<ChevronsDownUp class="ico" size={12} aria-hidden="true" />{/if}</button
         >{/if}<button
         class="manage-btn"
-        title="Manage remotes&#8230;"
-        aria-label="Manage remotes"
+        title={t("sidebar.manage_remotes")}
+        aria-label={t("sidebar.manage_remotes_aria")}
         onclick={(e) => {
           e.preventDefault(); // don't also toggle this <details> open/closed
           e.stopPropagation();
@@ -488,7 +498,7 @@
               type="checkbox"
               class="rb-check"
               checked={sidebarCtrl.isBranchVisible("remote", r.name)}
-              title="Show/hide this branch in the graph"
+              title={t("sidebar.toggle_branch_visible")}
               onclick={(e) => {
                 e.stopPropagation();
                 sidebarCtrl.toggleBranchVisible(bridge.CUR_REPO as unknown as string, "remote", r.name);
@@ -497,8 +507,8 @@
             <span class="dot" style="background:var(--l{remoteColorIndex(r.name)})"></span><span class="rname" data-fullname={r.name}>{row.label}</span>
             <button
               class="copy-name"
-              title={sidebarCtrl.copiedBranch === r.name ? "Copied!" : "Copy branch name"}
-              aria-label="Copy branch name {r.name}"
+              title={sidebarCtrl.copiedBranch === r.name ? t("sidebar.copied") : t("sidebar.copy_branch_name")}
+              aria-label={t("sidebar.copy_branch_name_named", { name: r.name })}
               onclick={(e) => {
                 e.stopPropagation();
                 sidebarCtrl.copyBranchName(r.name);
@@ -512,10 +522,10 @@
   </details>
   <details class="ref-group">
     <summary
-      ><span class="tw">&#9656;</span>Tags<span class="count" id="cntTags">{sidebarCtrl.tags.length}</span>{#if tagFolderPaths.length > 0 && !filterActive}<button
+      ><span class="tw">&#9656;</span>{t("sidebar.tags")}<span class="count" id="cntTags">{sidebarCtrl.tags.length}</span>{#if tagFolderPaths.length > 0 && !filterActive}<button
           class="manage-btn fold-btn"
-          title={tagAllFolded ? "Expand all tag folders" : "Collapse all tag folders"}
-          aria-label={tagAllFolded ? "Expand all tag folders" : "Collapse all tag folders"}
+          title={tagAllFolded ? t("sidebar.expand_tag_folders") : t("sidebar.collapse_tag_folders")}
+          aria-label={tagAllFolded ? t("sidebar.expand_tag_folders") : t("sidebar.collapse_tag_folders")}
           onclick={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -528,7 +538,7 @@
            conventionally path-like (`v1/rc1`, `release/2026-08`), and a repo
            with a few hundred of them is exactly where a flat list stops being
            readable. -->
-      {#each buildRefRows(sidebarCtrl.tags.filter((t) => matches(t.name)), (t) => t.name, (p) => sidebarCtrl.isFolderCollapsed("tag", p), filterActive) as row (row.kind + row.path)}
+      {#each buildRefRows(sidebarCtrl.tags.filter((tag) => matches(tag.name)), (tag) => tag.name, (p) => sidebarCtrl.isFolderCollapsed("tag", p), filterActive) as row (row.kind + row.path)}
         {#if row.kind === "folder"}
           <div
             class="ref-folder"
@@ -548,32 +558,32 @@
             ><span class="count">{row.count}</span>
           </div>
         {:else}
-        {@const t = row.item}
+        {@const tag = row.item}
         <div
           class="ref-item"
           class:busy={sidebarCtrl.busy}
           style="--depth:{row.depth}"
-          data-tag={t.name}
+          data-tag={tag.name}
           role="button"
           tabindex="0"
-          onkeydown={(e) => (e.key === "Enter" || e.key === " ") && !sidebarCtrl.busy && sidebarCtrl.openTagMenu(t.name, e.currentTarget as HTMLElement)}
+          onkeydown={(e) => (e.key === "Enter" || e.key === " ") && !sidebarCtrl.busy && sidebarCtrl.openTagMenu(tag.name, e.currentTarget as HTMLElement)}
           oncontextmenu={(e) => {
             e.preventDefault();
-            if (!sidebarCtrl.busy) sidebarCtrl.openTagMenu(t.name, e.currentTarget as HTMLElement);
+            if (!sidebarCtrl.busy) sidebarCtrl.openTagMenu(tag.name, e.currentTarget as HTMLElement);
           }}
         >
-          <span class="rname" data-fullname={t.name}>{row.label}</span>
-          {#if sidebarCtrl.busyTarget === t.name}
+          <span class="rname" data-fullname={tag.name}>{row.label}</span>
+          {#if sidebarCtrl.busyTarget === tag.name}
             <span class="spinner"></span>
           {/if}
           <button
             class="ref-menu"
-            title="Tag actions"
-            aria-label="Tag actions"
+            title={t("sidebar.tag_actions")}
+            aria-label={t("sidebar.tag_actions")}
             disabled={sidebarCtrl.busy}
             onclick={(e) => {
               e.stopPropagation();
-              sidebarCtrl.openTagMenu(t.name, e.currentTarget as HTMLElement);
+              sidebarCtrl.openTagMenu(tag.name, e.currentTarget as HTMLElement);
             }}>&#8942;</button
           >
         </div>
@@ -585,7 +595,7 @@
             class="nb-input"
             bind:this={newTagEl}
             bind:value={sidebarCtrl.newTagName}
-            placeholder="tag name&#8230;"
+            placeholder={t("sidebar.tag_name_placeholder")}
             spellcheck="false"
             autocomplete="off"
             disabled={sidebarCtrl.busy}
@@ -594,24 +604,24 @@
           <input
             class="nb-input"
             bind:value={sidebarCtrl.newTagMessage}
-            placeholder="message (optional &#8212; annotated tag)&#8230;"
+            placeholder={t("sidebar.tag_message_placeholder")}
             spellcheck="false"
             autocomplete="off"
             disabled={sidebarCtrl.busy}
             onkeydown={onNewTagKeydown}
           />
           <div class="nb-row">
-            <select class="nb-from" bind:value={sidebarCtrl.newTagFrom} title="Tag target" disabled={sidebarCtrl.busy} onkeydown={onNewTagKeydown}>
-              <option value="">at HEAD (current)</option>
+            <select class="nb-from" bind:value={sidebarCtrl.newTagFrom} title={t("sidebar.tag_target")} disabled={sidebarCtrl.busy} onkeydown={onNewTagKeydown}>
+              <option value="">{t("sidebar.at_head")}</option>
               {#if sidebarCtrl.locals.length}
-                <optgroup label="Local">
+                <optgroup label={t("sidebar.local")}>
                   {#each sidebarCtrl.locals as b (b.name)}
                     <option value={b.name}>{b.name}</option>
                   {/each}
                 </optgroup>
               {/if}
               {#if sidebarCtrl.remotes.length}
-                <optgroup label="Remote">
+                <optgroup label={t("sidebar.remote")}>
                   {#each sidebarCtrl.remotes as r (r.name)}
                     <option value={r.name}>{r.name}</option>
                   {/each}
@@ -623,16 +633,16 @@
         </div>
       {:else}
         <div class="ref-item new-branch" role="button" tabindex="0" onclick={() => sidebarCtrl.startNewTag()} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.startNewTag()}>
-          <span class="rname nb">&#65291; New tag&#8230;</span>
+          <span class="rname nb">&#65291; {t("sidebar.new_tag")}</span>
         </div>
       {/if}
     </div>
   </details>
   <details class="ref-group">
-    <summary><span class="tw">&#9656;</span>Submodules<span class="count" id="cntSubmodules">{sidebarCtrl.submodules.length || "—"}</span></summary>
+    <summary><span class="tw">&#9656;</span>{t("sidebar.submodules")}<span class="count" id="cntSubmodules">{sidebarCtrl.submodules.length || "—"}</span></summary>
     <div class="ref-list" id="refSubmodules">
       {#if !sidebarCtrl.submodules.length}
-        <div class="sub-item"><span class="rname mut">no submodules</span></div>
+        <div class="sub-item"><span class="rname mut">{t("sidebar.no_submodules")}</span></div>
       {:else}
         <!-- Bulk submodule tools — recursive toggle, Sync all/Update all.
              Lives at the top of the list rather than crammed into <summary>
@@ -643,7 +653,7 @@
              below it. -->
         <div class="sub-head">
           <label class="sub-recursive"
-            ><input type="checkbox" bind:checked={sidebarCtrl.submodulesRecursive} disabled={sidebarCtrl.busy} /> Recursive (nested submodules)</label
+            ><input type="checkbox" bind:checked={sidebarCtrl.submodulesRecursive} disabled={sidebarCtrl.busy} /> {t("sidebar.recursive")}</label
           >
           <div class="sub-bulk-row">
             <button
@@ -651,14 +661,14 @@
               disabled={sidebarCtrl.busy}
               onclick={() => sidebarCtrl.syncAllSubmodules(sidebarCtrl.submodulesRecursive)}
             >
-              {#if sidebarCtrl.busy && sidebarCtrl.busyTarget === SUBMODULES_SYNC_ALL}<span class="spinner"></span>{:else}Sync all{/if}
+              {#if sidebarCtrl.busy && sidebarCtrl.busyTarget === SUBMODULES_SYNC_ALL}<span class="spinner"></span>{:else}{t("sidebar.sync_all")}{/if}
             </button>
             <button
               class="sub-update-all"
               disabled={sidebarCtrl.busy}
               onclick={() => sidebarCtrl.updateAllSubmodules(sidebarCtrl.submodulesRecursive)}
             >
-              {#if sidebarCtrl.busy && sidebarCtrl.busyTarget === SUBMODULES_ALL}<span class="spinner"></span>{:else}Update all{/if}
+              {#if sidebarCtrl.busy && sidebarCtrl.busyTarget === SUBMODULES_ALL}<span class="spinner"></span>{:else}{t("sidebar.update_all")}{/if}
             </button>
           </div>
         </div>
@@ -697,7 +707,7 @@
                    Sync at minimum). A muted label instead of a dead-looking
                    menu, distinct from "clean" so it's not mistaken for an
                    ordinary, actionable submodule. -->
-              <span class="rname mut">removed (uncommitted) — commit via Workdir</span>
+              <span class="rname mut">{t("sidebar.sub_removed_uncommitted")}</span>
             {:else if s.status === "unreadable"}
               <!-- CRASH FIX (M1): this submodule's own reachable
                    nested-submodule subtree was found cyclic/unresolvable, so
@@ -709,12 +719,12 @@
                    dead-looking menu, and distinct enough from "clean" that it
                    can never be mistaken for an ordinary, actionable
                    submodule. -->
-              <span class="rname mut">unreadable — possible cyclic submodule reference</span>
+              <span class="rname mut">{t("sidebar.sub_unreadable_cyclic")}</span>
             {:else}
               <button
                 class="ref-menu"
-                title="Submodule actions"
-                aria-label="Submodule actions"
+                title={t("sidebar.submodule_actions")}
+                aria-label={t("sidebar.submodule_actions")}
                 disabled={sidebarCtrl.busy}
                 onclick={(e) => {
                   e.stopPropagation();
@@ -731,7 +741,7 @@
             class="nb-input"
             bind:this={newSubmoduleEl}
             bind:value={sidebarCtrl.newSubmoduleUrl}
-            placeholder="repository URL&#8230;"
+            placeholder={t("sidebar.submodule_url_placeholder")}
             spellcheck="false"
             autocomplete="off"
             disabled={sidebarCtrl.busy}
@@ -740,7 +750,7 @@
           <input
             class="nb-input"
             bind:value={sidebarCtrl.newSubmodulePath}
-            placeholder="path (e.g. vendor/lib)&#8230;"
+            placeholder={t("sidebar.submodule_path_placeholder")}
             spellcheck="false"
             autocomplete="off"
             disabled={sidebarCtrl.busy}
@@ -749,7 +759,7 @@
           <input
             class="nb-input"
             bind:value={sidebarCtrl.newSubmoduleBranch}
-            placeholder="branch (optional)&#8230;"
+            placeholder={t("sidebar.submodule_branch_placeholder")}
             spellcheck="false"
             autocomplete="off"
             disabled={sidebarCtrl.busy}
@@ -761,25 +771,25 @@
         </div>
       {:else}
         <div class="ref-item new-branch" role="button" tabindex="0" onclick={() => sidebarCtrl.startNewSubmodule()} onkeydown={(e) => (e.key === "Enter" || e.key === " ") && sidebarCtrl.startNewSubmodule()}>
-          <span class="rname nb">&#65291; Add submodule&#8230;</span>
+          <span class="rname nb">&#65291; {t("sidebar.add_submodule")}</span>
         </div>
       {/if}
     </div>
   </details>
   <details class="ref-group">
-    <summary><span class="tw">&#9656;</span>Snapshots<span class="count" id="snapCount">{sidebarCtrl.snapshots.length || "—"}</span></summary>
+    <summary><span class="tw">&#9656;</span>{t("sidebar.snapshots")}<span class="count" id="snapCount">{sidebarCtrl.snapshots.length || "—"}</span></summary>
     <div class="ref-list" id="refSnaps">
       {#if !sidebarCtrl.snapshots.length}
-        <div class="ref-item"><span class="rname mut">no snapshots yet</span></div>
+        <div class="ref-item"><span class="rname mut">{t("sidebar.no_snapshots")}</span></div>
       {:else}
         {#each sidebarCtrl.snapshots.slice(0, SNAP_CAP) as s (s.ref)}
-          {@const sha7 = (s.sha || "").slice(0, 7) || "snapshot"}
+          {@const sha7 = (s.sha || "").slice(0, 7) || t("sidebar.snapshot_label")}
           <div
             class="snap-item snap-clickable"
             data-tip={new Date(s.ts * 1000).toLocaleString()}
             role="button"
             tabindex="0"
-            title="Preview this snapshot"
+            title={t("sidebar.preview_snapshot")}
             onclick={(e) => snapshotPreviewCtrl.showAt(s, e.clientX, e.clientY)}
             onkeydown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
@@ -791,16 +801,16 @@
           >
             <span class="dot" style="background:var(--accent)"></span>
             <div class="snap-main">
-              <span class="snap-subject">{s.subject || "(no message)"}</span>
+              <span class="snap-subject">{s.subject || t("sidebar.no_message")}</span>
               <span class="snap-meta">
-                <button class="snap-sha" onclick={(e) => { e.stopPropagation(); sidebarCtrl.copySnapshotSha(s.sha); }}>{sidebarCtrl.copiedSnapshotSha === s.sha ? "copied ✓" : sha7}</button>
+                <button class="snap-sha" onclick={(e) => { e.stopPropagation(); sidebarCtrl.copySnapshotSha(s.sha); }}>{sidebarCtrl.copiedSnapshotSha === s.sha ? t("sidebar.copied_check") : sha7}</button>
                 <span class="mut">&#183; {bridge.relTime(s.ts).replace(" ago", "")}</span>
               </span>
             </div>
           </div>
         {/each}
         {#if sidebarCtrl.snapshots.length > SNAP_CAP}
-          <div class="ref-item"><span class="rname mut">+{sidebarCtrl.snapshots.length - SNAP_CAP} more &#183; newest shown first</span></div>
+          <div class="ref-item"><span class="rname mut">{t("sidebar.snapshots_more", { n: sidebarCtrl.snapshots.length - SNAP_CAP })}</span></div>
         {/if}
       {/if}
     </div>
@@ -817,54 +827,55 @@
          one of these three actions since the very first version of this
          island: `menu` above isn't a frozen snapshot, it re-derives from the
          live sidebarCtrl.menu state on each read. -->
-    <button disabled={menu.isCurrent} onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.checkout(name, { x, y }); }}>Checkout</button>
+    <button disabled={menu.isCurrent} onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.checkout(name, { x, y }); }}>{t("sidebar.checkout")}</button>
     <!-- Pushes THIS branch directly — no switching, unlike the topbar Push
          button/doPush() which always targets whatever's checked out. Shown
          for every branch (not gated by !menu.isCurrent, unlike the actions
          below) since even the current branch benefits from a from-the-
          sidebar push, e.g. while comparing several branches without
          checking any of them out. -->
-    <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.pushBranch(name, null); }}>Push</button>
-    <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.openPushMenu(name, x, y); }}>Push to&#8230;</button>
+    <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.pushBranch(name, null); }}>{t("sidebar.push")}</button>
+    <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.openPushMenu(name, x, y); }}>{t("sidebar.push_to")}</button>
     <!-- Force push targets the CURRENT branch (the backend force_push resolves
          its branch from HEAD), so it's offered only on the current branch. Both
          variants open their own typed-confirm danger window (see
          forcepush.svelte.ts); "override" is the raw --force. -->
     {#if menu.isCurrent}
-      <button class="danger" onclick={() => { sidebarCtrl.closeMenu(); forcePushCtrl.forcePushLease(bridge.CUR_REPO as unknown as string); }}>Force push (with lease)&#8230;</button>
-      <button class="danger" onclick={() => { sidebarCtrl.closeMenu(); forcePushCtrl.forcePushOverride(bridge.CUR_REPO as unknown as string); }}>Force push — override remote&#8230;</button>
+      <button class="danger" onclick={() => { sidebarCtrl.closeMenu(); forcePushCtrl.forcePushLease(bridge.CUR_REPO as unknown as string); }}>{t("sidebar.force_push_lease")}</button>
+      <button class="danger" onclick={() => { sidebarCtrl.closeMenu(); forcePushCtrl.forcePushOverride(bridge.CUR_REPO as unknown as string); }}>{t("sidebar.force_push_override")}</button>
     {/if}
     {#if !menu.isCurrent}
-      <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.openMergeMenu(name, x, y); }}>Merge into current&#8230;</button>
-      <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.rebaseOnto(name); }}>Rebase current branch onto here</button>
-      <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.interactiveRebaseOnto(name); }}>Interactive rebase onto here&#8230;</button>
+      <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.openMergeMenu(name, x, y); }}>{t("sidebar.merge_into_current")}</button>
+      <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.rebaseOnto(name); }}>{t("sidebar.rebase_onto")}</button>
+      <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.interactiveRebaseOnto(name); }}>{t("sidebar.interactive_rebase_onto")}</button>
     {/if}
     {#if menu.upstream}
-      <button class="danger" onclick={() => { const name = menu.name; const upstream = menu.upstream as string; sidebarCtrl.closeMenu(); sidebarCtrl.resetToUpstream(name, upstream); }}>Reset to {menu.upstream}&#8230;</button>
+      <button class="danger" onclick={() => { const name = menu.name; const upstream = menu.upstream as string; sidebarCtrl.closeMenu(); sidebarCtrl.resetToUpstream(name, upstream); }}>{t("sidebar.reset_to_upstream", { upstream: menu.upstream })}</button>
     {/if}
-    <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.copyBranchName(name); }}>Copy name</button>
-    <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.openRenameMenu(name, x, y); }}>Rename&#8230;</button>
-    <button class="danger" disabled={menu.isCurrent} onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.deleteBranch(name); }}>Delete&#8230;</button>
+    <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.copyBranchName(name); }}>{t("sidebar.copy_name")}</button>
+    <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.openRenameMenu(name, x, y); }}>{t("sidebar.rename")}</button>
+    <button class="danger" disabled={menu.isCurrent} onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.deleteBranch(name); }}>{t("sidebar.delete")}</button>
   </div>
 {/if}
 
 {#if sidebarCtrl.pushMenu}
   {@const pm = sidebarCtrl.pushMenu}
   <div class="ref-pop cm-pop" bind:this={pushMenuEl} style="left:{pm.x}px;top:{pm.y}px">
-    <div class="cm-head"><span>Push <b>{pm.name}</b> to&#8230;</span></div>
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+    <div class="cm-head"><span>{@html t("sidebar.push_to_head", { name: pm.name })}</span></div>
     <div class="nb-form" class:busy={sidebarCtrl.busy}>
       <input
         class="nb-input"
         bind:this={pushBranchInputEl}
         bind:value={sidebarCtrl.pushBranchInput}
-        placeholder={pm.name + " (same name)"}
+        placeholder={t("sidebar.push_same_name", { name: pm.name })}
         spellcheck="false"
         autocomplete="off"
         disabled={sidebarCtrl.busy}
         onkeydown={onPushBranchKeydown}
       />
       <div class="nb-row">
-        <span class="mut">Enter to push, Esc to cancel</span>
+        <span class="mut">{t("sidebar.enter_to_push")}</span>
         {#if sidebarCtrl.busy}<span class="spinner"></span>{/if}
       </div>
     </div>
@@ -874,20 +885,21 @@
 {#if sidebarCtrl.renameMenu}
   {@const rm = sidebarCtrl.renameMenu}
   <div class="ref-pop cm-pop" bind:this={renameMenuEl} style="left:{rm.x}px;top:{rm.y}px">
-    <div class="cm-head"><span>Rename <b>{rm.name}</b></span></div>
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+    <div class="cm-head"><span>{@html t("sidebar.rename_head", { name: rm.name })}</span></div>
     <div class="nb-form" class:busy={sidebarCtrl.busy}>
       <input
         class="nb-input"
         bind:this={renameInputEl}
         bind:value={sidebarCtrl.renameInput}
-        placeholder="new branch name"
+        placeholder={t("sidebar.new_branch_name")}
         spellcheck="false"
         autocomplete="off"
         disabled={sidebarCtrl.busy}
         onkeydown={onRenameKeydown}
       />
       <div class="nb-row">
-        <span class="mut">Enter to rename, Esc to cancel</span>
+        <span class="mut">{t("sidebar.enter_to_rename")}</span>
         {#if sidebarCtrl.busy}<span class="spinner"></span>{/if}
       </div>
     </div>
@@ -900,10 +912,10 @@
     <!-- Same capture-before-close rationale as the branch/tag/submodule menus
          above — mm.name is read into a local BEFORE closeMergeMenu() nulls
          sidebarCtrl.mergeMenu. -->
-    <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.mergeInto(name, "auto"); }}>Auto (fast-forward if possible)</button>
-    <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.mergeInto(name, "no-ff"); }}>Always create a merge commit</button>
-    <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.mergeInto(name, "ff-only"); }}>Fast-forward only</button>
-    <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.squashInto(name); }}>Squash (no commit)</button>
+    <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.mergeInto(name, "auto"); }}>{t("sidebar.merge_auto")}</button>
+    <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.mergeInto(name, "no-ff"); }}>{t("sidebar.merge_no_ff")}</button>
+    <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.mergeInto(name, "ff-only"); }}>{t("sidebar.merge_ff_only")}</button>
+    <button onclick={() => { const name = mm.name; sidebarCtrl.closeMergeMenu(); sidebarCtrl.squashInto(name); }}>{t("sidebar.merge_squash")}</button>
   </div>
 {/if}
 
@@ -918,7 +930,8 @@
   {@const dcm = sidebarCtrl.dirtyCheckoutMenu}
   <div class="ref-pop cm-pop" bind:this={dirtyCheckoutMenuEl} style="left:{dcm.x}px;top:{dcm.y}px">
     <div class="cm-head">
-      <span>{dcm.files.length} file{dcm.files.length === 1 ? "" : "s"} would be overwritten switching to <b>{dcm.name}</b>:</span>
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+      <span>{@html t("sidebar.dirty_overwrite", { n: dcm.files.length, files: dcm.files.length === 1 ? t("sidebar.file") : t("sidebar.files_plural"), name: dcm.name })}</span>
       <span class="subject" title={dcm.files.join(", ")}>{dcm.files.slice(0, 6).join(", ")}{dcm.files.length > 6 ? "…" : ""}</span>
     </div>
     <!-- Capture dcm.name/startPoint/files.length into locals BEFORE
@@ -930,14 +943,14 @@
         const name = dcm.name, sp = dcm.startPoint;
         sidebarCtrl.closeDirtyCheckoutMenu();
         sidebarCtrl.stashSwitchReapply(name, sp);
-      }}>Stash, switch, then reapply</button
+      }}>{t("sidebar.stash_switch_reapply")}</button
     >
     <button
       onclick={() => {
         const name = dcm.name, sp = dcm.startPoint;
         sidebarCtrl.closeDirtyCheckoutMenu();
         sidebarCtrl.stashSwitchLeaveStashed(name, sp);
-      }}>Stash, switch, leave stashed</button
+      }}>{t("sidebar.stash_switch_leave")}</button
     >
     <button
       class="danger"
@@ -945,7 +958,7 @@
         const name = dcm.name, sp = dcm.startPoint, n = dcm.files.length;
         sidebarCtrl.closeDirtyCheckoutMenu();
         sidebarCtrl.forceDiscardCheckout(name, sp, n);
-      }}>Force switch, discarding my changes&#8230;</button
+      }}>{t("sidebar.force_switch_discard")}</button
     >
   </div>
 {/if}
@@ -960,7 +973,8 @@
 {#if sidebarCtrl.checkoutConfirm}
   {@const cc = sidebarCtrl.checkoutConfirm}
   <div class="ref-pop cm-pop" bind:this={checkoutConfirmEl} style="left:{cc.x}px;top:{cc.y}px">
-    <div class="cm-head">Switch to <b>{cc.name}</b>?</div>
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+    <div class="cm-head">{@html t("sidebar.switch_to_confirm", { name: cc.name })}</div>
     <!-- Same capture-before-close rationale as the branch menu above. -->
     <button
       onclick={() => {
@@ -968,7 +982,7 @@
         sidebarCtrl.closeCheckoutConfirm();
         if (remote) sidebarCtrl.checkoutRemote(name, pos);
         else sidebarCtrl.checkout(name, pos);
-      }}>Switch</button
+      }}>{t("sidebar.switch")}</button
     >
   </div>
 {/if}
@@ -977,8 +991,8 @@
   {@const tm = sidebarCtrl.tagMenu}
   <div class="ref-pop" bind:this={tagMenuEl} style="left:{tm.x}px;top:{tm.y}px">
     <!-- Same capture-before-close rationale as the branch menu above. -->
-    <button onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.pushTag(name); }}>Push to origin</button>
-    <button class="danger" onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.deleteTag(name); }}>Delete&#8230;</button>
+    <button onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.pushTag(name); }}>{t("sidebar.push_to_origin")}</button>
+    <button class="danger" onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.deleteTag(name); }}>{t("sidebar.delete")}</button>
   </div>
 {/if}
 
@@ -991,26 +1005,26 @@
          from the snapshot the popover opened with, matching what the row
          itself showed. -->
     {#if submoduleCanOpen(sm.status)}
-      <button onclick={() => { const path = sm.path, p = sm.absolutePath; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.openSubmodule(path, p); }}>Open</button>
+      <button onclick={() => { const path = sm.path, p = sm.absolutePath; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.openSubmodule(path, p); }}>{t("sidebar.open")}</button>
     {/if}
     <!-- Sync is offered regardless of status (unlike Init/Update below) — it
          only rewrites .git/config's url, never the submodule's own working
          tree/index, so there's nothing for "dirty"/"conflicted" to block. -->
-    <button onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.syncSubmodule(p); }}>Sync</button>
+    <button onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.syncSubmodule(p); }}>{t("sidebar.sync")}</button>
     {#if smAction === "init"}
-      <button onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.initAndUpdateSubmodule(p); }}>Init + update</button>
+      <button onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.initAndUpdateSubmodule(p); }}>{t("sidebar.init_update")}</button>
     {:else if smAction === "update"}
-      <button onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.updateSubmodule(p); }}>Update</button>
+      <button onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.updateSubmodule(p); }}>{t("sidebar.update")}</button>
     {:else if smAction === "blocked"}
-      <button disabled title={subBlockedTip(sm.status)}>Update</button>
+      <button disabled title={subBlockedTip(sm.status)}>{t("sidebar.update")}</button>
     {/if}
     <!-- Deinit/Remove — offered unconditionally like Sync (not status-gated
          the way Init/Update are): Deinit's own status-gated confirm
          decision lives in the controller (submoduleNeedsForceConfirm), and
          Remove is always final regardless of status. Ordering is
          increasing severity, Remove last. -->
-    <button onclick={() => { const p = sm.path, st = sm.status; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.deinitSubmodule(p, st); }}>Deinit</button>
-    <button class="danger" onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.removeSubmodule(p); }}>Remove&#8230;</button>
+    <button onclick={() => { const p = sm.path, st = sm.status; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.deinitSubmodule(p, st); }}>{t("sidebar.deinit")}</button>
+    <button class="danger" onclick={() => { const p = sm.path; sidebarCtrl.closeSubmoduleMenu(); sidebarCtrl.removeSubmodule(p); }}>{t("sidebar.remove")}</button>
   </div>
 {/if}
 

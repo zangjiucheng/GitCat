@@ -8,6 +8,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State, Wry};
 
 use crate::git_read::{collect_refs, filter_hidden_chips, read_repo, seed_tip_oids, walk_repo};
+use crate::i18n_err::ierrp;
 use crate::layout::{layout, LayoutBuilder, NCOL};
 use crate::model::{
     AncestorFlags, CommitDetail, CommitMeta, DiffHunkRow, DiffLineRow, FastRefresh, FileChange,
@@ -219,7 +220,7 @@ pub async fn load_graph(app: AppHandle<Wry>, state: State<'_, GraphLoadState>, p
     let probe_path = path.clone();
     crate::blocking::run_blocking(move || crate::trust::open_repo(&probe_path).map(|_| ()))
         .await
-        .map_err(|e| format!("cannot open repository: {}", e.message()))?;
+        .map_err(|e| ierrp("err_repo.cannot_open_repo", &[("detail", e.message())]))?;
 
     let app2 = app.clone();
     // NOT awaited: spawn_blocking's returned JoinHandle, simply dropped here,

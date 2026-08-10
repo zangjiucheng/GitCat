@@ -103,6 +103,7 @@ use std::time::{Duration, Instant};
 
 use mlua::{Lua, LuaOptions, StdLib, Table, Value, Variadic, VmState};
 
+use crate::i18n_err::ierrp;
 use crate::plugin_exec::{CommandOutput, PlaceholderCtx};
 use crate::procutil::NoConsoleWindowExt;
 
@@ -180,28 +181,29 @@ fn run_handler_inner(
     //    NOT os/io/package/debug. (Luau's base still exposes a filesystem
     //    `require` etc. — those are stripped in step 3.)
     let lua = Lua::new_with(StdLib::STRING | StdLib::MATH | StdLib::TABLE, LuaOptions::default())
-        .map_err(|e| format!("could not create the sandboxed Lua VM: {e}"))?;
+        .map_err(|e| ierrp("err_plugins.lua_vm_create", &[("detail", &e.to_string())]))?;
 
     // 2. Memory ceiling BEFORE any script runs — stops allocation bombs.
     lua.set_memory_limit(memory_limit)
-        .map_err(|e| format!("could not apply the Lua memory limit: {e}"))?;
+        .map_err(|e| ierrp("err_plugins.lua_memory_limit", &[("detail", &e.to_string())]))?;
 
     // 3. Strip Luau's dangerous always-on base globals (esp. the filesystem
     //    `require`) while the globals table is still writable — see the module
     //    doc's "sandbox caveat". This MUST precede the freeze below.
-    strip_dangerous_globals(&lua).map_err(|e| format!("could not harden the Lua globals: {e}"))?;
+    strip_dangerous_globals(&lua)
+        .map_err(|e| ierrp("err_plugins.lua_harden_globals", &[("detail", &e.to_string())]))?;
 
     // 4. Luau sandbox: freeze the (now-stripped) globals read-only, fresh
     //    per-thread env.
-    lua.sandbox(true).map_err(|e| format!("could not enable the Lua sandbox: {e}"))?;
+    lua.sandbox(true).map_err(|e| ierrp("err_plugins.lua_enable_sandbox", &[("detail", &e.to_string())]))?;
 
     // Shared, single-threaded output buffer for print() + tama.react(). `!Send`
     // is fine without mlua's `send` feature (see the module doc's caveat).
     let out_buf = Rc::new(RefCell::new(String::new()));
 
     // 5. Inject the entire host API into the (writable) sandbox environment.
-    let ctx_table =
-        install_host_api(&lua, ctx, repo_dir, &out_buf).map_err(|e| format!("could not install the plugin host API: {e}"))?;
+    let ctx_table = install_host_api(&lua, ctx, repo_dir, &out_buf)
+        .map_err(|e| ierrp("err_plugins.lua_install_host_api", &[("detail", &e.to_string())]))?;
 
     // 6. Time budget: Luau fires this on loop back-edges / calls; once we're past
     //    the deadline, returning an Err aborts the VM (catches infinite loops a
@@ -220,30 +222,34 @@ fn run_handler_inner(
         .load(script_src)
         .set_name("plugin")
         .eval()
-        .map_err(|e| format!("plugin script error: {e}"))?;
+        .map_err(|e| ierrp("err_plugins.lua_script_error", &[("detail", &e.to_string())]))?;
     let handlers = match module {
         Value::Table(t) => t,
         other => {
-            return Err(format!(
-                "the plugin's main Lua file must `return` a table of handler functions, but it returned a {}",
-                other.type_name()
-            ))
+            return Err(ierrp("err_plugins.lua_module_not_table", &[("type", other.type_name())]))
         }
     };
 
     // 8. Look up the requested handler — clear error if missing or not a function.
-    let handler = match handlers.get::<Value>(handler_name).map_err(|e| format!("plugin script error: {e}"))? {
+    let handler = match handlers
+        .get::<Value>(handler_name)
+        .map_err(|e| ierrp("err_plugins.lua_script_error", &[("detail", &e.to_string())]))?
+    {
         Value::Function(f) => f,
         Value::Nil => {
-            return Err(format!("the plugin handler '{handler_name}' was not found in the table its main file returned"))
+            return Err(ierrp("err_plugins.lua_handler_not_found", &[("handler", handler_name)]))
         }
         other => {
-            return Err(format!("the plugin handler '{handler_name}' is a {}, not a function", other.type_name()))
+            return Err(ierrp(
+                "err_plugins.lua_handler_not_function",
+                &[("handler", handler_name), ("type", other.type_name())],
+            ))
         }
     };
 
     // 9. Call it with the ctx table as its single argument.
-    let ret: Value = handler.call(ctx_table).map_err(|e| format!("plugin handler error: {e}"))?;
+    let ret: Value =
+        handler.call(ctx_table).map_err(|e| ierrp("err_plugins.lua_handler_error", &[("detail", &e.to_string())]))?;
 
     // 10. Assemble stdout: buffered print/tama output, then the returned string.
     let mut stdout = out_buf.borrow().clone();
@@ -735,7 +741,7 @@ mod runtime_tests {
         let src = "return { run = 5 }";
         let res = run(src, "run", &PlaceholderCtx::default(), ".");
         let err = res.expect_err("a non-function handler must error");
-        assert!(err.contains("not a function"), "unexpected error: {err}");
+        assert!(err.contains("err_plugins.lua_handler_not_function"), "unexpected error: {err}");
     }
 
     #[test]
@@ -743,7 +749,7 @@ mod runtime_tests {
         let src = "return 42";
         let res = run(src, "run", &PlaceholderCtx::default(), ".");
         let err = res.expect_err("a non-table module must error");
-        assert!(err.contains("table"), "unexpected error: {err}");
+        assert!(err.contains("err_plugins.lua_module_not_table"), "unexpected error: {err}");
     }
 
     #[test]

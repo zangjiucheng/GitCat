@@ -203,8 +203,8 @@ fn export_refuses_a_merge_commit_in_single_commit_mode() {
     let res = tauri::async_runtime::block_on(export_patch(path, None, merge_sha, dest_str.clone()));
     assert!(!res.ok, "expected export_patch to refuse a merge commit");
     assert!(
-        res.message.to_lowercase().contains("merge"),
-        "expected an explanatory message mentioning 'merge', got: {}",
+        res.message.contains("err_ops.cannot_export_merge_single"),
+        "expected the merge-refusal error key, got: {}",
         res.message
     );
     assert!(!dest.exists(), "no file should have been written when the export was refused");

@@ -30,6 +30,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { FileHistory, FileHistoryEntry } from "../../ipc/bindings";
 
 // Demo data (design-mode only) — a small canned history with one rename, same
@@ -120,7 +121,7 @@ class FileHistoryState {
       }
       if (!this.repo) {
         this.data = null;
-        this.error = "Open a repository first.";
+        this.error = t("filehistory.open_repo_first");
         return;
       }
       try {
@@ -130,11 +131,11 @@ class FileHistoryState {
           this.error = null;
         } else {
           this.data = null;
-          this.error = String(r.error ?? "Could not load this file's history.");
+          this.error = be(r.error) || t("filehistory.err_load");
         }
       } catch (e) {
         this.data = null;
-        this.error = "File history unavailable — " + e;
+        this.error = t("filehistory.err_unavailable", { reason: be(String(e)) });
       }
     } finally {
       this.loading = false;
@@ -168,7 +169,7 @@ class FileHistoryState {
     const row = this.rowForSha(sha.slice(0, 7));
     this.close();
     if (row == null) {
-      bridge.tama.warn("commit not loaded in the current graph");
+      bridge.tama.warn(t("filehistory.warn_not_loaded"));
       return;
     }
     const G: any = bridge.G;

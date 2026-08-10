@@ -68,6 +68,7 @@ use std::process::Command;
 use git2::Repository;
 use serde::Serialize;
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::NoConsoleWindowExt;
 
 // ---------------------------------------------------------------------------
@@ -162,7 +163,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     }
     let o = cmd
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -183,7 +184,7 @@ fn git_worktree(path: &str, args: &[&str], no_editor: bool) -> Result<Out, Strin
         envs.push(("GIT_EDITOR", "true"));
         envs.push(("GIT_SEQUENCE_EDITOR", "true"));
     }
-    let o = crate::wsl::git_command_env(path, args, &envs).output().map_err(|e| format!("Could not run git: {e}"))?;
+    let o = crate::wsl::git_command_env(path, args, &envs).output().map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -212,13 +213,13 @@ fn git_msg(o: &Out) -> String {
 /// clean message instead of git's "unknown revision".
 fn validate_sha(sha: &str) -> Result<(), String> {
     if sha.is_empty() {
-        return Err("No commit to revert.".into());
+        return Err(ierr("err_history.no_commit_to_revert"));
     }
     if sha.starts_with('-') {
-        return Err(format!("Refusing a revision that looks like a flag: {sha:?}"));
+        return Err(ierrp("err_history.revision_looks_like_flag", &[("rev", &format!("{sha:?}"))]));
     }
     if sha.chars().any(|c| c.is_control()) {
-        return Err("Revision has a control character.".into());
+        return Err(ierr("err_history.revision_control_char"));
     }
     Ok(())
 }
@@ -390,18 +391,18 @@ pub async fn revert_start(path: String, sha: String, signoff: Option<bool>) -> R
         }
         let repo = match Repository::open(&path) {
             Ok(r) => r,
-            Err(e) => return RevertResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return RevertResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
 
         // Refuse to stack a new revert on top of an unfinished one.
         if in_progress(&repo) {
-            return RevertResult::error("A revert is already in progress — resolve or abort it first.");
+            return RevertResult::error(ierr("err_history.revert_in_progress"));
         }
 
         // Snapshot FIRST — never mutate without a pre-op backup. If it fails, abort.
         let backup = match crate::safety::snapshot(&repo) {
             Ok(b) => b,
-            Err(e) => return RevertResult::error(format!("Safety snapshot failed, aborting: {e}")),
+            Err(e) => return RevertResult::error(ierrp("err_history.snapshot_failed", &[("detail", &e)])),
         };
 
         // git revert [-s] --no-edit --end-of-options <sha>
@@ -455,10 +456,10 @@ pub async fn revert_continue(path: String) -> RevertResult {
     crate::blocking::run_blocking(move || {
         let repo = match Repository::open(&path) {
             Ok(r) => r,
-            Err(e) => return RevertResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return RevertResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
         if !in_progress(&repo) {
-            return RevertResult::error("No revert in progress to continue.");
+            return RevertResult::error(ierr("err_history.no_revert_to_continue"));
         }
 
         // Name the commit being reverted (for messages) while REVERT_HEAD exists.
@@ -513,7 +514,7 @@ pub async fn revert_abort(path: String) -> RevertResult {
     crate::blocking::run_blocking(move || {
         let repo = match Repository::open(&path) {
             Ok(r) => r,
-            Err(e) => return RevertResult::error(format!("Cannot open repository: {}", e.message())),
+            Err(e) => return RevertResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
         };
         if !in_progress(&repo) {
             return RevertResult {

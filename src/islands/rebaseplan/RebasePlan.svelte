@@ -2,14 +2,9 @@
   import { rebasePlanCtrl } from "./rebaseplan.svelte.ts";
   import type { PlanAction } from "./rebaseplan.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
-  const ACTIONS: { value: PlanAction; label: string }[] = [
-    { value: "pick", label: "Pick" },
-    { value: "edit", label: "Edit" },
-    { value: "squash", label: "Squash" },
-    { value: "fixup", label: "Fixup" },
-    { value: "drop", label: "Drop" },
-  ];
+  const ACTIONS: PlanAction[] = ["pick", "edit", "squash", "fixup", "drop"];
 
   const ACTION_GLYPH: Record<PlanAction, string> = {
     pick: "●", // ●
@@ -61,10 +56,10 @@
 <div class="scrim" class:on={rebasePlanCtrl.open}>
   <div class="modal rebaseplan">
     <div class="modal-head">
-      <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.alarm} alt="Tama, alarmed" /></div>
+      <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.alarm} alt={t("rebaseplan.tama_alt")} /></div>
       <div>
-        <h3>Interactive rebase onto {rebasePlanCtrl.onto}</h3>
-        <p>Drag to reorder, pick an action per commit, then Start.</p>
+        <h3>{t("rebaseplan.header", { onto: rebasePlanCtrl.onto })}</h3>
+        <p>{t("rebaseplan.subtitle")}</p>
       </div>
     </div>
     <div class="modal-body">
@@ -82,7 +77,7 @@
             ondrop={(e) => onDrop(e, i)}
             ondragend={onDragEnd}
           >
-            <span class="rbp-handle" title="Drag to reorder" aria-hidden="true">&#8942;&#8942;</span>
+            <span class="rbp-handle" title={t("rebaseplan.drag_reorder")} aria-hidden="true">&#8942;&#8942;</span>
             <span class="rbp-mk" data-action={row.action} aria-hidden="true">{ACTION_GLYPH[row.action]}</span>
             <span class="rbp-sha mono">{row.shortSha}</span>
             <span class="rbp-subject" title={row.subject}>{row.subject}</span>
@@ -90,30 +85,30 @@
               class="rbp-action"
               value={row.action}
               disabled={rebasePlanCtrl.busy}
-              aria-label="Action for {row.shortSha}"
+              aria-label={t("rebaseplan.action_aria", { sha: row.shortSha })}
               onchange={(e) =>
                 rebasePlanCtrl.setAction(row.sha, (e.currentTarget as HTMLSelectElement).value as PlanAction)}
             >
               {#each ACTIONS as a}
-                <option value={a.value} disabled={i === 0 && (a.value === "squash" || a.value === "fixup")}
-                  >{a.label}</option
+                <option value={a} disabled={i === 0 && (a === "squash" || a === "fixup")}
+                  >{t("rebaseplan.action_" + a)}</option
                 >
               {/each}
             </select>
           </div>
         {:else}
-          <div class="rbp-empty mut">No plannable commits between here and the target.</div>
+          <div class="rbp-empty mut">{t("rebaseplan.empty")}</div>
         {/each}
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" disabled={rebasePlanCtrl.busy} onclick={() => rebasePlanCtrl.close()}>Cancel</button>
+      <button class="btn ghost" disabled={rebasePlanCtrl.busy} onclick={() => rebasePlanCtrl.close()}>{t("common.cancel")}</button>
       <button
         class="btn"
         style="background:var(--accent2);border-color:var(--accent2)"
         disabled={!rebasePlanCtrl.canStart}
         onclick={() => rebasePlanCtrl.start()}
-        >{#if rebasePlanCtrl.busy}<span class="spinner"></span> Starting…{:else}Start interactive rebase{/if}</button
+        >{#if rebasePlanCtrl.busy}<span class="spinner"></span> {t("rebaseplan.starting")}{:else}{t("rebaseplan.start")}{/if}</button
       >
     </div>
   </div>

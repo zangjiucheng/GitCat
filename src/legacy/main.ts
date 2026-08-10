@@ -30,6 +30,10 @@ import { dlog } from "../devlog";
 // change via STATE_SOUND — see sound.ts's own header for why this is a leaf
 // module main.ts imports FROM, never the reverse.
 import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
+// i18n for the vanilla top-bar/loading chrome. This module isn't Svelte-
+// reactive, so t() is called imperatively (applyStaticI18n below + the busy
+// labels in doFetch/doPull/doPush) and re-run on i18nEvents "change".
+import { t, be, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -1596,16 +1600,16 @@ class TamaMascot{
     switch(name){
       case "fetch.upToDate": case "checkout.clean": this.nod(); return null;
       case "commit.created": Safety.seal(); this._tele(); return null;
-      case "snapshot.surfaced":{const b=Safety.seal();this._tele();this.set("hint");this.say("Backup "+shortBackup(b.ref)+" pinned — you're covered.");return b;}
-      case "op.long": this.set("thinking"); this.say(""); this._teleText((p.label||"working")+" · 0 / "+(p.total||10000)); return null;
+      case "snapshot.surfaced":{const b=Safety.seal();this._tele();this.set("hint");this.say(t("snapshot.surfaced",{ref:shortBackup(b.ref)}));return b;}
+      case "op.long": this.set("thinking"); this.say(""); this._teleText((p.label||t("legacy.op_working"))+" · 0 / "+(p.total||10000)); return null;
       case "op.progress": this._teleText((p.label||"working")+" · "+p.done+" / "+p.total); return null;
       case "op.done": this.set(this.sticky&&this.sticky!=="thinking"?this.sticky:"idle"); this._tele(); return null;
-      case "mutation.caution":{const b=Safety.seal();this._tele();this.set("warn");const cnt=p.count?p.count+" commit"+(p.count===1?"":"s"):"a few commits";this.say("Heads up — this rewrites "+cnt+". Backup "+shortBackup(b.ref)+" saved first.",4200);return b;}
-      case "mutation.destructive":{const b=Safety.seal();this._tele();this.set("danger");this.say((p.label||"This")+" can't be undone. Backup "+shortBackup(b.ref)+" is pinned — type the ref name to go on.",6000);return b;}
+      case "mutation.caution":{const b=Safety.seal();this._tele();this.set("warn");const cnt=p.count?t(p.count===1?"mutation.commit_one":"mutation.commit_many",{n:p.count}):t("mutation.commit_some");this.say(t("mutation.caution",{cnt,ref:shortBackup(b.ref)}),4200);return b;}
+      case "mutation.destructive":{const b=Safety.seal();this._tele();this.set("danger");this.say(t("mutation.destructive",{label:p.label||t("mutation.this_label"),ref:shortBackup(b.ref)}),6000);return b;}
       case "mutation.cancel": this.sticky=null; this.set("idle"); this.say(""); return null;
-      case "undo.performed":{const s=Safety.seal();this._tele();this.sticky=null;this.set("celebrate");this.say("Rewound to "+(p.hash||"a1b2c3d")+" — nothing lost, I sealed "+shortBackup(s.ref)+" first. ♪",4200);return s;}
-      case "rescue.detached": this.set("rescue"); this.say("Detached HEAD — I've got you. One tap puts you back on "+(p.branch||"main")+".",6000); return null;
-      case "rescue.resolved": this.sticky=null; this.set("celebrate"); this.say("You're back on "+(p.branch||"main")+". Safe and sound.",3600); return null;
+      case "undo.performed":{const s=Safety.seal();this._tele();this.sticky=null;this.set("celebrate");this.say(t("undo.performed",{hash:p.hash||"a1b2c3d",ref:shortBackup(s.ref)}),4200);return s;}
+      case "rescue.detached": this.set("rescue"); this.say(t("rescue.detached",{branch:p.branch||"main"}),6000); return null;
+      case "rescue.resolved": this.sticky=null; this.set("celebrate"); this.say(t("rescue.resolved",{branch:p.branch||"main"}),3600); return null;
       case "idle": this.sticky=null; this.set("idle"); this.say(""); return null;
       default: return null;
     }
@@ -1765,7 +1769,7 @@ function goToHead(){
     const l=(G.allRefs&&G.allRefs[r])||(G.refs&&G.refs[r]?[G.refs[r]]:[]);
     if(l.some&&l.some(x=>x&&x.kind==="head")){ hr=r; break; }
   }
-  if(hr<0){ Tama.warn("Couldn't locate HEAD in the loaded graph."); return; }
+  if(hr<0){ Tama.warn(t("legacy.head_not_located")); return; }
   select(hr);
   state.scrollTarget=clampScroll(hr*layout.rowH-(view.cssH-bandH())/2);
   dirty=true;
@@ -2085,8 +2089,8 @@ function cheer(msg,img: string|null=null){ $("#tamaCheerTxt").innerHTML=msg; $("
 // global undo (undo-is-itself-undoable)
 async function globalUndo(){
   if(!IN_TAURI){ Tama.event("undo.performed",{hash:hhex(1)}); pulseTick(0);
-    cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>',tamaPose("confident")); return; }
-  if(!CUR_REPO){ Tama.warn("Open a repository first — there's nothing to undo yet."); return; }
+    cheer(t("legacy.cheer_rewound"),tamaPose("confident")); return; }
+  if(!CUR_REPO){ Tama.warn(t("legacy.undo_no_repo")); return; }
   // Bug-B fix: right after a successful stash apply/pop, the working tree is
   // dirty in a way the generic undo_last can never rewind — nothing at the
   // ref level moved (see stash_undo_apply's doc comment, workdir.rs), so
@@ -2103,7 +2107,7 @@ async function globalUndo(){
   // so the shortcut doesn't round-trip to the backend for a guaranteed no-op.
   // Skipped entirely for the stash-undo path: stash_undo_apply takes its own
   // safety snapshot and needs no prior ref snapshot to already exist.
-  if(!useStashUndo&&!Safety.snaps.length){ Tama.warn("Nothing to undo yet — no snapshots have been taken."); return; }
+  if(!useStashUndo&&!Safety.snaps.length){ Tama.warn(t("legacy.undo_no_snapshots")); return; }
   if(undoBusy) return; undoBusy=true;
   // #undoBtn's disabled state was previously driven ONLY by Safety.updateBadge()
   // (zero-snapshot check) — undoBusy guarded re-entrancy in code but gave zero
@@ -2128,7 +2132,7 @@ async function globalUndo(){
       else await reloadGraph(true);
       const to=(res.restoredTo||"").slice(0,7);
       Tama.event("undo.performed",{hash:to||hhex(1)}); pulseTick(0);
-      cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>',tamaPose("confident"));
+      cheer(t("legacy.cheer_rewound"),tamaPose("confident"));
     } else if(!useStashUndo && /uncommitted changes/i.test((res&&res.message)||"")){
       // Undo refused because the working tree is dirty (its reset --hard would
       // DISCARD those changes — see safety.rs's undo()). Offer to keep them:
@@ -2148,12 +2152,12 @@ async function globalUndo(){
           await workdirCtrl.refreshStatus(CUR_REPO); await workdirCtrl.refreshStashes(CUR_REPO);
           const to=(r2.restoredTo||"").slice(0,7);
           Tama.event("undo.performed",{hash:to||hhex(1)}); pulseTick(0);
-          cheer('Rewound — <b>kept your changes</b>. <span class="jp">やったー♪</span>',tamaPose("confident"));
-          if(r2.message) Tama.say(r2.message,4600);
-        } else { Tama.warn((r2&&r2.message)||"Undo (with stash) failed."); }
-      } else { Tama.say("Undo cancelled — your uncommitted changes are untouched.",3200); }
-    } else { Tama.warn((res&&res.message)||"Nothing to undo — no snapshots yet."); }
-  }catch(e){ Tama.warn("Undo failed — "+e); console.error(e); }
+          cheer(t("legacy.cheer_rewound_kept"),tamaPose("confident"));
+          if(r2.message) Tama.say(be(r2.message),4600);
+        } else { Tama.warn(be(r2&&r2.message)||t("legacy.undo_stash_failed")); }
+      } else { Tama.say(t("legacy.undo_cancelled"),3200); }
+    } else { Tama.warn(be(res&&res.message)||t("legacy.undo_nothing")); }
+  }catch(e){ Tama.warn(t("legacy.undo_failed",{error:e})); console.error(e); }
   finally{ undoBusy=false; labelEl.innerHTML=label; Safety.updateBadge(); }
 }
 $("#undoBtn").addEventListener("click",globalUndo);
@@ -2180,45 +2184,45 @@ function clearSyncButtonsBusy(){
   });
 }
 async function doFetch(){
-  if(!IN_TAURI){ Tama.set("hint"); Tama.say("Fetched (demo). にゃ〜",3200); return; }
-  if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
+  if(!IN_TAURI){ Tama.set("hint"); Tama.say(t("legacy.fetched_demo"),3200); return; }
+  if(!CUR_REPO){ Tama.warn(t("legacy.open_repo_first")); return; }
   if(syncBusy) return; syncBusy=true;
-  setSyncButtonsBusy("fetchBtn","Fetching…");
-  Tama.set("syncing"); Tama.say("Fetching…");
+  setSyncButtonsBusy("fetchBtn",t("topbar.fetching"));
+  Tama.set("syncing"); Tama.say(t("legacy.fetching"));
   // Open the live-progress modal and start listening BEFORE invoking, so the
   // first "remote: Counting objects…" segment isn't missed. fetch_stream is the
   // streaming twin of fetch (same result); the ambient auto-fetch timer and the
   // pull-with-strategy flows still use the silent, non-modal `fetch`.
-  await syncProgressCtrl.begin("Fetching…","fetch");
+  await syncProgressCtrl.begin(t("topbar.fetching"),"fetch");
   try{
     const res=await tinvoke("fetch_stream",{path:CUR_REPO,remote:null});
-    syncProgressCtrl.settle(!!(res&&res.ok),(res&&res.message)||"");
-    if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("hint"); Tama.say(res.message||"Fetched.",3200); }
-    else Tama.warn((res&&res.message)||"Fetch failed.");
-  }catch(e){ syncProgressCtrl.settle(false,String(e)); Tama.warn("Fetch failed — "+e); console.error(e); }
+    syncProgressCtrl.settle(!!(res&&res.ok),be(res&&res.message)||"");
+    if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("hint"); Tama.say(be(res.message)||t("legacy.fetched"),3200); }
+    else Tama.warn(be(res&&res.message)||t("legacy.fetch_failed"));
+  }catch(e){ syncProgressCtrl.settle(false,be(String(e))); Tama.warn(t("legacy.fetch_failed_reason",{error:e})); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPull(){
-  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pulled (demo). にゃ〜",3200); cheer('Pulled (demo). <span class="jp">にゃ〜</span>',tamaPose("happy")); return; }
-  if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
+  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say(t("legacy.pulled_demo"),3200); cheer(t("legacy.cheer_pulled_demo"),tamaPose("happy")); return; }
+  if(!CUR_REPO){ Tama.warn(t("legacy.open_repo_first")); return; }
   if(syncBusy) return; syncBusy=true;
-  setSyncButtonsBusy("pullBtn","Pulling…");
-  Tama.set("syncing"); Tama.say("Pulling…");
-  await syncProgressCtrl.begin("Pulling…","pull");
+  setSyncButtonsBusy("pullBtn",t("topbar.pulling"));
+  Tama.set("syncing"); Tama.say(t("legacy.pulling"));
+  await syncProgressCtrl.begin(t("topbar.pulling"),"pull");
   try{
     const res=await tinvoke("pull_stream",{path:CUR_REPO});
-    syncProgressCtrl.settle(!!(res&&res.ok),(res&&res.message)||"");
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pulled.",3200); cheer(res.message||"Pulled.",tamaPose("happy")); }
-    else Tama.warn((res&&res.message)||"Pull failed.");
-  }catch(e){ syncProgressCtrl.settle(false,String(e)); Tama.warn("Pull failed — "+e); console.error(e); }
+    syncProgressCtrl.settle(!!(res&&res.ok),be(res&&res.message)||"");
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(be(res.message)||t("legacy.pulled"),3200); cheer(be(res.message)||t("legacy.pulled"),tamaPose("happy")); }
+    else Tama.warn(be(res&&res.message)||t("legacy.pull_failed"));
+  }catch(e){ syncProgressCtrl.settle(false,be(String(e))); Tama.warn(t("legacy.pull_failed_reason",{error:e})); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPush(){
-  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pushed (demo). にゃ〜",3200); cheer('Pushed (demo). <span class="jp">にゃ〜</span>',tamaPose("happy")); return; }
-  if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
+  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say(t("legacy.pushed_demo"),3200); cheer(t("legacy.cheer_pushed_demo"),tamaPose("happy")); return; }
+  if(!CUR_REPO){ Tama.warn(t("legacy.open_repo_first")); return; }
   if(syncBusy) return; syncBusy=true;
-  setSyncButtonsBusy("pushBtn","Pushing…");
-  Tama.set("syncing"); Tama.say("Pushing…");
+  setSyncButtonsBusy("pushBtn",t("topbar.pushing"));
+  Tama.set("syncing"); Tama.say(t("legacy.pushing"));
   try{
     const res=await tinvoke("push",{path:CUR_REPO});
     // reloadGraph (not just sidebarCtrl.refresh) so the graph's origin/* ref
@@ -2226,9 +2230,9 @@ async function doPush(){
     // moves the remote-tracking ref but not local HEAD, so nothing else picks
     // it up. reloadGraph's tail refreshes the sidebar too (and the incremental
     // path keeps this cheap — no commits changed).
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pushed.",3200); cheer(res.message||"Pushed.",tamaPose("happy")); }
-    else Tama.warn((res&&res.message)||"Push failed.");
-  }catch(e){ Tama.warn("Push failed — "+e); console.error(e); }
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(be(res.message)||t("legacy.pushed"),3200); cheer(be(res.message)||t("legacy.pushed"),tamaPose("happy")); }
+    else Tama.warn(be(res&&res.message)||t("legacy.push_failed"));
+  }catch(e){ Tama.warn(t("legacy.push_failed_reason",{error:e})); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 $("#fetchBtn").addEventListener("click",doFetch);
@@ -2590,7 +2594,7 @@ let loadingPillTimer=null;
 function setGraphLoadingPill(on,count){
   const p=$("#loadingPill"); if(!p) return;
   if(on){
-    const l=$("#loadingPillLabel"); if(l) l.textContent = count!=null&&count>0 ? "Loading… "+count.toLocaleString() : "Loading…";
+    const l=$("#loadingPillLabel"); if(l) l.textContent = count!=null&&count>0 ? t("topbar.loading")+" "+count.toLocaleString() : t("topbar.loading");
     // Delay the reveal so a repo that loads in well under this never flashes the
     // pill — only a genuinely-still-loading stream (which clears the timer late)
     // ever actually shows it.
@@ -2752,7 +2756,7 @@ function onGraphBatch(payload){
     // clobbered by an older snapshot resolving late. Best-effort: if it never
     // resolves, reloadGraph just re-fetches fresh state and compares.
     snapshotGraphBaseline(graphGeneration);
-    if(payload.error){ Tama.warn("Loading history stopped early — "+payload.error,5000); }
+    if(payload.error){ Tama.warn(t("legacy.history_stopped_early",{error:payload.error}),5000); }
     // Distinct from a genuine walk error (above) — the walk didn't fail, it
     // just has more history than commands.rs's MAX_LIVE_COMMITS is willing
     // to hold in memory at once. Surfacing this explicitly matters: without
@@ -2760,8 +2764,8 @@ function onGraphBatch(payload){
     // whole history" finish, silently hiding the fact that older commits
     // past this point aren't loaded (and won't be found by search/⌘K/jump-
     // to-commit either).
-    else if(payload.truncated){ Tama.set("curious"); Tama.warn("Loaded the most recent "+BACKEND.n.toLocaleString()+" commits — this repo's history is even longer, capped here to limit memory usage.",6500); }
-    else { Tama.set("curious"); Tama.say("Loaded "+BACKEND.n.toLocaleString()+" commits in "+payload.elapsedMs.toFixed(0)+" ms. にゃ〜",4200); }
+    else if(payload.truncated){ Tama.set("curious"); Tama.warn(t("legacy.history_truncated",{count:BACKEND.n.toLocaleString()}),6500); }
+    else { Tama.set("curious"); Tama.say(t("legacy.history_loaded",{count:BACKEND.n.toLocaleString(),ms:payload.elapsedMs.toFixed(0)}),4200); }
     if(pendingReselect){
       if(pendingReselect.sha){
         const row=BACKEND.rows.findIndex(r=>r.sha===pendingReselect.sha);
@@ -2775,7 +2779,7 @@ function onGraphBatch(payload){
     // First batch of a fresh stream — a lighter-weight "still going" hint
     // than the final toast above, so a big repo doesn't look hung between
     // "Loading…" and "Loaded" while the rest streams in.
-    Tama.set("thinking"); Tama.say("Loading history… "+BACKEND.n.toLocaleString()+" so far…",4200);
+    Tama.set("thinking"); Tama.say(t("legacy.history_loading",{count:BACKEND.n.toLocaleString()}),4200);
   }
 }
 // Last path segment of an absolute repo path, for display only (e.g. the
@@ -2921,7 +2925,7 @@ async function openRepo(path){
     // "thinking" mascot (no onGraphBatch runs on a hit to do it). Fire-and-forget
     // so the instant restore isn't blocked on the reconcile.
     if(cacheHit){
-      Tama.set("curious"); Tama.say("Back to "+repoBasename(path)+". にゃ〜",1800);
+      Tama.set("curious"); Tama.say(t("legacy.back_to_repo",{name:repoBasename(path)}),1800);
       void reloadGraph(true);
     }
     // Live refresh: watch this repo's git-dir for changes made outside the
@@ -2935,7 +2939,7 @@ async function openRepo(path){
     // real, surfaced error) from "it armed fine but genuinely saw no fs
     // events" (silent either way, but now at least ONE of the two classes
     // is no longer silent).
-    tinvoke("watch_repo",{path}).catch(e=>{ Tama.warn("Live refresh couldn't start for this repo — "+e); console.error("watch_repo",e); });
+    tinvoke("watch_repo",{path}).catch(e=>{ Tama.warn(t("legacy.watch_failed",{error:e})); console.error("watch_repo",e); });
     // Multi-repo dashboard (backlog #11): auto-track whichever repo was just
     // opened (real open OR submodule nav OR the setup wizard's finish() —
     // every one of them funnels through this one openRepo() success path) so
@@ -2962,7 +2966,7 @@ async function openRepo(path){
     // Fire-and-forget observers — never blocks the open (own async + try/catch).
     pluginHooksCtrl.onRepoOpened(path);
     return true;
-  }catch(e){ setGraphLoadingPill(false); Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); return false; }
+  }catch(e){ setGraphLoadingPill(false); Tama.warn(t("legacy.open_repo_failed",{error:e}),5000); console.error(e); return false; }
   finally{ openRepoBusy=false; if(pickBtn){ pickBtn.disabled=false; if(pickSpinner) pickSpinner.remove(); } if(graphLoading) graphLoading.style.display="none"; }
 }
 /* ------------------------------------------------------------
@@ -3174,7 +3178,7 @@ async function reloadGraph(preserveRow, forceFull=false){
           pendingReselect = keepSha ? {sha:keepSha} : (keepWorkdir ? {workdir:true} : null);
           await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
         }
-      }catch(e){ Tama.warn("Reload failed — "+e); console.error(e); }
+      }catch(e){ Tama.warn(t("legacy.reload_failed",{error:e})); console.error(e); }
       if(!reloadGraphPending) break;
       reloadGraphPending=false;
       nextPreserveRow=reloadGraphPendingPreserveRow;
@@ -3226,7 +3230,7 @@ async function pickRepo(){
     const d=window.__TAURI__.dialog;
     dir = (d&&d.open) ? await d.open({directory:true,title:"Open a Git repository"})
                       : await window.__TAURI__.core.invoke("plugin:dialog|open",{options:{directory:true,title:"Open a Git repository"}});
-  }catch(e){ console.error(e); Tama.say("Dialog error — "+e); return; }
+  }catch(e){ console.error(e); Tama.say(t("legacy.dialog_error",{error:e})); return; }
   if(dir){
     // openRepo() re-derives NAV_STACK from git's superproject chain and refreshes
     // the nav strip itself (see its body), so picking a brand-new repo just works:
@@ -3268,7 +3272,7 @@ function bootEmpty(){
   // from their static HTML placeholders. Now that closeRepo() (below) can
   // call it AFTER a repo was open, leaving these alone would keep showing the
   // just-closed repo's name and branch as if it were still open.
-  const pick=$(".repo-pick .repo-name"); if(pick) pick.textContent="Open a repository…";
+  const pick=$(".repo-pick .repo-name"); if(pick) pick.textContent=t("topbar.repo_pick_empty");
   const wslTag=$("#repoWslTag"); if(wslTag) wslTag.style.display="none";
   const bp=$(".branch-pill"); if(bp) bp.style.display="none";
   dirty=true;
@@ -3340,16 +3344,87 @@ if(IN_TAURI){
   // On failure (e.g. the repo became inaccessible between the launch-time check
   // and now) fall back to the empty hero rather than a stranded blank frame.
   if(initialRepo){ openRepo(initialRepo).then(ok=>{ if(!ok) bootEmpty(); }); }
-  else { bootEmpty(); if(repoError) Tama.warn(`"${repoError}" is not a git repository.`, 6000); }
+  else { bootEmpty(); if(repoError) Tama.warn(t("legacy.not_a_repo",{repo:repoError}), 6000); }
 }
 else { loadGraph(10000); }          // plain browser (design mode): synthetic demo data
 requestAnimationFrame(tick);
-if(!IN_TAURI) setTimeout(()=>{Tama.event("snapshot.surfaced");Tama.say("Safety Manager armed — I snapshot before every mutation. にゃ〜",4200);},800);
+if(!IN_TAURI) setTimeout(()=>{Tama.event("snapshot.surfaced");Tama.say(t("legacy.safety_armed"),4200);},800);
 
 /* ============================================================
    13) ⌘K COMMAND PALETTE — now a Svelte island (src/islands/cmdk).
    ============================================================ */
 const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>cmdkCtrl.show());
+
+/* ============================================================
+   i18n — the top-bar/loading/help chrome lives as static markup in
+   index.html (not a Svelte island), so its translations are carried on
+   data-i18n* attributes and applied imperatively here: data-i18n sets
+   textContent, -html sets innerHTML (for prose with inline <b>/<kbd>),
+   -title/-ph/-aria set the matching attribute. Applied once at boot and
+   re-applied on every language switch (islands re-render themselves via t()).
+   ============================================================ */
+function applyStaticI18n(root=document){
+  // A translation key is only ever a plain "namespace.key" identifier. Validate
+  // the attribute value against that allowlist before use: these keys are
+  // authored by us in index.html (never user input) and t() only ever returns
+  // compile-time dictionary strings, but gating on the pattern also severs the
+  // DOM-attribute -> innerHTML data flow CodeQL flags as js/xss-through-dom on
+  // the -html branch, and refuses anything that couldn't be a real key anyway.
+  const KEY_RE=/^[a-z0-9_.]+$/i;
+  const key=(el,attr)=>{ const k=el.getAttribute(attr); return k&&KEY_RE.test(k)?k:null; };
+  root.querySelectorAll("[data-i18n]").forEach(el=>{ const k=key(el,"data-i18n"); if(k!==null) el.textContent=t(k); });
+  root.querySelectorAll("[data-i18n-html]").forEach(el=>{ const k=key(el,"data-i18n-html"); if(k!==null) el.innerHTML=t(k); });
+  root.querySelectorAll("[data-i18n-title]").forEach(el=>{ const k=key(el,"data-i18n-title"); if(k!==null) el.title=t(k); });
+  root.querySelectorAll("[data-i18n-ph]").forEach(el=>{ const k=key(el,"data-i18n-ph"); if(k!==null) el.setAttribute("placeholder",t(k)); });
+  root.querySelectorAll("[data-i18n-aria]").forEach(el=>{ const k=key(el,"data-i18n-aria"); if(k!==null) el.setAttribute("aria-label",t(k)); });
+}
+applyStaticI18n();
+
+// The native OS menu (macOS app menu / Win-Linux menu bar) is built in Rust
+// with English defaults at startup (src-tauri/src/menu.rs). Push the current
+// locale's labels so Rust rebuilds it translated — keyed by menu-item id, with
+// `sub.*` for submenu titles; predefined items (Cut/Copy/Paste/Quit/…) are left
+// to the OS. Live-switch works; a restart also picks it up (the boot call below
+// runs with the persisted locale), so the menu is never stuck in the old one.
+function nativeMenuLabels(){
+  return {
+    "sub.file":t("menu.file"), "sub.repository":t("menu.repository"), "sub.edit":t("menu.edit"),
+    "sub.view":t("menu.view"), "sub.tools":t("menu.tools"), "sub.window":t("menu.window"),
+    "sub.help":t("menu.help"), "sub.search":t("menu.search"), "sub.history":t("menu.history"),
+    "sub.patches":t("menu.patches"),
+    "about":t("menu.about"), "open-repo":t("menu.open_repo"), "close-repo":t("menu.close_repo"),
+    "new-branch":t("menu.new_branch"), "fetch":t("menu.fetch"), "pull":t("menu.pull"),
+    "push":t("menu.push"), "refresh":t("menu.refresh"), "toggle-theme":t("menu.toggle_theme"),
+    "cmdk":t("menu.cmdk"), "code-search":t("menu.code_search"), "pickaxe-search":t("menu.pickaxe_search"),
+    "bisect":t("menu.bisect"), "reflog":t("menu.reflog"), "rerere":t("menu.rerere"),
+    "plumbing":t("menu.plumbing"), "repo-summary":t("menu.repo_summary"),
+    "dangling-recovery":t("menu.dangling_recovery"), "export-patches":t("menu.export_patches"),
+    "apply-patch":t("menu.apply_patch"), "remotes":t("menu.remotes"), "repositories":t("menu.repositories"),
+    "external-tools":t("menu.external_tools"), "plugins":t("menu.plugins"), "settings":t("menu.settings"),
+    "repo-files":t("menu.repo_files"), "uncommitted-changes":t("menu.uncommitted_changes"),
+    "pull-merge":t("menu.pull_merge"), "pull-rebase":t("menu.pull_rebase"),
+    "open-terminal":t("menu.open_terminal"), "force-push-lease":t("menu.force_push_lease"),
+    "force-push-override":t("menu.force_push_override"), "reset-head":t("menu.reset_head"),
+    "filter-repo":t("menu.filter_repo"), "new-window":t("menu.new_window"),
+    "open-github":t("menu.open_github"), "report-issue":t("menu.report_issue"),
+    "check-for-updates":t("menu.check_updates"),
+  };
+}
+function syncNativeMenu(){ if(!IN_TAURI) return; try{ tinvoke("set_app_menu",{labels:nativeMenuLabels()}); }catch(e){ console.error("set_app_menu failed",e); } }
+// Boot: Rust already drew the English menu, so only push if the locale differs.
+if(locale()!=="en") syncNativeMenu();
+
+// Live language switch (即时生效): the canvas text is drawn, not DOM, and these
+// chrome nodes aren't reactive — so on a switch re-apply the attributes, refresh
+// the empty-state repo label, invalidate the scroll-blit buffer, force a full
+// repaint, and rebuild the native menu. Islands wired through t() re-render on
+// their own.
+i18nEvents.addEventListener("change",()=>{
+  applyStaticI18n();
+  const pick=$(".repo-pick .repo-name"); if(pick && !CUR_REPO) pick.textContent=t("topbar.repo_pick_empty");
+  bufferValid=false; dirty=true;
+  syncNativeMenu();
+});
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,

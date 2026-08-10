@@ -51,6 +51,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::git_write::WriteResult;
+use crate::i18n_err::{ierr, ierrp};
 use crate::safety::{self, GitOut};
 
 // ---------------------------------------------------------------------------
@@ -123,7 +124,7 @@ pub async fn rerere_status(path: String) -> Result<RerereStatus, String> {
 }
 
 fn rerere_status_inner(path: &str) -> Result<RerereStatus, String> {
-    let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+    let repo = crate::trust::open_repo(path).map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))?;
     // `commondir()`, not `path()`: in a linked worktree `path()` is the
     // worktree-private gitdir, but rr-cache is shared repo-wide.
     let common_dir = repo.commondir().to_path_buf();
@@ -224,13 +225,13 @@ pub async fn rerere_set_enabled(path: String, enabled: bool) -> WriteResult {
 
 fn rerere_set_enabled_inner(path: &str, enabled: bool) -> WriteResult {
     if let Err(e) = crate::trust::open_repo(path) {
-        return WriteResult { ok: false, message: format!("Cannot open repository: {}", e.message()), backup_ref: None, conflicting_files: Vec::new() };
+        return WriteResult { ok: false, message: ierrp("err_misc.cannot_open_repo_cap", &[("detail", e.message())]), backup_ref: None, conflicting_files: Vec::new() };
     }
     let value = if enabled { "true" } else { "false" };
     match safety::run_git(path, &["config", "rerere.enabled", value]) {
         Ok(out) if out.ok => WriteResult {
             ok: true,
-            message: format!("rerere {} for this repository.", if enabled { "enabled" } else { "disabled" }),
+            message: ierr(if enabled { "err_misc.rerere_enabled" } else { "err_misc.rerere_disabled" }),
             backup_ref: None,
             conflicting_files: Vec::new(),
         },
@@ -246,6 +247,6 @@ fn err_msg(o: &GitOut) -> String {
     } else if !o.stdout.is_empty() {
         o.stdout.clone()
     } else {
-        format!("git exited with status {}", o.code)
+        ierrp("err_misc.git_exited_with_status", &[("code", &o.code.to_string())])
     }
 }

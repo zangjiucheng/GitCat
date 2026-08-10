@@ -12,6 +12,8 @@
 use git2::{ObjectType, Signature};
 use serde::Serialize;
 
+use crate::i18n_err::{ierr, ierrp};
+
 /// Blob text is capped to this many lines (mirrors conflict.rs CAP_LINES) so a
 /// vendored/generated blob can't blow up the payload.
 const CAP_LINES: usize = 400;
@@ -126,13 +128,13 @@ fn plumbing_inspect_inner(path: String, rev: String) -> Result<PlumbingObject, S
     // doc/contract that an empty rev never touches git2 at all, and gives a
     // clearer message when BOTH `path` is bad and `rev` is empty).
     if rev.trim().is_empty() {
-        return Err("Enter a rev, sha, or ref to inspect.".to_string());
+        return Err(ierr("err_misc.enter_rev_to_inspect"));
     }
     let repo =
-        crate::trust::open_repo(&path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+        crate::trust::open_repo(&path).map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))?;
     let obj = repo
         .revparse_single(&rev)
-        .map_err(|e| format!("Not a valid rev in this repository: {rev:?} ({})", e.message()))?;
+        .map_err(|e| ierrp("err_misc.not_a_valid_rev", &[("rev", &format!("{rev:?}")), ("detail", e.message())]))?;
 
     match obj.kind() {
         Some(ObjectType::Commit) => {
@@ -192,7 +194,7 @@ fn plumbing_inspect_inner(path: String, rev: String) -> Result<PlumbingObject, S
             // object itself (unpeeled) — matches `git rev-parse <tag>`.
             let tag = obj
                 .into_tag()
-                .map_err(|_| "Resolved object claims kind Tag but is not one.".to_string())?;
+                .map_err(|_| ierr("err_misc.resolved_not_a_tag"))?;
             // Same reasoning as the Commit arm above: bind `tagger` before the
             // struct literal so its temporary Signature drops before `tag` does.
             let tagger = tag.tagger().as_ref().map(person);
@@ -205,10 +207,10 @@ fn plumbing_inspect_inner(path: String, rev: String) -> Result<PlumbingObject, S
                 target_kind: kind_str(tag.target_type()),
             }))
         }
-        other => Err(format!(
-            "Unsupported object kind ({}) for {rev:?} — expected a commit, tree, blob, or tag.",
-            other.map(|k| k.str().to_string()).unwrap_or_else(|| "unknown".to_string())
-        )),
+        other => {
+            let kind = other.map(|k| k.str().to_string()).unwrap_or_else(|| "unknown".to_string());
+            Err(ierrp("err_misc.unsupported_object_kind", &[("kind", &kind), ("rev", &format!("{rev:?}"))]))
+        }
     }
 }
 

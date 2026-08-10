@@ -46,6 +46,7 @@ pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious owne
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
 pub mod windows; // multi-window: spawn a fresh, fully independent GitCat process, optionally pointed directly at a repo
 pub mod cli_shim; // "Install 'gitcat' command in PATH": writes a VS Code `code`-style launcher (macOS /usr/local/bin, Linux ~/.local/bin, Windows WindowsApps)
+pub mod i18n_err; // PER-82: app-authored errors as `i18n:<key>` strings the frontend's be() translates (raw git stderr stays passthrough)
 pub mod updater; // channel-aware "check for updates" (stable vs nightly endpoint + downgrade-allowing comparator)
 pub mod wsl; // routes git_remote.rs's/submodule.rs's network commands through wsl.exe on a WSL-path repo, so credentials resolve inside the distro
 
@@ -341,6 +342,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // generic "New Window" menu item is handled entirely in Rust, see
         // menu.rs's own handle_event — no command round trip for that path).
         windows::open_repo_in_new_window,
+        // Native-menu i18n (PER-80): the frontend pushes the current locale's
+        // menu labels here so Rust rebuilds + swaps the OS menu (menu.rs).
+        menu::set_app_menu,
         // "Install 'gitcat' command in PATH" (macOS/Linux/Windows): writes a
         // `code`-style launcher so `gitcat <folder>` works from a terminal.
         cli_shim::install_cli_shim,
@@ -541,7 +545,10 @@ pub fn run() {
         // invoke_handler is the tauri-specta equivalent of generate_handler! —
         // command runtime behavior (Ok resolves / Err rejects) is unchanged.
         .invoke_handler(builder.invoke_handler())
-        .menu(|app| menu::build(app))
+        // English default menu at startup (empty labels → English fallbacks);
+        // the frontend pushes the current locale's labels via `set_app_menu`
+        // once it boots (see syncNativeMenu in legacy/main.ts).
+        .menu(|app| menu::build(app, &std::collections::HashMap::new()))
         .on_menu_event(menu::handle_event)
         .setup(move |app| {
             builder.mount_events(app);

@@ -106,7 +106,8 @@ fn restore_refuses_on_a_dirty_working_tree() {
     let res = tauri::async_runtime::block_on(gitcat_lib::reflog::reflog_restore(path.clone(), 1));
     assert!(!res.ok, "restore should refuse on a dirty tree");
     assert!(
-        res.message.to_lowercase().contains("uncommitted") || res.message.to_lowercase().contains("clean"),
+        res.message.contains("err_misc.worktree_has_uncommitted_restore")
+            || res.message.contains("err_misc.cannot_verify_clean_refusing_restore"),
         "message should explain the dirty-tree refusal: {}",
         res.message
     );

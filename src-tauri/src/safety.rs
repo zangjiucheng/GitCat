@@ -26,6 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use git2::Repository;
 use serde::Serialize;
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::{output_with_timeout, NoConsoleWindowExt, SUBPROCESS_TIMEOUT};
 
 const BACKUP_GLOB: &str = "refs/gitgui/backup/*";
@@ -323,7 +324,7 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
         None => {
             return Ok(UndoResult {
                 ok: false,
-                message: "Nothing to undo — no snapshots yet.".to_string(),
+                message: ierr("err_misc.nothing_to_undo"),
                 restored_to: None,
                 sealed: None,
             })
@@ -333,7 +334,7 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
     let workdir = repo
         .workdir()
         .and_then(|p| p.to_str())
-        .ok_or_else(|| "undo needs a working tree (bare repo not supported)".to_string())?;
+        .ok_or_else(|| ierr("err_misc.undo_needs_worktree"))?;
 
     // A dirty tree would be silently discarded by `reset --hard`, and the backup
     // only preserves committed history — so refuse and surface it, don't force.
@@ -341,7 +342,7 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
     if !dirty.ok {
         return Ok(UndoResult {
             ok: false,
-            message: format!("Cannot verify the working tree is clean, refusing undo: {}", dirty.stderr),
+            message: ierrp("err_misc.cannot_verify_clean_refusing_undo", &[("detail", dirty.stderr.as_str())]),
             restored_to: None,
             sealed: None,
         });
@@ -349,7 +350,7 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
     if !dirty.stdout.is_empty() {
         return Ok(UndoResult {
             ok: false,
-            message: "Working tree has uncommitted changes — commit or stash before undo.".to_string(),
+            message: ierr("err_misc.worktree_has_uncommitted_undo"),
             restored_to: None,
             sealed: None,
         });
@@ -362,7 +363,7 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
         Err(e) => {
             return Ok(UndoResult {
                 ok: false,
-                message: format!("Undo aborted — could not snapshot current state first: {e}"),
+                message: ierrp("err_misc.undo_aborted_snapshot_failed", &[("detail", e.as_str())]),
                 restored_to: None,
                 sealed: None,
             })
@@ -422,20 +423,20 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
             let sr = run_git(workdir, &["symbolic-ref", "HEAD", sym])?;
             if !sr.ok {
                 return Ok(UndoResult { ok: false,
-                    message: format!("Undo failed restoring HEAD: {}", sr.stderr),
+                    message: ierrp("err_misc.undo_failed_restoring_head", &[("detail", sr.stderr.as_str())]),
                     restored_to: None, sealed });
             }
             let reset = run_git_worktree(workdir, &["reset", "--hard", target_sha.as_str()])?;
             if !reset.ok {
                 return Ok(UndoResult { ok: false,
-                    message: format!("Undo failed: {}", reset.stderr),
+                    message: ierrp("err_misc.undo_failed", &[("detail", reset.stderr.as_str())]),
                     restored_to: None, sealed });
             }
         } else {
             let co = run_git_worktree(workdir, &["checkout", "-q", "--detach", target_sha.as_str()])?;
             if !co.ok {
                 return Ok(UndoResult { ok: false,
-                    message: format!("Undo failed detaching HEAD: {}", co.stderr),
+                    message: ierrp("err_misc.undo_failed_detaching_head", &[("detail", co.stderr.as_str())]),
                     restored_to: None, sealed });
             }
         }
@@ -461,14 +462,14 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
             let sr = run_git(workdir, &["symbolic-ref", "HEAD", sym])?;
             if !sr.ok {
                 return Ok(UndoResult { ok: false,
-                    message: format!("Undo failed restoring HEAD: {}", sr.stderr),
+                    message: ierrp("err_misc.undo_failed_restoring_head", &[("detail", sr.stderr.as_str())]),
                     restored_to: None, sealed });
             }
         }
         let reset = run_git_worktree(workdir, &["reset", "--hard", target_sha.as_str()])?;
         if !reset.ok {
             return Ok(UndoResult { ok: false,
-                message: format!("Undo failed: {}", reset.stderr),
+                message: ierrp("err_misc.undo_failed", &[("detail", reset.stderr.as_str())]),
                 restored_to: None, sealed });
         }
     }
@@ -521,7 +522,7 @@ pub async fn create_snapshot(path: String) -> Result<Snapshot, String> {
         snapshots(&repo)?
             .into_iter()
             .find(|s| s.reference == ref_name)
-            .ok_or_else(|| "snapshot created but not found".to_string())
+            .ok_or_else(|| ierr("err_misc.snapshot_created_not_found"))
     })
     .await
 }
@@ -578,7 +579,7 @@ pub fn undo_stashing(repo: &Repository) -> Result<UndoResult, String> {
     let workdir = repo
         .workdir()
         .and_then(|p| p.to_str())
-        .ok_or_else(|| "undo needs a working tree (bare repo not supported)".to_string())?
+        .ok_or_else(|| ierr("err_misc.undo_needs_worktree"))?
         .to_string();
     let workdir = workdir.as_str();
 
@@ -588,7 +589,7 @@ pub fn undo_stashing(repo: &Repository) -> Result<UndoResult, String> {
     // clean tree instead of refusing.
     let stash = run_git_worktree(workdir, &["stash", "push", "--include-untracked", "-m", "gitcat: auto-stash before undo"])?;
     if !stash.ok {
-        return Ok(err(format!("Couldn't stash your changes before undo — {}", stash.stderr.trim())));
+        return Ok(err(ierrp("err_misc.couldnt_stash_before_undo", &[("detail", stash.stderr.trim())])));
     }
     // `git stash push` on a clean tree prints "No local changes to save" and
     // creates NOTHING — so there'd be nothing to pop afterward.
@@ -644,7 +645,7 @@ pub async fn prune_snapshots(path: String, mode: String, count: u32, days: u32) 
 // ---------------------------------------------------------------------------
 
 fn open(path: &str) -> Result<Repository, String> {
-    crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))
+    crate::trust::open_repo(path).map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))
 }
 
 /// Unique backup ref: `refs/gitgui/backup/<secs>-<nanos>-<seq>`. `secs` is the

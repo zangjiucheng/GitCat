@@ -45,6 +45,7 @@ use std::path::Path;
 use git2::BlameOptions;
 use serde::Serialize;
 
+use crate::i18n_err::ierrp;
 use crate::model::Person;
 
 /// Cap on rendered lines/hunks — see module doc. Duplicated (not imported)
@@ -136,7 +137,7 @@ fn blame_file_inner(
     ignore_whitespace: bool,
 ) -> Result<FileBlame, String> {
     let repo = crate::trust::open_repo(path)
-        .map_err(|e| format!("cannot open repository: {}", e.message()))?;
+        .map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))?;
 
     // Resolve the target commit: an explicit sha/short-sha (never a
     // branch/tag name — same convention as commit_detail_inner's `sha`), or
@@ -144,7 +145,7 @@ fn blame_file_inner(
     let commit = match at_commit {
         Some(sha) => repo
             .find_commit_by_prefix(sha)
-            .map_err(|e| format!("Not a valid commit: {sha:?} ({})", e.message()))?,
+            .map_err(|e| ierrp("err_misc.not_a_valid_commit", &[("rev", &format!("{sha:?}")), ("detail", e.message())]))?,
         None => {
             let head = repo.head().map_err(|e| e.message().to_string())?;
             head.peel_to_commit().map_err(|e| e.message().to_string())?
@@ -160,18 +161,16 @@ fn blame_file_inner(
     let tree = commit.tree().map_err(|e| e.message().to_string())?;
     let entry = tree
         .get_path(Path::new(file))
-        .map_err(|_| format!("{file} does not exist at {short_sha}."))?;
+        .map_err(|_| ierrp("err_misc.path_does_not_exist", &[("path", file), ("short", short_sha.as_str())]))?;
     let obj = entry
         .to_object(&repo)
-        .map_err(|_| format!("{file} does not exist at {short_sha}."))?;
+        .map_err(|_| ierrp("err_misc.path_does_not_exist", &[("path", file), ("short", short_sha.as_str())]))?;
     let blob = obj
         .into_blob()
-        .map_err(|_| format!("{file} does not exist at {short_sha}."))?;
+        .map_err(|_| ierrp("err_misc.path_does_not_exist", &[("path", file), ("short", short_sha.as_str())]))?;
 
     if blob.is_binary() {
-        return Err(format!(
-            "{file} is a binary file — blame is not available for binary content."
-        ));
+        return Err(ierrp("err_misc.file_is_binary_no_blame", &[("path", file)]));
     }
 
     // Cheap line count from the raw bytes — no blame walk needed for this.

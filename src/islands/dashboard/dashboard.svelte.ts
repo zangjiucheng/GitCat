@@ -43,6 +43,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { open } from "@tauri-apps/plugin-dialog";
+import { be, t } from "@/i18n/i18n.svelte.ts";
 import type { DashboardRepoStatus, TrackedRepo } from "../../ipc/bindings";
 
 export type DashboardRow = {
@@ -156,7 +157,7 @@ class DashboardState {
     const toks = q.split(/\s+/).filter(Boolean);
     return this.rows.filter((r) => {
       const hay = (repoBasename(r.path) + " " + r.path + " " + (r.status?.branch ?? "")).toLowerCase();
-      return toks.every((t) => hay.includes(t));
+      return toks.every((tok) => hay.includes(tok));
     });
   }
 
@@ -200,12 +201,12 @@ class DashboardState {
         this.applyTrackedList(res.data, forceRefetchAll);
       } else {
         this.rows = [];
-        this.error = String(res.error ?? "Could not list tracked repositories.");
+        this.error = be(res.error) || t("dashboard.err_list");
         return;
       }
     } catch (e) {
       this.rows = [];
-      this.error = "Could not list tracked repositories — " + e;
+      this.error = t("dashboard.err_list_e", { err: String(e) });
       return;
     } finally {
       this.loading = false;
@@ -259,10 +260,10 @@ class DashboardState {
       if (res.status === "ok") {
         this.updateRow(path, { loading: false, status: res.data, error: null });
       } else {
-        this.updateRow(path, { loading: false, status: null, error: String(res.error ?? "Could not read this repository's status.") });
+        this.updateRow(path, { loading: false, status: null, error: be(res.error) || t("dashboard.err_status") });
       }
     } catch (e) {
-      this.updateRow(path, { loading: false, status: null, error: "Could not read this repository's status — " + e });
+      this.updateRow(path, { loading: false, status: null, error: t("dashboard.err_status_e", { err: String(e) }) });
     }
   }
 
@@ -277,14 +278,14 @@ class DashboardState {
   async addRepository(): Promise<void> {
     if (this.addBusy) return;
     if (!IN_TAURI || this.demo) {
-      bridge.tama.say("This is where you'd pick a folder to track (demo).");
+      bridge.tama.say(t("dashboard.demo_pick"));
       return;
     }
     let dir: string | string[] | null;
     try {
-      dir = await open({ directory: true, title: "Add a repository to track" });
+      dir = await open({ directory: true, title: t("dashboard.add_dialog_title") });
     } catch (e) {
-      bridge.tama.warn("Could not open the folder dialog — " + e);
+      bridge.tama.warn(t("dashboard.err_dialog", { err: String(e) }));
       return;
     }
     if (!dir || Array.isArray(dir)) return; // cancelled (Array.isArray is defensive-only — multiple isn't set)
@@ -304,10 +305,10 @@ class DashboardState {
         // folder-and-go feel the old direct-to-native-dialog buttons had.
         await this.openRepository(dir);
       } else {
-        bridge.tama.warn(String(res.error ?? "Could not add that repository."));
+        bridge.tama.warn(be(res.error) || t("dashboard.err_add"));
       }
     } catch (e) {
-      bridge.tama.warn("Could not add that repository — " + e);
+      bridge.tama.warn(t("dashboard.err_add_e", { err: String(e) }));
     } finally {
       this.addBusy = false;
     }
@@ -328,10 +329,10 @@ class DashboardState {
       if (res.status === "ok") {
         this.applyTrackedList(res.data);
       } else {
-        bridge.tama.warn(String(res.error ?? "Could not remove that repository from the list."));
+        bridge.tama.warn(be(res.error) || t("dashboard.err_remove"));
       }
     } catch (e) {
-      bridge.tama.warn("Could not remove that repository from the list — " + e);
+      bridge.tama.warn(t("dashboard.err_remove_e", { err: String(e) }));
     } finally {
       this.removingPath = null;
     }
@@ -347,7 +348,7 @@ class DashboardState {
   async openRepository(path: string): Promise<void> {
     this.open = false;
     if (!IN_TAURI || this.demo) {
-      bridge.tama.say("This is where " + repoBasename(path) + " would open (demo).");
+      bridge.tama.say(t("dashboard.demo_open", { name: repoBasename(path) }));
       return;
     }
     await bridge.openRepo(path);
@@ -363,7 +364,7 @@ class DashboardState {
   // "picking a repo" mode; the new window opens in the background.
   async openRepositoryInNewWindow(path: string): Promise<void> {
     if (!IN_TAURI || this.demo) {
-      bridge.tama.say("This is where " + repoBasename(path) + " would open in a new window (demo).");
+      bridge.tama.say(t("dashboard.demo_open_window", { name: repoBasename(path) }));
       return;
     }
     // Genuinely fire-and-forget on the Rust side (open_repo_in_new_window

@@ -27,6 +27,7 @@ use std::process::Command;
 use git2::Repository;
 use serde::Serialize;
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::NoConsoleWindowExt;
 
 // ---------------------------------------------------------------------------
@@ -128,7 +129,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     }
     let o = cmd
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -145,7 +146,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
 /// No-op on non-WSL paths.
 fn git_worktree(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     let envs: &[(&str, &str)] = if no_editor { &[("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")] } else { &[] };
-    let o = crate::wsl::git_command_env(path, args, envs).output().map_err(|e| format!("Could not run git: {e}"))?;
+    let o = crate::wsl::git_command_env(path, args, envs).output().map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -174,13 +175,13 @@ fn git_msg(o: &Out) -> String {
 /// clean message instead of git's "unknown revision".
 fn validate_sha(sha: &str) -> Result<(), String> {
     if sha.is_empty() {
-        return Err("No commit to cherry-pick.".into());
+        return Err(ierr("err_history.no_commit_to_cherry_pick"));
     }
     if sha.starts_with('-') {
-        return Err(format!("Refusing a revision that looks like a flag: {sha:?}"));
+        return Err(ierrp("err_history.revision_looks_like_flag", &[("rev", &format!("{sha:?}"))]));
     }
     if sha.chars().any(|c| c.is_control()) {
-        return Err("Revision has a control character.".into());
+        return Err(ierr("err_history.revision_control_char"));
     }
     Ok(())
 }
@@ -369,12 +370,12 @@ pub async fn merge_parents(path: String, sha: String) -> Result<Vec<MergeParent>
 
 fn merge_parents_inner(path: String, sha: String) -> Result<Vec<MergeParent>, String> {
     validate_sha(&sha)?;
-    let repo = crate::trust::open_repo(&path).map_err(|e| format!("Cannot open repository: {}", e.message()))?;
+    let repo = crate::trust::open_repo(&path).map_err(|e| ierrp("err_history.cannot_open", &[("detail", e.message())]))?;
     let oid = repo
         .revparse_single(&sha)
-        .map_err(|e| format!("Cannot resolve {sha}: {}", e.message()))?
+        .map_err(|e| ierrp("err_history.cannot_resolve", &[("rev", &sha), ("detail", e.message())]))?
         .id();
-    let commit = repo.find_commit(oid).map_err(|e| format!("Cannot read commit {sha}: {}", e.message()))?;
+    let commit = repo.find_commit(oid).map_err(|e| ierrp("err_history.cannot_read_commit", &[("rev", &sha), ("detail", e.message())]))?;
     if commit.parent_count() < 2 {
         return Ok(Vec::new());
     }
@@ -421,20 +422,18 @@ fn cherry_pick_inner(path: String, sha: String, record_origin: Option<bool>, mai
     }
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
-        Err(e) => return PickResult::error(format!("Cannot open repository: {}", e.message())),
+        Err(e) => return PickResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
     };
 
     // Refuse to stack a new pick on top of an unfinished one.
     if in_progress(&repo) {
-        return PickResult::error(
-            "A cherry-pick is already in progress — resolve or abort it first.",
-        );
+        return PickResult::error(ierr("err_history.cherry_pick_in_progress"));
     }
 
     // Snapshot FIRST — never mutate without a pre-op backup. If it fails, abort.
     let backup = match crate::safety::snapshot(&repo) {
         Ok(b) => b,
-        Err(e) => return PickResult::error(format!("Safety snapshot failed, aborting: {e}")),
+        Err(e) => return PickResult::error(ierrp("err_history.snapshot_failed", &[("detail", &e)])),
     };
 
     // git cherry-pick [-x] [-m <n>] --no-edit --end-of-options <sha>
@@ -493,10 +492,10 @@ pub async fn cherry_pick_continue(path: String) -> PickResult {
 fn cherry_pick_continue_inner(path: String) -> PickResult {
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
-        Err(e) => return PickResult::error(format!("Cannot open repository: {}", e.message())),
+        Err(e) => return PickResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
     };
     if !in_progress(&repo) {
-        return PickResult::error("No cherry-pick in progress to continue.");
+        return PickResult::error(ierr("err_history.no_cherry_pick_to_continue"));
     }
 
     // Name the commit being applied (for messages) while CHERRY_PICK_HEAD exists.
@@ -548,7 +547,7 @@ pub async fn cherry_pick_abort(path: String) -> PickResult {
 fn cherry_pick_abort_inner(path: String) -> PickResult {
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
-        Err(e) => return PickResult::error(format!("Cannot open repository: {}", e.message())),
+        Err(e) => return PickResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
     };
     if !in_progress(&repo) {
         return PickResult {

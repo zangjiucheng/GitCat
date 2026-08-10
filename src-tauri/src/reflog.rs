@@ -36,6 +36,7 @@
 use git2::Repository;
 use serde::Serialize;
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::safety::{self, UndoResult};
 
 // ---------------------------------------------------------------------------
@@ -123,33 +124,33 @@ fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
 
     let workdir = match repo.workdir().and_then(|p| p.to_str()) {
         Some(w) => w.to_string(),
-        None => return fail("Restore needs a working tree (bare repo not supported)".into()),
+        None => return fail(ierr("err_misc.restore_needs_worktree")),
     };
 
     // (1) Dirty-tree fail-closed guard — same as undo(): never force.
     let dirty = match safety::run_git(&workdir, &["status", "--porcelain"]) {
         Ok(o) => o,
-        Err(e) => return fail(format!("Cannot verify the working tree is clean, refusing restore: {e}")),
+        Err(e) => return fail(ierrp("err_misc.cannot_verify_clean_refusing_restore", &[("detail", e.as_str())])),
     };
     if !dirty.ok {
-        return fail(format!("Cannot verify the working tree is clean, refusing restore: {}", dirty.stderr));
+        return fail(ierrp("err_misc.cannot_verify_clean_refusing_restore", &[("detail", dirty.stderr.as_str())]));
     }
     if !dirty.stdout.is_empty() {
-        return fail("Working tree has uncommitted changes — commit or stash before restoring.".into());
+        return fail(ierr("err_misc.worktree_has_uncommitted_restore"));
     }
 
     // (3) Re-validate against a FRESH reflog read — never trust a stale index.
     let log = match repo.reflog("HEAD") {
         Ok(l) => l,
-        Err(e) => return fail(format!("Cannot read HEAD reflog: {}", e.message())),
+        Err(e) => return fail(ierrp("err_misc.cannot_read_head_reflog_cap", &[("detail", e.message())])),
     };
     let len = log.len();
     let entry = match log.get(index) {
         Some(e) => e,
         None => {
-            return fail(format!(
-                "HEAD@{{{index}}} no longer exists — the reflog now has {len} entr{}. Refusing to restore a stale selection.",
-                if len == 1 { "y" } else { "ies" }
+            return fail(ierrp(
+                if len == 1 { "err_misc.reflog_stale_selection_one" } else { "err_misc.reflog_stale_selection_many" },
+                &[("ref", &format!("HEAD@{{{index}}}")), ("count", &len.to_string())],
             ))
         }
     };
@@ -163,7 +164,7 @@ fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
     // state.
     let sealed = match safety::snapshot(&repo) {
         Ok(r) => r,
-        Err(e) => return fail(format!("Restore aborted — could not snapshot current state first: {e}")),
+        Err(e) => return fail(ierrp("err_misc.restore_aborted_snapshot_failed", &[("detail", e.as_str())])),
     };
 
     // The actual mutation: move HEAD/current branch to the historical sha.
@@ -174,7 +175,7 @@ fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
         Err(e) => {
             return UndoResult {
                 ok: false,
-                message: format!("Restore failed: {e}"),
+                message: ierrp("err_misc.restore_failed", &[("detail", e.as_str())]),
                 restored_to: None,
                 sealed: Some(sealed),
             }
@@ -183,16 +184,17 @@ fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
     if !reset.ok {
         return UndoResult {
             ok: false,
-            message: format!("Restore failed: {}", reset.stderr),
+            message: ierrp("err_misc.restore_failed", &[("detail", reset.stderr.as_str())]),
             restored_to: None,
             sealed: Some(sealed),
         };
     }
 
+    let short_target = short(&target_sha);
     UndoResult {
         ok: true,
-        message: format!("Restored to HEAD@{{{index}}} ({}).", short(&target_sha)),
-        restored_to: Some(short(&target_sha)),
+        message: ierrp("err_misc.restored_to", &[("ref", &format!("HEAD@{{{index}}}")), ("sha", short_target.as_str())]),
+        restored_to: Some(short_target),
         sealed: Some(sealed),
     }
 }
@@ -202,7 +204,7 @@ fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
 // ---------------------------------------------------------------------------
 
 fn open(path: &str) -> Result<Repository, String> {
-    crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))
+    crate::trust::open_repo(path).map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))
 }
 
 fn fail(message: String) -> UndoResult {
@@ -218,7 +220,7 @@ fn short(sha: &str) -> String {
 fn read_reflog(repo: &Repository) -> Result<Vec<ReflogEntry>, String> {
     let log = repo
         .reflog("HEAD")
-        .map_err(|e| format!("cannot read HEAD reflog: {}", e.message()))?;
+        .map_err(|e| ierrp("err_misc.cannot_read_head_reflog", &[("detail", e.message())]))?;
     let mut out = Vec::with_capacity(log.len());
     for (i, entry) in log.iter().enumerate() {
         let sha = entry.id_new().to_string();

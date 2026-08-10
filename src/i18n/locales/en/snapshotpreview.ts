@@ -1,0 +1,25 @@
+// Snapshot preview popover strings. Keys become `snapshotpreview.<key>`.
+export default {
+  aria_label: "Snapshot preview",
+  no_message: "(no message)",
+  aria_close: "Close preview",
+  sha_fallback: "snapshot",
+  not_in_view: "not in this view",
+  not_in_view_title:
+    "This snapshot's commit isn't in the current graph view (history was rewritten since it was taken) — previewed here instead.",
+  loading_diff: "Loading diff…",
+  status_added: "added",
+  status_modified: "modified",
+  status_deleted: "deleted",
+  status_renamed: "renamed",
+  status_copied: "copied",
+  status_type_changed: "type changed",
+  status_changed: "changed",
+  file_one: "file",
+  file_many: "files",
+  no_changes: "No file changes in this commit.",
+  more_one: "+{n} more file…",
+  more_many: "+{n} more files…",
+  err_load: "Couldn't load this snapshot's commit.",
+  err_load_e: "Couldn't load this snapshot's commit — {e}",
+};

@@ -1,0 +1,22 @@
+// Export Patches modal strings. Keys become `exportpatches.<key>`.
+export default {
+  title: "Export Patches",
+  subtitle_pre: "Export a commit range as one combined ",
+  subtitle_mid: " file (",
+  subtitle_post: ") to share or email.",
+  ph_from: "from… e.g. origin/main",
+  ph_to: "to… e.g. HEAD",
+  range_hint: "Every commit after “from” up to and including “to”.",
+  export_btn: "Export…",
+  exporting: "Exporting…",
+  open_repo_first: "Open a repository first.",
+  err_enter_rev: "{label}: enter a revision.",
+  err_leading_dash: "{label}: can't start with ‘-’.",
+  dlg_export: "Export Patches",
+  err_save_dialog: "Could not open the save dialog — {e}",
+  say_demo: "Exported patches (demo).",
+  say_exporting: "Exporting patches…",
+  say_exported: "Exported.",
+  err_export: "Export failed.",
+  err_export_e: "Export failed — {e}",
+};

@@ -1,13 +1,14 @@
 <script lang="ts">
   import { mainlinePickerCtrl } from "./mainlinepicker.svelte.ts";
   import * as bridge from "../../legacy/bridge";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   // Parent 1 is the branch the merge was made ON (merged into); parent 2 is the
   // branch merged in. Spell that out so the choice isn't just "1 or 2".
   function role(n: number): string {
-    if (n === 1) return "the branch merged into (mainline — usually this one)";
-    if (n === 2) return "the branch merged in";
-    return `parent ${n}`;
+    if (n === 1) return t("mainlinepicker.role_mainline");
+    if (n === 2) return t("mainlinepicker.role_merged_in");
+    return t("mainlinepicker.role_parent", { n });
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -20,12 +21,11 @@
 <div class="scrim" class:on={mainlinePickerCtrl.open}>
   <div class="modal mainline">
     <div class="modal-head">
-      <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.curious} alt="Tama, curious" /></div>
+      <div class="modal-tama"><img class="tama-pic" src={bridge.TAMA_IMG.curious} alt={t("mainlinepicker.tama_alt")} /></div>
       <div>
-        <h3>Cherry-pick a merge commit</h3>
+        <h3>{t("mainlinepicker.title")}</h3>
         <p>
-          <span class="mono">{mainlinePickerCtrl.sha.slice(0, 8)}</span> is a merge, so git needs to know which parent is the
-          mainline — the changes it brings in are measured against that parent.
+          <span class="mono">{mainlinePickerCtrl.sha.slice(0, 8)}</span>{t("mainlinepicker.merge_desc")}
         </p>
       </div>
     </div>
@@ -44,7 +44,7 @@
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" onclick={() => mainlinePickerCtrl.cancel()}>Cancel</button>
+      <button class="btn ghost" onclick={() => mainlinePickerCtrl.cancel()}>{t("common.cancel")}</button>
     </div>
   </div>
 </div>

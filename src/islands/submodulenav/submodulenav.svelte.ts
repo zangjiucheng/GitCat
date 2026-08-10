@@ -17,6 +17,7 @@ import { commands } from "../../ipc/bindings";
 import { IN_TAURI } from "../../ipc/env";
 import { submoduleCanOpen } from "../sidebar/sidebar.svelte.ts";
 import type { SubmoduleInfo } from "../../ipc/bindings";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 function basename(p: string): string {
   return p.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || p;
@@ -170,7 +171,7 @@ class SubmoduleNavState {
     if (samePath(absolutePath, this.cur())) return; // already here
     if (!IN_TAURI) {
       bridge.tama.set("hint");
-      bridge.tama.say("Switched to " + basename(absolutePath) + " (demo).");
+      bridge.tama.say(t("submodulenav.switched_demo", { name: basename(absolutePath) }));
       return;
     }
     this.busy = true;
@@ -179,7 +180,7 @@ class SubmoduleNavState {
       await bridge.navigateToRepo(absolutePath);
     } catch (e) {
       console.error("submodulenav.jumpTo", e);
-      bridge.tama.warn("Couldn't switch to " + basename(absolutePath));
+      bridge.tama.warn(t("submodulenav.switch_failed", { name: basename(absolutePath) }));
     } finally {
       this.busy = false;
       this.busyTarget = null;

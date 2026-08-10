@@ -10,6 +10,7 @@
   // Workdir's prose-sized commit-message box. Only the small `.rf-tabs`/
   // `.rf-tab` toggle is new (see index.html's own doc comment on it).
   import { repoFilesCtrl, type RepoFileName } from "./repofiles.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
 
   const FILES: RepoFileName[] = [".gitignore", ".mailmap"];
 
@@ -25,8 +26,8 @@
   <div class="modal repofiles">
     <div class="modal-head">
       <div>
-        <h3>Repo Files &#8212; .gitignore / .mailmap</h3>
-        <p>Edit these repo-root text files directly, no external editor needed.</p>
+        <h3>{t("repofiles.title")}</h3>
+        <p>{t("repofiles.subtitle")}</p>
       </div>
     </div>
     <div class="modal-body">
@@ -46,7 +47,7 @@
       </div>
 
       {#if repoFilesCtrl.loading}
-        <div class="log-row"><span class="spinner"></span><span class="msg mut">Loading {repoFilesCtrl.file}&#8230;</span></div>
+        <div class="log-row"><span class="spinner"></span><span class="msg mut">{t("repofiles.loading", { file: repoFilesCtrl.file })}</span></div>
       {:else if repoFilesCtrl.error}
         <div class="pl-err">{repoFilesCtrl.error}</div>
       {:else}
@@ -61,13 +62,13 @@
       {/if}
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" disabled={repoFilesCtrl.busy} onclick={() => repoFilesCtrl.close()}>Close</button>
+      <button class="btn ghost" disabled={repoFilesCtrl.busy} onclick={() => repoFilesCtrl.close()}>{t("common.close")}</button>
       <button
         class="btn"
         disabled={repoFilesCtrl.busy || repoFilesCtrl.loading || !!repoFilesCtrl.error}
         onclick={() => repoFilesCtrl.save()}
       >
-        {#if repoFilesCtrl.busy}<span class="spinner"></span> Saving&#8230;{:else}Save {repoFilesCtrl.file}{/if}
+        {#if repoFilesCtrl.busy}<span class="spinner"></span> {t("repofiles.saving")}{:else}{t("repofiles.save_file", { file: repoFilesCtrl.file })}{/if}
       </button>
     </div>
   </div>

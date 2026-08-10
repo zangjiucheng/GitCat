@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { fileURLToPath } from "node:url";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -9,6 +10,15 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
 
   plugins: [svelte()],
+
+  // `@` → src, so shared modules (e.g. the i18n root) import the same way from
+  // any depth: `@/i18n/i18n.svelte.ts` instead of `../../i18n/…`. Mirrored in
+  // tsconfig.json's paths so svelte-check/tsc resolve it too.
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

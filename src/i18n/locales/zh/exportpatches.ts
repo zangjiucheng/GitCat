@@ -1,0 +1,22 @@
+// 导出补丁弹窗文案。键会变成 `exportpatches.<key>`。
+export default {
+  title: "导出补丁",
+  subtitle_pre: "把一段 commit 范围导出为一个合并的 ",
+  subtitle_mid: " 文件(",
+  subtitle_post: "),便于分享或邮件发送。",
+  ph_from: "起点…… 例如 origin/main",
+  ph_to: "终点…… 例如 HEAD",
+  range_hint: "「from」之后到「to」(含)之间的每一个 commit。",
+  export_btn: "导出……",
+  exporting: "导出中……",
+  open_repo_first: "请先打开一个仓库。",
+  err_enter_rev: "{label}:请输入一个 revision。",
+  err_leading_dash: "{label}:不能以 ‘-’ 开头。",
+  dlg_export: "导出补丁",
+  err_save_dialog: "无法打开保存对话框 —— {e}",
+  say_demo: "已导出补丁。(演示)",
+  say_exporting: "正在导出补丁……",
+  say_exported: "已导出。",
+  err_export: "导出失败。",
+  err_export_e: "导出失败 —— {e}",
+};

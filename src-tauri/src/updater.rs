@@ -13,6 +13,8 @@ use serde::Serialize;
 use tauri::{Manager, Webview, Wry};
 use tauri_plugin_updater::UpdaterExt;
 
+use crate::i18n_err::ierrp;
+
 /// The nightly channel's rolling `latest.json`: a GitHub PRERELEASE tagged
 /// `nightly`. Note `download/nightly/`, NOT `latest/download/` — the `latest`
 /// alias resolves only to the newest NON-prerelease, which would never pick a
@@ -54,15 +56,15 @@ pub struct UpdateAvailable {
 pub async fn check_for_update(webview: Webview<Wry>, nightly: bool) -> Result<Option<UpdateAvailable>, String> {
     let mut builder = webview.updater_builder().version_comparator(|current, update| update.version != current);
     if nightly {
-        let url = tauri::Url::parse(NIGHTLY_ENDPOINT).map_err(|e| format!("bad nightly endpoint: {e}"))?;
-        builder = builder.endpoints(vec![url]).map_err(|e| format!("updater endpoint error: {e}"))?;
+        let url = tauri::Url::parse(NIGHTLY_ENDPOINT).map_err(|e| ierrp("err_misc.bad_nightly_endpoint", &[("detail", &e.to_string())]))?;
+        builder = builder.endpoints(vec![url]).map_err(|e| ierrp("err_misc.updater_endpoint_error", &[("detail", &e.to_string())]))?;
     }
     let update = builder
         .build()
-        .map_err(|e| format!("updater init failed: {e}"))?
+        .map_err(|e| ierrp("err_misc.updater_init_failed", &[("detail", &e.to_string())]))?
         .check()
         .await
-        .map_err(|e| format!("update check failed: {e}"))?;
+        .map_err(|e| ierrp("err_misc.update_check_failed", &[("detail", &e.to_string())]))?;
     Ok(update.map(|u| UpdateAvailable {
         current_version: u.current_version.clone(),
         version: u.version.clone(),

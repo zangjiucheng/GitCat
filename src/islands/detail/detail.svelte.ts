@@ -14,6 +14,7 @@
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { CommitDetail } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { blameCtrl } from "../blame/blame.svelte.ts";
@@ -340,7 +341,7 @@ class DetailState {
     try {
       const r = await commands.commitDetail(bridge.CUR_REPO as unknown as string, m.sha);
       if (myReq !== this.detailSeq) return; // a newer selection superseded this one
-      if (r.status !== "ok") throw new Error(r.error);
+      if (r.status !== "ok") throw new Error(be(r.error));
       const d: CommitDetail = r.data;
       const files = Array.isArray(d.fileTree) ? d.fileTree : [];
       this.curChanged = files.map((f) => ({ p: f.path, st: f.status, add: f.additions | 0, del: f.deletions | 0, oldPath: f.oldPath ?? null }));
@@ -460,10 +461,10 @@ class DetailState {
       if (r.status === "ok" && r.data.kind === "commit") {
         blameCtrl.openFor(repo, r.data.sha, f.p, f.oldPath);
       } else {
-        bridge.tama.warn("Couldn't resolve the parent commit to blame a deleted file.");
+        bridge.tama.warn(t("detail.parent_blame_failed"));
       }
     } catch (e) {
-      bridge.tama.warn("Couldn't resolve the parent commit — " + e);
+      bridge.tama.warn(t("detail.parent_resolve_failed", { e: String(e) }));
     } finally {
       this.resolvingDeletedFileFor = null;
     }
@@ -494,10 +495,10 @@ class DetailState {
       if (r.status === "ok" && r.data.kind === "commit") {
         fileHistoryCtrl.openFor(repo, r.data.sha, f.p, f.oldPath);
       } else {
-        bridge.tama.warn("Couldn't resolve the parent commit to show history for a deleted file.");
+        bridge.tama.warn(t("detail.parent_history_failed"));
       }
     } catch (e) {
-      bridge.tama.warn("Couldn't resolve the parent commit — " + e);
+      bridge.tama.warn(t("detail.parent_resolve_failed", { e: String(e) }));
     } finally {
       this.resolvingDeletedFileFor = null;
     }

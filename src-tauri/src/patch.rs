@@ -135,6 +135,7 @@ use std::process::{Command, Stdio};
 use git2::{Repository, RepositoryState};
 use serde::Serialize;
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::NoConsoleWindowExt;
 
 // ---------------------------------------------------------------------------
@@ -216,7 +217,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     if no_editor {
         cmd.env("GIT_EDITOR", "true").env("GIT_SEQUENCE_EDITOR", "true");
     }
-    let o = cmd.output().map_err(|e| format!("Could not run git: {e}"))?;
+    let o = cmd.output().map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         stdout: String::from_utf8_lossy(&o.stdout).trim().to_string(),
@@ -232,7 +233,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
 fn git_worktree(path: &str, args: &[&str]) -> Result<Out, String> {
     let o = crate::wsl::git_command_env(path, args, &[("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")])
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         stdout: String::from_utf8_lossy(&o.stdout).trim().to_string(),
@@ -250,14 +251,14 @@ fn git_worktree(path: &str, args: &[&str]) -> Result<Out, String> {
 fn git_am_stdin(path: &str, args: &[&str], patch: &[u8]) -> Result<Out, String> {
     let mut cmd = crate::wsl::git_command_env(path, args, &[("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")]);
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("Could not run git: {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
     child
         .stdin
         .take()
         .expect("stdin was requested as piped")
         .write_all(patch)
-        .map_err(|e| format!("Could not write the patch to git am's stdin: {e}"))?;
-    let o = child.wait_with_output().map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_ops.could_not_write_am_stdin", &[("detail", &e.to_string())]))?;
+    let o = child.wait_with_output().map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         stdout: String::from_utf8_lossy(&o.stdout).trim().to_string(),
@@ -291,7 +292,7 @@ fn run_format_patch(path: &str, args: &[&str]) -> Result<RawOut, String> {
         .arg(path)
         .args(args)
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(RawOut {
         ok: o.status.success(),
         stdout: String::from_utf8_lossy(&o.stdout).into_owned(), // NOT trimmed
@@ -311,13 +312,13 @@ fn run_format_patch(path: &str, args: &[&str]) -> Result<RawOut, String> {
 /// revision".
 fn validate_rev(rev: &str) -> Result<(), String> {
     if rev.is_empty() {
-        return Err("No revision given.".into());
+        return Err(ierr("err_ops.no_revision_given"));
     }
     if rev.starts_with('-') {
-        return Err(format!("Refusing a revision that looks like a flag: {rev:?}"));
+        return Err(ierrp("err_ops.refusing_rev_like_flag", &[("rev", &format!("{rev:?}"))]));
     }
     if rev.chars().any(|c| c.is_control()) {
-        return Err("Revision has a control character.".into());
+        return Err(ierr("err_ops.rev_control_char"));
     }
     Ok(())
 }
@@ -328,10 +329,10 @@ fn validate_rev(rev: &str) -> Result<(), String> {
 /// guarded — there's no CLI injection surface to speak of.
 fn validate_dest_path(p: &str) -> Result<(), String> {
     if p.is_empty() {
-        return Err("No destination file chosen.".into());
+        return Err(ierr("err_ops.no_dest_file_chosen"));
     }
     if p.contains('\0') {
-        return Err("Destination path has an illegal NUL character.".into());
+        return Err(ierr("err_ops.dest_illegal_nul"));
     }
     Ok(())
 }
@@ -343,13 +344,13 @@ fn validate_dest_path(p: &str) -> Result<(), String> {
 /// give a friendlier error than a raw read failure.
 fn validate_patch_file(p: &str) -> Result<(), String> {
     if p.is_empty() {
-        return Err("No patch file chosen.".into());
+        return Err(ierr("err_ops.no_patch_file_chosen"));
     }
     if p.starts_with('-') {
-        return Err(format!("Refusing a path that looks like a flag: {p:?}"));
+        return Err(ierrp("err_ops.refusing_path_like_flag", &[("path", &format!("{p:?}"))]));
     }
     if p.chars().any(|c| c == '\0' || c == '\n' || c == '\r') {
-        return Err("Path has an illegal NUL/newline character.".into());
+        return Err(ierr("err_ops.path_illegal_nul_newline"));
     }
     Ok(())
 }
@@ -386,9 +387,9 @@ fn classify_am(repo: &Repository, path: &str, out: &Out, backup: Option<String>)
             ok: false,
             state: "conflict".into(),
             conflicted_files: conflicts,
-            message: format!(
-                "Applying the patch conflicts in {n} file{}. Resolve them, then Continue — or Skip this commit, or Abort.",
-                if n == 1 { "" } else { "s" }
+            message: ierrp(
+                if n == 1 { "err_ops.apply_conflict_one" } else { "err_ops.apply_conflict_other" },
+                &[("n", &n.to_string())],
             ),
             backup_ref: backup,
         };
@@ -411,10 +412,7 @@ fn classify_am(repo: &Repository, path: &str, out: &Out, backup: Option<String>)
             ok: false,
             state: "conflict".into(),
             conflicted_files: Vec::new(),
-            message: format!(
-                "Could not finish applying the patch: {}. Continue to retry, Skip this commit, or Abort.",
-                git_msg(out)
-            ),
+            message: ierrp("err_ops.could_not_finish_applying", &[("detail", &git_msg(out))]),
             backup_ref: backup,
         };
     }
@@ -452,7 +450,7 @@ fn commit_shas_oldest_first(repo: &Repository, from: Option<&str>, to_commit: &g
         let from_oid = repo
             .revparse_single(f)
             .and_then(|o| o.peel_to_commit())
-            .map_err(|e| format!("Cannot resolve revision {f:?}: {}", e.message()))?
+            .map_err(|e| ierrp("err_ops.cannot_resolve_revision", &[("rev", &format!("{f:?}")), ("detail", e.message())]))?
             .id();
         walk.hide(from_oid).map_err(|e| e.message().to_string())?;
     }
@@ -546,24 +544,20 @@ fn export_patch_sync(path: String, from: Option<String>, to: String, dest: Strin
 
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
-        Err(e) => return ExportPatchResult::err(format!("Cannot open repository: {}", e.message())),
+        Err(e) => return ExportPatchResult::err(ierrp("err_ops.cannot_open_repo", &[("detail", e.message())])),
     };
     // Fail fast with a clean message before ever spawning format-patch — same
     // "resolve via git2 first" discipline as git_rebase.rs's resolve_oid.
     let to_commit = match repo.revparse_single(&to).and_then(|o| o.peel_to_commit()) {
         Ok(c) => c,
-        Err(e) => return ExportPatchResult::err(format!("Cannot resolve revision {to:?}: {}", e.message())),
+        Err(e) => return ExportPatchResult::err(ierrp("err_ops.cannot_resolve_revision", &[("rev", &format!("{to:?}")), ("detail", e.message())])),
     };
     if from.is_none() && to_commit.parent_count() > 1 {
-        return ExportPatchResult::err(
-            "Can't export a merge commit as a single patch — format-patch has no single unambiguous diff for a \
-             merge (git itself would silently export its FIRST PARENT's commit instead, not the merge). \
-             Use Export Patches\u{2026} with an explicit revision range instead.",
-        );
+        return ExportPatchResult::err(ierr("err_ops.cannot_export_merge_single"));
     }
     if let Some(f) = &from {
         if let Err(e) = repo.revparse_single(f) {
-            return ExportPatchResult::err(format!("Cannot resolve revision {f:?}: {}", e.message()));
+            return ExportPatchResult::err(ierrp("err_ops.cannot_resolve_revision", &[("rev", &format!("{f:?}")), ("detail", e.message())]));
         }
     }
 
@@ -586,11 +580,11 @@ fn export_patch_sync(path: String, from: Option<String>, to: String, dest: Strin
         return ExportPatchResult::err(if !out.stderr.is_empty() {
             out.stderr
         } else {
-            "git format-patch failed.".into()
+            ierr("err_ops.format_patch_failed")
         });
     }
     if out.stdout.trim().is_empty() {
-        return ExportPatchResult::err("Nothing to export — that range contains no commits.");
+        return ExportPatchResult::err(ierr("err_ops.nothing_to_export"));
     }
     // Ground truth for mboxrd escaping (see module doc's "Mbox 'From '
     // ambiguity" section) — the exact, ordered set of shas this blob
@@ -603,7 +597,7 @@ fn export_patch_sync(path: String, from: Option<String>, to: String, dest: Strin
     };
     let escaped = mboxrd_escape(&out.stdout, &shas);
     if let Err(e) = std::fs::write(&dest, &escaped) {
-        return ExportPatchResult::err(format!("Could not write {dest}: {e}"));
+        return ExportPatchResult::err(ierrp("err_ops.could_not_write_dest", &[("dest", &dest), ("detail", &e.to_string())]));
     }
     let n = shas.len();
     ExportPatchResult::ok_msg(format!("Exported {n} commit{} to {dest}.", if n == 1 { "" } else { "s" }))
@@ -640,14 +634,14 @@ fn apply_patch_sync(path: String, patch_file_path: String) -> ApplyPatchResult {
     }
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
-        Err(e) => return ApplyPatchResult::error(format!("Cannot open repository: {}", e.message())),
+        Err(e) => return ApplyPatchResult::error(ierrp("err_ops.cannot_open_repo", &[("detail", e.message())])),
     };
     if !matches!(repo.state(), RepositoryState::Clean) {
-        return ApplyPatchResult::error("Another operation is already in progress — resolve or abort it first.");
+        return ApplyPatchResult::error(ierr("err_ops.another_op_in_progress"));
     }
     let backup = match crate::safety::snapshot(&repo) {
         Ok(b) => b,
-        Err(e) => return ApplyPatchResult::error(format!("Safety snapshot failed, aborting: {e}")),
+        Err(e) => return ApplyPatchResult::error(ierrp("err_ops.safety_snapshot_failed", &[("detail", &e)])),
     };
     // Feed the patch on STDIN rather than as a `<file>` positional: the picked
     // path is an absolute Windows/UNC path, which git inside a WSL distro can't
@@ -656,7 +650,7 @@ fn apply_patch_sync(path: String, patch_file_path: String) -> ApplyPatchResult {
     // git_am_stdin). Rust can read both a `C:\…` and a `\\wsl.localhost\…` path.
     let patch_bytes = match std::fs::read(&patch_file_path) {
         Ok(b) => b,
-        Err(e) => return ApplyPatchResult::error(format!("Couldn't read the patch file: {e}")),
+        Err(e) => return ApplyPatchResult::error(ierrp("err_ops.could_not_read_patch_file", &[("detail", &e.to_string())])),
     };
     // --patch-format=mboxrd: undoes export_patch's own mboxrd escaping (see
     // module doc's "Mbox 'From ' ambiguity" section) for a patch this app
@@ -706,10 +700,10 @@ pub async fn am_continue(path: String) -> ApplyPatchResult {
 fn am_continue_sync(path: String) -> ApplyPatchResult {
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
-        Err(e) => return ApplyPatchResult::error(format!("Cannot open repository: {}", e.message())),
+        Err(e) => return ApplyPatchResult::error(ierrp("err_ops.cannot_open_repo", &[("detail", e.message())])),
     };
     if repo.state() != RepositoryState::ApplyMailbox {
-        return ApplyPatchResult::error("No patch-apply in progress to continue.");
+        return ApplyPatchResult::error(ierr("err_ops.no_patch_apply_to_continue"));
     }
     let backup = crate::safety::snapshot(&repo).ok(); // best-effort, mirrors rebase_continue
     let out = match git_worktree(&path, &["am", "--continue"]) {
@@ -753,10 +747,10 @@ pub async fn am_skip(path: String) -> ApplyPatchResult {
 fn am_skip_sync(path: String) -> ApplyPatchResult {
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
-        Err(e) => return ApplyPatchResult::error(format!("Cannot open repository: {}", e.message())),
+        Err(e) => return ApplyPatchResult::error(ierrp("err_ops.cannot_open_repo", &[("detail", e.message())])),
     };
     if repo.state() != RepositoryState::ApplyMailbox {
-        return ApplyPatchResult::error("No patch-apply in progress to skip a commit from.");
+        return ApplyPatchResult::error(ierr("err_ops.no_patch_apply_to_skip"));
     }
     let backup = crate::safety::snapshot(&repo).ok();
     let out = match git_worktree(&path, &["am", "--skip"]) {
@@ -798,7 +792,7 @@ pub async fn am_abort(path: String) -> ApplyPatchResult {
 fn am_abort_sync(path: String) -> ApplyPatchResult {
     let repo = match crate::trust::open_repo(&path) {
         Ok(r) => r,
-        Err(e) => return ApplyPatchResult::error(format!("Cannot open repository: {}", e.message())),
+        Err(e) => return ApplyPatchResult::error(ierrp("err_ops.cannot_open_repo", &[("detail", e.message())])),
     };
     if repo.state() != RepositoryState::ApplyMailbox {
         return ApplyPatchResult {

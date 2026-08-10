@@ -5,6 +5,7 @@
   import { sidebarCtrl } from "../sidebar/sidebar.svelte.ts";
   import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
   import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import Eye from "@lucide/svelte/icons/eye";
   import History from "@lucide/svelte/icons/history";
   import ExternalLink from "@lucide/svelte/icons/external-link";
@@ -58,10 +59,10 @@
     if (!el) return;
     const saved = Number(localStorage.getItem(WD_MSG_H_LS));
     if (Number.isFinite(saved) && saved >= WD_MSG_H_MIN) el.style.height = saved + "px";
-    let t: ReturnType<typeof setTimeout> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const ro = new ResizeObserver(() => {
-      clearTimeout(t);
-      t = setTimeout(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
         try {
           localStorage.setItem(WD_MSG_H_LS, String(Math.round(el.offsetHeight)));
         } catch {
@@ -72,7 +73,7 @@
     ro.observe(el);
     return () => {
       ro.disconnect();
-      clearTimeout(t);
+      clearTimeout(timer);
     };
   });
   $effect(() => {
@@ -152,57 +153,57 @@
 
 {#if workdirCtrl.selected}
   <section>
-    <div class="d-subject">Uncommitted changes</div>
+    <div class="d-subject">{t("workdir.uncommitted_changes")}</div>
     <div class="d-body" style="margin-top:2px">
       {#if workdirCtrl.status?.branch}
-        on <b class="mono">{workdirCtrl.status.branch}</b>
+        {t("workdir.on")} <b class="mono">{workdirCtrl.status.branch}</b>
       {:else}
-        detached HEAD
+        {t("workdir.detached_head")}
       {/if}
     </div>
     <div class="id-strip">
       {#if workdirCtrl.status}
         {@const s = workdirCtrl.status}
         {#if s.conflicted}
-          <span class="gpg bad">{s.conflicted} conflicted</span>
+          <span class="gpg bad">{t("workdir.n_conflicted", { n: s.conflicted })}</span>
         {:else if s.staged.length || s.unstaged.length}
-          <span class="hash">{s.staged.length} staged &#183; {s.unstaged.length} unstaged</span>
+          <span class="hash">{t("workdir.staged_unstaged", { staged: s.staged.length, unstaged: s.unstaged.length })}</span>
         {:else}
-          <span class="gpg good">&#10003; clean</span>
+          <span class="gpg good">&#10003; {t("workdir.clean")}</span>
         {/if}
       {/if}
       {#if workdirCtrl.loading}<span class="spinner"></span>{/if}
     </div>
     {#if workdirCtrl.status?.conflicted}
       <div class="pl-err" style="margin-top:10px">
-        {workdirCtrl.status.conflicted} file{workdirCtrl.status.conflicted === 1 ? "" : "s"} conflicted (a stash apply/pop hit a conflict) — resolve it in the Conflict Resolver.
+        {t("workdir.conflicted_hint", { n: workdirCtrl.status.conflicted, files: workdirCtrl.status.conflicted === 1 ? t("workdir.file") : t("workdir.files_plural") })}
       </div>
     {/if}
   </section>
 
   <section>
     <div class="d-lab-row">
-      <h4 class="d-lab" style="margin:0">Commit</h4>
+      <h4 class="d-lab" style="margin:0">{t("workdir.commit")}</h4>
       <button
         class="wd-stage-all"
-        title="Generate a commit message with your configured command (Tools ▸ External Tools)"
+        title={t("workdir.generate_tip")}
         disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"}
         onclick={() => workdirCtrl.generateMessage(repo())}
       >
-        {#if workdirCtrl.generating}<span class="spinner"></span> Generating&#8230;{:else}&#10024; Generate{/if}
+        {#if workdirCtrl.generating}<span class="spinner"></span> {t("workdir.generating")}{:else}&#10024; {t("workdir.generate")}{/if}
       </button>
     </div>
     <textarea
       class="wd-msg"
       rows="3"
       bind:this={msgEl}
-      placeholder={workdirCtrl.amend ? "Leave empty to keep the previous message…" : "Commit message…"}
+      placeholder={workdirCtrl.amend ? t("workdir.msg_placeholder_amend") : t("workdir.msg_placeholder")}
       bind:value={workdirCtrl.message}
       disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"}
     ></textarea>
     <div class="wd-commit-row">
       <label class="wd-amend"
-        ><input type="checkbox" bind:checked={workdirCtrl.amend} disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"} /> Amend previous commit</label
+        ><input type="checkbox" bind:checked={workdirCtrl.amend} disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"} /> {t("workdir.amend_previous")}</label
       >
       <button
         class="btn"
@@ -210,25 +211,25 @@
         onclick={() => workdirCtrl.commit(repo())}
       >
         {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"}<span class="spinner"></span>{/if}
-        {workdirCtrl.amend ? "Amend" : "Commit"}
+        {workdirCtrl.amend ? t("workdir.amend") : t("workdir.commit_btn")}
       </button>
     </div>
   </section>
 
   <section>
     <div class="wd-sec-head">
-      <h4 class="d-lab" style="margin:0">Staged ({workdirCtrl.status?.staged.length ?? 0})</h4>
+      <h4 class="d-lab" style="margin:0">{t("workdir.staged", { n: workdirCtrl.status?.staged.length ?? 0 })}</h4>
       <div class="wd-sec-actions">
         {@render treeCtl("staged", workdirCtrl.stagedHasDirs)}
         {#if workdirCtrl.status?.staged.length}
           <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageAll(repo())}>
-            {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__unstage_all__"}<span class="spinner"></span>{:else}Unstage all{/if}
+            {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__unstage_all__"}<span class="spinner"></span>{:else}{t("workdir.unstage_all")}{/if}
           </button>
         {/if}
       </div>
     </div>
     {#if !workdirCtrl.status?.staged.length}
-      <div class="mut" style="font-size:12px">nothing staged</div>
+      <div class="mut" style="font-size:12px">{t("workdir.nothing_staged")}</div>
     {:else}
       <div class="wd-files tree">
         {@render stagedDirNode(workdirCtrl.stagedTree)}
@@ -238,28 +239,28 @@
 
   <section>
     <div class="wd-sec-head">
-      <h4 class="d-lab" style="margin:0">Unstaged ({workdirCtrl.status?.unstaged.length ?? 0})</h4>
+      <h4 class="d-lab" style="margin:0">{t("workdir.unstaged", { n: workdirCtrl.status?.unstaged.length ?? 0 })}</h4>
       <div class="wd-sec-actions">
         {@render treeCtl("unstaged", workdirCtrl.unstagedHasDirs)}
         {#if workdirCtrl.status?.unstaged.length}
           <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageAll(repo())}>
-            {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__all__"}<span class="spinner"></span>{:else}Stage all{/if}
+            {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__all__"}<span class="spinner"></span>{:else}{t("workdir.stage_all")}{/if}
           </button>
         {/if}
         {#if workdirCtrl.hasChanges}
           <button
             class="wd-stage-all wd-discard-all"
             disabled={workdirCtrl.busy}
-            title="Discard ALL uncommitted changes — staged, unstaged and untracked (saved to a stash you can restore)"
+            title={t("workdir.discard_all_tip")}
             onclick={() => workdirCtrl.discardAll(repo())}
           >
-            {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__discard_all__"}<span class="spinner"></span>{:else}Discard all{/if}
+            {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__discard_all__"}<span class="spinner"></span>{:else}{t("workdir.discard_all")}{/if}
           </button>
         {/if}
       </div>
     </div>
     {#if !workdirCtrl.status?.unstaged.length}
-      <div class="mut" style="font-size:12px">no unstaged changes</div>
+      <div class="mut" style="font-size:12px">{t("workdir.no_unstaged")}</div>
     {:else}
       <div class="wd-files tree">
         {@render unstagedDirNode(workdirCtrl.unstagedTree)}
@@ -271,9 +272,9 @@
     {@const file = workdirCtrl.selectedDiffFile}
     <section>
       <div class="wd-sec-head">
-        <h4 class="d-lab" style="margin:0">Diff</h4>
+        <h4 class="d-lab" style="margin:0">{t("workdir.diff")}</h4>
         {@render workdirLinesBar(file)}
-        <button class="wd-act" title="Expand diff" aria-label="Expand diff to full page" onclick={() => (diffExpanded = true)}>
+        <button class="wd-act" title={t("workdir.expand_diff")} aria-label={t("workdir.expand_diff_aria")} onclick={() => (diffExpanded = true)}>
           <Maximize2 class="ico" size={13} aria-hidden="true" />
         </button>
       </div>
@@ -285,28 +286,28 @@
 
   <section>
     <div class="wd-sec-head">
-      <h4 class="d-lab" style="margin:0">Stash</h4>
+      <h4 class="d-lab" style="margin:0">{t("workdir.stash")}</h4>
     </div>
     {#if !workdirCtrl.stashes.length}
-      <div class="mut" style="font-size:12px">no stashes</div>
+      <div class="mut" style="font-size:12px">{t("workdir.no_stashes")}</div>
     {:else}
       <div class="wd-stash-list">
         {#each workdirCtrl.stashes as s (s.index)}
           <div class="wd-stash-item">
             <span class="dot" style="background:var(--accent2)"></span>
             <div class="wd-stash-main">
-              <span class="wd-stash-msg">{s.message || "(no message)"}</span>
+              <span class="wd-stash-msg">{s.message || t("workdir.no_message")}</span>
               <span class="wd-stash-meta mut mono">stash@{"{" + s.index + "}"} &#183; {s.sha}{s.branch ? " · " + s.branch : ""}</span>
             </div>
             {#if workdirCtrl.stashBusy && workdirCtrl.stashBusyTarget === s.index}
               <span class="spinner"></span>
             {:else}
               <div class="wd-stash-act">
-                <button title="Apply (keep the stash entry)" disabled={workdirCtrl.stashBusy} onclick={() => workdirCtrl.applyStash(repo(), s.index)}>Apply</button>
-                <button title="Pop (apply, then drop on success)" disabled={workdirCtrl.stashBusy} onclick={() => workdirCtrl.popStash(repo(), s.index)}>Pop</button>
+                <button title={t("workdir.stash_apply_tip")} disabled={workdirCtrl.stashBusy} onclick={() => workdirCtrl.applyStash(repo(), s.index)}>{t("workdir.apply")}</button>
+                <button title={t("workdir.stash_pop_tip")} disabled={workdirCtrl.stashBusy} onclick={() => workdirCtrl.popStash(repo(), s.index)}>{t("workdir.pop")}</button>
                 <button
                   class="danger"
-                  title="Drop"
+                  title={t("workdir.stash_drop_tip")}
                   disabled={workdirCtrl.stashBusy}
                   onclick={() => workdirCtrl.confirmDropStash(repo(), s.index)}><Trash2 class="ico" size={12} aria-hidden="true" /></button
                 >
@@ -320,7 +321,7 @@
     {#if workdirCtrl.stashOpen}
       <div class="wd-stash-form" class:busy={workdirCtrl.busy && workdirCtrl.busyTarget === "__stash__"}>
         <input
-          placeholder="stash message (optional)…"
+          placeholder={t("workdir.stash_msg_placeholder")}
           spellcheck="false"
           autocomplete="off"
           bind:value={workdirCtrl.stashMessage}
@@ -333,18 +334,18 @@
               type="checkbox"
               bind:checked={workdirCtrl.stashIncludeUntracked}
               disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__stash__"}
-            /> include untracked</label
+            /> {t("workdir.include_untracked")}</label
           >
           {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__stash__"}
             <span class="spinner"></span>
           {:else}
-            <button class="btn ghost" style="padding:4px 10px" onclick={() => workdirCtrl.cancelStashForm()}>Cancel</button>
-            <button class="btn" style="padding:4px 10px" onclick={() => workdirCtrl.saveStash(repo())}>Save</button>
+            <button class="btn ghost" style="padding:4px 10px" onclick={() => workdirCtrl.cancelStashForm()}>{t("common.cancel")}</button>
+            <button class="btn" style="padding:4px 10px" onclick={() => workdirCtrl.saveStash(repo())}>{t("common.save")}</button>
           {/if}
         </div>
       </div>
     {:else}
-      <button class="wd-stash-new" onclick={() => workdirCtrl.openStashForm()}>&#65291; Stash changes&#8230;</button>
+      <button class="wd-stash-new" onclick={() => workdirCtrl.openStashForm()}>&#65291; {t("workdir.stash_changes")}</button>
     {/if}
   </section>
 
@@ -359,42 +360,42 @@
     <div class="modal diffx">
       <div class="modal-head">
         <div class="diffx-head-main">
-          <h3>Uncommitted changes</h3>
-          <p>{#if workdirCtrl.status?.branch}on <span class="mono">{workdirCtrl.status.branch}</span>{:else}detached HEAD{/if}</p>
+          <h3>{t("workdir.uncommitted_changes")}</h3>
+          <p>{#if workdirCtrl.status?.branch}{t("workdir.on")} <span class="mono">{workdirCtrl.status.branch}</span>{:else}{t("workdir.detached_head")}{/if}</p>
         </div>
       </div>
       <div class="modal-body diffx-body">
         <div class="diffx-files" style="width:{diffxTreeW}px">
           <div class="diffx-files-scroll tree" data-vimnav-list>
             <div class="diffx-files-head">
-              <span class="d-lab" style="margin:0">Staged ({workdirCtrl.status?.staged.length ?? 0})</span>
+              <span class="d-lab" style="margin:0">{t("workdir.staged", { n: workdirCtrl.status?.staged.length ?? 0 })}</span>
               <div class="wd-sec-actions">
                 {@render treeCtl("staged", workdirCtrl.stagedHasDirs)}
                 {#if workdirCtrl.status?.staged.length}
                   <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageAll(repo())}>
-                    {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__unstage_all__"}<span class="spinner"></span>{:else}Unstage all{/if}
+                    {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__unstage_all__"}<span class="spinner"></span>{:else}{t("workdir.unstage_all")}{/if}
                   </button>
                 {/if}
               </div>
             </div>
             {#if !workdirCtrl.status?.staged.length}
-              <div class="mut" style="font-size:12px;padding:2px 4px">nothing staged</div>
+              <div class="mut" style="font-size:12px;padding:2px 4px">{t("workdir.nothing_staged")}</div>
             {:else}
               {@render stagedDirNode(workdirCtrl.stagedTree)}
             {/if}
             <div class="diffx-files-head" style="margin-top:12px">
-              <span class="d-lab" style="margin:0">Unstaged ({workdirCtrl.status?.unstaged.length ?? 0})</span>
+              <span class="d-lab" style="margin:0">{t("workdir.unstaged", { n: workdirCtrl.status?.unstaged.length ?? 0 })}</span>
               <div class="wd-sec-actions">
                 {@render treeCtl("unstaged", workdirCtrl.unstagedHasDirs)}
                 {#if workdirCtrl.status?.unstaged.length}
                   <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageAll(repo())}>
-                    {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__all__"}<span class="spinner"></span>{:else}Stage all{/if}
+                    {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__all__"}<span class="spinner"></span>{:else}{t("workdir.stage_all")}{/if}
                   </button>
                 {/if}
               </div>
             </div>
             {#if !workdirCtrl.status?.unstaged.length}
-              <div class="mut" style="font-size:12px;padding:2px 4px">no unstaged changes</div>
+              <div class="mut" style="font-size:12px;padding:2px 4px">{t("workdir.no_unstaged")}</div>
             {:else}
               {@render unstagedDirNode(workdirCtrl.unstagedTree)}
             {/if}
@@ -407,7 +408,7 @@
           class:active={diffxResizing}
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize file list"
+          aria-label={t("workdir.resize_file_list")}
           aria-valuenow={Math.round(diffxTreeW)}
           aria-valuemin={DIFFX_TREE_MIN}
           aria-valuemax={DIFFX_TREE_MAX}
@@ -425,12 +426,12 @@
             {@render workdirLinesBar(file)}
             {@render workdirDiffBody(file)}
           {:else}
-            <div class="diff-file-h mut">select a file on the left to see its diff</div>
+            <div class="diff-file-h mut">{t("workdir.select_file_hint")}</div>
           {/if}
         </div>
       </div>
       <div class="modal-foot">
-        <button class="btn ghost" onclick={() => (diffExpanded = false)}>Close</button>
+        <button class="btn ghost" onclick={() => (diffExpanded = false)}>{t("common.close")}</button>
       </div>
     </div>
   </div>
@@ -457,7 +458,7 @@
         const m = workdirCtrl.rowMenu;
         workdirCtrl.closeRowMenu();
         if (m) workdirCtrl.confirmDiscard(m.file, m.untracked);
-      }}>Discard changes</button
+      }}>{t("workdir.discard_changes")}</button
     >
   </div>
 {/if}
@@ -475,17 +476,17 @@
         class="wd-sel-toggle"
         disabled={workdirCtrl.busy}
         onclick={() => (workdirCtrl.selectedLinesCount ? workdirCtrl.deselectAllLines() : workdirCtrl.selectAllLines())}
-        >{workdirCtrl.selectedLinesCount ? "Deselect all" : "Select all"}</button
+        >{workdirCtrl.selectedLinesCount ? t("workdir.deselect_all") : t("workdir.select_all")}</button
       >
       {#if workdirCtrl.selectedLinesCount}
-        <span class="mut" style="font-size:11.5px">{workdirCtrl.selectedLinesCount} line{workdirCtrl.selectedLinesCount === 1 ? "" : "s"} selected</span>
+        <span class="mut" style="font-size:11.5px">{t("workdir.lines_selected", { n: workdirCtrl.selectedLinesCount, line: workdirCtrl.selectedLinesCount === 1 ? t("workdir.line") : t("workdir.lines_plural") })}</span>
         {#if workdirCtrl.busy && workdirCtrl.busyTarget === file}
           <span class="spinner"></span>
         {:else if !workdirCtrl.selectedDiffStaged}
-          <button disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageLines(repo(), file, workdirCtrl.buildSelectedHunks())}>Stage selected</button>
-          <button class="danger" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.confirmDiscardLines(file, workdirCtrl.buildSelectedHunks())}>Discard selected</button>
+          <button disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageLines(repo(), file, workdirCtrl.buildSelectedHunks())}>{t("workdir.stage_selected")}</button>
+          <button class="danger" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.confirmDiscardLines(file, workdirCtrl.buildSelectedHunks())}>{t("workdir.discard_selected")}</button>
         {:else}
-          <button disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageLines(repo(), file, workdirCtrl.buildSelectedHunks())}>Unstage selected</button>
+          <button disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageLines(repo(), file, workdirCtrl.buildSelectedHunks())}>{t("workdir.unstage_selected")}</button>
         {/if}
       {/if}
     </div>
@@ -494,7 +495,7 @@
 
 {#snippet workdirDiffBody(file: string)}
   {#if workdirCtrl.diffLoading}
-    <div class="diff-file-h mut"><span class="spinner"></span> loading diff&#8230;</div>
+    <div class="diff-file-h mut"><span class="spinner"></span> {t("workdir.loading_diff")}</div>
   {:else if workdirCtrl.diffError}
     <div class="diff-file-h">{workdirCtrl.diffHeader}</div>
     <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{workdirCtrl.diffError}</code></div>
@@ -502,9 +503,9 @@
     <div class="diff-file-h">{workdirCtrl.diffHeader}</div>
     <div class="diff-rows">
       {#if workdirCtrl.diffFile.binary}
-        <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">binary file — not shown</code></div>
+        <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{t("workdir.binary_not_shown")}</code></div>
       {:else if !workdirCtrl.diffHunks.length}
-        <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">no textual diff</code></div>
+        <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{t("workdir.no_textual_diff")}</code></div>
       {:else}
         {#each workdirCtrl.diffHunks as hunk (hunk.header)}
           <div class="diff-line hunk">
@@ -513,10 +514,10 @@
               {#if workdirCtrl.busy && workdirCtrl.busyTarget === file}
                 <span class="spinner"></span>
               {:else if !workdirCtrl.selectedDiffStaged}
-                <button disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageLines(repo(), file, [workdirCtrl.hunkSelectionFor(hunk)])}>Stage hunk</button>
-                <button class="danger" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.confirmDiscardLines(file, [workdirCtrl.hunkSelectionFor(hunk)])}>Discard hunk</button>
+                <button disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageLines(repo(), file, [workdirCtrl.hunkSelectionFor(hunk)])}>{t("workdir.stage_hunk")}</button>
+                <button class="danger" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.confirmDiscardLines(file, [workdirCtrl.hunkSelectionFor(hunk)])}>{t("workdir.discard_hunk")}</button>
               {:else}
-                <button disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageLines(repo(), file, [workdirCtrl.hunkSelectionFor(hunk)])}>Unstage hunk</button>
+                <button disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageLines(repo(), file, [workdirCtrl.hunkSelectionFor(hunk)])}>{t("workdir.unstage_hunk")}</button>
               {/if}
             </span>
           </div>
@@ -537,7 +538,7 @@
                       e.stopPropagation();
                       workdirCtrl.toggleLine(hunk.header, hunk.lines, idx, e.shiftKey);
                     }}
-                    aria-label="select {line.kind === '+' ? 'added' : 'removed'} line {line.kind === '+' ? line.newNo : line.oldNo}"
+                    aria-label={t("workdir.select_line", { kind: line.kind === "+" ? t("workdir.added") : t("workdir.removed"), n: line.kind === "+" ? line.newNo : line.oldNo })}
                   />
                 {/if}
               </span>
@@ -547,7 +548,7 @@
           {/each}
         {/each}
         {#if workdirCtrl.diffFile.truncated}
-          <div class="diff-line"><span class="ln"></span><span class="sel"></span><span class="mk"></span><code class="mut">&#8230; diff truncated (file capped)</code></div>
+          <div class="diff-line"><span class="ln"></span><span class="sel"></span><span class="mk"></span><code class="mut">&#8230; {t("workdir.diff_truncated")}</code></div>
         {/if}
       {/if}
     </div>
@@ -573,10 +574,10 @@
      already conveys the directory — title keeps the full path either way. -->
 {#snippet treeCtl(section: "staged" | "unstaged", hasDirs: boolean)}
   {#if hasDirs}
-    <button class="wd-act" title="Collapse all folders" aria-label="Collapse all folders" onclick={() => workdirCtrl.collapseAll(section)}>
+    <button class="wd-act" title={t("workdir.collapse_all_folders")} aria-label={t("workdir.collapse_all_folders")} onclick={() => workdirCtrl.collapseAll(section)}>
       <ChevronsDownUp class="ico" size={14} aria-hidden="true" />
     </button>
-    <button class="wd-act" title="Expand all folders" aria-label="Expand all folders" onclick={() => workdirCtrl.expandAll(section)}>
+    <button class="wd-act" title={t("workdir.expand_all_folders")} aria-label={t("workdir.expand_all_folders")} onclick={() => workdirCtrl.expandAll(section)}>
       <ChevronsUpDown class="ico" size={14} aria-hidden="true" />
     </button>
   {/if}
@@ -599,8 +600,8 @@
                so the click stages, not toggles the folder open/closed. -->
           <button
             class="wd-act"
-            title="Unstage folder"
-            aria-label="Unstage folder {child.path}"
+            title={t("workdir.unstage_folder")}
+            aria-label={t("workdir.unstage_folder_named", { path: child.path })}
             disabled={workdirCtrl.busy}
             onclick={(e) => {
               e.preventDefault();
@@ -625,15 +626,15 @@
       <span class="st" data-status={f.status}>{STATUS_LABEL[f.status] ?? f.status}</span>
       <span class="wd-path" title={f.path}>{f.oldPath ? f.oldPath + " → " + f.path : f.name}</span>
       {#if submodulePaths.has(f.path)}
-        <span class="wd-sub" title="Submodule — its own working tree has uncommitted changes or its recorded commit moved. Open it (sidebar ▸ Submodules) to inspect.">submodule</span>
+        <span class="wd-sub" title={t("workdir.submodule_tip")}>{t("workdir.submodule")}</span>
       {/if}
       {#if workdirCtrl.busyTarget === f.path}
         <span class="spinner"></span>
       {:else}
         <button
           class="wd-act"
-          title="Blame"
-          aria-label="Blame {f.path}"
+          title={t("workdir.blame")}
+          aria-label={t("workdir.blame_file", { path: f.path })}
           disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
           onclick={(e) => {
             e.stopPropagation();
@@ -642,8 +643,8 @@
         >
         <button
           class="wd-act"
-          title="History"
-          aria-label="History {f.path}"
+          title={t("workdir.history")}
+          aria-label={t("workdir.history_file", { path: f.path })}
           disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
           onclick={(e) => {
             e.stopPropagation();
@@ -652,8 +653,8 @@
         >
         <button
           class="wd-act"
-          title="Unstage"
-          aria-label="Unstage {f.path}"
+          title={t("workdir.unstage")}
+          aria-label={t("workdir.unstage_named", { path: f.path })}
           disabled={workdirCtrl.busy}
           onclick={(e) => {
             e.stopPropagation();
@@ -662,8 +663,8 @@
         >
         <button
           class="wd-act"
-          title="Open in external diff"
-          aria-label="Open in external diff for {f.path}"
+          title={t("workdir.open_external_diff")}
+          aria-label={t("workdir.open_external_diff_for", { path: f.path })}
           disabled={workdirCtrl.busy}
           onclick={(e) => {
             e.stopPropagation();
@@ -692,8 +693,8 @@
                click stages, not toggles the folder open/closed. -->
           <button
             class="wd-act"
-            title="Stage folder"
-            aria-label="Stage folder {child.path}"
+            title={t("workdir.stage_folder")}
+            aria-label={t("workdir.stage_folder_named", { path: child.path })}
             disabled={workdirCtrl.busy}
             onclick={(e) => {
               e.preventDefault();
@@ -722,15 +723,15 @@
       <span class="st" data-status={f.status}>{STATUS_LABEL[f.status] ?? f.status}</span>
       <span class="wd-path" title={f.path}>{f.oldPath ? f.oldPath + " → " + f.path : f.name}</span>
       {#if submodulePaths.has(f.path)}
-        <span class="wd-sub" title="Submodule — its own working tree has uncommitted changes or its recorded commit moved. Open it (sidebar ▸ Submodules) to inspect.">submodule</span>
+        <span class="wd-sub" title={t("workdir.submodule_tip")}>{t("workdir.submodule")}</span>
       {/if}
       {#if workdirCtrl.busyTarget === f.path}
         <span class="spinner"></span>
       {:else}
         <button
           class="wd-act"
-          title="Blame"
-          aria-label="Blame {f.path}"
+          title={t("workdir.blame")}
+          aria-label={t("workdir.blame_file", { path: f.path })}
           disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
           onclick={(e) => {
             e.stopPropagation();
@@ -739,8 +740,8 @@
         >
         <button
           class="wd-act"
-          title="History"
-          aria-label="History {f.path}"
+          title={t("workdir.history")}
+          aria-label={t("workdir.history_file", { path: f.path })}
           disabled={workdirCtrl.busy || !canBlameWorkdirFile(f)}
           onclick={(e) => {
             e.stopPropagation();
@@ -749,8 +750,8 @@
         >
         <button
           class="wd-act"
-          title="Stage"
-          aria-label="Stage {f.path}"
+          title={t("workdir.stage")}
+          aria-label={t("workdir.stage_named", { path: f.path })}
           disabled={workdirCtrl.busy}
           onclick={(e) => {
             e.stopPropagation();
@@ -759,8 +760,8 @@
         >
         <button
           class="wd-act danger"
-          title="Discard"
-          aria-label="Discard changes to {f.path}"
+          title={t("workdir.discard")}
+          aria-label={t("workdir.discard_named", { path: f.path })}
           disabled={workdirCtrl.busy}
           onclick={(e) => {
             e.stopPropagation();
@@ -769,8 +770,8 @@
         >
         <button
           class="wd-act"
-          title="Open in external diff"
-          aria-label="Open in external diff for {f.path}"
+          title={t("workdir.open_external_diff")}
+          aria-label={t("workdir.open_external_diff_for", { path: f.path })}
           disabled={workdirCtrl.busy || f.status === "?"}
           onclick={(e) => {
             e.stopPropagation();

@@ -21,6 +21,7 @@
 // snapshotted). The user is never trapped behind a stuck fetch.
 
 import { IN_TAURI } from "../../ipc/env";
+import { be } from "@/i18n/i18n.svelte.ts";
 
 type Phase = "fetch" | "pull";
 
@@ -65,7 +66,7 @@ class SyncProgressState {
   // so the user can read git's error until they close it.
   settle(ok: boolean, message: string): void {
     this.done = true;
-    this.error = ok ? null : message || "Failed.";
+    this.error = ok ? null : be(message) || "Failed.";
     this.stopListening();
     if (ok) {
       this.autoCloseTimer = setTimeout(() => {
