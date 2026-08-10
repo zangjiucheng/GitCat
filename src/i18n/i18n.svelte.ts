@@ -24,25 +24,32 @@ export const LOCALES: { id: Locale; label: string }[] = [
   { id: "zh", label: "中文" },
 ];
 
-// Per-namespace dicts. `import.meta.glob` MUST be called DIRECTLY — Vite only
-// static-replaces the literal `import.meta.glob(...)` call form; aliasing it to a
-// variable leaves it undefined at runtime (throws on load / under vitest). Typed
-// by vite/client (src/vite-env.d.ts).
+// ONE glob over every locale dir — `./locales/<loc>/<namespace>.ts` — so adding
+// a language is PURELY ADDITIVE: create `locales/<loc>/`, add the id to `Locale`
+// + `LOCALES` above, and it's picked up here with no edit. `import.meta.glob`
+// MUST be called DIRECTLY — Vite only static-replaces the literal
+// `import.meta.glob(...)` call form; aliasing it to a variable leaves it
+// undefined at runtime (throws on load / under vitest). `./locales/*/*.ts` is
+// still a literal pattern, so that requirement is met. Typed by vite/client
+// (src/vite-env.d.ts).
 type GlobMod = { default?: Record<string, string> };
-const enModules = import.meta.glob("./locales/en/*.ts", { eager: true }) as Record<string, GlobMod>;
-const zhModules = import.meta.glob("./locales/zh/*.ts", { eager: true }) as Record<string, GlobMod>;
+const allModules = import.meta.glob("./locales/*/*.ts", { eager: true }) as Record<string, GlobMod>;
 
-function build(mods: Record<string, GlobMod>): Record<string, string> {
-  const out: Record<string, string> = {};
+// path -> { "<loc>": { "<namespace>.<key>": value } }. The filename is the
+// namespace and the parent dir is the locale.
+function buildDicts(mods: Record<string, GlobMod>): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
   for (const [path, mod] of Object.entries(mods)) {
-    const m = /([^/]+)\.ts$/.exec(path);
-    const ns = m ? m[1] : path;
-    for (const [k, v] of Object.entries(mod.default ?? {})) out[`${ns}.${k}`] = v;
+    const m = /\/locales\/([^/]+)\/([^/]+)\.ts$/.exec(path);
+    if (!m) continue;
+    const [, loc, ns] = m;
+    const dict = (out[loc] ??= {});
+    for (const [k, v] of Object.entries(mod.default ?? {})) dict[`${ns}.${k}`] = v;
   }
   return out;
 }
 
-const DICTS: Record<Locale, Record<string, string>> = { en: build(enModules), zh: build(zhModules) };
+const DICTS: Record<string, Record<string, string>> = buildDicts(allModules);
 
 const STORAGE_KEY = "gitcat.locale";
 function readStored(): Locale {
@@ -87,7 +94,7 @@ export function setLocale(loc: Locale): void {
  * blanks the UI.
  */
 export function t(key: string, params?: Record<string, string | number | null | undefined>): string {
-  let s = DICTS[current][key] ?? DICTS.en[key] ?? key;
+  let s = DICTS[current]?.[key] ?? DICTS.en?.[key] ?? key;
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       s = s.split(`{${k}}`).join(v == null ? "" : String(v));
