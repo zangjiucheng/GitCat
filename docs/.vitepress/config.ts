@@ -73,10 +73,56 @@ export default defineConfig({
     logo: "/gitcat-icon.svg",
     nav: [
       { text: "Home", link: "/" },
+      { text: "Guide", link: "/guide/" },
       { text: "Install", link: "/install" },
       { text: "Features", link: "/features" },
+      { text: "Plugins", link: "/plugins" },
       { text: "FAQ", link: "/faq" },
     ],
+
+    // A sidebar only for the /guide/ user manual (the other pages stay
+    // sidebar-less, full-width marketing/reference pages). Grouped to match the
+    // manual's four arcs: get oriented, do everyday work, stay safe, go deeper.
+    sidebar: {
+      "/guide/": [
+        {
+          text: "Getting started",
+          items: [
+            { text: "Overview & layout", link: "/guide/" },
+            { text: "Opening a repository", link: "/guide/opening-a-repository" },
+            { text: "Reading the commit graph", link: "/guide/commit-graph" },
+          ],
+        },
+        {
+          text: "Everyday work",
+          items: [
+            { text: "Committing & staging", link: "/guide/committing" },
+            { text: "Branches & tags", link: "/guide/branches" },
+            { text: "Syncing with remotes", link: "/guide/remotes" },
+            { text: "Cherry-pick, merge & revert", link: "/guide/combining" },
+            { text: "Rebasing", link: "/guide/rebasing" },
+          ],
+        },
+        {
+          text: "Safety & recovery",
+          items: [
+            { text: "Undo & the Safety Manager", link: "/guide/undo-safety" },
+            { text: "History & recovery tools", link: "/guide/history-tools" },
+            { text: "Rewriting history", link: "/guide/rewriting-history" },
+          ],
+        },
+        {
+          text: "Power & customization",
+          items: [
+            { text: "Command palette & keyboard", link: "/guide/keyboard" },
+            { text: "Terminal & external tools", link: "/guide/terminal-tools" },
+            { text: "Tama", link: "/guide/tama" },
+            { text: "Plugins", link: "/guide/plugins" },
+            { text: "Settings", link: "/guide/settings" },
+          ],
+        },
+      ],
+    },
 
     socialLinks: [{ icon: "github", link: "https://github.com/zangjiucheng/GitCat" }],
 

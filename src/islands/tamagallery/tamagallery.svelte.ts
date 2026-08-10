@@ -29,14 +29,19 @@ export const POSES: PoseCard[] = [
   { key: "hero", label: "Hello!", previewState: "greeting" },
 ];
 
-// Resolves a pose's image lazily, never at module load: bridge.ts's own
-// TAMA_IMG re-export is TDZ-hazardous read eagerly (see that file's header
-// doc) — legacy/main.ts hasn't finished initializing TAMA_IMG yet at the
-// point this module's own top-level code runs (it sits in the same import
-// graph, well before legacy/main.ts's own body executes). Safe to call
-// from the gallery's template, which only ever renders after boot.
+// Resolves a pose's image lazily, never at module load: bridge.ts's own live
+// re-exports are TDZ-hazardous read eagerly (see that file's header doc) —
+// legacy/main.ts hasn't finished initializing them at the point this module's
+// own top-level code runs (it sits in the same import graph, well before
+// legacy/main.ts's own body executes). Safe to call from the gallery's
+// template, which only ever renders after boot.
+//
+// Goes through bridge.tamaPose — the SAME single accessor the mascot itself
+// reads (activeSkin[key] ?? TAMA_IMG[key], see legacy/main.ts) — so an active
+// plugin skin (PER-47) shows here too, with the built-in painted art as the
+// always-present fallback. This is the de-dupe: no separate TAMA_IMG read path.
 export function poseImg(key: string): string {
-  return (bridge.TAMA_IMG as Record<string, string>)[key] ?? "";
+  return (bridge.tamaPose as (key: string) => string)(key) ?? "";
 }
 
 class TamaGalleryState {

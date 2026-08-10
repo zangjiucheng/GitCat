@@ -71,6 +71,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use git2::{Oid, Repository};
 
 use crate::git_write::WriteResult;
+use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::NoConsoleWindowExt;
 
 /// Process-wide monotonic tie-breaker for `refs/gitgui/deleted-tag/*` names —
@@ -113,7 +114,7 @@ fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
         .arg(path)
         .args(args)
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(GitOut {
         ok: output.status.success(),
         code: output.status.code(),
@@ -147,17 +148,17 @@ fn git_error_message(out: &GitOut) -> String {
 /// convention (see this module's own doc comment).
 fn validate_tag_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
-        return Err("Tag name is empty.".into());
+        return Err(ierr("err_history.tag_name_empty"));
     }
     if name.starts_with('-') {
-        return Err(format!("Refusing a tag name that looks like a flag: {name:?}"));
+        return Err(ierrp("err_history.tag_name_flag", &[("name", &format!("{name:?}"))]));
     }
     for ch in name.chars() {
         if ch.is_control() || ch == ' ' || ch == '\u{7f}' {
-            return Err(format!("Tag name has an illegal whitespace/control character: {name:?}"));
+            return Err(ierrp("err_history.tag_name_control", &[("name", &format!("{name:?}"))]));
         }
         if matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\') {
-            return Err(format!("Tag name has an illegal character '{ch}': {name:?}"));
+            return Err(ierrp("err_history.tag_name_illegal_char", &[("ch", &ch.to_string()), ("name", &format!("{name:?}"))]));
         }
     }
     if name.contains("..")
@@ -169,7 +170,7 @@ fn validate_tag_name(name: &str) -> Result<(), String> {
         || name.ends_with(".lock")
         || name == "@"
     {
-        return Err(format!("Not a valid tag name: {name:?}"));
+        return Err(ierrp("err_history.tag_name_invalid", &[("name", &format!("{name:?}"))]));
     }
     Ok(())
 }
@@ -180,19 +181,19 @@ fn validate_tag_name(name: &str) -> Result<(), String> {
 /// chars; `--end-of-options` handles the rest at the CLI boundary).
 fn validate_revision(rev: &str) -> Result<(), String> {
     if rev.is_empty() {
-        return Err("Target is empty.".into());
+        return Err(ierr("err_history.target_empty"));
     }
     if rev.starts_with('-') {
-        return Err(format!("Refusing a target that looks like a flag: {rev:?}"));
+        return Err(ierrp("err_history.target_flag", &[("rev", &format!("{rev:?}"))]));
     }
     if rev.chars().any(|c| c.is_control()) {
-        return Err("Target has a control character.".into());
+        return Err(ierr("err_history.target_control"));
     }
     Ok(())
 }
 
 fn open_repo(path: &str) -> Result<Repository, WriteResult> {
-    Repository::open(path).map_err(|e| err_result(format!("Cannot open repository: {}", e.message())))
+    Repository::open(path).map_err(|e| err_result(ierrp("err_history.cannot_open", &[("detail", e.message())])))
 }
 
 // ---------------------------------------------------------------------------
@@ -306,7 +307,7 @@ pub async fn delete_tag(path: String, name: String) -> WriteResult {
         let full_ref = format!("refs/tags/{name}");
         let target = match repo.find_reference(&full_ref).ok().and_then(|r| r.target()) {
             Some(oid) => oid,
-            None => return err_result(format!("Tag {name} does not exist.")),
+            None => return err_result(ierrp("err_history.tag_does_not_exist", &[("name", &name)])),
         };
         let short_target: String = target.to_string().chars().take(7).collect();
 
@@ -314,7 +315,7 @@ pub async fn delete_tag(path: String, name: String) -> WriteResult {
         // it up first — never delete unbacked-up.
         let pin = match pin_deleted_tag(&repo, target, &name) {
             Ok(p) => p,
-            Err(e) => return err_result(format!("Refusing to delete tag {name} — could not back it up first: {e}")),
+            Err(e) => return err_result(ierrp("err_history.refuse_delete_tag_backup", &[("name", &name), ("detail", &e)])),
         };
 
         match run_git(&path, &["tag", "-d", "--end-of-options", &name]) {

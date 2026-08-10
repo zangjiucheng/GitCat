@@ -68,6 +68,7 @@ use std::process::Command;
 
 use serde::Serialize;
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::model::Person;
 use crate::procutil::NoConsoleWindowExt;
 
@@ -151,13 +152,13 @@ fn file_history_inner(path: &str, file: &str, at_commit: Option<&str>) -> Result
     validate_path(file)?;
 
     let repo = crate::trust::open_repo(path)
-        .map_err(|e| format!("cannot open repository: {}", e.message()))?;
+        .map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))?;
 
     // Same resolution convention as blame_file_inner.
     let commit = match at_commit {
         Some(sha) => repo
             .find_commit_by_prefix(sha)
-            .map_err(|e| format!("Not a valid commit: {sha:?} ({})", e.message()))?,
+            .map_err(|e| ierrp("err_misc.not_a_valid_commit", &[("rev", &format!("{sha:?}")), ("detail", e.message())]))?,
         None => {
             let head = repo.head().map_err(|e| e.message().to_string())?;
             head.peel_to_commit().map_err(|e| e.message().to_string())?
@@ -171,12 +172,12 @@ fn file_history_inner(path: &str, file: &str, at_commit: Option<&str>) -> Result
     let tree = commit.tree().map_err(|e| e.message().to_string())?;
     let entry = tree
         .get_path(Path::new(file))
-        .map_err(|_| format!("{file} does not exist at {short_sha}."))?;
+        .map_err(|_| ierrp("err_misc.path_does_not_exist", &[("path", file), ("short", short_sha.as_str())]))?;
     let obj = entry
         .to_object(&repo)
-        .map_err(|_| format!("{file} does not exist at {short_sha}."))?;
+        .map_err(|_| ierrp("err_misc.path_does_not_exist", &[("path", file), ("short", short_sha.as_str())]))?;
     if obj.as_blob().is_none() {
-        return Err(format!("{file} is a directory at {short_sha} — pick a file."));
+        return Err(ierrp("err_misc.file_is_a_directory", &[("path", file), ("short", short_sha.as_str())]));
     }
 
     let max_count_arg = format!("--max-count={}", MAX_HISTORY_COMMITS + 1);
@@ -241,7 +242,7 @@ fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
         .arg(path)
         .args(args)
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code(),
@@ -254,7 +255,7 @@ fn git_msg(o: &Out) -> String {
     if !o.stderr.is_empty() {
         o.stderr.clone()
     } else {
-        format!("git exited with status {:?}", o.code)
+        ierrp("err_misc.git_exited_with_status", &[("code", &format!("{:?}", o.code))])
     }
 }
 
@@ -274,10 +275,10 @@ fn short(sha: &str) -> String {
 /// delimiter assumption (see module doc).
 fn validate_path(file: &str) -> Result<(), String> {
     if file.trim().is_empty() {
-        return Err("No file to show history for.".into());
+        return Err(ierr("err_misc.no_file_for_history"));
     }
     if file.contains('\u{0}') {
-        return Err("Path has an embedded NUL byte.".into());
+        return Err(ierr("err_misc.path_nul"));
     }
     Ok(())
 }

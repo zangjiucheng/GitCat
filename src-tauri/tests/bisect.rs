@@ -259,7 +259,11 @@ fn bisect_run_aborts_cleanly_on_exit_126_or_127_and_leaves_session_resumable() {
         assert!(!result.ok, "exit {bad_exit_code} must be reported as an abort, not silently ok");
         assert!(result.first_bad.is_none(), "must not have converged");
         let msg = result.message.to_lowercase();
-        assert!(msg.contains("abort"), "message should clearly say it aborted (code {bad_exit_code}): {}", result.message);
+        assert!(
+            msg.contains("err_ops.bisect_run_aborted"),
+            "message should carry the aborted key (code {bad_exit_code}): {}",
+            result.message
+        );
         assert!(
             msg.contains(&bad_exit_code.to_string()),
             "message should mention the distinguishing exit code {bad_exit_code}: {}",
@@ -297,7 +301,7 @@ fn bisect_run_refuses_cleanly_when_no_bisect_is_in_progress() {
     assert!(!result.ok, "should refuse cleanly, not report ok");
     assert!(!result.in_progress);
     assert!(
-        result.message.to_lowercase().contains("no bisect in progress"),
+        result.message.contains("err_ops.no_bisect_in_progress_start"),
         "message should match bisect_mark's own refusal: {}",
         result.message
     );

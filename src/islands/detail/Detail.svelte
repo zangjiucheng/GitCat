@@ -6,6 +6,7 @@
   import { resolver } from "../resolver/resolver.svelte.ts";
   import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
   import { settingsCtrl } from "../settings/settings.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
   import { fade } from "svelte/transition";
   import Folder from "@lucide/svelte/icons/folder";
   import ChevronsDownUp from "@lucide/svelte/icons/chevrons-down-up";
@@ -116,23 +117,23 @@
   <Workdir />
 {:else if detailCtrl.hero}
   <div class="tama-hero">
-    <img class="tama-hero-img" src={bridge.TAMA_IMG.hero} alt={detailCtrl.hero.kind === "empty" ? "Tama" : "Tama, GitCat's guardian"} />
+    <img class="tama-hero-img" src={bridge.TAMA_IMG.hero} alt={detailCtrl.hero.kind === "empty" ? "Tama" : t("detail.hero_alt")} />
     {#if detailCtrl.hero.kind === "loaded"}
       {#if settingsCtrl.tamaEnabled}
-        <div class="hero-bubble">
-          はじめまして! I'm <b>Tama</b>, GitCat's guardian. I pin a snapshot before every mutation — so your history is always safe with
-          me. <span class="jp">にゃ〜♪</span>
-        </div>
+        <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+        <div class="hero-bubble">{@html t("detail.hero_bubble_loaded")}</div>
       {:else}
-        <div class="hero-bubble">A snapshot is taken before every mutation — your history is always safe.</div>
+        <div class="hero-bubble">{t("detail.hero_bubble_loaded_plain")}</div>
       {/if}
-      <div class="hero-stat"><span class="n">{detailCtrl.hero.n.toLocaleString()}</span> commits laid out in <b>{detailCtrl.hero.ms.toFixed(0)} ms</b></div>
-      <div class="hero-hint">Click a commit to inspect it &#183; drag a dot onto another to cherry-pick &#183; &#8984;Z to rewind</div>
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+      <div class="hero-stat">{@html t("detail.hero_stat", { n: detailCtrl.hero.n.toLocaleString(), ms: detailCtrl.hero.ms.toFixed(0) })}</div>
+      <div class="hero-hint">{t("detail.hero_hint_loaded")}</div>
     {:else}
       {#if settingsCtrl.tamaEnabled}
-        <div class="hero-bubble">はじめまして! I'm <b>Tama</b>. Open a Git repository and I'll lay out its whole history in a blink. <span class="jp">にゃ〜♪</span></div>
+        <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+        <div class="hero-bubble">{@html t("detail.hero_bubble_empty")}</div>
       {:else}
-        <div class="hero-bubble">Open a Git repository to get started.</div>
+        <div class="hero-bubble">{t("detail.hero_bubble_empty_plain")}</div>
       {/if}
       <div style="margin-top:2px;display:flex;align-items:center;gap:8px;justify-content:center">
         <!-- Single entry point (was two: a direct native-picker button plus a
@@ -144,9 +145,10 @@
              See dashboard.svelte.ts's addRepository() for why picking a
              brand-new folder from inside the modal still opens it
              immediately when reached from here (no repo open yet). -->
-        <button class="btn" id="openRepoBtn" onclick={() => dashboardCtrl.show()}><Folder class="ico" size={14} aria-hidden="true" /> Open a repository&#8230;</button>
+        <button class="btn" id="openRepoBtn" onclick={() => dashboardCtrl.show()}><Folder class="ico" size={14} aria-hidden="true" /> {t("detail.open_repo")}</button>
       </div>
-      <div class="hero-hint">or click the repo name <b>&#9662;</b> in the top bar</div>
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+      <div class="hero-hint">{@html t("detail.hero_hint_open")}</div>
     {/if}
   </div>
 {:else if detailCtrl.commit}
@@ -165,75 +167,76 @@
     <div class="d-subject">{c.subject}</div>
     <div class="d-body" id="dBody" class:clamped={detailCtrl.bodyLong && !detailCtrl.bodyExpanded}>
       {#if detailCtrl.bodyText === "loading…"}
-        <span class="mut">loading&#8230;</span>
+        <span class="mut">{t("detail.loading")}</span>
       {:else}
         {detailCtrl.bodyText}
       {/if}
     </div>
     {#if detailCtrl.bodyLong}
       <button class="d-body-toggle" onclick={() => detailCtrl.toggleBody()}>
-        {detailCtrl.bodyExpanded ? "Show less" : "Show more"}
+        {detailCtrl.bodyExpanded ? t("detail.show_less") : t("detail.show_more")}
       </button>
     {/if}
     <div class="id-strip">
       <span
         class="hash"
         id="hashCopy"
-        title="Click to copy"
+        title={t("detail.click_to_copy")}
         role="button"
         tabindex="0"
         onclick={() => detailCtrl.copySha()}
         onkeydown={(e) => (e.key === "Enter" || e.key === " ") && detailCtrl.copySha()}
-        >{detailCtrl.copied ? "copied ✓" : c.sha}</span
+        >{detailCtrl.copied ? t("detail.copied") : c.sha}</span
       >
       <span class="gpg {gpg[0]}">{gpg[1]}</span>
-      <span class="mut mono" style="font-size:11px">row {c.row.toLocaleString()} / {(bridge.G?.N ?? 0).toLocaleString()}</span>
+      <span class="mut mono" style="font-size:11px">{t("detail.row_of", { row: c.row.toLocaleString(), total: (bridge.G?.N ?? 0).toLocaleString() })}</span>
     </div>
     <button
       class="btn ghost"
       id="revertCommitBtn"
       style="margin-top:8px"
       disabled={detailCtrl.revertDisabled}
-      title={c.merge ? "Can't revert a merge commit" : undefined}
+      title={c.merge ? t("detail.cant_revert_merge") : undefined}
       onclick={() => detailCtrl.revertCommit()}
-      >{#if resolver.busy}<span class="spinner"></span>{/if}&#8617; Revert commit</button
+      >{#if resolver.busy}<span class="spinner"></span>{/if}&#8617; {t("detail.revert_commit")}</button
     >
   </section>
   <section>
     <div class="who-split">
-      <div class="who" class:differ={c.differ}><h4>Author</h4><div class="nm">{c.an.n}</div><div class="em">{c.an.e}</div><div class="dt mono">{c.an.d}</div><div class="dt-abs mono">{c.an.abs}</div></div>
-      <div class="who" class:differ={c.differ}><h4>Committer</h4><div class="nm">{c.cm.n}</div><div class="em">{c.cm.e}</div><div class="dt mono">{c.cm.d}</div><div class="dt-abs mono">{c.cm.abs}</div></div>
+      <div class="who" class:differ={c.differ}><h4>{t("detail.author")}</h4><div class="nm">{c.an.n}</div><div class="em">{c.an.e}</div><div class="dt mono">{c.an.d}</div><div class="dt-abs mono">{c.an.abs}</div></div>
+      <div class="who" class:differ={c.differ}><h4>{t("detail.committer")}</h4><div class="nm">{c.cm.n}</div><div class="em">{c.cm.e}</div><div class="dt mono">{c.cm.d}</div><div class="dt-abs mono">{c.cm.abs}</div></div>
     </div>
     {#if c.differ}
-      <div class="mut" style="font-size:11px;margin-top:6px">&#9888; author &ne; committer (patch applied / rebased) &#8212; the teaching point cherry-pick &amp; rebase create.</div>
+      <div class="mut" style="font-size:11px;margin-top:6px">{t("detail.author_ne_committer")}</div>
     {/if}
   </section>
   <section>
-    <h4 class="d-lab">Refs pointing here</h4>
+    <h4 class="d-lab">{t("detail.refs_pointing_here")}</h4>
     <div class="refs-here">
       {#if c.refs.length}
         {#each c.refs as r}<span class="row-chip {r.t}">{r.n}</span>{/each}
       {:else}
-        <span class="mut">no refs point here</span>
+        <span class="mut">{t("detail.no_refs")}</span>
       {/if}
     </div>
     {#if cov}
       <div class="covered">
         <span class="ck"></span>
         <div>
-          Covered by snapshot <b>backup/&#8230;{cov.ago} ago</b><br /><span class="mut">reachable via a Safety-Manager backup ref &#8212; &#8984;Z can rewind here.</span>
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+          {@html t("detail.covered", { ago: cov.ago })}
         </div>
       </div>
     {/if}
   </section>
   <section>
     <div class="d-lab-row">
-      <h4 class="d-lab" style="margin:0">Changes</h4>
+      <h4 class="d-lab" style="margin:0">{t("detail.changes")}</h4>
       {@render treeCtl()}
     </div>
     <div class="diffstat" id="diffstat">
       {#if detailCtrl.diffLoading}
-        <span class="mut mono" style="font-size:11px"><span class="spinner"></span> loading diff&#8230;</span>
+        <span class="mut mono" style="font-size:11px"><span class="spinner"></span> {t("detail.loading_diff")}</span>
       {:else if detailCtrl.diffstat}
         {@const s = detailCtrl.diffstat}
         <span class="nums"><span class="add">+{s.add}</span> <span class="del">&minus;{s.del}</span></span>
@@ -241,28 +244,28 @@
           <i class="a" style="width:{Math.round((100 * s.add) / ((s.add + s.del) || 1))}%"></i>
           <i class="d" style="width:{Math.round((100 * s.del) / ((s.add + s.del) || 1))}%"></i>
         </div>
-        <span class="mut mono" style="font-size:11px">{s.files} file{s.files === 1 ? "" : "s"}{s.truncated ? " (capped)" : ""}</span>
+        <span class="mut mono" style="font-size:11px">{s.files} {s.files === 1 ? t("detail.file") : t("detail.files_plural")}{s.truncated ? t("detail.capped_suffix") : ""}</span>
       {/if}
     </div>
     <div class="tree" id="tree" data-vimnav-list>
       {#if detailCtrl.treeLoading}
-        <div class="mut" style="padding:6px 4px"><span class="spinner"></span> loading files&#8230;</div>
+        <div class="mut" style="padding:6px 4px"><span class="spinner"></span> {t("detail.loading_files")}</div>
       {:else if !detailCtrl.tree.files.length && !Object.keys(detailCtrl.tree.dirs).length}
-        <div class="mut" style="padding:6px 4px">no file changes</div>
+        <div class="mut" style="padding:6px 4px">{t("detail.no_file_changes")}</div>
       {:else}
         {@render dirNode(detailCtrl.tree)}
       {/if}
     </div>
   </section>
   <section>
-    <h4 class="d-lab">Diff</h4>
+    <h4 class="d-lab">{t("detail.diff")}</h4>
     <div class="diffview" id="diffview" bind:this={diffviewEl}>
       {#if detailCtrl.diffLoading}
-        <div class="diff-file-h mut"><span class="spinner"></span> loading diff&#8230;</div>
+        <div class="diff-file-h mut"><span class="spinner"></span> {t("detail.loading_diff")}</div>
       {:else}
         <div class="diff-file-h">
           <span class="diff-file-h-name">{detailCtrl.diffHeader}</span>
-          <button class="wd-act" title="Expand diff" aria-label="Expand diff to full page" onclick={() => detailCtrl.expandDiff()}>
+          <button class="wd-act" title={t("detail.expand_diff")} aria-label={t("detail.expand_diff_aria")} onclick={() => detailCtrl.expandDiff()}>
             <Maximize2 class="ico" size={13} aria-hidden="true" />
           </button>
         </div>
@@ -288,14 +291,14 @@
       <div class="modal-body diffx-body">
         <div class="diffx-files" style="width:{diffxTreeW}px">
           <div class="diffx-files-head">
-            <span class="d-lab" style="margin:0">Files</span>
+            <span class="d-lab" style="margin:0">{t("detail.files_label")}</span>
             {@render treeCtl()}
           </div>
           <div class="diffx-files-scroll tree" data-vimnav-list>
             {#if detailCtrl.treeLoading}
-              <div class="mut" style="padding:6px 4px"><span class="spinner"></span> loading files&#8230;</div>
+              <div class="mut" style="padding:6px 4px"><span class="spinner"></span> {t("detail.loading_files")}</div>
             {:else if !detailCtrl.tree.files.length && !Object.keys(detailCtrl.tree.dirs).length}
-              <div class="mut" style="padding:6px 4px">no file changes</div>
+              <div class="mut" style="padding:6px 4px">{t("detail.no_file_changes")}</div>
             {:else}
               {@render dirNode(detailCtrl.tree)}
             {/if}
@@ -311,7 +314,7 @@
           class:active={diffxResizing}
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize file list"
+          aria-label={t("detail.resize_file_list")}
           aria-valuenow={Math.round(diffxTreeW)}
           aria-valuemin={DIFFX_TREE_MIN}
           aria-valuemax={DIFFX_TREE_MAX}
@@ -325,7 +328,7 @@
         ></div>
         <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
           {#if detailCtrl.diffLoading}
-            <div class="diff-file-h mut"><span class="spinner"></span> loading diff&#8230;</div>
+            <div class="diff-file-h mut"><span class="spinner"></span> {t("detail.loading_diff")}</div>
           {:else}
             <div class="diff-file-h"><span class="diff-file-h-name">{detailCtrl.diffHeader}</span></div>
             <div class="diff-rows">{@render diffLineRows()}</div>
@@ -333,7 +336,7 @@
         </div>
       </div>
       <div class="modal-foot">
-        <button class="btn ghost" onclick={() => detailCtrl.collapseDiff()}>Close</button>
+        <button class="btn ghost" onclick={() => detailCtrl.collapseDiff()}>{t("common.close")}</button>
       </div>
     </div>
   </div>
@@ -354,10 +357,10 @@
 {#snippet treeCtl()}
   {#if detailCtrl.treeHasDirs}
     <span class="tree-ctl">
-      <button class="wd-act" title="Collapse all folders" aria-label="Collapse all folders" onclick={() => detailCtrl.collapseAllDirs()}>
+      <button class="wd-act" title={t("detail.collapse_all_folders")} aria-label={t("detail.collapse_all_folders")} onclick={() => detailCtrl.collapseAllDirs()}>
         <ChevronsDownUp class="ico" size={14} aria-hidden="true" />
       </button>
-      <button class="wd-act" title="Expand all folders" aria-label="Expand all folders" onclick={() => detailCtrl.expandAllDirs()}>
+      <button class="wd-act" title={t("detail.expand_all_folders")} aria-label={t("detail.expand_all_folders")} onclick={() => detailCtrl.expandAllDirs()}>
         <ChevronsUpDown class="ico" size={14} aria-hidden="true" />
       </button>
     </span>
@@ -393,8 +396,8 @@
       {:else}
         <button
           class="wd-act"
-          title="Blame"
-          aria-label="Blame {f.p}"
+          title={t("detail.blame")}
+          aria-label={t("detail.blame_file", { path: f.p })}
           onclick={(e) => {
             e.stopPropagation();
             detailCtrl.blameFile(f);
@@ -402,8 +405,8 @@
         >
         <button
           class="wd-act"
-          title="History"
-          aria-label="History {f.p}"
+          title={t("detail.history")}
+          aria-label={t("detail.history_file", { path: f.p })}
           onclick={(e) => {
             e.stopPropagation();
             detailCtrl.historyFile(f);
@@ -412,8 +415,8 @@
       {/if}
       <button
         class="wd-act"
-        title="Open in external diff"
-        aria-label="Open in external diff for {f.p}"
+        title={t("detail.open_external_diff")}
+        aria-label={t("detail.open_external_diff_for", { path: f.p })}
         onclick={(e) => {
           e.stopPropagation();
           detailCtrl.openExternalDiff(f);

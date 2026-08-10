@@ -8,6 +8,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State, Wry};
 
 use crate::git_read::{collect_refs, filter_hidden_chips, read_repo, seed_tip_oids, walk_repo};
+use crate::i18n_err::ierrp;
 use crate::layout::{layout, LayoutBuilder, NCOL};
 use crate::model::{
     AncestorFlags, CommitDetail, CommitMeta, DiffHunkRow, DiffLineRow, FastRefresh, FileChange,
@@ -75,6 +76,15 @@ fn cap_line_len(mut s: String) -> String {
 /// almost instantly regardless of total repo size, large enough not to spam
 /// hundreds of thousands of tiny IPC events on a genuinely huge repo.
 const BATCH_SIZE: usize = 1000;
+/// The FIRST `"graph-batch"` flushes at this much smaller row count, so the
+/// newest commits paint almost immediately — enough to fill a typical viewport —
+/// and every SUBSEQUENT batch reverts to the larger [`BATCH_SIZE`]. Walking +
+/// laying out a full 1000 rows before the very first paint was a big chunk of the
+/// "open repo → first frame" latency; the viewport only ever shows a few dozen
+/// rows at once, so there's no reason to compute 1000 before showing anything.
+/// The MIN_BATCH_INTERVAL throttle keeps the follow-up batches from flooding, so
+/// a tall window fills within a frame or two of this first one.
+const FIRST_BATCH_SIZE: usize = 64;
 /// Secondary flush trigger, alongside `BATCH_SIZE`'s row-count one: a row's
 /// OWN gap-segment count scales with how many lanes are simultaneously
 /// active where it falls in history, not with row count at all — a repo with
@@ -210,7 +220,7 @@ pub async fn load_graph(app: AppHandle<Wry>, state: State<'_, GraphLoadState>, p
     let probe_path = path.clone();
     crate::blocking::run_blocking(move || crate::trust::open_repo(&probe_path).map(|_| ()))
         .await
-        .map_err(|e| format!("cannot open repository: {}", e.message()))?;
+        .map_err(|e| ierrp("err_repo.cannot_open_repo", &[("detail", e.message())]))?;
 
     let app2 = app.clone();
     // NOT awaited: spawn_blocking's returned JoinHandle, simply dropped here,
@@ -312,6 +322,9 @@ pub fn stream_graph_core(
     let t0 = Instant::now();
     let mut builder = LayoutBuilder::new();
     let mut total = 0usize;
+    // The first batch flushes at FIRST_BATCH_SIZE rows instead of `batch_size`,
+    // so the first frame paints fast; flipped false after that first flush.
+    let mut first_batch = true;
     // Set once the walk stops because it hit MAX_LIVE_COMMITS specifically —
     // as opposed to a genuine natural finish or a should_cancel() supersede —
     // so the final batch can tell the frontend "there's more, this was capped"
@@ -357,8 +370,16 @@ pub fn stream_graph_core(
         };
     }
 
-    let head_ancestors = head_ancestor_set(path);
-
+    // NOTE: the `ancestor` bit (dims a commit already merged into HEAD) is
+    // DEFERRED, NOT computed here. Computing it means an up-front full revwalk of
+    // every ancestor of HEAD (O(history)) that must FINISH before the first row
+    // can paint — on a large repo that dominated the open→first-frame latency.
+    // Every row is instead emitted undimmed (`ancestor: false`); the frontend
+    // fills the dimming in a beat later, OFF the critical path, via the SAME
+    // positional `head_ancestor_flags` recompute it already runs after a checkout
+    // (legacy/main.ts `recomputeAncestorsAsync`, called on the final `done`
+    // batch). `head_ancestor_set` itself stays — `head_ancestor_flags_core` uses
+    // it for exactly that recompute.
     let result = walk_repo(path, visible_local, visible_remote, |raw, refs| {
         if should_cancel() {
             return false;
@@ -398,7 +419,7 @@ pub fn stream_graph_core(
                 cm: Person { n: raw.committer.0.clone(), e: raw.committer.1.clone(), t: raw.committer.2 },
                 refs: row_refs,
                 merge: out.merge == 1,
-                ancestor: head_ancestors.contains(&raw.id),
+                ancestor: false, // deferred — filled by the frontend's head_ancestor_flags recompute (see note above)
             },
             sha,
             out.lane,
@@ -406,8 +427,10 @@ pub fn stream_graph_core(
             out.merge,
         ));
 
-        if b_rows.len() >= batch_size || b_gap_top.len() >= MAX_GAP_SEGMENTS_PER_BATCH {
+        let row_threshold = if first_batch { FIRST_BATCH_SIZE.min(batch_size) } else { batch_size };
+        if b_rows.len() >= row_threshold || b_gap_top.len() >= MAX_GAP_SEGMENTS_PER_BATCH {
             flush!(false, None, false);
+            first_batch = false;
         }
 
         true

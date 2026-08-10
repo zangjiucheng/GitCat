@@ -78,6 +78,7 @@
 use serde::Serialize;
 use std::process::Command;
 
+use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::NoConsoleWindowExt;
 
 /// Cap on returned matches — same value as `pickaxe::MAX_PICKAXE_MATCHES`/
@@ -143,7 +144,7 @@ fn code_search_inner(
     // one place that applies the WSL/UNC auto-trust side effect (writes
     // safe.directory, which the raw `git` CLI shelled out to below reads
     // too) BEFORE any git invocation touches this path — see trust.rs.
-    let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+    let repo = crate::trust::open_repo(path).map_err(|e| ierrp("err_tools.cannot_open_repo", &[("detail", e.message())]))?;
 
     // `revparse_single`, not `find_commit_by_prefix`: unlike blame.rs/
     // file_history.rs/pickaxe.rs's own `at_commit` (always a real sha, fed
@@ -156,9 +157,12 @@ fn code_search_inner(
     // still resolves) plus everything `git rev-parse` itself understands.
     let sha: Option<String> = match at_commit {
         Some(rev) => {
-            let obj = repo.revparse_single(rev).map_err(|e| format!("Not a valid commit: {rev:?} ({})", e.message()))?;
-            let commit =
-                obj.peel_to_commit().map_err(|e| format!("Not a valid commit: {rev:?} ({})", e.message()))?;
+            let obj = repo
+                .revparse_single(rev)
+                .map_err(|e| ierrp("err_tools.not_a_valid_commit", &[("rev", &format!("{rev:?}")), ("detail", e.message())]))?;
+            let commit = obj
+                .peel_to_commit()
+                .map_err(|e| ierrp("err_tools.not_a_valid_commit", &[("rev", &format!("{rev:?}")), ("detail", e.message())]))?;
             Some(commit.id().to_string())
         }
         None => None,
@@ -283,7 +287,7 @@ fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
         .arg(path)
         .args(args)
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_tools.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code(),
@@ -296,7 +300,7 @@ fn git_msg(o: &Out) -> String {
     if !o.stderr.is_empty() {
         o.stderr.clone()
     } else {
-        format!("git exited with status {:?}", o.code)
+        ierrp("err_tools.git_exited_with_status", &[("code", &format!("{:?}", o.code))])
     }
 }
 
@@ -309,10 +313,10 @@ fn git_msg(o: &Out) -> String {
 /// literal embedded NUL would corrupt this module's own delimiter parsing.
 fn validate_query(query: &str) -> Result<(), String> {
     if query.is_empty() {
-        return Err("Enter something to search for.".into());
+        return Err(ierr("err_tools.enter_search_text"));
     }
     if query.contains('\u{0}') {
-        return Err("Search text has an embedded NUL byte.".into());
+        return Err(ierr("err_tools.search_text_nul"));
     }
     Ok(())
 }

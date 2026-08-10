@@ -45,6 +45,12 @@ specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 notify-debouncer-mini = "0.7.0"
 portable-pty = "0.9"
 base64 = "0.22"
+# Embedded Luau VM for the plugin scripting runtime (PER-56): sandboxed,
+# in-process, curated host API — no shell, no io/os. The `luau` feature builds
+# Luau (C++) from vendored source (a C++ toolchain is already required for
+# git2's vendored libgit2). Chosen over Lua/WASM/JS: Luau is purpose-built for
+# sandboxing untrusted scripts (Roblox) and mlua exposes Lua::sandbox().
+mlua = { version = "0.12", features = ["luau"] }
 # Multi-window: a repo path handed to a newly spawned window travels as a
 # `?repo=` URL query param (see windows.rs's own doc comment) — a repo path
 # can contain spaces/#/&/non-ASCII, all meaningful in a URL if not escaped.

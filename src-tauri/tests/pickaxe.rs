@@ -220,7 +220,7 @@ fn file_scope_refuses_a_nonexistent_path_instead_of_silently_returning_nothing()
         "a typo'd file scope must be refused, not silently return zero matches",
     );
     assert!(
-        err.contains("nonexistent/path.txt") && err.contains("does not exist"),
+        err.contains("nonexistent/path.txt") && err.contains("err_tools.path_does_not_exist"),
         "expected a clear 'does not exist' message naming the bad path, got: {err:?}"
     );
 }

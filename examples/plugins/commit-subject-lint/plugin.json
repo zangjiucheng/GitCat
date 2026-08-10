@@ -1,0 +1,22 @@
+{
+  "id": "commit-subject-lint",
+  "name": "Commit Subject Lint",
+  "version": "1.0.0",
+  "description": "A commit-created hook (plus an on-demand command) that checks the new commit's subject line and reacts through Tama. Written as a cross-platform Luau handler.",
+  "lua": "main.lua",
+  "hooks": [
+    {
+      "event": "commit-created",
+      "handler": "on_commit"
+    }
+  ],
+  "commands": [
+    {
+      "id": "lint-head",
+      "label": "Lint: Check HEAD commit subject length",
+      "handler": "lint_head",
+      "context": "repo",
+      "placement": "palette"
+    }
+  ]
+}

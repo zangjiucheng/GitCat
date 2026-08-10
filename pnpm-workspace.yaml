@@ -1,2 +1,13 @@
 allowBuilds:
   esbuild: true
+
+# Security bumps for Dependabot alerts (PER-68). All dev/build-only, none ship in
+# the app bundle. The vulnerable transitive versions are pulled by vitepress (an
+# old vite, which in turn pulls an old esbuild) and by jsdom (undici); the direct
+# deps can't reach them, so they're forced to the patched floors here. Moved from
+# package.json's "pnpm.overrides" because pnpm 10 no longer reads that field.
+overrides:
+  vite: "^6.4.3"
+  esbuild: "^0.25.0"
+  postcss: "^8.5.23"
+  undici: "^7.29.0"

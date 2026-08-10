@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { fileURLToPath } from "node:url";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -10,6 +11,15 @@ export default defineConfig(async () => ({
 
   plugins: [svelte()],
 
+  // `@` → src, so shared modules (e.g. the i18n root) import the same way from
+  // any depth: `@/i18n/i18n.svelte.ts` instead of `../../i18n/…`. Mirrored in
+  // tsconfig.json's paths so svelte-check/tsc resolve it too.
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
@@ -18,7 +28,11 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Bind IPv4 loopback (not the default `localhost`, which macOS resolves to
+    // IPv6 ::1) so it matches tauri.conf.json's devUrl 127.0.0.1:1420 — otherwise
+    // the `tauri dev` readiness poll waits forever even though Vite is up.
+    // TAURI_DEV_HOST still wins for LAN/mobile dev.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",

@@ -761,8 +761,8 @@ fn rebase_interactive_rejects_squash_as_first_row() {
     let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), bad));
     assert_eq!(out.state, "error");
     assert!(
-        out.message.to_lowercase().contains("squash") || out.message.to_lowercase().contains("first"),
-        "expected a clean pre-check message, got: {}",
+        out.message.contains("err_history.first_commit_squash"),
+        "expected the first-commit-squash refusal key, got: {}",
         out.message
     );
     assert!(out.backup_ref.is_none(), "a pre-flight refusal must never snapshot");

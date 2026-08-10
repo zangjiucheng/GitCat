@@ -867,6 +867,20 @@ async pull(path: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("pull", { path });
 },
 /**
+ * Run `git maintenance run --auto` in `path`, off-thread. `Ok(())` on success;
+ * `Err(git's stderr)` otherwise (the caller logs it and simply tries again on a
+ * later idle tick). `--auto` keeps this safe to call on a timer — git decides
+ * which tasks, if any, are due.
+ */
+async runGitMaintenance(path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("run_git_maintenance", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Streaming twin of [`fetch`]: identical behaviour (same validation, args,
  * success message, and `git_error_message` failure path), but forces
  * `--progress` so git writes transfer progress to stderr, reads it live via
@@ -2820,9 +2834,12 @@ async getToolSettings() : Promise<Result<ToolSettings, string>> {
 }
 },
 /**
- * Whole-form overwrite (the settings modal always submits both slots at
- * once) — no read-modify-write needed, unlike `repo_registry`'s list
- * mutations, but still lock-guarded for the same cheap-insurance reason.
+ * Overwrite the three legacy SINGLETON slots (the settings modal always
+ * submits all of them at once). Now a READ-modify-write (it was a whole-value
+ * overwrite before PER-44): it loads the current settings first so it only
+ * touches the singleton fields and PRESERVES the named-tools list + active
+ * selections — otherwise saving the singleton form would silently wipe every
+ * named tool the user had configured. Still lock-guarded, same as before.
  * JS: `commands.setToolSettings(diffTool, mergeTool, commitMsgCommand)`.
  */
 async setToolSettings(diffTool: ExternalTool | null, mergeTool: ExternalTool | null, commitMsgCommand: string | null) : Promise<Result<ToolSettings, string>> {
@@ -2936,6 +2953,158 @@ async openDiffTool(path: string, file: string, staged: boolean, fromRev: string 
  */
 async resolveConflictWithExternalTool(path: string, file: string) : Promise<ResolveResult> {
     return await TAURI_INVOKE("resolve_conflict_with_external_tool", { path, file });
+},
+/**
+ * Add a new named tool, or update an existing one with the same `id` (upsert).
+ * JS: `commands.saveNamedTool(tool)`.
+ */
+async saveNamedTool(tool: NamedTool) : Promise<Result<ToolSettings, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_named_tool", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove the named tool with `id` (and clear it as any kind's active
+ * selection). JS: `commands.removeNamedTool(id)`.
+ */
+async removeNamedTool(id: string) : Promise<Result<ToolSettings, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_named_tool", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Select (or, with `id: None`, clear) the active tool for a kind.
+ * JS: `commands.setActiveTool(kind, id)`.
+ */
+async setActiveTool(kind: ToolKind, id: string | null) : Promise<Result<ToolSettings, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_active_tool", { kind, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.listPlugins()`.
+ */
+async listPlugins() : Promise<Result<Plugin[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_plugins") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Enable/disable an installed plugin. JS: `commands.setPluginEnabled(id, enabled)`.
+ */
+async setPluginEnabled(id: string, enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_plugin_enabled", { id, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Install a plugin from a local `plugin.json` file OR a directory containing
+ * one: read + parse + validate, reject a duplicate id, then append + save.
+ * Returns the installed plugin. JS: `commands.installPluginFromPath(path)`.
+ */
+async installPluginFromPath(path: string) : Promise<Result<Plugin, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_plugin_from_path", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Uninstall a plugin (removes it from the registry only; never touches the
+ * original manifest file on disk). JS: `commands.removePlugin(id)`.
+ */
+async removePlugin(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_plugin", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Load an ENABLED plugin's Tama skin (PER-47). Resolves the plugin by id,
+ * requires it to be enabled, then [`build_skin`]s its declared pose assets
+ * into `data:`-URI sprites — reading ONLY files strictly inside the plugin's
+ * own canonicalized source dir (see [`build_skin`]/[`asset_is_within_dir`] for
+ * the traversal + symlink-escape guard). File IO, so the whole load runs on
+ * the blocking pool. JS: `commands.loadPluginSkin(pluginId)`.
+ */
+async loadPluginSkin(pluginId: string) : Promise<Result<TamaSkin, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("load_plugin_skin", { pluginId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Run a plugin's command by id. Loads it from the registry (written in
+ * parallel — [`crate::plugin_registry::find_command`], which returns `None`
+ * for a command that is missing OR disabled), resolves the working directory
+ * from `ctx.repo`, and shells out via [`run_template`].
+ * 
+ * `async fn` + `run_blocking` keeps the (potentially long, up to
+ * [`PLUGIN_CMD_TIMEOUT`]) subprocess wait off Tauri's main thread, exactly
+ * like `tool_settings::generate_commit_message`. The cheap registry lookup
+ * runs inline first (same shape as that command loading its JSON settings
+ * before the `run_blocking`).
+ * 
+ * JS: `commands.runPluginCommand(pluginId, commandId, ctx)`.
+ */
+async runPluginCommand(pluginId: string, commandId: string, ctx: PlaceholderCtx) : Promise<Result<CommandOutput, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("run_plugin_command", { pluginId, commandId, ctx }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Run every ENABLED plugin's hook(s) registered for `event`, in the repo at
+ * `ctx.repo`. A hook is an OBSERVER: it cannot veto or block GitCat's own
+ * operation — the frontend fires this without awaiting it before proceeding, so
+ * even a slow/pre-mutation hook never gates the mutation. A hook whose command
+ * fails to LAUNCH is skipped (a broken hook must not stall the event or the
+ * other hooks); a non-zero exit comes back as a normal [`CommandOutput`]. The
+ * registry is loaded inline (cheap), then the matched templates run on the
+ * blocking pool (each bounded by the shorter [`HOOK_TIMEOUT`], not the
+ * user-command [`PLUGIN_CMD_TIMEOUT`]), same shape as [`run_plugin_command`].
+ * 
+ * A hook the plugin DECLARED as mutating (`mutates: true`) is snapshotted
+ * before it runs (via [`snapshot_before_mutation`]) so its change enters global
+ * Undo. Because a hook must never stall the event or its sibling hooks, this
+ * path is best-effort: if the snapshot fails, the one mutating hook is LOGGED
+ * and SKIPPED (rather than run unprotected or aborting the whole event). A
+ * `mutates: false` hook is a pure observer and takes no snapshot. Reentrancy is
+ * not a concern via GitCat: a hook's `git commit`/etc. is an external shell call
+ * that does not re-fire GitCat's own Tama lifecycle events, so a commit-created
+ * hook that commits cannot loop.
+ * 
+ * JS: `commands.runHooks(event, ctx)`.
+ */
+async runHooks(event: PluginEvent, ctx: PlaceholderCtx) : Promise<Result<HookRun[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("run_hooks", { event, ctx }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Read `file_name`'s current content (repo-root only). Missing file => `Ok("")`,
@@ -3052,6 +3221,35 @@ async terminalKill(id: string) : Promise<Result<null, string>> {
  */
 async openRepoInNewWindow(path: string) : Promise<void> {
     await TAURI_INVOKE("open_repo_in_new_window", { path });
+},
+/**
+ * Rebuild the native menu with frontend-supplied labels and swap it in — the
+ * runtime half of i18n for the OS menu (PER-80). Called by `syncNativeMenu` in
+ * legacy/main.ts on boot (when the locale isn't the English default) and on
+ * every language switch. `set_menu` must run on the main thread, so the actual
+ * swap is marshalled there; if a live swap is ever missed, the next launch
+ * rebuilds correctly anyway (the boot call passes the persisted locale).
+ */
+async setAppMenu(labels: Partial<{ [key in string]: string }>) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_app_menu", { labels }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.installCliShim()` — the ⌘K "Install 'gitcat' command" action
+ * and the Settings ▸ Command line button. Returns the installed path on
+ * success, or a human-readable error to surface as a Tama toast / inline note.
+ */
+async installCliShim() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_cli_shim") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -3155,6 +3353,24 @@ export type CodeSearchResults = { matches: CodeSearchMatch[]; truncated: boolean
  * instead of the raw typed "sha/ref" text `code_search` itself accepts.
  */
 resolvedSha: string | null }
+/**
+ * The captured result of running a plugin command. `camelCase` for bindings.
+ */
+export type CommandOutput = { 
+/**
+ * stdout, ANSI-stripped (CLIs stream spinner/cursor escapes even when
+ * piped — see [`strip_ansi`]). NOT trimmed: a plugin may care about exact
+ * bytes/trailing newlines, unlike the commit-message generator.
+ */
+stdout: string; 
+/**
+ * The process exit code, or `None` if it was killed by a signal.
+ */
+exitCode: number | null; 
+/**
+ * `true` iff the process exited 0.
+ */
+success: boolean }
 /**
  * Full payload for the M1 commit detail panel: message + real diff tree.
  */
@@ -3433,6 +3649,10 @@ error: string | null;
  */
 truncated: boolean }
 /**
+ * The captured result of ONE plugin hook firing on a lifecycle event.
+ */
+export type HookRun = { pluginId: string; event: PluginEvent; output: CommandOutput }
+/**
  * One hunk's selection. `header` is `DiffHunkRow::header` byte-for-byte, as
  * last fetched by `workdir_file_diff` — the anchor this module re-verifies
  * against a FRESH read before trusting anything else in this struct.
@@ -3537,6 +3757,83 @@ state: string; conflictedFiles: string[]; message: string; backupRef: string | n
 suggestedMessage: string | null }
 export type MonthlyActivity = { month: string; commits: number }
 /**
+ * One of possibly-many NAMED external tools the user has configured (PER-44).
+ * Generalizes the three legacy SINGLETONS (`diff_tool`/`merge_tool`/
+ * `commit_msg_command`) into a managed list keyed by a stable, unique [`id`].
+ */
+export type NamedTool = { 
+/**
+ * Stable, UNIQUE identifier matching `^[a-z0-9][a-z0-9-]*$` (validated by
+ * [`normalize_named_tool`]). Two jobs: it's the list's primary key for
+ * upsert/remove/active-selection, AND — for a diff/merge tool — it is
+ * reused VERBATIM as the git `difftool.<id>.cmd=`/`mergetool.<id>.cmd=`
+ * config SUBSECTION name at invocation time. That charset is a deliberate
+ * subset of [`ExternalTool::name`]'s (lowercase, no `_`, no leading `-`,
+ * crucially NO `.`) so it is unambiguous in git's dotted `-c` shorthand —
+ * see that field's doc for why a literal `.` there is unescapable.
+ */
+id: string; 
+/**
+ * A free-form human label shown in the UI. Unlike [`id`] it carries NO git
+ * charset constraint (it never reaches a git config key), only a
+ * non-blank check.
+ */
+name: string; 
+/**
+ * Which slot this tool feeds — see [`ToolKind`].
+ */
+kind: ToolKind; 
+/**
+ * The command. For a diff/merge tool this is the `difftool`/`mergetool`
+ * `cmd` override (git's `$LOCAL`/`$REMOTE`/`$BASE`/`$MERGED` placeholders);
+ * for a commit tool it's the print-only shell command (see
+ * [`ToolSettings::commit_msg_command`]). Required (a named tool with no
+ * command is meaningless) — same user-authored trust boundary as every
+ * other `cmd` in this module.
+ */
+cmd: string }
+/**
+ * One declarative widget inside a [`PluginPanel`] (PER-45) — a FIXED, closed
+ * vocabulary GitCat renders ITSELF. A panel runs NO plugin code: the only way
+ * a widget triggers behavior is a `button`/`command-output` that names one of
+ * the plugin's OWN [`PluginCommand`] ids, which the frontend invokes through
+ * the exact same declarative `run_plugin_command` path as the palette/menu
+ * (PER-42) — nothing is ever eval'd.
+ * 
+ * Internally tagged by a kebab-case `"type"` discriminator, so a manifest
+ * author writes e.g. `{"type":"command-output","command":"status"}`:
+ * 
+ * * `text`           — `{ "type":"text", "text": "..." }` a paragraph.
+ * * `heading`        — `{ "type":"heading", "text": "..." }` a section heading.
+ * * `button`         — `{ "type":"button", "label":"...", "command":"id" }`
+ * runs the plugin's own command `id` when clicked.
+ * * `command-output` — `{ "type":"command-output", "command":"id", "label"? }`
+ * runs command `id` when the panel opens and shows its stdout; `label` is an
+ * optional caption.
+ * 
+ * A `button`/`command-output` `command` MUST reference an existing command id
+ * within the SAME plugin — a dangling reference is rejected at
+ * [`validate_manifest`] time.
+ */
+export type PanelItem = 
+/**
+ * A paragraph of body text.
+ */
+{ type: "text"; text: string } | 
+/**
+ * A section heading.
+ */
+{ type: "heading"; text: string } | 
+/**
+ * A button that runs the plugin's OWN command with id `command` on click.
+ */
+{ type: "button"; label: string; command: string } | 
+/**
+ * Runs the plugin's OWN command `command` when the panel opens and shows
+ * its stdout. `label` is an optional caption above the output.
+ */
+{ type: "command-output"; command: string; label?: string | null }
+/**
  * One author/committer identity. `t` is a unix timestamp; the frontend formats it.
  */
 export type Person = { n: string; e: string; t: number }
@@ -3581,6 +3878,52 @@ blockedByLocalChanges: boolean }
 export type PickaxeMatch = { sha: string; shortSha: string; subject: string; an: Person }
 export type PickaxeResults = { entries: PickaxeMatch[]; truncated: boolean }
 /**
+ * Values substituted into a plugin command's `run` template. Every field is
+ * optional / possibly-empty: the frontend fills in only the placeholders a
+ * given command's declared `context` needs, and any placeholder whose value
+ * is absent expands to an empty string (see [`expand_placeholders`]).
+ * 
+ * `repo` does double duty: it is BOTH the `{repo}` placeholder value AND the
+ * working directory the command runs in (see [`run_plugin_command`]) — a
+ * plugin command with no repo has nowhere sensible to run.
+ * 
+ * `camelCase` for the TS bindings. `gitref` is renamed to `ref` on the wire
+ * so the JS field matches the `{ref}` token (the Rust field can't be named
+ * `ref`, a reserved keyword). Container-level `#[serde(default)]` (+ derived
+ * `Default`) lets the frontend send only the subset of fields it has.
+ */
+export type PlaceholderCtx = { 
+/**
+ * `{sha}` — a commit id (Commit context).
+ */
+sha: string | null; 
+/**
+ * `{file}` — a single file path (File context).
+ */
+file: string | null; 
+/**
+ * `{files}` — several file paths; expands to each path shell-quoted,
+ * space-joined (File context, multi-select).
+ */
+files: string[]; 
+/**
+ * `{diff}` — diff text. UNTRUSTED repo content; quoted like everything else.
+ */
+diff: string | null; 
+/**
+ * `{repo}` — the repository path. Also the command's working directory.
+ */
+repo: string | null; 
+/**
+ * `{branch}` — a branch name. UNTRUSTED (attacker can name a branch anything).
+ */
+branch: string | null; 
+/**
+ * `{ref}` — a full ref / tag / symbolic ref. UNTRUSTED. (Rust field
+ * `gitref`; wire/TS field `ref` — see the struct doc.)
+ */
+ref: string | null }
+/**
  * One row the interactive-rebase planner shows: a plannable (non-merge)
  * commit between `onto` and HEAD, oldest-first (this IS the replay/todo
  * order — see [`commit_range`]). `sha` is the full 40-hex id so a
@@ -3592,6 +3935,207 @@ export type PickaxeResults = { entries: PickaxeMatch[]; truncated: boolean }
  * Serializes camelCase: `shortSha`.
  */
 export type PlanCommit = { sha: string; shortSha: string; subject: string }
+/**
+ * A plugin manifest (`plugin.json`).
+ */
+export type Plugin = { 
+/**
+ * Stable identifier, `^[a-z0-9][a-z0-9-]*$` (enforced at install — see
+ * [`is_valid_id`]). Unique within the registry; used as the remove/enable
+ * key and half of a command's `(pluginId, commandId)` address.
+ */
+id: string; name: string; version: string; description: string | null; 
+/**
+ * Defaults to `true` when a manifest omits it — a freshly installed
+ * plugin is active unless the user disables it.
+ */
+enabled?: boolean; commands?: PluginCommand[]; hooks?: PluginHook[]; 
+/**
+ * Declarative UI PANELS (PER-45) this plugin contributes — titled surfaces
+ * of a FIXED widget vocabulary (see [`PanelItem`]) GitCat renders itself.
+ * `#[serde(default)]` so every pre-panels manifest still loads (absent =>
+ * no panels). Panel ids are validated unique-within-plugin and every
+ * button/command-output must reference one of THIS plugin's commands.
+ */
+panels?: PluginPanel[]; 
+/**
+ * Optional Tama SKIN (PER-47) — pose sprites + copy this plugin
+ * contributes. `#[serde(default)]` + `Option` so every pre-skin manifest
+ * still loads (absent => no skin). See [`PluginTama`].
+ */
+tama?: PluginTama | null; 
+/**
+ * The plugin's main Luau SCRIPT (PER-56) — a path, RELATIVE to the plugin's
+ * own [`dir`](Plugin::dir), to a `.lua` file that `return`s a table of named
+ * handler functions. A command/hook names one of those functions via its
+ * `handler` field. `#[serde(default)]` + `Option` so every non-scripting
+ * (pre-PER-56) manifest still loads (absent => no Luau). [`validate_manifest`]
+ * REQUIRES this whenever any command/hook declares a `handler`; the source is
+ * loaded — behind the SAME canonicalizing path-containment guard the Tama skin
+ * loader uses (see [`read_plugin_lua`]/[`asset_is_within_dir`]) — only from
+ * strictly inside the plugin dir.
+ */
+lua?: string | null; 
+/**
+ * The plugin's on-disk SOURCE directory (the canonicalized PARENT of its
+ * `plugin.json`), captured at install time so a later skin load knows
+ * where to resolve relative asset paths. `#[serde(default)]` + `Option`:
+ * pre-PER-47 registries have none, and a plugin whose source dir could not
+ * be resolved at install (e.g. a non-canonicalizable path) simply has its
+ * Tama assets UNAVAILABLE — the skin loads with an empty `poses` rather
+ * than erroring. Persisted verbatim in `plugins.json`.
+ */
+dir?: string | null }
+/**
+ * One user-invokable command a plugin contributes. A command runs EITHER an
+ * external shell `run` TEMPLATE (user-authored shell text — see the module
+ * doc's trust note; the executor expands its placeholders and runs it) OR an
+ * embedded Luau `handler` (PER-56: a named function in the plugin's main `.lua`
+ * file, run in a sandboxed VM). Exactly one of the two is declared — see
+ * [`validate_manifest`]. `context`/`placement` both `#[serde(default)]` so a
+ * minimal manifest command needs only `id`/`label` plus its `run`/`handler`.
+ */
+export type PluginCommand = { id: string; label: string; 
+/**
+ * External command TEMPLATE (the shell path). `Option` + `#[serde(default)]`
+ * so a `handler`-based (Luau) command may omit it; [`validate_manifest`]
+ * enforces that EXACTLY ONE of a non-empty `run` or a non-empty `handler` is
+ * present. NOT otherwise sanitized — same trust boundary as
+ * `tool_settings.rs`'s diff/merge `cmd`.
+ */
+run?: string | null; 
+/**
+ * The name of a Luau handler function (the scripting path, PER-56) exported
+ * by the plugin's main `.lua` file (see [`Plugin::lua`]). `Option` +
+ * `#[serde(default)]`: a shell `run` command omits it, and exactly one of
+ * `run`/`handler` must be declared. A command with a `handler` requires the
+ * plugin to declare a `lua` file (both enforced in [`validate_manifest`]).
+ * The executor loads the script and calls this function via
+ * `plugin_lua::run_lua_handler`.
+ */
+handler?: string | null; context?: PluginContext; placement?: PluginPlacement; 
+/**
+ * Does this command CHANGE the repository? A plugin DECLARES `true` for a
+ * command that mutates (checks out, resets, commits, deletes files, …).
+ * `#[serde(default)]` => `false` when omitted, so a v1 manifest with no
+ * `mutates` still loads and is treated as read-only.
+ * 
+ * The executor honors it: for a `mutates: true` invocation it takes a
+ * `crate::safety::snapshot` BEFORE running `run`, so the change enters
+ * global Undo; a `mutates: false` invocation takes NO snapshot (no Undo
+ * clutter for read-only tools). A mutating command that does NOT set this
+ * runs OUTSIDE Undo — authors must set it (see SECURITY.md and
+ * `plugin_exec::run_plugin_command`).
+ */
+mutates?: boolean }
+/**
+ * What a command needs from the current UI selection to be applicable — the
+ * executor uses this to decide where a command is offered (e.g. a `commit`
+ * command only in a commit's context menu). Serialized lowercase so a
+ * manifest author writes `"context": "commit"`.
+ */
+export type PluginContext = 
+/**
+ * No selection needed — always applicable (the default when omitted).
+ */
+"none" | 
+/**
+ * Needs a selected commit.
+ */
+"commit" | 
+/**
+ * Needs a selected file.
+ */
+"file" | 
+/**
+ * Repo-scoped (needs only the open repository).
+ */
+"repo"
+/**
+ * A lifecycle event a hook can fire on. Serialized kebab-case
+ * (`"repo-opened"`, `"pre-mutation"`, …).
+ */
+export type PluginEvent = "repo-opened" | "repo-switched" | "pre-mutation" | "post-mutation" | "commit-created" | "undo"
+/**
+ * One lifecycle hook fired when `event` occurs. Like a [`PluginCommand`], a
+ * hook runs EITHER an external shell `run` TEMPLATE (same trust boundary as
+ * [`PluginCommand::run`]) OR an embedded Luau `handler` (PER-56). Exactly one
+ * of the two is declared — see [`validate_manifest`].
+ */
+export type PluginHook = { event: PluginEvent; 
+/**
+ * External command TEMPLATE (the shell path). `Option` + `#[serde(default)]`;
+ * exactly one of a non-empty `run` or a non-empty `handler` must be present
+ * (see [`validate_manifest`]).
+ */
+run?: string | null; 
+/**
+ * The name of a Luau handler function (PER-56) exported by the plugin's main
+ * `.lua` file (see [`Plugin::lua`]). `Option` + `#[serde(default)]`; a hook
+ * declaring a `handler` requires the plugin to declare a `lua` file. Run via
+ * `plugin_lua::run_lua_handler` on the hook timeout.
+ */
+handler?: string | null; 
+/**
+ * Does this hook CHANGE the repository? Same semantics as
+ * [`PluginCommand::mutates`] (default `false` => pure observer, no
+ * snapshot). A `mutates: true` hook is snapshotted before it runs so its
+ * change is covered by global Undo; see `plugin_exec::run_hooks`.
+ */
+mutates?: boolean }
+/**
+ * A declarative UI PANEL a plugin contributes (PER-45): a titled surface of
+ * [`PanelItem`] widgets GitCat renders itself. `id` is a stable, plugin-unique
+ * key (validated by [`is_valid_id`] + a within-plugin uniqueness check in
+ * [`validate_manifest`]); the frontend opens a panel by that id.
+ */
+export type PluginPanel = { id: string; title: string; items: PanelItem[] }
+/**
+ * Where a command surfaces. Serialized lowercase (`"palette"`/`"menu"`/
+ * `"both"`); defaults to `Palette` when a manifest omits it.
+ */
+export type PluginPlacement = 
+/**
+ * Only in the ⌘K command palette (the default).
+ */
+"palette" | 
+/**
+ * Only in the relevant context menu.
+ */
+"menu" | 
+/**
+ * Both the palette and the context menu.
+ */
+"both"
+/**
+ * A plugin-contributed Tama SKIN (PER-47): pose sprites that override the
+ * built-in cat art, plus optional copy/voice lines. `poses` maps a built-in
+ * pose KEY (one of [`VALID_TAMA_POSE_KEYS`]) to a RELATIVE asset path within
+ * the plugin's own directory (e.g. `"curious" -> "assets/curious.webp"`).
+ * Both the key set and the relative-path safety are enforced up front in
+ * [`validate_manifest`]; the actual bytes are loaded — with a second,
+ * canonicalizing containment guard — by [`load_plugin_skin`].
+ */
+export type PluginTama = { 
+/**
+ * Pose key -> relative asset path within the plugin dir. Every key must be
+ * one of [`VALID_TAMA_POSE_KEYS`]; every value must be a relative path with
+ * no `..` and not absolute (validated at install time).
+ */
+poses: Partial<{ [key in string]: string }>; 
+/**
+ * Optional voice/copy lines the skin contributes, passed through verbatim.
+ */
+copy?: Partial<{ [key in string]: string }>; 
+/**
+ * Optional voice PITCH multiplier (PER-53) the skin retunes Tama's speech
+ * synthesis to. `#[serde(default)]` + `Option` so every pre-PER-53 manifest
+ * still loads (absent => `None` => "no change", i.e. the frontend's default
+ * pitch of `1.0`). A present value MUST be finite — NaN/±inf are rejected at
+ * [`validate_manifest`]; a finite out-of-range value is CLAMPED to
+ * `[VOICE_PITCH_MIN, VOICE_PITCH_MAX]` by the loader ([`build_skin`]).
+ */
+voicePitch?: number | null }
 /**
  * Whatever `revparse_single` resolved `rev` to. Internally tagged on `kind`
  * (verified empirically against specta 2.0.0-rc.22 — this generates a clean
@@ -3899,12 +4443,45 @@ phase: string;
 line: string }
 export type TagObject = { sha: string; name: string; tagger: PlumbingPerson | null; message: string; targetOid: string; targetKind: string }
 /**
+ * A loaded Tama SKIN, ready for the frontend: `poses` maps each built-in pose
+ * key to a `data:` URI (`data:image/webp;base64,...` or `image/png`) usable
+ * directly as an `<img>` src, and `copy` carries the skin's optional
+ * voice/copy lines. Only poses whose asset passed every safety check appear —
+ * a missing/oversize/wrong-extension/escaping asset is silently omitted, so a
+ * partial skin still loads.
+ */
+export type TamaSkin = { poses: Partial<{ [key in string]: string }>; copy: Partial<{ [key in string]: string }>; 
+/**
+ * The skin's voice PITCH multiplier (PER-53), already CLAMPED to
+ * `[VOICE_PITCH_MIN, VOICE_PITCH_MAX]` by [`build_skin`]. `None` means "no
+ * change" — the frontend leaves Tama at the default pitch of `1.0`.
+ */
+voicePitch?: number | null }
+/**
  * One planner row's chosen action, as sent back to [`rebase_interactive_start`].
  * `sha` is validated against a FRESHLY recomputed commit range before
  * anything is written or mutated — see that command's doc comment.
  * `action` is one of `"pick" | "squash" | "fixup" | "drop" | "edit"`.
  */
 export type TodoItem = { sha: string; action: string }
+/**
+ * Which invocation slot a [`NamedTool`] plugs into. Serialized lowercase
+ * (`"diff"`/`"merge"`/`"commit"`) so it reads naturally both on disk and as a
+ * TS string-union over the IPC boundary.
+ */
+export type ToolKind = 
+/**
+ * An external diff tool (drives `git difftool`, like [`ToolSettings::diff_tool`]).
+ */
+"diff" | 
+/**
+ * An external merge tool (drives `git mergetool`, like [`ToolSettings::merge_tool`]).
+ */
+"merge" | 
+/**
+ * A print-only commit-message command (like [`ToolSettings::commit_msg_command`]).
+ */
+"commit"
 /**
  * App-level (NOT per-repo) tool preferences — a personal cross-repo setting
  * exactly like a real git client's tool prefs, persisted as one small JSON
@@ -3922,7 +4499,20 @@ export type ToolSettings = { diffTool: ExternalTool | null; mergeTool: ExternalT
  * Unlike a tool `name`, this has no git-subsection charset constraint, so
  * it's a plain trimmed string (blank => `None` => the feature is unset).
  */
-commitMsgCommand: string | null }
+commitMsgCommand: string | null; 
+/**
+ * PER-44: the managed list of NAMED tools, generalizing the three
+ * singletons above. Empty on a v1 file / first run (see [`load_from`]'s
+ * migration note) — in which case resolution behaves EXACTLY as before.
+ */
+tools?: NamedTool[]; 
+/**
+ * The [`NamedTool::id`] of the currently-ACTIVE diff/merge/commit tool,
+ * or `None` to fall through to the matching singleton (then git config).
+ * See [`configured_diff_tool`]/[`configured_merge_tool`]/
+ * [`resolve_commit_command`] for the precedence.
+ */
+activeDiffToolId?: string | null; activeMergeToolId?: string | null; activeCommitToolId?: string | null }
 export type TrackedRepo = { path: string; 
 /**
  * Unix seconds this repo was last OPENED through this app (via

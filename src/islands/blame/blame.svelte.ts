@@ -24,6 +24,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { BlameHunkRow, FileBlame } from "../../ipc/bindings";
 
 // One flattened display row per line of `data.lines` — built fresh from
@@ -138,7 +139,7 @@ class BlameState {
       }
       if (!this.repo) {
         this.data = null;
-        this.error = "Open a repository first.";
+        this.error = t("blame.open_repo_first");
         return;
       }
       try {
@@ -148,11 +149,11 @@ class BlameState {
           this.error = null;
         } else {
           this.data = null;
-          this.error = String(r.error ?? "Could not blame this file.");
+          this.error = be(r.error) || t("blame.err_blame");
         }
       } catch (e) {
         this.data = null;
-        this.error = "Blame unavailable — " + e;
+        this.error = t("blame.err_unavailable", { reason: be(String(e)) });
       }
     } finally {
       this.loading = false;
@@ -210,7 +211,7 @@ class BlameState {
     const row = this.rowForSha(sha.slice(0, 7));
     this.close();
     if (row == null) {
-      bridge.tama.warn("commit not loaded in the current graph");
+      bridge.tama.warn(t("blame.warn_not_loaded"));
       return;
     }
     const G: any = bridge.G;

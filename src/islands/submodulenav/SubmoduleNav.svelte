@@ -4,30 +4,48 @@
   // is purely presentation. Rendered into #submoduleNavMount (a grid row under
   // the topbar) by src/main.ts — the row collapses to nothing when `visible` is
   // false, so a plain repo with no submodules shows no strip at all.
-  import { submoduleNavCtrl as ctrl, type TreeNode } from "./submodulenav.svelte.ts";
+  import { submoduleNavCtrl as ctrl, horizontalWheelDelta, type TreeNode } from "./submodulenav.svelte.ts";
+  import { t } from "@/i18n/i18n.svelte.ts";
+
+  // Let a plain vertical mouse wheel scroll the strip left/right when it
+  // overflows (lots of sibling submodules). Trackpad horizontal gestures
+  // (deltaX) already scroll it natively, so those are left untouched.
+  function onStripWheel(e: WheelEvent): void {
+    const el = e.currentTarget as HTMLElement;
+    const dx = horizontalWheelDelta({
+      deltaX: e.deltaX,
+      deltaY: e.deltaY,
+      deltaMode: e.deltaMode,
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+    });
+    if (!dx) return;
+    el.scrollLeft += dx;
+    e.preventDefault();
+  }
 
   // Human label for a submodule status, reused by the tree popover's tooltip.
   function statusLabel(s: string): string {
     switch (s) {
-      case "clean": return "clean";
-      case "dirty": return "uncommitted changes";
-      case "out-of-date": return "out of date";
-      case "conflicted": return "conflicted";
-      case "not-initialized": return "not initialized";
-      case "removed": return "removed";
-      case "unreadable": return "unreadable";
+      case "clean": return t("submodulenav.status_clean");
+      case "dirty": return t("submodulenav.status_dirty");
+      case "out-of-date": return t("submodulenav.status_out_of_date");
+      case "conflicted": return t("submodulenav.status_conflicted");
+      case "not-initialized": return t("submodulenav.status_not_initialized");
+      case "removed": return t("submodulenav.status_removed");
+      case "unreadable": return t("submodulenav.status_unreadable");
       default: return s;
     }
   }
 </script>
 
 {#if ctrl.visible}
-  <div class="subnav-inner">
+  <div class="subnav-inner" onwheel={onStripWheel}>
     <button
       class="sn-tree-btn"
       class:on={ctrl.treeOpen}
-      title="Browse the full submodule tree"
-      aria-label="Browse the full submodule tree"
+      title={t("submodulenav.browse_tree")}
+      aria-label={t("submodulenav.browse_tree")}
       onclick={() => ctrl.toggleTree()}
     >
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -36,14 +54,14 @@
     </button>
 
     <!-- Breadcrumb: root › … › current -->
-    <nav class="sn-crumbs" aria-label="Submodule path">
+    <nav class="sn-crumbs" aria-label={t("submodulenav.breadcrumb_aria")}>
       {#each ctrl.path as c, i (c.absolutePath + i)}
         {#if i > 0}<span class="sn-sep" aria-hidden="true">›</span>{/if}
         <button
           class="sn-crumb"
           class:current={c.current}
           disabled={c.current || ctrl.busy}
-          title={c.current ? "Current repository" : "Go to " + c.name}
+          title={c.current ? t("submodulenav.current_repo") : t("submodulenav.go_to", { name: c.name })}
           onclick={() => ctrl.jumpToCrumb(i)}
         >
           {#if ctrl.busy && ctrl.busyTarget === "crumb:" + i}<span class="spinner"></span>{/if}
@@ -54,7 +72,7 @@
 
     <!-- Sibling / dive-in tabs at the current level -->
     {#if ctrl.siblings.length}
-      <div class="sn-tabs" role="tablist" aria-label="Sibling submodules">
+      <div class="sn-tabs" role="tablist" aria-label={t("submodulenav.siblings_aria")}>
         {#each ctrl.siblings as s (s.absolutePath)}
           <button
             class="sn-tab"
@@ -62,7 +80,7 @@
             role="tab"
             aria-selected={s.current}
             disabled={s.current || ctrl.busy || !s.canOpen}
-            title={s.current ? s.name + " (current)" : s.canOpen ? "Switch to " + s.name : s.name + " — " + statusLabel(s.status)}
+            title={s.current ? t("submodulenav.sibling_current", { name: s.name }) : s.canOpen ? t("submodulenav.switch_to", { name: s.name }) : t("submodulenav.sibling_status", { name: s.name, status: statusLabel(s.status) })}
             onclick={() => ctrl.jumpToSibling(s)}
           >
             {#if ctrl.busy && ctrl.busyTarget === "sib:" + s.absolutePath}
@@ -79,14 +97,14 @@
 
   {#if ctrl.treeOpen}
     <div class="sn-tree-backdrop" role="presentation" onclick={() => ctrl.closeTree()} oncontextmenu={(e) => { e.preventDefault(); ctrl.closeTree(); }}></div>
-    <div class="sn-tree-pop" role="dialog" aria-label="Submodule tree">
-      <div class="sn-tree-head">Submodules</div>
+    <div class="sn-tree-pop" role="dialog" aria-label={t("submodulenav.tree_aria")}>
+      <div class="sn-tree-head">{t("submodulenav.submodules")}</div>
       {#if ctrl.treeLoading}
-        <div class="sn-tree-empty"><span class="spinner"></span> Reading tree…</div>
+        <div class="sn-tree-empty"><span class="spinner"></span> {t("submodulenav.reading_tree")}</div>
       {:else if ctrl.tree}
         {@render treeNode(ctrl.tree, 0)}
       {:else}
-        <div class="sn-tree-empty">Couldn't read the submodule tree.</div>
+        <div class="sn-tree-empty">{t("submodulenav.tree_error")}</div>
       {/if}
     </div>
   {/if}
@@ -99,7 +117,7 @@
     class:disabled={!n.isRoot && !n.canOpen}
     style="padding-left:{8 + depth * 16}px"
     disabled={n.current || (!n.isRoot && !n.canOpen) || ctrl.busy}
-    title={n.isRoot ? "Superproject" : statusLabel(n.status)}
+    title={n.isRoot ? t("submodulenav.superproject") : statusLabel(n.status)}
     onclick={() => ctrl.jumpToNode(n)}
   >
     {#if n.isRoot}
@@ -108,7 +126,7 @@
       <span class="sn-dot" data-status={n.status} aria-hidden="true"></span>
     {/if}
     <span class="sn-node-name">{n.name}</span>
-    {#if n.current}<span class="sn-here">here</span>{/if}
+    {#if n.current}<span class="sn-here">{t("submodulenav.here")}</span>{/if}
   </button>
   {#each n.children as child (child.absolutePath)}
     {@render treeNode(child, depth + 1)}

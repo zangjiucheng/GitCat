@@ -18,6 +18,7 @@ import MainlinePicker from "./islands/mainlinepicker/MainlinePicker.svelte";
 import TamaConfirm from "./islands/tamaconfirm/TamaConfirm.svelte";
 import RepoSummary from "./islands/reposummary/RepoSummary.svelte";
 import { repoSummaryCtrl } from "./islands/reposummary/reposummary.svelte.ts";
+import { pluginHooksCtrl } from "./islands/pluginhooks/pluginhooks.svelte.ts";
 import Remotes from "./islands/remotes/Remotes.svelte";
 import { remotesCtrl } from "./islands/remotes/remotes.svelte.ts";
 import { resolver } from "./islands/resolver/resolver.svelte.ts";
@@ -37,6 +38,8 @@ import Dashboard from "./islands/dashboard/Dashboard.svelte";
 import { dashboardCtrl } from "./islands/dashboard/dashboard.svelte.ts";
 import ExternalTools from "./islands/externaltools/ExternalTools.svelte";
 import { externalToolsCtrl } from "./islands/externaltools/externaltools.svelte.ts";
+import Plugins from "./islands/plugins/Plugins.svelte";
+import { pluginsCtrl } from "./islands/plugins/plugins.svelte.ts";
 import Settings from "./islands/settings/Settings.svelte";
 import { settingsCtrl, loadSettings } from "./islands/settings/settings.svelte.ts";
 import DanglingRecovery from "./islands/danglingrecovery/DanglingRecovery.svelte";
@@ -53,6 +56,7 @@ import SetupWizard from "./islands/setupwizard/SetupWizard.svelte";
 import { setupWizardCtrl } from "./islands/setupwizard/setupwizard.svelte.ts";
 import Cmdk from "./islands/cmdk/Cmdk.svelte";
 import { cmdkCtrl } from "./islands/cmdk/cmdk.svelte.ts";
+import PluginPanel from "./islands/pluginpanels/PluginPanel.svelte";
 import VimNav from "./islands/vimnav/VimNav.svelte";
 import SnapshotPreview from "./islands/snapshotpreview/SnapshotPreview.svelte";
 import About from "./islands/about/About.svelte";
@@ -101,8 +105,18 @@ mount(SetupWizard, { target: document.body });
 // by this point (module evaluation order). Only a FIRST run, not every launch
 // with no repo open — hasBeenDismissed() persists across launches (see
 // setupwizard.svelte.ts) once the user has skipped or finished it once.
+// A launch that names a repo — `gitcat <folder>` from a terminal, the
+// Dashboard's "Open in New Window", or a submodule deep-link — carries a
+// ?repo= (or ?repoError= when the path isn't a repo) query param, and is never
+// a first-run onboarding moment. bridge.CUR_REPO is still null here (legacy/
+// main.ts kicks off openRepo() without awaiting it, and CUR_REPO is only set
+// after it resolves), so gate on the launch arg itself; otherwise the wizard
+// pops on top of the very repo the user explicitly asked to open.
+const launchParams = new URLSearchParams(location.search);
+const launchedWithRepoArg = launchParams.has("repo") || launchParams.has("repoError");
 if (IN_TAURI) {
-  if (!bridge.CUR_REPO && !setupWizardCtrl.hasBeenDismissed()) setupWizardCtrl.start();
+  if (!bridge.CUR_REPO && !launchedWithRepoArg && !setupWizardCtrl.hasBeenDismissed())
+    setupWizardCtrl.start();
 } else {
   setupWizardCtrl.openDemo();
 }
@@ -132,10 +146,16 @@ mount(Sidebar, { target: document.getElementById("sidebarRefs")! });
 sidebarCtrl.refresh(bridge.CUR_REPO as unknown as string);
 
 // Submodule navigator strip (grid row under the topbar). legacy/main.ts's boot
-// open / navigateToRepo / pickRepo call submoduleNavCtrl.refresh() themselves,
-// but seed it here too for the case a repo is already open at mount time.
+// open / navigateToRepo / pickRepo each call submoduleNavCtrl.refresh()
+// themselves; this seed only puts the strip in a defined state before the first
+// of those lands.
 mount(SubmoduleNav, { target: document.getElementById("submoduleNavMount")! });
-submoduleNavCtrl.refresh(bridge.CUR_REPO as unknown as string);
+// Handed over as-is rather than cast to `string` like the CUR_REPO reads
+// elsewhere in this file: mount runs before any repo is open (legacy/main.ts
+// starts openRepo() without awaiting it, and openRepo awaits before it assigns
+// CUR_REPO), so on a real launch this reads null. refresh() takes
+// `string | null` and resets to the empty strip for it.
+submoduleNavCtrl.refresh(bridge.CUR_REPO);
 
 // Reflog/Rerere/Plumbing: on-demand modals now (Tools menu / ⌘K — see
 // menu.rs / cmdk.svelte.ts), each opened via its own controller's show()
@@ -146,6 +166,13 @@ submoduleNavCtrl.refresh(bridge.CUR_REPO as unknown as string);
 mount(Reflog, { target: document.body });
 mount(Rerere, { target: document.body });
 mount(Plumbing, { target: document.body });
+// Declarative plugin panels (PER-45): same on-demand-modal treatment as
+// Reflog/Rerere/Plumbing above — opened from ⌘K (one entry per declared
+// panel, contributed by pluginPanelsCtrl, see cmdk.svelte.ts), never mounted
+// into a drawer. Purely declarative: it renders a plugin's DECLARED widgets
+// (heading/text/button/command-output) and only ever runs that plugin's OWN
+// commands via the same runPluginCommand path PER-42 uses.
+mount(PluginPanel, { target: document.body });
 // Fetch/Pull live-progress modal — opened by doFetch/doPull (legacy/main.ts),
 // which is reached from both the topbar buttons and the native Fetch/Pull menu.
 mount(SyncProgress, { target: document.body });
@@ -197,6 +224,12 @@ mount(Dashboard, { target: document.body });
 // "Resolve with external tool" buttons, which live on Detail.svelte/
 // Workdir.svelte's file rows and Resolver.svelte instead).
 mount(ExternalTools, { target: document.body });
+// Plugins manager (PER-49 follow-up): the installed-plugin registry moved out
+// of the old Settings → Plugins tab into its own VS Code Extensions-style
+// two-pane view — app-level (no repo needed) like External Tools/Dashboard, so
+// the same on-demand-modal + Tools-menu/⌘K treatment. It OWNS the plugin list;
+// the Settings Tama skin picker now reads pluginsCtrl.plugins.
+mount(Plugins, { target: document.body });
 // App Settings: theme/cherry-pick-default/auto-update-check prefs (app-level,
 // like External Tools/Dashboard above) plus a Git Identity section scoped to
 // whichever repo is open (forwards bridge.CUR_REPO, like Remotes) — see
@@ -403,6 +436,44 @@ if (IN_TAURI) {
   }, AUTO_FETCH_CHECK_MS);
 }
 
+// Background git maintenance (Settings ▸ General ▸ "Run git maintenance … when
+// idle", default OFF). Unlike auto-fetch above, this is IDLE-gated, not on a
+// fixed cadence: it only fires once the user has left the app alone for a while,
+// and at most once an hour, so it never competes with active work. `git
+// maintenance run --auto` (see maintenance.rs) is cheap when nothing is due,
+// touches no remote/credential, and changes no history — purely object-database
+// housekeeping (commit-graph/gc/repack) that keeps the graph walk + status fast.
+// Silent + best-effort like the auto-fetch/poll loops: a failure (e.g. a
+// concurrent git process holding the lock) is logged and simply retried later.
+const MAINTENANCE_CHECK_MS = 120_000; // re-evaluate every 2 min
+const MAINTENANCE_IDLE_MS = 5 * 60_000; // "idle" = no real user input for 5 min
+const MAINTENANCE_MIN_INTERVAL_MS = 60 * 60_000; // at most once an hour
+let lastUserActivityAt = Date.now();
+let lastMaintenanceAt = 0;
+// Any real user input resets the idle clock. Passive + capture so it never costs
+// anything on the input path and still counts input handled inside the islands.
+for (const ev of ["pointerdown", "keydown", "wheel", "pointermove"] as const) {
+  window.addEventListener(ev, () => (lastUserActivityAt = Date.now()), { passive: true, capture: true });
+}
+if (IN_TAURI) {
+  setInterval(async () => {
+    const path = bridge.CUR_REPO as unknown as string | null;
+    if (!path) return;
+    const s = loadSettings();
+    if (!s.autoMaintenanceEnabled) return;
+    const now = Date.now();
+    if (now - lastUserActivityAt < MAINTENANCE_IDLE_MS) return; // still active — leave the repo alone
+    if (now - lastMaintenanceAt < MAINTENANCE_MIN_INTERVAL_MS) return; // ran recently
+    lastMaintenanceAt = now;
+    try {
+      const res = await commands.runGitMaintenance(path);
+      if (res.status !== "ok") console.warn("git maintenance:", res.error);
+    } catch (e) {
+      console.error("git maintenance failed unexpectedly", e);
+    }
+  }, MAINTENANCE_CHECK_MS);
+}
+
 // Manual refresh (topbar button) — the explicit escape hatch for exactly
 // the gap the fix above closes: if a user ever suspects the graph is out
 // of sync with the repo on disk, this forces the same full resync
@@ -560,6 +631,9 @@ if (IN_TAURI) {
       case "external-tools":
         externalToolsCtrl.show();
         break;
+      case "plugins":
+        pluginsCtrl.show();
+        break;
       case "settings":
         settingsCtrl.show(bridge.CUR_REPO as unknown as string);
         break;
@@ -609,6 +683,11 @@ if (IN_TAURI) {
     dlog("trigger", "file watcher: repo-changed (external git-dir change)");
     void refreshFromExternalChange();
   });
+
+  // PER-43: start the plugin lifecycle-hook dispatcher — subscribes to the Tama
+  // event bus so commit/undo/mutation moments fire matching plugin hooks. (The
+  // repo-open/switch hooks are pushed from openRepo()'s tail in legacy/main.ts.)
+  pluginHooksCtrl.start();
 
   // Streaming graph load: the "graph-batch" event listener is registered inside
   // legacy/main.ts (next to onGraphBatch, BEFORE its boot-time openRepo), not

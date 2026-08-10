@@ -1,0 +1,57 @@
+// err_ops 的简体中文翻译。英文是权威来源（en/err_ops.ts）；缺失的键会自动回退到
+// 英文。占位符 {name} 必须与英文一致，插值才能正确工作。
+export default {
+  // 共用辅助函数（patch.rs + conflict.rs + git_bisect.rs）。
+  could_not_run_git: "无法运行 git：{detail}",
+  cannot_open_repo: "无法打开仓库：{detail}",
+  cannot_open_repo_lc: "无法打开仓库：{detail}",
+  safety_snapshot_failed: "安全快照失败，已中止：{detail}",
+  cannot_resolve_revision: "无法解析修订版本 {rev}：{detail}",
+  refusing_rev_like_flag: "拒绝看起来像命令行参数的修订版本：{rev}",
+  rev_control_char: "修订版本包含控制字符。",
+  refusing_path_like_flag: "拒绝看起来像命令行参数的路径：{path}",
+  path_illegal_nul_newline: "路径包含非法的 NUL/换行 字符。",
+  // 补丁 导出 / 应用（patch.rs）。
+  could_not_write_am_stdin: "无法将补丁写入 git am 的标准输入：{detail}",
+  no_revision_given: "未指定修订版本。",
+  no_dest_file_chosen: "未选择目标文件。",
+  dest_illegal_nul: "目标路径包含非法的 NUL 字符。",
+  no_patch_file_chosen: "未选择补丁文件。",
+  apply_conflict_one: "应用补丁时在 {n} 个文件中产生冲突。请解决它们，然后点击“继续”——或“跳过”此提交，或“中止”。",
+  apply_conflict_other: "应用补丁时在 {n} 个文件中产生冲突。请解决它们，然后点击“继续”——或“跳过”此提交，或“中止”。",
+  could_not_finish_applying: "无法完成补丁的应用：{detail}。点击“继续”重试、“跳过”此提交，或“中止”。",
+  cannot_export_merge_single:
+    "无法将合并提交导出为单个补丁——format-patch 对合并提交没有唯一明确的差异（git 本身会静默地导出其第一个父提交，而不是该合并）。请改用“导出补丁…”并指定明确的修订范围。",
+  format_patch_failed: "git format-patch 失败。",
+  nothing_to_export: "没有可导出的内容——该范围内没有提交。",
+  could_not_write_dest: "无法写入 {dest}：{detail}",
+  another_op_in_progress: "已有另一项操作正在进行——请先解决或中止它。",
+  could_not_read_patch_file: "无法读取补丁文件：{detail}",
+  no_patch_apply_to_continue: "没有正在进行的补丁应用可供继续。",
+  no_patch_apply_to_skip: "没有正在进行的补丁应用可供跳过提交。",
+  // 三方冲突解决器（conflict.rs）。
+  cannot_inspect_repo_state: "无法检查仓库状态：{detail}",
+  not_in_resolvable_op:
+    "当前不处于 拣选、合并、变基、还原、贮藏、压缩合并 或 补丁应用 冲突中（仓库状态：{op}）。请在命令行中用 git 解决 {op} 冲突。",
+  unknown_side: '未知的一侧 {side}（应为 "ours" 或 "theirs"）。',
+  no_file_specified: "未指定文件。",
+  refusing_absolute_path: "拒绝绝对路径。",
+  refusing_path_dotdot: '拒绝包含 ".." 的路径。',
+  file_not_conflicted: "{file} 没有冲突。",
+  cannot_create_scratch_dir: "无法创建临时目录：{detail}",
+  cannot_write_scratch_files: "无法写入临时文件：{detail}",
+  merge_file_exited_with_status: "git merge-file 以状态 {code} 退出",
+  could_not_parse_conflict_markers: "无法解析该文件的冲突标记——发现了未闭合的冲突区域。",
+  cannot_write_file: "无法写入 {file}：{detail}",
+  // 二分查找（git_bisect.rs）。
+  no_commit_specified: "未指定提交。",
+  not_a_commit: "不是此仓库已知的提交：{rev}",
+  bisect_already_in_progress: "二分查找已在进行中——请先重置，再开始新的查找。",
+  select_known_good: "请至少选择一个已知正常的提交作为二分查找的一端。",
+  cannot_verify_clean: "无法确认工作区是干净的，已拒绝二分查找：{detail}",
+  working_tree_dirty: "工作区有未提交的改动——请在二分查找前提交或贮藏。",
+  unknown_mark: '未知的标记 {mark}（应为 "good"、"bad" 或 "skip"）。',
+  no_bisect_in_progress_start: "没有正在进行的二分查找——请先开始一个。",
+  bisect_run_aborted: "自动二分查找运行已中止——{detail}。",
+  bisect_run_already_in_progress: "已有一个自动二分查找正在运行——请先取消它，再开始另一个。",
+};

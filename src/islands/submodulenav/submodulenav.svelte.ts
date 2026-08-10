@@ -17,6 +17,7 @@ import { commands } from "../../ipc/bindings";
 import { IN_TAURI } from "../../ipc/env";
 import { submoduleCanOpen } from "../sidebar/sidebar.svelte.ts";
 import type { SubmoduleInfo } from "../../ipc/bindings";
+import { t } from "@/i18n/i18n.svelte.ts";
 
 function basename(p: string): string {
   return p.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || p;
@@ -34,6 +35,26 @@ function samePath(a: string, b: string): boolean {
       .replace(/\/+$/, "")
       .replace(/^([a-z]):/i, (_m, d) => d.toUpperCase() + ":");
   return norm(a) === norm(b);
+}
+
+// Translate a vertical mouse-wheel tick into a horizontal scroll amount (px to
+// add to the strip's scrollLeft) for the overflowing submodule nav strip.
+// Returns 0 — i.e. "leave the wheel alone" — when the strip doesn't overflow,
+// or when the gesture is horizontal-dominant (a trackpad already scrolls a
+// horizontal container natively via deltaX; only a plain vertical mouse wheel
+// needs the translation). `deltaMode === 1` is line-based scrolling (typical of
+// a real mouse wheel); approximate a line as 16px. Pure + testable; the .svelte
+// component wires it to the real element and calls preventDefault when nonzero.
+export function horizontalWheelDelta(e: {
+  deltaX: number;
+  deltaY: number;
+  deltaMode: number;
+  scrollWidth: number;
+  clientWidth: number;
+}): number {
+  if (e.scrollWidth <= e.clientWidth) return 0; // nothing to scroll
+  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return 0; // horizontal-dominant → native
+  return e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
 }
 
 // One clickable step in the "root › vendor/lib-a › nested" path.
@@ -99,11 +120,22 @@ class SubmoduleNavState {
   // Rebuild the breadcrumb + sibling tabs for wherever the app currently is.
   // openRepo() calls this after it has set NAV_STACK (from git's superproject
   // chain), so it always reflects the real location — never on a timer.
-  async refresh(repo: string): Promise<void> {
+  //
+  // `repo` is nullable because this can be called before any repo is open —
+  // priming the strip at mount is a legitimate reason to call it with nothing.
+  // There is nothing to navigate then, so it resets to the empty strip, the same
+  // state `reset()` leaves it in when a repo is closed.
+  async refresh(repo: string | null): Promise<void> {
     if (!IN_TAURI) {
       // Design-mode preview: a superproject sitting on three demo submodules.
       this.path = [{ name: "gitcat", absolutePath: "/demo/gitcat", current: true }];
       this.siblings = DEMO_SIBLINGS;
+      return;
+    }
+    // Below the design-mode branch on purpose: there is never a repo in design
+    // mode, so guarding first would empty the browser preview.
+    if (!repo) {
+      this.reset();
       return;
     }
     const stack = this.stack().slice();
@@ -139,7 +171,7 @@ class SubmoduleNavState {
     if (samePath(absolutePath, this.cur())) return; // already here
     if (!IN_TAURI) {
       bridge.tama.set("hint");
-      bridge.tama.say("Switched to " + basename(absolutePath) + " (demo).");
+      bridge.tama.say(t("submodulenav.switched_demo", { name: basename(absolutePath) }));
       return;
     }
     this.busy = true;
@@ -148,7 +180,7 @@ class SubmoduleNavState {
       await bridge.navigateToRepo(absolutePath);
     } catch (e) {
       console.error("submodulenav.jumpTo", e);
-      bridge.tama.warn("Couldn't switch to " + basename(absolutePath));
+      bridge.tama.warn(t("submodulenav.switch_failed", { name: basename(absolutePath) }));
     } finally {
       this.busy = false;
       this.busyTarget = null;

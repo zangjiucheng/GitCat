@@ -29,8 +29,12 @@ fn build_diverged() -> (common::TempRepo, [String; 4]) {
 }
 
 /// Drive stream_graph_core (the real graph load) and return, per row, the full
-/// oid + the `ancestor` bit it computed — the exact thing the fast path must
-/// reproduce without a full re-walk.
+/// oid + the `ancestor` bit it emitted. NOTE: the stream now DEFERS the dimming
+/// bit — it emits `ancestor: false` for every row (see stream_graph_core's own
+/// doc), because computing it up front meant a full HEAD-ancestor revwalk that
+/// delayed the first frame. head_ancestor_flags_core is what supplies the real
+/// bits, positionally aligned to these rows; that alignment is what the tests
+/// below verify (it's what the frontend's recomputeAncestorsAsync relies on).
 fn stream_rows(path: &str) -> Vec<(String, bool)> {
     let mut batches: Vec<GraphBatch> = Vec::new();
     stream_graph_core(path, None, None, 1, 100, usize::MAX, || false, |b| batches.push(b));
@@ -44,25 +48,29 @@ fn stream_rows(path: &str) -> Vec<(String, bool)> {
 }
 
 #[test]
-fn head_ancestor_flags_core_matches_stream_ancestor_bits_and_row_count() {
+fn head_ancestor_flags_core_aligns_with_the_stream_and_supplies_the_deferred_dimming_bits() {
     let (repo, [c0, c1, c2, c3]) = build_diverged();
     let path = repo.path();
 
     let rows = stream_rows(&path); // (full oid, ancestor) per row, in walk order
     let af = head_ancestor_flags_core(&path, None, None);
 
-    // Positional alignment: same count, same per-row bit as the full load.
+    // The stream DEFERS the dimming bit — every row comes back undimmed.
+    assert!(rows.iter().all(|(_, a)| !*a), "stream_graph_core emits ancestor:false for every row (deferred)");
+
+    // head_ancestor_flags_core supplies the REAL bits, POSITIONALLY aligned to the
+    // same rows (same count, same walk order) — the alignment the frontend relies
+    // on to apply flags[i] to row i in recomputeAncestorsAsync.
     assert_eq!(af.n, rows.len(), "flag count must equal the streamed row count");
     assert_eq!(af.flags.len(), af.n);
-    let stream_bits: Vec<bool> = rows.iter().map(|(_, a)| *a).collect();
-    assert_eq!(af.flags, stream_bits, "flags must match stream_graph_core's ancestor bits row-for-row");
 
-    // And it's a genuine mix (guards against "all true"/"all false" passing vacuously).
-    let by_oid = |want: &str| rows.iter().find(|(o, _)| o == want).map(|(_, a)| *a);
-    assert_eq!(by_oid(&c0), Some(true), "c0 is an ancestor of HEAD");
-    assert_eq!(by_oid(&c1), Some(true), "c1 is an ancestor of HEAD");
-    assert_eq!(by_oid(&c3), Some(true), "c3 IS HEAD");
-    assert_eq!(by_oid(&c2), Some(false), "c2 (feature-only) is NOT an ancestor of HEAD");
+    // Map each row's oid to the flag at its position; it must be a genuine mix
+    // (guards against an all-true/all-false vacuous pass).
+    let flag_of = |want: &str| rows.iter().position(|(o, _)| o == want).map(|i| af.flags[i]);
+    assert_eq!(flag_of(&c0), Some(true), "c0 is an ancestor of HEAD");
+    assert_eq!(flag_of(&c1), Some(true), "c1 is an ancestor of HEAD");
+    assert_eq!(flag_of(&c3), Some(true), "c3 IS HEAD");
+    assert_eq!(flag_of(&c2), Some(false), "c2 (feature-only) is NOT an ancestor of HEAD");
 }
 
 #[test]
@@ -75,9 +83,10 @@ fn head_ancestor_flags_core_tracks_head_after_a_checkout() {
     let rows = stream_rows(&path);
     let af = head_ancestor_flags_core(&path, None, None);
     assert_eq!(af.n, rows.len());
-    assert_eq!(af.flags, rows.iter().map(|(_, a)| *a).collect::<Vec<_>>());
+    assert!(rows.iter().all(|(_, a)| !*a), "stream defers the ancestor bit");
 
-    let c2_is_ancestor = rows.iter().find(|(o, _)| o == &c2).map(|(_, a)| *a);
+    // Positionally map c2's row to its flag — after the checkout it must be dimmed.
+    let c2_is_ancestor = rows.iter().position(|(o, _)| o == &c2).map(|i| af.flags[i]);
     assert_eq!(c2_is_ancestor, Some(true), "after checking out feature, c2 is an ancestor of HEAD");
 }
 

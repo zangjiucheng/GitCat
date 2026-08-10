@@ -30,6 +30,7 @@ vi.mock("../../ipc/bindings", () => ({
   commands: {
     getGitIdentity: vi.fn(),
     setGitIdentity: vi.fn(),
+    installCliShim: vi.fn(),
   },
 }));
 
@@ -51,9 +52,11 @@ async function pickAndValidate(identity: { name: string | null; email: string | 
 }
 
 describe("skip", () => {
-  it("opens an already-validated repo instead of discarding it (configured identity -> done step)", async () => {
+  it("opens an already-validated repo instead of discarding it (configured identity -> cli step)", async () => {
     await pickAndValidate({ name: "a", email: "a@b.c", configured: true, local: true });
-    expect(setupWizardCtrl.step).toBe("done");
+    // A configured repo skips the identity step and lands on the optional
+    // command-line step; skipping from there still opens the validated repo.
+    expect(setupWizardCtrl.step).toBe("cli");
 
     await setupWizardCtrl.skip();
 
@@ -107,5 +110,67 @@ describe("skip", () => {
 
     expect(bridge.openRepo).not.toHaveBeenCalled();
     expect(setupWizardCtrl.open).toBe(true);
+  });
+});
+
+describe("command-line step", () => {
+  it("a saved identity advances to the cli step, then Continue reaches done", async () => {
+    await pickAndValidate({ name: null, email: null, configured: false, local: false });
+    expect(setupWizardCtrl.step).toBe("identity");
+
+    vi.mocked(commands.setGitIdentity).mockResolvedValueOnce({ ok: true } as any);
+    setupWizardCtrl.nameInput = "A";
+    setupWizardCtrl.emailInput = "a@b.c";
+    await setupWizardCtrl.saveIdentity();
+    expect(setupWizardCtrl.step).toBe("cli");
+
+    setupWizardCtrl.toDone();
+    expect(setupWizardCtrl.step).toBe("done");
+  });
+
+  it("installCli surfaces the installed path on success", async () => {
+    await pickAndValidate({ name: "a", email: "a@b.c", configured: true, local: true });
+    vi.mocked(commands.installCliShim).mockResolvedValueOnce({ status: "ok", data: "/usr/local/bin/gitcat" });
+
+    await setupWizardCtrl.installCli();
+
+    expect(setupWizardCtrl.cliInstalledPath).toBe("/usr/local/bin/gitcat");
+    expect(setupWizardCtrl.cliError).toBe("");
+  });
+
+  it("installCli surfaces a backend error without throwing", async () => {
+    await pickAndValidate({ name: "a", email: "a@b.c", configured: true, local: true });
+    vi.mocked(commands.installCliShim).mockResolvedValueOnce({ status: "error", error: "nope" });
+
+    await setupWizardCtrl.installCli();
+
+    expect(setupWizardCtrl.cliError).toBe("nope");
+    expect(setupWizardCtrl.cliInstalledPath).toBe("");
+  });
+
+  it("demo mode never calls the real backend", async () => {
+    setupWizardCtrl.openDemo();
+    setupWizardCtrl.toPick();
+    (setupWizardCtrl as any).repoPath = "/home/demo/my-project";
+    await (setupWizardCtrl as any).validate();
+    // The demo identity is unconfigured, so validate lands on the identity
+    // step; skip it to reach the optional command-line step.
+    expect(setupWizardCtrl.step).toBe("identity");
+    setupWizardCtrl.skipIdentity();
+    expect(setupWizardCtrl.step).toBe("cli");
+
+    await setupWizardCtrl.installCli();
+
+    expect(commands.installCliShim).not.toHaveBeenCalled();
+    expect(setupWizardCtrl.cliInstalledPath).toBe("/usr/local/bin/gitcat");
+  });
+
+  it("Back from the cli step returns to identity", async () => {
+    await pickAndValidate({ name: "a", email: "a@b.c", configured: true, local: true });
+    expect(setupWizardCtrl.step).toBe("cli");
+
+    setupWizardCtrl.backToIdentity();
+
+    expect(setupWizardCtrl.step).toBe("identity");
   });
 });

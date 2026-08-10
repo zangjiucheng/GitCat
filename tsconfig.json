@@ -9,6 +9,11 @@
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+
+    /* `@/*` → src/* — keep in sync with vite.config.ts's resolve.alias */
+    "baseUrl": ".",
+    "paths": { "@/*": ["src/*"] },
+
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,

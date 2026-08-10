@@ -33,7 +33,10 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import type { ConfigEntry, ConfigScope, GitIdentity, RawConfigEntry } from "../../ipc/bindings";
+import { t, be } from "@/i18n/i18n.svelte.ts";
+import { pluginsCtrl } from "../plugins/plugins.svelte.ts";
+import { BUILTIN_SKINS, builtinSkinById, isBuiltinSkinId, type BuiltinSkin } from "./builtinskins.ts";
+import type { ConfigEntry, ConfigScope, GitIdentity, Plugin, RawConfigEntry } from "../../ipc/bindings";
 
 export type ThemeMode = "system" | "light" | "dark";
 
@@ -101,10 +104,73 @@ export const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
 
 // Safety-Manager snapshot auto-cleanup policy — see PersistedSettings below.
 export type SnapshotRetentionMode = "off" | "count" | "age" | "hybrid";
-// Which ref chip wins the front of a commit's gutter labels when the graph is
-// too narrow to show them all. "tag" is the backend's own order (a tag beats the
-// branch); "branch" promotes the checked-out/local branch ahead of tags.
+// Which ref chip wins the front of a commit's ref labels when more than one
+// can't all be shown (showAllCommitTags off — see that setting). "tag" is the
+// backend's own order (a tag beats the branch); "branch" promotes the
+// checked-out/local branch ahead of tags.
 export type GraphLabelPriority = "tag" | "branch";
+// Where ref labels sit relative to a commit's subject: "inline" draws them
+// immediately before the subject text (Fork-style, and the default); "column"
+// keeps this app's original resizable left column. See legacy/main.ts's
+// graphLabelInline for what actually changes at draw time.
+export type GraphLabelLayout = "inline" | "column";
+
+// ── Tama customization (PER-54) ────────────────────────────────────────────
+// PER-54: how lively Tama's idle animation + state-change timing feel.
+// "default" is exactly today's behavior; the runtime (bridge.setTamaMotionPreset,
+// in legacy/main.ts) owns what "calm"/"lively" actually change. Persisted +
+// re-applied at boot (see applyPersistedTamaMotion).
+export type TamaMotionPreset = "default" | "calm" | "lively";
+
+// The motion presets offered in the Tama tab's dropdown.
+export const TAMA_MOTION_PRESETS: { value: TamaMotionPreset; label: string }[] = [
+  { value: "default", label: "Default" },
+  { value: "calm", label: "Calm" },
+  { value: "lively", label: "Lively" },
+];
+
+// The 8 painted poses (TAMA_IMG's own keys — see legacy/main.ts) a moment can be
+// remapped to. "" is the implicit "Default — use the built-in pose" option the
+// template prepends per row; it never appears in this list.
+export const TAMA_POSE_OPTIONS: { value: string; label: string }[] = [
+  { value: "hero", label: "Hero" },
+  { value: "curious", label: "Curious" },
+  { value: "confident", label: "Confident" },
+  { value: "thinking", label: "Thinking" },
+  { value: "happy", label: "Happy" },
+  { value: "alarm", label: "Alarm" },
+  { value: "shocked", label: "Shocked" },
+  { value: "sleep", label: "Sleep" },
+];
+
+// The curated, human-labelled subset of TamaMascot.STATES (legacy/main.ts) the
+// expression remapper exposes — deliberately NOT all 12 raw FSM states (sleep/
+// hint/confused/curious are internal-feeling and left out). Each `state` is a
+// real key usable in a tamaPoseOverrides map (the mascot resolves
+// overrides[state] ?? POSE[state]); `pose` is that state's BUILT-IN default,
+// surfaced in the "Default (…)" option so a user sees what they're overriding.
+export interface TamaMomentField {
+  state: string;
+  label: string;
+  pose: string;
+  hint: string;
+}
+export const TAMA_MOMENT_FIELDS: TamaMomentField[] = [
+  { state: "idle", label: "Idle", pose: "curious", hint: "Resting — nothing is happening" },
+  { state: "thinking", label: "Thinking", pose: "thinking", hint: "A long operation is running" },
+  { state: "syncing", label: "Working / Sync", pose: "thinking", hint: "Fetching, pulling, or pushing" },
+  { state: "warn", label: "Caution", pose: "shocked", hint: "A heads-up before a risky action" },
+  { state: "danger", label: "Danger", pose: "alarm", hint: "About to do something destructive" },
+  { state: "celebrate", label: "Celebrate", pose: "happy", hint: "An operation just succeeded" },
+  { state: "rescue", label: "Rescue", pose: "confident", hint: "An undo or recovery just happened" },
+  { state: "greeting", label: "Greeting", pose: "hero", hint: "No repository open" },
+];
+
+// The display label for a pose key (used by the "Default (…)" option). Falls
+// back to the raw key for an unlisted one. Pure + exported for unit testing.
+export function tamaPoseLabel(key: string): string {
+  return TAMA_POSE_OPTIONS.find((o) => o.value === key)?.label ?? key;
+}
 
 export interface PersistedSettings {
   themeMode: ThemeMode;
@@ -136,10 +202,18 @@ export interface PersistedSettings {
   // row is a real layout change existing users haven't opted into, unlike
   // the other toggles here which don't affect the graph's own rendering.
   showAllCommitTags: boolean;
-  // Which kind of ref wins the front of a commit's gutter labels when the graph
-  // can't fit them all (and thus which one the "+N" cycle starts from). "tag"
+  // Which kind of ref wins the front of a commit's ref labels when it can't
+  // show them all (and thus which one the "+N" cycle starts from). "tag"
   // keeps the app's original tag-first order; "branch" puts the branch first.
   graphLabelPriority: GraphLabelPriority;
+  // Where ref labels are drawn: inline before the subject (this app's
+  // default) or in the resizable left column (this app's original layout).
+  // Inline is the default because the label column reserves roughly 14% of
+  // the canvas width that sits empty on most rows, and Fork/GitKraken/Tower
+  // all label inline too; existing users who prefer the column can restore it
+  // with one Settings select. A deliberate, user-confirmed spec decision —
+  // not an unexamined leftover default.
+  graphLabelLayout: GraphLabelLayout;
   // Periodically `git fetch --all --prune` while a repo is open, so
   // ahead/behind counts and incoming remote changes stay current without a
   // manual Pull. Off by default — unlike autoCheckUpdates (checking GitHub
@@ -151,6 +225,13 @@ export interface PersistedSettings {
   // Whole minutes between auto-fetch attempts while enabled — see
   // AUTO_FETCH_INTERVAL_OPTIONS below for the exact choices offered.
   autoFetchIntervalMinutes: number;
+  // Optional background `git maintenance run --auto` while the app sits IDLE —
+  // keeps the object database tidy (commit-graph, gc, incremental-repack) so
+  // everyday reads stay fast, without the user running it by hand. Off by
+  // default and even lighter-touch than auto-fetch: `--auto` means git only does
+  // work that's actually due, it touches no remote/credential, and it never
+  // changes history or the working tree. The idle gate + timer live in main.ts.
+  autoMaintenanceEnabled: boolean;
   // Safety-Manager snapshot retention. Every history-changing op pins a backup
   // ref under refs/gitgui/backup/*; with no cleanup they accumulate forever.
   // The mode picks the auto-prune policy, run on repo-open:
@@ -177,6 +258,29 @@ export interface PersistedSettings {
   // personality trait of the app, not a bug users need to opt out of a
   // regression for.
   tamaEnabled: boolean;
+  // PER-47/PER-53: id of the Tama look currently active, or null for the default
+  // painted portraits. Broadened in PER-53 to hold EITHER a "builtin:*" character
+  // id (Momo/Sora — see builtinskins.ts) OR an installed plugin's id; the field
+  // name is kept for back-compat (an existing persisted plugin id still round-
+  // trips unchanged). Persisted here (not a separate localStorage key) so it
+  // round-trips with every other client-only pref and is re-applied at boot (see
+  // applyPersistedTamaSkin). A built-in applies synchronously; a plugin id only
+  // ever becomes the persisted value AFTER it loads successfully once, so a
+  // boot-apply of a stored plugin id can still fail (plugin later removed/
+  // disabled) — that path falls back to the default portraits silently.
+  tamaSkinPluginId: string | null;
+  // PER-54: Tama motion preset — how lively her idle animation + state-change
+  // timing feel. "default" is exactly today's behavior; "calm"/"lively" are the
+  // runtime's to define (bridge.setTamaMotionPreset). Re-applied at boot (see
+  // applyPersistedTamaMotion). Default "default" — no behavior change until a
+  // user picks otherwise.
+  tamaMotionPreset: TamaMotionPreset;
+  // PER-54: per-moment expression remap — a map of FSM-state -> pose key that
+  // overlays TamaMascot.POSE (the mascot resolves overrides[state] ?? POSE[state]).
+  // An empty map (the default) means "no overrides, use the built-in poses". Only
+  // a curated subset of states is user-editable (see TAMA_MOMENT_FIELDS); an
+  // unlisted key persisted by a hand-edit still round-trips harmlessly.
+  tamaPoseOverrides: Record<string, string>;
 }
 
 const STORAGE_KEY = "gitcat.settings";
@@ -206,12 +310,17 @@ const DEFAULTS: PersistedSettings = {
   soundEffectsVolume: 1,
   showAllCommitTags: false,
   graphLabelPriority: "tag",
+  graphLabelLayout: "inline",
   autoFetchEnabled: false,
   autoFetchIntervalMinutes: 15,
+  autoMaintenanceEnabled: false,
   snapshotRetentionMode: "off",
   snapshotRetentionCount: 25,
   snapshotRetentionDays: 14,
   tamaEnabled: true,
+  tamaSkinPluginId: null,
+  tamaMotionPreset: "default",
+  tamaPoseOverrides: {},
 };
 
 // Both loadSettings() (below) and setSoundEffectsVolume() need the same 0-1
@@ -234,6 +343,12 @@ export function loadSettings(): PersistedSettings {
     // to trust this field is always a valid finite 0-1 number, not just the
     // one call site (the volume slider) that happens to go through the setter.
     merged.soundEffectsVolume = Number.isFinite(merged.soundEffectsVolume) ? clamp01(merged.soundEffectsVolume) : DEFAULTS.soundEffectsVolume;
+    // Same read-boundary discipline: a corrupt blob whose tamaPoseOverrides is a
+    // non-plain-object (string/array/null) would survive the shallow spread — coerce
+    // it back to {} so every consumer can trust the field's shape.
+    if (typeof merged.tamaPoseOverrides !== "object" || merged.tamaPoseOverrides === null || Array.isArray(merged.tamaPoseOverrides)) {
+      merged.tamaPoseOverrides = { ...DEFAULTS.tamaPoseOverrides };
+    }
     return merged;
   } catch {
     return { ...DEFAULTS }; // storage disabled (e.g. private mode) or corrupt JSON — fall back quietly
@@ -269,6 +384,82 @@ export async function pruneSnapshotsPerPolicy(repo: string): Promise<void> {
   }
 }
 
+// ── Tama skin picker (PER-47) ───────────────────────────────────────────────
+// A plugin MAY ship an alternate look for Tama by declaring a `tama` field in
+// its manifest. loadPluginSkin(pluginId) returns a TamaSkin { poses, copy };
+// poses overlay the built-in portraits via bridge.applyTamaSkin. Everything the
+// picker needs sits here (plus the SettingsState methods below) so the sibling
+// plugincommands controller and legacy/main.ts stay untouched.
+
+// A plugin OFFERS a Tama skin when its manifest declares a (truthy) `tama`
+// field. Read defensively via a cast — the exact shape of `tama` is the
+// backend's business (a manifest-relative path or an inline block); the picker
+// only ever needs to know it EXISTS. Pure + exported for unit testing.
+export function hasTamaSkin(p: Plugin): boolean {
+  return !!(p as { tama?: unknown }).tama;
+}
+
+// A skin MAY ship optional copy/voice lines (TamaSkin.copy). The picker surfaces
+// ONE as a courtesy confirmation when a skin is applied interactively — this is
+// the only use of `copy`, and it never reaches a safety-critical pose (say() is
+// just the nook toast, same trust level as PER-46's plugin reactions). Prefers a
+// well-known key, else the first line; capped like every other plugin-sourced
+// string; null when the skin ships no copy. Pure + exported for unit testing.
+export function pickSkinCopyLine(copy: Record<string, string> | null | undefined): string | null {
+  if (!copy) return null;
+  const line = copy.applied ?? copy.greeting ?? copy.hero ?? Object.values(copy)[0];
+  return line ? line.slice(0, 160) : null;
+}
+
+// Re-apply the persisted Tama skin at boot — called ONCE from legacy/main.ts's
+// startup (see its own `void applyPersistedTamaSkin()`). Silent by contract: a
+// skin whose plugin was removed/disabled, or whose load fails for any reason,
+// falls back to the built-in poses with no error surfaced. Mirrors
+// pruneSnapshotsPerPolicy's own "read settings fresh, IN_TAURI-gated,
+// fire-and-forget" boot shape; never rejects.
+export async function applyPersistedTamaSkin(): Promise<void> {
+  const id = loadSettings().tamaSkinPluginId;
+  if (!id) return;
+  // A built-in character (Momo/Sora) is pure frontend — its poses are bundled
+  // asset URLs and its voice pitch a plain number, so it applies SYNCHRONOUSLY
+  // with no backend round-trip, and works even in design mode (!IN_TAURI).
+  const builtin = builtinSkinById(id);
+  if (builtin) {
+    bridge.applyTamaSkin(builtin.poses, builtin.voicePitch);
+    return;
+  }
+  // A "builtin:*" id we don't recognise (persisted by a newer/older build) —
+  // stay on the default portraits rather than trying to load it as a plugin.
+  // Nothing is applied yet at boot, so returning leaves the default in place.
+  if (isBuiltinSkinId(id)) return;
+  // Otherwise it's a plugin id: async, backend-gated, silent fail-safe.
+  if (!IN_TAURI) return;
+  try {
+    const res = await commands.loadPluginSkin(id);
+    if (res.status === "ok") {
+      bridge.applyTamaSkin(res.data.poses ?? {}, res.data.voicePitch ?? undefined);
+    } else {
+      bridge.clearTamaSkin();
+    }
+  } catch {
+    bridge.clearTamaSkin(); // stays on the default portraits — silent per contract
+  }
+}
+
+// Re-apply the persisted Tama motion preset + expression overrides at boot —
+// called ONCE from legacy/main.ts's startup, right beside applyPersistedTamaSkin.
+// Unlike that skin boot path (plugin-backed, backend-gated, async), these are
+// pure frontend: a timing preset and a pose-key map, handed straight to the
+// mascot via the bridge setters. So this runs UNCONDITIONALLY — design mode
+// included (!IN_TAURI) — and synchronously. Calling with the defaults
+// ("default" + {}) is a harmless baseline no-op by the setters' own contract
+// ("default" restores current behavior; {} = no overrides = the built-in poses).
+export function applyPersistedTamaMotion(): void {
+  const s = loadSettings();
+  bridge.setTamaMotionPreset(s.tamaMotionPreset);
+  bridge.setTamaPoseOverrides(s.tamaPoseOverrides ?? {});
+}
+
 // Canned identity for design-mode (!IN_TAURI), same spirit as setupwizard's
 // own DEMO_IDENTITY. local:false so the browser preview also demos the
 // "using your global identity" messaging (see Settings.svelte), not just
@@ -283,6 +474,34 @@ class SettingsState {
     this.activeTab = tab;
   }
 
+  // ── Command line: "Install 'gitcat' command in PATH" (macOS only) ────────
+  // Writes a `code`-style launcher via install_cli_shim (see cli_shim.rs). The
+  // view gates the whole section on IS_MAC; these fields just carry the
+  // button's in-flight + result state so the outcome shows inline right below
+  // it (the ⌘K twin of this action toasts via Tama instead).
+  cliInstalling = $state(false);
+  cliInstallOk = $state("");
+  cliInstallError = $state("");
+
+  async installCliCommand(): Promise<void> {
+    if (this.cliInstalling) return;
+    this.cliInstalling = true;
+    this.cliInstallOk = "";
+    this.cliInstallError = "";
+    try {
+      const res = await commands.installCliShim();
+      if (res.status === "ok") {
+        this.cliInstallOk = t("settings.cli_ok", { path: res.data });
+      } else {
+        this.cliInstallError = be(res.error) || t("settings.cli_err");
+      }
+    } catch (e) {
+      this.cliInstallError = t("settings.cli_err_e", { e: String(e) });
+    } finally {
+      this.cliInstalling = false;
+    }
+  }
+
   // ── app-level prefs (instant-apply, no Save button) ─────────────────────
   themeMode = $state<ThemeMode>(DEFAULTS.themeMode);
   cherryPickRecordOriginDefault = $state(DEFAULTS.cherryPickRecordOriginDefault);
@@ -292,12 +511,49 @@ class SettingsState {
   soundEffectsVolume = $state(DEFAULTS.soundEffectsVolume);
   showAllCommitTags = $state(DEFAULTS.showAllCommitTags);
   graphLabelPriority = $state<GraphLabelPriority>(DEFAULTS.graphLabelPriority);
+  graphLabelLayout = $state<GraphLabelLayout>(DEFAULTS.graphLabelLayout);
   autoFetchEnabled = $state(DEFAULTS.autoFetchEnabled);
   autoFetchIntervalMinutes = $state(DEFAULTS.autoFetchIntervalMinutes);
+  autoMaintenanceEnabled = $state(DEFAULTS.autoMaintenanceEnabled);
   snapshotRetentionMode = $state<SnapshotRetentionMode>(DEFAULTS.snapshotRetentionMode);
   snapshotRetentionCount = $state(DEFAULTS.snapshotRetentionCount);
   snapshotRetentionDays = $state(DEFAULTS.snapshotRetentionDays);
   tamaEnabled = $state(DEFAULTS.tamaEnabled);
+
+  // ── Tama motion + expression remap (PER-54) — app-level, pure frontend ────
+  // The motion preset drives her idle-animation liveliness + state-change timing
+  // (bridge.setTamaMotionPreset); the override map remaps which of the 8 poses
+  // shows for a given moment (bridge.setTamaPoseOverrides). Both seed from
+  // localStorage in show() and re-apply at boot (applyPersistedTamaMotion). The
+  // override map is copied on seed/write (never mutated in place) so each $state
+  // reassignment is actually observed.
+  tamaMotionPreset = $state<TamaMotionPreset>(DEFAULTS.tamaMotionPreset);
+  tamaPoseOverrides = $state<Record<string, string>>({ ...DEFAULTS.tamaPoseOverrides });
+
+  // ── Tama skin picker (PER-47) — app-level, NOT repo-scoped ──────────────
+  // The active skin's plugin id (null = built-in). Seeded from localStorage in
+  // show(); the picker's <select> binds to it. tamaSkinBusy disables the
+  // control while a load is in flight; tamaSkinError surfaces an interactive
+  // load failure (the boot path stays silent — see applyPersistedTamaSkin).
+  tamaSkinPluginId = $state<string | null>(DEFAULTS.tamaSkinPluginId);
+  tamaSkinBusy = $state(false);
+  tamaSkinError = $state("");
+
+  // The bundled Tama characters (Momo/Sora) the picker always offers, between
+  // "Default" and any plugin-provided skins. A plain constant list — no fetch,
+  // no gating — surfaced through the controller so the template reads it the same
+  // way it reads skinnablePlugins.
+  get builtinSkins(): BuiltinSkin[] {
+    return BUILTIN_SKINS;
+  }
+
+  // Enabled plugins that ship a Tama skin — the plugin entries the picker offers
+  // after "Default" and the built-in characters. Reads the plugin registry from
+  // pluginsCtrl (its single owner since the Plugins tab became its own view);
+  // show() below kicks a pluginsCtrl.refreshPlugins() so this is fresh on open.
+  get skinnablePlugins(): Plugin[] {
+    return pluginsCtrl.plugins.filter((p) => p.enabled !== false && hasTamaSkin(p));
+  }
 
   // ── git identity section (repo-scoped, explicit Save) ───────────────────
   // Unlike remotes.svelte.ts's own plain (non-$state) `repo` field — which
@@ -419,7 +675,7 @@ class SettingsState {
         for (const e of res.data) map[e.key] = e;
         this.configEntries = map;
       } else {
-        this.configError = String(res.error ?? "Could not read this repository's git configuration.");
+        this.configError = be(res.error) || "Could not read this repository's git configuration.";
       }
     } catch (e) {
       this.configError = "Could not read this repository's git configuration — " + e;
@@ -466,7 +722,7 @@ class SettingsState {
       if (res.ok) {
         await this.refreshConfigKey(key);
       } else {
-        this.configFieldErrors = { ...this.configFieldErrors, [key]: res.message };
+        this.configFieldErrors = { ...this.configFieldErrors, [key]: be(res.message) };
       }
     } catch (e) {
       this.configFieldErrors = { ...this.configFieldErrors, [key]: "Could not save — " + e };
@@ -498,7 +754,7 @@ class SettingsState {
       if (res.status === "ok") {
         this.advancedEntries = res.data;
       } else {
-        this.advancedError = String(res.error ?? "Could not list this repository's git configuration.");
+        this.advancedError = be(res.error) || "Could not list this repository's git configuration.";
       }
     } catch (e) {
       this.advancedError = "Could not list this repository's git configuration — " + e;
@@ -515,7 +771,7 @@ class SettingsState {
       if (res.ok) {
         await this.refreshAdvanced();
       } else {
-        this.advancedError = res.message;
+        this.advancedError = be(res.message);
       }
     } catch (e) {
       this.advancedError = "Could not remove — " + e;
@@ -541,7 +797,7 @@ class SettingsState {
         this.newAdvancedValue = "";
         await this.refreshAdvanced();
       } else {
-        this.advancedError = res.message;
+        this.advancedError = be(res.message);
       }
     } catch (e) {
       this.advancedError = "Could not save — " + e;
@@ -564,12 +820,18 @@ class SettingsState {
     this.soundEffectsVolume = s.soundEffectsVolume;
     this.showAllCommitTags = s.showAllCommitTags;
     this.graphLabelPriority = s.graphLabelPriority;
+    this.graphLabelLayout = s.graphLabelLayout;
     this.autoFetchEnabled = s.autoFetchEnabled;
     this.autoFetchIntervalMinutes = s.autoFetchIntervalMinutes;
+    this.autoMaintenanceEnabled = s.autoMaintenanceEnabled;
     this.snapshotRetentionMode = s.snapshotRetentionMode;
     this.snapshotRetentionCount = s.snapshotRetentionCount;
     this.snapshotRetentionDays = s.snapshotRetentionDays;
     this.tamaEnabled = s.tamaEnabled;
+    this.tamaSkinPluginId = s.tamaSkinPluginId;
+    this.tamaSkinError = "";
+    this.tamaMotionPreset = s.tamaMotionPreset;
+    this.tamaPoseOverrides = { ...s.tamaPoseOverrides };
     this.repo = repo ?? "";
     this.identityError = "";
     this.configError = "";
@@ -582,6 +844,10 @@ class SettingsState {
       this.identity = null;
       this.configEntries = {};
     }
+    // The Tama skin picker offers every enabled skin-shipping plugin (see
+    // skinnablePlugins). pluginsCtrl owns the registry now, so refresh it here on
+    // every open — app-level (not repo-scoped), same as it did as our own tab.
+    void pluginsCtrl.refreshPlugins();
   }
 
   close(): void {
@@ -632,7 +898,13 @@ class SettingsState {
   setGraphLabelPriority(v: GraphLabelPriority): void {
     this.graphLabelPriority = v;
     saveSettings({ graphLabelPriority: v });
-    bridge.setGraphLabelPriority(v); // reorders the gutter chips live — see legacy/main.ts
+    bridge.setGraphLabelPriority(v); // reorders the graph's ref labels live — see legacy/main.ts
+  }
+
+  setGraphLabelLayout(v: GraphLabelLayout): void {
+    this.graphLabelLayout = v;
+    saveSettings({ graphLabelLayout: v });
+    bridge.setGraphLabelLayout(v); // flips the canvas layout live — see legacy/main.ts
   }
 
   // The background timer itself lives in main.ts (mirrors the existing
@@ -647,6 +919,11 @@ class SettingsState {
   setAutoFetchIntervalMinutes(v: number): void {
     this.autoFetchIntervalMinutes = v;
     saveSettings({ autoFetchIntervalMinutes: v });
+  }
+
+  setAutoMaintenanceEnabled(v: boolean): void {
+    this.autoMaintenanceEnabled = v;
+    saveSettings({ autoMaintenanceEnabled: v });
   }
 
   setSnapshotRetentionMode(v: SnapshotRetentionMode): void {
@@ -677,6 +954,121 @@ class SettingsState {
     bridge.setTamaEnabled(v); // applies the .tama-off class immediately — see legacy/main.ts
   }
 
+  // ── Tama motion preset + expression remap (PER-54) ──────────────────────
+  // Both persist like every other instant-apply pref AND hand the new value to
+  // the runtime via a bridge setter. The bridge setters are pure frontend/DOM
+  // (a timing knob + a pose-key lookup), so they fire in design mode too — no
+  // IN_TAURI gate here, unlike the plugin-backed skin picker below.
+  setTamaMotionPreset(v: TamaMotionPreset): void {
+    this.tamaMotionPreset = v;
+    saveSettings({ tamaMotionPreset: v });
+    bridge.setTamaMotionPreset(v); // adjusts idle/timing behavior live — see legacy/main.ts
+  }
+
+  // What a moment's <select> currently shows: its override pose, or "" (the
+  // "Default" option — i.e. fall back to the built-in POSE[state]).
+  tamaPoseOverride(state: string): string {
+    return this.tamaPoseOverrides[state] ?? "";
+  }
+
+  // Whether ANY override is set — gates the "Reset expressions" button.
+  get hasTamaPoseOverrides(): boolean {
+    return Object.keys(this.tamaPoseOverrides).length > 0;
+  }
+
+  // A moment row's onchange. pose === "" (the "Default" option) REMOVES the
+  // override so that state resolves to POSE[state] again; any pose key SETS it.
+  // Rebuilds the map (never mutates in place) so the $state assignment is seen,
+  // persists the whole map, and hands it to the runtime.
+  setTamaPoseOverride(state: string, pose: string): void {
+    const next = { ...this.tamaPoseOverrides };
+    if (pose) next[state] = pose;
+    else delete next[state];
+    this.tamaPoseOverrides = next;
+    saveSettings({ tamaPoseOverrides: next });
+    bridge.setTamaPoseOverrides(next); // remaps the resolved poses live — see legacy/main.ts
+  }
+
+  // "Reset expressions" — drop every override back to the built-in poses.
+  resetTamaPoseOverrides(): void {
+    this.tamaPoseOverrides = {};
+    saveSettings({ tamaPoseOverrides: {} });
+    bridge.setTamaPoseOverrides({});
+  }
+
+  // The skin picker's onchange. Three kinds of selection:
+  //   - `null`/"" -> Default: clear the overlay (poses AND voice pitch) and
+  //     forget the persisted choice.
+  //   - a "builtin:*" id (Momo/Sora) -> apply its bundled poses + voicePitch
+  //     SYNCHRONOUSLY (no backend), persist immediately, and surface its greeting
+  //     once. Works in design mode too — a built-in is pure frontend.
+  //   - a plugin id -> load the plugin's skin from the backend and overlay its
+  //     poses + voicePitch. The id is PERSISTED only AFTER a successful load, so a
+  //     broken plugin skin never becomes the boot-applied one; an interactive
+  //     failure reverts the selection to Default and surfaces tamaSkinError
+  //     (unlike the silent boot path). Design mode (!IN_TAURI) has no backend to
+  //     load a plugin skin from — it persists + demos with a toast, no real overlay.
+  async setTamaSkin(id: string | null): Promise<void> {
+    const chosen = id || null;
+    this.tamaSkinError = "";
+    if (!chosen) {
+      this.tamaSkinPluginId = null;
+      saveSettings({ tamaSkinPluginId: null });
+      bridge.clearTamaSkin();
+      return;
+    }
+    // Built-in character — pure frontend, applies at once (poses + voice pitch),
+    // no backend and no busy spinner.
+    const builtin = builtinSkinById(chosen);
+    if (builtin) {
+      this.tamaSkinPluginId = builtin.id;
+      bridge.applyTamaSkin(builtin.poses, builtin.voicePitch);
+      saveSettings({ tamaSkinPluginId: builtin.id });
+      const line = pickSkinCopyLine(builtin.copy);
+      if (line) bridge.tama.say(line);
+      return;
+    }
+    // A "builtin:*" id we don't recognise — coerce to Default rather than trying
+    // to load it as a plugin (a plugin id can never carry the "builtin:" prefix).
+    if (isBuiltinSkinId(chosen)) {
+      this.tamaSkinPluginId = null;
+      saveSettings({ tamaSkinPluginId: null });
+      bridge.clearTamaSkin();
+      return;
+    }
+    // Otherwise it's a plugin id. Reflect the choice in the control right away;
+    // only persist after the load resolves so a failed one doesn't linger as the
+    // stored value.
+    this.tamaSkinPluginId = chosen;
+    if (!IN_TAURI) {
+      saveSettings({ tamaSkinPluginId: chosen });
+      bridge.tama.say(`This is where the "${chosen}" Tama skin would load (demo).`);
+      return;
+    }
+    this.tamaSkinBusy = true;
+    try {
+      const res = await commands.loadPluginSkin(chosen);
+      if (res.status === "ok") {
+        bridge.applyTamaSkin(res.data.poses ?? {}, res.data.voicePitch ?? undefined);
+        saveSettings({ tamaSkinPluginId: chosen });
+        const line = pickSkinCopyLine(res.data.copy as Record<string, string>);
+        if (line) bridge.tama.say(line);
+      } else {
+        this.tamaSkinPluginId = null;
+        saveSettings({ tamaSkinPluginId: null });
+        bridge.clearTamaSkin();
+        this.tamaSkinError = be(res.error) || "Could not load that Tama skin.";
+      }
+    } catch (e) {
+      this.tamaSkinPluginId = null;
+      saveSettings({ tamaSkinPluginId: null });
+      bridge.clearTamaSkin();
+      this.tamaSkinError = "Could not load that Tama skin — " + e;
+    } finally {
+      this.tamaSkinBusy = false;
+    }
+  }
+
   async refreshIdentity(): Promise<void> {
     if (!this.repo) {
       this.identity = null;
@@ -698,7 +1090,7 @@ class SettingsState {
         this.emailInput = r.data.email ?? "";
       } else {
         this.identity = null;
-        this.identityError = String(r.error ?? "Could not read this repository's git identity.");
+        this.identityError = be(r.error) || "Could not read this repository's git identity.";
       }
     } catch (e) {
       // getGitIdentity's binding rethrows on a real Error rejection (only a
@@ -728,7 +1120,7 @@ class SettingsState {
         this.identity = { name, email, configured: true, local: true };
         bridge.tama.say("Git identity updated.");
       } else {
-        this.identityError = res.message || "Could not update this repository's git identity.";
+        this.identityError = be(res.message) || "Could not update this repository's git identity.";
       }
     } catch (e) {
       this.identityError = "Could not update this repository's git identity — " + e;

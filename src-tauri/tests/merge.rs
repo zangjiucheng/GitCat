@@ -254,7 +254,7 @@ fn merge_start_rejects_an_unknown_strategy() {
     let merged = tauri::async_runtime::block_on(merge_start(path.clone(), head.clone(), Some("squash".into())));
     assert_eq!(merged.state, "error");
     assert!(!merged.ok);
-    assert!(merged.message.contains("Unknown merge strategy"), "message: {}", merged.message);
+    assert!(merged.message.contains("err_history.unknown_merge_strategy"), "message: {}", merged.message);
     // Nothing should have been touched — this must fail validation before
     // ever opening the repo/snapshotting.
     assert_eq!(repo.rev("HEAD").as_deref(), Some(head.as_str()));
@@ -772,12 +772,12 @@ fn merge_start_multi_rejects_fewer_than_two_shas() {
     let one = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![head], "octopus".into(), None));
     assert!(!one.ok);
     assert_eq!(one.state, "error");
-    assert!(one.message.contains("at least two"), "message: {}", one.message);
+    assert!(one.message.contains("err_history.pick_at_least_two"), "message: {}", one.message);
     assert_eq!(repo.open().state(), RepositoryState::Clean);
 
     let none = tauri::async_runtime::block_on(merge_start_multi(path, vec![], "sequential".into(), None));
     assert!(!none.ok);
-    assert!(none.message.contains("at least two"), "message: {}", none.message);
+    assert!(none.message.contains("err_history.pick_at_least_two"), "message: {}", none.message);
 }
 
 #[test]
@@ -789,7 +789,7 @@ fn merge_start_multi_rejects_an_unknown_mode() {
     let result = tauri::async_runtime::block_on(merge_start_multi(path, vec![head.clone(), head], "bogus".into(), None));
     assert!(!result.ok);
     assert_eq!(result.state, "error");
-    assert!(result.message.contains("Unknown merge mode"), "message: {}", result.message);
+    assert!(result.message.contains("err_history.unknown_merge_mode"), "message: {}", result.message);
 }
 
 #[test]
@@ -921,7 +921,7 @@ fn merge_queue_continue_refuses_while_the_current_step_is_still_conflicted() {
     let advanced = tauri::async_runtime::block_on(merge_queue_continue(path.clone()));
     assert!(!advanced.ok);
     assert_eq!(advanced.state, "error");
-    assert!(advanced.message.contains("Finish resolving"), "message: {}", advanced.message);
+    assert!(advanced.message.contains("err_history.finish_resolving_first"), "message: {}", advanced.message);
 
     // The sidecar must still be intact — abort still works after a refused continue.
     let aborted = tauri::async_runtime::block_on(merge_queue_abort(path));
@@ -983,7 +983,7 @@ fn merge_start_multi_refuses_to_stack_on_an_existing_merge_or_queue() {
     let blocked = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_a.clone(), tip_b.clone()], "octopus".into(), None));
     assert!(!blocked.ok);
     assert_eq!(blocked.state, "error");
-    assert!(blocked.message.contains("already in progress"), "message: {}", blocked.message);
+    assert!(blocked.message.contains("err_history.merge_in_progress"), "message: {}", blocked.message);
 
     // Resolve + finish the current step, but the queue's second branch is
     // still queued — the sidecar itself (not just MERGE_HEAD) must also gate
@@ -997,7 +997,7 @@ fn merge_start_multi_refuses_to_stack_on_an_existing_merge_or_queue() {
     let blocked2 = tauri::async_runtime::block_on(merge_start_multi(path, vec![tip_a, tip_b], "octopus".into(), None));
     assert!(!blocked2.ok);
     assert_eq!(blocked2.state, "error");
-    assert!(blocked2.message.contains("sequential merge queue"), "message: {}", blocked2.message);
+    assert!(blocked2.message.contains("err_history.sequential_queue_in_progress"), "message: {}", blocked2.message);
 }
 
 // ---------------------------------------------------------------------------

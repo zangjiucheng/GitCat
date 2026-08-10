@@ -39,7 +39,7 @@ vi.mock("../sidebar/sidebar.svelte.ts", () => ({
 }));
 
 import { commands } from "../../ipc/bindings";
-import { submoduleNavCtrl } from "./submodulenav.svelte.ts";
+import { submoduleNavCtrl, horizontalWheelDelta } from "./submodulenav.svelte.ts";
 import type { SubmoduleInfo } from "../../ipc/bindings";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
@@ -234,5 +234,78 @@ describe("reset", () => {
     expect(submoduleNavCtrl.visible).toBe(false);
     expect(submoduleNavCtrl.path).toEqual([]);
     expect(submoduleNavCtrl.siblings).toEqual([]);
+  });
+});
+
+describe("horizontalWheelDelta — wheel-to-scroll on the overflowing strip", () => {
+  const overflow = { scrollWidth: 800, clientWidth: 400 };
+  const noOverflow = { scrollWidth: 300, clientWidth: 400 };
+
+  it("returns 0 when the strip doesn't overflow (nothing to scroll)", () => {
+    expect(horizontalWheelDelta({ deltaX: 0, deltaY: 120, deltaMode: 0, ...noOverflow })).toBe(0);
+  });
+
+  it("translates a vertical mouse wheel into horizontal px when overflowing", () => {
+    expect(horizontalWheelDelta({ deltaX: 0, deltaY: 120, deltaMode: 0, ...overflow })).toBe(120);
+    expect(horizontalWheelDelta({ deltaX: 0, deltaY: -80, deltaMode: 0, ...overflow })).toBe(-80);
+  });
+
+  it("leaves a horizontal-dominant trackpad gesture alone (native deltaX scroll)", () => {
+    expect(horizontalWheelDelta({ deltaX: 90, deltaY: 30, deltaMode: 0, ...overflow })).toBe(0);
+    // Equal magnitudes count as horizontal-dominant → not hijacked.
+    expect(horizontalWheelDelta({ deltaX: 50, deltaY: 50, deltaMode: 0, ...overflow })).toBe(0);
+  });
+
+  it("scales line-based deltas (deltaMode 1, typical mouse wheel) by ~16px/line", () => {
+    expect(horizontalWheelDelta({ deltaX: 0, deltaY: 3, deltaMode: 1, ...overflow })).toBe(48);
+  });
+});
+
+describe("refresh with no repo open", () => {
+  beforeEach(() => {
+    mockInTauri = true;
+    mockNavStack = [];
+    mockCurRepo = "";
+    submoduleNavCtrl.reset();
+  });
+
+  // REGRESSION: src/main.ts calls this once at boot, with whatever
+  // `bridge.CUR_REPO` currently is — and at boot with no repo open that is
+  // `null`. `refresh` used to take it as `string` (the call site casts through
+  // `as unknown as string`) and hand it straight to `basename()`, which does
+  // `p.replace(...)`. Result: an uncaught TypeError on every launch that opens
+  // without a repo, from a line the type-checker had been told to trust.
+  it("does not throw when there is no repo yet", async () => {
+    await expect(submoduleNavCtrl.refresh(null)).resolves.toBeUndefined();
+  });
+
+  it("leaves the strip empty rather than inventing a breadcrumb for nothing", async () => {
+    await submoduleNavCtrl.refresh(null);
+    expect(submoduleNavCtrl.path).toEqual([]);
+    expect(submoduleNavCtrl.siblings).toEqual([]);
+  });
+
+  it("treats an empty-string repo the same way", async () => {
+    await submoduleNavCtrl.refresh("");
+    expect(submoduleNavCtrl.path).toEqual([]);
+  });
+
+  it("clears a strip that was already populated, so a closed repo can't leave one behind", async () => {
+    submoduleNavCtrl.path = [{ name: "gitcat", absolutePath: "/repo", current: true }];
+    await submoduleNavCtrl.refresh(null);
+    expect(submoduleNavCtrl.path).toEqual([]);
+  });
+
+  // The no-repo guard must stay BELOW the `!IN_TAURI` branch. Design mode has no
+  // repo at all (CUR_REPO is null there for the whole session — see
+  // legacy/main.ts's own note on workdirAvailable), so a guard placed first
+  // would empty the browser preview's demo strip instead of showing it.
+  it("still shows the demo strip in design mode, where the repo is always null", async () => {
+    mockInTauri = false;
+    await submoduleNavCtrl.refresh(null);
+    expect(submoduleNavCtrl.path.map((c) => c.name)).toEqual(["gitcat"]);
+    expect(submoduleNavCtrl.siblings.length).toBeGreaterThan(0);
+    expect(submoduleNavCtrl.visible).toBe(true);
+    expect(commands.submoduleStatus).not.toHaveBeenCalled();
   });
 });

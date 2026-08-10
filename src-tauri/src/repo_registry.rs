@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, Wry};
 
+use crate::i18n_err::ierrp;
+
 const FILE_NAME: &str = "tracked_repos.json";
 const SCHEMA_VERSION: u32 = 1;
 
@@ -111,8 +113,9 @@ fn registry_path(app: &AppHandle<Wry>) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_config_dir()
-        .map_err(|e| format!("Could not resolve app config dir: {e}"))?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create app config dir: {e}"))?;
+        .map_err(|e| ierrp("err_repo.could_not_resolve_config_dir", &[("detail", &e.to_string())]))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| ierrp("err_repo.could_not_create_config_dir", &[("detail", &e.to_string())]))?;
     Ok(dir.join(FILE_NAME))
 }
 
@@ -142,7 +145,12 @@ pub fn load_from(path: &Path) -> Result<Vec<TrackedRepo>, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("Could not read {}: {e}", path.display())),
+        Err(e) => {
+            return Err(ierrp(
+                "err_repo.could_not_read",
+                &[("path", &path.display().to_string()), ("detail", &e.to_string())],
+            ))
+        }
     };
     match serde_json::from_str::<RegistryFile>(&text) {
         Ok(file) => Ok(file.repos),
@@ -179,12 +187,15 @@ fn registry_lock() -> &'static std::sync::Mutex<()> {
 /// always either the fully-old or fully-new content, never a partial mix.
 pub fn save_to(path: &Path, repos: &[TrackedRepo]) -> Result<(), String> {
     let file = RegistryFile { version: SCHEMA_VERSION, repos: repos.to_vec() };
-    let json = serde_json::to_string_pretty(&file).map_err(|e| format!("Could not serialize: {e}"))?;
+    let json = serde_json::to_string_pretty(&file)
+        .map_err(|e| ierrp("err_repo.could_not_serialize", &[("detail", &e.to_string())]))?;
     let mut tmp_name = path.as_os_str().to_os_string();
     tmp_name.push(".tmp");
     let tmp_path = PathBuf::from(tmp_name);
-    std::fs::write(&tmp_path, &json).map_err(|e| format!("Could not write {}: {e}", tmp_path.display()))?;
-    std::fs::rename(&tmp_path, path).map_err(|e| format!("Could not finalize {}: {e}", path.display()))
+    std::fs::write(&tmp_path, &json)
+        .map_err(|e| ierrp("err_repo.could_not_write", &[("path", &tmp_path.display().to_string()), ("detail", &e.to_string())]))?;
+    std::fs::rename(&tmp_path, path)
+        .map_err(|e| ierrp("err_repo.could_not_finalize", &[("path", &path.display().to_string()), ("detail", &e.to_string())]))
 }
 
 /// Best-effort canonicalization so the SAME repo (reached via the native

@@ -62,6 +62,7 @@ use std::process::Command;
 use serde::Serialize;
 
 use crate::git_remote::RemoteResult;
+use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::NoConsoleWindowExt;
 
 // ---------------------------------------------------------------------------
@@ -114,7 +115,7 @@ fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
         .arg(path)
         .args(args)
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_remote.run_git_failed", &[("detail", &e.to_string())]))?;
     Ok(GitOut {
         ok: output.status.success(),
         code: output.status.code(),
@@ -129,7 +130,7 @@ fn git_error_message(out: &GitOut) -> String {
     } else if !out.stdout.is_empty() {
         out.stdout.clone()
     } else {
-        format!("git exited with status {:?}", out.code)
+        ierrp("err_remote.git_exited_status", &[("code", &format!("{:?}", out.code))])
     }
 }
 
@@ -141,13 +142,13 @@ fn git_error_message(out: &GitOut) -> String {
 /// (per-module-copy convention).
 fn validate_remote_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
-        return Err("Remote name is empty.".into());
+        return Err(ierr("err_remote.remote_name_empty"));
     }
     if name.starts_with('-') {
-        return Err(format!("Refusing a remote name that looks like a flag: {name:?}"));
+        return Err(ierrp("err_remote.remote_name_flag", &[("name", &format!("{name:?}"))]));
     }
     if name.chars().any(|c| c.is_control() || c == ' ') {
-        return Err(format!("Remote name has an illegal whitespace/control character: {name:?}"));
+        return Err(ierrp("err_remote.remote_name_control", &[("name", &format!("{name:?}"))]));
     }
     Ok(())
 }
@@ -160,13 +161,13 @@ fn validate_remote_name(name: &str) -> Result<(), String> {
 /// than validate_remote_name.
 fn validate_remote_url(url: &str) -> Result<(), String> {
     if url.is_empty() {
-        return Err("Remote URL is empty.".into());
+        return Err(ierr("err_remote.remote_url_empty"));
     }
     if url.starts_with('-') {
-        return Err(format!("Refusing a URL that looks like a flag: {url:?}"));
+        return Err(ierrp("err_remote.remote_url_flag", &[("url", &format!("{url:?}"))]));
     }
     if url.chars().any(|c| c.is_control()) {
-        return Err("Remote URL has a control character.".into());
+        return Err(ierr("err_remote.remote_url_control"));
     }
     Ok(())
 }

@@ -1,0 +1,22 @@
+{
+  "id": "open-in-editor",
+  "name": "Open in Editor",
+  "version": "1.0.0",
+  "description": "External-tool commands that use placeholders: open the current repository in VS Code, or show a stat summary of the selected commit.",
+  "commands": [
+    {
+      "id": "open-repo",
+      "label": "Editor: Open repository in VS Code",
+      "run": "code -- {repo}",
+      "context": "repo",
+      "placement": "palette"
+    },
+    {
+      "id": "show-commit",
+      "label": "Commit: Show selected commit (stat)",
+      "run": "git show --stat {sha}",
+      "context": "commit",
+      "placement": "palette"
+    }
+  ]
+}

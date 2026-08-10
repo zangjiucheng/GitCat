@@ -4,17 +4,18 @@ import { bisectCtrl } from "../islands/bisect/bisect.svelte.ts";
 import { cmdkCtrl } from "../islands/cmdk/cmdk.svelte.ts";
 import { detailCtrl } from "../islands/detail/detail.svelte.ts";
 import { bisectDrawerCtrl } from "../islands/bisectdrawer/bisectdrawer.svelte.ts";
-import { loadSettings, saveSettings, pruneSnapshotsPerPolicy } from "../islands/settings/settings.svelte.ts";
+import { loadSettings, saveSettings, pruneSnapshotsPerPolicy, applyPersistedTamaSkin, applyPersistedTamaMotion } from "../islands/settings/settings.svelte.ts";
 import { sidebarCtrl } from "../islands/sidebar/sidebar.svelte.ts";
 import { workdirCtrl } from "../islands/workdir/workdir.svelte.ts";
 import { commitMenuCtrl } from "../islands/commitmenu/commitmenu.svelte.ts";
 import { snapshotPreviewCtrl } from "../islands/snapshotpreview/snapshotpreview.svelte.ts";
 import { submoduleNavCtrl } from "../islands/submodulenav/submodulenav.svelte.ts";
 import { ribbonTickFracs, RIBBON_TOP_FRAC, RIBBON_BOT_FRAC, RIBBON_MIN_TICK_PX } from "./ribbon.ts";
-import { orderRefs } from "./reforder.ts";
+import { displayChips } from "./reforder.ts";
 import { LruCache } from "./graphcache.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
 import { repoSummaryCtrl } from "../islands/reposummary/reposummary.svelte.ts";
+import { pluginHooksCtrl } from "../islands/pluginhooks/pluginhooks.svelte.ts";
 import { syncProgressCtrl } from "../islands/syncprogress/syncprogress.svelte.ts";
 import { tamaConfirmCtrl } from "../islands/tamaconfirm/tamaconfirm.svelte.ts";
 // Hidden Easter egg — see its own header doc + this file's click-counter
@@ -28,7 +29,11 @@ import { dlog } from "../devlog";
 // TamaMascot.set() below plays a short synthesized chime on a real state
 // change via STATE_SOUND — see sound.ts's own header for why this is a leaf
 // module main.ts imports FROM, never the reverse.
-import { playTamaSound, STATE_SOUND } from "./sound.ts";
+import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
+// i18n for the vanilla top-bar/loading chrome. This module isn't Svelte-
+// reactive, so t() is called imperatively (applyStaticI18n below + the busy
+// labels in doFetch/doPull/doPush) and re-run on i18nEvents "change".
+import { t, be, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -65,17 +70,22 @@ const PADX=18, ROW_H_BASE=26, LANE_W_BASE=14, DOT_R_BASE=4.6;
 // darkened vs the message column; DIVIDER_ALPHA = the hairline between them.
 // All four are read straight by draw() — tweak the look here.
 const BRANCH_BAR_W=3, BRANCH_WASH_ALPHA=0.17, BRANCH_BAR_ALPHA=0.95, GRAPH_CHANNEL_ALPHA=0.20, GRAPH_DIVIDER_ALPHA=0.6, BRANCH_ROW_GAP=3;
-// Dedicated left BRANCH / TAG column (GitKraken-style): ref labels live in a
-// fixed left gutter [0,branchColW) instead of inline before the subject, so the
-// message column stays clean and branch names align in one scannable strip. Width
-// is ~19% of the graph, clamped to [MIN,MAX]; it collapses to 0 (falling back to
-// inline chips) when the window is too narrow to spare a column. BRANCH_PAD_L is
-// the label's left inset inside the gutter.
+// Dedicated left BRANCH / TAG column, the opt-in alternative
+// to the default inline-before-the-subject layout (graphLabelLayout setting —
+// see setGraphLabelLayout): ref labels live in a fixed left gutter
+// [0,branchColW) instead of inline, so the message column stays clean and
+// branch names align in one scannable strip. Width is ~14% of the graph,
+// clamped to [MIN,MAX]; like the inline layout, it still collapses to 0 when
+// the window is too narrow to spare a column. BRANCH_PAD_L is the label's left
+// inset inside the gutter.
 const BRANCH_COL_MIN=96, BRANCH_COL_MAX=260, BRANCH_PAD_L=12, COL_HANDLE=5, MIN_GRAPH_W=32;
 // The branch-colour bar that marks each row's branch just inside the message
 // column: RBAR_INSET px right of the graph|message divider, then MSG_TEXT_PAD px
 // in total before the message text begins — so the bar reads as separated from
-// both the graph and the text (see draw()'s tag pass).
+// both the graph and the text (see draw()'s tag pass). MSG_TEXT_PAD does double
+// duty in inline layout: it's also the gap left after the last inline chip (or
+// its "+N" pill) before the subject starts, same breathing room the bar gets
+// in column layout (see draw()'s inline chip pass).
 const RBAR_INSET=2, MSG_TEXT_PAD=11;
 // Hard length caps against pathological input. Line/commit COUNT is capped
 // upstream, but a single string's LENGTH is not: a commit summary can be an
@@ -201,6 +211,22 @@ function generateGraph(N){
   // the setting OFF still shows exactly one chip there, matching a fresh repo).
   const allRefs=refs.map(r=>r?[r]:[]);
   if(refs[40]) allRefs[40]=[refs[40],{label:"v0.2.9-rc1",kind:"tag"}];
+  // Design-mode showcase rows for the chip forms: a synced head (main +
+  // origin/main merge into one [🖥☁ main] chip), a synced plain branch, and a
+  // DIVERGED pair (local and origin tips on different commits, two rows apart)
+  // so the local-vs-remote distinction is visible without a real repo. Rows
+  // 12/20/26 sit below the first generated tag (r=40) and below the first
+  // generated branch (r%223===0), so they avoid colliding with generated refs.
+  // Row 0 is the opposite: it deliberately RIDES the generated head ref
+  // (refs[0] above) rather than dodging it, so main + origin/main demo the
+  // merged head chip on the one row that's guaranteed to carry "head".
+  if(N>30){
+    allRefs[0]=[...allRefs[0],{label:"origin/main",kind:"remote"}];
+    allRefs[12]=[{label:"release/2.1",kind:"branch"},{label:"origin/release/2.1",kind:"remote"}];
+    refs[12]=allRefs[12][0];
+    allRefs[20]=[{label:"feat/inline-labels",kind:"branch"}]; refs[20]=allRefs[20][0];
+    allRefs[26]=[{label:"origin/feat/inline-labels",kind:"remote"}]; refs[26]=allRefs[26][0];
+  }
   const snapRows=[]; const snapTs={};
   for(let r=6;r<N;r+=38+((r*97)%46)){snapRows.push(r);snapTs[r]=fakeAgo(r);}
   // High-water mark of lane slots ever allocated — slotColor's length only
@@ -285,13 +311,23 @@ function recomputeLayout(){
   layout.laneW=LANE_W_BASE*(0.85+0.15*z);
   layout.dotR=DOT_R_BASE*(0.85+0.15*z);
   layout.chipFont="600 "+Math.round(11.5*Math.min(1.3,z))+"px "+FONT_UI;
-  // Left branch/tag column width: ~19% of the graph, clamped to [MIN,MAX], but
-  // never so wide that the graph lanes + subject lose their room — collapses to 0
-  // (inline chips, the pre-column behaviour) when the window is too narrow.
+  // Left branch/tag column width (column layout only): ~14% of the graph,
+  // clamped to [MIN,MAX], but never so wide that the graph lanes + subject
+  // lose their room — collapses to 0 (falls back to the same rendering path
+  // inline layout always uses) when the window is too narrow.
   const autoB=Math.round(Math.min(BRANCH_COL_MAX,Math.max(BRANCH_COL_MIN,view.cssW*0.14)));
-  let bcw=colW.branch!=null?Math.round(colW.branch):autoB;
-  bcw=Math.max(BRANCH_COL_MIN,Math.min(bcw,Math.round(view.cssW*0.45)));
-  if(bcw>view.cssW-AUTHOR_GUTTER-MIN_SUBJECT_W-MIN_GRAPH_W) bcw=0;
+  // Gate on the layout MODE, not on the resulting width: column mode's clamp
+  // must run unconditionally, exactly as it did pre-inline, since a divider
+  // drag can leave colW.branch negative (the drag handler applies no floor of
+  // its own) — clamping only when bcw>0 would let that negative value skip
+  // straight through to layout.branchColW/laneX() uncorrected.
+  let bcw;
+  if(graphLabelInline) bcw=0;
+  else{
+    bcw=colW.branch!=null?Math.round(colW.branch):autoB;
+    bcw=Math.max(BRANCH_COL_MIN,Math.min(bcw,Math.round(view.cssW*0.45)));
+    if(bcw>view.cssW-AUTHOR_GUTTER-MIN_SUBJECT_W-MIN_GRAPH_W) bcw=0;
+  }
   layout.branchColW=(G&&G.N&&view.cssW>0)?bcw:0;
   layout.contentH=(G?G.N:0)*layout.rowH;
   // +bandH(): the pinned header steals bandH() px of on-screen vertical
@@ -418,7 +454,7 @@ function renderContent(st, rowLo, rowHi, strip){
   // into the message and there's no need to clip; panning still reaches lanes
   // wider than the column. lastTx is cached for the divider-drag hit test.
   const contentTx=Math.min(laneX(maxLane)+dotR+14,W-AUTHOR_GUTTER-MIN_SUBJECT_W);
-  const tx=strip?lastTx:((bcw>0&&colW.graph!=null)
+  const tx=strip?lastTx:(colW.graph!=null
     ? Math.min(Math.max(contentTx,bcw+Math.round(colW.graph)),W-AUTHOR_GUTTER-MIN_SUBJECT_W)
     : contentTx);
   if(!strip) lastTx=tx;
@@ -513,17 +549,46 @@ function renderContent(st, rowLo, rowHi, strip){
     // "where am I" pops even in a busy graph. Drawn last so it sits over the other
     // rings; kept undimmed by the ancestor overlay (which skips headRow).
     if(r===headRow){ ctx.save(); ctx.shadowColor=theme.accent; ctx.shadowBlur=7; ctx.beginPath(); ctx.arc(x,y,dotR+4.5,0,TAU); ctx.strokeStyle=theme.accent; ctx.lineWidth=2.6; ctx.stroke(); ctx.restore(); }
-    let cx=bcw>0?tx+MSG_TEXT_PAD:tx; ctx.font=layout.chipFont;
+    // Inline chips start MSG_TEXT_PAD past tx unconditionally — same inset
+    // column mode's message text gets after ITS divider (bcw). Also, not
+    // incidentally, clears dividerAt's COL_HANDLE (5px) grab zone around
+    // lastTx (11>5): chips used to start flush AT tx, so the first chip's own
+    // left edge sat inside the graph|message divider's hit zone — a click
+    // meant to select/open that chip could instead start a colDrag (and any
+    // hand-tremor pixel of movement would persist a `colW.graph` override on
+    // release). Every inline row's text column starts here now, labelled or
+    // not — there's no more "stays exactly at tx" case.
+    let cx=tx+MSG_TEXT_PAD; ctx.font=layout.chipFont;
     // Ref labels — drawGutterChips lays them out in display order (priority +
-    // per-commit rotation), tinted in column mode to THIS row's branch colour so
-    // the label matches the row's band, and adds a "+N" pill when they don't all
-    // fit. In column mode (bcw>0) they live in the left BRANCH/TAG gutter and the
-    // subject stays put at tx; when the window is too narrow for a column
-    // (bcw===0) they fall back to inline chips, advancing cx so the subject
-    // follows past whatever was drawn (chips + any pill).
-    const bcol=LANE_COLORS[G.commitColor[r]];
-    if(bcw>0){ drawGutterChips(r,BRANCH_PAD_L,bcw-6,y,bcol,6); }
-    else { cx=drawGutterChips(r,cx,W-AUTHOR_GUTTER-MIN_SUBJECT_W,y,null,8); }
+    // per-commit rotation), tinted to THIS row's lane colour in BOTH layouts so
+    // the label matches the lane lines beside it, and adds a "+N" pill when
+    // they don't all fit. In column mode (bcw>0) they live in the left
+    // BRANCH/TAG gutter and the subject stays put at cx; inline (bcw===0) they
+    // sit before the subject, advancing cx past whatever was drawn.
+    if(bcw>0){ drawGutterChips(r,BRANCH_PAD_L,bcw-6,y,col,6,false); }
+    else {
+      // Same breathing room after the last chip that column mode's message
+      // gets after ITS divider (MSG_TEXT_PAD, applied above to cx already) —
+      // drawGutterChips returns the right edge of the last thing it actually
+      // drew (a chip, or the "+N" pill), so without this the subject starts
+      // flush against that border. Only when something was drawn: an
+      // unlabelled row's subject stays exactly at cx (tx+MSG_TEXT_PAD).
+      //
+      // That trailing pad is subtracted from the chips' own x-limit rather
+      // than added past it, so a row whose chips fill the limit still leaves
+      // the subject its full MIN_SUBJECT_W. Capping at
+      // W-AUTHOR_GUTTER-MIN_SUBJECT_W and THEN adding the pad pushed the
+      // subject MSG_TEXT_PAD px into that floor (40 -> 29).
+      //
+      // Chips are the only term this controls. cx's own tx+MSG_TEXT_PAD above
+      // eats the same 11px whenever tx has been dragged out to ITS
+      // W-AUTHOR_GUTTER-MIN_SUBJECT_W clamp — on labelled and unlabelled rows
+      // alike, and long before this limit is in play. That one predates the
+      // chips and is left alone here.
+      const cx0=cx;
+      cx=drawGutterChips(r,cx,W-AUTHOR_GUTTER-MIN_SUBJECT_W-MSG_TEXT_PAD,y,col,8,true);
+      if(cx>cx0) cx+=MSG_TEXT_PAD;
+    }
     // Skip the per-row message/author/sha text while scrolling FAST (fastScroll):
     // glyph rasterisation is the single biggest per-frame cost on a software-
     // rendered canvas, and at this speed the text is an unreadable blur anyway
@@ -610,7 +675,7 @@ function draw(){
 // tick() forces a FULL. `bufferG` (G's object identity, reassigned on every data
 // change) is compared separately in tick().
 function bufferKeyNow(){
-  return view.renderDpr+"|"+Math.round(state.panX*100)+"|"+layout.zoom+"|"+cv.width+"|"+cv.height+"|"+bandH()+"|"+colW.graph+"|"+colW.branch+"|"+(showAllTags?1:0)+"|"+(graphTagsFirst?1:0)+"|"+refRotEpoch+"|"+themeEpoch+"|"+(bisectDrawerCtrl.active()?1:0)+"|"+bisectDrawerCtrl.cur+"|"+(state.drag?1:0)+"|"+state.selectedRow+"|"+state.hoverRow;
+  return view.renderDpr+"|"+Math.round(state.panX*100)+"|"+layout.zoom+"|"+cv.width+"|"+cv.height+"|"+bandH()+"|"+colW.graph+"|"+colW.branch+"|"+(showAllTags?1:0)+"|"+(graphTagsFirst?1:0)+"|"+graphLabelInline+"|"+refRotEpoch+"|"+themeEpoch+"|"+(bisectDrawerCtrl.active()?1:0)+"|"+bisectDrawerCtrl.cur+"|"+(state.drag?1:0)+"|"+state.selectedRow+"|"+state.hoverRow;
 }
 // True when the row-highlight fades have reached their targets — a blit copies
 // baked pixels, so a mid-animation alpha (fading a selection/hover tint in/out)
@@ -698,44 +763,92 @@ function drawWorkdirBand(){
   ctx.strokeStyle=theme.border; ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(0,rowH+0.5); ctx.lineTo(W,rowH+0.5); ctx.stroke();
 }
-// `maxWidth`, when given, caps the WHOLE chip (label + padding) — a label
-// that would exceed it is shrunk to fit with a trailing "…", same shrink-one-
-// char-at-a-time-and-remeasure approach the subject/author text below
-// already use. `maxWidth<=pad*2+8` means there's no usable room at all
-// (not even a one-char label plus ellipsis would read as anything but a
-// sliver) — draws nothing and returns `x` unchanged rather than a garbled chip.
+// `maxWidth`, when given, caps the WHOLE chip (label + padding + any leading
+// icons) — a label that would exceed it is shrunk to fit with a trailing "…",
+// same shrink-one-char-at-a-time-and-remeasure approach the subject/author
+// text below already use. `maxWidth<=pad*2+iconsW+8` means there's no usable
+// room at all (not even a one-char label plus ellipsis would read as anything
+// but a sliver) — draws nothing and returns `x` unchanged rather than a
+// garbled chip.
 const CHIP_PAD=6;
+// How much leading width `entry`'s glyphs take inside the chip (0 for a tag).
+function chipIconsW(entry, h) {
+  const s = chipIconSize(h);
+  return (entry.local ? s + CHIP_ICON_GAP : 0) + (entry.remote ? s + CHIP_ICON_GAP : 0);
+}
 // Measure a chip's drawn width, truncating the label to fit `maxWidth` (px). It
 // stays a pure measurement (no drawing) so drawGutterChips can decide fit —
 // including reserving room for a "+N" pill — before committing paint. Returns
 // null when there isn't room for even a minimal chip.
-function measureChip(label,kind,maxWidth){
-  ctx.font=layout.chipFont;
-  if(maxWidth!=null&&maxWidth<=CHIP_PAD*2+8) return null;
-  let text=label.length>LABEL_MAX?label.slice(0,LABEL_MAX):label;
-  if(maxWidth!=null){
-    const textMax=maxWidth-CHIP_PAD*2;
-    if(ctx.measureText(text).width>textMax){
-      while(text.length>1&&ctx.measureText(text+"…").width>textMax) text=text.slice(0,-1);
-      text+="…";
+function measureChip(entry, maxWidth) {
+  ctx.font = layout.chipFont;
+  const h = Math.round(16.5 * Math.min(1.25, layout.zoom));
+  const iconsW = chipIconsW(entry, h);
+  if (maxWidth != null && maxWidth <= CHIP_PAD * 2 + iconsW + 8) return null;
+  let text = entry.label.length > LABEL_MAX ? entry.label.slice(0, LABEL_MAX) : entry.label;
+  if (maxWidth != null) {
+    const textMax = maxWidth - CHIP_PAD * 2 - iconsW;
+    if (ctx.measureText(text).width > textMax) {
+      while (text.length > 1 && ctx.measureText(text + "…").width > textMax) text = text.slice(0, -1);
+      text += "…";
     }
   }
-  return {text, w:ctx.measureText(text).width+CHIP_PAD*2};
+  return { text, w: ctx.measureText(text).width + CHIP_PAD * 2 + iconsW };
 }
-// Paint a pre-measured chip (see measureChip). `colorOverride` tints the whole
-// chip to the row's branch colour in column mode; otherwise the kind colour.
-function paintChip(x,y,text,w,kind,colorOverride){
-  const col=colorOverride||refKindColor(kind);
-  ctx.font=layout.chipFont;
-  const h=Math.round(16.5*Math.min(1.25,layout.zoom));
-  ctx.beginPath(); if(ctx.roundRect)ctx.roundRect(x,y-h/2,w,h,4);else ctx.rect(x,y-h/2,w,h);
-  ctx.fillStyle=col; ctx.globalAlpha=kind==="head"?0.95:0.26; ctx.fill(); ctx.globalAlpha=1;
-  ctx.lineWidth=1; ctx.strokeStyle=col; ctx.stroke();
-  // Non-head labels draw their text in the bright theme.text (NOT the branch
-  // colour on a same-colour tint, which read as low-contrast/blurry) — the colour
-  // identity stays in the border + fill tint. head stays dark-on-solid.
-  ctx.fillStyle=kind==="head"?theme.bg:theme.text; ctx.textAlign="left"; ctx.fillText(text,x+CHIP_PAD,y+0.5);
-  return x+w;
+// Pick black-or-white text for a solid fill colour, via the WCAG relative
+// luminance the "black text" vs "white text" contrast ratio is itself built
+// on (gamma-corrected sRGB, not a raw-channel luma average) — a naive
+// (0.299R+0.587G+0.114B) luma threshold picks the LOSING colour for several of
+// our saturated lane hexes (e.g. light theme's teal/orange/blue lanes read as
+// "dark" under that formula but actually contrast better with black text), so
+// this compares against the real crossover point (~0.179) instead of
+// guessing one. `hex` is #rgb or #rrggbb; anything else (a stray CSS
+// variable, an empty string before the theme's first read) falls back to
+// white rather than throwing.
+function fgForFill(hex) {
+  let h = String(hex || "").replace("#", "");
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  const r = parseInt(h.slice(0, 2), 16) / 255, g = parseInt(h.slice(2, 4), 16) / 255, b = parseInt(h.slice(4, 6), 16) / 255;
+  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return "#ffffff";
+  const lin = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return L > 0.179 ? "#111417" : "#ffffff";
+}
+// Paint a pre-measured chip (see measureChip), leading with a monitor/cloud
+// glyph per `entry.local`/`entry.remote` (see reforder.ts::mergeRefChips) so a
+// folded local+remote pair reads as one chip with both icons, not two chips
+// with the same label.
+function paintChip(x, y, text, w, entry, rowColor) {
+  // Every chip tints to its ROW's lane colour, in both layouts, so the label
+  // always matches the lane lines it sits beside — one colour story for the
+  // whole row. What KIND of ref it is no longer rides on colour at all: the
+  // monitor/cloud glyphs carry local/remote, and head's solid fill (below)
+  // carries "you are here". `|| refKindColor(kind)` is defensive-only: both
+  // call sites (drawGutterChips, in both layouts) always pass a real lane
+  // colour as rowColor.
+  const kind = entry.kind;
+  const col = rowColor || refKindColor(kind);
+  ctx.font = layout.chipFont;
+  const h = Math.round(16.5 * Math.min(1.25, layout.zoom));
+  ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y - h / 2, w, h, 4); else ctx.rect(x, y - h / 2, w, h);
+  ctx.fillStyle = col; ctx.globalAlpha = kind === "head" ? 0.95 : 0.26; ctx.fill(); ctx.globalAlpha = 1;
+  ctx.lineWidth = 1; ctx.strokeStyle = col; ctx.stroke();
+  // Non-head labels draw their text (and glyphs) in the bright theme.text (NOT
+  // the branch colour on a same-colour tint, which read as low-contrast/
+  // blurry) — the colour identity stays in the border + fill tint. head sits
+  // on a near-opaque (0.95-alpha) fill of `col` itself, so its text/glyphs
+  // pick black or white via fgForFill(col) above instead of a fixed
+  // theme.bg — a fixed colour reads fine on dark theme's light pastel lanes
+  // (theme.bg is dark there) but fails WCAG on several of light theme's
+  // darker/saturated lanes (theme.bg is white there, so it was always the
+  // "white text" choice, regardless of what the lane actually needed).
+  const fg = kind === "head" ? fgForFill(col) : theme.text;
+  const s = chipIconSize(h);
+  let ix = x + CHIP_PAD;
+  if (entry.local) { paintChipIcon(CHIP_ICON_MONITOR, ix, y, s, fg); ix += s + CHIP_ICON_GAP; }
+  if (entry.remote) { paintChipIcon(CHIP_ICON_CLOUD, ix, y, s, fg); ix += s + CHIP_ICON_GAP; }
+  ctx.fillStyle = fg; ctx.textAlign = "left"; ctx.fillText(text, ix, y + 0.5);
+  return x + w;
 }
 // The muted "+N" overflow pill telling you N more refs are hidden here and that
 // clicking cycles them into view. Returns its width so the caller can record a
@@ -750,6 +863,28 @@ function paintPlus(x,y,n){
   ctx.fillStyle=theme.muted; ctx.textAlign="left"; ctx.fillText(text,x+CHIP_PAD,y+0.5);
   return w;
 }
+// Chip glyphs — the SAME lucide icons the sidebar renders as Svelte components
+// (@lucide/svelte v1.24.0, ISC: `monitor`, `cloud`), here as raw path data in a
+// Path2D because a canvas can't host a component and emoji render differently
+// per webview. Stroked in the label's own TEXT colour (paintChip's `fg`), at
+// chip scale, so the glyphs read as part of the label, not a separate colour
+// story; lucide draws in a 24×24 box with stroke-width 2, so scaling the box
+// scales the stroke too.
+const CHIP_ICON_CLOUD = new Path2D("M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z");
+const CHIP_ICON_MONITOR = new Path2D(
+  "M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2H4a2 2 0 0 1 -2 -2V5a2 2 0 0 1 2 -2Z M8 21h8 M12 17v4",
+);
+const CHIP_ICON_GAP = 3;
+function chipIconSize(h) { return Math.max(8, h - 6); }
+// Stroke one glyph with its 24-box scaled to `size` px at (x, yMid-centred).
+function paintChipIcon(path, x, yMid, size, col) {
+  ctx.save();
+  ctx.translate(x, yMid - size / 2);
+  ctx.scale(size / 24, size / 24);
+  ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.strokeStyle = col; ctx.stroke(path);
+  ctx.restore();
+}
 // Greedily lay out up to `cap` chips from `list` starting at x0, each truncated
 // to the room remaining before `xLimit`. Pure layout (measure only) — returns
 // the placed chips with their x/width so the caller paints them after deciding
@@ -757,9 +892,9 @@ function paintPlus(x,y,n){
 function fitChips(list,cap,x0,xLimit,gap){
   const out=[]; let x=x0;
   for(let i=0;i<cap&&i<list.length;i++){
-    const m=measureChip(list[i].label,list[i].kind,xLimit-x);
+    const m=measureChip(list[i],xLimit-x);
     if(!m) break;
-    out.push({label:list[i].label, kind:list[i].kind, text:m.text, x, w:m.w});
+    out.push({entry:list[i], text:m.text, x, w:m.w});
     x+=m.w+gap;
   }
   return out;
@@ -767,13 +902,20 @@ function fitChips(list,cap,x0,xLimit,gap){
 // Draw a row's ref chips into the gutter (or inline before the subject), plus a
 // "+N" pill when some don't fit — recording that pill's x-span in overflowHit so
 // a click there cycles the row (see endPointer). Returns the x just past the
-// last thing drawn (inline mode advances the subject past it). `colorOverride`
-// is the row's branch colour in column mode, null inline. Reserved room for the
-// pill (RESERVE) is generous enough for a two-digit count so it always fits.
+// last thing drawn (inline mode advances the subject past it). `rowColor` is
+// the row's lane colour — every chip tints to it in both layouts (see
+// paintChip). Reserved room for the pill (RESERVE) is generous enough for a
+// two-digit count so it always fits. With `recordHits`, ALSO records every
+// placed chip's own x-span in chipHit (row -> spans) for chipEntryAt, which
+// answers "which chip is under this x" for the hover tooltip (labelAt) and the
+// label context menu. Only the inline call site asks for that: column mode
+// resolves refs from its whole gutter cell and never consults chipEntryAt, so
+// building the spans there would be per-frame waste. Both maps are cleared for
+// the row either way, so a layout switch can't leave stale spans behind.
 const PLUS_RESERVE=34;
-function drawGutterChips(row,x0,xLimit,y,colorOverride,gap){
-  overflowHit.delete(row);
-  const list=orderedRefsFor(row);
+function drawGutterChips(row,x0,xLimit,y,rowColor,gap,recordHits){
+  overflowHit.delete(row); chipHit.delete(row);
+  const list=displayChipsFor(row);
   if(!list.length) return x0;
   const cap=showAllTags?list.length:1;
   // First fit with no reservation; if everything intended fits, no pill needed.
@@ -785,7 +927,8 @@ function drawGutterChips(row,x0,xLimit,y,colorOverride,gap){
     overflow=list.length-placed.length;
   }
   let endX=x0;
-  for(const c of placed){ paintChip(c.x,y,c.text,c.w,c.kind,colorOverride); endX=c.x+c.w; }
+  for(const c of placed){ paintChip(c.x,y,c.text,c.w,c.entry,rowColor); endX=c.x+c.w; }
+  if(recordHits) chipHit.set(row, placed.map(c=>({x0:c.x, x1:c.x+c.w, entry:c.entry})));
   if(overflow>0){
     const px=placed.length?endX+gap:x0;
     ctx.font=layout.chipFont;
@@ -889,21 +1032,59 @@ function zoomAt(cy,dir){
 
 let down=null, sbDrag=null, colDrag=null;
 // Which resizable column divider (if any) sits under screen-x `x`: the
-// branch|graph divider at bcw, or the graph|message divider at the last-drawn tx.
-// A COL_HANDLE-px grab zone each side. Null when no branch column is shown.
-function dividerAt(x){ const bcw=layout.branchColW; if(bcw<=0) return null;
-  if(Math.abs(x-bcw)<=COL_HANDLE) return "branch";
-  if(lastTx>bcw+COL_HANDLE&&Math.abs(x-lastTx)<=COL_HANDLE) return "graph";
+// branch|graph divider at bcw (column layout only — there's nothing there to
+// grab in inline layout, bcw is 0), or the graph|message divider at the
+// last-drawn tx (both layouts — inline's persisted graph width is real and
+// draggable exactly like column layout's, it's just anchored at 0 instead of
+// bcw). A COL_HANDLE-px grab zone each side.
+function dividerAt(x){ const bcw=layout.branchColW;
+  if(bcw>0&&Math.abs(x-bcw)<=COL_HANDLE) return "branch";
+  if(lastTx>COL_HANDLE&&Math.abs(x-lastTx)<=COL_HANDLE) return "graph";
   return null; }
-// The ref chip(s) at screen-x `mx` in `row`'s BRANCH/TAG gutter, or null when mx
-// isn't over a labelled gutter cell — the hover-tooltip + right-click-checkout
-// target. Returns the whole ref list IN DISPLAY ORDER (so the tooltip lists
-// every co-located ref, top one = what's currently shown) regardless of the
-// show-all-tags mode, since the tooltip is exactly where you read the ones the
-// gutter couldn't fit.
+// The painted chip under screen-x `mx` in `row` (inline mode) — chipHit spans
+// are recorded per rendered row by drawGutterChips, which only fills them in
+// this layout. Null over the "+N" pill (overflowPillAt covers that), over plain
+// subject text, and everywhere in column mode.
+function chipEntryAt(mx,row){
+  const spans=chipHit.get(row); if(!spans) return null;
+  for(const s of spans) if(mx>=s.x0&&mx<=s.x1) return s.entry;
+  return null;
+}
+// True when screen-x `mx` is over `row`'s "+N" overflow pill (inline mode; the
+// pill's span is recorded by drawGutterChips). The pill is a label surface just
+// like a chip — it grows the same hover tooltip (labelAt), opens the same ref
+// menu (the contextmenu handler), and cycles the row on a plain click
+// (endPointer) — so all three read it through here rather than each re-testing
+// the span.
+function overflowPillAt(mx,row){
+  const oh=overflowHit.get(row);
+  return !!oh&&mx>=oh.x0&&mx<=oh.x1;
+}
+// The ref chip(s) at screen-x `mx` in `row`'s BRANCH/TAG gutter (column mode) or
+// under a painted chip / its "+N" pill (inline mode), or null when mx isn't
+// over a labelled surface — the hover-tooltip + right-click-checkout target.
+// Both branches now read off displayChipsFor's single display-ordered list
+// (never a separately-rotated raw ref list), so "top one = what's currently
+// shown" is true in both layouts and stays true mid "+N" cycle. Column mode
+// flattens every display chip's members in order (so the tooltip lists every
+// co-located ref regardless of show-all-tags, same as before). Inline mode
+// returns just the HOVERED chip's own refs so hover/right-click describe the
+// SAME chip — except over the "+N" pill itself, where it returns the full
+// list too, exactly like column mode, since that pill IS the "read what's
+// hidden" affordance.
 function labelAt(mx,row){
-  if(!G||layout.branchColW<=0||mx>=layout.branchColW||row<0) return null;
-  const l=orderedRefsFor(row); return l.length?l:null;
+  if(!G||row<0) return null;
+  if(layout.branchColW>0){
+    if(mx>=layout.branchColW) return null;
+    const l=displayChipsFor(row).flatMap(e=>e.refs); return l.length?l:null;
+  }
+  // Inline: over an actual chip, or over its "+N" overflow pill — the subject
+  // text past either is not a label surface, and hovering it must not grow a
+  // tooltip.
+  const e=chipEntryAt(mx,row);
+  if(e) return e.refs;
+  if(overflowPillAt(mx,row)){ const l=displayChipsFor(row).flatMap(c=>c.refs); return l.length?l:null; }
+  return null;
 }
 // The hover tooltip: one ref per line, each with a kind-coloured dot and a muted
 // kind label, the current (top) one bolded. Built from DOM nodes (textContent,
@@ -912,9 +1093,9 @@ function labelAt(mx,row){
 // behind a "+N" pill.
 function showLabelTip(refs,cx,cy){ const t=$("#graphLabelTip"); if(!t) return;
   if(refs&&refs.length){
-    // pointermove fires this every frame over the gutter; only rebuild the child
-    // nodes when the ref set actually changed (a new row / a cycle), otherwise
-    // just reposition — no per-frame DOM churn.
+    // pointermove fires this every frame over a label (either layout); only
+    // rebuild the child nodes when the ref set actually changed (a new row /
+    // a cycle), otherwise just reposition — no per-frame DOM churn.
     const sig=refs.map(r=>r.kind+":"+r.label).join("|");
     if(t.dataset.sig!==sig){
       t.dataset.sig=sig; t.textContent="";
@@ -979,8 +1160,9 @@ cv.addEventListener("pointermove",(e)=>{
     return;
   }
   const h=hitTest(p.x,p.y), nr=h?h.row:-1; if(nr!==state.hoverRow){state.hoverRow=nr;dirty=true;}
-  // Full branch/tag name tooltip when hovering a label in the BRANCH/TAG gutter,
-  // and a pointer cursor there to hint it's clickable (right-click = checkout).
+  // Full branch/tag name tooltip when hovering a ref label in either layout —
+  // the gutter cell in column mode, a chip or its "+N" pill inline — and a
+  // pointer cursor there to hint it's clickable (right-click = checkout).
   const lbl = h ? labelAt(p.x, h.row) : null;
   showLabelTip(lbl, e.clientX, e.clientY);
   cv.style.cursor=dividerAt(p.x)?"col-resize":(lbl?"pointer":(h&&h.onDot?"grab":"default"));
@@ -993,8 +1175,8 @@ function endPointer(e){
     // A clean click on a row's "+N" overflow pill cycles that row's labels
     // (bringing the next hidden ref to the front) instead of selecting — the
     // pill is a distinct affordance, so it leaves the current selection alone.
-    if(!down.moved&&down.hit&&down.hit.row>=0){ const oh=overflowHit.get(down.hit.row);
-      if(oh&&p.x>=oh.x0&&p.x<=oh.x1){ cycleRefs(down.hit.row); down=null; state.pointerActive=false; return; } }
+    if(!down.moved&&down.hit&&down.hit.row>=0&&overflowPillAt(p.x,down.hit.row)){
+      cycleRefs(down.hit.row); down=null; state.pointerActive=false; return; }
     if(!down.moved&&down.hit){ if(down.hit.row===-2) selectWorkdir(); else select(down.hit.row); }
     else if(!down.moved&&!down.hit) deselect();
     else if(state.drag){
@@ -1057,19 +1239,42 @@ cv.addEventListener("contextmenu",(e)=>{
   const row=hit.row;
   select(row);
   showLabelTip(null);
-  // Right-click a LOCAL BRANCH label in the left gutter → the sidebar's full
-  // branch-management menu (checkout / push / merge / rebase / reset / delete) at
-  // the cursor, reusing it verbatim. Anywhere else on the row (the commit dot or
-  // message) → the commit menu below, unchanged. kind "head" = the current branch
-  // (isCurrent); "branch" = another local branch; tags/remotes fall through.
-  const rowRefs=(G&&G.allRefs&&G.allRefs[row])||(G&&G.refs&&G.refs[row]?[G.refs[row]]:[]);
-  if(layout.branchColW>0 && p.x<layout.branchColW){
-    const br=rowRefs.find(r=>r&&(r.kind==="branch"||r.kind==="head"));
+  // Right-click a ref label — the gutter cell in column mode, the clicked chip
+  // inline — opens a menu keyed off what kind of ref is there: a LOCAL BRANCH
+  // label (kind "head" = the current branch (isCurrent), "branch" = another
+  // local branch) opens the sidebar's full branch-management menu (checkout /
+  // push / merge / rebase / reset / delete) at the cursor, reusing it verbatim;
+  // a REMOTE label opens the sidebar's checkout-confirm instead (see below);
+  // tags fall through, same as anywhere else on the row (the commit dot or
+  // message) → the commit menu below, unchanged.
+  const inGutter=layout.branchColW>0&&p.x<layout.branchColW;
+  const chip=layout.branchColW>0?null:chipEntryAt(p.x,row);
+  // The inline "+N" pill counts as a label surface here too — it already grows
+  // the row's full ref tooltip on hover (labelAt), so right-clicking it landing
+  // on the COMMIT menu read as a dead spot, and column mode resolves a ref from
+  // anywhere in its gutter cell including the pill.
+  const onPill=layout.branchColW===0&&overflowPillAt(p.x,row);
+  if(inGutter||chip||onPill){
+    // Column mode keeps its whole-cell behaviour (any local branch on the row),
+    // and so does the "+N" pill — it stands for the row, being the "read what's
+    // hidden" affordance rather than one ref. Inline chips resolve to the
+    // CLICKED chip's own member refs instead, so right-clicking an unmatched
+    // origin/x chip can't open the menu of an unrelated local.
+    //
+    // The whole-row pool is the DISPLAY list, not the raw backend order, so
+    // this menu names the same branch labelAt's tooltip just bolded. With raw
+    // order the two could disagree the moment a row is cycled: on a commit
+    // carrying both `main` (head) and `feat`, one "+N" click makes the tooltip
+    // bold `feat` while backend order (head before branch) still handed this
+    // menu `main` — i.e. you saw one branch highlighted and got another's
+    // delete/reset menu.
+    const pool=chip?chip.refs:displayChipsFor(row).flatMap(c=>c.refs);
+    const br=pool.find(r=>r&&(r.kind==="branch"||r.kind==="head"));
     if(br){ sidebarCtrl.openMenuAt(br.label, br.kind==="head", null, e.clientX, e.clientY); return; }
     // A remote-tracking branch label (e.g. origin/main, upstream/3.13) → the
     // sidebar's checkout-confirm, which creates a local branch tracking it —
     // the same action clicking that remote in the sidebar performs.
-    const rem=rowRefs.find(r=>r&&r.kind==="remote");
+    const rem=pool.find(r=>r&&r.kind==="remote");
     if(rem){ sidebarCtrl.openCheckoutConfirm(rem.label, true, e.clientX, e.clientY); return; }
   }
   const sha=(BACKEND&&BACKEND.rows[row])?BACKEND.rows[row].sha:hhex(row);
@@ -1213,6 +1418,75 @@ const Safety={ count:214, lastAt:performance.now()-2*60*1000, snaps:[], pad(n){r
   teleAgo(){ if(IN_TAURI){ return this.snaps.length ? relTime(this.snaps[0].ts).replace(" ago","") : "—"; }
     const m=Math.max(0,Math.round((performance.now()-this.lastAt)/60000)); return m<1?"just now":m+"m"; } };
 
+// Additive, subscribable event bus for every Tama event. TamaMascot.event()
+// emit()s here at the TOP of its switch (see below), so islands can observe the
+// exact same stream the mascot reacts to WITHOUT touching the ~28 existing
+// `bridge.tama.event(...)` call sites. Declared as a MID-FILE `export const`
+// (same live-binding shape as CUR_REPO/NAV_STACK) so bridge.ts's
+// `export { tamaBus } from "./main"` re-exports it cleanly. A subscriber that
+// throws is isolated (logged, iteration over a snapshot) — it can never break
+// emit() or the app, and never blocks the mascot's own reaction or Safety.seal.
+// NOTE ordering: emit() fires at the TOP of event(), BEFORE the switch runs
+// Safety.seal()/the pose change — so a subscriber observes PRE-reaction state.
+// Future consumers (PER-43 hooks / PER-46 reactions) should read what they need
+// from `payload`, not from Safety/DOM globals (not yet updated at emit time),
+// and must stay observe-only (never re-enter Tama.event() from a subscriber).
+export const tamaBus = (() => { const subs = []; return { subscribe(fn){ subs.push(fn); return () => { const i = subs.indexOf(fn); if (i >= 0) subs.splice(i, 1); }; }, emit(name, payload){ for (const fn of subs.slice()) { try { fn(name, payload); } catch (e) { console.error("tamaBus subscriber failed", e); } } } }; })();
+
+// ── Tama skin overlay (PER-47) ──────────────────────────────────────────────
+// A plugin-provided skin (commands.loadPluginSkin, applied via the Settings
+// skin picker) can override SOME or ALL of the 8 built-in poses. `activeTamaSkin`
+// is a plain poseKey->dataUri map, EMPTY by default; every read of a pose image
+// goes through tamaPose(), so a skin overlays the built-ins while TAMA_IMG stays
+// the always-present fallback for any pose the skin doesn't provide. Additive:
+// TamaMascot / POSE / TAMA_IMG itself are untouched. Declared BEFORE
+// `const Tama = new TamaMascot(...)` below so the constructor's own set("idle")
+// already resolves through it (activeTamaSkin={} is initialised at eval time,
+// well before that construction).
+let activeTamaSkin = {};
+// Hoisted `function` (TDZ-safe, same as select/openRepo) so bridge.ts can
+// `export { tamaPose } from "./main"` and the Tama Gallery renders the ACTIVE
+// skin's poses too (see tamagallery.svelte.ts's poseImg). `activeSkin[key] ??
+// built-in` — a skin key present but nullish still falls back to the painted art.
+export function tamaPose(key){ return activeTamaSkin[key] ?? TAMA_IMG[key]; }
+// Overlay / clear the active skin. Mid-file `export const` (same live-binding
+// shape as tamaBus/CUR_REPO), so bridge.ts re-exports them cleanly. Each also
+// repaints the mascot's CURRENT pose immediately (through the accessor) so a
+// live skin swap from Settings is visible without waiting for the next FSM
+// state change — pure DOM, TamaMascot itself is never touched.
+// PER-53: an optional 2nd arg sets the character's VOICE PITCH too (see
+// sound.ts's setVoicePitch) — a built-in character or plugin skin ships its own
+// voicePitch alongside its poses, so applying a skin swaps both the look and the
+// sound in one call. Omitted/undefined means "no pitch change" (resets to 1.0),
+// so the existing single-arg callers (and any skin without a voicePitch) keep
+// Tama's default voice; clearTamaSkin() likewise restores the painted portraits
+// AND the 1.0 default voice.
+export const applyTamaSkin = (poses, voicePitch) => { activeTamaSkin = (poses && typeof poses === "object") ? { ...poses } : {}; setVoicePitch(voicePitch ?? 1); repaintTamaSkin(); };
+export const clearTamaSkin = () => { activeTamaSkin = {}; setVoicePitch(1); repaintTamaSkin(); };
+function repaintTamaSkin(){
+  const spr=$("#sprite"); if(spr && spr.dataset.pose) spr.src=tamaPose(spr.dataset.pose);
+  const d=$("#dangerTamaImg"); if(d) d.src=tamaPose("alarm");
+  const c=$("#tamaCheerImg"); if(c) c.src=tamaPose("happy");
+}
+
+// ── Tama pose overrides + motion presets (PER-54) ───────────────────────────
+// Purely additive, frontend-only customization. Both settings default to their
+// no-op value, so with NO override map AND the "default" preset the mascot
+// behaves byte-for-byte as before. The Settings island persists these in
+// localStorage (gitcat.settings) and drives them through
+// bridge.setTamaPoseOverrides / bridge.setTamaMotionPreset (re-exported from
+// bridge.ts, same live-binding shape as applyTamaSkin/tamaBus). Declared BEFORE
+// `class TamaMascot` / `new TamaMascot(...)` so the constructor's own
+// set("idle") already reads them at their initial (no-op) values — no TDZ.
+const TAMA_POSE_KEYS = new Set(["hero","curious","confident","thinking","happy","alarm","shocked","sleep"]);
+// FSM-state -> poseKey. EMPTY = no overrides = the built-in POSE map below.
+// set() resolves `activeTamaPoseOverrides[state] ?? POSE[state]` (see _pose()).
+let activeTamaPoseOverrides = {};
+// Motion preset: scales the sticky/dwell auto-revert hold and swaps the idle
+// behavior. scale 1 + no idle loop == today's "default".
+let activeTamaMotionPreset = "default";
+let tamaDwellScale = 1;
+
 class TamaMascot{
   static STATES={idle:{sticky:false},sleep:{sticky:false},hint:{sticky:false,dwell:3200},thinking:{sticky:true},warn:{sticky:true},danger:{sticky:true},celebrate:{sticky:false,dwell:3600},rescue:{sticky:true},
     // confused: a real operation FAILURE (see warn() below — distinct from
@@ -1237,28 +1511,29 @@ class TamaMascot{
   // intentionally share one).
   static POSE={idle:"curious",sleep:"sleep",hint:"curious",thinking:"thinking",warn:"shocked",danger:"alarm",celebrate:"happy",rescue:"confident",confused:"shocked",curious:"curious",syncing:"thinking",greeting:"hero"};
   constructor(el){this.nook=el.nook;this.sprite=el.sprite;this.spriteWrap=el.spriteWrap;this.line=el.line;this.tele=el.tele;this.topToast=el.topToast;
-    this.sticky=null;this.toastT=null;this.topToastT=null;this.dwellT=null;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
+    this.sticky=null;this.toastT=null;this.topToastT=null;this.dwellT=null;this._animT=null;this._animDirty=false;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
   // Only touches the portrait's `src` when the resolved pose actually
   // changed (several states share one pose — see POSE above) — a real
   // "pop" (shrink+fade out via .swap, swap src, overshoot back in via
   // .swap-in — see index.html's own spriteSwapOut/spriteSwapIn keyframes),
   // skipped entirely under reduced-motion (immediate swap, no animation).
-  set(s){clearTimeout(this.dwellT);const cfg=TamaMascot.STATES[s]||TamaMascot.STATES.idle;
-    const pose=TamaMascot.POSE[s]||"curious";
+  set(s){clearTimeout(this.dwellT);this._stopAnimation();const cfg=TamaMascot.STATES[s]||TamaMascot.STATES.idle;
+    const pose=this._pose(s);
     if(this.sprite.dataset.pose!==pose){
       this.sprite.dataset.pose=pose;
-      if(this.reduced){ this.sprite.src=TAMA_IMG[pose]; }
+      if(this.reduced){ this.sprite.src=tamaPose(pose); }
       else{
         this.sprite.classList.remove("swap-in"); this.sprite.classList.add("swap");
         setTimeout(()=>{
-          this.sprite.src=TAMA_IMG[pose];
+          this.sprite.src=tamaPose(pose);
           this.sprite.classList.remove("swap");
           void this.sprite.offsetWidth;
           this.sprite.classList.add("swap-in");
           setTimeout(()=>this.sprite.classList.remove("swap-in"),240);
         },110);
       }
-    }
+    }else if(this._animDirty){ this.sprite.src=tamaPose(pose); } // an idle animation left a non-resting frame on the same pose — restore it
+    this._animDirty=false;
     // Sound plays on a real FSM-STATE change, not a pose change (several
     // states above intentionally share one pose) — captured before
     // overwriting dataset.state so re-entering the same state (e.g. two
@@ -1267,8 +1542,27 @@ class TamaMascot{
     this.nook.dataset.state=s;
     if(prevState!==s){const kind=STATE_SOUND[s];if(kind)playTamaSound(kind);}
     if(cfg.sticky)this.sticky=s;
-    if(!cfg.sticky&&cfg.dwell)this.dwellT=setTimeout(()=>this.set(this.sticky||"idle"),cfg.dwell);
+    if(!cfg.sticky&&cfg.dwell)this.dwellT=setTimeout(()=>this.set(this.sticky||"idle"),cfg.dwell*tamaDwellScale);
     if(!cfg.sticky&&!cfg.dwell)this.sticky=null;}
+  // PER-54: resolve a state's pose through the active override map, falling
+  // back to the built-in POSE table (and "curious" for any unknown state, as
+  // before). Empty override map => identical to `TamaMascot.POSE[s]||"curious"`.
+  _pose(s){return activeTamaPoseOverrides[s] ?? TamaMascot.POSE[s] ?? "curious";}
+  // PER-54: repaint the CURRENT state's pose immediately (no swap animation),
+  // so a live override change from Settings shows without waiting for the next
+  // FSM transition — same immediate-swap shape as repaintTamaSkin().
+  repaintCurrentPose(){const pose=this._pose(this.nook.dataset.state);if(this.sprite.dataset.pose!==pose){this.sprite.dataset.pose=pose;this.sprite.src=tamaPose(pose);}}
+  // PER-54 animation runner: step the sprite through a sequence of poseKeys via
+  // tamaPose() on a timer. INTERRUPTIBLE — set() calls _stopAnimation() at its
+  // top, so any real state change cancels a running animation cleanly. Skipped
+  // entirely under reduced-motion. loop=true keeps cycling (the idle behavior);
+  // loop=false plays the sequence once. Only touches .src (never dataset.pose),
+  // so set()'s restore path (_animDirty) repaints the resting frame afterward.
+  playTamaAnimation(frames,frameMs,loop){this._stopAnimation();if(this.reduced)return;if(!Array.isArray(frames))return;const seq=frames.filter(f=>TAMA_POSE_KEYS.has(f));if(!seq.length)return;const ms=Math.max(60,frameMs||300);let i=0;const step=()=>{this.sprite.src=tamaPose(seq[i%seq.length]);this._animDirty=true;i++;if(!loop&&i>=seq.length){this._animT=null;return;}this._animT=setTimeout(step,ms);};step();}
+  _stopAnimation(){if(this._animT){clearTimeout(this._animT);this._animT=null;}}
+  // Repaint the resting pose after an animation dirtied .src (used when the idle
+  // loop is torn down, e.g. switching away from the "lively" preset).
+  _restoreRestingPose(){if(!this._animDirty)return;const pose=this._pose(this.nook.dataset.state);this.sprite.dataset.pose=pose;this.sprite.src=tamaPose(pose);this._animDirty=false;}
   // ms is a FLOOR, not the actual dwell — every caller below passes a fixed
   // guess (3200 default, up to 6000 for the danger copy), but the message
   // text itself was never a factor, so a long message could get yanked away
@@ -1302,19 +1596,20 @@ class TamaMascot{
   nod(){if(this.reduced)return;this.sprite.classList.remove("nod");void this.sprite.offsetWidth;this.sprite.classList.add("nod");}
   setInteracting(on){this.nook.classList.toggle("is-interacting",on);}
   event(name,p={}){
+    tamaBus.emit(name,p);
     switch(name){
       case "fetch.upToDate": case "checkout.clean": this.nod(); return null;
       case "commit.created": Safety.seal(); this._tele(); return null;
-      case "snapshot.surfaced":{const b=Safety.seal();this._tele();this.set("hint");this.say("Backup "+shortBackup(b.ref)+" pinned — you're covered.");return b;}
-      case "op.long": this.set("thinking"); this.say(""); this._teleText((p.label||"working")+" · 0 / "+(p.total||10000)); return null;
+      case "snapshot.surfaced":{const b=Safety.seal();this._tele();this.set("hint");this.say(t("snapshot.surfaced",{ref:shortBackup(b.ref)}));return b;}
+      case "op.long": this.set("thinking"); this.say(""); this._teleText((p.label||t("legacy.op_working"))+" · 0 / "+(p.total||10000)); return null;
       case "op.progress": this._teleText((p.label||"working")+" · "+p.done+" / "+p.total); return null;
       case "op.done": this.set(this.sticky&&this.sticky!=="thinking"?this.sticky:"idle"); this._tele(); return null;
-      case "mutation.caution":{const b=Safety.seal();this._tele();this.set("warn");const cnt=p.count?p.count+" commit"+(p.count===1?"":"s"):"a few commits";this.say("Heads up — this rewrites "+cnt+". Backup "+shortBackup(b.ref)+" saved first.",4200);return b;}
-      case "mutation.destructive":{const b=Safety.seal();this._tele();this.set("danger");this.say((p.label||"This")+" can't be undone. Backup "+shortBackup(b.ref)+" is pinned — type the ref name to go on.",6000);return b;}
+      case "mutation.caution":{const b=Safety.seal();this._tele();this.set("warn");const cnt=p.count?t(p.count===1?"mutation.commit_one":"mutation.commit_many",{n:p.count}):t("mutation.commit_some");this.say(t("mutation.caution",{cnt,ref:shortBackup(b.ref)}),4200);return b;}
+      case "mutation.destructive":{const b=Safety.seal();this._tele();this.set("danger");this.say(t("mutation.destructive",{label:p.label||t("mutation.this_label"),ref:shortBackup(b.ref)}),6000);return b;}
       case "mutation.cancel": this.sticky=null; this.set("idle"); this.say(""); return null;
-      case "undo.performed":{const s=Safety.seal();this._tele();this.sticky=null;this.set("celebrate");this.say("Rewound to "+(p.hash||"a1b2c3d")+" — nothing lost, I sealed "+shortBackup(s.ref)+" first. ♪",4200);return s;}
-      case "rescue.detached": this.set("rescue"); this.say("Detached HEAD — I've got you. One tap puts you back on "+(p.branch||"main")+".",6000); return null;
-      case "rescue.resolved": this.sticky=null; this.set("celebrate"); this.say("You're back on "+(p.branch||"main")+". Safe and sound.",3600); return null;
+      case "undo.performed":{const s=Safety.seal();this._tele();this.sticky=null;this.set("celebrate");this.say(t("undo.performed",{hash:p.hash||"a1b2c3d",ref:shortBackup(s.ref)}),4200);return s;}
+      case "rescue.detached": this.set("rescue"); this.say(t("rescue.detached",{branch:p.branch||"main"}),6000); return null;
+      case "rescue.resolved": this.sticky=null; this.set("celebrate"); this.say(t("rescue.resolved",{branch:p.branch||"main"}),3600); return null;
       case "idle": this.sticky=null; this.set("idle"); this.say(""); return null;
       default: return null;
     }
@@ -1367,6 +1662,52 @@ function scheduleGlance(){
   },8000+Math.random()*6000);
 }
 scheduleGlance();
+
+// ── PER-54 setters (mid-file export functions, re-exported from bridge.ts) ───
+// A subtle periodic pose-glance driver used ONLY by the "lively" preset. It
+// fires a short one-shot glance sequence through the animation runner while the
+// mascot is genuinely idle (idle state, cursor at rest, not reduced-motion), so
+// the corner has a little life without constant motion. Fully torn down by
+// stopTamaIdleLoop() (any non-lively preset), which also restores the resting
+// pose. Independent of the CSS-transform scheduleGlance() above.
+let tamaIdleTimer=null;
+function stopTamaIdleLoop(){ if(tamaIdleTimer){ clearInterval(tamaIdleTimer); tamaIdleTimer=null; } Tama._stopAnimation(); Tama._restoreRestingPose(); }
+function startTamaIdleLoop(){
+  stopTamaIdleLoop();
+  if(Tama.reduced) return; // reduced-motion: don't schedule an interval that can only ever no-op
+  tamaIdleTimer=setInterval(()=>{
+    const n=$("#nook");
+    if(!n||Tama.reduced||n.dataset.state!=="idle"||Tama._animT!=null) return;
+    if(performance.now()-Tama.lastMove<4000) return;
+    // idle-pose → thinking → idle-pose: a quick "look around", then settle back.
+    Tama.playTamaAnimation([Tama._pose("idle"),"thinking",Tama._pose("idle")],260,false);
+  },9000);
+}
+// bridge.setTamaMotionPreset — "default"|"calm"|"lively". "default" restores
+// today's behavior exactly (dwell scale 1, no idle loop). "calm" holds poses a
+// bit longer (1.5×) with no idle loop; "lively" shortens holds (0.7×) and adds
+// the subtle idle glance loop above. Unknown values fall back to "default".
+// Hoisted `export function` (TDZ-safe), re-exported from bridge.ts.
+export function setTamaMotionPreset(preset){
+  const p=(preset==="calm"||preset==="lively")?preset:"default";
+  activeTamaMotionPreset=p;
+  if(p==="calm"){ tamaDwellScale=1.5; stopTamaIdleLoop(); }
+  else if(p==="lively"){ tamaDwellScale=0.7; startTamaIdleLoop(); }
+  else{ tamaDwellScale=1; stopTamaIdleLoop(); }
+}
+// bridge.setTamaPoseOverrides — a map of FSM-state -> poseKey. Non-string
+// values and poseKeys not among the 8 valid ones are ignored; {} clears all
+// overrides (back to the built-in POSE map). Repaints the current pose
+// immediately so a live change from Settings is visible without waiting for the
+// next FSM transition. Hoisted `export function`, re-exported from bridge.ts.
+export function setTamaPoseOverrides(overrides){
+  const next={};
+  if(overrides&&typeof overrides==="object"){
+    for(const k in overrides){ const v=overrides[k]; if(typeof v==="string"&&TAMA_POSE_KEYS.has(v)) next[k]=v; }
+  }
+  activeTamaPoseOverrides=next;
+  Tama.repaintCurrentPose();
+}
 
 // Hidden Easter egg: click the portrait itself 7 times within 2.5s to open
 // Tama Gallery (src/islands/tamagallery) — every pose in one grid, click a
@@ -1428,7 +1769,7 @@ function goToHead(){
     const l=(G.allRefs&&G.allRefs[r])||(G.refs&&G.refs[r]?[G.refs[r]]:[]);
     if(l.some&&l.some(x=>x&&x.kind==="head")){ hr=r; break; }
   }
-  if(hr<0){ Tama.warn("Couldn't locate HEAD in the loaded graph."); return; }
+  if(hr<0){ Tama.warn(t("legacy.head_not_located")); return; }
   select(hr);
   state.scrollTarget=clampScroll(hr*layout.rowH-(view.cssH-bandH())/2);
   dirty=true;
@@ -1657,12 +1998,21 @@ function applyThemeMode(mode){
 let showAllTags=false;
 function setGraphShowAllTags(v){ showAllTags=v; dirty=true; }
 // Global "label priority" preference (settings.svelte.ts's graphLabelPriority).
-// The backend hands refs tag-first; when a narrow gutter can only show one, that
-// means the tag wins. `graphTagsFirst=false` ("Branches first") promotes the
-// checked-out branch / local branches ahead of tags instead. Seeded on boot,
-// updated live by the setter — same idiom as setGraphShowAllTags above.
+// The backend hands refs tag-first; with showAllTags off (the one-visible-chip
+// cap is driven by that setting, not by how much width a layout happens to
+// have), that means the tag wins the one shown slot. `graphTagsFirst=false`
+// ("Branches first") promotes the checked-out branch / local branches ahead of
+// tags instead. Seeded on boot, updated live by the setter — same idiom as
+// setGraphShowAllTags above.
 let graphTagsFirst=true;
 function setGraphLabelPriority(v){ graphTagsFirst=(v!=="branch"); dirty=true; }
+// Where ref labels live (settings.svelte.ts's graphLabelLayout): inline before
+// the subject (the default), or the resizable left column. Inline
+// simply forces branchColW to 0 — the layout the narrow-window collapse below
+// already produces — so every downstream consumer (laneX, dividers, gutter vs
+// inline chips) follows from that one width with no second flag to consult.
+let graphLabelInline=true;
+function setGraphLabelLayout(v){ graphLabelInline=(v!=="column"); recomputeLayout(); dirty=true; }
 // Per-commit ref rotation for the "+N" overflow chip: sha -> how many places the
 // row's ref list has been spun left (see cycleRefs / drawGutterChips). Keyed by
 // sha so it survives a streaming re-layout; cleared when a fresh graph loads.
@@ -1673,25 +2023,47 @@ function setGraphLabelPriority(v){ graphTagsFirst=(v!=="branch"); dirty=true; }
 const refRot=new Map();
 let refRotEpoch=0;
 const overflowHit=new Map();
+// Every rendered row's PAINTED chip x-spans (CSS px, scroll-independent),
+// entry included — chipEntryAt reads this to answer "which MergedChip is
+// under this x", which feeds both the hover tooltip (labelAt) and the
+// label-context-menu's chip targeting, instead of either re-deriving layout.
+// Cleared per row exactly like overflowHit above, but only POPULATED inline
+// (drawGutterChips' `recordHits`): column mode resolves refs from its whole
+// gutter cell and never asks which individual chip was hit.
+const chipHit=new Map();
 function rowSha(row){ return (BACKEND&&BACKEND.rows[row]&&BACKEND.rows[row].sha)||("r"+row); }
-// This row's ref chips in display order: priority-sorted then rotated. Uses the
-// FULL list (allRefs) so rotation can reach every ref even when only the primary
-// (refs[0]) would otherwise show.
-function orderedRefsFor(row){
-  const list=(G&&G.allRefs&&G.allRefs[row])||(G&&G.refs&&G.refs[row]?[G.refs[row]]:[]);
-  return orderRefs(list, graphTagsFirst, refRot.get(rowSha(row))||0);
+// This row's refs exactly as the backend delivered them (no priority sort, no
+// rotation): the FULL list when available (allRefs), else the single primary
+// ref (refs[row]) wrapped in an array, else []. Kept separate from
+// displayChipsFor below so that three-branch fallback stays one named thing —
+// every ref consumer now goes through displayChipsFor, and nothing else should
+// reach for raw backend order (hover and right-click disagreed when one did).
+function rowRefsOf(row){
+  return (G&&G.allRefs&&G.allRefs[row])||(G&&G.refs&&G.refs[row]?[G.refs[row]]:[]);
+}
+// The row's DISPLAY chips. The pipeline itself (sort -> merge -> rotate, and
+// why that order) lives in reforder.ts::displayChips, where it's unit-tested;
+// this only supplies the three per-row inputs. It stays the single source of
+// truth for "what's currently shown": labelAt derives its tooltip list from
+// this (never a separately-rotated raw ref list), so the bolded "current" ref
+// always matches the chip actually on screen mid-"+N"-cycle.
+function displayChipsFor(row){
+  return displayChips(rowRefsOf(row), graphTagsFirst, refRot.get(rowSha(row))||0);
 }
 // Spin this row's labels one place left, bringing the next hidden ref to the
 // front — the "+N" chip's click action. No-op with fewer than two refs.
 function cycleRefs(row){
-  const list=(G&&G.allRefs&&G.allRefs[row])||[];
-  if(list.length<2) return;
+  const n=displayChipsFor(row).length;
+  if(n<2) return;
   const k=rowSha(row);
-  refRot.set(k,((refRot.get(k)||0)+1)%list.length);
+  refRot.set(k,((refRot.get(k)||0)+1)%n);
   refRotEpoch++; bufferValid=false; dirty=true;
 }
-// Chip colour/label per ref kind — shared by paintChip, the "+N" pill and the
-// hover tooltip so the three surfaces stay visually consistent.
+// Chip colour per ref kind — at HEAD this colours only the hover tooltip's
+// per-ref kind dots (showLabelTip). paintChip reaches it only through its
+// `rowColor || refKindColor(kind)` fallback, which both real call sites never
+// hit (they always pass a lane colour); paintPlus (the "+N" pill) doesn't call
+// it at all, it's a fixed muted colour regardless of kind.
 function refKindColor(kind){ return kind==="branch"?LANE_COLORS[0]:kind==="tag"?(theme.accent2||"#7FB6A6"):kind==="remote"?theme.muted:theme.accent; }
 function refKindLabel(kind){ return kind==="head"?"current":kind==="remote"?"remote":kind==="tag"?"tag":"branch"; }
 // "Serious work" mode (settings.svelte.ts's tamaEnabled) — toggles a single
@@ -1712,13 +2084,13 @@ $("#themeBtn").addEventListener("click",()=>{
 });
 // painted-Tama celebration popover
 let cheerT=null;
-function cheer(msg,img: string|null=null){ $("#tamaCheerTxt").innerHTML=msg; $("#tamaCheerImg").src=img||TAMA_IMG.happy; const c=$("#tamaCheer"); c.classList.add("show");
+function cheer(msg,img: string|null=null){ $("#tamaCheerTxt").innerHTML=msg; $("#tamaCheerImg").src=img||tamaPose("happy"); const c=$("#tamaCheer"); c.classList.add("show");
   clearTimeout(cheerT); cheerT=setTimeout(()=>c.classList.remove("show"),3600); }
 // global undo (undo-is-itself-undoable)
 async function globalUndo(){
   if(!IN_TAURI){ Tama.event("undo.performed",{hash:hhex(1)}); pulseTick(0);
-    cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>',TAMA_IMG.confident); return; }
-  if(!CUR_REPO){ Tama.warn("Open a repository first — there's nothing to undo yet."); return; }
+    cheer(t("legacy.cheer_rewound"),tamaPose("confident")); return; }
+  if(!CUR_REPO){ Tama.warn(t("legacy.undo_no_repo")); return; }
   // Bug-B fix: right after a successful stash apply/pop, the working tree is
   // dirty in a way the generic undo_last can never rewind — nothing at the
   // ref level moved (see stash_undo_apply's doc comment, workdir.rs), so
@@ -1735,7 +2107,7 @@ async function globalUndo(){
   // so the shortcut doesn't round-trip to the backend for a guaranteed no-op.
   // Skipped entirely for the stash-undo path: stash_undo_apply takes its own
   // safety snapshot and needs no prior ref snapshot to already exist.
-  if(!useStashUndo&&!Safety.snaps.length){ Tama.warn("Nothing to undo yet — no snapshots have been taken."); return; }
+  if(!useStashUndo&&!Safety.snaps.length){ Tama.warn(t("legacy.undo_no_snapshots")); return; }
   if(undoBusy) return; undoBusy=true;
   // #undoBtn's disabled state was previously driven ONLY by Safety.updateBadge()
   // (zero-snapshot check) — undoBusy guarded re-entrancy in code but gave zero
@@ -1760,7 +2132,7 @@ async function globalUndo(){
       else await reloadGraph(true);
       const to=(res.restoredTo||"").slice(0,7);
       Tama.event("undo.performed",{hash:to||hhex(1)}); pulseTick(0);
-      cheer('Rewound — <b>nothing lost</b>. <span class="jp">やったー♪</span>',TAMA_IMG.confident);
+      cheer(t("legacy.cheer_rewound"),tamaPose("confident"));
     } else if(!useStashUndo && /uncommitted changes/i.test((res&&res.message)||"")){
       // Undo refused because the working tree is dirty (its reset --hard would
       // DISCARD those changes — see safety.rs's undo()). Offer to keep them:
@@ -1780,12 +2152,12 @@ async function globalUndo(){
           await workdirCtrl.refreshStatus(CUR_REPO); await workdirCtrl.refreshStashes(CUR_REPO);
           const to=(r2.restoredTo||"").slice(0,7);
           Tama.event("undo.performed",{hash:to||hhex(1)}); pulseTick(0);
-          cheer('Rewound — <b>kept your changes</b>. <span class="jp">やったー♪</span>',TAMA_IMG.confident);
-          if(r2.message) Tama.say(r2.message,4600);
-        } else { Tama.warn((r2&&r2.message)||"Undo (with stash) failed."); }
-      } else { Tama.say("Undo cancelled — your uncommitted changes are untouched.",3200); }
-    } else { Tama.warn((res&&res.message)||"Nothing to undo — no snapshots yet."); }
-  }catch(e){ Tama.warn("Undo failed — "+e); console.error(e); }
+          cheer(t("legacy.cheer_rewound_kept"),tamaPose("confident"));
+          if(r2.message) Tama.say(be(r2.message),4600);
+        } else { Tama.warn(be(r2&&r2.message)||t("legacy.undo_stash_failed")); }
+      } else { Tama.say(t("legacy.undo_cancelled"),3200); }
+    } else { Tama.warn(be(res&&res.message)||t("legacy.undo_nothing")); }
+  }catch(e){ Tama.warn(t("legacy.undo_failed",{error:e})); console.error(e); }
   finally{ undoBusy=false; labelEl.innerHTML=label; Safety.updateBadge(); }
 }
 $("#undoBtn").addEventListener("click",globalUndo);
@@ -1812,45 +2184,45 @@ function clearSyncButtonsBusy(){
   });
 }
 async function doFetch(){
-  if(!IN_TAURI){ Tama.set("hint"); Tama.say("Fetched (demo). にゃ〜",3200); return; }
-  if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
+  if(!IN_TAURI){ Tama.set("hint"); Tama.say(t("legacy.fetched_demo"),3200); return; }
+  if(!CUR_REPO){ Tama.warn(t("legacy.open_repo_first")); return; }
   if(syncBusy) return; syncBusy=true;
-  setSyncButtonsBusy("fetchBtn","Fetching…");
-  Tama.set("syncing"); Tama.say("Fetching…");
+  setSyncButtonsBusy("fetchBtn",t("topbar.fetching"));
+  Tama.set("syncing"); Tama.say(t("legacy.fetching"));
   // Open the live-progress modal and start listening BEFORE invoking, so the
   // first "remote: Counting objects…" segment isn't missed. fetch_stream is the
   // streaming twin of fetch (same result); the ambient auto-fetch timer and the
   // pull-with-strategy flows still use the silent, non-modal `fetch`.
-  await syncProgressCtrl.begin("Fetching…","fetch");
+  await syncProgressCtrl.begin(t("topbar.fetching"),"fetch");
   try{
     const res=await tinvoke("fetch_stream",{path:CUR_REPO,remote:null});
-    syncProgressCtrl.settle(!!(res&&res.ok),(res&&res.message)||"");
-    if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("hint"); Tama.say(res.message||"Fetched.",3200); }
-    else Tama.warn((res&&res.message)||"Fetch failed.");
-  }catch(e){ syncProgressCtrl.settle(false,String(e)); Tama.warn("Fetch failed — "+e); console.error(e); }
+    syncProgressCtrl.settle(!!(res&&res.ok),be(res&&res.message)||"");
+    if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("hint"); Tama.say(be(res.message)||t("legacy.fetched"),3200); }
+    else Tama.warn(be(res&&res.message)||t("legacy.fetch_failed"));
+  }catch(e){ syncProgressCtrl.settle(false,be(String(e))); Tama.warn(t("legacy.fetch_failed_reason",{error:e})); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPull(){
-  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pulled (demo). にゃ〜",3200); cheer('Pulled (demo). <span class="jp">にゃ〜</span>',TAMA_IMG.happy); return; }
-  if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
+  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say(t("legacy.pulled_demo"),3200); cheer(t("legacy.cheer_pulled_demo"),tamaPose("happy")); return; }
+  if(!CUR_REPO){ Tama.warn(t("legacy.open_repo_first")); return; }
   if(syncBusy) return; syncBusy=true;
-  setSyncButtonsBusy("pullBtn","Pulling…");
-  Tama.set("syncing"); Tama.say("Pulling…");
-  await syncProgressCtrl.begin("Pulling…","pull");
+  setSyncButtonsBusy("pullBtn",t("topbar.pulling"));
+  Tama.set("syncing"); Tama.say(t("legacy.pulling"));
+  await syncProgressCtrl.begin(t("topbar.pulling"),"pull");
   try{
     const res=await tinvoke("pull_stream",{path:CUR_REPO});
-    syncProgressCtrl.settle(!!(res&&res.ok),(res&&res.message)||"");
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pulled.",3200); cheer(res.message||"Pulled.",TAMA_IMG.happy); }
-    else Tama.warn((res&&res.message)||"Pull failed.");
-  }catch(e){ syncProgressCtrl.settle(false,String(e)); Tama.warn("Pull failed — "+e); console.error(e); }
+    syncProgressCtrl.settle(!!(res&&res.ok),be(res&&res.message)||"");
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(be(res.message)||t("legacy.pulled"),3200); cheer(be(res.message)||t("legacy.pulled"),tamaPose("happy")); }
+    else Tama.warn(be(res&&res.message)||t("legacy.pull_failed"));
+  }catch(e){ syncProgressCtrl.settle(false,be(String(e))); Tama.warn(t("legacy.pull_failed_reason",{error:e})); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPush(){
-  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say("Pushed (demo). にゃ〜",3200); cheer('Pushed (demo). <span class="jp">にゃ〜</span>',TAMA_IMG.happy); return; }
-  if(!CUR_REPO){ Tama.warn("Open a repository first."); return; }
+  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say(t("legacy.pushed_demo"),3200); cheer(t("legacy.cheer_pushed_demo"),tamaPose("happy")); return; }
+  if(!CUR_REPO){ Tama.warn(t("legacy.open_repo_first")); return; }
   if(syncBusy) return; syncBusy=true;
-  setSyncButtonsBusy("pushBtn","Pushing…");
-  Tama.set("syncing"); Tama.say("Pushing…");
+  setSyncButtonsBusy("pushBtn",t("topbar.pushing"));
+  Tama.set("syncing"); Tama.say(t("legacy.pushing"));
   try{
     const res=await tinvoke("push",{path:CUR_REPO});
     // reloadGraph (not just sidebarCtrl.refresh) so the graph's origin/* ref
@@ -1858,9 +2230,9 @@ async function doPush(){
     // moves the remote-tracking ref but not local HEAD, so nothing else picks
     // it up. reloadGraph's tail refreshes the sidebar too (and the incremental
     // path keeps this cheap — no commits changed).
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||"Pushed.",3200); cheer(res.message||"Pushed.",TAMA_IMG.happy); }
-    else Tama.warn((res&&res.message)||"Push failed.");
-  }catch(e){ Tama.warn("Push failed — "+e); console.error(e); }
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(be(res.message)||t("legacy.pushed"),3200); cheer(be(res.message)||t("legacy.pushed"),tamaPose("happy")); }
+    else Tama.warn(be(res&&res.message)||t("legacy.push_failed"));
+  }catch(e){ Tama.warn(t("legacy.push_failed_reason",{error:e})); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 $("#fetchBtn").addEventListener("click",doFetch);
@@ -2202,7 +2574,7 @@ function restoreGraphFromCache(path){
   loadedSeedTips=c.seedTips; loadedHeadOid=c.headOid; lastRefSig=c.refSig;
   graphStreamComplete=true; lastLoadTruncated=false;
   refRot.clear(); for(const [k,v] of c.refRot) refRot.set(k,v);
-  overflowHit.clear(); bufferValid=false;
+  overflowHit.clear(); chipHit.clear(); bufferValid=false;
   recomputeLayout();                                  // rebuild scroll bounds for this G.N
   state.scrollTop=state.scrollTarget=clampScroll(c.scrollTarget); // land back at the same place
   // Selection resets to none, exactly like a fresh load (loadGraph) would — the
@@ -2222,7 +2594,7 @@ let loadingPillTimer=null;
 function setGraphLoadingPill(on,count){
   const p=$("#loadingPill"); if(!p) return;
   if(on){
-    const l=$("#loadingPillLabel"); if(l) l.textContent = count!=null&&count>0 ? "Loading… "+count.toLocaleString() : "Loading…";
+    const l=$("#loadingPillLabel"); if(l) l.textContent = count!=null&&count>0 ? t("topbar.loading")+" "+count.toLocaleString() : t("topbar.loading");
     // Delay the reveal so a repo that loads in well under this never flashes the
     // pill — only a genuinely-still-loading stream (which clears the timer late)
     // ever actually shows it.
@@ -2239,7 +2611,7 @@ async function startGraphStream(path){
   BACKEND = { n:0, oids:[], lane:[], color:[], merge:[], gapStart:[0], gapTop:[], gapBot:[], gapColor:[], rows:[], refs:[], allRefs:[], ncol:7, laneCount:0 };
   // A fresh graph (repo switch or refresh) invalidates any per-commit label
   // rotation the user had spun up — the ref set itself may have changed.
-  refRot.clear(); overflowHit.clear();
+  refRot.clear(); overflowHit.clear(); chipHit.clear();
   // A fresh stream: the incremental-refresh baseline is now stale until this
   // load finishes. loadedOids is rebuilt from scratch as batches arrive; the
   // fast path (see reloadGraph) is disabled until `done` sets graphStreamComplete.
@@ -2369,13 +2741,22 @@ function onGraphBatch(payload){
     // "is this commit loaded?", so a truncated load forces full reloads).
     graphStreamComplete=true;
     lastLoadTruncated=!!payload.truncated;
+    // The `ancestor`/dimming bit is no longer computed during the stream — that
+    // needed an up-front full HEAD-ancestor revwalk that delayed the very first
+    // frame (see commands.rs `stream_graph_core`). Now that the whole set is
+    // loaded, fill the dimming in OFF the critical path via the same positional
+    // recompute a checkout already uses. Skipped on a walk error: a partial graph
+    // would otherwise trip recomputeAncestorsAsync's n-guard into a resync reload
+    // of an already-degraded load. (On success/truncated, BACKEND.n is final and
+    // head_ancestor_flags honours the same cap, so the counts line up.)
+    if(!payload.error) recomputeAncestorsAsync();
     dlog("graph", "stream DONE gen", payload.generation, "—", BACKEND.n, "commits in", payload.elapsedMs.toFixed(0)+"ms", payload.truncated?"(truncated)":"", payload.error?("error: "+payload.error):"");
     // Establish the fast-refresh baseline (seed tips / HEAD oid / ref signature)
     // for THIS load, generation-guarded so a newer load's baseline can't be
     // clobbered by an older snapshot resolving late. Best-effort: if it never
     // resolves, reloadGraph just re-fetches fresh state and compares.
     snapshotGraphBaseline(graphGeneration);
-    if(payload.error){ Tama.warn("Loading history stopped early — "+payload.error,5000); }
+    if(payload.error){ Tama.warn(t("legacy.history_stopped_early",{error:payload.error}),5000); }
     // Distinct from a genuine walk error (above) — the walk didn't fail, it
     // just has more history than commands.rs's MAX_LIVE_COMMITS is willing
     // to hold in memory at once. Surfacing this explicitly matters: without
@@ -2383,8 +2764,8 @@ function onGraphBatch(payload){
     // whole history" finish, silently hiding the fact that older commits
     // past this point aren't loaded (and won't be found by search/⌘K/jump-
     // to-commit either).
-    else if(payload.truncated){ Tama.set("curious"); Tama.warn("Loaded the most recent "+BACKEND.n.toLocaleString()+" commits — this repo's history is even longer, capped here to limit memory usage.",6500); }
-    else { Tama.set("curious"); Tama.say("Loaded "+BACKEND.n.toLocaleString()+" commits in "+payload.elapsedMs.toFixed(0)+" ms. にゃ〜",4200); }
+    else if(payload.truncated){ Tama.set("curious"); Tama.warn(t("legacy.history_truncated",{count:BACKEND.n.toLocaleString()}),6500); }
+    else { Tama.set("curious"); Tama.say(t("legacy.history_loaded",{count:BACKEND.n.toLocaleString(),ms:payload.elapsedMs.toFixed(0)}),4200); }
     if(pendingReselect){
       if(pendingReselect.sha){
         const row=BACKEND.rows.findIndex(r=>r.sha===pendingReselect.sha);
@@ -2398,7 +2779,7 @@ function onGraphBatch(payload){
     // First batch of a fresh stream — a lighter-weight "still going" hint
     // than the final toast above, so a big repo doesn't look hung between
     // "Loading…" and "Loaded" while the rest streams in.
-    Tama.set("thinking"); Tama.say("Loading history… "+BACKEND.n.toLocaleString()+" so far…",4200);
+    Tama.set("thinking"); Tama.say(t("legacy.history_loading",{count:BACKEND.n.toLocaleString()}),4200);
   }
 }
 // Last path segment of an absolute repo path, for display only (e.g. the
@@ -2544,7 +2925,7 @@ async function openRepo(path){
     // "thinking" mascot (no onGraphBatch runs on a hit to do it). Fire-and-forget
     // so the instant restore isn't blocked on the reconcile.
     if(cacheHit){
-      Tama.set("curious"); Tama.say("Back to "+repoBasename(path)+". にゃ〜",1800);
+      Tama.set("curious"); Tama.say(t("legacy.back_to_repo",{name:repoBasename(path)}),1800);
       void reloadGraph(true);
     }
     // Live refresh: watch this repo's git-dir for changes made outside the
@@ -2558,7 +2939,7 @@ async function openRepo(path){
     // real, surfaced error) from "it armed fine but genuinely saw no fs
     // events" (silent either way, but now at least ONE of the two classes
     // is no longer silent).
-    tinvoke("watch_repo",{path}).catch(e=>{ Tama.warn("Live refresh couldn't start for this repo — "+e); console.error("watch_repo",e); });
+    tinvoke("watch_repo",{path}).catch(e=>{ Tama.warn(t("legacy.watch_failed",{error:e})); console.error("watch_repo",e); });
     // Multi-repo dashboard (backlog #11): auto-track whichever repo was just
     // opened (real open OR submodule nav OR the setup wizard's finish() —
     // every one of them funnels through this one openRepo() success path) so
@@ -2581,8 +2962,11 @@ async function openRepo(path){
     // and self-contained (own try/catch), so it can never block opening the
     // repo — same as watch_repo/track_repo_opened above.
     await repoSummaryCtrl.maybeAutoShow(path);
+    // PER-43: fire plugin lifecycle hooks for this open (repo-opened / -switched).
+    // Fire-and-forget observers — never blocks the open (own async + try/catch).
+    pluginHooksCtrl.onRepoOpened(path);
     return true;
-  }catch(e){ setGraphLoadingPill(false); Tama.warn("Couldn't open that repo — "+e,5000); console.error(e); return false; }
+  }catch(e){ setGraphLoadingPill(false); Tama.warn(t("legacy.open_repo_failed",{error:e}),5000); console.error(e); return false; }
   finally{ openRepoBusy=false; if(pickBtn){ pickBtn.disabled=false; if(pickSpinner) pickSpinner.remove(); } if(graphLoading) graphLoading.style.display="none"; }
 }
 /* ------------------------------------------------------------
@@ -2740,9 +3124,10 @@ async function tryFastRefresh(){
   // Advance the baseline before any async work / re-entrant refresh sees it.
   loadedSeedTips=curTipSet; loadedHeadOid=cur.headOid; lastRefSig=cur.refSig;
   // Pill + refs tree + auto-visibility (keeps its own sameLocal&&sameRemote echo
-  // guard — a checkout that auto-hides a branch queues one more pass that Gate B
-  // then turns into a full reload). Safety.refresh keeps the undo count current
-  // for the DAG-preserving mutations that still take a snapshot (e.g. checkout).
+  // guard — a checkout that auto-hides a branch persists that, which reloads the
+  // graph in full on its own, so this fast pass must not be the last word on
+  // which rows are shown). Safety.refresh keeps the undo count current for the
+  // DAG-preserving mutations that still take a snapshot (e.g. checkout).
   await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
   if(headMoved) recomputeAncestorsAsync();
   return true;
@@ -2793,7 +3178,7 @@ async function reloadGraph(preserveRow, forceFull=false){
           pendingReselect = keepSha ? {sha:keepSha} : (keepWorkdir ? {workdir:true} : null);
           await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
         }
-      }catch(e){ Tama.warn("Reload failed — "+e); console.error(e); }
+      }catch(e){ Tama.warn(t("legacy.reload_failed",{error:e})); console.error(e); }
       if(!reloadGraphPending) break;
       reloadGraphPending=false;
       nextPreserveRow=reloadGraphPendingPreserveRow;
@@ -2845,7 +3230,7 @@ async function pickRepo(){
     const d=window.__TAURI__.dialog;
     dir = (d&&d.open) ? await d.open({directory:true,title:"Open a Git repository"})
                       : await window.__TAURI__.core.invoke("plugin:dialog|open",{options:{directory:true,title:"Open a Git repository"}});
-  }catch(e){ console.error(e); Tama.say("Dialog error — "+e); return; }
+  }catch(e){ console.error(e); Tama.say(t("legacy.dialog_error",{error:e})); return; }
   if(dir){
     // openRepo() re-derives NAV_STACK from git's superproject chain and refreshes
     // the nav strip itself (see its body), so picking a brand-new repo just works:
@@ -2887,7 +3272,7 @@ function bootEmpty(){
   // from their static HTML placeholders. Now that closeRepo() (below) can
   // call it AFTER a repo was open, leaving these alone would keep showing the
   // just-closed repo's name and branch as if it were still open.
-  const pick=$(".repo-pick .repo-name"); if(pick) pick.textContent="Open a repository…";
+  const pick=$(".repo-pick .repo-name"); if(pick) pick.textContent=t("topbar.repo_pick_empty");
   const wslTag=$("#repoWslTag"); if(wslTag) wslTag.style.display="none";
   const bp=$(".branch-pill"); if(bp) bp.style.display="none";
   dirty=true;
@@ -2922,8 +3307,16 @@ $(".repo-pick").addEventListener("click", ()=>dashboardCtrl.show());
 applyThemeMode(loadSettings().themeMode);
 setGraphShowAllTags(loadSettings().showAllCommitTags);
 setGraphLabelPriority(loadSettings().graphLabelPriority);
+setGraphLabelLayout(loadSettings().graphLabelLayout);
 setTamaEnabled(loadSettings().tamaEnabled);
-$("#dangerTamaImg").src=TAMA_IMG.alarm; $("#tamaCheerImg").src=TAMA_IMG.happy;
+// PER-47: re-apply a persisted Tama skin at boot. Fire-and-forget + self-gates
+// on IN_TAURI internally; if the skin's plugin was removed/disabled or its load
+// fails, it stays silently on the built-in poses (a decorative skin is never
+// worth a startup toast). Async, so the two static images below paint the
+// built-ins first and repaintTamaSkin() swaps them once the skin resolves.
+void applyPersistedTamaSkin();
+applyPersistedTamaMotion(); // PER-54: re-apply the persisted motion preset + pose overrides at boot
+$("#dangerTamaImg").src=tamaPose("alarm"); $("#tamaCheerImg").src=tamaPose("happy");
 // Window resize re-renders live (standard); the panel-divider drag is what
 // avoids a live reflow — it moves only a guide line and commits the width once
 // on release (see wireResizeHandle), so this observer fires just once per
@@ -2939,25 +3332,105 @@ if(IN_TAURI){
   // flashes the empty hero state first. URLSearchParams.get() already
   // returns the fully percent-decoded value — no separate decodeURIComponent
   // needed (that would double-decode a path containing a literal '%').
-  const initialRepo=new URLSearchParams(location.search).get("repo");
+  const params=new URLSearchParams(location.search);
+  const initialRepo=params.get("repo");
+  // `gitcat <path>` where <path> isn't a git repo: windows.rs validated the
+  // launch argument and, rather than a `?repo=`, handed us `?repoError=<path>`.
+  // Boot the empty hero (so the app is usable — pick a real folder) and name the
+  // offending path, VS Code-style.
+  const repoError=params.get("repoError");
   // openRepo() derives NAV_STACK + refreshes the submodule-nav strip itself, so a
   // repo opened by deep-link that happens to be a submodule shows its context too.
-  if(initialRepo) openRepo(initialRepo); else bootEmpty();
+  // On failure (e.g. the repo became inaccessible between the launch-time check
+  // and now) fall back to the empty hero rather than a stranded blank frame.
+  if(initialRepo){ openRepo(initialRepo).then(ok=>{ if(!ok) bootEmpty(); }); }
+  else { bootEmpty(); if(repoError) Tama.warn(t("legacy.not_a_repo",{repo:repoError}), 6000); }
 }
 else { loadGraph(10000); }          // plain browser (design mode): synthetic demo data
 requestAnimationFrame(tick);
-if(!IN_TAURI) setTimeout(()=>{Tama.event("snapshot.surfaced");Tama.say("Safety Manager armed — I snapshot before every mutation. にゃ〜",4200);},800);
+if(!IN_TAURI) setTimeout(()=>{Tama.event("snapshot.surfaced");Tama.say(t("legacy.safety_armed"),4200);},800);
 
 /* ============================================================
    13) ⌘K COMMAND PALETTE — now a Svelte island (src/islands/cmdk).
    ============================================================ */
 const cmdHint=$(".cmd-hint"); if(cmdHint) cmdHint.addEventListener("click",()=>cmdkCtrl.show());
 
+/* ============================================================
+   i18n — the top-bar/loading/help chrome lives as static markup in
+   index.html (not a Svelte island), so its translations are carried on
+   data-i18n* attributes and applied imperatively here: data-i18n sets
+   textContent, -html sets innerHTML (for prose with inline <b>/<kbd>),
+   -title/-ph/-aria set the matching attribute. Applied once at boot and
+   re-applied on every language switch (islands re-render themselves via t()).
+   ============================================================ */
+function applyStaticI18n(root=document){
+  // A translation key is only ever a plain "namespace.key" identifier. Validate
+  // the attribute value against that allowlist before use: these keys are
+  // authored by us in index.html (never user input) and t() only ever returns
+  // compile-time dictionary strings, but gating on the pattern also severs the
+  // DOM-attribute -> innerHTML data flow CodeQL flags as js/xss-through-dom on
+  // the -html branch, and refuses anything that couldn't be a real key anyway.
+  const KEY_RE=/^[a-z0-9_.]+$/i;
+  const key=(el,attr)=>{ const k=el.getAttribute(attr); return k&&KEY_RE.test(k)?k:null; };
+  root.querySelectorAll("[data-i18n]").forEach(el=>{ const k=key(el,"data-i18n"); if(k!==null) el.textContent=t(k); });
+  root.querySelectorAll("[data-i18n-html]").forEach(el=>{ const k=key(el,"data-i18n-html"); if(k!==null) el.innerHTML=t(k); });
+  root.querySelectorAll("[data-i18n-title]").forEach(el=>{ const k=key(el,"data-i18n-title"); if(k!==null) el.title=t(k); });
+  root.querySelectorAll("[data-i18n-ph]").forEach(el=>{ const k=key(el,"data-i18n-ph"); if(k!==null) el.setAttribute("placeholder",t(k)); });
+  root.querySelectorAll("[data-i18n-aria]").forEach(el=>{ const k=key(el,"data-i18n-aria"); if(k!==null) el.setAttribute("aria-label",t(k)); });
+}
+applyStaticI18n();
+
+// The native OS menu (macOS app menu / Win-Linux menu bar) is built in Rust
+// with English defaults at startup (src-tauri/src/menu.rs). Push the current
+// locale's labels so Rust rebuilds it translated — keyed by menu-item id, with
+// `sub.*` for submenu titles; predefined items (Cut/Copy/Paste/Quit/…) are left
+// to the OS. Live-switch works; a restart also picks it up (the boot call below
+// runs with the persisted locale), so the menu is never stuck in the old one.
+function nativeMenuLabels(){
+  return {
+    "sub.file":t("menu.file"), "sub.repository":t("menu.repository"), "sub.edit":t("menu.edit"),
+    "sub.view":t("menu.view"), "sub.tools":t("menu.tools"), "sub.window":t("menu.window"),
+    "sub.help":t("menu.help"), "sub.search":t("menu.search"), "sub.history":t("menu.history"),
+    "sub.patches":t("menu.patches"),
+    "about":t("menu.about"), "open-repo":t("menu.open_repo"), "close-repo":t("menu.close_repo"),
+    "new-branch":t("menu.new_branch"), "fetch":t("menu.fetch"), "pull":t("menu.pull"),
+    "push":t("menu.push"), "refresh":t("menu.refresh"), "toggle-theme":t("menu.toggle_theme"),
+    "cmdk":t("menu.cmdk"), "code-search":t("menu.code_search"), "pickaxe-search":t("menu.pickaxe_search"),
+    "bisect":t("menu.bisect"), "reflog":t("menu.reflog"), "rerere":t("menu.rerere"),
+    "plumbing":t("menu.plumbing"), "repo-summary":t("menu.repo_summary"),
+    "dangling-recovery":t("menu.dangling_recovery"), "export-patches":t("menu.export_patches"),
+    "apply-patch":t("menu.apply_patch"), "remotes":t("menu.remotes"), "repositories":t("menu.repositories"),
+    "external-tools":t("menu.external_tools"), "plugins":t("menu.plugins"), "settings":t("menu.settings"),
+    "repo-files":t("menu.repo_files"), "uncommitted-changes":t("menu.uncommitted_changes"),
+    "pull-merge":t("menu.pull_merge"), "pull-rebase":t("menu.pull_rebase"),
+    "open-terminal":t("menu.open_terminal"), "force-push-lease":t("menu.force_push_lease"),
+    "force-push-override":t("menu.force_push_override"), "reset-head":t("menu.reset_head"),
+    "filter-repo":t("menu.filter_repo"), "new-window":t("menu.new_window"),
+    "open-github":t("menu.open_github"), "report-issue":t("menu.report_issue"),
+    "check-for-updates":t("menu.check_updates"),
+  };
+}
+function syncNativeMenu(){ if(!IN_TAURI) return; try{ tinvoke("set_app_menu",{labels:nativeMenuLabels()}); }catch(e){ console.error("set_app_menu failed",e); } }
+// Boot: Rust already drew the English menu, so only push if the locale differs.
+if(locale()!=="en") syncNativeMenu();
+
+// Live language switch (即时生效): the canvas text is drawn, not DOM, and these
+// chrome nodes aren't reactive — so on a switch re-apply the attributes, refresh
+// the empty-state repo label, invalidate the scroll-blit buffer, force a full
+// repaint, and rebuild the native menu. Islands wired through t() re-render on
+// their own.
+i18nEvents.addEventListener("change",()=>{
+  applyStaticI18n();
+  const pick=$(".repo-pick .repo-name"); if(pick && !CUR_REPO) pick.textContent=t("topbar.repo_pick_empty");
+  bufferValid=false; dirty=true;
+  syncNativeMenu();
+});
+
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
-  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setTamaEnabled, onGraphBatch,
+  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
   // above for the full design) — enterSubmodule/navigateToRepo are hoisted
   // `function` declarations, so no TDZ risk (same reasoning as
