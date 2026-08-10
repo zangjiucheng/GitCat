@@ -19,7 +19,7 @@
     TAMA_MOMENT_FIELDS,
     tamaPoseLabel,
   } from "./settings.svelte.ts";
-  import type { ThemeMode, SnapshotRetentionMode, GraphLabelPriority, TamaMotionPreset } from "./settings.svelte.ts";
+  import type { ThemeMode, SnapshotRetentionMode, GraphLabelPriority, GraphLabelLayout, TamaMotionPreset } from "./settings.svelte.ts";
   import type { ConfigScope } from "../../ipc/bindings";
   import { playTamaSound } from "../../legacy/sound.ts";
   import { updaterCtrl } from "../updater/updater.svelte.ts";
@@ -107,7 +107,7 @@
       </label>
 
       <p class="mut" style="font-size:11.5px;margin:0 0 8px">
-        When a commit's labels don't all fit the gutter, show this kind first. Click a row's <b>+N</b> chip to cycle the rest into view.
+        When a commit's labels don't all fit, show this kind first. Click a row's <b>+N</b> chip to cycle the rest into view.
       </p>
       <div class="rm-form" style="margin-bottom:14px;max-width:220px">
         <select
@@ -116,6 +116,19 @@
         >
           <option value="tag">Tags first</option>
           <option value="branch">Branches first</option>
+        </select>
+      </div>
+
+      <p class="mut" style="font-size:11.5px;margin:0 0 8px">
+        Inline draws a commit's ref chips right before its subject text; Left column keeps them in a separate, resizable column.
+      </p>
+      <div class="rm-form" style="margin-bottom:14px;max-width:220px">
+        <select
+          value={settingsCtrl.graphLabelLayout}
+          onchange={(e) => settingsCtrl.setGraphLabelLayout((e.target as HTMLSelectElement).value as GraphLabelLayout)}
+        >
+          <option value="inline">Inline (before the subject)</option>
+          <option value="column">Left column</option>
         </select>
       </div>
 
