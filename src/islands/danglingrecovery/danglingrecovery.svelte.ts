@@ -33,7 +33,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { DanglingCommit } from "../../ipc/bindings";
 
 // Canned demo rows (design-mode only) — same spirit as reflog.svelte.ts's own
@@ -125,12 +125,12 @@ class DanglingRecoveryState {
         } else {
           this.commits = [];
           this.truncated = false;
-          this.error = String(r.error ?? t("danglingrecovery.err_fsck"));
+          this.error = be(r.error) || t("danglingrecovery.err_fsck");
         }
       } catch (e) {
         this.commits = [];
         this.truncated = false;
-        this.error = t("danglingrecovery.err_fsck_reason", { reason: String(e) });
+        this.error = t("danglingrecovery.err_fsck_reason", { reason: be(String(e)) });
       }
     } finally {
       this.loading = false;
@@ -201,17 +201,17 @@ class DanglingRecoveryState {
         await bridge.reloadGraph(true);
         this.tamaImg = bridge.TAMA_IMG.confident;
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("danglingrecovery.recovered_as", { name }), 3600);
-        bridge.cheer(res.message || t("danglingrecovery.recovered_as", { name }), bridge.TAMA_IMG.confident);
+        bridge.tama.say(be(res.message) || t("danglingrecovery.recovered_as", { name }), 3600);
+        bridge.cheer(be(res.message) || t("danglingrecovery.recovered_as", { name }), bridge.TAMA_IMG.confident);
         // Re-pull: the recovered commit is no longer dangling now that a real
         // ref points at it — without this, a stale row would keep offering to
         // "recover" something that's already been recovered.
         await this.refresh(this.repo);
       } else {
-        bridge.tama.warn((res && res.message) || t("danglingrecovery.err_could_not_recover", { sha: shortSha }));
+        bridge.tama.warn(be(res && res.message) || t("danglingrecovery.err_could_not_recover", { sha: shortSha }));
       }
     } catch (e) {
-      bridge.tama.warn(t("danglingrecovery.err_recover_reason", { reason: String(e) }));
+      bridge.tama.warn(t("danglingrecovery.err_recover_reason", { reason: be(String(e)) }));
     } finally {
       this.busy = false;
       this.busyTarget = null;

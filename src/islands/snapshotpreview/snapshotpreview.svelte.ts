@@ -21,7 +21,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import type { CommitDetail, Snapshot } from "../../ipc/bindings";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 
 // Popover size budget, used only to clamp its anchor inside the viewport.
 const POP_W = 320;
@@ -123,7 +123,7 @@ class SnapshotPreviewState {
       const res = await commands.commitDetail(bridge.CUR_REPO as unknown as string, snap.sha);
       if (this.token !== my) return; // superseded by a newer open/close
       if (res.status === "ok") this.detail = res.data;
-      else this.error = res.error || t("snapshotpreview.err_load");
+      else this.error = be(res.error) || t("snapshotpreview.err_load");
     } catch (e) {
       if (this.token !== my) return;
       this.error = t("snapshotpreview.err_load_e", { e: String(e) });

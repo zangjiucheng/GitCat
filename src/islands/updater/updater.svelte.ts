@@ -22,7 +22,7 @@ import { IN_TAURI } from "../../ipc/env";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { commands } from "../../ipc/bindings";
 import { loadSettings } from "../settings/settings.svelte.ts";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 
 type Phase = "idle" | "checking" | "up-to-date" | "available" | "downloading" | "ready" | "error";
 
@@ -66,7 +66,7 @@ class UpdaterState {
       const nightly = loadSettings().useNightlyChannel;
       const res = await commands.checkForUpdate(nightly);
       if (res.status === "error") {
-        this.error = t("updater.check_failed", { err: res.error });
+        this.error = t("updater.check_failed", { err: be(res.error) });
         this.phase = silent ? "idle" : "error";
         return;
       }

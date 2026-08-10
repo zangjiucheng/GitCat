@@ -19,7 +19,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { FilterRepoBackupInfo, FilterRepoPreview, FilterRepoResult } from "../../ipc/bindings";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 
 export type FilterRepoStep = "scope" | "preview" | "confirm" | "result" | "restore";
 
@@ -164,11 +164,11 @@ class FilterRepoState {
         this.step = "preview";
       } else {
         this.preview = null;
-        this.previewError = String(r.error ?? t("filterrepo.err_preview"));
+        this.previewError = be(r.error) || t("filterrepo.err_preview");
       }
     } catch (e) {
       this.preview = null;
-      this.previewError = t("filterrepo.err_preview_e", { e: String(e) });
+      this.previewError = t("filterrepo.err_preview_e", { e: be(String(e)) });
     } finally {
       this.busy = false;
     }
@@ -229,22 +229,22 @@ class FilterRepoState {
     this.tamaImg = bridge.TAMA_IMG.thinking;
     try {
       const res = await commands.filterRepoRun(this.repo, this.pathList, this.invert);
-      this.result = res;
+      this.result = { ...res, message: be(res.message) };
       this.step = "result";
       if (res.ok) {
         await bridge.reloadGraph(true); // HEAD/history changed
         this.tamaImg = bridge.TAMA_IMG.happy;
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("filterrepo.say_rewritten"), 4200);
+        bridge.tama.say(be(res.message) || t("filterrepo.say_rewritten"), 4200);
         bridge.cheer(t("filterrepo.cheer_rewritten"));
       } else {
         this.tamaImg = bridge.TAMA_IMG.shocked;
-        bridge.tama.warn(res.message || t("filterrepo.warn_failed"));
+        bridge.tama.warn(be(res.message) || t("filterrepo.warn_failed"));
       }
     } catch (e) {
       this.result = {
         ok: false,
-        message: t("filterrepo.err_run", { e: String(e) }),
+        message: t("filterrepo.err_run", { e: be(String(e)) }),
         backupBundle: null,
         commitsBefore: null,
         commitsAfter: null,
@@ -310,11 +310,11 @@ class FilterRepoState {
         this.backupsError = "";
       } else {
         this.backups = [];
-        this.backupsError = String(r.error ?? t("filterrepo.err_list_backups"));
+        this.backupsError = be(r.error) || t("filterrepo.err_list_backups");
       }
     } catch (e) {
       this.backups = [];
-      this.backupsError = t("filterrepo.err_list_backups_e", { e: String(e) });
+      this.backupsError = t("filterrepo.err_list_backups_e", { e: be(String(e)) });
     } finally {
       this.backupsLoading = false;
     }
@@ -354,21 +354,21 @@ class FilterRepoState {
     this.tamaImg = bridge.TAMA_IMG.thinking;
     try {
       const res = await commands.filterRepoRestore(this.repo, this.selectedBackupId);
-      this.restoreResult = res;
+      this.restoreResult = { ...res, message: be(res.message) };
       if (res.ok) {
         await bridge.reloadGraph(true); // HEAD/history changed back
         this.tamaImg = bridge.TAMA_IMG.confident;
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("filterrepo.say_restored"), 4200);
+        bridge.tama.say(be(res.message) || t("filterrepo.say_restored"), 4200);
         bridge.cheer(t("filterrepo.cheer_restored"));
       } else {
         this.tamaImg = bridge.TAMA_IMG.shocked;
-        bridge.tama.warn(res.message || t("filterrepo.warn_restore_failed"));
+        bridge.tama.warn(be(res.message) || t("filterrepo.warn_restore_failed"));
       }
     } catch (e) {
       this.restoreResult = {
         ok: false,
-        message: t("filterrepo.err_restore", { e: String(e) }),
+        message: t("filterrepo.err_restore", { e: be(String(e)) }),
         backupBundle: null,
         commitsBefore: null,
         commitsAfter: null,

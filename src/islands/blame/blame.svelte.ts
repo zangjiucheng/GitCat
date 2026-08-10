@@ -24,7 +24,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { BlameHunkRow, FileBlame } from "../../ipc/bindings";
 
 // One flattened display row per line of `data.lines` — built fresh from
@@ -149,11 +149,11 @@ class BlameState {
           this.error = null;
         } else {
           this.data = null;
-          this.error = String(r.error ?? t("blame.err_blame"));
+          this.error = be(r.error) || t("blame.err_blame");
         }
       } catch (e) {
         this.data = null;
-        this.error = t("blame.err_unavailable", { reason: String(e) });
+        this.error = t("blame.err_unavailable", { reason: be(String(e)) });
       }
     } finally {
       this.loading = false;

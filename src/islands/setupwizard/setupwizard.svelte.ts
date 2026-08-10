@@ -25,7 +25,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { GitIdentity } from "../../ipc/bindings";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 
 // "language" is the first step — a brand-new user picks their language before
 // anything else, so the rest of onboarding (and the whole app) is in it. The
@@ -237,7 +237,7 @@ class SetupWizardState {
           this.identity = r.data;
         } else {
           this.identity = null;
-          this.pathError = String(r.error ?? t("setupwizard.err_not_repo"));
+          this.pathError = be(r.error) || t("setupwizard.err_not_repo");
           return;
         }
       }
@@ -285,7 +285,7 @@ class SetupWizardState {
         this.identity = { name, email, configured: true, local: true };
         this.step = "cli";
       } else {
-        this.saveError = res.message || t("setupwizard.err_set_identity");
+        this.saveError = be(res.message) || t("setupwizard.err_set_identity");
       }
     } catch (e) {
       this.saveError = t("setupwizard.err_set_identity_e", { e: String(e) });
@@ -313,7 +313,7 @@ class SetupWizardState {
       if (res.status === "ok") {
         this.cliInstalledPath = res.data;
       } else {
-        this.cliError = res.error || "Couldn't install the gitcat command.";
+        this.cliError = be(res.error) || "Couldn't install the gitcat command.";
       }
     } catch (e) {
       this.cliError = "Couldn't install the gitcat command. " + e;

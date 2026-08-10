@@ -30,7 +30,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { FileHistory, FileHistoryEntry } from "../../ipc/bindings";
 
 // Demo data (design-mode only) — a small canned history with one rename, same
@@ -131,11 +131,11 @@ class FileHistoryState {
           this.error = null;
         } else {
           this.data = null;
-          this.error = String(r.error ?? t("filehistory.err_load"));
+          this.error = be(r.error) || t("filehistory.err_load");
         }
       } catch (e) {
         this.data = null;
-        this.error = t("filehistory.err_unavailable", { reason: String(e) });
+        this.error = t("filehistory.err_unavailable", { reason: be(String(e)) });
       }
     } finally {
       this.loading = false;

@@ -48,7 +48,7 @@ import { resetHeadCtrl } from "../resethead/resethead.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { save } from "@tauri-apps/plugin-dialog";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { be, t } from "@/i18n/i18n.svelte.ts";
 
 type MenuView = "menu" | "branch" | "tag";
 
@@ -272,9 +272,9 @@ class CommitMenuState {
       const res = await commands.exportPatch(repo, null, sha, dest);
       if (res && res.ok) {
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("commitmenu.say_exported", { sha: shortSha }), 3600);
+        bridge.tama.say(be(res.message) || t("commitmenu.say_exported", { sha: shortSha }), 3600);
       } else {
-        bridge.tama.warn((res && res.message) || t("commitmenu.warn_export_failed", { sha: shortSha }));
+        bridge.tama.warn(be(res && res.message) || t("commitmenu.warn_export_failed", { sha: shortSha }));
       }
     } catch (e) {
       bridge.tama.warn(t("commitmenu.err_export", { e: String(e) }));
@@ -370,9 +370,9 @@ class CommitMenuState {
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("commitmenu.say_branch_created", { name }), 3200);
+        bridge.tama.say(be(res.message) || t("commitmenu.say_branch_created", { name }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("commitmenu.warn_branch_failed", { name }));
+        bridge.tama.warn(be(res && res.message) || t("commitmenu.warn_branch_failed", { name }));
       }
     } catch (e) {
       bridge.tama.warn(t("commitmenu.err_create", { e: String(e) }));
@@ -423,9 +423,9 @@ class CommitMenuState {
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("commitmenu.say_tag_created", { name }), 3200);
+        bridge.tama.say(be(res.message) || t("commitmenu.say_tag_created", { name }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("commitmenu.warn_tag_failed", { name }));
+        bridge.tama.warn(be(res && res.message) || t("commitmenu.warn_tag_failed", { name }));
       }
     } catch (e) {
       bridge.tama.warn(t("commitmenu.err_create", { e: String(e) }));

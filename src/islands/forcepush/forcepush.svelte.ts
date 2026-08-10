@@ -40,7 +40,7 @@ import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { sidebarCtrl } from "../sidebar/sidebar.svelte.ts";
 import { ICON_BACKUP, ICON_WARNING } from "../../legacy/icons";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
@@ -128,9 +128,9 @@ class ForcePushState {
         // live — same as doPush()/pushBranch(). Cheap: no local commits change.
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("forcepush.pushed", { branch }), 3200);
+        bridge.tama.say(be(res.message) || t("forcepush.pushed", { branch }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("forcepush.failed"));
+        bridge.tama.warn(be(res && res.message) || t("forcepush.failed"));
       }
     } catch (e) {
       bridge.tama.warn(t("forcepush.failed_e", { error: String(e) }));

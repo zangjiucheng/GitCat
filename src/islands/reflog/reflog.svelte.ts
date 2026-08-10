@@ -10,7 +10,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import { ICON_WARNING, ICON_CHERRY } from "../../legacy/icons";
 import type { ReflogEntry } from "../../ipc/bindings";
 
@@ -115,11 +115,11 @@ class ReflogState {
           this.error = "";
         } else {
           this.entries = [];
-          this.error = String(r.error ?? t("reflog.err_read"));
+          this.error = be(r.error) || t("reflog.err_read");
         }
       } catch (e) {
         this.entries = [];
-        this.error = t("reflog.err_read_reason", { reason: String(e) });
+        this.error = t("reflog.err_read_reason", { reason: be(String(e)) });
       }
     } finally {
       this.loading = false;
@@ -157,16 +157,16 @@ class ReflogState {
         await bridge.reloadGraph(true);
         this.tamaImg = bridge.TAMA_IMG.confident;
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("reflog.restored"), 4200);
-        bridge.cheer(res.message || t("reflog.restored"), bridge.TAMA_IMG.confident);
+        bridge.tama.say(be(res.message) || t("reflog.restored"), 4200);
+        bridge.cheer(be(res.message) || t("reflog.restored"), bridge.TAMA_IMG.confident);
         // Re-pull: the restore itself moved HEAD, so the reflog now has a
         // fresh entry on top (and indices have shifted).
         await this.refresh(this.repo);
       } else {
-        bridge.tama.warn(res.message || t("reflog.restore_failed"));
+        bridge.tama.warn(be(res.message) || t("reflog.restore_failed"));
       }
     } catch (e) {
-      bridge.tama.warn(t("reflog.restore_failed_reason", { reason: String(e) }));
+      bridge.tama.warn(t("reflog.restore_failed_reason", { reason: be(String(e)) }));
     } finally {
       this.busy = false;
       this.restoringIndex = null;

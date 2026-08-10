@@ -30,7 +30,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import { workdirCtrl } from "../workdir/workdir.svelte.ts";
 
 export type RepoFileName = ".gitignore" | ".mailmap";
@@ -104,12 +104,12 @@ class RepoFilesState {
           this.error = "";
         } else {
           this.content = "";
-          this.error = String(r.error ?? t("repofiles.read_failed", { file }));
+          this.error = be(r.error) || t("repofiles.read_failed", { file });
         }
       } catch (e) {
         if (myReq !== this.loadSeq) return;
         this.content = "";
-        this.error = t("repofiles.read_failed_detail", { file, err: String(e) });
+        this.error = t("repofiles.read_failed_detail", { file, err: be(String(e)) });
       }
     } finally {
       if (myReq === this.loadSeq) this.loading = false;
@@ -141,7 +141,7 @@ class RepoFilesState {
       const res = await commands.writeRepoFile(this.repo, file, content);
       if (res.ok) {
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("repofiles.saved", { file }), 3200);
+        bridge.tama.say(be(res.message) || t("repofiles.saved", { file }), 3200);
         // Only .gitignore can change what the workdir reports as untracked —
         // .mailmap affects author-name display/blame attribution only, never
         // workdir status — see module doc.
@@ -149,10 +149,10 @@ class RepoFilesState {
           await workdirCtrl.refreshStatus(this.repo);
         }
       } else {
-        bridge.tama.warn(res.message || t("repofiles.save_failed", { file }));
+        bridge.tama.warn(be(res.message) || t("repofiles.save_failed", { file }));
       }
     } catch (e) {
-      bridge.tama.warn(t("repofiles.save_failed_detail", { err: String(e) }));
+      bridge.tama.warn(t("repofiles.save_failed_detail", { err: be(String(e)) }));
     } finally {
       this.busy = false;
     }

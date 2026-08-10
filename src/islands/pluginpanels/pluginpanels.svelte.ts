@@ -31,7 +31,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import { parseTamaReaction, pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import type { Plugin, PluginPanel, PlaceholderCtx } from "../../ipc/bindings";
 import type { ActionItem } from "../cmdk/cmdk.svelte.ts";
@@ -230,7 +230,7 @@ class PluginPanelsState {
     try {
       const res = await commands.runPluginCommand(pluginId, item.command, this.ctx());
       if (res.status !== "ok") {
-        this.setOutput(index, { running: false, text: "", error: String(res.error ?? t("pluginpanels.err_command_failed")) });
+        this.setOutput(index, { running: false, text: "", error: be(res.error) || t("pluginpanels.err_command_failed") });
         return;
       }
       const out = res.data;

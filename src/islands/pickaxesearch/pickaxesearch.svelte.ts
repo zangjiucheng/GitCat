@@ -33,7 +33,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import type { PickaxeMatch, PickaxeResults } from "../../ipc/bindings";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 
 export type PickaxeMode = "added-removed" | "diff-match" | "author";
 
@@ -144,11 +144,11 @@ class PickaxeSearchState {
         this.error = "";
       } else {
         this.data = null;
-        this.error = String(res.error ?? t("pickaxesearch.err_search"));
+        this.error = be(res.error) || t("pickaxesearch.err_search");
       }
     } catch (e) {
       this.data = null;
-      this.error = t("pickaxesearch.err_search_e", { e: String(e) });
+      this.error = t("pickaxesearch.err_search_e", { e: be(String(e)) });
     } finally {
       this.busy = false;
     }

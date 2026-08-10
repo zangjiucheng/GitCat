@@ -22,7 +22,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { Plugin, PluginContext, PlaceholderCtx } from "../../ipc/bindings";
 import type { ActionItem } from "../cmdk/cmdk.svelte.ts";
 
@@ -229,7 +229,7 @@ class PluginCommandsState {
     try {
       const res = await commands.runPluginCommand(pluginId, commandId, ctx);
       if (res.status !== "ok") {
-        bridge.tama.warn(String(res.error ?? t("plugincommands.err_failed")));
+        bridge.tama.warn(be(res.error) || t("plugincommands.err_failed"));
         return;
       }
       const out = res.data;

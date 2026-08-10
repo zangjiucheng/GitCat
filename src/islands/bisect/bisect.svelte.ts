@@ -10,7 +10,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { BisectStatus } from "../../ipc/bindings";
 
 // specta generates `term: string`; keep the precise union at the call boundary.
@@ -160,7 +160,7 @@ class BisectState {
     try {
       const st = await commands.bisectStart(repo, badSha, [goodSha]); // snapshots + checks out midpoint
       if (!st || st.ok === false) {
-        bridge.tama.warn(t("bisect.warn_start_failed", { reason: (st && st.message) || t("bisect.unknown_error") }));
+        bridge.tama.warn(t("bisect.warn_start_failed", { reason: be(st && st.message) || t("bisect.unknown_error") }));
         return;
       }
       await bridge.reloadGraph(true);
@@ -193,7 +193,7 @@ class BisectState {
       const st = await commands.bisectMark(this.repo, term); // HEAD moves (or converges)
       await bridge.reloadGraph(true); // rebuild rows
       await this.refresh();
-      if (st && st.ok === false) bridge.tama.warn(t("bisect.warn_mark_failed", { reason: st.message || t("bisect.try_again") }));
+      if (st && st.ok === false) bridge.tama.warn(t("bisect.warn_mark_failed", { reason: be(st.message) || t("bisect.try_again") }));
     } catch (e) {
       bridge.tama.warn(t("bisect.warn_mark_failed", { reason: String(e) }));
     } finally {
@@ -235,7 +235,7 @@ class BisectState {
       const st = await commands.bisectRunStart(repo, cmd); // blocks until converged/aborted/cancelled
       await bridge.reloadGraph(true); // rebuild rows, mirrors mark()'s finishing touch
       this.applyStatus(st); // final status is authoritative even if an event raced it
-      if (st && st.ok === false) bridge.tama.warn(t("bisect.warn_run_stopped", { reason: st.message || t("bisect.try_again") }));
+      if (st && st.ok === false) bridge.tama.warn(t("bisect.warn_run_stopped", { reason: be(st.message) || t("bisect.try_again") }));
     } catch (e) {
       bridge.tama.warn(t("bisect.warn_run_failed", { reason: String(e) }));
     } finally {
@@ -292,14 +292,14 @@ class BisectState {
     try {
       const r = await commands.bisectReset(this.repo); // restores original HEAD/branch
       if (r && r.ok === false) {
-        bridge.tama.warn(t("bisect.warn_reset_failed", { reason: r.message || t("bisect.reset_detached") }));
+        bridge.tama.warn(t("bisect.warn_reset_failed", { reason: be(r.message) || t("bisect.reset_detached") }));
         return;
       }
       this.endReset();
       await bridge.reloadGraph(true);
       bridge.clearBisectMarks();
       bridge.tama.set("celebrate");
-      bridge.tama.say((r && r.message) || t("bisect.say_ended_restored"), 3600);
+      bridge.tama.say(be(r && r.message) || t("bisect.say_ended_restored"), 3600);
     } catch (e) {
       bridge.tama.warn(t("bisect.warn_reset_failed", { reason: String(e) }));
     } finally {

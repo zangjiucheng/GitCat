@@ -86,7 +86,7 @@
 // no extra branching, exactly like before this feature existed.
 
 import { commands } from "../../ipc/bindings";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { be, t } from "@/i18n/i18n.svelte.ts";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { rebasePlanCtrl } from "../rebaseplan/rebaseplan.svelte.ts";
@@ -1083,12 +1083,12 @@ class SidebarState {
       if (res && res.ok) {
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.initialized", { path }), 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.initialized", { path }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_initialize", { path }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_initialize", { path }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.init_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.init_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1118,12 +1118,12 @@ class SidebarState {
       if (res && res.ok) {
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.updated", { path }), 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.updated", { path }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_update", { path }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_update", { path }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.update_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.update_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1156,12 +1156,12 @@ class SidebarState {
       if (res && res.ok) {
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.submodules_updated"), 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.submodules_updated"), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_update_submodules"));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_update_submodules"));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.update_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.update_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1225,12 +1225,12 @@ class SidebarState {
         this.newSubmoduleBranch = "";
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.added_submodule", { path }), 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.added_submodule", { path }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_add_submodule", { path }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_add_submodule", { path }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.add_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.add_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1262,12 +1262,12 @@ class SidebarState {
       const res = await commands.submoduleSync(bridge.CUR_REPO as unknown as string, path, false);
       if (res && res.ok) {
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.synced", { path }), 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.synced", { path }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_sync", { path }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_sync", { path }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.sync_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.sync_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1298,12 +1298,12 @@ class SidebarState {
       const res = await commands.submoduleSync(bridge.CUR_REPO as unknown as string, null, recursive);
       if (res && res.ok) {
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.submodules_synced"), 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.submodules_synced"), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_sync_submodules"));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_sync_submodules"));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.sync_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.sync_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1380,12 +1380,12 @@ class SidebarState {
         // res.message already names the backup path inline when one was
         // written ("… (backup: gitgui/submodule-backup/…)") — see
         // submodule.rs's ok_removal call sites — so no extra copy needed here.
-        bridge.tama.say(res.message || t("sidebar.deinitialized", { path }), 4200);
+        bridge.tama.say(be(res.message) || t("sidebar.deinitialized", { path }), 4200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_deinit", { path }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_deinit", { path }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.deinit_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.deinit_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1448,12 +1448,12 @@ class SidebarState {
         bridge.tama.set("celebrate");
         // Same "message already names the backup path inline" reasoning as
         // doDeinitSubmodule above.
-        bridge.tama.say(res.message || t("sidebar.removed", { path }), 4200);
+        bridge.tama.say(be(res.message) || t("sidebar.removed", { path }), 4200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_remove", { path }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_remove", { path }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.remove_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.remove_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1539,10 +1539,10 @@ class SidebarState {
         const p = pos ?? { x: 24, y: 80 };
         this.openDirtyCheckoutMenu(name, null, res.conflictingFiles, p.x, p.y);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_checkout_uncommitted", { name }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_checkout_uncommitted", { name }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.checkout_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.checkout_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1595,10 +1595,10 @@ class SidebarState {
         const p = pos ?? { x: 24, y: 80 };
         this.openDirtyCheckoutMenu(shortName, remoteRef, res.conflictingFiles, p.x, p.y);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_checkout_remote", { remote: remoteRef }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_checkout_remote", { remote: remoteRef }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.checkout_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.checkout_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1654,7 +1654,7 @@ class SidebarState {
       // staged, untracked) made the tree dirty in the first place.
       const stashRes = await commands.stashSave(repo, "Auto-stash before switching to " + name, true);
       if (!stashRes.ok) {
-        bridge.tama.warn(stashRes.message || t("sidebar.couldnt_stash"));
+        bridge.tama.warn(be(stashRes.message) || t("sidebar.couldnt_stash"));
         return;
       }
       bridge.tama.say(t("sidebar.switching_to", { name }));
@@ -1666,7 +1666,7 @@ class SidebarState {
         // OTHER refusal (bad ref, name collision, …). The stash is untouched
         // and still recoverable via Manage Stash, so say so rather than
         // implying the changes are gone.
-        bridge.tama.warn((switchRes.message || t("sidebar.couldnt_switch", { name })) + t("sidebar.changes_safely_stashed"));
+        bridge.tama.warn((be(switchRes.message) || t("sidebar.couldnt_switch", { name })) + t("sidebar.changes_safely_stashed"));
         return;
       }
       await bridge.reloadGraph(true);
@@ -1693,10 +1693,10 @@ class SidebarState {
         // applyOrPopStash, which this mirrors exactly.
         await resolver.openStashConflict(repo, popRes);
       } else {
-        bridge.tama.warn(popRes.message || t("sidebar.couldnt_reapply"));
+        bridge.tama.warn(be(popRes.message) || t("sidebar.couldnt_reapply"));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.checkout_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.checkout_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1768,12 +1768,12 @@ class SidebarState {
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.on_branch_now_plain", { name }), 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.on_branch_now_plain", { name }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_switch", { name }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_switch", { name }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.checkout_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.checkout_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1846,12 +1846,12 @@ class SidebarState {
         }
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.branch_created", { name }), 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.branch_created", { name }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_create", { name }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_create", { name }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.create_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.create_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1903,12 +1903,12 @@ class SidebarState {
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.deleted", { name }), 4200);
+        bridge.tama.say(be(res.message) || t("sidebar.deleted", { name }), 4200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_delete", { name }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_delete", { name }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.delete_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.delete_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -1964,12 +1964,12 @@ class SidebarState {
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.reset_done", { name, upstream }), 4200);
+        bridge.tama.say(be(res.message) || t("sidebar.reset_done", { name, upstream }), 4200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_reset", { name }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_reset", { name }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.reset_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.reset_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -2061,13 +2061,13 @@ class SidebarState {
         // sidebar too).
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.pushed", { target }), 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.pushed", { target }), 3200);
         return true;
       }
-      bridge.tama.warn((res && res.message) || t("sidebar.couldnt_push", { target }));
+      bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_push", { target }));
       return false;
     } catch (e) {
-      bridge.tama.warn(t("sidebar.push_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.push_failed", { error: be(String(e)) }));
       console.error(e);
       return false;
     } finally {
@@ -2161,12 +2161,12 @@ class SidebarState {
         this.renameInput = "";
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.renamed_to", { to }), 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.renamed_to", { to }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_rename", { from }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_rename", { from }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.rename_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.rename_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -2309,12 +2309,12 @@ class SidebarState {
         this.newTagFrom = "";
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.tag_created", { name }), 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.tag_created", { name }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_create_tag", { name }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_create_tag", { name }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.create_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.create_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -2360,12 +2360,12 @@ class SidebarState {
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.deleted_tag", { name }), 4200);
+        bridge.tama.say(be(res.message) || t("sidebar.deleted_tag", { name }), 4200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_delete_tag", { name }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_delete_tag", { name }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.delete_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.delete_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;
@@ -2388,12 +2388,12 @@ class SidebarState {
       const res = await commands.pushTag(bridge.CUR_REPO as unknown as string, null, name);
       if (res && res.ok) {
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("sidebar.pushed_tag", { name }), 3200);
+        bridge.tama.say(be(res.message) || t("sidebar.pushed_tag", { name }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("sidebar.couldnt_push_tag", { name }));
+        bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_push_tag", { name }));
       }
     } catch (e) {
-      bridge.tama.warn(t("sidebar.push_failed", { error: String(e) }));
+      bridge.tama.warn(t("sidebar.push_failed", { error: be(String(e)) }));
       console.error(e);
     } finally {
       this.busy = false;

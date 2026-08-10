@@ -65,7 +65,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { LocalBranch, MergeResult } from "../../ipc/bindings";
 
 export type MultiMergeMode = "octopus" | "sequential";
@@ -163,7 +163,7 @@ class MultiMergeState {
         return;
       }
       if (r.status !== "ok") {
-        bridge.tama.warn(r.error || t("multimerge.list_failed"));
+        bridge.tama.warn(be(r.error) || t("multimerge.list_failed"));
         return;
       }
       this.open = true;
@@ -264,9 +264,9 @@ class MultiMergeState {
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.set("hint");
-        bridge.tama.say(res.message || t("multimerge.queue_cancelled"), 3200);
+        bridge.tama.say(be(res.message) || t("multimerge.queue_cancelled"), 3200);
       } else {
-        bridge.tama.warn(res.message || t("multimerge.queue_cancel_failed"));
+        bridge.tama.warn(be(res.message) || t("multimerge.queue_cancel_failed"));
       }
     } catch (e) {
       bridge.tama.warn(t("multimerge.queue_cancel_failed_e", { error: String(e) }));
@@ -294,7 +294,7 @@ class MultiMergeState {
         // advanceQueueGuarded()'s `queueBusy`), never a fresh, independent
         // entry that would need to acquire the mutex itself.
         if (this.mode === "sequential") await this.advanceOrFinish(repo);
-        else await this.finish(res.message || t("multimerge.octopus_complete"));
+        else await this.finish(be(res.message) || t("multimerge.octopus_complete"));
         break;
       case "conflict":
         // Hand off to the SAME shared conflict UI every other op uses (see
@@ -317,10 +317,10 @@ class MultiMergeState {
         );
         break;
       case "octopus-conflict-unsupported":
-        bridge.tama.warn(res.message || t("multimerge.octopus_conflict"));
+        bridge.tama.warn(be(res.message) || t("multimerge.octopus_conflict"));
         break;
       default: // "error"
-        bridge.tama.warn(res.message || t("multimerge.could_not_start"));
+        bridge.tama.warn(be(res.message) || t("multimerge.could_not_start"));
         break;
     }
   }
@@ -383,10 +383,10 @@ class MultiMergeState {
       const res = await commands.mergeQueueAbort(repo);
       if (res.ok) {
         bridge.tama.set("hint");
-        bridge.tama.say(res.message || t("multimerge.queue_cancelled"), 3200);
+        bridge.tama.say(be(res.message) || t("multimerge.queue_cancelled"), 3200);
         await bridge.reloadGraph(true);
       } else {
-        bridge.tama.warn(res.message || t("multimerge.queue_cancel_failed"));
+        bridge.tama.warn(be(res.message) || t("multimerge.queue_cancel_failed"));
       }
     } catch (e) {
       bridge.tama.warn(t("multimerge.queue_cleanup_failed_e", { error: String(e) }));

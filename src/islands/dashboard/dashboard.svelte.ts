@@ -43,7 +43,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { open } from "@tauri-apps/plugin-dialog";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { be, t } from "@/i18n/i18n.svelte.ts";
 import type { DashboardRepoStatus, TrackedRepo } from "../../ipc/bindings";
 
 export type DashboardRow = {
@@ -201,7 +201,7 @@ class DashboardState {
         this.applyTrackedList(res.data, forceRefetchAll);
       } else {
         this.rows = [];
-        this.error = String(res.error ?? t("dashboard.err_list"));
+        this.error = be(res.error) || t("dashboard.err_list");
         return;
       }
     } catch (e) {
@@ -260,7 +260,7 @@ class DashboardState {
       if (res.status === "ok") {
         this.updateRow(path, { loading: false, status: res.data, error: null });
       } else {
-        this.updateRow(path, { loading: false, status: null, error: String(res.error ?? t("dashboard.err_status")) });
+        this.updateRow(path, { loading: false, status: null, error: be(res.error) || t("dashboard.err_status") });
       }
     } catch (e) {
       this.updateRow(path, { loading: false, status: null, error: t("dashboard.err_status_e", { err: String(e) }) });
@@ -305,7 +305,7 @@ class DashboardState {
         // folder-and-go feel the old direct-to-native-dialog buttons had.
         await this.openRepository(dir);
       } else {
-        bridge.tama.warn(String(res.error ?? t("dashboard.err_add")));
+        bridge.tama.warn(be(res.error) || t("dashboard.err_add"));
       }
     } catch (e) {
       bridge.tama.warn(t("dashboard.err_add_e", { err: String(e) }));
@@ -329,7 +329,7 @@ class DashboardState {
       if (res.status === "ok") {
         this.applyTrackedList(res.data);
       } else {
-        bridge.tama.warn(String(res.error ?? t("dashboard.err_remove")));
+        bridge.tama.warn(be(res.error) || t("dashboard.err_remove"));
       }
     } catch (e) {
       bridge.tama.warn(t("dashboard.err_remove_e", { err: String(e) }));

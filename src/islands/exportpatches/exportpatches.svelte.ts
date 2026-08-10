@@ -31,7 +31,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { save } from "@tauri-apps/plugin-dialog";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 
 // Mirrors patch.rs's own `validate_rev` shape (empty / leading-dash) — a
 // clearer, immediate in-form error rather than waiting on a round trip for
@@ -136,12 +136,12 @@ class ExportPatchesState {
       if (res && res.ok) {
         this.open = false;
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("exportpatches.say_exported"), 3600);
+        bridge.tama.say(be(res.message) || t("exportpatches.say_exported"), 3600);
       } else {
-        this.error = (res && res.message) || t("exportpatches.err_export");
+        this.error = be(res && res.message) || t("exportpatches.err_export");
       }
     } catch (e) {
-      this.error = t("exportpatches.err_export_e", { e: String(e) });
+      this.error = t("exportpatches.err_export_e", { e: be(String(e)) });
     } finally {
       this.busy = false;
     }

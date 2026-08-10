@@ -30,7 +30,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { be, t } from "@/i18n/i18n.svelte.ts";
 import type { ExternalTool, NamedTool, ToolKind, ToolSettings } from "../../ipc/bindings";
 
 class ExternalToolsState {
@@ -167,7 +167,7 @@ class ExternalToolsState {
         this.resetToolForm();
         bridge.tama.say(wasEditing ? t("externaltools.saved_updated", { name }) : t("externaltools.saved_added", { name }));
       } else {
-        this.error = String(res.error ?? t("externaltools.err_save_tool"));
+        this.error = be(res.error) || t("externaltools.err_save_tool");
       }
     } catch (e) {
       this.error = t("externaltools.err_save_tool_detail", { err: String(e) });
@@ -196,7 +196,7 @@ class ExternalToolsState {
         this.applySettings(res.data);
         if (this.editingId === id) this.resetToolForm();
       } else {
-        this.error = String(res.error ?? t("externaltools.err_remove_tool"));
+        this.error = be(res.error) || t("externaltools.err_remove_tool");
       }
     } catch (e) {
       this.error = t("externaltools.err_remove_tool_detail", { err: String(e) });
@@ -226,7 +226,7 @@ class ExternalToolsState {
       if (res.status === "ok") {
         this.applySettings(res.data);
       } else {
-        this.error = String(res.error ?? t("externaltools.err_set_active"));
+        this.error = be(res.error) || t("externaltools.err_set_active");
       }
     } catch (e) {
       this.error = t("externaltools.err_set_active_detail", { err: String(e) });
@@ -253,7 +253,7 @@ class ExternalToolsState {
       if (res.status === "ok") {
         this.applySettings(res.data);
       } else {
-        this.error = String(res.error ?? t("externaltools.err_load"));
+        this.error = be(res.error) || t("externaltools.err_load");
       }
     } catch (e) {
       this.error = t("externaltools.err_load_detail", { err: String(e) });
@@ -286,7 +286,7 @@ class ExternalToolsState {
           this.error = t("externaltools.err_ollama_not_found");
         }
       } else {
-        this.error = String(res.error ?? t("externaltools.err_ollama_check"));
+        this.error = be(res.error) || t("externaltools.err_ollama_check");
       }
     } catch (e) {
       this.error = t("externaltools.err_ollama_check_detail", { err: String(e) });
@@ -326,7 +326,7 @@ class ExternalToolsState {
         bridge.tama.say(t("externaltools.saved_prefs"));
         this.open = false;
       } else {
-        this.error = String(res.error ?? t("externaltools.err_save_settings"));
+        this.error = be(res.error) || t("externaltools.err_save_settings");
       }
     } catch (e) {
       this.error = t("externaltools.err_save_settings_detail", { err: String(e) });
@@ -353,7 +353,7 @@ class ExternalToolsState {
     try {
       const res = await commands.openDiffTool(repo, file, staged, fromRev, toRev);
       if (res.status === "error") {
-        bridge.tama.warn(String(res.error ?? t("externaltools.err_open_diff")));
+        bridge.tama.warn(be(res.error) || t("externaltools.err_open_diff"));
       }
     } catch (e) {
       bridge.tama.warn(t("externaltools.err_open_diff_detail", { err: String(e) }));

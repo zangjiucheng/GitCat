@@ -30,7 +30,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { ICON_BACKUP, ICON_WARNING } from "../../legacy/icons";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 
 type ResetMode = "soft" | "mixed" | "hard";
 
@@ -165,9 +165,9 @@ class ResetHeadState {
       if (res && res.ok) {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("resethead.reset_done", { label }), 3200);
+        bridge.tama.say(be(res.message) || t("resethead.reset_done", { label }), 3200);
       } else {
-        bridge.tama.warn((res && res.message) || t("resethead.reset_failed", { label }));
+        bridge.tama.warn(be(res && res.message) || t("resethead.reset_failed", { label }));
       }
     } catch (e) {
       bridge.tama.warn(t("resethead.reset_failed_e", { error: String(e) }));

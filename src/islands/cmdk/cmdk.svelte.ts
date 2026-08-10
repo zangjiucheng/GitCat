@@ -44,7 +44,7 @@ import { updaterCtrl } from "../updater/updater.svelte.ts";
 import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import { commands } from "../../ipc/bindings";
 
 export const CMD_CAP = 50;
@@ -71,7 +71,7 @@ async function installGitcatCommand(): Promise<void> {
     if (res.status === "ok") {
       bridge.tama.say(t("cmdk.install_cli_ok", { path: res.data }), 6000);
     } else {
-      bridge.tama.warn(res.error || t("cmdk.install_cli_err"), 6000);
+      bridge.tama.warn(be(res.error) || t("cmdk.install_cli_err"), 6000);
     }
   } catch (e) {
     bridge.tama.warn(t("cmdk.install_cli_err_e", { e: String(e) }), 6000);

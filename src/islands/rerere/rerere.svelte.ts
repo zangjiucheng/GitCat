@@ -14,7 +14,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { RerereStatus } from "../../ipc/bindings";
 
 /// One row the view renders (reuses the existing .rr-row/.h/.rr-badge/.mut
@@ -143,10 +143,10 @@ class RerereState {
     this.busy = true;
     try {
       const r = await commands.rerereSetEnabled(this.repo, enabled);
-      if (!r.ok) bridge.tama.warn(r.message || t("rerere.err_update"));
+      if (!r.ok) bridge.tama.warn(be(r.message) || t("rerere.err_update"));
       await this.refreshReal(this.repo);
     } catch (e) {
-      bridge.tama.warn(t("rerere.err_update_reason", { reason: String(e) }));
+      bridge.tama.warn(t("rerere.err_update_reason", { reason: be(String(e)) }));
     } finally {
       this.busy = false;
     }

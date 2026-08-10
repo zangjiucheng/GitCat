@@ -98,7 +98,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { workdirCtrl } from "../workdir/workdir.svelte.ts";
 import { mainlinePickerCtrl } from "../mainlinepicker/mainlinepicker.svelte.ts";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { be, t } from "@/i18n/i18n.svelte.ts";
 import type { ApplyPatchResult, ConflictFile, ConflictHunk, MergeResult, MergeSquashResult, PickResult, RebaseResult, RevertResult, StashResolveResult, WorkdirResult } from "../../ipc/bindings";
 
 // specta generates `side: string`; keep the precise union at the call boundary.
@@ -396,7 +396,7 @@ class ResolverState {
         mainline = await mainlinePickerCtrl.choose(sha, p.data);
         if (mainline == null) return; // user cancelled the chooser
       } else if (p.status === "error") {
-        bridge.tama.warn(t("resolver.parents_read_failed", { error: p.error }));
+        bridge.tama.warn(t("resolver.parents_read_failed", { error: be(p.error) }));
         return;
       }
     } catch (e) {
@@ -543,7 +543,7 @@ class ResolverState {
     try {
       const r = await commands.currentUpstream(repo);
       if (r.status !== "ok") {
-        bridge.tama.warn(r.error || t("resolver.upstream_read_failed"));
+        bridge.tama.warn(be(r.error) || t("resolver.upstream_read_failed"));
         this.busy = false;
         return;
       }
@@ -563,7 +563,7 @@ class ResolverState {
     try {
       const f = await commands.fetch(repo, null);
       if (!f.ok) {
-        bridge.tama.warn(f.message || t("resolver.fetch_failed_pull"));
+        bridge.tama.warn(be(f.message) || t("resolver.fetch_failed_pull"));
         this.busy = false;
         return;
       }
@@ -634,7 +634,7 @@ class ResolverState {
         await bridge.reloadGraph(true);
         bridge.tama.event("snapshot.surfaced");
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || msg.clean(sha || ""), 4200);
+        bridge.tama.say(be(res.message) || msg.clean(sha || ""), 4200);
         bridge.cheer(msg.cheer);
         onQueueContinue?.();
         break;
@@ -643,7 +643,7 @@ class ResolverState {
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.set("hint");
-        bridge.tama.say(res.message || msg.empty, 4200);
+        bridge.tama.say(be(res.message) || msg.empty, 4200);
         break;
       case "conflict":
         await this.openConflict(res, sha);
@@ -664,13 +664,13 @@ class ResolverState {
         break;
       default: // "error"
         if (retry && "blockedByLocalChanges" in res && res.blockedByLocalChanges) {
-          this.dirtyBlock = { message: res.message || msg.couldNotStart, verb: msg.verb, retry };
+          this.dirtyBlock = { message: be(res.message) || msg.couldNotStart, verb: msg.verb, retry };
         } else if (await this.openIfInProgress(this.repo)) {
           // The refusal was "another op is already in progress" — instead of a
           // dead-end warning, surface THAT op's resolver (Abort/Continue) so the
           // user can clear it here rather than reaching for the command line.
         } else {
-          bridge.tama.warn(res.message || msg.couldNotStart);
+          bridge.tama.warn(be(res.message) || msg.couldNotStart);
         }
         break;
     }
@@ -735,7 +735,7 @@ class ResolverState {
     this.reset();
     this.editing = true;
     this.tamaImg = bridge.TAMA_IMG.alarm;
-    this.sub = res.message || t("resolver.editing_sub");
+    this.sub = be(res.message) || t("resolver.editing_sub");
     if (res.backupRef) this.backupRef = res.backupRef;
     this.open = true;
   }
@@ -840,7 +840,7 @@ class ResolverState {
     bridge.selectWorkdir();
     workdirCtrl.message = res.suggestedMessage || "";
     bridge.tama.set("hint");
-    bridge.tama.say(res.message || t("resolver.squash_staged"), 4200);
+    bridge.tama.say(be(res.message) || t("resolver.squash_staged"), 4200);
   }
 
   // Public entry for a stash-apply/pop conflict (workdir.svelte.ts's
@@ -917,7 +917,7 @@ class ResolverState {
     this.activeAction = side;
     try {
       const r = await commands.resolveConflictFile(this.repo, f.path, side);
-      if (!r.ok) bridge.tama.warn(r.message || t("resolver.resolve_failed", { path: f.path }));
+      if (!r.ok) bridge.tama.warn(be(r.message) || t("resolver.resolve_failed", { path: f.path }));
     } catch (e) {
       bridge.tama.warn(t("resolver.resolve_failed_e", { error: String(e) }));
       return;
@@ -964,7 +964,7 @@ class ResolverState {
           bridge.tama.set("hint");
           bridge.tama.say(t("resolver.no_tool_hint"), 7000);
         } else {
-          bridge.tama.warn(r.message || t("resolver.tool_resolve_failed", { path: f.path }));
+          bridge.tama.warn(be(r.message) || t("resolver.tool_resolve_failed", { path: f.path }));
         }
       }
     } catch (e) {
@@ -1011,7 +1011,7 @@ class ResolverState {
       // land against whichever file is current by the time it resolves.
       if (this.current?.path !== f.path) return;
       if (r.status !== "ok") {
-        bridge.tama.warn(r.error || t("resolver.hunks_load_failed"));
+        bridge.tama.warn(be(r.error) || t("resolver.hunks_load_failed"));
         return;
       }
       this.editBinary = r.data.binary;
@@ -1077,7 +1077,7 @@ class ResolverState {
     const content = this.editJoined;
     try {
       const r = await commands.resolveConflictHunks(this.repo, f.path, content);
-      if (!r.ok) bridge.tama.warn(r.message || t("resolver.save_failed", { path: f.path }));
+      if (!r.ok) bridge.tama.warn(be(r.message) || t("resolver.save_failed", { path: f.path }));
       else this.clearHunks();
     } catch (e) {
       bridge.tama.warn(t("resolver.save_failed_e", { error: String(e) }));
@@ -1164,11 +1164,11 @@ class ResolverState {
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.set("hint");
-        bridge.tama.say(r.message || MSG[this.op].abortMsg);
+        bridge.tama.say(be(r.message) || MSG[this.op].abortMsg);
         onQueueAbort?.();
       } else {
         this.tamaImg = bridge.TAMA_IMG.alarm;
-        bridge.tama.warn((r && r.message) || t("resolver.abort_failed"));
+        bridge.tama.warn(be(r && r.message) || t("resolver.abort_failed"));
       }
     } catch (e) {
       this.tamaImg = bridge.TAMA_IMG.alarm;
@@ -1233,10 +1233,10 @@ class ResolverState {
   //     Aborts. Still fire one warn too (mirrored to the top-of-modal toast).
   private showConflictOrStuck(message: string | null | undefined) {
     if (this.files.length === 0) {
-      this.stuckMessage = message || t("resolver.stuck_commit");
+      this.stuckMessage = be(message) || t("resolver.stuck_commit");
       bridge.tama.warn(this.stuckMessage);
     } else {
-      bridge.tama.warn(message || t("resolver.still_conflicted"));
+      bridge.tama.warn(be(message) || t("resolver.still_conflicted"));
     }
   }
 
@@ -1302,7 +1302,7 @@ class ResolverState {
         // is invisible the whole time this modal's `.scrim` (z-index 300)
         // is on top of it, which is exactly the state we're still in here
         // (dirtyBlock is deliberately NOT cleared on this path).
-        this.dirtyBlockStuck = stashRes.message || t("resolver.stash_failed");
+        this.dirtyBlockStuck = be(stashRes.message) || t("resolver.stash_failed");
         return;
       }
       // EMPIRICALLY VERIFIED: a path staged as an embedded git repository
@@ -1360,7 +1360,7 @@ class ResolverState {
       } else if (popRes.conflictedFiles && popRes.conflictedFiles.length) {
         await this.openStashConflict(repo, popRes);
       } else {
-        bridge.tama.warn(popRes.message || t("resolver.reapply_failed"));
+        bridge.tama.warn(be(popRes.message) || t("resolver.reapply_failed"));
       }
     } catch (e) {
       bridge.tama.warn(t("resolver.retry_failed_e", { error: String(e) }));

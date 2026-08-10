@@ -33,7 +33,7 @@ import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
 // i18n for the vanilla top-bar/loading chrome. This module isn't Svelte-
 // reactive, so t() is called imperatively (applyStaticI18n below + the busy
 // labels in doFetch/doPull/doPush) and re-run on i18nEvents "change".
-import { t, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
+import { t, be, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -2153,10 +2153,10 @@ async function globalUndo(){
           const to=(r2.restoredTo||"").slice(0,7);
           Tama.event("undo.performed",{hash:to||hhex(1)}); pulseTick(0);
           cheer(t("legacy.cheer_rewound_kept"),tamaPose("confident"));
-          if(r2.message) Tama.say(r2.message,4600);
-        } else { Tama.warn((r2&&r2.message)||t("legacy.undo_stash_failed")); }
+          if(r2.message) Tama.say(be(r2.message),4600);
+        } else { Tama.warn(be(r2&&r2.message)||t("legacy.undo_stash_failed")); }
       } else { Tama.say(t("legacy.undo_cancelled"),3200); }
-    } else { Tama.warn((res&&res.message)||t("legacy.undo_nothing")); }
+    } else { Tama.warn(be(res&&res.message)||t("legacy.undo_nothing")); }
   }catch(e){ Tama.warn(t("legacy.undo_failed",{error:e})); console.error(e); }
   finally{ undoBusy=false; labelEl.innerHTML=label; Safety.updateBadge(); }
 }
@@ -2196,10 +2196,10 @@ async function doFetch(){
   await syncProgressCtrl.begin(t("topbar.fetching"),"fetch");
   try{
     const res=await tinvoke("fetch_stream",{path:CUR_REPO,remote:null});
-    syncProgressCtrl.settle(!!(res&&res.ok),(res&&res.message)||"");
-    if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("hint"); Tama.say(res.message||t("legacy.fetched"),3200); }
-    else Tama.warn((res&&res.message)||t("legacy.fetch_failed"));
-  }catch(e){ syncProgressCtrl.settle(false,String(e)); Tama.warn(t("legacy.fetch_failed_reason",{error:e})); console.error(e); }
+    syncProgressCtrl.settle(!!(res&&res.ok),be(res&&res.message)||"");
+    if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("hint"); Tama.say(be(res.message)||t("legacy.fetched"),3200); }
+    else Tama.warn(be(res&&res.message)||t("legacy.fetch_failed"));
+  }catch(e){ syncProgressCtrl.settle(false,be(String(e))); Tama.warn(t("legacy.fetch_failed_reason",{error:e})); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPull(){
@@ -2211,10 +2211,10 @@ async function doPull(){
   await syncProgressCtrl.begin(t("topbar.pulling"),"pull");
   try{
     const res=await tinvoke("pull_stream",{path:CUR_REPO});
-    syncProgressCtrl.settle(!!(res&&res.ok),(res&&res.message)||"");
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||t("legacy.pulled"),3200); cheer(res.message||t("legacy.pulled"),tamaPose("happy")); }
-    else Tama.warn((res&&res.message)||t("legacy.pull_failed"));
-  }catch(e){ syncProgressCtrl.settle(false,String(e)); Tama.warn(t("legacy.pull_failed_reason",{error:e})); console.error(e); }
+    syncProgressCtrl.settle(!!(res&&res.ok),be(res&&res.message)||"");
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(be(res.message)||t("legacy.pulled"),3200); cheer(be(res.message)||t("legacy.pulled"),tamaPose("happy")); }
+    else Tama.warn(be(res&&res.message)||t("legacy.pull_failed"));
+  }catch(e){ syncProgressCtrl.settle(false,be(String(e))); Tama.warn(t("legacy.pull_failed_reason",{error:e})); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPush(){
@@ -2230,8 +2230,8 @@ async function doPush(){
     // moves the remote-tracking ref but not local HEAD, so nothing else picks
     // it up. reloadGraph's tail refreshes the sidebar too (and the incremental
     // path keeps this cheap — no commits changed).
-    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(res.message||t("legacy.pushed"),3200); cheer(res.message||t("legacy.pushed"),tamaPose("happy")); }
-    else Tama.warn((res&&res.message)||t("legacy.push_failed"));
+    if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(be(res.message)||t("legacy.pushed"),3200); cheer(be(res.message)||t("legacy.pushed"),tamaPose("happy")); }
+    else Tama.warn(be(res&&res.message)||t("legacy.push_failed"));
   }catch(e){ Tama.warn(t("legacy.push_failed_reason",{error:e})); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }

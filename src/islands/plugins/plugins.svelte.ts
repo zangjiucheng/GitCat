@@ -13,7 +13,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import { open } from "@tauri-apps/plugin-dialog";
 import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";
@@ -129,7 +129,7 @@ class PluginsState {
       if (res.status === "ok") {
         this.plugins = res.data;
       } else {
-        this.pluginsError = String(res.error ?? t("plugins.err_list"));
+        this.pluginsError = be(res.error) || t("plugins.err_list");
       }
     } catch (e) {
       this.pluginsError = t("plugins.err_list_detail", { err: String(e) });
@@ -160,7 +160,7 @@ class PluginsState {
         await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload()]);
       } else {
         this.plugins = prev; // backend rejected — undo the optimistic flip
-        this.pluginsError = String(res.error ?? t("plugins.err_update"));
+        this.pluginsError = be(res.error) || t("plugins.err_update");
       }
     } catch (e) {
       this.plugins = prev; // backend threw — undo the optimistic flip
@@ -197,7 +197,7 @@ class PluginsState {
         // Drop both its ⌘K commands AND panels immediately.
         await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload()]);
       } else {
-        this.pluginsError = String(res.error ?? t("plugins.err_remove"));
+        this.pluginsError = be(res.error) || t("plugins.err_remove");
       }
     } catch (e) {
       this.pluginsError = t("plugins.err_remove_detail", { err: String(e) });
@@ -243,7 +243,7 @@ class PluginsState {
         await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload()]);
         bridge.tama.say(t("plugins.installed", { name: res.data.name }));
       } else {
-        this.pluginsError = String(res.error ?? t("plugins.err_install"));
+        this.pluginsError = be(res.error) || t("plugins.err_install");
       }
     } catch (e) {
       this.pluginsError = t("plugins.err_install_detail", { err: String(e) });

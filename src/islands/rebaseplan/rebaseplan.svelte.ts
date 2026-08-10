@@ -32,7 +32,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
-import { t } from "@/i18n/i18n.svelte.ts";
+import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { PlanCommit, RebaseResult, TodoItem } from "../../ipc/bindings";
 
 export type PlanAction = "pick" | "squash" | "fixup" | "drop" | "edit";
@@ -95,7 +95,7 @@ class RebasePlanState {
         this.rows = r.data.map((c) => ({ ...c, action: "pick" as PlanAction }));
         this.open = true;
       } else {
-        bridge.tama.warn(r.error || t("rebaseplan.list_failed"));
+        bridge.tama.warn(be(r.error) || t("rebaseplan.list_failed"));
       }
     } catch (e) {
       bridge.tama.warn(t("rebaseplan.list_failed_e", { error: String(e) }));
@@ -174,14 +174,14 @@ class RebasePlanState {
         await bridge.reloadGraph(true);
         bridge.tama.event("snapshot.surfaced");
         bridge.tama.set("celebrate");
-        bridge.tama.say(res.message || t("rebaseplan.complete"), 4200);
+        bridge.tama.say(be(res.message) || t("rebaseplan.complete"), 4200);
         bridge.cheer(t("rebaseplan.cheer"));
         break;
       case "empty":
         this.close();
         await bridge.reloadGraph(true);
         bridge.tama.set("hint");
-        bridge.tama.say(res.message || t("rebaseplan.up_to_date_empty"), 4200);
+        bridge.tama.say(be(res.message) || t("rebaseplan.up_to_date_empty"), 4200);
         break;
       case "conflict":
       case "editing":
@@ -191,7 +191,7 @@ class RebasePlanState {
         await resolver.openFromResult(this.repo, res, this.onto, "rebase");
         break;
       default: // "error"
-        bridge.tama.warn(res.message || t("rebaseplan.could_not_start"));
+        bridge.tama.warn(be(res.message) || t("rebaseplan.could_not_start"));
         break;
     }
   }
