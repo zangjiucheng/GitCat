@@ -86,15 +86,15 @@ fn bare_repo_is_refused_cleanly_for_read_and_write() {
     let read_res = tauri::async_runtime::block_on(read_repo_file(path.clone(), ".gitignore".to_string()));
     assert!(read_res.is_err(), "a bare repo (no working tree) must refuse cleanly on read");
     assert!(
-        read_res.unwrap_err().contains("working tree"),
-        "error message should clearly explain there is no working tree"
+        read_res.unwrap_err().contains("err_repo.no_working_tree"),
+        "error message should be the localizable no-working-tree key"
     );
 
     let write_res = tauri::async_runtime::block_on(write_repo_file(path, ".gitignore".to_string(), "*.log\n".to_string()));
     assert!(!write_res.ok, "a bare repo (no working tree) must refuse cleanly on write");
     assert!(
-        write_res.message.contains("working tree"),
-        "error message should clearly explain there is no working tree"
+        write_res.message.contains("err_repo.no_working_tree"),
+        "error message should be the localizable no-working-tree key"
     );
 }
 

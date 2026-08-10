@@ -51,6 +51,7 @@
 
 use std::process::{Command, Stdio};
 
+use crate::i18n_err::ierrp;
 use crate::procutil::{output_with_timeout, NoConsoleWindowExt, SUBPROCESS_TIMEOUT};
 
 /// `path` -> `(distro, linux_path)` when `path` is a WSL UNC path, checking
@@ -338,9 +339,9 @@ pub fn wsl_status(path: &str) -> Option<Result<Vec<StatusEntry>, String>> {
         Ok(o) if o.status.success() => Ok(parse_status_porcelain_v2(&String::from_utf8_lossy(&o.stdout))),
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-            Err(format!("WSL status check timed out after {SUBPROCESS_TIMEOUT:?} — try `wsl --shutdown` in a terminal, then reopen this repo"))
+            Err(ierrp("err_misc.wsl_status_timed_out", &[("timeout", &format!("{SUBPROCESS_TIMEOUT:?}"))]))
         }
-        Err(e) => Err(format!("Could not run git: {e}")),
+        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())])),
     })
 }
 
@@ -380,7 +381,7 @@ pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize
             let text = String::from_utf8_lossy(&o.stdout);
             match parse_ahead_behind_count(&text) {
                 Some(pair) => Ok(Some(pair)),
-                None => Err(format!("unexpected `git rev-list --left-right --count` output: {text:?}")),
+                None => Err(ierrp("err_misc.unexpected_rev_list_output", &[("output", &format!("{text:?}"))])),
             }
         }
         // git's own message for this is stable across versions: "fatal: no
@@ -390,9 +391,9 @@ pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize
         Ok(o) if String::from_utf8_lossy(&o.stderr).contains("no upstream") => Ok(None),
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-            Err(format!("WSL ahead/behind check timed out after {SUBPROCESS_TIMEOUT:?}"))
+            Err(ierrp("err_misc.wsl_ahead_behind_timed_out", &[("timeout", &format!("{SUBPROCESS_TIMEOUT:?}"))]))
         }
-        Err(e) => Err(format!("Could not run git: {e}")),
+        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())])),
     })
 }
 

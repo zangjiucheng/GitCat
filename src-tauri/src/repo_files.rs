@@ -24,6 +24,8 @@ use git2::Repository;
 use serde::Serialize;
 use std::path::PathBuf;
 
+use crate::i18n_err::{ierr, ierrp};
+
 /// The ONLY two file names this module will ever read or write. Anything
 /// else is rejected before a path is even constructed.
 const ALLOWED_FILES: &[&str] = &[".gitignore", ".mailmap"];
@@ -32,14 +34,15 @@ fn validate_file_name(file_name: &str) -> Result<(), String> {
     if ALLOWED_FILES.contains(&file_name) {
         Ok(())
     } else {
-        Err(format!(
-            "Not an editable repo file: {file_name:?} (only .gitignore and .mailmap are supported)."
+        Err(ierrp(
+            "err_repo.not_editable_repo_file",
+            &[("name", &format!("{file_name:?}"))],
         ))
     }
 }
 
 fn open(path: &str) -> Result<Repository, String> {
-    crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))
+    crate::trust::open_repo(path).map_err(|e| ierrp("err_repo.cannot_open_repo", &[("detail", e.message())]))
 }
 
 /// Both names are flat, single-component filenames (no `/`) straight from
@@ -48,7 +51,7 @@ fn open(path: &str) -> Result<Repository, String> {
 fn resolve_path(repo: &Repository, file_name: &str) -> Result<PathBuf, String> {
     repo.workdir()
         .map(|wd| wd.join(file_name))
-        .ok_or_else(|| "This repository has no working tree.".to_string())
+        .ok_or_else(|| ierr("err_repo.no_working_tree"))
 }
 
 /// Refuse if `file_path` is a symlink — an adversarial review found that a
@@ -65,7 +68,7 @@ fn resolve_path(repo: &Repository, file_name: &str) -> Result<PathBuf, String> {
 fn refuse_if_symlink(file_path: &std::path::Path, file_name: &str) -> Result<(), String> {
     match std::fs::symlink_metadata(file_path) {
         Ok(meta) if meta.file_type().is_symlink() => {
-            Err(format!("{file_name} is a symlink — refusing to read or write through it for safety."))
+            Err(ierrp("err_repo.file_is_symlink", &[("name", file_name)]))
         }
         _ => Ok(()), // doesn't exist, or exists and is a plain file: fine either way
     }
@@ -110,7 +113,7 @@ fn read_repo_file_inner(path: &str, file_name: &str) -> Result<String, String> {
     match std::fs::read_to_string(&file_path) {
         Ok(s) => Ok(s),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(e) => Err(format!("Could not read {file_name}: {e}")),
+        Err(e) => Err(ierrp("err_repo.could_not_read", &[("path", file_name), ("detail", &e.to_string())])),
     }
 }
 
@@ -144,7 +147,10 @@ fn write_repo_file_inner(path: &str, file_name: &str, content: &str) -> RepoFile
         return RepoFileResult { ok: false, message: e };
     }
     match std::fs::write(&file_path, content.as_bytes()) {
-        Ok(()) => RepoFileResult { ok: true, message: format!("Saved {file_name}.") },
-        Err(e) => RepoFileResult { ok: false, message: format!("Could not write {file_name}: {e}") },
+        Ok(()) => RepoFileResult { ok: true, message: ierrp("err_repo.saved_file", &[("name", file_name)]) },
+        Err(e) => RepoFileResult {
+            ok: false,
+            message: ierrp("err_repo.could_not_write", &[("path", file_name), ("detail", &e.to_string())]),
+        },
     }
 }

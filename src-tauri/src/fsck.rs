@@ -92,6 +92,7 @@
 
 use serde::Serialize;
 
+use crate::i18n_err::ierrp;
 use crate::model::Person;
 use crate::procutil::NoConsoleWindowExt;
 
@@ -152,7 +153,7 @@ pub async fn dangling_commits(path: String) -> Result<DanglingCommits, String> {
 
 fn dangling_commits_inner(path: &str) -> Result<DanglingCommits, String> {
     let repo = crate::trust::open_repo(path)
-        .map_err(|e| format!("cannot open repository: {}", e.message()))?;
+        .map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))?;
 
     let out = run_git(path, &["fsck", "--dangling", "--no-reflogs"])?;
     if !out.ok {
@@ -220,7 +221,7 @@ fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
         .env("LC_ALL", "C")
         .env("LANGUAGE", "")
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code(),
@@ -233,7 +234,7 @@ fn git_msg(o: &Out) -> String {
     if !o.stderr.is_empty() {
         o.stderr.clone()
     } else {
-        format!("git exited with status {:?}", o.code)
+        ierrp("err_misc.git_exited_with_status", &[("code", &format!("{:?}", o.code))])
     }
 }
 

@@ -56,6 +56,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Command;
 
+use crate::i18n_err::ierrp;
 use crate::procutil::NoConsoleWindowExt;
 
 /// How far back the whole walk looks — "the last year", matching the
@@ -184,7 +185,8 @@ pub async fn repo_summary(path: String) -> Result<RepoSummary, String> {
 }
 
 fn repo_summary_inner(path: &str) -> Result<RepoSummary, String> {
-    let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+    let repo = crate::trust::open_repo(path)
+        .map_err(|e| ierrp("err_repo.cannot_open_repo", &[("detail", e.message())]))?;
     if repo.head().is_err() {
         return Ok(empty_summary());
     }
@@ -254,7 +256,8 @@ pub async fn repo_summary_auto_recommended(path: String) -> Result<bool, String>
 }
 
 fn repo_summary_auto_recommended_inner(path: &str) -> Result<bool, String> {
-    let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
+    let repo = crate::trust::open_repo(path)
+        .map_err(|e| ierrp("err_repo.cannot_open_repo", &[("detail", e.message())]))?;
     if repo.head().is_err() {
         return Ok(false); // unborn/empty — the auto-show has nothing meaningful to display
     }
@@ -459,7 +462,7 @@ fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
         .arg(path)
         .args(args)
         .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+        .map_err(|e| ierrp("err_repo.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code(),
@@ -472,7 +475,7 @@ fn git_msg(o: &Out) -> String {
     if !o.stderr.is_empty() {
         o.stderr.clone()
     } else {
-        format!("git exited with status {:?}", o.code)
+        ierrp("err_repo.git_exited_with_status", &[("code", &format!("{:?}", o.code))])
     }
 }
 

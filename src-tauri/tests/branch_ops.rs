@@ -153,9 +153,7 @@ fn undo_refuses_on_dirty_tree_and_restores_head_when_clean() {
     let refused = tauri::async_runtime::block_on(undo_last(path.clone())).expect("undo_last failed");
     assert!(!refused.ok, "undo should refuse on a dirty tree");
     assert!(
-        refused.message.to_lowercase().contains("uncommitted")
-            || refused.message.to_lowercase().contains("dirty")
-            || refused.message.to_lowercase().contains("clean"),
+        refused.message.contains("err_misc.worktree_has_uncommitted_undo"),
         "unexpected refusal message: {}",
         refused.message
     );

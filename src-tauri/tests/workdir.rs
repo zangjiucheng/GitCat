@@ -360,7 +360,7 @@ fn global_undo_refuses_after_stash_apply_but_stash_undo_apply_restores_a_clean_t
     let blocked = undo(&repo.open()).expect("undo should not hard-error");
     assert!(!blocked.ok, "the generic global-undo path must still refuse on a dirty tree");
     assert!(
-        blocked.message.to_lowercase().contains("uncommitted"),
+        blocked.message.contains("err_misc.worktree_has_uncommitted_undo"),
         "unexpected refusal message: {}",
         blocked.message
     );

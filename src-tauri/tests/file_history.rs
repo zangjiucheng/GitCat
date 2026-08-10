@@ -168,7 +168,7 @@ fn history_of_a_file_deleted_at_head_is_queryable_via_at_commit() {
         tauri::async_runtime::block_on(file_history(repo.path(), "gone.txt".to_string(), None)),
         "gone.txt no longer exists at HEAD",
     );
-    assert!(err.contains("does not exist"), "expected a 'does not exist' message, got: {err}");
+    assert!(err.contains("err_misc.path_does_not_exist"), "expected a 'does not exist' message, got: {err}");
 
     // Querying AT the delete commit itself: the file existed in a prior
     // state and the delete is itself a change, so tree lookup at c3 (the
@@ -179,7 +179,7 @@ fn history_of_a_file_deleted_at_head_is_queryable_via_at_commit() {
         tauri::async_runtime::block_on(file_history(repo.path(), "gone.txt".to_string(), Some(c3.clone()))),
         "gone.txt is absent from the delete commit's own tree",
     );
-    assert!(err_at_delete.contains("does not exist"));
+    assert!(err_at_delete.contains("err_misc.path_does_not_exist"));
 
     // At the delete commit's PARENT (where the file still exists), the full
     // pre-deletion history must be queryable. `at_commit` mirrors
