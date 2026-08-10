@@ -13,13 +13,30 @@ Tauri 2 + Rust + Svelte 5, with a clean neutral canvas (white / charcoal-dark, c
 
 **[Website & docs](https://zangjiucheng.github.io/GitCat/)**
 
-![GitCat screenshot](docs/screenshot.png)
+![GitCat — the commit graph](docs/public/screenshots/graph.png)
 
 </div>
 
 ## What is this?
 
 GitCat is a desktop Git GUI built around one idea: every operation that touches your history should be reversible. A **Safety Manager** snapshots your repo before every mutation, so a global Undo (⌘Z) is always one keystroke away — and Undo is itself undoable.
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><b>Commit detail &amp; diff</b><br><img src="docs/public/screenshots/commit-detail.png" alt="Commit detail panel with a syntax-highlighted diff" /></td>
+<td width="50%"><b>⌘K command palette</b><br><img src="docs/public/screenshots/command-palette.png" alt="The command palette" /></td>
+</tr>
+<tr>
+<td><b>Settings</b><br><img src="docs/public/screenshots/settings.png" alt="Settings, with the language and graph-layout options" /></td>
+<td><b>Chinese (中文) interface</b><br><img src="docs/public/screenshots/chinese.png" alt="The whole UI in Simplified Chinese" /></td>
+</tr>
+<tr>
+<td><b>Light theme</b><br><img src="docs/public/screenshots/graph-light.png" alt="The commit graph in the light theme" /></td>
+<td></td>
+</tr>
+</table>
 
 ## Meet Tama
 
@@ -38,63 +55,17 @@ Tama is GitCat's Safety Manager, not a mascot bolted on for cuteness — the one
 
 ## Features
 
-**Core graph + history**
+The short version. See the **[full feature guide](https://zangjiucheng.github.io/GitCat/features)** for the exhaustive list.
 
-- Fast commit graph (git2 read + a hand-tuned Rust swimlane layout), streamed onto a virtualized canvas — no hard cap on history depth, newest commits paint almost instantly, and scrolling stays smooth *with readable text* even on a 150k-commit repo (a scroll-blit render path copies the frame and only redraws the newly-exposed strip)
-- Instant everyday operations — checkout, creating/renaming/deleting a branch or tag, and staging update the graph immediately instead of re-walking the whole history each time
-- Orientation at a glance — a dedicated branch/tag column, a clear "you are here" marker on the current HEAD (accent ring + row bar), and commits already merged into your branch drawn dimmed so unmerged work stands out; `⌘⇧H` (or the crosshair button) recentres on HEAD from anywhere
-- Branch actions on the graph itself — right-click a branch or tag label to check out / rename / delete (or check out a remote branch), separate from the commit menu; hover a label to see its full name
-- Full commit detail panel: author/committer split, GPG status, diffstat, file tree, syntax-highlighted diff that can expand to a full-page view (with a resizable file list, and full paths on hover)
-- ⌘K command palette — fuzzy search across commits and refs (including branches that aren't currently shown in the sidebar), quick actions, and an in-app Help page
-- Vim-style keyboard navigation — `j`/`k`, `gg`/`G`, Ctrl-D/Ctrl-U, and `/` to search
-- Per-file history with rename-following, like `git log --follow` — a renamed file's history continues seamlessly under its old path
-- Search commits by author (`git log --author`) or by diff content / pickaxe (`git log -S`/`-G`) across all history — find every commit by a person, or every commit whose diff touched a string, not just what a message mentions
+- **A fast, readable commit graph** — git2 reads plus a hand-tuned swimlane layout, streamed onto a virtualized canvas with no depth cap. Scrolling stays smooth *with readable text* even on a 150k-commit repo. Right-click branches/tags on the graph, snap back to HEAD, and open a full commit detail panel with a syntax-highlighted diff.
+- **Everyday git, made safe** — stage by file, hunk, or line; commit, stash, branch, tag, and checkout (with a dirty-tree chooser); fetch / pull / push; merge, cherry-pick, revert, and rebase (linear plus a drag-to-reorder interactive planner) — all backed by a real 3-way conflict resolver.
+- **The deep cuts too** — submodules, patch export/apply, `git bisect`, `git blame` with rename-following, per-file history, author and pickaxe search, a `git-filter-repo` wizard, and pluggable external diff/merge tools.
+- **A Safety Manager you can trust** — every mutation snapshots first, so global Undo (⌘Z) is always one keystroke away, and itself undoable; plus reflog rescue and dangling-object recovery for when git normally can't help.
+- **Plugins** *(new in 1.1)* — extend GitCat with ⌘K commands, hooks, side panels, named tools, and Tama skins and reactions.
+- **Speaks your language** *(new in 1.1)* — full English and Simplified Chinese (中文), switchable live with no reload.
+- **The bits that make it pleasant** — a multi-repo dashboard (⌘O), a first-run setup wizard, the ⌘K command palette, vim-style keys, a real native menu, WSL-aware remotes, dark/light themes, and opening a repo straight from your terminal (`gitcat .`).
 
-**Working directory**
-
-- Stage or unstage whole files, or select specific lines or a whole hunk to stage, unstage, or discard (a `git add -p` equivalent) — per-hunk toolbar plus per-line checkboxes with shift-click range select
-- Write commits, discard changes, and stash — save / apply / pop / drop
-- `git blame` (line-annotation) view — per-hunk attribution (sha, author), an ignore-whitespace toggle, and follows the file's rename history automatically
-
-**Everyday git, made safe**
-
-- Sidebar: branches / remotes / tags / snapshots, resizable, with a branch context menu
-- Branch visibility filter — hide/show branches individually, "Hide all branches" for a clean slate, or flip on **Auto** to always show just the current branch plus anything with unpushed or unmerged work (auto-hides stale branches too)
-- Live refresh — picks up changes made outside GitCat (a terminal commit, another tool, a background fetch) on its own, with a manual Refresh button as a backup
-- Checkout a local branch, or a remote one — checking out `origin/feature-x` creates and switches to a local tracking branch automatically
-- Checkout dirty-tree resolution — when checking out would overwrite local changes, a chooser offers 3 modes in increasing order of risk: stash/switch/reapply, stash/switch/leave stashed (recoverable via Manage Stash), or force switch and discard your changes (genuinely irreversible, gated behind a typed danger-confirm)
-- New Branch lets you pick the start point (any local/remote ref), not just HEAD
-- Tags: create, delete, and push
-- Fetch / Pull / Push, from the top bar or the native Repository menu — Pull offers an explicit merge-or-rebase strategy choice and follows your configured upstream automatically; push a non-current branch or to a differently-named remote branch from the sidebar; force push / force-with-lease are gated behind the same danger-confirm flow as other irreversible actions
-- "Manage Remotes" dialog — add / edit / rename / remove
-- "Open Terminal" — drop into a real terminal at the repo's root when you need a raw shell, from the Tools menu/⌘K
-- Drag-and-drop cherry-pick and merge (shift-drag) onto HEAD, or right-click a commit row for cherry-pick / merge / revert — all backed by a real 3-way conflict resolver
-- Squash-merge, plus explicit fast-forward strategy choice: auto (default) / no-ff (always a real merge commit) / ff-only (refuse unless a fast-forward is possible)
-- Linear rebase onto any branch — including multi-commit conflict sequences and mid-sequence skip
-- Interactive rebase — a drag-to-reorder planner (pick / edit / squash / fixup / drop) before it ever touches your history
-- Submodules — init/update (including `--recursive`), add, deinit/remove, and "Open" to manage a submodule exactly like its own top-level repo
-- Patch export/apply (`git format-patch` / `git am`), with real 3-way conflict resolution through the existing conflict resolver
-- Pluggable external diff/merge tools — hand off a diff or a conflict to your own configured tool (e.g. VS Code, Beyond Compare) instead of GitCat's built-in view
-- `git bisect` — mark good/bad/skip, live canvas cues for the narrowing range, automatic first-bad detection
-- `git-filter-repo` wizard — scope, preview, typed-confirm, and a full backup/restore safety net for the one genuinely irreversible operation in the app
-
-**Safety Manager**
-
-- Every mutation snapshots first; global Undo (⌘Z) is itself undoable
-- Reflog rescue — browse and restore to any historical HEAD position
-- fsck-based dangling-object recovery — find and recover a commit no branch, tag, or (often) reflog points to anymore, as a new branch, without ever touching your current branch or HEAD
-- rerere status/toggle panel
-
-**Setup + polish**
-
-- First-run setup wizard: pick a repo (click, or drag a folder in), check/fix its git identity, jump into the graph — shown once, not on every launch
-- Multi-repository dashboard (`⌘O`) for tracking and quickly switching between repos you use often — with a search box to filter by name, path, or branch, and Enter to open the top hit
-- "Close Repository" — an in-app way back to the empty state
-- In-app `.gitignore` / `.mailmap` editors
-- A real native app menu (File / Repository / Edit / View / Tools / Window / Help) and About panel, not just a default OS stub
-- Works with repos on a WSL path (`\\wsl.localhost\<distro>\...`) — remote operations route through the distro's own git, so credentials resolve correctly instead of against Windows'
-- Dark theme by default (light available via the toggle)
-- Eight Tama expressions wired into every relevant moment across the app — Reflog Rescue, Dangling-Object Recovery, Plumbing, Pickaxe Search, and the Interactive Rebase planner all get mascot art, and filter-repo/conflict resolution shows a "thinking" face during real work instead of freezing on one expression the whole time
+Tama isn't decoration: eight expressions are wired into real moments across the app, from curious-while-searching to genuinely-alarmed right before something irreversible, and celebrating once it's safely done.
 
 ## Install
 

@@ -19,7 +19,8 @@
     "flamegraph": "node scripts/profile.mjs",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "dependencies": {
     "@lucide/svelte": "^1.24.0",
