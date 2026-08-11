@@ -1038,14 +1038,17 @@ let down=null, sbDrag=null, colDrag=null;
 // draggable exactly like column layout's, it's just anchored at 0 instead of
 // bcw). A COL_HANDLE-px grab zone each side.
 function dividerAt(x){
-  // No graph, no divider (#29). lastTx is module state that only renderContent
-  // writes, and renderContent doesn't run without a repo — closeRepo() never
-  // resets it — so the "graph" case below would otherwise keep matching on a
-  // stale lastTx, exposing an invisible col-resize strip on the empty canvas and
+  // No non-empty graph, no divider (#29). lastTx is module state that only
+  // renderContent writes, and renderContent early-returns (`if(N===0) return`)
+  // before writing it when the graph is empty — which is exactly what closeRepo()
+  // leaves behind via bootEmpty()'s truthy `{N:0}` placeholder (so a plain `!G`
+  // misses it), as well as a never-opened boot (G===null). lastTx thus keeps the
+  // last repo's value, so the "graph" case below would otherwise match a stale
+  // lastTx, exposing an invisible col-resize strip on the empty canvas and
   // letting a drag persist a colW.graph override onto the next repo opened. A
   // divider is a property of a rendered graph, so it shouldn't resolve without
-  // one.
-  if(!G) return null;
+  // one — same `!G||!G.N` guard the render tick uses.
+  if(!G||!G.N) return null;
   const bcw=layout.branchColW;
   if(bcw>0&&Math.abs(x-bcw)<=COL_HANDLE) return "branch";
   if(lastTx>COL_HANDLE&&Math.abs(x-lastTx)<=COL_HANDLE) return "graph";
