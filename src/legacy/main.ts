@@ -37,7 +37,6 @@ import { t, be, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
-const FONT_UI=getComputedStyle(document.body).fontFamily;
 const app=$("#app");
 
 /* Painted Tama art (Nano-Banana / Gemini), embedded as WebP data URIs.
@@ -753,10 +752,12 @@ function drawWorkdirBand(){
   else if(hover){ ctx.beginPath(); ctx.arc(x,y,dotR+2.6,0,TAU); ctx.strokeStyle=theme.muted; ctx.lineWidth=1; ctx.stroke(); }
   ctx.textBaseline="middle"; ctx.textAlign="left";
   ctx.font=Math.round(12.5*Math.min(1.25,layout.zoom))+"px "+FONT_UI; ctx.fillStyle=theme.text;
-  ctx.fillText("Uncommitted changes",x+dotR+14,y);
+  ctx.fillText(t("workdir.uncommitted_changes"),x+dotR+14,y);
   const s=workdirCtrl.status;
   const nConflict=s?s.conflicted:0, nStaged=s?s.staged.length:0, nUnstaged=s?s.unstaged.length:0;
-  const badge=nConflict?(nConflict+" conflicted"):(nStaged||nUnstaged)?(nStaged+" staged · "+nUnstaged+" unstaged"):"clean";
+  const badge=nConflict?t("workdir.n_conflicted",{n:nConflict})
+    :(nStaged||nUnstaged)?t("workdir.staged_unstaged",{staged:nStaged,unstaged:nUnstaged})
+    :t("workdir.clean");
   ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px ui-monospace,monospace";
   ctx.fillStyle=nConflict?theme.danger:theme.muted; ctx.textAlign="right";
   ctx.fillText(badge,W-14,y); ctx.textAlign="left";
