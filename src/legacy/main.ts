@@ -1037,7 +1037,16 @@ let down=null, sbDrag=null, colDrag=null;
 // last-drawn tx (both layouts — inline's persisted graph width is real and
 // draggable exactly like column layout's, it's just anchored at 0 instead of
 // bcw). A COL_HANDLE-px grab zone each side.
-function dividerAt(x){ const bcw=layout.branchColW;
+function dividerAt(x){
+  // No graph, no divider (#29). lastTx is module state that only renderContent
+  // writes, and renderContent doesn't run without a repo — closeRepo() never
+  // resets it — so the "graph" case below would otherwise keep matching on a
+  // stale lastTx, exposing an invisible col-resize strip on the empty canvas and
+  // letting a drag persist a colW.graph override onto the next repo opened. A
+  // divider is a property of a rendered graph, so it shouldn't resolve without
+  // one.
+  if(!G) return null;
+  const bcw=layout.branchColW;
   if(bcw>0&&Math.abs(x-bcw)<=COL_HANDLE) return "branch";
   if(lastTx>COL_HANDLE&&Math.abs(x-lastTx)<=COL_HANDLE) return "graph";
   return null; }
