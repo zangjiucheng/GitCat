@@ -37,7 +37,36 @@ import { t, be, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
+// No fallback needed here: a rendered element's resolved fontFamily is never
+// empty. FONT_MONO below is a different case — see its note.
 const FONT_UI=getComputedStyle(document.body).fontFamily;
+// The canvas's fixed-width face, read from the SAME --mono the DOM uses rather
+// than hardcoded separately at each call site below, so the graph and the DOM
+// diff view stop disagreeing about what "monospace" means.
+//
+// The fallback is not belt-and-braces: an empty custom property composes to
+// "11px ", which a canvas rejects SILENTLY — ctx.font keeps whatever was set
+// last, so the sha would quietly render in the UI face with nothing thrown.
+//
+// Read ONCE, at module load. That is safe only while --mono stays a single
+// unscoped declaration: this const sits outside readTheme()'s re-read path, and
+// a language switch only repaints. Scoping --mono per theme or per locale means
+// re-reading it here too.
+//
+// A consistency fix, not a coverage one — as long as --mono names no CJK or
+// Hangul family (it doesn't today), non-Latin glyphs come from Blink's
+// per-character system fallback regardless; measured, 个 is the same width under
+// the old stack, the new one, and a deliberately nonexistent family. Adding one
+// would change that, and this note with it.
+//
+// Not free, either: wherever the named faces are installed, the sha column
+// moves off the generic monospace face onto the first of them and gets slightly
+// wider. That is every stock Windows box (Windows Terminal ships Cascadia
+// Code), and any Linux box carrying cascadia-code or the MS core fonts; macOS
+// resolved ui-monospace to SF Mono under the old stack already, so it is
+// unchanged. AUTHOR_GUTTER reserves enough for the wider sha — nothing
+// collides — but it is a visible restyle, not a no-op.
+const FONT_MONO=getComputedStyle(document.documentElement).getPropertyValue("--mono").trim()||"ui-monospace,monospace";
 const app=$("#app");
 
 /* Painted Tama art (Nano-Banana / Gemini), embedded as WebP data URIs.
@@ -604,7 +633,7 @@ function renderContent(st, rowLo, rowHi, strip){
       let s=msgOf(r); if(s.length>LABEL_MAX) s=s.slice(0,LABEL_MAX); const maxw=W-cx-AUTHOR_GUTTER;
       if(ctx.measureText(s).width>maxw){while(s.length>4&&ctx.measureText(s+"…").width>maxw)s=s.slice(0,-1);s+="…";}
       ctx.fillText(s,cx,y);
-      ctx.fillStyle=theme.muted; ctx.textAlign="right"; ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px ui-monospace,monospace";
+      ctx.fillStyle=theme.muted; ctx.textAlign="right"; ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px "+FONT_MONO;
       const sha=hhex(r), shaW=ctx.measureText(sha).width;
       // Author preview — right next to the sha, so who wrote a commit is
       // visible at a glance without opening its detail panel. Own (slightly
@@ -614,7 +643,11 @@ function renderContent(st, rowLo, rowHi, strip){
       let a=authorOf(r); if(a.length>LABEL_MAX) a=a.slice(0,LABEL_MAX); const maxAuthorW=AUTHOR_GUTTER-96-8;
       if(ctx.measureText(a).width>maxAuthorW){while(a.length>1&&ctx.measureText(a+"…").width>maxAuthorW)a=a.slice(0,-1);a+="…";}
       ctx.fillText(a,W-14-shaW-8,y);
-      ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px ui-monospace,monospace";
+      // Back to mono. Not a duplicate of the line above the author preview —
+      // that preview clobbered ctx.font with FONT_UI, and without restoring it
+      // the sha draws in the UI face. Silently: a canvas never complains about
+      // the font it was handed.
+      ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px "+FONT_MONO;
       ctx.fillText(sha,W-14,y); ctx.textAlign="left";
     }
     ctx.globalAlpha=1;
@@ -753,11 +786,13 @@ function drawWorkdirBand(){
   else if(hover){ ctx.beginPath(); ctx.arc(x,y,dotR+2.6,0,TAU); ctx.strokeStyle=theme.muted; ctx.lineWidth=1; ctx.stroke(); }
   ctx.textBaseline="middle"; ctx.textAlign="left";
   ctx.font=Math.round(12.5*Math.min(1.25,layout.zoom))+"px "+FONT_UI; ctx.fillStyle=theme.text;
-  ctx.fillText("Uncommitted changes",x+dotR+14,y);
+  ctx.fillText(t("workdir.uncommitted_changes"),x+dotR+14,y);
   const s=workdirCtrl.status;
   const nConflict=s?s.conflicted:0, nStaged=s?s.staged.length:0, nUnstaged=s?s.unstaged.length:0;
-  const badge=nConflict?(nConflict+" conflicted"):(nStaged||nUnstaged)?(nStaged+" staged · "+nUnstaged+" unstaged"):"clean";
-  ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px ui-monospace,monospace";
+  const badge=nConflict?t("workdir.n_conflicted",{n:nConflict})
+    :(nStaged||nUnstaged)?t("workdir.staged_unstaged",{staged:nStaged,unstaged:nUnstaged})
+    :t("workdir.clean");
+  ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px "+FONT_MONO;
   ctx.fillStyle=nConflict?theme.danger:theme.muted; ctx.textAlign="right";
   ctx.fillText(badge,W-14,y); ctx.textAlign="left";
   ctx.strokeStyle=theme.border; ctx.lineWidth=1;
@@ -1037,7 +1072,19 @@ let down=null, sbDrag=null, colDrag=null;
 // last-drawn tx (both layouts — inline's persisted graph width is real and
 // draggable exactly like column layout's, it's just anchored at 0 instead of
 // bcw). A COL_HANDLE-px grab zone each side.
-function dividerAt(x){ const bcw=layout.branchColW;
+function dividerAt(x){
+  // No non-empty graph, no divider (#29). lastTx is module state that only
+  // renderContent writes, and renderContent early-returns (`if(N===0) return`)
+  // before writing it when the graph is empty — which is exactly what closeRepo()
+  // leaves behind via bootEmpty()'s truthy `{N:0}` placeholder (so a plain `!G`
+  // misses it), as well as a never-opened boot (G===null). lastTx thus keeps the
+  // last repo's value, so the "graph" case below would otherwise match a stale
+  // lastTx, exposing an invisible col-resize strip on the empty canvas and
+  // letting a drag persist a colW.graph override onto the next repo opened. A
+  // divider is a property of a rendered graph, so it shouldn't resolve without
+  // one — same `!G||!G.N` guard the render tick uses.
+  if(!G||!G.N) return null;
+  const bcw=layout.branchColW;
   if(bcw>0&&Math.abs(x-bcw)<=COL_HANDLE) return "branch";
   if(lastTx>COL_HANDLE&&Math.abs(x-lastTx)<=COL_HANDLE) return "graph";
   return null; }
