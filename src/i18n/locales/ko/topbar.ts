@@ -1,0 +1,25 @@
+// 정적 상단 바 / 툴바 + 로딩 화면 문자열(index.html에 있으며 island이 아니라서
+// legacy/main.ts의 applyStaticI18n이 명령형으로 적용해요). 키는 `topbar.<key>`가 돼요.
+export default {
+  repo_pick_empty: "저장소 열기…",
+  wsl_tip: "이 저장소는 WSL 안에 있어요 — 자격 증명 확인을 위해 네트워크 명령은 wsl.exe를 거쳐요",
+  goto_head: "현재 커밋(HEAD)으로 이동  ⌘⇧H",
+  goto_head_aria: "현재 커밋(HEAD)으로 이동",
+  cmd_palette: "명령 팔레트",
+  search_hint: "커밋, ref, 작업 검색…",
+  fetch: "페치",
+  pull: "풀",
+  push: "푸시",
+  fetch_tip: "페치 — 원격 추적 ref를 업데이트해요 (⌘⇧D)",
+  pull_tip: "풀(패스트포워드만) (⌘⇧L)",
+  push_tip: "푸시 (⌘⇧P)",
+  fetching: "페치하는 중…",
+  pulling: "풀하는 중…",
+  pushing: "푸시하는 중…",
+  refresh_tip: "새로고침 — 디스크의 저장소와 다시 동기화해요",
+  undo: "실행 취소",
+  undo_tip: "전역 실행 취소 — Safety Manager (⌘Z)",
+  theme_tip: "테마 전환",
+  loading_repo: "저장소를 불러오는 중…",
+  loading: "불러오는 중…",
+};
