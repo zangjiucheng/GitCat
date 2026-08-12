@@ -95,7 +95,7 @@ fn window_url(arg: &InitialArg) -> WebviewUrl {
 /// `\\?\C:\…` back to `C:\…`. A path without the prefix (every non-Windows
 /// path, and any already-plain input) is returned untouched, so this is safe to
 /// call unconditionally. Pure string work, unit-tested on every platform.
-fn strip_windows_verbatim_prefix(p: String) -> String {
+pub(crate) fn strip_windows_verbatim_prefix(p: String) -> String {
     if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
     } else if let Some(rest) = p.strip_prefix(r"\\?\") {
@@ -155,6 +155,15 @@ fn initial_arg() -> InitialArg {
 /// process was launched with.
 pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
     let arg = initial_arg();
+    // #39: if this repo is already open in another window — and this launch
+    // isn't the explicit "Open in New Window" action (which passes `--new-window`,
+    // see spawn_new_window) — raise that window and exit instead of duplicating
+    // it. `gitcat <same repo>` run twice now focuses the first window.
+    if let InitialArg::Repo(p) = &arg {
+        if !std::env::args().any(|a| a == "--new-window") && crate::instance_focus::focus_if_open(app, p) {
+            std::process::exit(0);
+        }
+    }
     // Best-effort terminal hint for `gitcat <not-a-repo>`, visible when launched
     // from a shell (a GUI double-click has no attached terminal — there the
     // in-app hint via ?repoError=, surfaced by legacy/main.ts's boot dispatch,
@@ -168,6 +177,10 @@ pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
         .min_inner_size(WINDOW_MIN_W, WINDOW_MIN_H)
         .center()
         .build()?;
+    // #39: start this window's focus listener so a later `gitcat <same repo>`
+    // can raise it. The repo itself is registered by the frontend via
+    // set_open_repo once it opens (which also covers in-place repo switches).
+    crate::instance_focus::start_listener(app);
     Ok(())
 }
 
@@ -212,7 +225,10 @@ pub fn spawn_new_window(repo_path: Option<&str>) {
         let mut cmd = Command::new("open");
         cmd.arg("-n").arg("-a").arg(&bundle);
         if let Some(p) = repo_path {
-            cmd.arg("--args").arg(p);
+            // `--new-window` after the repo reaches the new instance's argv and
+            // tells it to skip the #39 already-open dedup — this is the explicit
+            // "Open in New Window" action, which SHOULD get its own window.
+            cmd.arg("--args").arg(p).arg("--new-window");
         }
         match cmd.spawn() {
             Ok(_) => return,
@@ -225,7 +241,7 @@ pub fn spawn_new_window(repo_path: Option<&str>) {
     // foreground on its own, so no LaunchServices dance is needed.
     let mut cmd = Command::new(&exe);
     if let Some(p) = repo_path {
-        cmd.arg(p);
+        cmd.arg(p).arg("--new-window"); // explicit new window: skip the #39 dedup
     }
     cmd.no_console_window();
     if let Err(e) = cmd.spawn() {
