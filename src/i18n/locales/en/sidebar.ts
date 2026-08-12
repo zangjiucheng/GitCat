@@ -126,14 +126,20 @@ export default {
   // ── Tama toasts (controller: sidebar.svelte.ts) ─────────────────────────
   // Branch-visibility persistence.
   couldnt_save_visibility: "Couldn't save which branches to show.",
-  // Click-to-jump (jumpToRef). Three different situations all end in "there is
+  // Click-to-jump (jumpToRef). Four different situations all end in "there is
   // no row for that commit", and only ONE of them is a checkbox problem — so
-  // each gets its own message rather than one vague catch-all. The last is the
-  // normal case for a tag: tags never seed the graph walk and have no checkbox
-  // to tick, so "tick its checkbox" would be advice a user cannot follow.
+  // each gets its own message rather than one vague catch-all. jump_not_shown
+  // is the checkbox one; jump_not_reachable is the normal case for a tag, since
+  // tags never seed the graph walk and have no checkbox to tick, so "tick its
+  // checkbox" would be advice a user cannot follow.
   jump_no_commit: "{name} has no commit to jump to.",
   jump_still_loading: "Still loading the graph — try {name} again in a moment.",
   jump_not_shown: "{name} isn't shown in the graph — tick its checkbox to load it.",
+  // The graph finished loading but stopped short (memory-capped, or the walk
+  // hit an error partway). Says so plainly instead of blaming the ref: the
+  // branch IS shown, so jump_not_reachable's "no branch currently shown reaches
+  // its commit" would argue with itself here.
+  jump_graph_incomplete: "Only part of the history is loaded — {name}'s commit may be older than what was loaded.",
   jump_not_reachable: "{name} isn't in the loaded graph — no branch currently shown reaches its commit.",
   // Submodule init / update / add / sync / deinit / remove.
   opened_demo: "Opened {path} (demo).",

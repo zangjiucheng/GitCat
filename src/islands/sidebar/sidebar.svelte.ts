@@ -133,6 +133,11 @@ const RECENCY_HALF_LIFE_DAYS = 14;
 const MIN_RECENCY = Math.pow(0.5, STALE_DAYS / RECENCY_HALF_LIFE_DAYS);
 const MAX_AUTO_CANDIDATES = 10;
 
+// How long a FAILED jump's warning waits before it's shown, so a double-click
+// (= checkout) can cancel the warning its own first click provoked. See
+// SidebarState.warnJumpFailed for the whole story.
+const JUMP_WARN_HOLD_MS = 250;
+
 // Demo data (design-mode only) — mirrors the static markup this replaces, so
 // the browser preview still shows a populated sidebar without a real repo.
 // lastCommitTime: fabricated relative to whenever the browser preview
@@ -812,15 +817,23 @@ class SidebarState {
   // ancestry, so an unticked branch that's already merged into a visible one
   // is in the graph and jumps just fine, with no reload.
   //
-  // Three different situations all end in "no row for this oid" and only one
+  // Four different situations all end in "no row for this oid" and only one
   // is a checkbox problem, so the message says which — a tag has no checkbox
-  // to tick, and a branch that simply hasn't streamed in yet is already ticked.
+  // to tick, a branch that simply hasn't streamed in yet is already ticked,
+  // and a graph that stopped short never had the commit to begin with.
   jumpToRef(section: RefSection, name: string, sha: string): void {
     if (!sha) {
-      bridge.tama.warn(t("sidebar.jump_no_commit", { name }));
+      this.warnJumpFailed(t("sidebar.jump_no_commit", { name }));
       return;
     }
     if (bridge.goToOid(sha)) return;
+    // Design mode only (the call is a no-op with a real repo open — see
+    // goToRefLabel's own guard and doc comment in legacy/main.ts). The demo
+    // sidebar's shas are invented and the synthetic graph has no oids at all,
+    // so goToOid above can never succeed there; matching on the ref label is
+    // what keeps the browser preview demoing the jump instead of warning on
+    // every single click.
+    if (bridge.goToRefLabel(name)) return;
     // graphStreamComplete is only ever flipped true from Tauri-only paths:
     // onGraphBatch's `done` handling (wired up solely inside an IN_TAURI
     // branch), and restoreGraphFromCache — which only sets it when it hits a
@@ -829,14 +842,55 @@ class SidebarState {
     // ever fires/hits, so graphStreamComplete stays permanently false and
     // this branch would otherwise always win.
     if (IN_TAURI && !bridge.graphStreamComplete) {
-      bridge.tama.warn(t("sidebar.jump_still_loading", { name }));
+      this.warnJumpFailed(t("sidebar.jump_still_loading", { name }));
       return;
     }
     if ((section === "local" || section === "remote") && !this.isBranchVisible(section, name)) {
-      bridge.tama.warn(t("sidebar.jump_not_shown", { name }));
+      this.warnJumpFailed(t("sidebar.jump_not_shown", { name }));
       return;
     }
-    bridge.tama.warn(t("sidebar.jump_not_reachable", { name }));
+    // Ordered AFTER the checkbox case on purpose: an unticked branch has an
+    // actionable fix (tick it), and saying so beats the vaguer "the graph is
+    // only partly loaded" even when both are true.
+    //
+    // Reached only once the branch IS shown, which is exactly why the
+    // not-reachable message below can't cover it: "no branch currently shown
+    // reaches its commit" contradicts itself here. A truncated load, or a
+    // revwalk that errored partway, both leave a finished-but-incomplete graph
+    // (see legacy/main.ts's graphIncomplete) in which the tip legitimately just
+    // isn't loaded — nothing to do with which branches are shown.
+    if (bridge.graphIncomplete) {
+      this.warnJumpFailed(t("sidebar.jump_graph_incomplete", { name }));
+      return;
+    }
+    this.warnJumpFailed(t("sidebar.jump_not_reachable", { name }));
+  }
+
+  // Jump FAILURE messages are held for one double-click interval; a successful
+  // jump is never routed through here, so the common case keeps zero latency.
+  //
+  // Why hold at all: double-click is checkout, and the DOM delivers click,
+  // click, dblclick. Sidebar.svelte's row handlers drop the second click
+  // (`e.detail > 1`), but the FIRST one has already run jumpToRef by the time
+  // dblclick arrives. On the success path that reads fine — you land on the tip
+  // and the confirm opens over it. On a failure path it doesn't: double-clicking
+  // an unticked branch would tell you to go tick a checkbox and then, a beat
+  // later, offer you the very switch you asked for. Every ondblclick calls
+  // cancelJumpWarning() before opening the confirm, so that stale scolding never
+  // lands. 250ms is the usual double-click threshold — long enough to catch the
+  // pair, short enough that a genuine single click still feels answered.
+  private jumpWarnTimer: ReturnType<typeof setTimeout> | null = null;
+  private warnJumpFailed(msg: string): void {
+    this.cancelJumpWarning();
+    this.jumpWarnTimer = setTimeout(() => {
+      this.jumpWarnTimer = null;
+      bridge.tama.warn(msg);
+    }, JUMP_WARN_HOLD_MS);
+  }
+  cancelJumpWarning(): void {
+    if (this.jumpWarnTimer === null) return;
+    clearTimeout(this.jumpWarnTimer);
+    this.jumpWarnTimer = null;
   }
 
   get isFiltering(): boolean {

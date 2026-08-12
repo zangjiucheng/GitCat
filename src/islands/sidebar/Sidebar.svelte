@@ -323,6 +323,13 @@
           tabindex="0"
           onclick={(e) => {
             if ((e.target as HTMLElement).closest(".ref-menu")) return;
+            // A double-click (= checkout) fires click, click, dblclick — without
+            // this the jump would run TWICE, each a commit_detail round-trip,
+            // before the confirm ever opens. MouseEvent.detail is the click
+            // count, so >1 is "the second (or third…) of a multi-click"; the
+            // first still jumps, which is what makes the confirm open over the
+            // branch you just landed on.
+            if (e.detail > 1) return;
             sidebarCtrl.jumpToRef("local", b.name, b.sha);
           }}
           onkeydown={(e) => {
@@ -341,6 +348,10 @@
             // The checkbox/copy-name onclick handlers stopPropagation on click only —
             // dblclick is a separate event that still bubbles here, so it needs its own guard.
             if ((e.target as HTMLElement).closest(".ref-menu, .rb-check, .copy-name") || isCur || sidebarCtrl.busy) return;
+            // The first click of this double-click already ran jumpToRef; if it
+            // failed, its warning is still pending (see warnJumpFailed) and
+            // would otherwise land on top of the confirm we're about to open.
+            sidebarCtrl.cancelJumpWarning();
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
             sidebarCtrl.openCheckoutConfirm(b.name, false, r.left, r.bottom + 4);
           }}
@@ -498,6 +509,7 @@
             tabindex="0"
             onclick={(e) => {
               if ((e.target as HTMLElement).closest(".ref-menu")) return;
+              if (e.detail > 1) return; // second click of a double-click — see the local row's own comment
               sidebarCtrl.jumpToRef("remote", r.name, r.sha);
             }}
             onkeydown={(e) => {
@@ -514,6 +526,7 @@
             }}
             ondblclick={(e) => {
               if ((e.target as HTMLElement).closest(".ref-menu, .rb-check, .copy-name") || sidebarCtrl.busy) return;
+              sidebarCtrl.cancelJumpWarning(); // see the local row's ondblclick
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
               sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
             }}
@@ -614,6 +627,10 @@
           tabindex="0"
           onclick={(e) => {
             if ((e.target as HTMLElement).closest(".ref-menu")) return;
+            // A tag row has no ondblclick of its own, but a double-click on it
+            // still delivers two clicks — and two jumps — so it needs the same
+            // guard as the branch rows above.
+            if (e.detail > 1) return;
             sidebarCtrl.jumpToRef("tag", tag.name, tag.sha);
           }}
           onkeydown={(e) => {

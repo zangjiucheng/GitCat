@@ -55,6 +55,39 @@ test("double-clicking a branch still opens the checkout confirm", async ({ page,
   await expect(page.locator(".ref-pop")).toContainText("Switch to release?");
 });
 
+test("double-clicking a branch jumps once, not twice, before the confirm opens", async ({ page, repo }) => {
+  repo.writeFile("README.md", "# fixture\n");
+  repo.commit("Initial commit");
+  repo.branch("release");
+
+  await page.goto("/");
+  await page.locator(".repo-pick").click();
+  await page.locator(".db-add").click();
+  await expect(page.locator("#cntLocal")).toHaveText("2");
+
+  // The DOM delivers click, click, dblclick — so before the `e.detail > 1`
+  // guard, checkout-by-double-click ran the jump TWICE, each one a real
+  // `commit_detail` round-trip. That's invisible in the DOM (both jumps land on
+  // the same row), so count the IPC calls instead. Wrapping
+  // `window.__TAURI_INTERNALS__.invoke` from the test works because
+  // @tauri-apps/api/core reads it at call time, not at import time — see
+  // tauriMock.ts's own header.
+  await page.evaluate(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__e2eDetailCalls = 0;
+    const inner = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = (cmd: string, args: unknown) => {
+      if (cmd === "commit_detail") w.__e2eDetailCalls++;
+      return inner(cmd, args);
+    };
+  });
+
+  await page.locator('#refLocal [data-branch="release"]').dblclick();
+  await expect(page.locator(".ref-pop")).toContainText("Switch to release?");
+
+  expect(await page.evaluate(() => (window as unknown as Record<string, any>).__e2eDetailCalls)).toBe(1);
+});
+
 test("Enter on a branch row's own ⋮ button opens the branch menu, not a graph jump", async ({ page, repo }) => {
   repo.writeFile("README.md", "# fixture\n");
   repo.commit("Initial commit");
@@ -133,4 +166,36 @@ test("a remote row's own ⋮ button opens the checkout confirm", async ({ page, 
   // shared by eight popovers, and only checkoutConfirm's own heading reads
   // "Switch to <name>?".
   await expect(page.locator(".ref-pop")).toContainText("Switch to origin/main?");
+});
+
+test("Enter on a tag row's own ⋮ button opens the tag menu, not a graph jump", async ({ page, repo }) => {
+  repo.writeFile("README.md", "# fixture\n");
+  repo.commit("Initial commit");
+  repo.git("tag", "v1.0.0");
+
+  await page.goto("/");
+  await page.locator(".repo-pick").click();
+  await page.locator(".db-add").click();
+  await expect(page.locator("#cntTags")).toHaveText("1");
+
+  // Tags' <details> starts closed, like Remote's — expand via the twisty
+  // rather than the summary's centre, which could land on a manage button.
+  const tagGroup = page.locator("details.ref-group", { has: page.locator("#refTags") });
+  await tagGroup.locator("summary .tw").click();
+
+  // A tag row's Enter now JUMPS, like every other ref row — deliberate (Enter
+  // mirrors click). This pins the other half of that trade: the tag menu is
+  // still reachable from the keyboard, via the row's own ⋮, exactly as a branch
+  // row's is. Same bubble-phase hazard as the branch case above — the row's
+  // onkeydown sees this Enter too, and an unguarded preventDefault there would
+  // swallow the button's own activation and jump instead.
+  await page.locator('#refTags [data-tag="v1.0.0"] .ref-menu').focus();
+  await page.keyboard.press("Enter");
+
+  // Only the TAG menu offers "Push to origin" + "Delete…" as its whole content;
+  // the branch menu's own push entry lives behind a separate pushMenu popover.
+  await expect(page.locator(".ref-pop")).toContainText("Push to origin");
+  // …and the graph did NOT jump: `.d-subject` exists only in the commit view,
+  // so the detail panel is still the hero it opened with.
+  await expect(page.locator("#detail .d-subject")).toHaveCount(0);
 });

@@ -1847,6 +1847,34 @@ function goToOid(oid){
   focusRow(row);
   return true;
 }
+// Design-mode-only counterpart to goToOid: find a row by ref LABEL instead.
+// In plain-browser design mode BACKEND stays null (loadGraph's `else` branch
+// builds G from generateGraph instead), so there are no oids to join on at all
+// and goToOid above can only ever return false — which made every sidebar ref
+// click warn "isn't in the loaded graph" instead of demoing the jump. The
+// synthetic graph does carry ref LABELS though (generateGraph's refs/allRefs:
+// "main", the BR branch names, the v0.x.y tags, the showcase rows), and several
+// of them are exactly what the design-mode sidebar lists, so a label match is
+// the only join available here — and it is enough to make the demo work.
+//
+// The `BACKEND` guard is the point of this function, not an optimisation: with
+// a real repo open the oid join is authoritative, and falling back to a label
+// there could quietly land on a row whose chip says the right name while the
+// ref itself has since moved, masking a genuine "that commit isn't loaded"
+// — which is precisely what the sidebar's jump_* messages exist to tell apart.
+// Please don't "simplify" the guard away.
+//
+// Scans allRefs (falling back to the single refs[r]) exactly like goToHead
+// above, and hands off to the same focusRow, so a design-mode jump lands and
+// scrolls identically to a real one.
+function goToRefLabel(label){
+  if(!label||BACKEND||!G||!G.N) return false;
+  for(let r=0;r<G.N;r++){
+    const l=(G.allRefs&&G.allRefs[r])||(G.refs&&G.refs[r]?[G.refs[r]]:[]);
+    if(l.some&&l.some(x=>x&&x.label===label)){ focusRow(r); return true; }
+  }
+  return false;
+}
 // In-app Help page (#helpScrim / index.html) — opened from ⌘K ▸ Help. Toggles the
 // scrim's `.on` class (same show/hide the other scrim modals use); closes on the
 // Close button, a click on the backdrop, or Escape.
@@ -2605,6 +2633,18 @@ let graphRequestSeq=0;
 let loadedOids=new Set();
 export let graphStreamComplete=false;
 let lastLoadTruncated=false;
+// Whether the last FINISHED load is known to be missing history it would
+// otherwise have walked — memory-capped (payload.truncated) OR stopped by a
+// revwalk error partway (payload.error). Both leave graphStreamComplete true
+// over a graph that is genuinely incomplete, so "this ref's commit isn't in
+// the loaded rows" stops meaning "nothing shown reaches it" and starts meaning
+// "we never loaded that far". The sidebar's jumpToRef reads this (via
+// bridge.ts) to pick that message instead of the not-reachable one.
+//
+// Deliberately SEPARATE from lastLoadTruncated rather than replacing it:
+// lastLoadTruncated is the narrower fact (memory cap only) that
+// cacheCurrentGraph keys its "safe to cache" decision on.
+export let graphIncomplete=false;
 let loadedSeedTips=new Set();
 let loadedHeadOid=null;
 let lastRefSig=null;
@@ -2630,6 +2670,12 @@ function cacheCurrentGraph(){
   graphCache.set(CUR_REPO, {
     backend:BACKEND, g:G, loadedOids, seedTips:loadedSeedTips, headOid:loadedHeadOid,
     refSig:lastRefSig, refRot:new Map(refRot), scrollTarget:state.scrollTarget,
+    // Carried through the cache rather than recomputed on restore: the guard
+    // above rejects a TRUNCATED load, but not one whose revwalk errored partway
+    // (that leaves lastLoadTruncated false), so an entry here can legitimately
+    // be an incomplete graph. Hardcoding `false` on restore would tell the
+    // sidebar the graph is whole when it isn't.
+    incomplete:graphIncomplete,
   });
 }
 // Put a previously-cached graph for `path` straight back on screen — no stream,
@@ -2644,7 +2690,7 @@ function restoreGraphFromCache(path){
   graphCache.delete(path);
   BACKEND=c.backend; G=c.g; loadedOids=c.loadedOids;
   loadedSeedTips=c.seedTips; loadedHeadOid=c.headOid; lastRefSig=c.refSig;
-  graphStreamComplete=true; lastLoadTruncated=false;
+  graphStreamComplete=true; lastLoadTruncated=false; graphIncomplete=c.incomplete;
   refRot.clear(); for(const [k,v] of c.refRot) refRot.set(k,v);
   overflowHit.clear(); chipHit.clear(); bufferValid=false;
   recomputeLayout();                                  // rebuild scroll bounds for this G.N
@@ -2688,6 +2734,12 @@ async function startGraphStream(path){
   // load finishes. loadedOids is rebuilt from scratch as batches arrive; the
   // fast path (see reloadGraph) is disabled until `done` sets graphStreamComplete.
   graphStreamComplete=false;
+  // The PREVIOUS repo's truncation/error says nothing about this one, and only
+  // this stream's own `done` can decide. Its one reader (jumpToRef) can't even
+  // reach it mid-stream — graphStreamComplete is false from here until `done`,
+  // and that check comes first — so this is purely about never leaving the two
+  // flags disagreeing.
+  graphIncomplete=false;
   loadedOids=new Set();
   setGraphLoadingPill(true,0);
   // Batches arrive via the global "graph-batch" event (listener registered just
@@ -2812,6 +2864,9 @@ function onGraphBatch(payload){
     // "is this commit loaded?", so a truncated load forces full reloads).
     graphStreamComplete=true;
     lastLoadTruncated=!!payload.truncated;
+    // Assigned unconditionally (not just when one of the two is set), so a
+    // clean finish clears whatever the previous load left behind.
+    graphIncomplete=!!payload.truncated||!!payload.error;
     // The `ancestor`/dimming bit is no longer computed during the stream — that
     // needed an up-front full HEAD-ancestor revwalk that delayed the very first
     // frame (see commands.rs `stream_graph_core`). Now that the whole set is
@@ -3499,7 +3554,7 @@ i18nEvents.addEventListener("change",()=>{
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, goToOid, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
