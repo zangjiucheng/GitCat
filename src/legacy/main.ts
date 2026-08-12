@@ -1867,6 +1867,19 @@ function goToOid(oid){
 // Scans allRefs (falling back to the single refs[r]) exactly like goToHead
 // above, and hands off to the same focusRow, so a design-mode jump lands and
 // scrolls identically to a real one.
+//
+// FIRST match wins, and that is load-bearing rather than incidental: rows run
+// newest-first, so the lowest matching row is the newest commit carrying that
+// label — the tip, which is what a sidebar click asks for. It matters because
+// generateGraph reuses each BR name up to eight times (`BR[bn%BR.length]`, see
+// its `bn<48` loop), so most branch labels genuinely appear on several rows.
+//
+// Not every demo ref resolves, and that's expected: only some of the sidebar's
+// DEMO_* names ("main", "feat/inline-diff", "fix/lane-cull", "origin/main")
+// exist as labels in this synthetic graph. The demo tags and most demo remotes
+// have no counterpart at all, so clicking those still warns in design mode.
+// That is the honest answer — inventing matching rows just to silence it would
+// make the preview lie about what a jump does.
 function goToRefLabel(label){
   if(!label||BACKEND||!G||!G.N) return false;
   for(let r=0;r<G.N;r++){
@@ -2642,8 +2655,11 @@ let lastLoadTruncated=false;
 // bridge.ts) to pick that message instead of the not-reachable one.
 //
 // Deliberately SEPARATE from lastLoadTruncated rather than replacing it:
-// lastLoadTruncated is the narrower fact (memory cap only) that
-// cacheCurrentGraph keys its "safe to cache" decision on.
+// lastLoadTruncated is the narrower fact (memory cap only), and it has two
+// readers of its own — cacheCurrentGraph's "safe to cache" guard and
+// tryFastRefresh's "is loadedOids trustworthy" guard. Both are about the
+// INCREMENTAL machinery; this flag is about what to tell the user. See the
+// KNOWN GAP note at tryFastRefresh, which the same widening would also fix.
 export let graphIncomplete=false;
 let loadedSeedTips=new Set();
 let loadedHeadOid=null;
@@ -2661,10 +2677,14 @@ let lastRefSig=null;
 const GRAPH_CACHE_CAP=8;
 const graphCache=new LruCache(GRAPH_CACHE_CAP);
 // Snapshot the CURRENTLY-open graph under its path before we navigate away, so a
-// later return restores it. Only caches a COMPLETE, non-truncated load — a
-// half-streamed or memory-capped graph would restore wrong. Cheap: it stores
-// references, not deep copies (the live BACKEND/G are about to be REPLACED by the
-// next load, never mutated in place, so the snapshot stays frozen).
+// later return restores it. Only caches a FINISHED, non-truncated load — a
+// half-streamed or memory-capped graph would restore wrong. "Non-truncated" is
+// NOT the same as "whole": a load whose revwalk errored partway also finishes
+// with lastLoadTruncated false and so IS cached, which is why the entry carries
+// graphIncomplete along with it (see below) rather than the restore assuming
+// the graph is complete. Cheap: it stores references, not deep copies (the live
+// BACKEND/G are about to be REPLACED by the next load, never mutated in place,
+// so the snapshot stays frozen).
 function cacheCurrentGraph(){
   if(!CUR_REPO || !BACKEND || !graphStreamComplete || lastLoadTruncated) return;
   graphCache.set(CUR_REPO, {
@@ -3218,6 +3238,15 @@ async function tryFastRefresh(){
   // Guard 1: only a COMPLETE, non-truncated load has a trustworthy loadedOids
   // to answer "is this commit already loaded?" — mid-stream or memory-capped,
   // fall back to full reload.
+  //
+  // KNOWN GAP (deliberately NOT fixed here — widening this changes reload
+  // behaviour well beyond the sidebar-jump work that added graphIncomplete):
+  // a load whose revwalk ERRORED partway also has a knowingly-partial
+  // loadedOids, but it leaves lastLoadTruncated false (only payload.truncated
+  // sets that), so it slips through this guard and a refs-only fast refresh
+  // keeps serving the degraded graph instead of re-walking. graphIncomplete
+  // (declared beside graphStreamComplete above) is exactly that broader fact;
+  // testing it here instead would close this.
   if(!BACKEND || !graphStreamComplete || lastLoadTruncated){ dlog("reload", "FULL — buffer not ready", lastLoadTruncated?"(truncated)":"(streaming)"); return false; }
   let cur;
   try{

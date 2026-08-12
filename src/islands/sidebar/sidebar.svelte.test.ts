@@ -2813,6 +2813,14 @@ describe("jumpToRef (click a sidebar ref -> select its tip commit)", () => {
     expect(bridge.tama.warn).not.toHaveBeenCalled();
   });
 
+  it("closing the repo drops a held warning — Tama must not scold about a ref of a repo that's gone", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));
+    sidebarCtrl.reset(); // what closing the repo does
+    flushWarning();
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+  });
+
   it("a SUCCESSFUL jump is never delayed — no timer on the common case", () => {
     vi.mocked(bridge.goToOid).mockReturnValue(true);
     sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));

@@ -136,7 +136,16 @@ const MAX_AUTO_CANDIDATES = 10;
 // How long a FAILED jump's warning waits before it's shown, so a double-click
 // (= checkout) can cancel the warning its own first click provoked. See
 // SidebarState.warnJumpFailed for the whole story.
-const JUMP_WARN_HOLD_MS = 250;
+//
+// This has to cover the PLATFORM double-click interval, because that — not any
+// number chosen here — is what decides whether a second click still counts as
+// part of a double-click (`e.detail > 1`, and whether `dblclick` fires at all).
+// That interval is the OS/browser's: Chromium's own default is 500ms, and on
+// Windows it's whatever GetDoubleClickTime() reports, itself 500ms by default
+// and user-configurable higher. 500 covers the common case; anything shorter
+// silently un-fixes the slower half of real double-clicks, and no Playwright
+// test would notice, because `dblclick()` clicks with zero delay.
+const JUMP_WARN_HOLD_MS = 500;
 
 // Demo data (design-mode only) — mirrors the static markup this replaces, so
 // the browser preview still shows a populated sidebar without a real repo.
@@ -875,10 +884,11 @@ class SidebarState {
   // dblclick arrives. On the success path that reads fine — you land on the tip
   // and the confirm opens over it. On a failure path it doesn't: double-clicking
   // an unticked branch would tell you to go tick a checkbox and then, a beat
-  // later, offer you the very switch you asked for. Every ondblclick calls
+  // later, offer you the very switch you asked for. Every ondblclick (and
+  // oncontextmenu, which can follow a left-click just as closely) calls
   // cancelJumpWarning() before opening the confirm, so that stale scolding never
-  // lands. 250ms is the usual double-click threshold — long enough to catch the
-  // pair, short enough that a genuine single click still feels answered.
+  // lands. The hold must be at least the platform's double-click interval or it
+  // only fixes the FAST half of real double-clicks — see JUMP_WARN_HOLD_MS.
   private jumpWarnTimer: ReturnType<typeof setTimeout> | null = null;
   private warnJumpFailed(msg: string): void {
     this.cancelJumpWarning();
@@ -1593,6 +1603,12 @@ class SidebarState {
     this.checkoutConfirm = null;
     this.pushMenu = null;
     this.hasRepo = false;
+    // A held jump warning names a ref by name (see warnJumpFailed) — firing it
+    // after the repo is closed would have Tama scolding about a branch of a
+    // repo that is no longer open. Same "drop anything still pending" reasoning
+    // as the popovers above, which is why it belongs here and not only on the
+    // double-click path.
+    this.cancelJumpWarning();
   }
 
   // `pos`: the (x, y) to open backlog #34's dirty-tree resolution chooser at,

@@ -195,7 +195,14 @@ test("Enter on a tag row's own ⋮ button opens the tag menu, not a graph jump",
   // Only the TAG menu offers "Push to origin" + "Delete…" as its whole content;
   // the branch menu's own push entry lives behind a separate pushMenu popover.
   await expect(page.locator(".ref-pop")).toContainText("Push to origin");
-  // …and the graph did NOT jump: `.d-subject` exists only in the commit view,
-  // so the detail panel is still the hero it opened with.
+  // …and the graph did NOT jump. Assert the hero is still SHOWN rather than only
+  // that `.d-subject` is absent: a bare toHaveCount(0) is satisfied on the first
+  // poll, and `.d-subject` appears only after an async commit_detail round-trip,
+  // so on the regression this guards (the row's onkeydown swallowing the ⋮'s own
+  // Enter, opening the menu AND jumping) the negative would race the round-trip
+  // and pass vacuously. `.tama-hero` and the commit view are mutually exclusive
+  // branches of Detail.svelte, so requiring the hero rules the jump out
+  // positively; the count check stays as the direct statement of "no commit view".
+  await expect(page.locator("#detail .tama-hero")).toBeVisible();
   await expect(page.locator("#detail .d-subject")).toHaveCount(0);
 });

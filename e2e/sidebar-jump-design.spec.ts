@@ -37,10 +37,11 @@ test("clicking a demo branch in design mode jumps to its labelled row", async ({
 
   await page.locator('#refLocal [data-branch="main"]').click();
 
-  await expect(page.locator("#detail .d-subject")).toHaveCount(1);
-  // …and no scolding: before the fallback, this click produced
-  // sidebar.jump_not_reachable in Tama's line (#toastLine).
-  await expect(page.locator("#toastLine")).not.toContainText("isn't in the loaded graph");
+  // Pin the ROW, not just "something got selected": legacy/main.ts's msgOf()
+  // returns this exact subject for r === 0 and a rotating MSGS entry for every
+  // other row, and generateGraph puts `main` on refs[0] — so this text is proof
+  // the label match landed on main's own row rather than anywhere in the graph.
+  await expect(page.locator("#detail .d-subject")).toHaveText("Head of main — you are here");
 
   expect(errors).toEqual([]);
 });

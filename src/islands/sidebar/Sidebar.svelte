@@ -357,7 +357,16 @@
           }}
           oncontextmenu={(e) => {
             e.preventDefault();
-            if (!sidebarCtrl.busy) sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement, b.upstream);
+            // Right-click provokes no warning of its own (it fires no `click`),
+            // but it can easily FOLLOW a left-click that did — and the hold is a
+            // full platform double-click interval wide, so that overlap is real.
+            // Cancel only when a menu is actually about to open: if `busy` swallows
+            // the action there's no replacement feedback, so the warning should
+            // still land.
+            if (!sidebarCtrl.busy) {
+              sidebarCtrl.cancelJumpWarning();
+              sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement, b.upstream);
+            }
           }}
         >
           <input
@@ -533,6 +542,7 @@
             oncontextmenu={(e) => {
               e.preventDefault();
               if (!sidebarCtrl.busy) {
+                sidebarCtrl.cancelJumpWarning(); // see the local row's oncontextmenu
                 const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                 sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
               }
@@ -646,7 +656,13 @@
           }}
           oncontextmenu={(e) => {
             e.preventDefault();
-            if (!sidebarCtrl.busy) sidebarCtrl.openTagMenu(tag.name, e.currentTarget as HTMLElement);
+            // A tag row jumps on click and opens this menu on right-click, so it
+            // has exactly the same left-then-right overlap as the branch rows —
+            // see the local row's oncontextmenu.
+            if (!sidebarCtrl.busy) {
+              sidebarCtrl.cancelJumpWarning();
+              sidebarCtrl.openTagMenu(tag.name, e.currentTarget as HTMLElement);
+            }
           }}
         >
           <span class="rname" data-fullname={tag.name}>{row.label}</span>
