@@ -10,18 +10,20 @@
 // namespace file needs NO central registry edit, which is what lets the
 // string-extraction work fan out file-by-file with no merge conflicts.
 //
-// CONTRIBUTOR POLICY: English is the SOURCE OF TRUTH. `t()` falls back zh -> en
-// -> key, so a key present only in `en/` renders fine (in English) with no zh
-// entry. A contributor who doesn't read Chinese should add ONLY the `en/` string
-// and is never blocked: zh is best-effort and can be filled in later, and there
-// is deliberately no CI gate requiring en/zh key parity. Same for the backend:
-// see `be()` below and `src-tauri/src/i18n_err.rs`.
+// CONTRIBUTOR POLICY: English is the SOURCE OF TRUTH. `t()` falls back
+// <locale> -> en -> key, so a key present only in `en/` renders fine (in
+// English) with no entry in any other locale. A contributor who doesn't read
+// the target locale's language should add ONLY the `en/` string and is never
+// blocked: every non-English locale is best-effort and can be filled in later,
+// and there is deliberately no CI gate requiring cross-locale key parity. Same
+// for the backend: see `be()` below and `src-tauri/src/i18n_err.rs`.
 
-export type Locale = "en" | "zh";
+export type Locale = "en" | "zh" | "ko";
 
 export const LOCALES: { id: Locale; label: string }[] = [
   { id: "en", label: "English" },
   { id: "zh", label: "中文" },
+  { id: "ko", label: "한국어" },
 ];
 
 // ONE glob over every locale dir — `./locales/<loc>/<namespace>.ts` — so adding
@@ -55,7 +57,7 @@ const STORAGE_KEY = "gitcat.locale";
 function readStored(): Locale {
   try {
     const v = localStorage.getItem(STORAGE_KEY);
-    if (v === "en" || v === "zh") return v;
+    if (v === "en" || v === "zh" || v === "ko") return v;
   } catch {
     // storage disabled (private mode) — fall through to default
   }
@@ -113,7 +115,7 @@ const BE_SEP = "\u001f";
  * returned in the machine-readable form `i18n:<ns>.<key>` (optionally followed
  * by `\x1f name \x1f value` pairs) — see `src-tauri/src/i18n_err.rs`. This
  * detects that prefix, looks the key up, and interpolates the params (reusing
- * `t()`, so it's reactive and respects the same zh -> en -> key fallback).
+ * `t()`, so it's reactive and respects the same <locale> -> en -> key fallback).
  *
  * Anything WITHOUT the `i18n:` prefix is returned verbatim: raw `git` stderr
  * (which the app pins to `LC_ALL=C` and cannot localize) and any not-yet-keyed
