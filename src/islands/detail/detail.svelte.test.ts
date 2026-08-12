@@ -324,6 +324,20 @@ describe("copySha", () => {
     expect(detailCtrl.copied).toBe(false);
     vi.useRealTimers();
   });
+
+  it("copies the FULL oid, not the short display sha (#43)", () => {
+    const writeText = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText } });
+    const full = "a8080adf0123456789abcdef0123456789abcdef"; // 40-char oid
+    setBackendGraph([{ sha: "a8080ad", subject: "Extract swimlane module", an: { n: "Mao", e: "m@nyan.cat", t: 100 }, cm: { n: "Mao", e: "m@nyan.cat", t: 100 }, refs: [] }]);
+    (bridge as any).BACKEND.oids = [full]; // parallel to rows; carries the full hash
+    vi.mocked(commands.commitDetail).mockResolvedValueOnce(
+      ok({ sha: full, shortSha: "a8080ad", subject: "Extract swimlane module", body: "", message: "Extract swimlane module", additions: 0, deletions: 0, filesChanged: 0, truncated: false, fileTree: [] }) as any,
+    );
+    detailCtrl.select(0);
+    detailCtrl.copySha();
+    expect(writeText).toHaveBeenCalledWith(full);
+  });
 });
 
 describe("coverage", () => {

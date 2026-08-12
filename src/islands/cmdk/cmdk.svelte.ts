@@ -384,7 +384,12 @@ class CmdkState {
         sha = bridge.hhex(r);
         author = bridge.AUTHORS[(Math.imul(r, 2654435761) >>> 5) % bridge.AUTHORS.length].n;
       }
-      out.push({ type: "commit", row: r, subject, sha, author, hay: (subject + " " + sha + " " + author).toLowerCase() });
+      // Haystack carries the FULL 40-char oid (BACKEND.oids[r]), not just the
+      // short display sha, so pasting a full hash into ⌘K matches (#43). The
+      // short sha is the oid's 7-char prefix, so a short-hash search still
+      // matches via the oid. `sha` (short) stays the item's display field.
+      const full = BACKEND && BACKEND.oids && BACKEND.oids[r] ? BACKEND.oids[r] : sha;
+      out.push({ type: "commit", row: r, subject, sha, author, hay: (subject + " " + full + " " + author).toLowerCase() });
     }
     return out;
   }

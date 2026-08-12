@@ -528,7 +528,11 @@ class DetailState {
 
   copySha() {
     if (!this.commit) return;
-    copyToClipboard(this.commit.sha);
+    // Copy the FULL 40-char oid (BACKEND.oids[row]), not the short sha shown in
+    // the header (#43) — copying a hash is almost always to paste into a git
+    // command. Falls back to the short sha in design mode (no BACKEND).
+    const backend: any = bridge.BACKEND;
+    copyToClipboard((backend && backend.oids && backend.oids[this.commit.row]) || this.commit.sha);
     this.copied = true;
     setTimeout(() => {
       this.copied = false;
