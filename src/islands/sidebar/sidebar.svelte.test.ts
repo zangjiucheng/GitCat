@@ -135,8 +135,8 @@ function resetAll() {
   mockInTauri = false;
   mockStreamComplete = true;
   mockGraphIncomplete = false;
-  // A jump warning held from a previous test (see warnJumpFailed's 250ms hold)
-  // must not fire into the next one's mocks.
+  // A jump warning held from a previous test (see warnJumpFailed's hold) must
+  // not fire into the next one's mocks.
   sidebarCtrl.cancelJumpWarning();
   vi.clearAllMocks();
   // Default: no submodules, so the many pre-existing "refresh"/checkout/etc.
