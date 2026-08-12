@@ -67,12 +67,18 @@ fn read_entries(path: &PathBuf) -> Vec<Entry> {
 
 fn write_entries(path: &PathBuf, entries: &[Entry]) {
     let Ok(json) = serde_json::to_string(entries) else { return };
-    // Write to a temp file then rename, so a concurrent reader never sees a
-    // half-written registry.
-    let tmp = path.with_extension("json.tmp");
+    // Temp-then-rename so a concurrent READER never sees a half-written file. The
+    // temp name is per-process (pid), so concurrent WRITERS don't clobber a
+    // shared temp. The final rename is still last-writer-wins: two launches
+    // racing can lose one update, but that's rare, benign, and self-heals — the
+    // repo is registered twice (create_initial_window and the frontend's
+    // set_open_repo), and re-registered on the next open — the same tradeoff
+    // repo_registry.rs documents for its own registry.
+    let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
     if std::fs::write(&tmp, json).is_ok() {
         let _ = std::fs::rename(&tmp, path);
     }
+    let _ = std::fs::remove_file(&tmp); // clean up if the rename didn't consume it
 }
 
 /// Re-key `port`'s window to `path`: drop this window's previous entry (so an
@@ -114,14 +120,29 @@ pub fn focus_if_open(app: &AppHandle<Wry>, path: &str) -> bool {
 fn focus_if_open_at(reg: &PathBuf, path: &str) -> bool {
     let key = canonical_key(path);
     let mut entries = read_entries(reg);
-    if let Some(pos) = entries.iter().position(|e| e.path == key) {
-        if ping_focus(entries[pos].port) {
-            return true;
+    // A repo can have MORE than one entry (each "Open in New Window" adds its own
+    // port), so try every window registered for this repo and focus the first
+    // reachable one — pruning the dead entries we pass on the way. Only give up
+    // (open fresh) if none are live.
+    let mut focused = false;
+    let mut dead: Vec<usize> = Vec::new();
+    for (i, e) in entries.iter().enumerate() {
+        if e.path != key {
+            continue;
         }
-        entries.remove(pos); // stale window — drop it and open a fresh one
+        if ping_focus(e.port) {
+            focused = true;
+            break;
+        }
+        dead.push(i); // unreachable window for this repo — mark for pruning
+    }
+    if !dead.is_empty() {
+        for &i in dead.iter().rev() {
+            entries.remove(i);
+        }
         write_entries(reg, &entries);
     }
-    false
+    focused
 }
 
 /// Bind this process's focus listener and remember its port. On each incoming
@@ -165,14 +186,21 @@ pub fn start_listener(app: &AppHandle<Wry>) {
 /// (or switches to) a repo, so a later `gitcat <same repo>` finds this window.
 /// Re-keys this window (drops its previous repo entry) so an in-place switch
 /// doesn't leave a stale mapping.
+/// Record that this window now shows `path`, keyed by this process's focus port.
+/// Called at launch (create_initial_window, to close the gap before the frontend
+/// finishes loading) AND by the frontend's `set_open_repo` on every open/switch.
+pub fn register(app: &AppHandle<Wry>, path: &str) {
+    let Some(port) = FOCUS_PORT.get().copied() else { return };
+    let Some(reg) = registry_path(app) else { return };
+    let mut entries = read_entries(&reg);
+    upsert(&mut entries, canonical_key(path), port);
+    write_entries(&reg, &entries);
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn set_open_repo(app: AppHandle<Wry>, path: String) {
-    let Some(port) = FOCUS_PORT.get().copied() else { return };
-    let Some(reg) = registry_path(&app) else { return };
-    let mut entries = read_entries(&reg);
-    upsert(&mut entries, canonical_key(&path), port);
-    write_entries(&reg, &entries);
+    register(&app, &path);
 }
 
 /// JS: `commands.clearOpenRepo()` — called when a repo is closed in-app (the
@@ -251,6 +279,41 @@ mod tests {
         write_entries(&reg, &[Entry { path: canonical_key(&dir_s), port: 1 }]);
         assert!(!focus_if_open_at(&reg, &dir_s), "a dead window must NOT dedup");
         assert!(read_entries(&reg).is_empty(), "the stale entry is pruned");
+        let _ = std::fs::remove_file(&reg);
+    }
+
+    #[test]
+    fn focus_if_open_falls_through_a_dead_duplicate_to_a_live_window() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let dir = std::env::temp_dir();
+        let dir_s = dir.to_str().unwrap().to_string();
+        let key = canonical_key(&dir_s);
+        let reg = std::env::temp_dir().join(format!("gitcat-focus-dup-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&reg);
+
+        // A second, LIVE window for the same repo (Open-in-New-Window leaves two).
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let live_port = listener.local_addr().unwrap().port();
+        let pinged = Arc::new(AtomicBool::new(false));
+        let flag = pinged.clone();
+        let accept = std::thread::spawn(move || {
+            if let Ok((mut s, _)) = listener.accept() {
+                let mut b = [0u8; 16];
+                let _ = s.read(&mut b);
+                flag.store(true, Ordering::SeqCst);
+            }
+        });
+
+        // First entry for the repo is dead (port 1), the second is the live one.
+        write_entries(&reg, &[Entry { path: key.clone(), port: 1 }, Entry { path: key.clone(), port: live_port }]);
+        assert!(focus_if_open_at(&reg, &dir_s), "must fall through the dead duplicate and focus the live window");
+        accept.join().ok();
+        assert!(pinged.load(Ordering::SeqCst), "the live window got the focus ping");
+        let after = read_entries(&reg);
+        assert_eq!(after.len(), 1, "the dead duplicate is pruned, the live one kept");
+        assert_eq!(after[0].port, live_port);
         let _ = std::fs::remove_file(&reg);
     }
 

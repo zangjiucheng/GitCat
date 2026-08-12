@@ -177,10 +177,15 @@ pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
         .min_inner_size(WINDOW_MIN_W, WINDOW_MIN_H)
         .center()
         .build()?;
-    // #39: start this window's focus listener so a later `gitcat <same repo>`
-    // can raise it. The repo itself is registered by the frontend via
-    // set_open_repo once it opens (which also covers in-place repo switches).
+    // #39: start this window's focus listener, then register the launch repo
+    // RIGHT AWAY (not just later via the frontend's set_open_repo) — otherwise an
+    // impatient re-launch during the initial graph load finds no entry and
+    // duplicates the window. set_open_repo keeps it current across in-place
+    // switches from there.
     crate::instance_focus::start_listener(app);
+    if let InitialArg::Repo(p) = &arg {
+        crate::instance_focus::register(app, p);
+    }
     Ok(())
 }
 
