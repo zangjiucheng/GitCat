@@ -75,6 +75,8 @@ export default {
   snapshots_more: "+{n}개 더 · 최신순으로 표시",
   // 브랜치 작업 메뉴.
   checkout: "체크아웃",
+  checkout_remote: "이 원격 브랜치 체크아웃",
+  checkout_named: "{name} 체크아웃",
   push: "푸시",
   push_to: "푸시할 곳…",
   force_push_lease: "강제 푸시(lease 사용)…",
@@ -121,6 +123,10 @@ export default {
   // ── Tama 토스트 (컨트롤러: sidebar.svelte.ts) ─────────────────────────
   // 브랜치 표시 여부 저장.
   couldnt_save_visibility: "표시할 브랜치를 저장하지 못했어요.",
+  jump_no_commit: "{name}에 대응하는 커밋이 없어요.",
+  jump_still_loading: "그래프를 아직 불러오는 중이에요 — 잠시 뒤에 {name}을(를) 다시 눌러주세요.",
+  jump_not_shown: "{name} 브랜치는 그래프에 표시되지 않았어요 — 체크박스를 켜면 불러와요.",
+  jump_not_reachable: "{name}은(는) 불러온 그래프 안에 없어요 — 지금 표시된 브랜치 중 어느 것도 그 커밋에 닿지 않아요.",
   // 서브모듈 초기화 / 업데이트 / 추가 / 동기화 / 초기화 해제 / 제거.
   opened_demo: "{path} 저장소를 열었어요 (demo).",
   init_updated_demo: "{path}을(를) 초기화하고 업데이트했어요 (demo).",
