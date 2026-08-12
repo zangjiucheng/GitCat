@@ -1,4 +1,4 @@
-// 명령 팔레트(⌘K) 문자열. 키는 `cmdk.<key>` 형태가 됩니다.
+// 명령 팔레트(⌘K) 문자열. 키는 `cmdk.<key>` 형태가 돼요.
 export default {
   // UI 틀
   aria_palette: "명령 팔레트",

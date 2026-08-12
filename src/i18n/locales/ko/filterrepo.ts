@@ -1,4 +1,4 @@
-// Filter-repo 마법사 문자열. 키는 `filterrepo.<key>` 형태가 됩니다.
+// Filter-repo 마법사 문자열. 키는 `filterrepo.<key>` 형태가 돼요.
 export default {
   title: "히스토리 재작성 — filter-repo",
   sub_restore: "이전 재작성 전에 만들어둔 백업을 복원해요.",
@@ -21,8 +21,8 @@ export default {
   pv_li_hashes: "처음으로 영향받은 커밋 이후의 모든 커밋 해시가 바뀌어요",
   pv_li_shas: "백업이 만료되면 원래 SHA에는 다시 접근할 수 없어요",
   backup_note_pre: "filter-repo가 실행되기 ",
-  backup_note_bold: "전",
-  backup_note_post: "에 검증된 백업 묶음을 저장해요 → 다시 쓰기 전 상태를 언제든 복원 기능으로 되돌릴 수 있어요.",
+  backup_note_bold: "전에",
+  backup_note_post: " 검증된 백업 묶음을 저장해요 → 다시 쓰기 전 상태를 언제든 복원 기능으로 되돌릴 수 있어요.",
   confirm_rewriting: "히스토리를 다시 쓰는 중… 큰 저장소는 시간이 걸릴 수 있어요. GitCat을 닫지 마세요.",
   cf_li_rewrites: "{branch} 브랜치의 커밋 {touched}개를 다시 써요",
   cf_li_scope: "범위: {scope} — {outcome}",
@@ -68,7 +68,7 @@ export default {
   warn_restore_failed: "복원에 실패했어요 — 다시 시도해주세요.",
   err_restore: "복원에 실패했어요 — {e}",
   // index.html의 범용 #dangerScrim 모달을 위한 정적 자리표시자 문구
-  // (제목/확인 버튼은 위의 `title`/`rewrite_history`를 재사용합니다).
+  // (제목/확인 버튼은 위의 `title`/`rewrite_history`를 재사용해요).
   danger_desc: "선택한 ref의 모든 커밋을 다시 써요. 일반적인 실행 취소로는 되돌릴 수 없어요.",
   danger_lose:
     "<h5>다시 쓰거나 잃게 될 내용</h5><ul><li><code>main</code>과 <code>feat/inline-diff</code>에서 커밋 <code>42</code>개를 다시 써요</li><li>원래 SHA는 더 이상 접근할 수 없게 돼요: <code>a1b2c3d</code> … <code>90ff210</code></li><li>다시 쓴 커밋의 GPG 서명은 사라져요</li></ul>",

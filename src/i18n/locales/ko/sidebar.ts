@@ -1,5 +1,5 @@
 // 사이드바 (ref / 브랜치 / 원격 / 태그 / 서브모듈 / 스냅샷) 문자열.
-// 키는 `sidebar.<key>` 형태가 됩니다.
+// 키는 `sidebar.<key>` 형태가 돼요.
 export default {
   // 빈 상태 + 필터 바.
   no_repo_open: "열린 저장소가 없어요",

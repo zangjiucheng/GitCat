@@ -1,4 +1,4 @@
-// Reflog 구조 모달 문자열. 키는 `reflog.<key>`가 돼요.
+// Reflog 복구 모달 문자열. 키는 `reflog.<key>`가 돼요.
 export default {
   tama_alt: "궁금해하는 Tama",
   title: "Reflog — 과거 HEAD 복원",

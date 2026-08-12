@@ -2,8 +2,8 @@
 export default {
   title: "커밋 검색…",
   sub_author_pre: "전체 히스토리에서 특정 ",
-  sub_author_bold: "작성자",
-  sub_author_mid: "가 작성한 모든 커밋을 찾아요(",
+  sub_author_bold: "작성자가",
+  sub_author_mid: " 작성한 모든 커밋을 찾아요(",
   sub_author_post: ") — 이름과 이메일을 기준으로 매칭해요.",
   sub_diff_pre: "커밋 메시지가 아니라 ",
   sub_diff_bold: "diff",

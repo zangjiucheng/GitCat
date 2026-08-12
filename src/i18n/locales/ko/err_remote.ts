@@ -1,8 +1,8 @@
 // 원격 동기화(페치/풀/푸시), 원격 설정 CRUD, 서브모듈을 위한 앱 자체 작성
-// 백엔드 오류 문자열(PER-82). 키는 `err_remote.<key>`가 돼요. 영어가 SOURCE OF
-// TRUTH이며, 이 텍스트는 git_remote.rs / git_remote_manage.rs / submodule.rs의
-// Rust `ierr`/`ierrp` 호출부와 그대로 일치해야 해요. 원본 git stderr는 여기에
-// 키로 등록되지 않으며, 그대로 통과돼요.
+// 백엔드 오류 문자열(PER-82)의 한국어 번역. 키는 `err_remote.<key>`가 돼요.
+// 영어가 SOURCE OF TRUTH이며, 여기 없는 키는 자동으로 영어로 폴백돼요. 원본 git
+// stderr는 여기에 키로 등록되지 않으며, 그대로 통과돼요 — `{detail}` 같은 자리에
+// 담기는 그 원문은 번역하지 않아요.
 export default {
   // 공용 git 실행 실패.
   run_git_failed: "git을 실행하지 못했어요: {detail}",

@@ -24,9 +24,9 @@ export default {
   dest_illegal_nul: "대상 경로에 허용되지 않는 NUL 문자가 있어요.",
   no_patch_file_chosen: "패치 파일이 선택되지 않았어요.",
   apply_conflict_one:
-    "패치를 적용하는 중 파일 {n}개에서 충돌이 발생했어요. 충돌 해결기에서 해결한 뒤 계속하거나, 이 커밋을 건너뛰거나, 중단하세요.",
+    "패치를 적용하는 중 파일 {n}개에서 충돌이 발생했어요. 해결한 뒤 계속하거나, 이 커밋을 건너뛰거나, 중단하세요.",
   apply_conflict_other:
-    "패치를 적용하는 중 파일 {n}개에서 충돌이 발생했어요. 충돌 해결기에서 해결한 뒤 계속하거나, 이 커밋을 건너뛰거나, 중단하세요.",
+    "패치를 적용하는 중 파일 {n}개에서 충돌이 발생했어요. 해결한 뒤 계속하거나, 이 커밋을 건너뛰거나, 중단하세요.",
   could_not_finish_applying: "패치 적용을 끝내지 못했어요: {detail}. 계속을 눌러 재시도하거나, 이 커밋을 건너뛰거나, 중단하세요.",
   cannot_export_merge_single:
     "병합 커밋을 단일 패치로 내보낼 수 없어요 — format-patch는 병합에 대해 명확한 단일 diff를 만들지 못해요(git 자체도 그 병합이 아니라 첫 번째 부모의 커밋을 조용히 내보내요). 대신 명시적인 리비전 범위와 함께 패치 내보내기… 메뉴를 사용해주세요.",
@@ -57,7 +57,7 @@ export default {
   bisect_already_in_progress: "이미 bisect가 진행 중이에요 — 새로 시작하기 전에 리셋해주세요.",
   select_known_good: "bisect 범위의 기준이 될, 정상으로 확인된 커밋을 하나 이상 선택해주세요.",
   cannot_verify_clean: "작업 트리가 깨끗한지 확인할 수 없어 bisect를 거부해요: {detail}",
-  working_tree_dirty: "작업 트리에 커밋되지 않은 변경사항이 있어요 — bisect 전에 커밋하거나 스태시해주세요.",
+  working_tree_dirty: "작업 트리에 커밋 안 된 변경사항이 있어요 — bisect 전에 커밋하거나 스태시해주세요.",
   unknown_mark: '알 수 없는 마크예요: {mark}("good", "bad", "skip" 중 하나여야 해요).',
   no_bisect_in_progress_start: "진행 중인 bisect가 없어요 — 먼저 시작해주세요.",
   bisect_run_aborted: "자동 bisect 실행이 중단됐어요 — {detail}.",

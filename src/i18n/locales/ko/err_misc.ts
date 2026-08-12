@@ -61,7 +61,7 @@ export default {
   // reflog.rs
   restore_needs_worktree: "복원에는 작업 트리가 필요해요(베어 저장소는 지원하지 않아요)",
   cannot_verify_clean_refusing_restore: "작업 트리가 깨끗한지 확인할 수 없어 복원을 거부해요: {detail}",
-  worktree_has_uncommitted_restore: "작업 트리에 커밋되지 않은 변경사항이 있어요 — 복원하기 전에 커밋하거나 스태시해주세요.",
+  worktree_has_uncommitted_restore: "작업 트리에 커밋 안 된 변경사항이 있어요 — 복원하기 전에 커밋하거나 스태시해주세요.",
   cannot_read_head_reflog_cap: "HEAD의 reflog를 읽을 수 없어요: {detail}",
   cannot_read_head_reflog: "HEAD의 reflog를 읽을 수 없어요: {detail}",
   reflog_stale_selection_one: "{ref}이(가) 더 이상 존재하지 않아요 — reflog에는 이제 항목이 {count}개 있어요. 오래된 선택으로 복원하는 것은 거부해요.",
@@ -75,7 +75,7 @@ export default {
   nothing_to_undo: "실행 취소할 것이 없어요 — 아직 스냅샷이 없어요.",
   undo_needs_worktree: "실행 취소에는 작업 트리가 필요해요(베어 저장소는 지원하지 않아요)",
   cannot_verify_clean_refusing_undo: "작업 트리가 깨끗한지 확인할 수 없어 실행 취소를 거부해요: {detail}",
-  worktree_has_uncommitted_undo: "작업 트리에 커밋되지 않은 변경사항이 있어요 — 실행 취소하기 전에 커밋하거나 스태시해주세요.",
+  worktree_has_uncommitted_undo: "작업 트리에 커밋 안 된 변경사항이 있어요 — 실행 취소하기 전에 커밋하거나 스태시해주세요.",
   undo_aborted_snapshot_failed: "실행 취소가 중단됐어요 — 먼저 현재 상태의 스냅샷을 찍지 못했어요: {detail}",
   undo_failed_restoring_head: "실행 취소 중 HEAD 복원에 실패했어요: {detail}",
   undo_failed: "실행 취소에 실패했어요: {detail}",

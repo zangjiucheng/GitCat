@@ -38,8 +38,11 @@ export default {
   not_a_repo: '"{repo}"은(는) git 저장소가 아니에요.',
   safety_armed: "Safety Manager 준비 완료다옹 — 뭔가 바꾸기 전엔 항상 먼저 스냅샷을 찍어둔다옹.",
   op_working: "처리 중",
-  cheer_pulled_demo: '풀했다옹 <span class="jp">(demo).</span>',
-  cheer_pushed_demo: '푸시했다옹 <span class="jp">(demo).</span>',
+  // `.jp`는 색+굵기 강조(index.html:609,654)로, 타마의 감탄사에 붙는 자리예요.
+  // 영어는 `にゃ〜`가 그 자리를 차지하지만 한국어는 `다옹`이 동사에 붙으므로,
+  // 강조를 동사째로 옮겨요 — `(demo).`는 디버그 표시라 강조하면 안 돼요.
+  cheer_pulled_demo: '<span class="jp">풀했다옹</span> (demo).',
+  cheer_pushed_demo: '<span class="jp">푸시했다옹</span> (demo).',
   cheer_rewound: '되돌렸어요 — <b>아무것도 잃지 않았어요</b>. <span class="jp">やったー♪</span>',
   cheer_rewound_kept: '되돌렸어요 — <b>변경사항은 유지했어요</b>. <span class="jp">やったー♪</span>',
 };

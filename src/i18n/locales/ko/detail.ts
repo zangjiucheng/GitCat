@@ -6,7 +6,7 @@ export default {
     'はじめまして! 나는 GitCat의 수호자 <b>Tama</b>다옹. 매번 무언가 바뀌기 전에 스냅샷을 찍어두니까, 히스토리는 언제나 나와 함께 <span class="jp">안전하다옹♪</span>',
   hero_bubble_loaded_plain: "매번 변경 전에 스냅샷이 찍혀요 — 히스토리는 항상 안전해요.",
   hero_stat: '<b>{ms}ms</b> 만에 배치된 커밋 <span class="n">{n}</span>개',
-  hero_hint_loaded: "커밋을 클릭해 살펴보세요 · 점을 다른 점 위로 끌어다 놓으면 체리픽돼요 · 되돌리려면 ⌘Z를 눌러주세요",
+  hero_hint_loaded: "커밋을 클릭해 살펴보세요 · 점을 다른 점 위로 끌어다 놓으면 체리픽돼요 · ⌘Z로 실행 취소",
   hero_bubble_empty:
     'はじめまして! 나는 <b>Tama</b>다옹. Git 저장소를 열어주면 눈 깜짝할 사이에 히스토리를 전부 펼쳐 <span class="jp">보인다옹♪</span>',
   hero_bubble_empty_plain: "시작하려면 Git 저장소를 열어주세요.",

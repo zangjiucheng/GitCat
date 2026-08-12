@@ -1,4 +1,4 @@
-// 설정 모달 문자열. 키는 `settings.<key>` 형태가 됩니다.
+// 설정 모달 문자열. 키는 `settings.<key>` 형태가 돼요.
 export default {
   title: "설정",
   subtitle: "테마, 체리픽 기본값, 업데이트 확인, 이 저장소의 git 사용자 정보.",
@@ -46,7 +46,7 @@ export default {
   auto_check_updates: "실행 시 자동으로 업데이트 확인",
   use_nightly: "나이틀리 빌드 사용",
   nightly_hint:
-    "매일 만들어지는 불안정한 빌드예요. 언제든 최신 안정 버전으로 다시 전환할 수 있어요.",
+    "디버그 로그를 자세히 남기는, 매일 만들어지는 불안정한 빌드예요. 언제든 최신 안정 버전으로 다시 전환할 수 있어요.",
   check_updates_now: "지금 업데이트 확인",
   checking_updates: "업데이트 확인하는 중…",
   up_to_date: "최신 버전이에요.",

@@ -1,10 +1,9 @@
 // 히스토리를 다시 쓰는 작업(리베이스, 병합(스쿼시 + 다중/옥토퍼스/순차 포함),
 // 되돌리기, 태그 생성/삭제, 체리픽)을 위한 앱 자체 작성 백엔드 오류 문자열
-// (PER-82). 키는 `err_history.<key>`가 돼요. 영어가 SOURCE OF TRUTH이며,
-// 이 텍스트는 git_rebase.rs / git_merge.rs / git_revert.rs / git_tag.rs /
-// git_pick.rs의 Rust `ierr`/`ierrp` 호출부와 그대로 일치해야 해요. 원본 git
-// stderr는 여기에 키로 등록되지 않으며(병합/리베이스 실패 후 그런 출력이
-// 많이 나와요), 그대로 통과돼요.
+// (PER-82)의 한국어 번역. 키는 `err_history.<key>`가 돼요. 영어가 SOURCE OF
+// TRUTH이며, 여기 없는 키는 자동으로 영어로 폴백돼요. 원본 git stderr는 여기에
+// 키로 등록되지 않으며(병합/리베이스 실패 후 그런 출력이 많이 나와요), 그대로
+// 통과돼요 — `{detail}` 같은 자리에 담기는 그 원문은 번역하지 않아요.
 export default {
   // 공용 git 실행 / 저장소 열기 / 스냅샷 / 리비전 검증 실패.
   // ({detail}에는 원본 io/git2 사유가 그대로 담기며 번역하지 않아요.)

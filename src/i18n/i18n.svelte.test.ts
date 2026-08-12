@@ -19,10 +19,9 @@ describe("locale registry", () => {
       setLocale("ko");
       expect(locale()).toBe("ko");
 
-      // The corpus is at full parity (enforced by
-      // .claude/scratch/ko-parity.mjs, which reports zero MISSING KEY lines),
-      // so there is no key present in en/ and genuinely absent from ko/ to
-      // exercise the ko -> en hop in isolation. Assert instead that the
+      // ko/ currently has an entry for every en/ key, so there is no key
+      // present in en/ and genuinely absent from ko/ to exercise the
+      // ko -> en hop in isolation. Assert instead that the
       // locale layer is actually consulted rather than bypassed: the same
       // key returns the ko string under "ko" and the en string under "en".
       expect(t("common.cancel")).toBe("취소");

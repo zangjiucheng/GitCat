@@ -27,7 +27,7 @@ export default {
   named_tools: "이름 붙인 도구",
   named_tools_help_pre: "이름 붙인 도구를 원하는 만큼 저장하고, 종류별로 하나씩 ",
   named_tools_help_bold: "활성",
-  named_tools_help_post: "으로 지정할 수 있어요. 활성 상태인 이름 붙인 도구는 위의 단일 입력란보다 우선하며, 그 입력란은 대체 값으로 남아요.",
+  named_tools_help_post: " 상태로 지정할 수 있어요. 활성 상태인 이름 붙인 도구는 위의 단일 입력란보다 우선하며, 그 입력란은 대체 값으로 남아요.",
   no_named_tools: "아직 이름 붙인 도구가 없어요 — 아래에서 추가해주세요.",
   active: "활성",
   deactivate: "비활성화",
