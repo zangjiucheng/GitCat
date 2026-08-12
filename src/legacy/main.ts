@@ -1324,7 +1324,10 @@ cv.addEventListener("contextmenu",(e)=>{
     const rem=pool.find(r=>r&&r.kind==="remote");
     if(rem){ sidebarCtrl.openCheckoutConfirm(rem.label, true, e.clientX, e.clientY); return; }
   }
-  const sha=(BACKEND&&BACKEND.rows[row])?BACKEND.rows[row].sha:hhex(row);
+  // Full oid (BACKEND.oids[row]), not the short display sha, so the menu's
+  // "Copy full SHA" really copies the full hash and git ops get an unambiguous
+  // ref (#43). openAt derives shortSha from it via slice(0,7).
+  const sha=(BACKEND&&BACKEND.oids&&BACKEND.oids[row])?BACKEND.oids[row]:((BACKEND&&BACKEND.rows[row])?BACKEND.rows[row].sha:hhex(row));
   commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), e.clientX, e.clientY);
 });
 cv.addEventListener("keydown",(e)=>{
