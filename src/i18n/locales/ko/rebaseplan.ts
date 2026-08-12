@@ -1,0 +1,27 @@
+// 인터랙티브 리베이스 플래너. 키는 `rebaseplan.<key>`가 돼요.
+export default {
+  header: "{onto}(으)로 인터랙티브 리베이스",
+  subtitle: "드래그해서 순서를 바꾸고, 커밋마다 작업을 선택한 다음 시작을 눌러주세요.",
+  tama_alt: "놀란 Tama",
+  drag_reorder: "드래그해서 순서 바꾸기",
+  action_aria: "{sha}에 대한 작업",
+  action_pick: "Pick",
+  action_edit: "Edit",
+  action_squash: "Squash",
+  action_fixup: "Fixup",
+  action_drop: "Drop",
+  empty: "여기와 대상 사이에 계획할 수 있는 커밋이 없어요.",
+  start: "인터랙티브 리베이스 시작",
+  starting: "시작하는 중…",
+  // 컨트롤러
+  open_repo_first: "먼저 저장소를 열어주세요.",
+  up_to_date: "이미 {onto} 기준으로 최신이에요 — 계획할 게 없어요.",
+  list_failed: "계획할 커밋 목록을 가져오지 못했어요.",
+  list_failed_e: "계획할 커밋 목록을 가져오지 못했어요 — {error}",
+  demo_applied: "인터랙티브 리베이스를 적용했어요 (demo).",
+  cheer: '인터랙티브 리베이스 완료. <span class="jp">よし!</span>',
+  complete: "인터랙티브 리베이스 완료.",
+  up_to_date_empty: "이미 최신 상태예요 — 리베이스할 내용이 없어요.",
+  could_not_start: "인터랙티브 리베이스를 시작할 수 없었어요.",
+  failed_e: "인터랙티브 리베이스에 실패했어요 — {error}",
+};
