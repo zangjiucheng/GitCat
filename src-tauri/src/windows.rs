@@ -95,7 +95,7 @@ fn window_url(arg: &InitialArg) -> WebviewUrl {
 /// `\\?\C:\…` back to `C:\…`. A path without the prefix (every non-Windows
 /// path, and any already-plain input) is returned untouched, so this is safe to
 /// call unconditionally. Pure string work, unit-tested on every platform.
-fn strip_windows_verbatim_prefix(p: String) -> String {
+pub(crate) fn strip_windows_verbatim_prefix(p: String) -> String {
     if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
     } else if let Some(rest) = p.strip_prefix(r"\\?\") {
@@ -155,12 +155,32 @@ fn initial_arg() -> InitialArg {
 /// process was launched with.
 pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
     let arg = initial_arg();
+    // #39: if this repo is already open in another window — and this launch
+    // isn't the explicit "Open in New Window" action (which passes `--new-window`,
+    // see spawn_new_window) — raise that window and exit instead of duplicating
+    // it. `gitcat <same repo>` run twice now focuses the first window.
+    if let InitialArg::Repo(p) = &arg {
+        if !std::env::args().any(|a| a == "--new-window") && crate::instance_focus::focus_if_open(app, p) {
+            std::process::exit(0);
+        }
+    }
     // Best-effort terminal hint for `gitcat <not-a-repo>`, visible when launched
     // from a shell (a GUI double-click has no attached terminal — there the
     // in-app hint via ?repoError=, surfaced by legacy/main.ts's boot dispatch,
     // is the real one).
     if let InitialArg::NotRepo(p) = &arg {
         eprintln!("gitcat: {p} is not a git repository");
+    }
+    // #39: bind this window's focus listener and register the launch repo BEFORE
+    // building the (comparatively slow) webview — otherwise a re-launch during
+    // window creation / the initial graph load finds no entry and duplicates the
+    // window, which is the impatient `gitcat . ; gitcat .` case this targets. The
+    // focus handler resolves the "main" window lazily when a ping actually
+    // arrives (seconds later, once it's built), so listening first is safe.
+    // set_open_repo keeps the entry current across in-place repo switches.
+    crate::instance_focus::start_listener(app);
+    if let InitialArg::Repo(p) = &arg {
+        crate::instance_focus::register(app, p);
     }
     WebviewWindowBuilder::new(app, "main", window_url(&arg))
         .title(WINDOW_TITLE)
@@ -212,7 +232,10 @@ pub fn spawn_new_window(repo_path: Option<&str>) {
         let mut cmd = Command::new("open");
         cmd.arg("-n").arg("-a").arg(&bundle);
         if let Some(p) = repo_path {
-            cmd.arg("--args").arg(p);
+            // `--new-window` after the repo reaches the new instance's argv and
+            // tells it to skip the #39 already-open dedup — this is the explicit
+            // "Open in New Window" action, which SHOULD get its own window.
+            cmd.arg("--args").arg(p).arg("--new-window");
         }
         match cmd.spawn() {
             Ok(_) => return,
@@ -225,7 +248,7 @@ pub fn spawn_new_window(repo_path: Option<&str>) {
     // foreground on its own, so no LaunchServices dance is needed.
     let mut cmd = Command::new(&exe);
     if let Some(p) = repo_path {
-        cmd.arg(p);
+        cmd.arg(p).arg("--new-window"); // explicit new window: skip the #39 dedup
     }
     cmd.no_console_window();
     if let Err(e) = cmd.spawn() {

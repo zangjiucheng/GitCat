@@ -2918,6 +2918,10 @@ async function openRepo(path){
       await startGraphStream(path);
     }
     CUR_REPO = path;
+    // #39: tell the backend this window now shows `path`, so a later
+    // `gitcat <same repo>` focuses this window instead of opening a duplicate.
+    // Fire-and-forget; re-keys on an in-place repo switch (see instance_focus.rs).
+    if(IN_TAURI) void commands.setOpenRepo(path);
     // Auto-prune old Safety-Manager snapshots per the user's retention policy,
     // once per repo-open. Fire-and-forget (never awaited — must not delay the
     // open); a no-op unless the policy is set to something other than "off".
@@ -3337,6 +3341,9 @@ function bootEmpty(){
 // reset the submodule-nav strip that renders the breadcrumb).
 async function closeRepo(){
   if(!IN_TAURI||!CUR_REPO) return;
+  // #39: this window no longer shows a repo — drop its focus-registry entry so
+  // `gitcat <that repo>` opens fresh rather than focusing an empty window.
+  void commands.clearOpenRepo();
   await bisectCtrl.cancelIfRunning();
   bootEmpty();
   NAV_STACK.length=0;

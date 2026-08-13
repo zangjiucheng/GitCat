@@ -3223,6 +3223,24 @@ async openRepoInNewWindow(path: string) : Promise<void> {
     await TAURI_INVOKE("open_repo_in_new_window", { path });
 },
 /**
+ * JS: `commands.setOpenRepo(path)` — called by the frontend whenever it opens
+ * (or switches to) a repo, so a later `gitcat <same repo>` finds this window.
+ * Re-keys this window (drops its previous repo entry) so an in-place switch
+ * doesn't leave a stale mapping.
+ */
+async setOpenRepo(path: string) : Promise<void> {
+    await TAURI_INVOKE("set_open_repo", { path });
+},
+/**
+ * JS: `commands.clearOpenRepo()` — called when a repo is closed in-app (the
+ * window stays open with no repo). Removes this window's registry entry so it's
+ * no longer a focus target. (An OS-close exits the process; its now-unreachable
+ * entry is pruned lazily by the next launch's [`focus_if_open`].)
+ */
+async clearOpenRepo() : Promise<void> {
+    await TAURI_INVOKE("clear_open_repo");
+},
+/**
  * Rebuild the native menu with frontend-supplied labels and swap it in — the
  * runtime half of i18n for the OS menu (PER-80). Called by `syncNativeMenu` in
  * legacy/main.ts on boot (when the locale isn't the English default) and on
