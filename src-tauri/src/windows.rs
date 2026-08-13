@@ -171,21 +171,23 @@ pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
     if let InitialArg::NotRepo(p) = &arg {
         eprintln!("gitcat: {p} is not a git repository");
     }
+    // #39: bind this window's focus listener and register the launch repo BEFORE
+    // building the (comparatively slow) webview — otherwise a re-launch during
+    // window creation / the initial graph load finds no entry and duplicates the
+    // window, which is the impatient `gitcat . ; gitcat .` case this targets. The
+    // focus handler resolves the "main" window lazily when a ping actually
+    // arrives (seconds later, once it's built), so listening first is safe.
+    // set_open_repo keeps the entry current across in-place repo switches.
+    crate::instance_focus::start_listener(app);
+    if let InitialArg::Repo(p) = &arg {
+        crate::instance_focus::register(app, p);
+    }
     WebviewWindowBuilder::new(app, "main", window_url(&arg))
         .title(WINDOW_TITLE)
         .inner_size(WINDOW_W, WINDOW_H)
         .min_inner_size(WINDOW_MIN_W, WINDOW_MIN_H)
         .center()
         .build()?;
-    // #39: start this window's focus listener, then register the launch repo
-    // RIGHT AWAY (not just later via the frontend's set_open_repo) — otherwise an
-    // impatient re-launch during the initial graph load finds no entry and
-    // duplicates the window. set_open_repo keeps it current across in-place
-    // switches from there.
-    crate::instance_focus::start_listener(app);
-    if let InitialArg::Repo(p) = &arg {
-        crate::instance_focus::register(app, p);
-    }
     Ok(())
 }
 
