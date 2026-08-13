@@ -27,9 +27,10 @@ export default {
   unstaged: "스테이징 안 됨 ({n})",
   stage_all: "전체 스테이징",
   discard_all_tip: "커밋 안 된 변경사항을 모두 버려요 — 스테이징됨, 스테이징 안 됨, 추적되지 않는 파일까지 전부(복원 가능한 스태시에 저장돼요)",
-  // 이 버튼은 `stage_all`과 같은 flex 행(`.wd-sec-actions`)을 트리 토글까지
-  // 셋이서 나눠 써서 폭이 가장 빠듯한 자리예요. 그래서 `버리기` 형태는 유지하되
-  // `전체`를 `다`로 줄였어요. 늘리려면 실제로 그 행에서 확인하고 늘려주세요.
+  // 이 버튼은 `stage_all`, 그리고 폴더가 있을 때만 나타나는 접기/펼치기 버튼과
+  // 같은 flex 행(`.wd-sec-actions`)을 나눠 써서 폭이 가장 빠듯한 자리예요. 그래서
+  // `버리기` 형태는 유지하되 `전체`를 `다`로 줄였어요. 늘리려면 폴더가 있는
+  // 저장소에서 실제로 그 행을 확인하고 늘려주세요.
   discard_all: "다 버리기",
   no_unstaged: "스테이징 안 된 변경사항 없음",
   // Diff.
@@ -61,9 +62,9 @@ export default {
   stash: "스태시",
   no_stashes: "스태시 없음",
   no_message: "(메시지 없음)",
-  stash_apply_tip: "적용해요(스태시 항목은 그대로 남겨둬요)",
+  stash_apply_tip: "적용 — 스태시 항목은 그대로 남겨둬요",
   apply: "적용",
-  stash_pop_tip: "적용한 뒤 성공하면 삭제해요(팝)",
+  stash_pop_tip: "팝 — 적용한 뒤 성공하면 스태시 항목을 삭제해요",
   pop: "팝",
   stash_drop_tip: "삭제",
   stash_msg_placeholder: "스태시 메시지(선택 사항)…",

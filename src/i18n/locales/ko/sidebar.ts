@@ -161,14 +161,17 @@ export default {
   syncing_submodules: "서브모듈 동기화하는 중…",
   submodules_synced: "서브모듈을 동기화했어요.",
   couldnt_sync_submodules: "서브모듈을 동기화하지 못했어요.",
-  deinit_arm: "{path}을(를) 초기화 해제하는 중이에요 — 확인하려면 경로를 입력해주세요. 먼저 커밋 안 된 변경사항을 백업해둘게요.",
+  // `*_arm` 문자열은 확인 창이 열리기 **전에** 나와요(armDanger 직전의 tama.say).
+  // 아직 아무것도 실행되지 않았으니 `-는 중이에요`로 쓰면 안 돼요 — 바로 아래의
+  // `deinitializing`/`deleting` 같은 실제 진행 문구와 구분이 사라져요.
+  deinit_arm: "{path}을(를) 초기화 해제하려고 해요 — 확인하려면 경로를 입력해주세요. 먼저 커밋 안 된 변경사항을 백업해둘게요.",
   deinitialized_demo: "{path}을(를) 초기화 해제했어요 (demo).",
   deinitializing: "{path} 초기화 해제하는 중…",
   kept_deinit_cancelled: "{path}을(를) 유지했어요 — 초기화 해제가 취소됐어요.",
   deinitialized: "{path}을(를) 초기화 해제했어요.",
   couldnt_deinit: "{path}을(를) 초기화 해제하지 못했어요.",
   deinit_failed: "초기화 해제에 실패했어요 — {error}",
-  remove_arm: "{path}을(를) 제거하는 중이에요 — 확인하려면 경로를 입력해주세요. 먼저 커밋 안 된 변경사항을 모두 백업해둘게요.",
+  remove_arm: "{path}을(를) 제거하려고 해요 — 확인하려면 경로를 입력해주세요. 먼저 커밋 안 된 변경사항을 모두 백업해둘게요.",
   removed_demo: "{path}을(를) 제거했어요 (demo).",
   removing: "{path} 제거하는 중…",
   removed: "{path}을(를) 제거했어요.",
@@ -207,7 +210,7 @@ export default {
   couldnt_create: "{name}을(를) 만들지 못했어요.",
   create_failed: "만들지 못했어요 — {error}",
   // 브랜치 삭제.
-  delete_branch_arm: "{name}을(를) 삭제하는 중이에요 — 확인하려면 브랜치 이름을 입력해주세요. 먼저 그 브랜치의 마지막 커밋을 고정해둘게요.",
+  delete_branch_arm: "{name} 브랜치를 삭제하려고 해요 — 확인하려면 브랜치 이름을 입력해주세요. 먼저 그 브랜치의 마지막 커밋을 고정해둘게요.",
   deleted_demo: "{name}을(를) 삭제했어요 (demo).",
   deleting: "{name} 삭제하는 중…",
   kept_delete_cancelled: "{name}을(를) 유지했어요 — 삭제가 취소됐어요.",
@@ -215,7 +218,7 @@ export default {
   couldnt_delete: "{name}을(를) 삭제하지 못했어요.",
   delete_failed: "삭제에 실패했어요 — {error}",
   // 업스트림으로 리셋.
-  reset_arm: "{name}을(를) {upstream}(으)로 리셋하는 중이에요 — 확인하려면 브랜치 이름을 입력해주세요. 먼저 그 브랜치의 마지막 커밋을 고정해둘게요.",
+  reset_arm: "{name} 브랜치를 {upstream}(으)로 리셋하려고 해요 — 확인하려면 브랜치 이름을 입력해주세요. 먼저 그 브랜치의 마지막 커밋을 고정해둘게요.",
   reset_demo: "{name}을(를) {upstream}(으)로 리셋했어요 (demo).",
   resetting: "{name}을(를) {upstream}(으)로 리셋하는 중…",
   reset_done: "{name}을(를) {upstream}(으)로 리셋했어요.",
@@ -240,7 +243,7 @@ export default {
   tag_created: "태그 {name}을(를) 만들었어요.",
   couldnt_create_tag: "태그 {name}을(를) 만들지 못했어요.",
   // 태그 삭제.
-  delete_tag_arm: "태그 {name}을(를) 삭제하는 중이에요 — 확인하려면 태그 이름을 입력해주세요. 먼저 그 대상을 고정해둘게요.",
+  delete_tag_arm: "{name} 태그를 삭제하려고 해요 — 확인하려면 태그 이름을 입력해주세요. 먼저 그 대상을 고정해둘게요.",
   deleted_tag_demo: "태그 {name}을(를) 삭제했어요 (demo).",
   deleting_tag: "태그 {name} 삭제하는 중…",
   deleted_tag: "태그 {name}을(를) 삭제했어요.",

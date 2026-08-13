@@ -1,4 +1,4 @@
-// 정적 상단 바 / 툴바 + 로딩 화면 문자열(index.html에 있으며 island이 아니라서
+// 정적 상단 바 / 툴바 + 로딩 화면 문자열(index.html에 있으며 island가 아니라서
 // legacy/main.ts의 applyStaticI18n이 명령형으로 적용해요). 키는 `topbar.<key>`가 돼요.
 export default {
   repo_pick_empty: "저장소 열기…",

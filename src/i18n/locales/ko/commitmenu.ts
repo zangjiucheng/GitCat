@@ -15,7 +15,7 @@ export default {
   ph_branch: "브랜치 이름…",
   ph_tag: "태그 이름…",
   ph_tag_message: "메시지(선택 사항 — 주석 태그)…",
-  at_hint: "{sha}에 · Enter로 만들기, Esc로 취소",
+  at_hint: "{sha} 커밋에서 · Enter로 만들기, Esc로 취소",
   pending_cherry: "체리픽하는 중…",
   pending_merge: "병합하는 중…",
   pending_revert: "되돌리는 중…",
