@@ -235,10 +235,18 @@ fn singleton_still_wins_over_gitconfig_and_named_falls_back_to_singleton_when_de
 /// into two fixed marker files under `out_dir`, so the test can assert their
 /// exact content without ever launching a real GUI diff tool.
 fn recording_diff_cmd(out_dir: &Path) -> String {
+    // Copy to a temp then `mv` (an atomic rename within the same dir) so each
+    // .out file only ever appears with its FULL content. `wait_for()` polls for
+    // existence, so a plain non-atomic `cp` left a window where the file existed
+    // but was still empty — a loaded CI runner could read it then, giving a
+    // flaky `""` (see tool_settings.rs:210). The temp lives in the same out_dir
+    // so the rename stays on one filesystem.
+    let local = out_dir.join("local.out");
+    let remote = out_dir.join("remote.out");
     format!(
-        "cp \"$LOCAL\" '{}' && cp \"$REMOTE\" '{}'",
-        out_dir.join("local.out").display(),
-        out_dir.join("remote.out").display()
+        "cp \"$LOCAL\" '{l}.tmp' && mv '{l}.tmp' '{l}' && cp \"$REMOTE\" '{r}.tmp' && mv '{r}.tmp' '{r}'",
+        l = local.display(),
+        r = remote.display(),
     )
 }
 
