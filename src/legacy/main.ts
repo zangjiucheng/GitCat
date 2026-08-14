@@ -553,6 +553,10 @@ function renderContent(st, rowLo, rowHi, strip){
     if(l.some&&l.some(x=>x&&x.kind==="head")){ headRow=r; break; }
   }
   ctx.textBaseline="middle"; ctx.font=layout.chipFont;
+  // Inline ref-chip bounds are frame-constant (lastTx + window width), so compute
+  // once here and reuse across rows instead of allocating per row in the loop;
+  // chipEntryAt recomputes the same on pointer events (#30). Unused in column mode.
+  const chipBounds=inlineChipBounds();
   for(let r=first;r<=last;r++){
     const y=r*rowH+rowH*0.5-st+bh, x=laneX(G.commitLane[r]), col=LANE_COLORS[G.commitColor[r]];
     const bisectDim = B && !(r>B.lo&&r<B.hi) && r!==B.good && r!==B.bad;
@@ -594,7 +598,7 @@ function renderContent(st, rowLo, rowHi, strip){
     // they don't all fit. In column mode (bcw>0) they live in the left
     // BRANCH/TAG gutter and the subject stays put at cx; inline (bcw===0) they
     // sit before the subject, advancing cx past whatever was drawn.
-    if(bcw>0){ drawGutterChips(r,BRANCH_PAD_L,bcw-6,y,col,6,false); }
+    if(bcw>0){ drawGutterChips(r,BRANCH_PAD_L,bcw-6,y,col,6); }
     else {
       // Same breathing room after the last chip that column mode's message
       // gets after ITS divider (MSG_TEXT_PAD, applied above to cx already) —
@@ -615,7 +619,7 @@ function renderContent(st, rowLo, rowHi, strip){
       // alike, and long before this limit is in play. That one predates the
       // chips and is left alone here.
       const cx0=cx;
-      cx=drawGutterChips(r,cx,W-AUTHOR_GUTTER-MIN_SUBJECT_W-MSG_TEXT_PAD,y,col,8,true);
+      cx=drawGutterChips(r,cx,chipBounds.xLimit,y,col,chipBounds.gap);
       if(cx>cx0) cx+=MSG_TEXT_PAD;
     }
     // Skip the per-row message/author/sha text while scrolling FAST (fastScroll):
@@ -934,36 +938,53 @@ function fitChips(list,cap,x0,xLimit,gap){
   }
   return out;
 }
+const PLUS_RESERVE=34;
+// The inline-mode gap between chips (and after the last chip before the "+N"
+// pill). Named so the draw call site (drawGutterChips in inline mode) and the
+// on-demand hit test (inlineChipBounds -> chipEntryAt) can't drift apart.
+const CHIP_GAP_INLINE=8;
+// Greedy chip fit + the "+N" pill's re-fit, shared by the draw path
+// (drawGutterChips) and the on-demand hit test (chipEntryAt) so both lay a row's
+// chips out at byte-identical spans. Fit once with no reservation; only if some
+// overflow, re-fit leaving room for the pill so it never collides with the last
+// chip. Returns the placed chips (x/width) and how many didn't fit.
+function fitChipsWithPill(list,cap,x0,xLimit,gap){
+  let placed=fitChips(list,cap,x0,xLimit,gap);
+  let overflow=list.length-placed.length;
+  if(overflow>0){
+    placed=fitChips(list,cap,x0,xLimit-PLUS_RESERVE-gap,gap);
+    overflow=list.length-placed.length;
+  }
+  return {placed,overflow};
+}
+// Row-independent inline chip bounds — where drawGutterChips lays chips out in
+// inline mode (bcw===0): starting just past the graph|message divider
+// (lastTx+MSG_TEXT_PAD, matching the draw loop's own `cx`, which is
+// tx+MSG_TEXT_PAD with tx===lastTx after every full render / pinned to lastTx in
+// a strip render — the same invariant dividerAt relies on), limited so the
+// subject keeps MIN_SUBJECT_W plus its trailing pad. Shared with chipEntryAt so
+// on-demand hit-testing reproduces the exact spans the frame painted, with no
+// per-frame recorded map to retain or prune (#30).
+function inlineChipBounds(){
+  return {x0:lastTx+MSG_TEXT_PAD, xLimit:view.cssW-AUTHOR_GUTTER-MIN_SUBJECT_W-MSG_TEXT_PAD, gap:CHIP_GAP_INLINE};
+}
 // Draw a row's ref chips into the gutter (or inline before the subject), plus a
 // "+N" pill when some don't fit — recording that pill's x-span in overflowHit so
 // a click there cycles the row (see endPointer). Returns the x just past the
 // last thing drawn (inline mode advances the subject past it). `rowColor` is
 // the row's lane colour — every chip tints to it in both layouts (see
-// paintChip). Reserved room for the pill (RESERVE) is generous enough for a
-// two-digit count so it always fits. With `recordHits`, ALSO records every
-// placed chip's own x-span in chipHit (row -> spans) for chipEntryAt, which
-// answers "which chip is under this x" for the hover tooltip (labelAt) and the
-// label context menu. Only the inline call site asks for that: column mode
-// resolves refs from its whole gutter cell and never consults chipEntryAt, so
-// building the spans there would be per-frame waste. Both maps are cleared for
-// the row either way, so a layout switch can't leave stale spans behind.
-const PLUS_RESERVE=34;
-function drawGutterChips(row,x0,xLimit,y,rowColor,gap,recordHits){
-  overflowHit.delete(row); chipHit.delete(row);
+// paintChip). Reserved room for the pill (PLUS_RESERVE) is generous enough for a
+// two-digit count so it always fits. Which individual chip sits under a given x
+// (for the hover tooltip + label menu) is answered on demand by chipEntryAt,
+// which replays this same fit — so nothing per-chip is recorded here.
+function drawGutterChips(row,x0,xLimit,y,rowColor,gap){
+  overflowHit.delete(row);
   const list=displayChipsFor(row);
   if(!list.length) return x0;
   const cap=showAllTags?list.length:1;
-  // First fit with no reservation; if everything intended fits, no pill needed.
-  let placed=fitChips(list,cap,x0,xLimit,gap);
-  let overflow=list.length-placed.length;
-  if(overflow>0){
-    // Re-fit leaving room for the pill, so it never collides with the last chip.
-    placed=fitChips(list,cap,x0,xLimit-PLUS_RESERVE-gap,gap);
-    overflow=list.length-placed.length;
-  }
+  const {placed,overflow}=fitChipsWithPill(list,cap,x0,xLimit,gap);
   let endX=x0;
   for(const c of placed){ paintChip(c.x,y,c.text,c.w,c.entry,rowColor); endX=c.x+c.w; }
-  if(recordHits) chipHit.set(row, placed.map(c=>({x0:c.x, x1:c.x+c.w, entry:c.entry})));
   if(overflow>0){
     const px=placed.length?endX+gap:x0;
     ctx.font=layout.chipFont;
@@ -1088,13 +1109,23 @@ function dividerAt(x){
   if(bcw>0&&Math.abs(x-bcw)<=COL_HANDLE) return "branch";
   if(lastTx>COL_HANDLE&&Math.abs(x-lastTx)<=COL_HANDLE) return "graph";
   return null; }
-// The painted chip under screen-x `mx` in `row` (inline mode) — chipHit spans
-// are recorded per rendered row by drawGutterChips, which only fills them in
-// this layout. Null over the "+N" pill (overflowPillAt covers that), over plain
-// subject text, and everywhere in column mode.
+// The painted chip under screen-x `mx` in `row` (inline mode). Recomputes the
+// row's chip spans on demand — the SAME displayChipsFor + fitChipsWithPill layout
+// drawGutterChips paints, at the shared inlineChipBounds — rather than reading a
+// per-frame recorded map. Hit-testing runs on pointer events (a handful of times
+// a second), not per frame (~60×/s), so the work is cheap here and nothing has to
+// be retained or pruned as rows scroll (#30). Null over the "+N" pill
+// (overflowPillAt covers that), over plain subject text, and everywhere in column
+// mode (bcw>0), which resolves refs from its whole gutter cell and never asks
+// which individual chip was hit.
 function chipEntryAt(mx,row){
-  const spans=chipHit.get(row); if(!spans) return null;
-  for(const s of spans) if(mx>=s.x0&&mx<=s.x1) return s.entry;
+  if(layout.branchColW>0||!G||row<0) return null;
+  const list=displayChipsFor(row);
+  if(!list.length) return null;
+  const {x0,xLimit,gap}=inlineChipBounds();
+  const cap=showAllTags?list.length:1;
+  const {placed}=fitChipsWithPill(list,cap,x0,xLimit,gap);
+  for(const c of placed) if(mx>=c.x&&mx<=c.x+c.w) return c.entry;
   return null;
 }
 // True when screen-x `mx` is over `row`'s "+N" overflow pill (inline mode; the
@@ -2073,14 +2104,6 @@ function setGraphLabelLayout(v){ graphLabelInline=(v!=="column"); recomputeLayou
 const refRot=new Map();
 let refRotEpoch=0;
 const overflowHit=new Map();
-// Every rendered row's PAINTED chip x-spans (CSS px, scroll-independent),
-// entry included — chipEntryAt reads this to answer "which MergedChip is
-// under this x", which feeds both the hover tooltip (labelAt) and the
-// label-context-menu's chip targeting, instead of either re-deriving layout.
-// Cleared per row exactly like overflowHit above, but only POPULATED inline
-// (drawGutterChips' `recordHits`): column mode resolves refs from its whole
-// gutter cell and never asks which individual chip was hit.
-const chipHit=new Map();
 function rowSha(row){ return (BACKEND&&BACKEND.rows[row]&&BACKEND.rows[row].sha)||("r"+row); }
 // This row's refs exactly as the backend delivered them (no priority sort, no
 // rotation): the FULL list when available (allRefs), else the single primary
@@ -2624,7 +2647,7 @@ function restoreGraphFromCache(path){
   loadedSeedTips=c.seedTips; loadedHeadOid=c.headOid; lastRefSig=c.refSig;
   graphStreamComplete=true; lastLoadTruncated=false;
   refRot.clear(); for(const [k,v] of c.refRot) refRot.set(k,v);
-  overflowHit.clear(); chipHit.clear(); bufferValid=false;
+  overflowHit.clear(); bufferValid=false;
   recomputeLayout();                                  // rebuild scroll bounds for this G.N
   state.scrollTop=state.scrollTarget=clampScroll(c.scrollTarget); // land back at the same place
   // Selection resets to none, exactly like a fresh load (loadGraph) would — the
@@ -2661,7 +2684,7 @@ async function startGraphStream(path){
   BACKEND = { n:0, oids:[], lane:[], color:[], merge:[], gapStart:[0], gapTop:[], gapBot:[], gapColor:[], rows:[], refs:[], allRefs:[], ncol:7, laneCount:0 };
   // A fresh graph (repo switch or refresh) invalidates any per-commit label
   // rotation the user had spun up — the ref set itself may have changed.
-  refRot.clear(); overflowHit.clear(); chipHit.clear();
+  refRot.clear(); overflowHit.clear();
   // A fresh stream: the incremental-refresh baseline is now stale until this
   // load finishes. loadedOids is rebuilt from scratch as batches arrive; the
   // fast path (see reloadGraph) is disabled until `done` sets graphStreamComplete.
