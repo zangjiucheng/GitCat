@@ -1295,7 +1295,13 @@ cv.addEventListener("dblclick",(e)=>{
   const dv=dividerAt(p.x);
   if(dv){ if(dv==="branch") colW.branch=null; else colW.graph=null; saveColW(); recomputeLayout(); dirty=true; return; }
   const hit=hitTest(p.x,p.y);
-  if(!hit||hit.row<0) return;
+  if(!hit) return;
+  // The pinned "Uncommitted changes" band (sentinel row -2) gets the same
+  // gesture as a commit row: select it, then open its expanded diff. It has to
+  // be handled before the row<0 guard below, which exists to ignore the other
+  // negative sentinels.
+  if(hit.row===-2){ selectWorkdir(); workdirCtrl.expandDiff(); return; }
+  if(hit.row<0) return;
   select(hit.row);
   detailCtrl.expandDiff();
 });

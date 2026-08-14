@@ -92,10 +92,12 @@
   // commit view uses (see Detail.svelte's .diffx) — a bigger window for reading
   // a large working-tree change, with the staged/unstaged file lists on the left
   // and the full per-hunk / per-line staging kept intact on the right.
-  let diffExpanded = $state(false);
+  // State lives on the controller so the canvas can open this too: double-
+  // clicking the pinned workdir band calls workdirCtrl.expandDiff(), the same
+  // way double-clicking a commit row calls detailCtrl.expandDiff().
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape" && diffExpanded) {
-      diffExpanded = false;
+    if (e.key === "Escape" && workdirCtrl.diffExpanded) {
+      workdirCtrl.collapseDiff();
       e.stopPropagation();
     }
   }
@@ -274,7 +276,7 @@
       <div class="wd-sec-head">
         <h4 class="d-lab" style="margin:0">{t("workdir.diff")}</h4>
         {@render workdirLinesBar(file)}
-        <button class="wd-act" title={t("workdir.expand_diff")} aria-label={t("workdir.expand_diff_aria")} onclick={() => (diffExpanded = true)}>
+        <button class="wd-act" title={t("workdir.expand_diff")} aria-label={t("workdir.expand_diff_aria")} onclick={() => workdirCtrl.expandDiff()}>
           <Maximize2 class="ico" size={13} aria-hidden="true" />
         </button>
       </div>
@@ -356,7 +358,7 @@
        the right. A top-level scrim so it's a direct child of .detail, same as
        the commit modal (index.html's `.detail.collapsed>*:not(.scrim)` exempts
        it from the Focus-mode panel collapse). -->
-  <div class="scrim" class:on={diffExpanded}>
+  <div class="scrim" class:on={workdirCtrl.diffExpanded}>
     <div class="modal diffx">
       <div class="modal-head">
         <div class="diffx-head-main">
@@ -431,7 +433,7 @@
         </div>
       </div>
       <div class="modal-foot">
-        <button class="btn ghost" onclick={() => (diffExpanded = false)}>{t("common.close")}</button>
+        <button class="btn ghost" onclick={() => workdirCtrl.collapseDiff()}>{t("common.close")}</button>
       </div>
     </div>
   </div>
