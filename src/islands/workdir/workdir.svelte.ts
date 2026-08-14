@@ -341,6 +341,20 @@ class WorkdirState {
   private lastClickedHeader: string | null = null;
   private lastClickedIdx: number | null = null;
 
+  // The near-fullscreen diff popup. Lives on the controller rather than inside
+  // Workdir.svelte so the canvas can open it too — double-clicking the pinned
+  // workdir band mirrors double-clicking a commit row, which reaches
+  // detailCtrl.expandDiff(). Same shape as that pair.
+  diffExpanded = $state(false);
+
+  expandDiff() {
+    this.diffExpanded = true;
+  }
+
+  collapseDiff() {
+    this.diffExpanded = false;
+  }
+
   stashes = $state<StashEntry[]>([]);
   stashOpen = $state(false); // the inline "+ Stash changes…" form, mirrors sidebar's newBranchOpen
   stashMessage = $state("");
@@ -369,6 +383,7 @@ class WorkdirState {
     this.diffFile = null;
     this.diffHunks = [];
     this.diffError = null;
+    this.diffExpanded = false;
     this.clearLineSelection();
     this.refreshStatus(this.repo);
     this.refreshStashes(this.repo);
@@ -376,6 +391,7 @@ class WorkdirState {
 
   deselect() {
     this.selected = false;
+    this.diffExpanded = false;
   }
 
   // Which backend call global Undo (⌘Z/#undoBtn's `globalUndo()`, legacy/

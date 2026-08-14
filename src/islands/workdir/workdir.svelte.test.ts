@@ -1316,3 +1316,66 @@ describe("folder collapse state (Collapse all / Expand all)", () => {
     expect(workdirCtrl.isDirCollapsed("unstaged", "src")).toBe(false); // same path, different section
   });
 });
+
+describe("expanded diff popup", () => {
+  beforeEach(() => {
+    workdirCtrl.collapseDiff();
+  });
+
+  it("starts closed", () => {
+    expect(workdirCtrl.diffExpanded).toBe(false);
+  });
+
+  it("expandDiff opens it and collapseDiff closes it", () => {
+    workdirCtrl.expandDiff();
+    expect(workdirCtrl.diffExpanded).toBe(true);
+    workdirCtrl.collapseDiff();
+    expect(workdirCtrl.diffExpanded).toBe(false);
+  });
+
+  it("expandDiff is idempotent", () => {
+    workdirCtrl.expandDiff();
+    workdirCtrl.expandDiff();
+    expect(workdirCtrl.diffExpanded).toBe(true);
+  });
+
+  it("collapseDiff on an already-closed popup is a no-op", () => {
+    workdirCtrl.collapseDiff();
+    expect(workdirCtrl.diffExpanded).toBe(false);
+  });
+
+  it("lives on the controller so the canvas can open it without the component", () => {
+    // The point of lifting it out of Workdir.svelte: main.ts's dblclick
+    // handler reaches this without the panel being mounted.
+    expect(typeof workdirCtrl.expandDiff).toBe("function");
+    expect(typeof workdirCtrl.collapseDiff).toBe("function");
+  });
+
+  // Living on the controller costs what a component-local `$state(false)`
+  // gave for free: Detail.svelte destroys the whole <Workdir /> instance on
+  // deselect, so the old flag reset on every remount. A controller field
+  // survives, and would re-open the modal by itself on the next single
+  // click — on the empty "select a file" placeholder, no less.
+  it("deselect() closes the popup so it does not spring back open", () => {
+    workdirCtrl.selected = true;
+    workdirCtrl.expandDiff();
+    workdirCtrl.deselect();
+    expect(workdirCtrl.diffExpanded).toBe(false);
+  });
+
+  it("select() closes the popup left open by a previous selection", () => {
+    workdirCtrl.expandDiff();
+    workdirCtrl.select("/repo");
+    expect(workdirCtrl.diffExpanded).toBe(false);
+  });
+
+  it("survives the full open → select a commit → reopen band gesture", () => {
+    // main.ts's select(row) calls workdirCtrl.deselect(); the band click
+    // that follows must land on a closed popup.
+    workdirCtrl.select("/repo");
+    workdirCtrl.expandDiff();
+    workdirCtrl.deselect(); // clicking any commit row
+    workdirCtrl.select("/repo"); // single-clicking the band again
+    expect(workdirCtrl.diffExpanded).toBe(false);
+  });
+});
