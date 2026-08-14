@@ -319,7 +319,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    them instead — pushing the badge away from the right edge it's aligned to.
    `display:flex` centres the lucide icon in the box. */
 .ref-group>summary .fold-btn{margin-left:4px;display:flex;align-items:center}
-.ref-item{display:flex;align-items:center;gap:8px;padding:5px 8px 5px calc(24px + var(--depth) * 12px);border-radius:6px;cursor:pointer;position:relative}
+.ref-item{display:flex;align-items:center;gap:8px;padding:5px 8px 5px calc(24px + var(--depth) * 12px);border-radius:6px;cursor:pointer;position:relative;user-select:none}
 .ref-item:hover{background:var(--elevated)}
 .ref-item.current{background:color-mix(in srgb,var(--accent) 14%,transparent)}
 /* Tracks --depth with the row's own padding, so the "you are here" dot stays in
@@ -346,6 +346,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-list{display:flex;flex-direction:column}
 .ref-item .ref-menu{margin-left:auto;opacity:0;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;border-radius:4px;flex:none}
 .ref-item:hover .ref-menu{opacity:1}
+/* A row's own Enter/Space now jumps rather than opening this menu (see
+   Sidebar.svelte's onkeydown), so the ⋮ button is the only keyboard route
+   to Checkout/etc left on the row — a keyboard user tabbing onto it needs
+   to actually SEE it light up, not just click-hover users. */
+.ref-item:focus-within .ref-menu{opacity:1}
 .ref-item .ref-menu:hover{background:var(--elevated);color:var(--text)}
 .ref-item.current .ref-menu{opacity:.65}
 .ref-item .rname.nb{color:var(--accent);font-weight:600}
@@ -358,12 +363,16 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .ref-item .rb-check{flex:none;margin:0;cursor:pointer}
 .ref-item .rb-check:disabled{cursor:default;opacity:.6}
 /* Copy-branch-name — sits right after .rname, hover-revealed like
-   .ref-menu (same opacity:0/1 idiom), but its OWN click never checks out
-   the row: the row's own click already means "check out this branch", so
-   copy needs a distinct, small target rather than stealing that gesture. */
+   .ref-menu (same opacity:0/1 idiom), but its OWN click doesn't jump to the
+   ref's tip like the row's own click does: copy needs a distinct, small
+   target rather than stealing that gesture. */
 .ref-item .copy-name{flex:none;opacity:0;border:none;background:transparent;color:var(--muted);cursor:pointer;
   font-size:11px;line-height:1;padding:2px 4px;border-radius:4px}
 .ref-item:hover .copy-name{opacity:1}
+/* Same keyboard-visibility reasoning as .ref-item:focus-within .ref-menu
+   above: without this, tabbing onto the copy button leaves the focused
+   control invisible while its sibling ⋮ lights up instead. */
+.ref-item:focus-within .copy-name{opacity:1}
 .ref-item .copy-name:hover{background:var(--elevated);color:var(--text)}
 .ref-item.new-branch:hover{background:color-mix(in srgb,var(--accent) 12%,transparent)}
 /* Any row mid-checkout/delete dims and stops accepting clicks — the
@@ -421,10 +430,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .sub-item .rname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* The row's own "⋮" popover trigger — .ref-menu is otherwise only scoped to
    `.ref-item .ref-menu` (branches/tags, which share that class); submodule
-   rows use a different class, so this mirrors that rule verbatim rather than
-   rendering with no fade/hover styling at all. */
+   rows use a different class, so this mirrors those rules verbatim
+   (including the focus-within reveal — a submodule row is tabindex="0"
+   with the same keyboard-only-route-to-the-menu problem as a ref row)
+   rather than rendering with no fade/hover/focus styling at all. */
 .sub-item .ref-menu{margin-left:auto;opacity:0;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;border-radius:4px;flex:none}
 .sub-item:hover .ref-menu{opacity:1}
+.sub-item:focus-within .ref-menu{opacity:1}
 .sub-item .ref-menu:hover{background:var(--elevated);color:var(--text)}
 .sub-status{font-size:10px;font-weight:600;padding:1px 7px;border-radius:var(--r-pill);flex:none;white-space:nowrap}
 .sub-status[data-status="clean"]{background:color-mix(in srgb,var(--success) 16%,transparent);color:var(--success)}
@@ -2136,7 +2148,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
       </section>
       <section>
         <h4 data-i18n="help.branches_h">Branches &amp; tags</h4>
-        <p data-i18n-html="help.branches_p"><b>Right-click a branch label</b> in the graph for branch management (checkout, push, merge, rebase, reset, delete). <b>Right-click a remote</b> label (origin/&#8230;) to check it out as a local branch. Hover a label to see its full name. The left <b>sidebar</b> lists every branch and tag &#8212; click one to check it out; the checkboxes show or hide branches in the graph.</p>
+        <p data-i18n-html="help.branches_p"><b>Right-click a branch label</b> in the graph for branch management (checkout, push, merge, rebase, reset, delete). <b>Right-click a remote</b> label (origin/&#8230;) to check it out as a local branch. Hover a label to see its full name. The left <b>sidebar</b> lists every branch and tag &#8212; click one to jump the graph to its tip commit; for a branch, double-click (or right-click, or its &#8942; button) checks it out instead; the checkboxes show or hide branches in the graph.</p>
       </section>
       <section>
         <h4 data-i18n="help.uncommitted_h">Uncommitted changes</h4>

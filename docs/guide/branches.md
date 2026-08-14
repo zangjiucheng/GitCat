@@ -13,7 +13,8 @@ The full walkthrough is on its way. Here's the outline of what it covers; the [F
 ## What this page will cover
 
 - **Creating a branch** — from `HEAD` or from any local/remote start point you pick (`⌘⇧N`, or **File ▸ New Branch…**).
-- **Checking out** a local branch, or a remote one directly — checking out `origin/feature-x` creates and switches to a local tracking branch automatically.
+- **Clicking a branch or tag row** in the sidebar jumps the graph to its tip commit, with no working-tree change — the safe way to see where a ref points.
+- **Checking out** a local branch, or a remote one directly (double-click a row, right-click it, or use its ⋮ button) — checking out `origin/feature-x` creates and switches to a local tracking branch automatically.
 - **Rename / delete** — from the right-click menu on a branch or tag label on the graph, or the sidebar branch menu.
 - **Branch visibility** — hide/show individual branches, "Hide all branches", and the **Auto** mode that keeps just the current branch plus anything with unpushed/unmerged work.
 - **Tags** — create, delete, and push tags from the sidebar.

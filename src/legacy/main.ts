@@ -1351,7 +1351,8 @@ cv.addEventListener("contextmenu",(e)=>{
     if(br){ sidebarCtrl.openMenuAt(br.label, br.kind==="head", null, e.clientX, e.clientY); return; }
     // A remote-tracking branch label (e.g. origin/main, upstream/3.13) → the
     // sidebar's checkout-confirm, which creates a local branch tracking it —
-    // the same action clicking that remote in the sidebar performs.
+    // the same popover double-clicking (or right-clicking, or the ⋮ button
+    // on) that remote in the sidebar opens.
     const rem=pool.find(r=>r&&r.kind==="remote");
     if(rem){ sidebarCtrl.openCheckoutConfirm(rem.label, true, e.clientX, e.clientY); return; }
   }
@@ -1840,9 +1841,10 @@ function selectWorkdir(){ state.selectedRow=-2; workdirCtrl.select(CUR_REPO); di
 // best-effort, same convention as cmdk's own jump().
 function goToUncommitted(){ selectWorkdir(); state.scrollTarget=0; try{cv.focus()}catch(_){} }
 // Jump to the current commit (HEAD = the current branch's tip). Finds HEAD's row
-// across ALL loaded rows (the "head"-kind ref), selects it, and centres it in the
-// scrollable viewport (same recipe reloadGraph's own reselect uses). No-op if
-// HEAD isn't among the loaded commits (detached/off-screen-only-in-history).
+// across ALL loaded rows (the "head"-kind ref), then hands off to focusRow to
+// select it, centre it in the scrollable viewport, and focus the canvas. Warns
+// via Tama instead (rather than focusRow) if HEAD isn't among the loaded
+// commits (detached/off-screen-only-in-history).
 function goToHead(){
   if(!G||!G.N) return;
   let hr=-1;
@@ -1851,10 +1853,74 @@ function goToHead(){
     if(l.some&&l.some(x=>x&&x.kind==="head")){ hr=r; break; }
   }
   if(hr<0){ Tama.warn(t("legacy.head_not_located")); return; }
-  select(hr);
-  state.scrollTarget=clampScroll(hr*layout.rowH-(view.cssH-bandH())/2);
+  focusRow(hr);
+}
+// Select `row`, centre it in the scrollable viewport (below the pinned band —
+// see bandH()), and put keyboard focus on the canvas so the arrow keys keep
+// working from where you landed. Shared by goToHead and goToOid. Not the only
+// copy of this recipe, though: onGraphBatch's pendingReselect restore
+// deliberately keeps its own copy instead of calling focusRow (it must not
+// steal focus to the canvas after a background reload), and cmdk.svelte.ts's
+// own ⌘K jump keeps a third copy with a deliberately different, off-centre
+// scroll factor.
+function focusRow(row){
+  select(row);
+  state.scrollTarget=clampScroll(row*layout.rowH-(view.cssH-bandH())/2);
   dirty=true;
   try{cv.focus()}catch(_){}
+}
+// Jump to a commit by its FULL 40-char oid. Joins on BACKEND.oids (parallel to
+// rows), never on rows[].sha — that one is a 7-char short hash, so a full oid
+// would never match it, and truncating to compare would collide on a large
+// repo and land on the wrong commit. Returns whether a row was found: the
+// caller knows which ref it was chasing and owns the "not here" message.
+function goToOid(oid){
+  if(!oid||!BACKEND||!BACKEND.oids) return false;
+  const row=BACKEND.oids.indexOf(oid);
+  if(row<0) return false;
+  focusRow(row);
+  return true;
+}
+// Design-mode-only counterpart to goToOid: find a row by ref LABEL instead.
+// In plain-browser design mode BACKEND stays null (loadGraph's `else` branch
+// builds G from generateGraph instead), so there are no oids to join on at all
+// and goToOid above can only ever return false — which made every sidebar ref
+// click warn "isn't in the loaded graph" instead of demoing the jump. The
+// synthetic graph does carry ref LABELS though (generateGraph's refs/allRefs:
+// "main", the BR branch names, the v0.x.y tags, the showcase rows), and several
+// of them are exactly what the design-mode sidebar lists, so a label match is
+// the only join available here — and it is enough to make the demo work.
+//
+// The `BACKEND` guard is the point of this function, not an optimisation: with
+// a real repo open the oid join is authoritative, and falling back to a label
+// there could quietly land on a row whose chip says the right name while the
+// ref itself has since moved, masking a genuine "that commit isn't loaded"
+// — which is precisely what the sidebar's jump_* messages exist to tell apart.
+// Please don't "simplify" the guard away.
+//
+// Scans allRefs (falling back to the single refs[r]) exactly like goToHead
+// above, and hands off to the same focusRow, so a design-mode jump lands and
+// scrolls identically to a real one.
+//
+// FIRST match wins, and that is load-bearing rather than incidental: rows run
+// newest-first, so the lowest matching row is the newest commit carrying that
+// label — the tip, which is what a sidebar click asks for. It matters because
+// generateGraph reuses each BR name up to eight times (`BR[bn%BR.length]`, see
+// its `bn<48` loop), so most branch labels genuinely appear on several rows.
+//
+// Not every demo ref resolves, and that's expected: only some of the sidebar's
+// DEMO_* names ("main", "feat/inline-diff", "fix/lane-cull", "origin/main")
+// exist as labels in this synthetic graph. The demo tags and most demo remotes
+// have no counterpart at all, so clicking those still warns in design mode.
+// That is the honest answer — inventing matching rows just to silence it would
+// make the preview lie about what a jump does.
+function goToRefLabel(label){
+  if(!label||BACKEND||!G||!G.N) return false;
+  for(let r=0;r<G.N;r++){
+    const l=(G.allRefs&&G.allRefs[r])||(G.refs&&G.refs[r]?[G.refs[r]]:[]);
+    if(l.some&&l.some(x=>x&&x.label===label)){ focusRow(r); return true; }
+  }
+  return false;
 }
 // In-app Help page (#helpScrim / index.html) — opened from ⌘K ▸ Help. Toggles the
 // scrim's `.on` class (same show/hide the other scrim modals use); closes on the
@@ -2604,8 +2670,23 @@ let graphRequestSeq=0;
 //                 HEAD oid (moved ⇒ recompute dimming), and whole-ref-set
 //                 signature (unchanged + HEAD unchanged ⇒ pure worktree change).
 let loadedOids=new Set();
-let graphStreamComplete=false;
+export let graphStreamComplete=false;
 let lastLoadTruncated=false;
+// Whether the last FINISHED load is known to be missing history it would
+// otherwise have walked — memory-capped (payload.truncated) OR stopped by a
+// revwalk error partway (payload.error). Both leave graphStreamComplete true
+// over a graph that is genuinely incomplete, so "this ref's commit isn't in
+// the loaded rows" stops meaning "nothing shown reaches it" and starts meaning
+// "we never loaded that far". The sidebar's jumpToRef reads this (via
+// bridge.ts) to pick that message instead of the not-reachable one.
+//
+// Deliberately SEPARATE from lastLoadTruncated rather than replacing it:
+// lastLoadTruncated is the narrower fact (memory cap only), and it has two
+// readers of its own — cacheCurrentGraph's "safe to cache" guard and
+// tryFastRefresh's "is loadedOids trustworthy" guard. Both are about the
+// INCREMENTAL machinery; this flag is about what to tell the user. See the
+// KNOWN GAP note at tryFastRefresh, which the same widening would also fix.
+export let graphIncomplete=false;
 let loadedSeedTips=new Set();
 let loadedHeadOid=null;
 let lastRefSig=null;
@@ -2622,15 +2703,25 @@ let lastRefSig=null;
 const GRAPH_CACHE_CAP=8;
 const graphCache=new LruCache(GRAPH_CACHE_CAP);
 // Snapshot the CURRENTLY-open graph under its path before we navigate away, so a
-// later return restores it. Only caches a COMPLETE, non-truncated load — a
-// half-streamed or memory-capped graph would restore wrong. Cheap: it stores
-// references, not deep copies (the live BACKEND/G are about to be REPLACED by the
-// next load, never mutated in place, so the snapshot stays frozen).
+// later return restores it. Only caches a FINISHED, non-truncated load — a
+// half-streamed or memory-capped graph would restore wrong. "Non-truncated" is
+// NOT the same as "whole": a load whose revwalk errored partway also finishes
+// with lastLoadTruncated false and so IS cached, which is why the entry carries
+// graphIncomplete along with it (see below) rather than the restore assuming
+// the graph is complete. Cheap: it stores references, not deep copies (the live
+// BACKEND/G are about to be REPLACED by the next load, never mutated in place,
+// so the snapshot stays frozen).
 function cacheCurrentGraph(){
   if(!CUR_REPO || !BACKEND || !graphStreamComplete || lastLoadTruncated) return;
   graphCache.set(CUR_REPO, {
     backend:BACKEND, g:G, loadedOids, seedTips:loadedSeedTips, headOid:loadedHeadOid,
     refSig:lastRefSig, refRot:new Map(refRot), scrollTarget:state.scrollTarget,
+    // Carried through the cache rather than recomputed on restore: the guard
+    // above rejects a TRUNCATED load, but not one whose revwalk errored partway
+    // (that leaves lastLoadTruncated false), so an entry here can legitimately
+    // be an incomplete graph. Hardcoding `false` on restore would tell the
+    // sidebar the graph is whole when it isn't.
+    incomplete:graphIncomplete,
   });
 }
 // Put a previously-cached graph for `path` straight back on screen — no stream,
@@ -2645,7 +2736,7 @@ function restoreGraphFromCache(path){
   graphCache.delete(path);
   BACKEND=c.backend; G=c.g; loadedOids=c.loadedOids;
   loadedSeedTips=c.seedTips; loadedHeadOid=c.headOid; lastRefSig=c.refSig;
-  graphStreamComplete=true; lastLoadTruncated=false;
+  graphStreamComplete=true; lastLoadTruncated=false; graphIncomplete=c.incomplete;
   refRot.clear(); for(const [k,v] of c.refRot) refRot.set(k,v);
   overflowHit.clear(); bufferValid=false;
   recomputeLayout();                                  // rebuild scroll bounds for this G.N
@@ -2689,6 +2780,12 @@ async function startGraphStream(path){
   // load finishes. loadedOids is rebuilt from scratch as batches arrive; the
   // fast path (see reloadGraph) is disabled until `done` sets graphStreamComplete.
   graphStreamComplete=false;
+  // The PREVIOUS repo's truncation/error says nothing about this one, and only
+  // this stream's own `done` can decide. Its one reader (jumpToRef) can't even
+  // reach it mid-stream — graphStreamComplete is false from here until `done`,
+  // and that check comes first — so this is purely about never leaving the two
+  // flags disagreeing.
+  graphIncomplete=false;
   loadedOids=new Set();
   setGraphLoadingPill(true,0);
   // Batches arrive via the global "graph-batch" event (listener registered just
@@ -2705,8 +2802,7 @@ async function startGraphStream(path){
 // openRepo below, so a new window (?repo=) whose first graph load fires during
 // boot can't miss early batches.
 if(IN_TAURI) window.__TAURI__.event.listen("graph-batch", (e)=>onGraphBatch(e.payload));
-// "graph-batch" event handler (registered once in src/main.ts, mirroring its
-// own "repo-changed" listener) — grows BACKEND/G with one incremental slice
+// "graph-batch" event handler — grows BACKEND/G with one incremental slice
 // at a time as the backend's revwalk+layout produces it, instead of the old
 // "wait for one giant response, then populate everything at once" shape.
 //
@@ -2814,6 +2910,9 @@ function onGraphBatch(payload){
     // "is this commit loaded?", so a truncated load forces full reloads).
     graphStreamComplete=true;
     lastLoadTruncated=!!payload.truncated;
+    // Assigned unconditionally (not just when one of the two is set), so a
+    // clean finish clears whatever the previous load left behind.
+    graphIncomplete=!!payload.truncated||!!payload.error;
     // The `ancestor`/dimming bit is no longer computed during the stream — that
     // needed an up-front full HEAD-ancestor revwalk that delayed the very first
     // frame (see commands.rs `stream_graph_core`). Now that the whole set is
@@ -2976,7 +3075,7 @@ async function openRepo(path){
     const bp=$(".branch-pill"); if(bp) bp.style.display="";
     // MISS only: BACKEND is empty at this point (startGraphStream() just reset
     // it) — this paints the canvas's OWN empty/reset state immediately;
-    // onGraphBatch() (registered in src/main.ts) takes over from here as
+    // onGraphBatch() (registered in legacy/main.ts) takes over from here as
     // "graph-batch" events stream in, growing BACKEND/G and eventually
     // showing the "Loaded N commits…" toast itself once the walk finishes. On a
     // cache HIT the restored graph is already on screen — nothing to reset.
@@ -3169,6 +3268,15 @@ async function tryFastRefresh(){
   // Guard 1: only a COMPLETE, non-truncated load has a trustworthy loadedOids
   // to answer "is this commit already loaded?" — mid-stream or memory-capped,
   // fall back to full reload.
+  //
+  // KNOWN GAP (deliberately NOT fixed here — widening this changes reload
+  // behaviour well beyond the sidebar-jump work that added graphIncomplete):
+  // a load whose revwalk ERRORED partway also has a knowingly-partial
+  // loadedOids, but it leaves lastLoadTruncated false (only payload.truncated
+  // sets that), so it slips through this guard and a refs-only fast refresh
+  // keeps serving the degraded graph instead of re-walking. graphIncomplete
+  // (declared beside graphStreamComplete above) is exactly that broader fact;
+  // testing it here instead would close this.
   if(!BACKEND || !graphStreamComplete || lastLoadTruncated){ dlog("reload", "FULL — buffer not ready", lastLoadTruncated?"(truncated)":"(streaming)"); return false; }
   let cur;
   try{
@@ -3508,7 +3616,7 @@ i18nEvents.addEventListener("change",()=>{
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
