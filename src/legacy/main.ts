@@ -553,6 +553,10 @@ function renderContent(st, rowLo, rowHi, strip){
     if(l.some&&l.some(x=>x&&x.kind==="head")){ headRow=r; break; }
   }
   ctx.textBaseline="middle"; ctx.font=layout.chipFont;
+  // Inline ref-chip bounds are frame-constant (lastTx + window width), so compute
+  // once here and reuse across rows instead of allocating per row in the loop;
+  // chipEntryAt recomputes the same on pointer events (#30). Unused in column mode.
+  const chipBounds=inlineChipBounds();
   for(let r=first;r<=last;r++){
     const y=r*rowH+rowH*0.5-st+bh, x=laneX(G.commitLane[r]), col=LANE_COLORS[G.commitColor[r]];
     const bisectDim = B && !(r>B.lo&&r<B.hi) && r!==B.good && r!==B.bad;
@@ -614,8 +618,8 @@ function renderContent(st, rowLo, rowHi, strip){
       // W-AUTHOR_GUTTER-MIN_SUBJECT_W clamp — on labelled and unlabelled rows
       // alike, and long before this limit is in play. That one predates the
       // chips and is left alone here.
-      const cx0=cx, cb=inlineChipBounds();
-      cx=drawGutterChips(r,cx,cb.xLimit,y,col,cb.gap);
+      const cx0=cx;
+      cx=drawGutterChips(r,cx,chipBounds.xLimit,y,col,chipBounds.gap);
       if(cx>cx0) cx+=MSG_TEXT_PAD;
     }
     // Skip the per-row message/author/sha text while scrolling FAST (fastScroll):
