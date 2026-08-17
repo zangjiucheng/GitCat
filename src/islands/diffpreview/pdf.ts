@@ -1,35 +1,38 @@
 // Lazy pdf.js bridge for the visual PDF diff preview (issue #37).
 //
-// The app is fully offline, so pdf.js and its worker are BUNDLED (no CDN):
-// `?url` yields Vite's hashed, same-origin asset URL, which the app's CSP
-// (`default-src 'self'`, inherited by `worker-src`) permits. The heavy pdf.js
-// library itself is pulled in via a dynamic `import()` so it lands in its own
-// chunk, loaded only the first time someone actually opens a PDF diff — the
-// image path never pays for it.
+// MAIN-THREAD, NO WEB WORKER. In the Tauri WKWebView a pdf.js module worker
+// constructs but never completes pdf.js's internal "test" handshake, so
+// `getDocument()` hangs forever with no error (a blank canvas). pdf.js has a
+// built-in escape hatch: if `globalThis.pdfjsWorker.WorkerMessageHandler`
+// exists, `PDFWorker.#initialize` takes the fake-worker path and runs the
+// worker's message handler INLINE on the main thread, never creating a Worker.
+// The worker module sets `globalThis.pdfjsWorker` unconditionally at its top
+// level, so importing it here (main thread) flips pdf.js onto that path.
+// Parsing + rendering one preview page on the main thread is cheap.
 //
-// WORKER: we construct the Worker OURSELVES as an explicit MODULE worker
-// (`{ type: "module" }`) and hand it to pdf.js via `workerPort`, instead of
-// setting `GlobalWorkerOptions.workerSrc` and letting pdf.js build it. The
-// bundled worker is an ES module (`pdf.worker.min.mjs`); if pdf.js constructs
-// it as a *classic* worker the `import`/`export` syntax fails to parse and
-// `getDocument()` hangs forever with no rejection (a blank canvas, no error).
-// Owning the Worker guarantees the module type matches the file.
-//
-// pdf.js v6 removed all `eval`/`new Function` use, so it runs under our strict
-// `script-src 'self'` (no 'unsafe-eval'). The remaining CSP caveat is wasm:
-// some image codecs (JBIG2 / JPEG2000) instantiate WebAssembly, which
-// `script-src` without 'wasm-unsafe-eval' blocks. Such a page rejects and the
-// caller shows the reason + external-tool escape hatch. A `loadPdf` timeout
-// turns any *other* hang (a worker that never initializes) into the same
-// visible failure rather than a silent blank.
+// Everything is BUNDLED (the app is offline, no CDN) and pulled in via dynamic
+// `import()`, so pdf.js lands in its own lazy chunk — loaded only the first
+// time someone opens a PDF diff; the image path and main bundle never pay for
+// it. pdf.js v6 uses no `eval`, so it runs under our strict `script-src 'self'`.
+// The one remaining CSP caveat is wasm image codecs (JBIG2/JPEG2000), which
+// `script-src` without 'wasm-unsafe-eval' blocks; such a page rejects and the
+// caller shows the reason + external-tool escape hatch. A load timeout turns
+// any other stall into the same visible failure.
 
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 
 let libPromise: Promise<typeof import("pdfjs-dist")> | null = null;
 
 async function lib(): Promise<typeof import("pdfjs-dist")> {
-  if (!libPromise) libPromise = import("pdfjs-dist");
+  if (!libPromise) {
+    libPromise = (async () => {
+      const pdfjs = await import("pdfjs-dist");
+      // Side-effect import: sets globalThis.pdfjsWorker -> main-thread path.
+      // @ts-expect-error — the worker build ships no type declarations.
+      await import("pdfjs-dist/build/pdf.worker.min.mjs");
+      return pdfjs;
+    })();
+  }
   return libPromise;
 }
 
@@ -49,7 +52,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
-/** A parsed PDF plus its teardown (`destroy` aborts the worker transport —
+/** A parsed PDF plus its teardown (`destroy` aborts the transport —
  * `PDFDocumentProxy` itself only exposes `cleanup()`, so we keep the task). */
 export interface LoadedPdf {
   doc: PDFDocumentProxy;
@@ -59,28 +62,16 @@ export interface LoadedPdf {
 /** Parse `bytes` into a pdf.js document. Caller must `.destroy()` when done. */
 export async function loadPdf(bytes: Uint8Array, timeoutMs = 20000): Promise<LoadedPdf> {
   const pdfjs = await lib();
-  // Our own module worker (see file header) + a per-document PDFWorker so the
-  // two diff sides never contend on one port.
-  const port = new Worker(workerUrl, { type: "module" });
-  // `.create` (not `new`) — its param type carries the proper `port?: Worker`,
-  // where the constructor's generated type narrows it to `null`.
-  const worker = pdfjs.PDFWorker.create({ port });
   // disableStream/disableAutoFetch: the whole blob is already in memory, so
   // there's nothing to range-fetch — this avoids pdf.js issuing `fetch`es the
   // CSP `connect-src` would block anyway.
-  const task = pdfjs.getDocument({ data: bytes, worker, disableStream: true, disableAutoFetch: true });
+  const task = pdfjs.getDocument({ data: bytes, disableStream: true, disableAutoFetch: true });
   const cleanup = async () => {
     try {
       await task.destroy();
     } catch {
       /* already gone */
     }
-    try {
-      worker.destroy();
-    } catch {
-      /* already gone */
-    }
-    port.terminate();
   };
   try {
     const doc = await withTimeout(task.promise, timeoutMs, "PDF load");
