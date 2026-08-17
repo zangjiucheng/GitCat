@@ -63,5 +63,8 @@ try {
     `[pdfium] fetch failed (${e.message}). PDF previews will be unavailable ` +
       `until you run: node scripts/fetch-pdfium.mjs`,
   );
-  process.exit(0); // non-fatal — never block install/build on this
+  // Fatal on CI (the bundled resource is required to build there); non-fatal
+  // for a local `pnpm install`, which must never break just because the
+  // network is down.
+  process.exit(process.env.CI ? 1 : 0);
 }
