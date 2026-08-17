@@ -516,6 +516,7 @@
             oldPath={workdirCtrl.diffFile.oldPath ?? null}
             newRev={workdirCtrl.selectedDiffStaged ? ":index" : ":workdir"}
             oldRev={workdirCtrl.selectedDiffStaged ? "HEAD" : ":index"}
+            externalStaged={workdirCtrl.selectedDiffStaged}
           />
         {:else}
           <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{t("workdir.binary_not_shown")}</code></div>

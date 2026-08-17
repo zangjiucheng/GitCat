@@ -350,7 +350,16 @@
     {:else if row.kind === "note"}
       <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{row.text}</code></div>
     {:else if row.kind === "preview"}
-      <BinaryDiffPreview repo={row.repo} path={row.path} oldPath={row.oldPath} newRev={row.newRev} oldRev={row.oldRev} />
+      <BinaryDiffPreview
+        repo={row.repo}
+        path={row.path}
+        oldPath={row.oldPath}
+        newRev={row.newRev}
+        oldRev={row.oldRev}
+        externalStaged={false}
+        externalFromRev={row.oldRev}
+        externalToRev={row.newRev}
+      />
     {:else}
       <div class="diff-line {row.cls}"><span class="ln">{row.ln}</span><span class="mk">{row.mk}</span><code>{@html row.html}</code></div>
     {/if}

@@ -7,12 +7,20 @@
   // backend `preview_blob` understands (a commit rev-spec, `:index`, or
   // `:workdir`) plus the file path (and old path for a rename). This component
   // owns ALL the fetching and rendering, so the two islands stay thin.
-  import { onDestroy } from "svelte";
+  //
+  // IMAGES render inline via `data:` URIs (CSP already allows `img-src data:`).
+  // PDFs do NOT render inline: pdf.js is unusable in the Tauri WKWebView (a Web
+  // Worker never completes its handshake -> getDocument hangs; on the main
+  // thread it freezes the UI, doubly so under the dev webview's software
+  // rasterizer). So a PDF shows its before/after size comparison plus the
+  // external-tool escape hatch — informative and, crucially, non-blocking.
   import { commands, type BlobPreview } from "@/ipc/bindings";
   import { t } from "@/i18n/i18n.svelte.ts";
   import { IN_TAURI } from "@/ipc/env";
+  import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
   import { previewKind, formatBytes } from "./preview-kind";
-  import { loadPdf, renderPdfPage, type LoadedPdf } from "./pdf";
+  import FileText from "@lucide/svelte/icons/file-text";
+  import ExternalLink from "@lucide/svelte/icons/external-link";
 
   type Props = {
     repo: string;
@@ -24,8 +32,23 @@
     newRev: string;
     /** `rev` token for the "before" side (e.g. `<sha>^`, `HEAD`, `:index`). */
     oldRev: string;
+    /** For the external-diff button (mirrors each island's own openDiff call):
+     * commit-detail passes staged=false + fromRev/toRev; the working tree passes
+     * its staged flag and no revs (its own index/workdir diff). */
+    externalStaged?: boolean;
+    externalFromRev?: string | null;
+    externalToRev?: string | null;
   };
-  let { repo, path, oldPath = null, newRev, oldRev }: Props = $props();
+  let {
+    repo,
+    path,
+    oldPath = null,
+    newRev,
+    oldRev,
+    externalStaged = false,
+    externalFromRev = null,
+    externalToRev = null,
+  }: Props = $props();
 
   type Side =
     | { st: "loading" }
@@ -53,9 +76,9 @@
     }
   }
 
-  // Refetch whenever the file/sides change. A monotonic token drops results
-  // from a superseded selection (the diff panel reuses this instance across
-  // files). Browser demo mode has no backend, so it degrades to a note.
+  // For PDFs we only need the byte size, not the payload — fetch it cheaply and
+  // skip base64 by asking for the size via a HEAD-ish call. `preview_blob`
+  // always returns the bytes, so just read `.size` and drop `.data`.
   $effect(() => {
     const r = repo,
       np = path,
@@ -95,111 +118,21 @@
     else afterDim = d;
   }
 
-  // ── PDFs: lazy pdf.js, page-1 default with shared prev/next nav ──
-  function b64ToBytes(b64: string): Uint8Array {
-    const bin = atob(b64);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  }
-
-  let beforeDoc = $state<LoadedPdf | null>(null);
-  let afterDoc = $state<LoadedPdf | null>(null);
-  let beforePages = $state(0);
-  let afterPages = $state(0);
-  let pageNum = $state(1);
-  let pdfError = $state(false);
-  let pdfErrorMsg = $state("");
-  let pdfToken = 0;
-  let beforeCanvas = $state<HTMLCanvasElement>();
-  let afterCanvas = $state<HTMLCanvasElement>();
-
-  const totalPages = $derived(Math.max(beforePages, afterPages));
-
-  function destroyDocs() {
-    void beforeDoc?.destroy();
-    void afterDoc?.destroy();
-    beforeDoc = null;
-    afterDoc = null;
-    beforePages = 0;
-    afterPages = 0;
-  }
-
-  // Parse each ready side into a pdf.js document. Any failure (including a CSP
-  // wasm block on an exotic codec) flips to the graceful fallback note.
-  $effect(() => {
-    if (kind !== "pdf") return;
-    const b = before,
-      a = after;
-    const my = ++pdfToken;
-    pdfError = false;
-    pdfErrorMsg = "";
-    pageNum = 1;
-    destroyDocs();
-    void (async () => {
-      try {
-        if (b.st === "ready") {
-          const doc = await loadPdf(b64ToBytes(b.data));
-          if (my !== pdfToken) return void doc.destroy();
-          beforeDoc = doc;
-          beforePages = doc.doc.numPages;
-        }
-        if (a.st === "ready") {
-          const doc = await loadPdf(b64ToBytes(a.data));
-          if (my !== pdfToken) return void doc.destroy();
-          afterDoc = doc;
-          afterPages = doc.doc.numPages;
-        }
-      } catch (e) {
-        if (my === pdfToken) {
-          pdfError = true;
-          pdfErrorMsg = String(e);
-        }
-        console.error("[diff preview] PDF load failed", e);
-      }
-    })();
-  });
-
-  // Render the current page into each side's canvas.
-  $effect(() => {
-    if (kind !== "pdf") return;
-    const p = pageNum;
-    const bd = beforeDoc,
-      ad = afterDoc;
-    const bc = beforeCanvas,
-      ac = afterCanvas;
-    void (async () => {
-      try {
-        if (bd && bc && p <= beforePages) await renderPdfPage(bd.doc, p, bc, 360);
-        if (ad && ac && p <= afterPages) await renderPdfPage(ad.doc, p, ac, 360);
-      } catch (e) {
-        pdfError = true;
-        pdfErrorMsg = String(e);
-        console.error("[diff preview] PDF render failed", e);
-      }
-    })();
-  });
-
-  onDestroy(() => {
-    pdfToken++;
-    destroyDocs();
-  });
-
-  function prevPage() {
-    if (pageNum > 1) pageNum--;
-  }
-  function nextPage() {
-    if (pageNum < totalPages) pageNum++;
+  function openExternal() {
+    if (!IN_TAURI) return;
+    // Mirrors each island's own openDiff call: commit-detail passes fromRev/
+    // toRev (staged=false); the working tree passes its staged flag, no revs.
+    void externalToolsCtrl.openDiff(repo, path, externalStaged, externalFromRev, externalToRev);
   }
 </script>
 
-{#snippet sidePanel(which: "before" | "after", label: string, side: Side, dim: { w: number; h: number } | null)}
+{#snippet imageSide(which: "before" | "after", label: string, side: Side, dim: { w: number; h: number } | null)}
   <div class="bd-panel">
     <div class="bd-cap">
       <span class="bd-lab">{label}</span>
       {#if side.st === "ready"}
         <span class="bd-meta">
-          {#if kind === "image" && dim}{t("preview.dimensions", { w: dim.w, h: dim.h })} · {/if}{formatBytes(side.size)}
+          {#if dim}{t("preview.dimensions", { w: dim.w, h: dim.h })} · {/if}{formatBytes(side.size)}
         </span>
       {/if}
     </div>
@@ -212,40 +145,53 @@
         <span class="bd-mut">{t("preview.too_large", { size: formatBytes(side.size) })}</span>
       {:else if side.st === "error"}
         <span class="bd-mut">{IN_TAURI ? t("preview.unavailable") : t("preview.browser_demo")}</span>
-      {:else if kind === "image"}
+      {:else}
         <img class="bd-img" src={dataUri(side)} alt={label} onload={(e) => onImgLoad(which, e)} />
-      {:else if kind === "pdf"}
-        {#if which === "before"}
-          <canvas class="bd-canvas" bind:this={beforeCanvas}></canvas>
-        {:else}
-          <canvas class="bd-canvas" bind:this={afterCanvas}></canvas>
-        {/if}
+      {/if}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet pdfSide(which: "before" | "after", label: string, side: Side)}
+  <div class="bd-panel">
+    <div class="bd-cap">
+      <span class="bd-lab">{label}</span>
+      {#if side.st === "ready"}<span class="bd-meta">{formatBytes(side.size)}</span>{/if}
+    </div>
+    <div class="bd-body bd-body-pdf">
+      {#if side.st === "loading"}
+        <span class="bd-mut">{t("preview.loading")}</span>
+      {:else if side.st === "absent"}
+        <span class="bd-badge">{which === "before" ? t("preview.no_before") : t("preview.no_after")}</span>
+      {:else if side.st === "error"}
+        <span class="bd-mut">{IN_TAURI ? t("preview.unavailable") : t("preview.browser_demo")}</span>
+      {:else}
+        <FileText class="bd-doc-ico" size={30} aria-hidden="true" />
+        <span class="bd-meta">{side.st === "toolarge" ? formatBytes(side.size) : formatBytes((side as Extract<Side, { st: "ready" }>).size)}</span>
       {/if}
     </div>
   </div>
 {/snippet}
 
 <div class="bdiff">
-  {#if kind === "pdf" && pdfError}
-    <div class="bd-fail">
-      {t("preview.pdf_failed")}
-      {#if pdfErrorMsg}<div class="bd-failmsg">{pdfErrorMsg}</div>{/if}
-    </div>
-  {:else}
+  <div class="bd-sides">
     {#if kind === "pdf"}
-      {#if totalPages > 0}
-        <div class="bd-nav">
-          <button class="bd-navbtn" onclick={prevPage} disabled={pageNum <= 1} aria-label={t("preview.pdf_prev")}>‹</button>
-          <span class="bd-navlab">{t("preview.pdf_page", { n: pageNum, total: totalPages })}</span>
-          <button class="bd-navbtn" onclick={nextPage} disabled={pageNum >= totalPages} aria-label={t("preview.pdf_next")}>›</button>
-        </div>
-      {:else if before.st === "ready" || after.st === "ready"}
-        <div class="bd-nav"><span class="bd-navlab bd-spin">{t("preview.pdf_loading")}</span></div>
-      {/if}
+      {@render pdfSide("before", t("preview.before"), before)}
+      {@render pdfSide("after", t("preview.after"), after)}
+    {:else}
+      {@render imageSide("before", t("preview.before"), before, beforeDim)}
+      {@render imageSide("after", t("preview.after"), after, afterDim)}
     {/if}
-    <div class="bd-sides">
-      {@render sidePanel("before", t("preview.before"), before, beforeDim)}
-      {@render sidePanel("after", t("preview.after"), after, afterDim)}
+  </div>
+  {#if kind === "pdf"}
+    <div class="bd-pdfnote">
+      <span>{t("preview.pdf_no_inline")}</span>
+      {#if IN_TAURI}
+        <button class="bd-extbtn" onclick={openExternal}>
+          <ExternalLink size={12} aria-hidden="true" />
+          {t("preview.open_external")}
+        </button>
+      {/if}
     </div>
   {/if}
 </div>
@@ -307,8 +253,17 @@
       8px -8px,
       -8px 0;
   }
-  .bd-img,
-  .bd-canvas {
+  .bd-body-pdf {
+    flex-direction: column;
+    gap: 8px;
+    background-image: none;
+    color: var(--muted);
+  }
+  :global(.bd-doc-ico) {
+    color: var(--muted);
+    opacity: 0.8;
+  }
+  .bd-img {
     max-width: 100%;
     height: auto;
     display: block;
@@ -325,43 +280,30 @@
     border: 1px dashed var(--border);
     border-radius: var(--r-pill, 999px);
   }
-  .bd-nav {
+  .bd-pdfnote {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 10px;
-    margin-bottom: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 11px;
+    text-align: center;
   }
-  .bd-navbtn {
-    width: 24px;
-    height: 24px;
-    line-height: 1;
-    font-size: 15px;
+  .bd-extbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
     border: 1px solid var(--border);
     border-radius: var(--r-control, 6px);
     background: var(--panel);
     color: var(--text);
     cursor: pointer;
+    font-size: 11px;
   }
-  .bd-navbtn:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-  .bd-navlab {
-    color: var(--muted);
-    font: 11px/1 var(--mono, monospace);
-    min-width: 96px;
-    text-align: center;
-  }
-  .bd-fail {
-    padding: 12px;
-    color: var(--muted);
-    text-align: center;
-  }
-  .bd-failmsg {
-    margin-top: 6px;
-    font: 11px/1.4 var(--mono, monospace);
-    color: var(--danger, var(--muted));
-    word-break: break-word;
+  .bd-extbtn:hover {
+    background: var(--elevated, var(--panel));
   }
 </style>
