@@ -153,9 +153,9 @@ async previewBlob(repo: string, rev: string, path: string) : Promise<Result<Blob
  * `Ok(None)` when the side is absent (same convention as [`preview_blob`]).
  * JS: `invoke("render_pdf_page", { repo, rev, path, page })`.
  */
-async renderPdfPage(repo: string, rev: string, path: string, page: number) : Promise<Result<PdfRender | null, string>> {
+async renderPdfPage(repo: string, rev: string, path: string, page: number, maxWidth: number) : Promise<Result<PdfRender | null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("render_pdf_page", { repo, rev, path, page }) };
+    return { status: "ok", data: await TAURI_INVOKE("render_pdf_page", { repo, rev, path, page, maxWidth }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

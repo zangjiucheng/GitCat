@@ -13,8 +13,15 @@ export default {
   browser_demo: "Preview isn't available in the browser demo.",
   // Images
   dimensions: "{w}×{h}",
-  // PDFs — inline rendering isn't available in the app's webview (pdf.js can't
-  // run there), so we show the size comparison + the external-tool handoff.
-  pdf_no_inline: "Inline PDF preview isn't available.",
+  // PDFs — rasterized in the Rust backend (pdf.js can't run in the webview).
+  pdf_page: "Page {n} / {total}",
+  pdf_prev: "Previous page",
+  pdf_next: "Next page",
   open_external: "Open in external tool",
+  // Zoom lightbox
+  expand: "Click to zoom",
+  zoom_title: "Zoom preview",
+  zoom_in: "Zoom in",
+  zoom_out: "Zoom out",
+  reset_zoom: "Reset zoom",
 };

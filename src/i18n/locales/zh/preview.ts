@@ -11,6 +11,14 @@ export default {
   no_after: "没有新版本",
   browser_demo: "浏览器演示模式下无法预览。",
   dimensions: "{w}×{h}",
-  pdf_no_inline: "暂不支持在应用内预览 PDF。",
+  pdf_page: "第 {n} / {total} 页",
+  pdf_prev: "上一页",
+  pdf_next: "下一页",
   open_external: "使用外部工具打开",
+  // 缩放查看
+  expand: "点击放大",
+  zoom_title: "缩放预览",
+  zoom_in: "放大",
+  zoom_out: "缩小",
+  reset_zoom: "重置缩放",
 };

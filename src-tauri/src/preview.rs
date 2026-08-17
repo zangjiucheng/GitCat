@@ -165,9 +165,10 @@ fn mime_for_path(path: &str) -> &'static str {
 use std::sync::mpsc::{self, Sender};
 use std::sync::OnceLock;
 
-/// Target width (device px) for a rendered PDF page. Generous enough to stay
-/// crisp when the preview panel scales it down; height follows the page ratio.
-const PDF_RENDER_WIDTH: i32 = 1240;
+/// Bounds on the caller-requested render width (device px): the inline panel
+/// asks for ~1240; the zoom lightbox asks for more so it stays crisp magnified.
+const PDF_MIN_WIDTH: u32 = 400;
+const PDF_MAX_WIDTH: u32 = 5000;
 
 /// One rasterized PDF page: a PNG (base64) plus its pixel size and the doc's
 /// total page count (so the frontend can page through).
@@ -193,10 +194,12 @@ pub async fn render_pdf_page(
     rev: String,
     path: String,
     page: u32,
+    max_width: u32,
 ) -> Result<Option<PdfRender>, String> {
     // Resolve the bundled PDFium library on the async side (needs the app
     // handle); the read + rasterize run off the UI thread.
     let lib = resolve_pdfium_lib(&app)?;
+    let width = max_width.clamp(PDF_MIN_WIDTH, PDF_MAX_WIDTH) as i32;
     crate::blocking::run_blocking(move || {
         let bytes = match read_side_bytes(&repo, &rev, &path)? {
             Some(b) => b,
@@ -205,7 +208,7 @@ pub async fn render_pdf_page(
         // Hand the work to the single PDFium thread and wait for its answer.
         let (tx, rx) = mpsc::channel();
         pdfium_thread()
-            .send(RenderJob { bytes, page, lib, resp: tx })
+            .send(RenderJob { bytes, page, width, lib, resp: tx })
             .map_err(|_| "pdf render thread unavailable".to_string())?;
         rx.recv().map_err(|_| "pdf render thread dropped the job".to_string())?
     })
@@ -216,6 +219,7 @@ pub async fn render_pdf_page(
 struct RenderJob {
     bytes: Vec<u8>,
     page: u32,
+    width: i32,
     lib: std::path::PathBuf,
     resp: Sender<Result<Option<PdfRender>, String>>,
 }
@@ -242,7 +246,7 @@ fn pdfium_thread() -> &'static Sender<RenderJob> {
                                 .map_err(|e| format!("PDFium load failed: {e}"))?;
                             pdfium = Some(Pdfium::new(bindings));
                         }
-                        rasterize(pdfium.as_ref().unwrap(), &job.bytes, job.page)
+                        rasterize(pdfium.as_ref().unwrap(), &job.bytes, job.page, job.width)
                     })();
                     let _ = job.resp.send(result);
                 }
@@ -258,6 +262,7 @@ fn rasterize(
     pdfium: &pdfium_render::prelude::Pdfium,
     bytes: &[u8],
     page: u32,
+    width: i32,
 ) -> Result<Option<PdfRender>, String> {
     use pdfium_render::prelude::*;
 
@@ -273,8 +278,8 @@ fn rasterize(
     let pdf_page = pages.get(idx).map_err(|e| format!("PDF page failed: {e}"))?;
 
     let config = PdfRenderConfig::new()
-        .set_target_width(PDF_RENDER_WIDTH)
-        .set_maximum_height(PDF_RENDER_WIDTH * 4);
+        .set_target_width(width)
+        .set_maximum_height(width * 4);
     let image = pdf_page
         .render_with_config(&config)
         .map_err(|e| format!("PDF render failed: {e}"))?
@@ -496,7 +501,7 @@ trailer<< /Root 1 0 R >>\n%%EOF";
             return;
         }
         let pdfium = Pdfium::new(Pdfium::bind_to_library(&lib).expect("bind pdfium"));
-        let out = rasterize(&pdfium, MINIMAL_PDF, 1)
+        let out = rasterize(&pdfium, MINIMAL_PDF, 1, 1240)
             .expect("rasterize ok")
             .expect("a render");
         assert_eq!(out.page_count, 1);

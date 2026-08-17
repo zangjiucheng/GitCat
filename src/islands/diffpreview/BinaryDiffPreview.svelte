@@ -17,6 +17,7 @@
   import { IN_TAURI } from "@/ipc/env";
   import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
   import { previewKind, formatBytes } from "./preview-kind";
+  import PreviewLightbox from "./PreviewLightbox.svelte";
   import ExternalLink from "@lucide/svelte/icons/external-link";
 
   type Props = {
@@ -77,9 +78,13 @@
     }
   }
 
+  // Inline panels are small, so ~1240px keeps the payload modest; the zoom
+  // lightbox re-renders at higher resolution on its own.
+  const PDF_INLINE_WIDTH = 1240;
+
   async function fetchPdf(rev: string, file: string, page: number): Promise<Side> {
     try {
-      const r = await commands.renderPdfPage(repo, rev, file, page);
+      const r = await commands.renderPdfPage(repo, rev, file, page, PDF_INLINE_WIDTH);
       if (r.status !== "ok") return { st: "error", msg: r.error };
       const p = r.data;
       if (!p) return { st: "absent" };
@@ -146,6 +151,18 @@
     void externalToolsCtrl.openDiff(repo, path, externalStaged, externalFromRev, externalToRev);
   }
 
+  // ── zoom lightbox ──
+  let zoomOpen = $state(false);
+  let zoomSide = $state<"before" | "after">("after");
+  function displayable(s: Side): boolean {
+    return s.st === "image" || s.st === "pdf";
+  }
+  function openZoom(which: "before" | "after") {
+    if (!displayable(which === "before" ? before : after)) return;
+    zoomSide = which;
+    zoomOpen = true;
+  }
+
   function prevPage() {
     if (pageNum > 1) pageNum--;
   }
@@ -170,7 +187,9 @@
       {:else if side.st === "error"}
         <span class="bd-mut">{IN_TAURI ? t("preview.unavailable") : t("preview.browser_demo")}</span>
       {:else}
-        <img class="bd-img" src={side.uri} alt={label} onload={(e) => onImgLoad(which, e)} />
+        <button class="bd-imgbtn" onclick={() => openZoom(which)} title={t("preview.expand")} aria-label={t("preview.expand")}>
+          <img class="bd-img" src={side.uri} alt={label} onload={(e) => onImgLoad(which, e)} />
+        </button>
       {/if}
     </div>
   </div>
@@ -197,6 +216,25 @@
     </div>
   {/if}
 </div>
+
+{#if zoomOpen && kind}
+  <PreviewLightbox
+    onClose={() => (zoomOpen = false)}
+    {kind}
+    side={zoomSide}
+    hasBefore={displayable(before)}
+    hasAfter={displayable(after)}
+    beforeUri={before.st === "image" ? before.uri : null}
+    afterUri={after.st === "image" ? after.uri : null}
+    {repo}
+    {oldRev}
+    {newRev}
+    {path}
+    {oldPath}
+    page={pageNum}
+    {totalPages}
+  />
+{/if}
 
 <style>
   .bdiff {
@@ -254,6 +292,15 @@
       0 8px,
       8px -8px,
       -8px 0;
+  }
+  .bd-imgbtn {
+    display: block;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: zoom-in;
+    line-height: 0;
   }
   .bd-img {
     max-width: 100%;
