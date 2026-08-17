@@ -109,6 +109,7 @@
   let afterPages = $state(0);
   let pageNum = $state(1);
   let pdfError = $state(false);
+  let pdfErrorMsg = $state("");
   let pdfToken = 0;
   let beforeCanvas = $state<HTMLCanvasElement>();
   let afterCanvas = $state<HTMLCanvasElement>();
@@ -132,6 +133,7 @@
       a = after;
     const my = ++pdfToken;
     pdfError = false;
+    pdfErrorMsg = "";
     pageNum = 1;
     destroyDocs();
     void (async () => {
@@ -148,8 +150,12 @@
           afterDoc = doc;
           afterPages = doc.doc.numPages;
         }
-      } catch {
-        if (my === pdfToken) pdfError = true;
+      } catch (e) {
+        if (my === pdfToken) {
+          pdfError = true;
+          pdfErrorMsg = String(e);
+        }
+        console.error("[diff preview] PDF load failed", e);
       }
     })();
   });
@@ -166,8 +172,10 @@
       try {
         if (bd && bc && p <= beforePages) await renderPdfPage(bd.doc, p, bc, 360);
         if (ad && ac && p <= afterPages) await renderPdfPage(ad.doc, p, ac, 360);
-      } catch {
+      } catch (e) {
         pdfError = true;
+        pdfErrorMsg = String(e);
+        console.error("[diff preview] PDF render failed", e);
       }
     })();
   });
@@ -219,7 +227,10 @@
 
 <div class="bdiff">
   {#if kind === "pdf" && pdfError}
-    <div class="bd-fail">{t("preview.pdf_failed")}</div>
+    <div class="bd-fail">
+      {t("preview.pdf_failed")}
+      {#if pdfErrorMsg}<div class="bd-failmsg">{pdfErrorMsg}</div>{/if}
+    </div>
   {:else}
     {#if kind === "pdf" && totalPages > 0}
       <div class="bd-nav">
@@ -342,5 +353,11 @@
     padding: 12px;
     color: var(--muted);
     text-align: center;
+  }
+  .bd-failmsg {
+    margin-top: 6px;
+    font: 11px/1.4 var(--mono, monospace);
+    color: var(--danger, var(--muted));
+    word-break: break-word;
   }
 </style>
