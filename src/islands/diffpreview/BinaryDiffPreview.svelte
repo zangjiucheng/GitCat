@@ -232,12 +232,16 @@
       {#if pdfErrorMsg}<div class="bd-failmsg">{pdfErrorMsg}</div>{/if}
     </div>
   {:else}
-    {#if kind === "pdf" && totalPages > 0}
-      <div class="bd-nav">
-        <button class="bd-navbtn" onclick={prevPage} disabled={pageNum <= 1} aria-label={t("preview.pdf_prev")}>‹</button>
-        <span class="bd-navlab">{t("preview.pdf_page", { n: pageNum, total: totalPages })}</span>
-        <button class="bd-navbtn" onclick={nextPage} disabled={pageNum >= totalPages} aria-label={t("preview.pdf_next")}>›</button>
-      </div>
+    {#if kind === "pdf"}
+      {#if totalPages > 0}
+        <div class="bd-nav">
+          <button class="bd-navbtn" onclick={prevPage} disabled={pageNum <= 1} aria-label={t("preview.pdf_prev")}>‹</button>
+          <span class="bd-navlab">{t("preview.pdf_page", { n: pageNum, total: totalPages })}</span>
+          <button class="bd-navbtn" onclick={nextPage} disabled={pageNum >= totalPages} aria-label={t("preview.pdf_next")}>›</button>
+        </div>
+      {:else if before.st === "ready" || after.st === "ready"}
+        <div class="bd-nav"><span class="bd-navlab bd-spin">{t("preview.pdf_loading")}</span></div>
+      {/if}
     {/if}
     <div class="bd-sides">
       {@render sidePanel("before", t("preview.before"), before, beforeDim)}

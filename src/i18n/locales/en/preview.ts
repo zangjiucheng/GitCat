@@ -14,6 +14,7 @@ export default {
   // Images
   dimensions: "{w}×{h}",
   // PDFs
+  pdf_loading: "Rendering PDF…",
   pdf_page: "Page {n} / {total}",
   pdf_prev: "Previous page",
   pdf_next: "Next page",

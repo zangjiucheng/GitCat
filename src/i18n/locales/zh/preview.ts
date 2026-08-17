@@ -11,6 +11,7 @@ export default {
   no_after: "没有新版本",
   browser_demo: "浏览器演示模式下无法预览。",
   dimensions: "{w}×{h}",
+  pdf_loading: "正在渲染 PDF……",
   pdf_page: "第 {n} / {total} 页",
   pdf_prev: "上一页",
   pdf_next: "下一页",
