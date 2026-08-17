@@ -50,3 +50,6 @@ profile.kernel.etl
 *.njsproj
 *.sln
 *.sw?
+
+# PDFium native libs — fetched per-platform by scripts/fetch-pdfium.mjs (#37), not committed
+/src-tauri/resources/pdfium/

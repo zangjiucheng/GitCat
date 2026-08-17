@@ -5,6 +5,8 @@
   import { sidebarCtrl } from "../sidebar/sidebar.svelte.ts";
   import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
   import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
+  import BinaryDiffPreview from "../diffpreview/BinaryDiffPreview.svelte";
+  import { previewKind } from "../diffpreview/preview-kind";
   import { t } from "@/i18n/i18n.svelte.ts";
   import Eye from "@lucide/svelte/icons/eye";
   import History from "@lucide/svelte/icons/history";
@@ -505,7 +507,20 @@
     <div class="diff-file-h">{workdirCtrl.diffHeader}</div>
     <div class="diff-rows">
       {#if workdirCtrl.diffFile.binary}
-        <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{t("workdir.binary_not_shown")}</code></div>
+        {#if previewKind(workdirCtrl.diffFile.path)}
+          <!-- #37: image/PDF visual before/after. Sides depend on which diff
+               is shown: staged is HEAD->index, unstaged is index->workdir. -->
+          <BinaryDiffPreview
+            repo={repo()}
+            path={workdirCtrl.diffFile.path}
+            oldPath={workdirCtrl.diffFile.oldPath ?? null}
+            newRev={workdirCtrl.selectedDiffStaged ? ":index" : ":workdir"}
+            oldRev={workdirCtrl.selectedDiffStaged ? "HEAD" : ":index"}
+            externalStaged={workdirCtrl.selectedDiffStaged}
+          />
+        {:else}
+          <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{t("workdir.binary_not_shown")}</code></div>
+        {/if}
       {:else if !workdirCtrl.diffHunks.length}
         <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{t("workdir.no_textual_diff")}</code></div>
       {:else}

@@ -136,6 +136,47 @@ async ancestorsOf(path: string, sha: string) : Promise<Result<string[], string>>
 }
 },
 /**
+ * Fetch one diff side's blob for an image/PDF preview. `rev` selects the side
+ * (see the module doc). Returns `Ok(None)` when the path is absent on that
+ * side. JS: `invoke("preview_blob", { repo, rev, path })`.
+ */
+async previewBlob(repo: string, rev: string, path: string) : Promise<Result<BlobPreview | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_blob", { repo, rev, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Rasterize page `page` (1-based) of the PDF blob on the `rev` side of a diff.
+ * `Ok(None)` when the side is absent (same convention as [`preview_blob`]).
+ * JS: `invoke("render_pdf_page", { repo, rev, path, page })`.
+ */
+async renderPdfPage(repo: string, rev: string, path: string, page: number, maxWidth: number) : Promise<Result<PdfRender | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("render_pdf_page", { repo, rev, path, page, maxWidth }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Save the raw bytes of the `rev` side of `file` to a user-picked `dest` path
+ * (from the frontend's native `save()` dialog) — "download this before/after
+ * version". `dest` is only ever consumed by `fs::write` (git never sees it),
+ * so, like `export_patch`, only empty/NUL is guarded. JS:
+ * `invoke("export_blob", { repo, rev, file, dest })`.
+ */
+async exportBlob(repo: string, rev: string, file: string, dest: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_blob", { repo, rev, file, dest }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.getAppInfo()`. No repo/path needed — this is pure static
  * build-time metadata (Cargo.toml's `[package]` table), never `Err`.
  */
@@ -3222,12 +3263,6 @@ async terminalKill(id: string) : Promise<Result<null, string>> {
 async openRepoInNewWindow(path: string) : Promise<void> {
     await TAURI_INVOKE("open_repo_in_new_window", { path });
 },
-/**
- * JS: `commands.setOpenRepo(path)` — called by the frontend whenever it opens
- * (or switches to) a repo, so a later `gitcat <same repo>` finds this window.
- * Re-keys this window (drops its previous repo entry) so an in-place switch
- * doesn't leave a stale mapping.
- */
 async setOpenRepo(path: string) : Promise<void> {
     await TAURI_INVOKE("set_open_repo", { path });
 },
@@ -3338,6 +3373,26 @@ export type BlobObject = { sha: string; size: number; isBinary: boolean;
  * blob (only `size` is reported).
  */
 content: string | null; truncated: boolean }
+/**
+ * One diff side's blob, ready for the frontend to build a `data:` URI (images)
+ * or hand to pdf.js (PDFs). `data` is standard-base64 of the raw bytes, or
+ * `None` when the blob is over [`MAX_PREVIEW_BYTES`].
+ */
+export type BlobPreview = { 
+/**
+ * MIME guessed from the path extension (`"image/png"`, `"application/pdf"`,
+ * …), so the frontend doesn't re-derive it.
+ */
+mime: string; 
+/**
+ * Raw byte length of the blob on this side (reported even when `data` is
+ * omitted for being over the cap).
+ */
+size: number; 
+/**
+ * Standard-base64 of the raw bytes, or `None` when `size > MAX_PREVIEW_BYTES`.
+ */
+data: string | null }
 /**
  * Which local branches are already fully merged into the repo's own
  * default branch, plus the resolved default branch's own name.
@@ -3851,6 +3906,19 @@ export type PanelItem =
  * its stdout. `label` is an optional caption above the output.
  */
 { type: "command-output"; command: string; label?: string | null }
+/**
+ * One rasterized PDF page: a PNG (base64) plus its pixel size and the doc's
+ * total page count (so the frontend can page through).
+ */
+export type PdfRender = { 
+/**
+ * Standard-base64 PNG of the rendered page.
+ */
+data: string; width: number; height: number; 
+/**
+ * Total pages in the document.
+ */
+pageCount: number }
 /**
  * One author/committer identity. `t` is a unix timestamp; the frontend formats it.
  */

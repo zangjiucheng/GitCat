@@ -29,6 +29,7 @@ pub mod model;
 pub mod patch; // format-patch export + git am --3way apply (with am's own continue/skip/abort)
 pub mod pickaxe; // pickaxe / diff-content search: git log -S/-G across (a subset of) history
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
+pub mod preview; // #37: raw image/PDF blob bytes for a visual before/after diff preview
 pub mod procutil; // suppresses the console window Windows flashes open per subprocess spawn
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod repo_files; // backlog #14 (final item): .gitignore/.mailmap in-app editors — allow-listed repo-root file read/write
@@ -67,6 +68,13 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::head_ancestor_flags,
         commands::commit_detail,
         commands::ancestors_of,
+        // #37: raw image/PDF blob bytes for a side-by-side visual diff preview
+        // (serves both the commit-detail diff and the working-tree diff), plus
+        // backend PDFium rasterization of a PDF page (pdf.js can't run in the
+        // WKWebView — see preview.rs).
+        preview::preview_blob,
+        preview::render_pdf_page,
+        preview::export_blob,
         commands::get_app_info,
         updater::check_for_update,
         // Safety Manager (snapshot / list / global undo / retention prune)

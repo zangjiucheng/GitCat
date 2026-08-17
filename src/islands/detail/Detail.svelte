@@ -3,6 +3,7 @@
   import * as bridge from "../../legacy/bridge";
   import { workdirCtrl } from "../workdir/workdir.svelte.ts";
   import Workdir from "../workdir/Workdir.svelte";
+  import BinaryDiffPreview from "../diffpreview/BinaryDiffPreview.svelte";
   import { resolver } from "../resolver/resolver.svelte.ts";
   import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
   import { settingsCtrl } from "../settings/settings.svelte.ts";
@@ -348,6 +349,17 @@
       <div class="diff-line hunk"><span class="ln"></span><span class="mk"></span><code>{row.text}</code></div>
     {:else if row.kind === "note"}
       <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{row.text}</code></div>
+    {:else if row.kind === "preview"}
+      <BinaryDiffPreview
+        repo={row.repo}
+        path={row.path}
+        oldPath={row.oldPath}
+        newRev={row.newRev}
+        oldRev={row.oldRev}
+        externalStaged={false}
+        externalFromRev={row.oldRev}
+        externalToRev={row.newRev}
+      />
     {:else}
       <div class="diff-line {row.cls}"><span class="ln">{row.ln}</span><span class="mk">{row.mk}</span><code>{@html row.html}</code></div>
     {/if}
