@@ -81,21 +81,22 @@ fn preview_blob_inner(repo: &str, rev: &str, path: &str) -> Result<Option<BlobPr
 #[tauri::command]
 #[specta::specta]
 pub async fn export_blob(repo: String, rev: String, file: String, dest: String) -> Result<(), String> {
-    crate::blocking::run_blocking(move || {
-        if dest.is_empty() {
-            return Err(ierr("err_ops.no_dest_file_chosen"));
-        }
-        if dest.contains('\0') {
-            return Err(ierr("err_ops.dest_illegal_nul"));
-        }
-        let bytes = read_side_bytes(&repo, &rev, &file)?.ok_or_else(|| {
-            ierrp("err_ops.could_not_write_dest", &[("dest", &dest), ("detail", "source not present on this side")])
-        })?;
-        std::fs::write(&dest, &bytes)
-            .map_err(|e| ierrp("err_ops.could_not_write_dest", &[("dest", &dest), ("detail", &e.to_string())]))?;
-        Ok(())
-    })
-    .await
+    crate::blocking::run_blocking(move || export_blob_inner(&repo, &rev, &file, &dest)).await
+}
+
+fn export_blob_inner(repo: &str, rev: &str, file: &str, dest: &str) -> Result<(), String> {
+    if dest.is_empty() {
+        return Err(ierr("err_ops.no_dest_file_chosen"));
+    }
+    if dest.contains('\0') {
+        return Err(ierr("err_ops.dest_illegal_nul"));
+    }
+    let bytes = read_side_bytes(repo, rev, file)?.ok_or_else(|| {
+        ierrp("err_ops.could_not_write_dest", &[("dest", dest), ("detail", "source not present on this side")])
+    })?;
+    std::fs::write(dest, &bytes)
+        .map_err(|e| ierrp("err_ops.could_not_write_dest", &[("dest", dest), ("detail", &e.to_string())]))?;
+    Ok(())
 }
 
 /// Read the raw bytes of `file` on the side named by `rev`. `Ok(None)` means
@@ -535,6 +536,29 @@ trailer<< /Root 1 0 R >>\n%%EOF";
         use base64::Engine;
         let png = base64::engine::general_purpose::STANDARD.decode(&out.data).unwrap();
         assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']);
+    }
+
+    #[test]
+    fn export_blob_writes_raw_bytes_and_guards_dest() {
+        let (dir, head) = setup("export");
+        let repo = dir.repo();
+        let dest = dir.path().join("out.png");
+        let dest_s = dest.to_str().unwrap();
+
+        // New side (HEAD) is the modified 1x1 PNG.
+        export_blob_inner(&repo, &head, "logo.png", dest_s).expect("export ok");
+        let mut expected = PNG_1X1.to_vec();
+        expected.push(0xAB);
+        assert_eq!(std::fs::read(&dest).unwrap(), expected);
+
+        // An empty destination is rejected (i18n:err_ops.no_dest_file_chosen).
+        let err = export_blob_inner(&repo, &head, "logo.png", "").unwrap_err();
+        assert!(err.contains("no_dest_file_chosen"), "got: {err}");
+
+        // A path absent on the side surfaces an error rather than writing.
+        let miss = dir.path().join("miss.png");
+        assert!(export_blob_inner(&repo, &head, "nope.png", miss.to_str().unwrap()).is_err());
+        assert!(!miss.exists());
     }
 
     #[test]
