@@ -162,6 +162,21 @@ async renderPdfPage(repo: string, rev: string, path: string, page: number, maxWi
 }
 },
 /**
+ * Save the raw bytes of the `rev` side of `file` to a user-picked `dest` path
+ * (from the frontend's native `save()` dialog) — "download this before/after
+ * version". `dest` is only ever consumed by `fs::write` (git never sees it),
+ * so, like `export_patch`, only empty/NUL is guarded. JS:
+ * `invoke("export_blob", { repo, rev, file, dest })`.
+ */
+async exportBlob(repo: string, rev: string, file: string, dest: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_blob", { repo, rev, file, dest }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.getAppInfo()`. No repo/path needed — this is pure static
  * build-time metadata (Cargo.toml's `[package]` table), never `Err`.
  */

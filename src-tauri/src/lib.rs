@@ -74,6 +74,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // WKWebView — see preview.rs).
         preview::preview_blob,
         preview::render_pdf_page,
+        preview::export_blob,
         commands::get_app_info,
         updater::check_for_update,
         // Safety Manager (snapshot / list / global undo / retention prune)

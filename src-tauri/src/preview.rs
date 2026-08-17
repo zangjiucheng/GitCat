@@ -17,7 +17,7 @@
 
 use serde::Serialize;
 
-use crate::i18n_err::ierrp;
+use crate::i18n_err::{ierr, ierrp};
 
 /// Hard cap on a previewed blob. Over this we still report the `mime`/`size`
 /// but omit the bytes (`data: None`), so a giant vendored asset can't blow up
@@ -71,6 +71,31 @@ fn preview_blob_inner(repo: &str, rev: &str, path: &str) -> Result<Option<BlobPr
         size,
         data,
     }))
+}
+
+/// Save the raw bytes of the `rev` side of `file` to a user-picked `dest` path
+/// (from the frontend's native `save()` dialog) — "download this before/after
+/// version". `dest` is only ever consumed by `fs::write` (git never sees it),
+/// so, like `export_patch`, only empty/NUL is guarded. JS:
+/// `invoke("export_blob", { repo, rev, file, dest })`.
+#[tauri::command]
+#[specta::specta]
+pub async fn export_blob(repo: String, rev: String, file: String, dest: String) -> Result<(), String> {
+    crate::blocking::run_blocking(move || {
+        if dest.is_empty() {
+            return Err(ierr("err_ops.no_dest_file_chosen"));
+        }
+        if dest.contains('\0') {
+            return Err(ierr("err_ops.dest_illegal_nul"));
+        }
+        let bytes = read_side_bytes(&repo, &rev, &file)?.ok_or_else(|| {
+            ierrp("err_ops.could_not_write_dest", &[("dest", &dest), ("detail", "source not present on this side")])
+        })?;
+        std::fs::write(&dest, &bytes)
+            .map_err(|e| ierrp("err_ops.could_not_write_dest", &[("dest", &dest), ("detail", &e.to_string())]))?;
+        Ok(())
+    })
+    .await
 }
 
 /// Read the raw bytes of `file` on the side named by `rev`. `Ok(None)` means

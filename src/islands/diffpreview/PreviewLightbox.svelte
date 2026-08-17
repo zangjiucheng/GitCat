@@ -7,10 +7,12 @@
   import { untrack } from "svelte";
   import { commands } from "@/ipc/bindings";
   import { t } from "@/i18n/i18n.svelte.ts";
+  import { downloadSide } from "./download";
   import X from "@lucide/svelte/icons/x";
   import ZoomIn from "@lucide/svelte/icons/zoom-in";
   import ZoomOut from "@lucide/svelte/icons/zoom-out";
   import Maximize from "@lucide/svelte/icons/maximize";
+  import Download from "@lucide/svelte/icons/download";
 
   type Props = {
     onClose: () => void;
@@ -203,6 +205,7 @@
         <button class="lb-btn" onclick={() => zoomBy(1.2)} aria-label={t("preview.zoom_in")}><ZoomIn size={15} /></button>
         <button class="lb-btn" onclick={resetView} aria-label={t("preview.reset_zoom")}><Maximize size={15} /></button>
         <span class="lb-div"></span>
+        <button class="lb-btn" onclick={() => downloadSide(repo, sideRev, sideFile, curSide)} aria-label={t("preview.download")}><Download size={15} /></button>
         <button class="lb-btn" onclick={onClose} aria-label={t("common.close")}><X size={16} /></button>
       </div>
     </div>

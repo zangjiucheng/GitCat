@@ -18,6 +18,8 @@ export default {
   pdf_prev: "Previous page",
   pdf_next: "Next page",
   open_external: "Open in external tool",
+  download: "Download this version",
+  downloaded: "Saved",
   // Zoom lightbox
   expand: "Click to zoom",
   zoom_title: "Zoom preview",

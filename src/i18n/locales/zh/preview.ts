@@ -15,6 +15,8 @@ export default {
   pdf_prev: "上一页",
   pdf_next: "下一页",
   open_external: "使用外部工具打开",
+  download: "下载此版本",
+  downloaded: "已保存",
   // 缩放查看
   expand: "点击放大",
   zoom_title: "缩放预览",

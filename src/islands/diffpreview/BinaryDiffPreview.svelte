@@ -17,8 +17,10 @@
   import { IN_TAURI } from "@/ipc/env";
   import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
   import { previewKind, formatBytes } from "./preview-kind";
+  import { downloadSide } from "./download";
   import PreviewLightbox from "./PreviewLightbox.svelte";
   import ExternalLink from "@lucide/svelte/icons/external-link";
+  import Download from "@lucide/svelte/icons/download";
 
   type Props = {
     repo: string;
@@ -163,6 +165,17 @@
     zoomOpen = true;
   }
 
+  // Present sides (incl. an over-cap image we never previewed) can still be
+  // downloaded — the backend re-reads the raw bytes.
+  function canDownload(s: Side): boolean {
+    return s.st === "image" || s.st === "pdf" || s.st === "toolarge";
+  }
+  function download(which: "before" | "after") {
+    const rev = which === "before" ? oldRev : newRev;
+    const file = which === "before" ? (oldPath ?? path) : path;
+    void downloadSide(repo, rev, file, which);
+  }
+
   function prevPage() {
     if (pageNum > 1) pageNum--;
   }
@@ -175,7 +188,14 @@
   <div class="bd-panel">
     <div class="bd-cap">
       <span class="bd-lab">{label}</span>
-      {#if metaOf(side)}<span class="bd-meta">{metaOf(side)}</span>{/if}
+      <span class="bd-cap-r">
+        {#if metaOf(side)}<span class="bd-meta">{metaOf(side)}</span>{/if}
+        {#if IN_TAURI && canDownload(side)}
+          <button class="bd-dl" onclick={() => download(which)} title={t("preview.download")} aria-label={t("preview.download")}>
+            <Download size={12} aria-hidden="true" />
+          </button>
+        {/if}
+      </span>
     </div>
     <div class="bd-body">
       {#if side.st === "loading"}
@@ -268,10 +288,33 @@
   .bd-lab {
     font-weight: 600;
   }
+  .bd-cap-r {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
   .bd-meta {
     color: var(--muted);
     font: 11px/1 var(--mono, monospace);
     white-space: nowrap;
+  }
+  .bd-dl {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--r-control, 6px);
+    background: var(--panel);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .bd-dl:hover {
+    color: var(--text);
+    background: var(--elevated, var(--panel));
   }
   .bd-body {
     display: flex;
