@@ -153,6 +153,176 @@ fn mime_for_path(path: &str) -> &'static str {
     }
 }
 
+// ---------------------------------------------------------------------------
+// PDF page rasterization (issue #37)
+//
+// pdf.js cannot run in the Tauri WKWebView (its worker never completes the
+// load handshake; on the main thread it freezes the UI). So a PDF diff side is
+// rasterized HERE with PDFium — off the UI thread via `run_blocking` — and the
+// frontend shows the resulting PNG through the same image path.
+// ---------------------------------------------------------------------------
+
+use std::sync::mpsc::{self, Sender};
+use std::sync::OnceLock;
+
+/// Target width (device px) for a rendered PDF page. Generous enough to stay
+/// crisp when the preview panel scales it down; height follows the page ratio.
+const PDF_RENDER_WIDTH: i32 = 1240;
+
+/// One rasterized PDF page: a PNG (base64) plus its pixel size and the doc's
+/// total page count (so the frontend can page through).
+#[derive(Serialize, specta::Type, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfRender {
+    /// Standard-base64 PNG of the rendered page.
+    pub data: String,
+    pub width: u32,
+    pub height: u32,
+    /// Total pages in the document.
+    pub page_count: u32,
+}
+
+/// Rasterize page `page` (1-based) of the PDF blob on the `rev` side of a diff.
+/// `Ok(None)` when the side is absent (same convention as [`preview_blob`]).
+/// JS: `invoke("render_pdf_page", { repo, rev, path, page })`.
+#[tauri::command]
+#[specta::specta]
+pub async fn render_pdf_page(
+    app: tauri::AppHandle<tauri::Wry>,
+    repo: String,
+    rev: String,
+    path: String,
+    page: u32,
+) -> Result<Option<PdfRender>, String> {
+    // Resolve the bundled PDFium library on the async side (needs the app
+    // handle); the read + rasterize run off the UI thread.
+    let lib = resolve_pdfium_lib(&app)?;
+    crate::blocking::run_blocking(move || {
+        let bytes = match read_side_bytes(&repo, &rev, &path)? {
+            Some(b) => b,
+            None => return Ok(None),
+        };
+        // Hand the work to the single PDFium thread and wait for its answer.
+        let (tx, rx) = mpsc::channel();
+        pdfium_thread()
+            .send(RenderJob { bytes, page, lib, resp: tx })
+            .map_err(|_| "pdf render thread unavailable".to_string())?;
+        rx.recv().map_err(|_| "pdf render thread dropped the job".to_string())?
+    })
+    .await
+}
+
+/// A render request handed to the dedicated PDFium thread.
+struct RenderJob {
+    bytes: Vec<u8>,
+    page: u32,
+    lib: std::path::PathBuf,
+    resp: Sender<Result<Option<PdfRender>, String>>,
+}
+
+/// `Pdfium` is not `Send` (its FFI bindings can't cross threads) and PDFium's
+/// `FPDF_InitLibrary` is process-global, so ALL rasterization runs on ONE
+/// dedicated thread that owns the instance for the app's lifetime. Callers post
+/// a [`RenderJob`] and block on its reply channel — from `run_blocking`'s pool,
+/// never the UI thread. Serializing previews this way is fine (they're rare and
+/// each page renders in a few ms).
+fn pdfium_thread() -> &'static Sender<RenderJob> {
+    static TX: OnceLock<Sender<RenderJob>> = OnceLock::new();
+    TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<RenderJob>();
+        std::thread::Builder::new()
+            .name("pdfium-render".into())
+            .spawn(move || {
+                use pdfium_render::prelude::*;
+                let mut pdfium: Option<Pdfium> = None;
+                for job in rx {
+                    let result = (|| -> Result<Option<PdfRender>, String> {
+                        if pdfium.is_none() {
+                            let bindings = Pdfium::bind_to_library(&job.lib)
+                                .map_err(|e| format!("PDFium load failed: {e}"))?;
+                            pdfium = Some(Pdfium::new(bindings));
+                        }
+                        rasterize(pdfium.as_ref().unwrap(), &job.bytes, job.page)
+                    })();
+                    let _ = job.resp.send(result);
+                }
+            })
+            .expect("spawn pdfium-render thread");
+        tx
+    })
+}
+
+/// Rasterize one page to a PNG. Runs only on the PDFium thread (see
+/// [`pdfium_thread`]).
+fn rasterize(
+    pdfium: &pdfium_render::prelude::Pdfium,
+    bytes: &[u8],
+    page: u32,
+) -> Result<Option<PdfRender>, String> {
+    use pdfium_render::prelude::*;
+
+    let doc = pdfium
+        .load_pdf_from_byte_slice(bytes, None)
+        .map_err(|e| format!("PDF open failed: {e}"))?;
+    let pages = doc.pages();
+    let count = pages.len(); // u16
+    if count == 0 {
+        return Ok(None);
+    }
+    let idx = page.saturating_sub(1).min(count as u32 - 1) as u16;
+    let pdf_page = pages.get(idx).map_err(|e| format!("PDF page failed: {e}"))?;
+
+    let config = PdfRenderConfig::new()
+        .set_target_width(PDF_RENDER_WIDTH)
+        .set_maximum_height(PDF_RENDER_WIDTH * 4);
+    let image = pdf_page
+        .render_with_config(&config)
+        .map_err(|e| format!("PDF render failed: {e}"))?
+        .as_image();
+    let (width, height) = (image.width(), image.height());
+
+    let mut buf = std::io::Cursor::new(Vec::new());
+    image
+        .write_to(&mut buf, image::ImageFormat::Png)
+        .map_err(|e| format!("PNG encode failed: {e}"))?;
+
+    use base64::Engine;
+    let data = base64::engine::general_purpose::STANDARD.encode(buf.into_inner());
+    Ok(Some(PdfRender {
+        data,
+        width,
+        height,
+        page_count: count as u32,
+    }))
+}
+
+/// Resolve the bundled PDFium library path. Tries the app's Resource dir first
+/// (release + `tauri build`), then the in-repo `resources/pdfium/` copy that
+/// `tauri dev` runs against.
+fn resolve_pdfium_lib(app: &tauri::AppHandle<tauri::Wry>) -> Result<std::path::PathBuf, String> {
+    use pdfium_render::prelude::Pdfium;
+    use tauri::Manager;
+
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(p) = app
+        .path()
+        .resolve("pdfium", tauri::path::BaseDirectory::Resource)
+    {
+        dirs.push(p);
+    }
+    dirs.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/pdfium"));
+
+    for dir in &dirs {
+        // Appends the platform library name (libpdfium.dylib / pdfium.dll /
+        // libpdfium.so) to the folder.
+        let candidate = Pdfium::pdfium_platform_library_name_at_path(dir);
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("PDFium library not found (resources/pdfium)".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,6 +474,37 @@ mod tests {
 
         // A never-staged path is absent from the index -> None.
         assert!(preview_blob_inner(&path, ":index", "nope.png").unwrap().is_none());
+    }
+
+    // A minimal one-page (blank, 200x200) PDF — enough to exercise the whole
+    // rasterize pipeline (load -> page -> render -> PNG encode).
+    const MINIMAL_PDF: &[u8] = b"%PDF-1.4\n\
+1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n\
+2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n\
+3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>endobj\n\
+trailer<< /Root 1 0 R >>\n%%EOF";
+
+    #[test]
+    fn rasterizes_a_pdf_page_when_lib_present() {
+        use pdfium_render::prelude::*;
+        // Uses the in-repo dev copy of PDFium; skip (don't fail) when it isn't
+        // fetched — a fresh CI runner without `pnpm install`/fetch-pdfium.mjs.
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/pdfium");
+        let lib = Pdfium::pdfium_platform_library_name_at_path(&dir);
+        if !lib.exists() {
+            eprintln!("skipping rasterize test: PDFium lib not present at {lib:?}");
+            return;
+        }
+        let pdfium = Pdfium::new(Pdfium::bind_to_library(&lib).expect("bind pdfium"));
+        let out = rasterize(&pdfium, MINIMAL_PDF, 1)
+            .expect("rasterize ok")
+            .expect("a render");
+        assert_eq!(out.page_count, 1);
+        assert!(out.width > 0 && out.height > 0);
+        // Decoded data starts with the PNG magic bytes.
+        use base64::Engine;
+        let png = base64::engine::general_purpose::STANDARD.decode(&out.data).unwrap();
+        assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']);
     }
 
     #[test]

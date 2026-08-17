@@ -11,6 +11,8 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview",
     "tauri": "tauri",
+    "pdfium": "node scripts/fetch-pdfium.mjs",
+    "postinstall": "node scripts/fetch-pdfium.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",

@@ -45,6 +45,13 @@ specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 notify-debouncer-mini = "0.7.0"
 portable-pty = "0.9"
 base64 = "0.22"
+# PDF page rasterization for the image/PDF diff preview (issue #37). pdf.js is
+# unusable in the WKWebView (its worker hangs; on the main thread it freezes
+# the UI), so PDFs are rendered to a PNG in the BACKEND (off the UI thread via
+# run_blocking) and shown through the same image path. `pdfium-render` binds to
+# a bundled PDFium native lib at runtime (resources/pdfium/, see preview.rs).
+pdfium-render = { version = "0.8", features = ["image", "thread_safe"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 # Embedded Luau VM for the plugin scripting runtime (PER-56): sandboxed,
 # in-process, curated host API — no shell, no io/os. The `luau` feature builds
 # Luau (C++) from vendored source (a C++ toolchain is already required for

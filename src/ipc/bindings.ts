@@ -149,6 +149,19 @@ async previewBlob(repo: string, rev: string, path: string) : Promise<Result<Blob
 }
 },
 /**
+ * Rasterize page `page` (1-based) of the PDF blob on the `rev` side of a diff.
+ * `Ok(None)` when the side is absent (same convention as [`preview_blob`]).
+ * JS: `invoke("render_pdf_page", { repo, rev, path, page })`.
+ */
+async renderPdfPage(repo: string, rev: string, path: string, page: number) : Promise<Result<PdfRender | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("render_pdf_page", { repo, rev, path, page }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.getAppInfo()`. No repo/path needed — this is pure static
  * build-time metadata (Cargo.toml's `[package]` table), never `Err`.
  */
@@ -3878,6 +3891,19 @@ export type PanelItem =
  * its stdout. `label` is an optional caption above the output.
  */
 { type: "command-output"; command: string; label?: string | null }
+/**
+ * One rasterized PDF page: a PNG (base64) plus its pixel size and the doc's
+ * total page count (so the frontend can page through).
+ */
+export type PdfRender = { 
+/**
+ * Standard-base64 PNG of the rendered page.
+ */
+data: string; width: number; height: number; 
+/**
+ * Total pages in the document.
+ */
+pageCount: number }
 /**
  * One author/committer identity. `t` is a unix timestamp; the frontend formats it.
  */

@@ -69,8 +69,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::commit_detail,
         commands::ancestors_of,
         // #37: raw image/PDF blob bytes for a side-by-side visual diff preview
-        // (serves both the commit-detail diff and the working-tree diff).
+        // (serves both the commit-detail diff and the working-tree diff), plus
+        // backend PDFium rasterization of a PDF page (pdf.js can't run in the
+        // WKWebView — see preview.rs).
         preview::preview_blob,
+        preview::render_pdf_page,
         commands::get_app_info,
         updater::check_for_update,
         // Safety Manager (snapshot / list / global undo / retention prune)

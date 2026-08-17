@@ -4,22 +4,19 @@
   // they used to render the "binary file — not shown" placeholder.
   //
   // Side-addressed: the caller passes the two diff sides as `rev` tokens the
-  // backend `preview_blob` understands (a commit rev-spec, `:index`, or
-  // `:workdir`) plus the file path (and old path for a rename). This component
-  // owns ALL the fetching and rendering, so the two islands stay thin.
+  // backend understands (a commit rev-spec, `:index`, or `:workdir`) plus the
+  // file path (and old path for a rename). This component owns ALL the fetching
+  // and rendering, so the two islands stay thin.
   //
-  // IMAGES render inline via `data:` URIs (CSP already allows `img-src data:`).
-  // PDFs do NOT render inline: pdf.js is unusable in the Tauri WKWebView (a Web
-  // Worker never completes its handshake -> getDocument hangs; on the main
-  // thread it freezes the UI, doubly so under the dev webview's software
-  // rasterizer). So a PDF shows its before/after size comparison plus the
-  // external-tool escape hatch — informative and, crucially, non-blocking.
+  // IMAGES: fetched as bytes (`preview_blob`) and shown via a `data:` URI.
+  // PDFs: rasterized in the RUST BACKEND (`render_pdf_page`, PDFium off the UI
+  // thread) to a PNG that's shown the same way — pdf.js can't run in the Tauri
+  // WKWebView. Both paths end at an <img>; a PDF adds page navigation.
   import { commands, type BlobPreview } from "@/ipc/bindings";
   import { t } from "@/i18n/i18n.svelte.ts";
   import { IN_TAURI } from "@/ipc/env";
   import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
   import { previewKind, formatBytes } from "./preview-kind";
-  import FileText from "@lucide/svelte/icons/file-text";
   import ExternalLink from "@lucide/svelte/icons/external-link";
 
   type Props = {
@@ -32,9 +29,7 @@
     newRev: string;
     /** `rev` token for the "before" side (e.g. `<sha>^`, `HEAD`, `:index`). */
     oldRev: string;
-    /** For the external-diff button (mirrors each island's own openDiff call):
-     * commit-detail passes staged=false + fromRev/toRev; the working tree passes
-     * its staged flag and no revs (its own index/workdir diff). */
+    /** External-diff fallback (mirrors each island's own openDiff call). */
     externalStaged?: boolean;
     externalFromRev?: string | null;
     externalToRev?: string | null;
@@ -54,87 +49,116 @@
     | { st: "loading" }
     | { st: "absent" }
     | { st: "toolarge"; size: number }
-    | { st: "error" }
-    | { st: "ready"; mime: string; size: number; data: string };
+    | { st: "error"; msg: string }
+    | { st: "image"; uri: string; size: number; dim?: { w: number; h: number } }
+    | { st: "pdf"; uri: string; pageCount: number; dim: { w: number; h: number } };
 
   const kind = $derived(previewKind(path));
 
   let before = $state<Side>({ st: "loading" });
   let after = $state<Side>({ st: "loading" });
+  let pageNum = $state(1);
   let fetchToken = 0;
 
-  async function fetchSide(rev: string, filePath: string): Promise<Side> {
+  const totalPages = $derived(
+    Math.max(before.st === "pdf" ? before.pageCount : 0, after.st === "pdf" ? after.pageCount : 0),
+  );
+
+  async function fetchImage(rev: string, file: string): Promise<Side> {
     try {
-      const r = await commands.previewBlob(repo, rev, filePath);
-      if (r.status !== "ok") return { st: "error" };
+      const r = await commands.previewBlob(repo, rev, file);
+      if (r.status !== "ok") return { st: "error", msg: r.error };
       const p: BlobPreview | null = r.data;
-      if (!p) return { st: "absent" }; // path not present on this side
-      if (p.data == null) return { st: "toolarge", size: p.size }; // over the cap
-      return { st: "ready", mime: p.mime, size: p.size, data: p.data };
-    } catch {
-      return { st: "error" };
+      if (!p) return { st: "absent" };
+      if (p.data == null) return { st: "toolarge", size: p.size };
+      return { st: "image", uri: `data:${p.mime};base64,${p.data}`, size: p.size };
+    } catch (e) {
+      return { st: "error", msg: String(e) };
     }
   }
 
-  // For PDFs we only need the byte size, not the payload — fetch it cheaply and
-  // skip base64 by asking for the size via a HEAD-ish call. `preview_blob`
-  // always returns the bytes, so just read `.size` and drop `.data`.
+  async function fetchPdf(rev: string, file: string, page: number): Promise<Side> {
+    try {
+      const r = await commands.renderPdfPage(repo, rev, file, page);
+      if (r.status !== "ok") return { st: "error", msg: r.error };
+      const p = r.data;
+      if (!p) return { st: "absent" };
+      return {
+        st: "pdf",
+        uri: `data:image/png;base64,${p.data}`,
+        pageCount: p.pageCount,
+        dim: { w: p.width, h: p.height },
+      };
+    } catch (e) {
+      return { st: "error", msg: String(e) };
+    }
+  }
+
+  // Refetch whenever the file/sides/page change. A monotonic token drops results
+  // from a superseded selection. Browser demo mode has no backend.
   $effect(() => {
     const r = repo,
       np = path,
       op = oldPath,
       nr = newRev,
-      or = oldRev;
+      or = oldRev,
+      k = kind,
+      pg = pageNum;
     void r;
     const my = ++fetchToken;
     before = { st: "loading" };
     after = { st: "loading" };
-    beforeDim = null;
-    afterDim = null;
     if (!IN_TAURI) {
-      before = { st: "error" };
-      after = { st: "error" };
+      before = { st: "error", msg: "" };
+      after = { st: "error", msg: "" };
       return;
     }
-    void fetchSide(or, op ?? np).then((s) => {
+    const oldFile = op ?? np;
+    const load = k === "pdf" ? (rev: string, f: string) => fetchPdf(rev, f, pg) : fetchImage;
+    void load(or, oldFile).then((s) => {
       if (my === fetchToken) before = s;
     });
-    void fetchSide(nr, np).then((s) => {
+    void load(nr, np).then((s) => {
       if (my === fetchToken) after = s;
     });
   });
 
-  function dataUri(s: Extract<Side, { st: "ready" }>): string {
-    return `data:${s.mime};base64,${s.data}`;
-  }
-
-  // ── images: intrinsic dimensions read off the loaded <img> ──
-  let beforeDim = $state<{ w: number; h: number } | null>(null);
-  let afterDim = $state<{ w: number; h: number } | null>(null);
+  // Images report their intrinsic size via the loaded <img>; PDFs already carry
+  // pixel dims from the backend.
   function onImgLoad(which: "before" | "after", e: Event) {
     const img = e.currentTarget as HTMLImageElement;
-    const d = { w: img.naturalWidth, h: img.naturalHeight };
-    if (which === "before") beforeDim = d;
-    else afterDim = d;
+    const dim = { w: img.naturalWidth, h: img.naturalHeight };
+    const patch = (s: Side): Side => (s.st === "image" ? { ...s, dim } : s);
+    if (which === "before") before = patch(before);
+    else after = patch(after);
+  }
+
+  function metaOf(s: Side): string {
+    if (s.st === "image") {
+      const d = s.dim ? t("preview.dimensions", { w: s.dim.w, h: s.dim.h }) + " · " : "";
+      return d + formatBytes(s.size);
+    }
+    return "";
   }
 
   function openExternal() {
     if (!IN_TAURI) return;
-    // Mirrors each island's own openDiff call: commit-detail passes fromRev/
-    // toRev (staged=false); the working tree passes its staged flag, no revs.
     void externalToolsCtrl.openDiff(repo, path, externalStaged, externalFromRev, externalToRev);
+  }
+
+  function prevPage() {
+    if (pageNum > 1) pageNum--;
+  }
+  function nextPage() {
+    if (pageNum < totalPages) pageNum++;
   }
 </script>
 
-{#snippet imageSide(which: "before" | "after", label: string, side: Side, dim: { w: number; h: number } | null)}
+{#snippet sidePanel(which: "before" | "after", label: string, side: Side)}
   <div class="bd-panel">
     <div class="bd-cap">
       <span class="bd-lab">{label}</span>
-      {#if side.st === "ready"}
-        <span class="bd-meta">
-          {#if dim}{t("preview.dimensions", { w: dim.w, h: dim.h })} · {/if}{formatBytes(side.size)}
-        </span>
-      {/if}
+      {#if metaOf(side)}<span class="bd-meta">{metaOf(side)}</span>{/if}
     </div>
     <div class="bd-body">
       {#if side.st === "loading"}
@@ -146,52 +170,30 @@
       {:else if side.st === "error"}
         <span class="bd-mut">{IN_TAURI ? t("preview.unavailable") : t("preview.browser_demo")}</span>
       {:else}
-        <img class="bd-img" src={dataUri(side)} alt={label} onload={(e) => onImgLoad(which, e)} />
-      {/if}
-    </div>
-  </div>
-{/snippet}
-
-{#snippet pdfSide(which: "before" | "after", label: string, side: Side)}
-  <div class="bd-panel">
-    <div class="bd-cap">
-      <span class="bd-lab">{label}</span>
-      {#if side.st === "ready"}<span class="bd-meta">{formatBytes(side.size)}</span>{/if}
-    </div>
-    <div class="bd-body bd-body-pdf">
-      {#if side.st === "loading"}
-        <span class="bd-mut">{t("preview.loading")}</span>
-      {:else if side.st === "absent"}
-        <span class="bd-badge">{which === "before" ? t("preview.no_before") : t("preview.no_after")}</span>
-      {:else if side.st === "error"}
-        <span class="bd-mut">{IN_TAURI ? t("preview.unavailable") : t("preview.browser_demo")}</span>
-      {:else}
-        <FileText class="bd-doc-ico" size={30} aria-hidden="true" />
-        <span class="bd-meta">{side.st === "toolarge" ? formatBytes(side.size) : formatBytes((side as Extract<Side, { st: "ready" }>).size)}</span>
+        <img class="bd-img" src={side.uri} alt={label} onload={(e) => onImgLoad(which, e)} />
       {/if}
     </div>
   </div>
 {/snippet}
 
 <div class="bdiff">
+  {#if kind === "pdf" && totalPages > 1}
+    <div class="bd-nav">
+      <button class="bd-navbtn" onclick={prevPage} disabled={pageNum <= 1} aria-label={t("preview.pdf_prev")}>‹</button>
+      <span class="bd-navlab">{t("preview.pdf_page", { n: pageNum, total: totalPages })}</span>
+      <button class="bd-navbtn" onclick={nextPage} disabled={pageNum >= totalPages} aria-label={t("preview.pdf_next")}>›</button>
+    </div>
+  {/if}
   <div class="bd-sides">
-    {#if kind === "pdf"}
-      {@render pdfSide("before", t("preview.before"), before)}
-      {@render pdfSide("after", t("preview.after"), after)}
-    {:else}
-      {@render imageSide("before", t("preview.before"), before, beforeDim)}
-      {@render imageSide("after", t("preview.after"), after, afterDim)}
-    {/if}
+    {@render sidePanel("before", t("preview.before"), before)}
+    {@render sidePanel("after", t("preview.after"), after)}
   </div>
-  {#if kind === "pdf"}
+  {#if kind === "pdf" && IN_TAURI}
     <div class="bd-pdfnote">
-      <span>{t("preview.pdf_no_inline")}</span>
-      {#if IN_TAURI}
-        <button class="bd-extbtn" onclick={openExternal}>
-          <ExternalLink size={12} aria-hidden="true" />
-          {t("preview.open_external")}
-        </button>
-      {/if}
+      <button class="bd-extbtn" onclick={openExternal}>
+        <ExternalLink size={12} aria-hidden="true" />
+        {t("preview.open_external")}
+      </button>
     </div>
   {/if}
 </div>
@@ -253,16 +255,6 @@
       8px -8px,
       -8px 0;
   }
-  .bd-body-pdf {
-    flex-direction: column;
-    gap: 8px;
-    background-image: none;
-    color: var(--muted);
-  }
-  :global(.bd-doc-ico) {
-    color: var(--muted);
-    opacity: 0.8;
-  }
   .bd-img {
     max-width: 100%;
     height: auto;
@@ -280,16 +272,38 @@
     border: 1px dashed var(--border);
     border-radius: var(--r-pill, 999px);
   }
-  .bd-pdfnote {
+  .bd-nav {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 10px;
-    flex-wrap: wrap;
-    margin-top: 10px;
+    margin-bottom: 8px;
+  }
+  .bd-navbtn {
+    width: 24px;
+    height: 24px;
+    line-height: 1;
+    font-size: 15px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-control, 6px);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .bd-navbtn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .bd-navlab {
     color: var(--muted);
-    font-size: 11px;
+    font: 11px/1 var(--mono, monospace);
+    min-width: 96px;
     text-align: center;
+  }
+  .bd-pdfnote {
+    display: flex;
+    justify-content: center;
+    margin-top: 10px;
   }
   .bd-extbtn {
     display: inline-flex;
