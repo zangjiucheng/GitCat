@@ -16,7 +16,7 @@ export default {
   loading: "加载中…",
   show_less: "收起",
   show_more: "展开",
-  click_to_copy: "点击复制",
+  click_to_copy: "点击复制完整哈希",
   copied: "已复制 ✓",
   row_of: "第 {row} / {total} 行",
   cant_revert_merge: "无法回退一个合并 commit",

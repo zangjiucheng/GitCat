@@ -74,6 +74,7 @@ export default defineConfig({
     nav: [
       { text: "Home", link: "/" },
       { text: "Guide", link: "/guide/" },
+      { text: "Screenshots", link: "/guide/screenshots" },
       { text: "Install", link: "/install" },
       { text: "Features", link: "/features" },
       { text: "Plugins", link: "/plugins" },
@@ -89,6 +90,7 @@ export default defineConfig({
           text: "Getting started",
           items: [
             { text: "Overview & layout", link: "/guide/" },
+            { text: "Screenshots", link: "/guide/screenshots" },
             { text: "Opening a repository", link: "/guide/opening-a-repository" },
             { text: "Reading the commit graph", link: "/guide/commit-graph" },
           ],

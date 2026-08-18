@@ -14,7 +14,7 @@ export default {
     "Click a commit to see its files and diff on the right. <b>Drag</b> a commit onto another to cherry-pick it there — hold <kbd>⇧</kbd> while dragging to merge instead. <b>Right-click</b> a commit for cherry-pick / merge / revert / reset / create branch or tag / copy.",
   branches_h: "Branches & tags",
   branches_p:
-    "<b>Right-click a branch label</b> in the graph for branch management (checkout, push, merge, rebase, reset, delete). <b>Right-click a remote</b> label (origin/…) to check it out as a local branch. Hover a label to see its full name. The left <b>sidebar</b> lists every branch and tag — click one to check it out; the checkboxes show or hide branches in the graph.",
+    "<b>Right-click a branch label</b> in the graph for branch management (checkout, push, merge, rebase, reset, delete). <b>Right-click a remote</b> label (origin/…) to check it out as a local branch. Hover a label to see its full name. The left <b>sidebar</b> lists every branch and tag — click one to jump the graph to its tip commit; for a branch, double-click (or right-click, or its ⋮ button) checks it out instead; the checkboxes show or hide branches in the graph.",
   uncommitted_h: "Uncommitted changes",
   uncommitted_p:
     "The pinned top row. Stage or unstage whole files, single hunks, or single lines, then commit. You can point GitCat at your own command to generate the commit message (Tools ▸ External Tools) — GitCat never talks to an AI itself; the command does.",

@@ -322,18 +322,51 @@
           role="button"
           tabindex="0"
           onclick={(e) => {
-            if ((e.target as HTMLElement).closest(".ref-menu") || isCur || sidebarCtrl.busy) return;
-            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            sidebarCtrl.openCheckoutConfirm(b.name, false, r.left, r.bottom + 4);
+            if ((e.target as HTMLElement).closest(".ref-menu")) return;
+            // A double-click (= checkout) fires click, click, dblclick — without
+            // this the jump would run TWICE, each a commit_detail round-trip,
+            // before the confirm ever opens. MouseEvent.detail is the click
+            // count, so >1 is "the second (or third…) of a multi-click"; the
+            // first still jumps, which is what makes the confirm open over the
+            // branch you just landed on.
+            if (e.detail > 1) return;
+            sidebarCtrl.jumpToRef("local", b.name, b.sha);
           }}
           onkeydown={(e) => {
-            if ((e.key !== "Enter" && e.key !== " ") || isCur || sidebarCtrl.busy) return;
+            // Fires during bubble, so a descendant's own Enter/Space (the ⋮
+            // button, the visibility checkbox, the copy-name button) reaches
+            // this handler too — bail before touching the event unless it
+            // originated on the row itself, or preventDefault below would
+            // cancel that descendant's own activation instead of just
+            // suppressing the list's Space-scrolls.
+            if (e.target !== e.currentTarget) return;
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault(); // Space would otherwise ALSO scroll the ref list
+            sidebarCtrl.jumpToRef("local", b.name, b.sha);
+          }}
+          ondblclick={(e) => {
+            // The checkbox/copy-name onclick handlers stopPropagation on click only —
+            // dblclick is a separate event that still bubbles here, so it needs its own guard.
+            if ((e.target as HTMLElement).closest(".ref-menu, .rb-check, .copy-name") || isCur || sidebarCtrl.busy) return;
+            // The first click of this double-click already ran jumpToRef; if it
+            // failed, its warning is still pending (see warnJumpFailed) and
+            // would otherwise land on top of the confirm we're about to open.
+            sidebarCtrl.cancelJumpWarning();
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
             sidebarCtrl.openCheckoutConfirm(b.name, false, r.left, r.bottom + 4);
           }}
           oncontextmenu={(e) => {
             e.preventDefault();
-            if (!sidebarCtrl.busy) sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement, b.upstream);
+            // Right-click provokes no warning of its own (it fires no `click`),
+            // but it can easily FOLLOW a left-click that did — and the hold is a
+            // full platform double-click interval wide, so that overlap is real.
+            // Cancel only when a menu is actually about to open: if `busy` swallows
+            // the action there's no replacement feedback, so the warning should
+            // still land.
+            if (!sidebarCtrl.busy) {
+              sidebarCtrl.cancelJumpWarning();
+              sidebarCtrl.openMenu(b.name, isCur, e.currentTarget as HTMLElement, b.upstream);
+            }
           }}
         >
           <input
@@ -484,14 +517,35 @@
             role="button"
             tabindex="0"
             onclick={(e) => {
-              if (sidebarCtrl.busy) return;
+              if ((e.target as HTMLElement).closest(".ref-menu")) return;
+              if (e.detail > 1) return; // second click of a double-click — see the local row's own comment
+              sidebarCtrl.jumpToRef("remote", r.name, r.sha);
+            }}
+            onkeydown={(e) => {
+              // Fires during bubble, so a descendant's own Enter/Space (the ⋮
+              // button, the visibility checkbox, the copy-name button) reaches
+              // this handler too — bail before touching the event unless it
+              // originated on the row itself, or preventDefault below would
+              // cancel that descendant's own activation instead of just
+              // suppressing the list's Space-scrolls.
+              if (e.target !== e.currentTarget) return;
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault(); // Space would otherwise ALSO scroll the ref list
+              sidebarCtrl.jumpToRef("remote", r.name, r.sha);
+            }}
+            ondblclick={(e) => {
+              if ((e.target as HTMLElement).closest(".ref-menu, .rb-check, .copy-name") || sidebarCtrl.busy) return;
+              sidebarCtrl.cancelJumpWarning(); // see the local row's ondblclick
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
               sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
             }}
-            onkeydown={(e) => {
-              if ((e.key !== "Enter" && e.key !== " ") || sidebarCtrl.busy) return;
-              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
+            oncontextmenu={(e) => {
+              e.preventDefault();
+              if (!sidebarCtrl.busy) {
+                sidebarCtrl.cancelJumpWarning(); // see the local row's oncontextmenu
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
+              }
             }}
           >
             <input
@@ -515,6 +569,21 @@
               }}>{#if sidebarCtrl.copiedBranch === r.name}✓{:else}<Clipboard class="ico" size={12} aria-hidden="true" />{/if}</button
             >
             {#if sidebarCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
+            <!-- A remote row's only action is checkout (there's no remote "branch
+                 actions" menu to open), so its ⋮ opens the checkout confirm
+                 directly instead of a menu — this keeps that action reachable
+                 without a mouse. -->
+            <button
+              class="ref-menu"
+              title={t("sidebar.checkout_remote")}
+              aria-label={t("sidebar.checkout_named", { name: r.name })}
+              disabled={sidebarCtrl.busy}
+              onclick={(e) => {
+                e.stopPropagation();
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
+              }}>&#8942;</button
+            >
           </div>
           {/if}
         {/each}
@@ -566,10 +635,34 @@
           data-tag={tag.name}
           role="button"
           tabindex="0"
-          onkeydown={(e) => (e.key === "Enter" || e.key === " ") && !sidebarCtrl.busy && sidebarCtrl.openTagMenu(tag.name, e.currentTarget as HTMLElement)}
+          onclick={(e) => {
+            if ((e.target as HTMLElement).closest(".ref-menu")) return;
+            // A tag row has no ondblclick of its own, but a double-click on it
+            // still delivers two clicks — and two jumps — so it needs the same
+            // guard as the branch rows above.
+            if (e.detail > 1) return;
+            sidebarCtrl.jumpToRef("tag", tag.name, tag.sha);
+          }}
+          onkeydown={(e) => {
+            // Fires during bubble, so a descendant's own Enter/Space (the ⋮
+            // button) reaches this handler too — bail before touching the
+            // event unless it originated on the row itself, or preventDefault
+            // below would cancel that descendant's own activation instead of
+            // just suppressing the list's Space-scrolls.
+            if (e.target !== e.currentTarget) return;
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault(); // Space would otherwise ALSO scroll the ref list
+            sidebarCtrl.jumpToRef("tag", tag.name, tag.sha);
+          }}
           oncontextmenu={(e) => {
             e.preventDefault();
-            if (!sidebarCtrl.busy) sidebarCtrl.openTagMenu(tag.name, e.currentTarget as HTMLElement);
+            // A tag row jumps on click and opens this menu on right-click, so it
+            // has exactly the same left-then-right overlap as the branch rows —
+            // see the local row's oncontextmenu.
+            if (!sidebarCtrl.busy) {
+              sidebarCtrl.cancelJumpWarning();
+              sidebarCtrl.openTagMenu(tag.name, e.currentTarget as HTMLElement);
+            }
           }}
         >
           <span class="rname" data-fullname={tag.name}>{row.label}</span>
@@ -680,9 +773,11 @@
                Deinit/Remove) plus the status chip and path simply don't fit
                the sidebar's width and were silently getting clipped. Mirrors
                the branch row's own "click the row = primary action, ⋮ =
-               everything else" convention exactly — clicking anywhere on an
-               openable row (canOpen) calls Open, same as clicking a branch
-               row checks it out. -->
+               everything else" convention — clicking anywhere on an openable
+               row (canOpen) calls Open, same as clicking a branch row jumps
+               the graph to its tip (a submodule row's only single-click
+               action is Open, so there's no second gesture to disambiguate
+               from the way there is on a branch row). -->
           <div
             class="sub-item"
             class:busy={sidebarCtrl.busy}
@@ -963,13 +1058,17 @@
   </div>
 {/if}
 
-<!-- A branch row's own click/Enter opens this instead of checking out
-     directly (see CheckoutConfirm's own doc comment) — a stray click that
-     misses the visibility checkbox right next to it, or just brushes the
-     row, used to switch branches with zero recourse. Reuses `.ref-pop.cm-pop`/
-     `.cm-head` verbatim, same as the dirty-tree chooser above; no Cancel
-     button, matching every OTHER popover here (menu/tagMenu/submoduleMenu/
-     mergeMenu/dirtyCheckoutMenu) — outside-click dismisses it. -->
+<!-- Opens on any branch row's double-click, and on a remote row's
+     right-click/⋮ — a local row's right-click/⋮ open the branch menu
+     instead, whose Checkout button calls checkout() immediately with no
+     confirm (see CheckoutConfirm's own doc comment). On the routes that
+     do lead here, this popover is the guard against a stray click — one
+     that misses the visibility checkbox right next to the row, or just
+     brushes it — switching branches with zero recourse. Reuses
+     `.ref-pop.cm-pop`/`.cm-head` verbatim, same as the dirty-tree chooser
+     above; no Cancel button, matching every OTHER popover here
+     (menu/tagMenu/submoduleMenu/mergeMenu/dirtyCheckoutMenu) —
+     outside-click dismisses it. -->
 {#if sidebarCtrl.checkoutConfirm}
   {@const cc = sidebarCtrl.checkoutConfirm}
   <div class="ref-pop cm-pop" bind:this={checkoutConfirmEl} style="left:{cc.x}px;top:{cc.y}px">

@@ -127,6 +127,19 @@ describe("filter", () => {
     expect((cmdkCtrl.results[0] as any).subject).toBe("Add rate limiting");
   });
 
+  it("matches a commit by its FULL 40-char hash, not just the short prefix (#43)", () => {
+    const full = "bbb2222abcdef0123456789abcdef0123456789a"; // 40 chars; short is bbb2222
+    setBackendGraph([
+      { sha: "aaa1111", subject: "Fix off-by-one bug", an: { n: "Dev" }, refs: [] },
+      { sha: "bbb2222", subject: "Add rate limiting", an: { n: "Dev" }, refs: [] },
+    ]);
+    (bridge as any).BACKEND.oids = ["aaa1111abcdef0123456789abcdef0123456789a", full]; // full oids parallel to rows
+    cmdkCtrl.show();
+    cmdkCtrl.filter(full);
+    expect(cmdkCtrl.results.length).toBe(1);
+    expect((cmdkCtrl.results[0] as any).subject).toBe("Add rate limiting");
+  });
+
   it("matches a ref by name", () => {
     setBackendGraph([{ sha: "aaa1111", subject: "Add feature", an: { n: "Dev" }, refs: [{ n: "main", t: "head" }] }]);
     cmdkCtrl.show();

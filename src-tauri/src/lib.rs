@@ -29,6 +29,7 @@ pub mod model;
 pub mod patch; // format-patch export + git am --3way apply (with am's own continue/skip/abort)
 pub mod pickaxe; // pickaxe / diff-content search: git log -S/-G across (a subset of) history
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
+pub mod preview; // #37: raw image/PDF blob bytes for a visual before/after diff preview
 pub mod procutil; // suppresses the console window Windows flashes open per subprocess spawn
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod repo_files; // backlog #14 (final item): .gitignore/.mailmap in-app editors — allow-listed repo-root file read/write
@@ -45,6 +46,7 @@ pub mod tool_settings; // backlog #12: external diff/merge tool settings + deleg
 pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious ownership"
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
 pub mod windows; // multi-window: spawn a fresh, fully independent GitCat process, optionally pointed directly at a repo
+pub mod instance_focus; // #39: focus the existing window for an already-open repo instead of duplicating it (per-repo loopback registry)
 pub mod cli_shim; // "Install 'gitcat' command in PATH": writes a VS Code `code`-style launcher (macOS /usr/local/bin, Linux ~/.local/bin, Windows WindowsApps)
 pub mod i18n_err; // PER-82: app-authored errors as `i18n:<key>` strings the frontend's be() translates (raw git stderr stays passthrough)
 pub mod updater; // channel-aware "check for updates" (stable vs nightly endpoint + downgrade-allowing comparator)
@@ -66,6 +68,13 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::head_ancestor_flags,
         commands::commit_detail,
         commands::ancestors_of,
+        // #37: raw image/PDF blob bytes for a side-by-side visual diff preview
+        // (serves both the commit-detail diff and the working-tree diff), plus
+        // backend PDFium rasterization of a PDF page (pdf.js can't run in the
+        // WKWebView — see preview.rs).
+        preview::preview_blob,
+        preview::render_pdf_page,
+        preview::export_blob,
         commands::get_app_info,
         updater::check_for_update,
         // Safety Manager (snapshot / list / global undo / retention prune)
@@ -342,6 +351,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // generic "New Window" menu item is handled entirely in Rust, see
         // menu.rs's own handle_event — no command round trip for that path).
         windows::open_repo_in_new_window,
+        // #39: the frontend registers/clears this window's current repo so a
+        // later `gitcat <same repo>` focuses it (see instance_focus.rs).
+        instance_focus::set_open_repo,
+        instance_focus::clear_open_repo,
         // Native-menu i18n (PER-80): the frontend pushes the current locale's
         // menu labels here so Rust rebuilds + swaps the OS menu (menu.rs).
         menu::set_app_menu,

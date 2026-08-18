@@ -28,6 +28,10 @@ export default {
   copy_branch_name: "复制分支名",
   copy_branch_name_named: "复制分支名 {name}",
   branch_actions: "分支操作",
+  // 远程分支行。检出是远程行唯一的操作,所以它的 ⋮ 按钮会直接打开检出确认框,
+  // 而不是一个菜单 —— 因此这里用动词,而本地分支的按钮只写「分支操作」。
+  checkout_remote: "检出这个远程分支",
+  checkout_named: "检出 {name}",
   // 新建分支表单。
   branch_name_placeholder: "分支名…",
   branch_from: "从哪里创建分支",
@@ -120,6 +124,18 @@ export default {
   // ── Tama 提示语(控制器:sidebar.svelte.ts)───────────────────────────
   // 分支可见性持久化。
   couldnt_save_visibility: "无法保存要显示的分支。",
+  // 点击跳转(jumpToRef)。四种不同情形最终都是「找不到那个 commit 所在的行」,
+  // 但其中只有一种是复选框的问题 —— 所以各自给出不同的提示,而不是一句笼统的话。
+  // jump_not_reachable 是标签的常见情形:标签从不作为图遍历的起点,也没有复选框
+  // 可勾,因此「勾选它的复选框」会是用户无法照做的建议。
+  jump_no_commit: "{name} 没有可跳转的 commit。",
+  jump_still_loading: "图还在加载中 —— 请稍后再点一次 {name}。",
+  jump_not_shown: "{name} 没有显示在图中 —— 勾选它的复选框即可加载。",
+  // 图已加载完毕,但并不完整(受内存上限截断,或遍历中途出错)。这里直说图的问题,
+  // 而不是怪到分支头上:该分支明明已经显示出来了,若用 jump_not_reachable 的
+  // 「当前显示的分支都到不了它的 commit」就会自相矛盾。
+  jump_graph_incomplete: "只加载了部分历史 —— {name} 的 commit 可能比已加载的部分更早。",
+  jump_not_reachable: "{name} 不在已加载的图中 —— 当前显示的分支都到不了它的 commit。",
   // 子模块 初始化 / 更新 / 添加 / 同步 / 反初始化 / 移除。
   opened_demo: "已打开 {path}(demo)。",
   init_updated_demo: "已初始化 + 更新 {path}(demo)。",
