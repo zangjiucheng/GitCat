@@ -1602,7 +1602,7 @@ class TamaMascot{
       case "commit.created": Safety.seal(); this._tele(); return null;
       case "snapshot.surfaced":{const b=Safety.seal();this._tele();this.set("hint");this.say(t("snapshot.surfaced",{ref:shortBackup(b.ref)}));return b;}
       case "op.long": this.set("thinking"); this.say(""); this._teleText((p.label||t("legacy.op_working"))+" · 0 / "+(p.total||10000)); return null;
-      case "op.progress": this._teleText((p.label||"working")+" · "+p.done+" / "+p.total); return null;
+      case "op.progress": this._teleText((p.label||t("legacy.op_working"))+" · "+p.done+" / "+p.total); return null;
       case "op.done": this.set(this.sticky&&this.sticky!=="thinking"?this.sticky:"idle"); this._tele(); return null;
       case "mutation.caution":{const b=Safety.seal();this._tele();this.set("warn");const cnt=p.count?t(p.count===1?"mutation.commit_one":"mutation.commit_many",{n:p.count}):t("mutation.commit_some");this.say(t("mutation.caution",{cnt,ref:shortBackup(b.ref)}),4200);return b;}
       case "mutation.destructive":{const b=Safety.seal();this._tele();this.set("danger");this.say(t("mutation.destructive",{label:p.label||t("mutation.this_label"),ref:shortBackup(b.ref)}),6000);return b;}
