@@ -831,6 +831,12 @@ class SidebarState {
   // to tick, a branch that simply hasn't streamed in yet is already ticked,
   // and a graph that stopped short never had the commit to begin with.
   jumpToRef(section: RefSection, name: string, sha: string): void {
+    // Every outcome of this call supersedes whatever an earlier click armed,
+    // success included — which is why the cancel lives here and not inside
+    // warnJumpFailed. Click a ref that isn't loaded, then click a different one
+    // within the hold and land on it: without this, the first ref's warning
+    // still fires half a second later, naming a ref you have already left.
+    this.cancelJumpWarning();
     if (!sha) {
       this.warnJumpFailed(t("sidebar.jump_no_commit", { name }));
       return;
@@ -891,6 +897,8 @@ class SidebarState {
   // only fixes the FAST half of real double-clicks — see JUMP_WARN_HOLD_MS.
   private jumpWarnTimer: ReturnType<typeof setTimeout> | null = null;
   private warnJumpFailed(msg: string): void {
+    // jumpToRef has already cancelled any pending warning by the time it calls
+    // this; the clear here only covers a caller that hasn't.
     this.cancelJumpWarning();
     this.jumpWarnTimer = setTimeout(() => {
       this.jumpWarnTimer = null;
