@@ -40,10 +40,10 @@ export default {
   panel_missing_title: "플러그인 패널 {id}에 비어 있지 않은 제목이 없어요.",
   panel_text_empty: "플러그인 패널 {id}에 텍스트가 비어 있는 text 항목이 있어요.",
   panel_heading_empty: "플러그인 패널 {id}에 텍스트가 비어 있는 heading 항목이 있어요.",
-  panel_button_empty_label: "플러그인 패널 {id}에 라벨이 비어 있는 버튼이 있어요.",
+  panel_button_empty_label: "플러그인 패널 {id}에 레이블이 비어 있는 버튼이 있어요.",
   panel_button_missing_command:
     "플러그인 패널 {id}에 명령 {command}을(를) 참조하는 버튼이 있는데, 이 명령은 이 플러그인에 없어요.",
-  panel_command_output_empty_label: "플러그인 패널 {id}에 라벨이 비어 있는 command-output 항목이 있어요.",
+  panel_command_output_empty_label: "플러그인 패널 {id}에 레이블이 비어 있는 command-output 항목이 있어요.",
   panel_command_output_missing_command:
     "플러그인 패널 {id}에 명령 {command}을(를) 참조하는 command-output이 있는데, 이 명령은 이 플러그인에 없어요.",
 

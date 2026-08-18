@@ -30,7 +30,7 @@ export default {
   say_creating_branch: "{name} 만드는 중…",
   say_branch_created: "{name} 브랜치를 만들었어요.",
   warn_branch_failed: "{name}을(를) 만들지 못했어요.",
-  err_create: "만들지 못했어요 — {e}",
+  err_create: "생성에 실패했어요 — {e}",
   say_demo_tag: "{sha}에 태그 {name}을(를) 만들었어요 (demo).",
   say_creating_tag: "태그 {name} 만드는 중…",
   say_tag_created: "태그 {name}을(를) 만들었어요.",

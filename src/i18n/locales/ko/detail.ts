@@ -16,7 +16,7 @@ export default {
   loading: "불러오는 중…",
   show_less: "간략히 보기",
   show_more: "더 보기",
-  click_to_copy: "클릭하면 복사돼요",
+  click_to_copy: "클릭하면 전체 해시가 복사돼요",
   copied: "복사됨 ✓",
   row_of: "{row} / {total}행",
   cant_revert_merge: "병합 커밋은 되돌릴 수 없어요",

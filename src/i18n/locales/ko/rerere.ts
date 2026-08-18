@@ -1,6 +1,6 @@
 // Rerere 패널 문자열. 키는 `rerere.<key>`가 돼요.
 export default {
-  title: "Rerere — 기록된 충돌 해결 상태",
+  title: "Rerere — 기록된 충돌 해결 방법",
   subtitle: "같은 충돌이 다시 나타나면, git이 이미 기록해둔 해결 방법을 재사용해요.",
   toggle_title: "git config rerere.enabled — 이 저장소에만 적용, --global은 절대 쓰지 않음",
   on: "켜짐",

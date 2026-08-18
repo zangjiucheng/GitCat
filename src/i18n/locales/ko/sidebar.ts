@@ -208,7 +208,7 @@ export default {
   creating: "{name} 만드는 중…",
   branch_created: "{name} 브랜치를 만들었어요.",
   couldnt_create: "{name}을(를) 만들지 못했어요.",
-  create_failed: "만들지 못했어요 — {error}",
+  create_failed: "생성에 실패했어요 — {error}",
   // 브랜치 삭제.
   delete_branch_arm: "{name} 브랜치를 삭제하려고 해요 — 확인하려면 브랜치 이름을 입력해주세요. 먼저 그 브랜치의 마지막 커밋을 고정해둘게요.",
   deleted_demo: "{name}을(를) 삭제했어요 (demo).",

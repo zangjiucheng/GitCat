@@ -26,7 +26,7 @@ export default {
   could_not_finalize: "{path} 파일의 저장을 마무리하지 못했어요: {detail}",
 
   // tool_settings.rs — 검증
-  tool_name_charset: "도구 이름 {name}에는 문자, 숫자, '-', '_'만 사용할 수 있어요.",
+  tool_name_charset: "도구 이름 {name}에는 영문자, 숫자, '-', '_'만 사용할 수 있어요.",
   tool_id_required: "도구 id가 필요해요.",
   tool_id_charset: "도구 id {id}은(는) 소문자나 숫자로 시작해야 하고, 소문자, 숫자, '-'만 포함할 수 있어요.",
   tool_name_required: "도구 이름이 필요해요.",

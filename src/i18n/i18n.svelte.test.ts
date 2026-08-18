@@ -19,11 +19,14 @@ describe("locale registry", () => {
       setLocale("ko");
       expect(locale()).toBe("ko");
 
-      // ko/ currently has an entry for every en/ key, so there is no key
-      // present in en/ and genuinely absent from ko/ to exercise the
-      // ko -> en hop in isolation. Assert instead that the
-      // locale layer is actually consulted rather than bypassed: the same
-      // key returns the ko string under "ko" and the en string under "en".
+      // The ko -> en hop is not asserted directly because it needs a key that
+      // en has and ko does not, and there is no such key at the moment. Do not
+      // read that as an invariant: CONTRIBUTOR POLICY lets a locale lag
+      // deliberately, so the next namespace someone adds to en/ alone will
+      // create one -- and that hop is exactly what renders it in English.
+      // What IS asserted here is that the locale layer gets consulted at all
+      // rather than bypassed: the same key returns the ko string under "ko"
+      // and the en string under "en".
       expect(t("common.cancel")).toBe("취소");
       setLocale("en");
       expect(t("common.cancel")).toBe("Cancel");

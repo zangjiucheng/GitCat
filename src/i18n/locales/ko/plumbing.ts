@@ -4,7 +4,7 @@
 export default {
   tama_alt: "궁금해하는 Tama",
   title: "Plumbing — 원본 객체 살펴보기",
-  subtitle: "rev, sha, branch, tag 중 하나를 입력하면 그것이 가리키는 원본 커밋, tree, blob, 태그 객체를 볼 수 있어요.",
+  subtitle: "rev, sha, 브랜치, 태그 중 하나를 입력하면 그것이 가리키는 원본 커밋, tree, blob, 태그 객체를 볼 수 있어요.",
   input_placeholder: "rev, sha, branch, tag… 예: HEAD~2, HEAD:path/to/file, a1b2c3d",
   inspect_btn: "살펴보기",
   inspecting: "살펴보는 중…",

@@ -6,7 +6,7 @@ export default {
   detached_head: "분리된 HEAD",
   n_conflicted: "충돌 {n}개",
   staged_unstaged: "{staged} 스테이징됨 · {unstaged} 스테이징 안 됨",
-  clean: "정상",
+  clean: "깨끗함",
   conflicted_hint: "{files} {n}개에 충돌이 있어요(스태시 적용/팝 중 충돌이 발생했어요) — 충돌 해결기에서 해결해주세요.",
   file: "파일",
   files_plural: "파일",
