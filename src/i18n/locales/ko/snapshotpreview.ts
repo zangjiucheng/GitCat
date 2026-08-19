@@ -1,0 +1,25 @@
+// 스냅샷 미리보기 팝오버 문자열. 키는 `snapshotpreview.<key>`가 돼요.
+export default {
+  aria_label: "스냅샷 미리보기",
+  no_message: "(메시지 없음)",
+  aria_close: "미리보기 닫기",
+  sha_fallback: "스냅샷",
+  not_in_view: "그래프에 없음",
+  not_in_view_title:
+    "이 스냅샷의 커밋은 현재 그래프 화면에 없어요(스냅샷을 찍은 뒤 히스토리가 재작성됐어요) — 대신 여기서 미리 보여드려요.",
+  loading_diff: "diff 불러오는 중…",
+  status_added: "추가됨",
+  status_modified: "수정됨",
+  status_deleted: "삭제됨",
+  status_renamed: "이름 변경됨",
+  status_copied: "복사됨",
+  status_type_changed: "타입 변경됨",
+  status_changed: "변경됨",
+  file_one: "파일",
+  file_many: "파일",
+  no_changes: "이 커밋에는 파일 변경사항이 없어요.",
+  more_one: "+파일 {n}개 더…",
+  more_many: "+파일 {n}개 더…",
+  err_load: "이 스냅샷의 커밋을 불러오지 못했어요.",
+  err_load_e: "이 스냅샷의 커밋을 불러오지 못했어요 — {e}",
+};
