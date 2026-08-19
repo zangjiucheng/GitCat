@@ -29,7 +29,7 @@ Every Git GUI makes it easy to run a dangerous command. GitCat is built so you c
 - **The deep cuts** — submodules, patch export/apply, `git bisect`, `git blame` with rename-following, per-file history, author and pickaxe search, a `git-filter-repo` wizard, external diff/merge tools, reflog rescue and dangling-object recovery.
 - **⌘K everything** — fuzzy search across commits, refs and actions, vim-style keys, and a real native menu.
 - **Plugins** *(1.1)* — ⌘K commands, hooks, side panels, named tools, and Tama skins and reactions.
-- **English & 中文** *(1.1)* — switchable live, no reload.
+- **English, 中文 & 한국어** — the whole interface, switchable live with no reload.
 - **`gitcat .`** — open a repo from your terminal the way `code .` does. WSL-aware.
 
 Full list: **[Features](https://zangjiucheng.github.io/GitCat/features)**.
@@ -40,7 +40,7 @@ Full list: **[Features](https://zangjiucheng.github.io/GitCat/features)**.
 | --- | --- |
 | <img src="docs/public/screenshots/commit-detail.png" alt="Commit detail panel with a syntax-highlighted diff" /><br>**Commit detail & diff** | <img src="docs/public/screenshots/command-palette.png" alt="The command palette" /><br>**⌘K command palette** |
 | <img src="docs/public/screenshots/settings.png" alt="Settings, with the language and graph-layout options" /><br>**Settings** | <img src="docs/public/screenshots/chinese.png" alt="The whole UI in Simplified Chinese" /><br>**Chinese (中文) interface** |
-| <img src="docs/public/screenshots/graph-light.png" alt="The commit graph in the light theme" /><br>**Light theme** | |
+| <img src="docs/public/screenshots/korean.png" alt="The whole UI in Korean" /><br>**Korean (한국어) interface** | <img src="docs/public/screenshots/graph-light.png" alt="The commit graph in the light theme" /><br>**Light theme** |
 
 ## Meet Tama
 

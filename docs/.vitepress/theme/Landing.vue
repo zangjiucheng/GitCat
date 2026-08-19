@@ -75,7 +75,7 @@ const MORE = [
   { title: "Conflicts, resolved", body: "A real 3-way editor with hunk-level resolution, plus rerere and your own external merge tool if you'd rather." },
   { title: "When git can't help", body: "Reflog rescue and dangling-object recovery, for the commits git itself has already given up on." },
   { title: "Plugins", body: "Extend GitCat with ⌘K commands, hooks, side panels, named tools, and Tama skins and reactions." },
-  { title: "English & 中文", body: "The whole interface, switchable live with no reload." },
+  { title: "English, 中文 & 한국어", body: "The whole interface in three languages, switchable live with no reload." },
   { title: "gitcat .", mono: true, body: "Open a repo from your terminal the way <code>code .</code> does — WSL-aware, on every platform." },
 ];
 

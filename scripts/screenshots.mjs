@@ -106,18 +106,28 @@ try {
     await shot(page, "graph-light");
   }
 
-  // ── fresh context (clean localStorage) for the Chinese UI ────────────────────
-  const zh = await newPage();
-  await boot(zh);
-  try {
-    await zh.getByRole("button", { name: "中文" }).click({ timeout: 3000 });
-  } catch {
-    console.warn("Chinese button not found on the wizard language step");
+  // ── one fresh context per non-English locale ─────────────────────────────────
+  // A fresh context each time, not a language switch inside the existing one:
+  // the wizard's language step only appears on first run, and it reads
+  // localStorage to decide that. Reusing a context would skip straight past it.
+  // Labels are the wizard's own buttons, which come from LOCALES in
+  // src/i18n/i18n.svelte.ts — add a locale there and it belongs here too.
+  for (const [label, name] of [
+    ["中文", "chinese"],
+    ["한국어", "korean"],
+  ]) {
+    const page = await newPage();
+    await boot(page);
+    try {
+      await page.getByRole("button", { name: label }).click({ timeout: 3000 });
+    } catch {
+      console.warn(`"${label}" button not found on the wizard language step`);
+    }
+    await sleep(600);
+    await page.keyboard.press("Escape");
+    await sleep(1500);
+    await shot(page, name);
   }
-  await sleep(600);
-  await zh.keyboard.press("Escape");
-  await sleep(1500);
-  await shot(zh, "chinese");
 } finally {
   await shutdown();
 }

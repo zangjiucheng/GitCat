@@ -28,9 +28,11 @@ Themes, graph layout, cherry-pick defaults, update channel, and this repository'
 
 ## In your language
 
-GitCat ships in English and Simplified Chinese (中文), switchable on the fly. Tama keeps her にゃ〜 either way.
+GitCat ships in English, Simplified Chinese (中文) and Korean (한국어), switchable on the fly. Tama keeps her にゃ〜 in every one of them.
 
 ![The whole interface in Simplified Chinese](/screenshots/chinese.png)
+
+![The whole interface in Korean](/screenshots/korean.png)
 
 ## Light theme
 
