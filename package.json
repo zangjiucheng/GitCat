@@ -22,7 +22,8 @@
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "encode:demo": "bash scripts/encode-demo.sh"
   },
   "dependencies": {
     "@lucide/svelte": "^1.24.0",

@@ -109,57 +109,18 @@
   font-weight: 800;
 }
 
-/* ---- Feature cards: default VitePress gives every icon the same flat gray
-   square (`--vp-c-default-soft`) regardless of content — replace with a
-   circular badge alternating the app's own two accents (indigo/teal), the
-   same two-color system used everywhere else in the product, rather than an
-   arbitrary rainbow of icon tints. */
-.VPFeature .icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background-color: var(--vp-c-indigo-soft);
-}
-
-/* Icons are inline Lucide SVGs (see index.md's own doc comment on why —
-   `stroke="currentColor"`, no fill) rather than emoji, matching the app's
-   own icon set exactly instead of an arbitrary platform-rendered glyph.
-   `color` tints the stroke; sized down slightly from Lucide's native 24px
-   so it doesn't crowd the 56px circular badge. */
-.VPFeature .icon svg {
-  width: 26px;
-  height: 26px;
-  color: var(--vp-c-indigo-1);
-}
-
-.VPFeatures .item:nth-child(even) .VPFeature .icon {
-  background-color: var(--vp-c-teal-soft);
-}
-
-.VPFeatures .item:nth-child(even) .VPFeature .icon svg {
-  color: var(--vp-c-teal-1);
-}
-
-.VPFeature {
-  border-radius: 16px;
-  transition:
-    transform 0.25s ease,
-    box-shadow 0.25s ease,
-    border-color 0.25s ease;
-}
-
 /* ---- Motion: the app itself is never static — Tama's own sprite breathes
    and blinks on a timer (see index.html's .sprite/.sprite-wrap keyframes),
    and every mutation gets a snapshot-toast slide-in. This brings a toned-
    down version of that same "alive, not a static brochure" feel to the
-   marketing site: the hero and feature grid animate in on load (staggered,
-   so the eye reads the page in the same order it's written), cards lift and
-   their icon nudges on hover, and Tama's own hero portrait gets a slow
-   float + a breathing glow behind her — a landing-page echo of her real
-   in-app idle animation, not a generic "everything spins" template effect.
-   Every rule here is undone under prefers-reduced-motion, same guarantee
-   index.html's own @media (prefers-reduced-motion:reduce) block makes for
-   the app itself. */
+   marketing site: the hero fades up on load, and Tama's own hero portrait
+   gets a slow float + a breathing glow behind her — a landing-page echo of
+   her real in-app idle animation, not a generic "everything spins" template
+   effect. The section stack below the hero has its own (scoped) hover motion
+   in Landing.vue; only the hero's is here, because only the hero is the
+   framework's own markup. Every rule in both places is undone under
+   prefers-reduced-motion, same guarantee index.html's own @media
+   (prefers-reduced-motion:reduce) block makes for the app itself. */
 
 @keyframes gc-fade-up {
   from {
@@ -209,15 +170,16 @@
    makes `.container` a NEW STACKING CONTEXT root. DownloadButton.vue's own
    dropdown (`.dl-menu`, z-index:20, nested inside `.container`) got
    trapped inside that context as a result: its z-index only ever competed
-   against other things INSIDE `.container`, never against `.VPFeatures`
-   (a normal-flow, unpositioned SIBLING of `.VPHero` itself, painting after
-   it in DOM order) — so the feature grid visually painted over the open
-   dropdown instead of the dropdown sitting on top of it. Promoting the
-   whole `.VPHero` section to its OWN explicitly-stacked, positioned
+   against other things INSIDE `.container`, never against whatever renders
+   BELOW the hero (a normal-flow, unpositioned SIBLING of `.VPHero` itself,
+   painting after it in DOM order) — so that content visually painted over
+   the open dropdown instead of the dropdown sitting on top of it. Promoting
+   the whole `.VPHero` section to its OWN explicitly-stacked, positioned
    context fixes this at the right level: now `.VPHero`'s entire subtree
-   (dropdown included, however deep) is compared against `.VPFeatures` as
-   ONE unit, and wins outright since `.VPFeatures` has no z-index of its
-   own to contest it. */
+   (dropdown included, however deep) is compared against the sections below
+   as ONE unit, and wins outright since they have no z-index of their own to
+   contest it. This still matters after the `features:` grid was replaced by
+   Landing.vue's band stack — same sibling relationship, same trap. */
 .VPHero {
   position: relative;
   z-index: 5;
@@ -229,45 +191,6 @@
 
 .VPHero .image-bg {
   animation: gc-glow-pulse 5s ease-in-out infinite;
-}
-
-/* Staggered so the six cards read top-left-to-bottom-right in the same
-   order they're written in index.md, not all at once. */
-.VPFeatures .item {
-  animation: gc-fade-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-.VPFeatures .item:nth-child(1) {
-  animation-delay: 0.08s;
-}
-.VPFeatures .item:nth-child(2) {
-  animation-delay: 0.15s;
-}
-.VPFeatures .item:nth-child(3) {
-  animation-delay: 0.22s;
-}
-.VPFeatures .item:nth-child(4) {
-  animation-delay: 0.29s;
-}
-.VPFeatures .item:nth-child(5) {
-  animation-delay: 0.36s;
-}
-.VPFeatures .item:nth-child(6) {
-  animation-delay: 0.43s;
-}
-
-.VPFeature:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 14px 28px -10px rgba(20, 20, 30, 0.16);
-}
-.dark .VPFeature:hover {
-  box-shadow: 0 14px 28px -10px rgba(0, 0, 0, 0.55);
-}
-
-.VPFeature .icon {
-  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-.VPFeature:hover .icon {
-  transform: scale(1.12) rotate(-6deg);
 }
 
 .VPButton {
@@ -534,14 +457,9 @@
   .VPHero .container,
   .VPHero .image-src,
   .VPHero .image-bg,
-  .VPFeatures .item,
   .dl-menu {
     animation: none !important;
   }
-  .VPFeature,
-  .VPFeature:hover,
-  .VPFeature .icon,
-  .VPFeature:hover .icon,
   .VPButton,
   .VPButton:hover,
   .dl-split,
