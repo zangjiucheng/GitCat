@@ -2821,6 +2821,27 @@ describe("jumpToRef (click a sidebar ref -> select its tip commit)", () => {
     expect(bridge.tama.warn).not.toHaveBeenCalled();
   });
 
+  it("a later SUCCESSFUL jump supersedes an armed warning — no scolding about the ref you left", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("tag", "v0.9.0", "a".repeat(40)); // not loaded -> warning armed
+    vi.advanceTimersByTime(100); // still inside the hold
+    vi.mocked(bridge.goToOid).mockReturnValue(true);
+    sidebarCtrl.jumpToRef("tag", "v1.0.0", "b".repeat(40)); // lands fine
+    flushWarning();
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a later FAILING jump replaces the armed warning rather than adding to it", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("tag", "v0.9.0", "a".repeat(40));
+    vi.advanceTimersByTime(100);
+    sidebarCtrl.jumpToRef("tag", "v1.0.0", "b".repeat(40));
+    flushWarning();
+    expect(bridge.tama.warn).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(bridge.tama.warn).mock.calls[0][0]).toContain("v1.0.0");
+  });
+
   it("a SUCCESSFUL jump is never delayed — no timer on the common case", () => {
     vi.mocked(bridge.goToOid).mockReturnValue(true);
     sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));
