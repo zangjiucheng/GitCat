@@ -74,7 +74,13 @@ import { IN_TAURI } from "./ipc/env";
 import * as bridge from "./legacy/bridge";
 import { dlog } from "./devlog";
 import { commands } from "./ipc/bindings";
+import ContextMenu from "./islands/contextmenu/ContextMenu.svelte";
 
+// Shared right-click menu. Mounted first because every other island can
+// open it, and it renders nothing until one does. Surfaces call
+// contextMenuCtrl.open(items, x, y) from their own oncontextmenu handler
+// rather than each rendering a popover of their own.
+mount(ContextMenu, { target: document.body });
 mount(Resolver, { target: document.body });
 mount(CommitMenu, { target: document.body });
 mount(Bisect, { target: document.body });

@@ -382,7 +382,12 @@
       open={!detailCtrl.isDirCollapsed(child.path)}
       ontoggle={(e) => detailCtrl.setDirOpen(child.path, (e.currentTarget as HTMLDetailsElement).open)}
     >
-      <summary title={child.path}><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /> {name}</summary>
+      <summary
+        title={child.path}
+        oncontextmenu={(e) => {
+          e.preventDefault();
+          detailCtrl.openDirMenu(child.path, e.clientX, e.clientY);
+        }}><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /> {name}</summary>
       <div class="indent">{@render dirNode(child)}</div>
     </details>
   {/each}
@@ -395,6 +400,14 @@
       role="button"
       tabindex="0"
       onkeydown={(e) => (e.key === "Enter" || e.key === " ") && detailCtrl.selectFile(f.p)}
+      oncontextmenu={(e) => {
+        e.preventDefault();
+        // Select first: the menu's actions all read as "…this file", and a
+        // menu acting on a row that isn't the highlighted one is the kind of
+        // mismatch that gets reported as data loss.
+        detailCtrl.selectFile(f.p);
+        detailCtrl.openFileMenu(f, e.clientX, e.clientY);
+      }}
     >
       <span class="st {f.st === 'A' ? 'A' : f.st === 'D' ? 'D' : 'M'}">{f.st}</span>
       <span class="fname">{f.name}</span>

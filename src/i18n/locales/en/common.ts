@@ -11,4 +11,23 @@ export default {
   // says which list it resizes. Double-click is otherwise undiscoverable.
   splitter_tip: "Drag to resize — double-click to reset",
   install: "Install",
+
+  // Row / repo context menus (Detail, Workdir, the topbar repo chip).
+  //
+  // The reveal_* and open_dir_* families are the ONE place this app's copy
+  // varies by platform — see legacy/platform.ts for why a proper noun earns
+  // that when a ⌘ glyph does not. Translators: keep whatever the OS itself
+  // is called in your language (Finder ships under a localized name in some
+  // locales), and keep the two verbs distinct — reveal_* opens the
+  // containing folder with the file selected, open_dir_* lands you inside
+  // the folder.
+  reveal_windows: "Show in File Explorer",
+  reveal_macos: "Reveal in Finder",
+  reveal_linux: "Show in file manager",
+  open_dir_windows: "Open in File Explorer",
+  open_dir_macos: "Open in Finder",
+  open_dir_linux: "Open in file manager",
+  // Repo-relative (what git itself prints) vs absolute.
+  copy_path: "Copy path",
+  copy_full_path: "Copy full path",
 };

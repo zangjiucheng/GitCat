@@ -1105,16 +1105,21 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 /* Discard all — the danger-toned variant of a section action. */
 .wd-discard-all{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,var(--border))}
 .wd-discard-all:hover:not([disabled]){background:color-mix(in srgb,var(--danger) 12%,transparent)}
-/* Per-file right-click menu (Workdir.svelte). Fixed-position popover + a
-   full-screen transparent backdrop that catches the dismissing click. */
-.wd-rowmenu-backdrop{position:fixed;inset:0;z-index:60}
-.wd-rowmenu{position:fixed;z-index:61;min-width:150px;background:var(--panel);border:1px solid var(--border);
+/* Shared right-click menu (src/islands/contextmenu). Fixed-position popover +
+   a full-screen transparent backdrop that catches the dismissing click. Was
+   .wd-rowmenu*, Workdir's own; generalized when the commit file list and the
+   repo chip grew menus too — see contextmenu.svelte.ts's header. The popover
+   is positioned by the component, which flips it away from the viewport edge
+   rather than letting a long menu run off the bottom. */
+.ctxmenu-backdrop{position:fixed;inset:0;z-index:60}
+.ctxmenu{position:fixed;z-index:61;min-width:150px;background:var(--panel);border:1px solid var(--border);
   border-radius:var(--r-panel);box-shadow:0 10px 30px rgba(0,0,0,.35);padding:4px;display:flex;flex-direction:column}
-.wd-rowmenu-item{text-align:left;background:transparent;border:0;border-radius:6px;padding:7px 10px;font-size:12.5px;color:var(--text);cursor:pointer}
-.wd-rowmenu-item:hover:not([disabled]){background:color-mix(in srgb,var(--text) 8%,transparent)}
-.wd-rowmenu-item.danger{color:var(--danger)}
-.wd-rowmenu-item.danger:hover:not([disabled]){background:color-mix(in srgb,var(--danger) 12%,transparent)}
-.wd-rowmenu-item[disabled]{opacity:.5;cursor:default}
+.ctxmenu-item{text-align:left;background:transparent;border:0;border-radius:6px;padding:7px 10px;font-size:12.5px;color:var(--text);cursor:pointer;white-space:nowrap}
+.ctxmenu-item:hover:not([disabled]){background:color-mix(in srgb,var(--text) 8%,transparent)}
+.ctxmenu-item.danger{color:var(--danger)}
+.ctxmenu-item.danger:hover:not([disabled]){background:color-mix(in srgb,var(--danger) 12%,transparent)}
+.ctxmenu-item[disabled]{opacity:.5;cursor:default}
+.ctxmenu-sep{height:1px;margin:4px 6px;background:var(--border)}
 .wd-files{display:flex;flex-direction:column;gap:1px}
 .wd-file{display:flex;align-items:center;gap:7px;padding:4px 5px;border-radius:6px;cursor:pointer;font-size:12px}
 .wd-file:hover{background:var(--elevated)}

@@ -460,29 +460,6 @@
 <!-- Per-file right-click menu (opened from an unstaged file row's contextmenu).
      A transparent full-screen backdrop dismisses it on the next click/right-
      click, like the app's other popovers. -->
-{#if workdirCtrl.rowMenu}
-  <div
-    class="wd-rowmenu-backdrop"
-    role="presentation"
-    onclick={() => workdirCtrl.closeRowMenu()}
-    oncontextmenu={(e) => {
-      e.preventDefault();
-      workdirCtrl.closeRowMenu();
-    }}
-  ></div>
-  <div class="wd-rowmenu" style="left:{workdirCtrl.rowMenu.x}px; top:{workdirCtrl.rowMenu.y}px">
-    <button
-      class="wd-rowmenu-item danger"
-      disabled={workdirCtrl.busy}
-      onclick={() => {
-        const m = workdirCtrl.rowMenu;
-        workdirCtrl.closeRowMenu();
-        if (m) workdirCtrl.confirmDiscard(m.file, m.untracked);
-      }}>{t("workdir.discard_changes")}</button
-    >
-  </div>
-{/if}
-
 <!-- The uncommitted-changes Diff, reused by the inline panel above and the
      expanded .diffx modal: a "lines selected" action bar and the file's diff
      body (per-hunk toolbar + per-line staging checkboxes). -->
@@ -624,7 +601,10 @@
       ontoggle={(e) => workdirCtrl.setDirOpen("staged", child.path, (e.currentTarget as HTMLDetailsElement).open)}
     >
       <summary
-        ><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /><span class="wd-path">{name}</span>
+        oncontextmenu={(e) => {
+          e.preventDefault();
+          workdirCtrl.openDirRowMenu(child.path, true, e.clientX, e.clientY);
+        }}><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /><span class="wd-path">{name}</span>
         {#if workdirCtrl.busyTarget === child.path}
           <span class="spinner"></span>
         {:else}
@@ -654,6 +634,12 @@
       role="button"
       tabindex="0"
       onclick={() => workdirCtrl.selectDiffFile(f.path, true)}
+      oncontextmenu={(e) => {
+        e.preventDefault();
+        // Select first, so the menu always acts on the highlighted row.
+        workdirCtrl.selectDiffFile(f.path, true);
+        workdirCtrl.openRowMenu(f.path, f.status === "?", true, e.clientX, e.clientY);
+      }}
       onkeydown={(e) => (e.key === "Enter" || e.key === " ") && workdirCtrl.selectDiffFile(f.path, true)}
     >
       <span class="st" data-status={f.status}>{STATUS_LABEL[f.status] ?? f.status}</span>
@@ -717,7 +703,10 @@
       ontoggle={(e) => workdirCtrl.setDirOpen("unstaged", child.path, (e.currentTarget as HTMLDetailsElement).open)}
     >
       <summary
-        ><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /><span class="wd-path">{name}</span>
+        oncontextmenu={(e) => {
+          e.preventDefault();
+          workdirCtrl.openDirRowMenu(child.path, false, e.clientX, e.clientY);
+        }}><span class="tw">&#9656;</span><Folder class="ico" size={13} aria-hidden="true" /><span class="wd-path">{name}</span>
         {#if workdirCtrl.busyTarget === child.path}
           <span class="spinner"></span>
         {:else}
@@ -750,7 +739,8 @@
       onkeydown={(e) => (e.key === "Enter" || e.key === " ") && workdirCtrl.selectDiffFile(f.path, false)}
       oncontextmenu={(e) => {
         e.preventDefault();
-        workdirCtrl.openRowMenu(f.path, f.status === "?", e.clientX, e.clientY);
+        workdirCtrl.selectDiffFile(f.path, false);
+        workdirCtrl.openRowMenu(f.path, f.status === "?", false, e.clientX, e.clientY);
       }}
     >
       <span class="st" data-status={f.status}>{STATUS_LABEL[f.status] ?? f.status}</span>

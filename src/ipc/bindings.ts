@@ -3251,6 +3251,42 @@ async terminalKill(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * JS: `commands.revealPathInFileManager(repo, relative)` — a file row's
+ * "Show in <file manager>": opens the containing folder with the file
+ * selected. `async` + `run_blocking` because the trust gate is a git2
+ * `Repository::open`, exactly as in `terminal_spawn`.
+ */
+async revealPathInFileManager(repo: string, relative: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reveal_path_in_file_manager", { repo, relative }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.openDirInFileManager(repo, relative)` — the topbar repo
+ * chip's and a folder row's "Open in <file manager>".
+ * 
+ * `open_path`, not the reveal above: revealing a directory opens its PARENT
+ * with the directory merely selected, and a folder is a thing you want to be
+ * INSIDE. That distinction is the whole reason the two labels use different
+ * verbs (see `legacy/platform.ts`).
+ * 
+ * An empty `relative` means the repo itself, which is what the repo chip
+ * passes. `resolve_in_repo` already drops the nothing-at-all case, so the
+ * chip and a folder row go through one command rather than two that would
+ * have to be kept in step.
+ */
+async openDirInFileManager(repo: string, relative: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_dir_in_file_manager", { repo, relative }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.openRepoInNewWindow(path)` — the Dashboard's "Open in New
  * Window" row action (see `src/islands/dashboard/dashboard.svelte.ts`'s
  * `openRepositoryInNewWindow`). Deliberately synchronous/non-async:
