@@ -56,6 +56,8 @@ This project is also very young — every commit so far is from July 2026 — so
 
   That produces the `demo.webm` / `demo.mp4` / `demo-poster.jpg` trio in `docs/public/` with the settings the homepage embed expects (1080p30, no audio, faststart). The second argument is the timestamp to pull the poster still from.
 
+  The two video files are stored in **Git LFS** (`.gitattributes` tracks `*.mp4` and `*.webm`). You need `git lfs install` once on your machine; after that a clone gets the real files automatically. If you ever see a 133-byte `demo.mp4` that won't play, run `git lfs pull`. Only `docs.yml` fetches LFS in CI — the app workflows never read `docs/public/`.
+
 ## Contributing translations (i18n)
 
 The UI is translatable. **English is the source of truth**, and everything falls back to it gracefully: `t()` resolves a key as `current locale -> English -> the key itself`, so a missing translation just shows the English text, never a blank or a crash. **You do not need to speak a language to contribute to it, and you are never blocked for leaving one incomplete** — there is deliberately no CI check that requires the locales to be in sync.

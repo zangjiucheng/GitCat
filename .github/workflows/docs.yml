@@ -32,6 +32,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        # The homepage demo video (docs/public/demo.mp4 / .webm) lives in Git
+        # LFS. Without this the checkout hands VitePress two 133-byte pointer
+        # files, which it happily copies into dist — the deploy succeeds and
+        # the homepage ships a video that will not play. This is the only
+        # workflow that needs it; ci/nightly/release never read docs/public.
+        with:
+          lfs: true
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6
