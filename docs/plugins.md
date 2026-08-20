@@ -203,7 +203,7 @@ A `run` string is a single shell command. When you need real logic — branch on
 run a **handler function written in [Luau](https://luau.org)** (a fast, safe Lua
 dialect) inside a locked-down sandbox. This is still AI-agnostic and offline:
 the script's only reach outward is a `git()` function.
-
+Tools ▶ **Plugins...** tab →
 ### The two manifest fields
 
 - **`lua`** (top-level) — a path, relative to the plugin folder, to your main
@@ -359,4 +359,4 @@ A few limits worth knowing while the plugin security model is still being built 
 
 ## Example plugins
 
-Ready-to-read manifests live in [`examples/plugins/`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins) in the repository — copy one, edit its `id`/`run` lines, and install it from **Settings → Plugins** to get started.
+Ready-to-read manifests live in [`examples/plugins/`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins) in the repository — copy one, edit its `id`/`run` lines, and install it from **Tools → Plugins** to get started.
