@@ -40,16 +40,16 @@
 // to refresh" precedent below.
 //
 // Submodules (M4 — deinit + remove, on top of M1-M3's status/init/add/sync):
-// deinitSubmodule/removeSubmodule are the per-row destructive actions,
+// /removeSubmodule are the per-row destructive actions,
 // routing through the shared armDanger typed-confirm scrim exactly like
-// deleteBranch/deleteTag above. deinitSubmodule is status-gated the same way
+// deleteBranch/deleteTag above.  is status-gated the same way
 // doDeleteBranch's own "isCurrent" checks are: submoduleNeedsForceConfirm(
 // status) mirrors real git's own precondition (a dirty tree OR a merge-
 // conflicted gitlink both refuse `deinit` without `-f` — see submodule.rs's
 // module doc comment) — everything else (clean/out-of-date/not-initialized)
 // calls straight through with force:false, no scrim at all, matching this
 // app's "never show a needless confirm for a safe operation" rule. Its
-// doDeinitSubmodule private helper has the same two-tier fallback as
+// do private helper has the same two-tier fallback as
 // doDeleteBranch: a plain force:false attempt first, then (only for the
 // stale-status race where a row looked safe but git itself refuses) a
 // window.confirm()-gated retry with force:true. removeSubmodule always
@@ -58,7 +58,7 @@
 // submodule_remove with no force parameter (the backend behaves as force
 // internally; see its own doc comment for why a second forced round-trip
 // would be redundant once the confirm has already been shown). Both
-// doDeinitSubmodule/doRemoveSubmodule refresh via refreshSubmodules() on
+// do/doRemoveSubmodule refresh via refreshSubmodules() on
 // success only, same as every other mutation in this file — a refusal
 // surfaces through bridge.tama.warn, never a silent no-op. Neither ever
 // appends its own backup-location copy to the success toast: submodule.rs's
@@ -1428,10 +1428,10 @@ class SidebarState {
   // confirm for a safe operation. A "dirty"/"conflicted" row DOES show the
   // shared armDanger scrim first, since force:true is what's actually about
   // to run and that's the one path that can discard uncommitted content
-  // (backed up first — see doDeinitSubmodule/submodule.rs).
-  async deinitSubmodule(path: string, status: string) {
+  // (backed up first — see do/submodule.rs).
+  async (path: string, status: string) {
     if (!submoduleNeedsForceConfirm(status)) {
-      await this.doDeinitSubmodule(path, false);
+      await this.do(path, false);
       return;
     }
     bridge.tama.set("danger");
@@ -1453,12 +1453,12 @@ class SidebarState {
       name: path,
       confirmLabel: "Deinit submodule",
       onConfirm: async () => {
-        await this.doDeinitSubmodule(path, true);
+        await this.do(path, true);
       },
     });
   }
 
-  private async doDeinitSubmodule(path: string, force: boolean) {
+  private async do(path: string, force: boolean) {
     if (!IN_TAURI) {
       bridge.tama.set("celebrate");
       bridge.tama.say(t("sidebar.deinitialized_demo", { path }));
@@ -1515,25 +1515,16 @@ class SidebarState {
     bridge.tama.set("danger");
     bridge.tama.say(t("sidebar.remove_arm", { path }), 6000);
     bridge.armDanger({
-      title: "Remove submodule — " + path,
+      title: t("sidebar.remove_submodule_title", { path }),
       steps: false,
-      desc:
-        "This removes " +
-        path +
-        " from this repository entirely: its checked-out files, its .gitmodules entry, and its tracked reference. This is staged, not committed — you'll still need to commit it. Its committed history is NOT deleted (it stays in .git/modules), and any of its own uncommitted changes are backed up first.",
+      desc: t("sidebar.remove_submodule_desc", { path }),
       lose:
-        "<h5>What happens</h5><ul><li>Clears and unregisters <code>" +
-        esc(path) +
-        "</code> (same as Deinit)</li><li>Stages its removal from the index (<code>git rm</code>)</li><li>Removes and stages its <code>[submodule]</code> entry from <code>.gitmodules</code></li><li>Nothing is committed — review and commit when ready</li></ul>",
-      note:
-        ICON_BACKUP +
-        " If " +
-        esc(path) +
-        " had uncommitted changes, they're backed up first. This only STAGES the removal — Undo/discard the staged .gitmodules + " +
-        esc(path) +
-        " changes the normal way if you change your mind before committing.",
+        `<h5>${t("common.what_happens")}</h5><ul><li>${t("sidebar.remove_submodule_lose_1", { path: esc(path) })}</li><li>${t("sidebar.remove_submodule_lose_2")}</li><li>${t("sidebar.remove_submodule_lose_3")}</li><li>${t("sidebar.remove_submodule_lose_4")}</li></ul>`,
+      note: ICON_BACKUP + " " + t("sidebar.remove_submodule_note", { path: esc(path) }),
       name: path,
-      confirmLabel: "Remove submodule",
+      confirmLabel: "sidebar.remove_submodule_verb",
+      typeNoun: "sidebar.submodule_noun",
+      typeVerb: "sidebar.remove_verb",
       onConfirm: async () => {
         await this.doRemoveSubmodule(path);
       },
@@ -1557,7 +1548,7 @@ class SidebarState {
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
         // Same "message already names the backup path inline" reasoning as
-        // doDeinitSubmodule above.
+        // do above.
         bridge.tama.say(be(res.message) || t("sidebar.removed", { path }), 4200);
       } else {
         bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_remove", { path }));
@@ -1979,15 +1970,15 @@ class SidebarState {
     bridge.tama.set("danger");
     bridge.tama.say(t("sidebar.delete_branch_arm", { name }), 6000);
     bridge.armDanger({
-      title: "Delete branch — " + name,
+      title: t("sidebar.delete_branch_title", { name }),
       steps: false,
-      desc: "This removes the local branch ref. Its tip is pinned to a backup first, so the commits stay recoverable by sha.",
+      desc: t("sidebar.delete_branch_desc"),
       lose:
-        '<h5>What happens</h5><ul><li>Removes local branch <code>' +
-        esc(name) +
-        "</code></li><li>Its tip is pinned under <code>refs/gitgui/deleted/…</code> — recover with ＋ New branch → the printed sha</li></ul>",
-      note: ICON_BACKUP + " I pin the branch tip before deleting; ⌘Z restores your CURRENT branch position (not the deleted branch).",
+        `<h5>${t("common.what_happens")}</h5><ul><li>${t("sidebar.delete_branch_lose_1", { name: esc(name) })}</li><li>${t("sidebar.delete_branch_lose_2")}</li></ul>`,
+      note: ICON_BACKUP + " " + t("sidebar.delete_branch_note"),
       name,
+      typeNoun: "sidebar.branch_name",
+      typeVerb: "sidebar.delete_verb",
       confirmLabel: "Delete branch",
       onConfirm: async () => {
         await this.doDeleteBranch(name, false);
