@@ -1752,6 +1752,11 @@ fn bug2_remove_refuses_when_a_nested_submodule_of_a_submodule_is_dirty() {
     assert!(!status_after.contains("D  sub"), "sub's gitlink must not have been staged for deletion: {status_after:?}");
 }
 
+// Unix-only: the precondition is a read-only DIRECTORY, which is what makes
+// the `.gitmodules` rewrite fail. Windows ignores the read-only attribute for
+// that purpose — there is no equivalent using file attributes, and an ACL deny
+// would be more machinery than this test is worth.
+#[cfg(unix)]
 #[test]
 fn bug3_remove_propagates_a_failed_gitmodules_fallback_instead_of_reporting_ok() {
     // BUG 3: the `.gitmodules` section-removal fallback (for when `git rm -f`
@@ -1804,6 +1809,9 @@ fn bug3_remove_propagates_a_failed_gitmodules_fallback_instead_of_reporting_ok()
     );
 }
 
+// Unix-only: needs a dangling symlink, which on Windows requires either
+// Developer Mode or elevation — not something a test run can assume.
+#[cfg(unix)]
 #[test]
 fn bug4_force_deinit_backs_up_a_dangling_symlinks_target_instead_of_refusing() {
     // BUG 4: the untracked-file backup loop called `fs::read(&src)`, which
