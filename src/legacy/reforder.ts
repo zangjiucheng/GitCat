@@ -123,7 +123,7 @@ export function rotateChips<T>(list: readonly T[], rot: number): T[] {
   const n = list.length;
   if (n === 0) return [];
   const k = ((rot % n) + n) % n;
-  return k === 0 ? list.slice() : list.slice(k).concat(list.slice(0, k));
+  return k === 0 ? list : list.slice(k).concat(list.slice(0, k));
 }
 
 // The whole display pipeline in one place: priority sort, THEN fold local +
