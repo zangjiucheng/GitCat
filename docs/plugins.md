@@ -9,8 +9,7 @@ A GitCat plugin is a small, **declarative** manifest — a single `plugin.json` 
 - **Commands** — actions that show up in the ⌘K command palette and run an external command you specify.
 - **Hooks** — external commands GitCat runs automatically when something happens (a repo opens, a commit is created, an undo runs, …).
 
-There is no plugin API, no sandbox, and no in-process JavaScript or Rust. A plugin's only moving part is a shell `run` string — a command line GitCat expands and executes on your machine, exactly like the external diff/merge tools you configure under **External Tools**. That's the whole trust model: **a plugin can do anything the command you wrote can do** (see [Security & trust](#security-trust) at the end).
-
+GitCat provides a plugin system with declarative manifests, an external-process executor, and a sandboxed Luau runtime.
 Like the rest of GitCat, plugins are AI-agnostic: GitCat itself contacts no AI service and no network. If you want a plugin that calls an AI, *you* write the `run` line that shells out to your own tool — GitCat only runs it.
 
 ## The manifest: `plugin.json`
