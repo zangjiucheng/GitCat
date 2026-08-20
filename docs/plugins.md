@@ -326,7 +326,7 @@ Apply a skin from **Settings → Tama → Skin**: the picker lists **Default (bu
 
 Plugins are installed from a local file — there's no registry or marketplace.
 
-1. Open **Settings → Plugins**.
+1. Open **Tools ▶ Plugins...**.
 2. Click **Install plugin…** and pick the plugin's `plugin.json` file (open the plugin's folder and select its `plugin.json`).
 3. The plugin appears in the list, enabled by default. Its commands are immediately available in ⌘K.
 
