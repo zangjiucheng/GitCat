@@ -1,0 +1,36 @@
+// 저장소 대시보드 문자열. 키는 `dashboard.<key>`가 돼요.
+export default {
+  title: "저장소 목록",
+  subtitle: "지금까지 추적한 모든 저장소를 한눈에 볼 수 있어요 — 브랜치, 동기화 상태, 변경사항 유무까지.",
+  loading_repos: "추적 중인 저장소를 불러오는 중…",
+  empty: "아직 추적 중인 저장소가 없어요 — 저장소를 열거나 아래에서 추가해주세요.",
+  search_ph: "저장소 검색…(이름, 경로, 브랜치)",
+  no_match: "“{q}”에 해당하는 저장소가 없어요.",
+  wsl_tip: "이 저장소는 WSL 안에 있어요 — 자격 증명 확인을 위해 네트워크 명령은 wsl.exe를 거쳐요",
+  detached: "분리됨",
+  dirty: "변경됨",
+  dirty_tip: "커밋 안 된 변경사항",
+  conflicted: "충돌됨",
+  conflicted_tip: "충돌 파일 {n}개",
+  reading_status: "상태 읽는 중…",
+  open: "열기",
+  new_window: "새 창",
+  new_window_tip: "별도의 창에서 이 저장소를 열어요 — 지금 여기 열려 있는 내용은 그대로 유지돼요",
+  add: "저장소 추가…",
+  // 네이티브 폴더 선택 대화상자 제목
+  add_dialog_title: "추적할 저장소 추가",
+  // 여기서 작성한 Tama 토스트 / 데모 모드 메시지
+  demo_pick: "여기서 추적할 폴더를 선택해요 (demo).",
+  demo_open: "여기서 {name}이(가) 열려요 (demo).",
+  demo_open_window: "여기서 {name}이(가) 새 창에서 열려요 (demo).",
+  // 오류 폴백(백엔드가 자체 메시지를 반환하지 않을 때 표시돼요)
+  err_list: "추적 중인 저장소 목록을 가져오지 못했어요.",
+  err_list_e: "추적 중인 저장소 목록을 가져오지 못했어요 — {err}",
+  err_status: "이 저장소의 상태를 읽지 못했어요.",
+  err_status_e: "이 저장소의 상태를 읽지 못했어요 — {err}",
+  err_dialog: "폴더 대화상자를 열지 못했어요 — {err}",
+  err_add: "그 저장소를 추가하지 못했어요.",
+  err_add_e: "그 저장소를 추가하지 못했어요 — {err}",
+  err_remove: "그 저장소를 목록에서 제거하지 못했어요.",
+  err_remove_e: "그 저장소를 목록에서 제거하지 못했어요 — {err}",
+};

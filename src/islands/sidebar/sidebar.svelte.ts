@@ -133,6 +133,20 @@ const RECENCY_HALF_LIFE_DAYS = 14;
 const MIN_RECENCY = Math.pow(0.5, STALE_DAYS / RECENCY_HALF_LIFE_DAYS);
 const MAX_AUTO_CANDIDATES = 10;
 
+// How long a FAILED jump's warning waits before it's shown, so a double-click
+// (= checkout) can cancel the warning its own first click provoked. See
+// SidebarState.warnJumpFailed for the whole story.
+//
+// This has to cover the PLATFORM double-click interval, because that — not any
+// number chosen here — is what decides whether a second click still counts as
+// part of a double-click (`e.detail > 1`, and whether `dblclick` fires at all).
+// That interval is the OS/browser's: Chromium's own default is 500ms, and on
+// Windows it's whatever GetDoubleClickTime() reports, itself 500ms by default
+// and user-configurable higher. 500 covers the common case; anything shorter
+// silently un-fixes the slower half of real double-clicks, and no Playwright
+// test would notice, because `dblclick()` clicks with zero delay.
+const JUMP_WARN_HOLD_MS = 500;
+
 // Demo data (design-mode only) — mirrors the static markup this replaces, so
 // the browser preview still shows a populated sidebar without a real repo.
 // lastCommitTime: fabricated relative to whenever the browser preview
@@ -195,8 +209,8 @@ export type TagMenu = { name: string; x: number; y: number };
 // (Open/Sync/Init+update-or-Update/Deinit/Remove) plus its status chip and
 // path — at the sidebar's normal width these simply don't fit and got
 // silently clipped (found via visual inspection, not a report). Fixed by
-// collapsing everything but the row itself (click = Open, mirroring how a
-// branch row's own click already means "checkout") into a "⋮" popover,
+// collapsing everything but the row itself (click = Open, same as a branch
+// row's own click jumps the graph to that ref's tip) into a "⋮" popover,
 // exactly like BranchMenu/TagMenu above. Captures status/absolutePath at
 // open-time (like BranchMenu captures isCurrent) rather than re-deriving
 // them from `path` inside the popover, so the popover's own buttons never
@@ -228,12 +242,17 @@ export type PushMenu = { name: string; x: number; y: number };
 // same way. `files` is `WriteResult.conflictingFiles` verbatim, for the
 // popover's own "N files would be overwritten: …" copy.
 export type DirtyCheckoutMenu = { name: string; startPoint: string | null; files: string[]; x: number; y: number };
-// A branch row's click/Enter no longer checks out immediately — a
-// misdirected click (aiming for the visibility checkbox right next to it, or
-// just brushing the row) used to switch branches with zero recourse. It
-// opens this small popover instead; only the popover's own "Switch" button
-// actually calls checkout/checkoutRemote. `remote` mirrors DirtyCheckoutMenu's
-// own local-vs-remote-ref shape: false calls plain `checkout` (an existing
+// A branch row's click/Enter jumps the graph to that ref's tip rather than
+// checking out — checkout instead opens this small popover. Reached by
+// double-click on any branch row (local or remote), and by a remote row's
+// right-click/⋮; a local row's right-click/⋮ open the branch menu instead,
+// whose own Checkout button calls `checkout` immediately with no confirm at
+// all. So this popover guards against a misdirected click switching
+// branches with zero recourse only on the routes that lead here (aiming for
+// the visibility checkbox right next to the row, or just brushing it).
+// Only the popover's own "Switch" button actually calls
+// checkout/checkoutRemote. `remote` mirrors DirtyCheckoutMenu's own
+// local-vs-remote-ref shape: false calls plain `checkout` (an existing
 // local branch row), true calls `checkoutRemote` (a remote row, which may
 // still need to CREATE a local branch first).
 export type CheckoutConfirm = { name: string; remote: boolean; x: number; y: number };
@@ -799,6 +818,97 @@ class SidebarState {
   isBranchVisible(kind: "local" | "remote", name: string): boolean {
     const set = kind === "local" ? this.visibleLocal : this.visibleRemote;
     return set === null || set.includes(name);
+  }
+
+  // Click a ref row -> select its tip commit in the graph. The question is
+  // "is this commit among the loaded rows?", never "is this branch ticked?":
+  // the walk seeds from the visible branches and then follows their whole
+  // ancestry, so an unticked branch that's already merged into a visible one
+  // is in the graph and jumps just fine, with no reload.
+  //
+  // Four different situations all end in "no row for this oid" and only one
+  // is a checkbox problem, so the message says which — a tag has no checkbox
+  // to tick, a branch that simply hasn't streamed in yet is already ticked,
+  // and a graph that stopped short never had the commit to begin with.
+  jumpToRef(section: RefSection, name: string, sha: string): void {
+    // Every outcome of this call supersedes whatever an earlier click armed,
+    // success included — which is why the cancel lives here and not inside
+    // warnJumpFailed. Click a ref that isn't loaded, then click a different one
+    // within the hold and land on it: without this, the first ref's warning
+    // still fires half a second later, naming a ref you have already left.
+    this.cancelJumpWarning();
+    if (!sha) {
+      this.warnJumpFailed(t("sidebar.jump_no_commit", { name }));
+      return;
+    }
+    if (bridge.goToOid(sha)) return;
+    // Design mode only (the call is a no-op with a real repo open — see
+    // goToRefLabel's own guard and doc comment in legacy/main.ts). The demo
+    // sidebar's shas are invented and the synthetic graph has no oids at all,
+    // so goToOid above can never succeed there; matching on the ref label is
+    // what keeps the browser preview demoing the jump instead of warning on
+    // every single click.
+    if (bridge.goToRefLabel(name)) return;
+    // graphStreamComplete is only ever flipped true from Tauri-only paths:
+    // onGraphBatch's `done` handling (wired up solely inside an IN_TAURI
+    // branch), and restoreGraphFromCache — which only sets it when it hits a
+    // cache entry, and an entry can only exist if some earlier onGraphBatch
+    // `done` already set it true. In plain-browser design mode neither path
+    // ever fires/hits, so graphStreamComplete stays permanently false and
+    // this branch would otherwise always win.
+    if (IN_TAURI && !bridge.graphStreamComplete) {
+      this.warnJumpFailed(t("sidebar.jump_still_loading", { name }));
+      return;
+    }
+    if ((section === "local" || section === "remote") && !this.isBranchVisible(section, name)) {
+      this.warnJumpFailed(t("sidebar.jump_not_shown", { name }));
+      return;
+    }
+    // Ordered AFTER the checkbox case on purpose: an unticked branch has an
+    // actionable fix (tick it), and saying so beats the vaguer "the graph is
+    // only partly loaded" even when both are true.
+    //
+    // Reached only once the branch IS shown, which is exactly why the
+    // not-reachable message below can't cover it: "no branch currently shown
+    // reaches its commit" contradicts itself here. A truncated load, or a
+    // revwalk that errored partway, both leave a finished-but-incomplete graph
+    // (see legacy/main.ts's graphIncomplete) in which the tip legitimately just
+    // isn't loaded — nothing to do with which branches are shown.
+    if (bridge.graphIncomplete) {
+      this.warnJumpFailed(t("sidebar.jump_graph_incomplete", { name }));
+      return;
+    }
+    this.warnJumpFailed(t("sidebar.jump_not_reachable", { name }));
+  }
+
+  // Jump FAILURE messages are held for one double-click interval; a successful
+  // jump is never routed through here, so the common case keeps zero latency.
+  //
+  // Why hold at all: double-click is checkout, and the DOM delivers click,
+  // click, dblclick. Sidebar.svelte's row handlers drop the second click
+  // (`e.detail > 1`), but the FIRST one has already run jumpToRef by the time
+  // dblclick arrives. On the success path that reads fine — you land on the tip
+  // and the confirm opens over it. On a failure path it doesn't: double-clicking
+  // an unticked branch would tell you to go tick a checkbox and then, a beat
+  // later, offer you the very switch you asked for. Every ondblclick (and
+  // oncontextmenu, which can follow a left-click just as closely) calls
+  // cancelJumpWarning() before opening the confirm, so that stale scolding never
+  // lands. The hold must be at least the platform's double-click interval or it
+  // only fixes the FAST half of real double-clicks — see JUMP_WARN_HOLD_MS.
+  private jumpWarnTimer: ReturnType<typeof setTimeout> | null = null;
+  private warnJumpFailed(msg: string): void {
+    // jumpToRef has already cancelled any pending warning by the time it calls
+    // this; the clear here only covers a caller that hasn't.
+    this.cancelJumpWarning();
+    this.jumpWarnTimer = setTimeout(() => {
+      this.jumpWarnTimer = null;
+      bridge.tama.warn(msg);
+    }, JUMP_WARN_HOLD_MS);
+  }
+  cancelJumpWarning(): void {
+    if (this.jumpWarnTimer === null) return;
+    clearTimeout(this.jumpWarnTimer);
+    this.jumpWarnTimer = null;
   }
 
   get isFiltering(): boolean {
@@ -1475,8 +1585,8 @@ class SidebarState {
 
   // Same click-to-copy + brief "copied" feedback shape as copySnapshotSha
   // above (and Detail.svelte's own commit-hash copy) — a dedicated hover-
-  // revealed button next to .rname, not the row's own click (which already
-  // means "check out this branch"; stealing that gesture for copy would
+  // revealed button next to .rname, not the row's own click (which jumps the
+  // graph to this ref's tip; stealing that gesture for copy would
   // shrink/replace a much more frequently used action).
   copyBranchName(name: string) {
     copyToClipboard(name);
@@ -1501,6 +1611,12 @@ class SidebarState {
     this.checkoutConfirm = null;
     this.pushMenu = null;
     this.hasRepo = false;
+    // A held jump warning names a ref by name (see warnJumpFailed) — firing it
+    // after the repo is closed would have Tama scolding about a branch of a
+    // repo that is no longer open. Same "drop anything still pending" reasoning
+    // as the popovers above, which is why it belongs here and not only on the
+    // double-click path.
+    this.cancelJumpWarning();
   }
 
   // `pos`: the (x, y) to open backlog #34's dirty-tree resolution chooser at,
@@ -2215,9 +2331,11 @@ class SidebarState {
     this.dirtyCheckoutMenu = null;
   }
 
-  // Opened by a branch row's own click/Enter — see CheckoutConfirm's own doc
-  // comment for why checkout no longer fires directly from the row. Reuses
-  // whatever (x, y) the row's own bounding rect already produced, same as
+  // Opened by any branch row's double-click, and by a remote row's own
+  // right-click/⋮ (a local row's right-click/⋮ open the branch menu instead)
+  // — see CheckoutConfirm's own doc comment for why checkout doesn't fire
+  // directly from a single click/Enter on the row. Reuses whatever (x, y)
+  // the row's own bounding rect already produced, same as
   // openMergeMenu/openDirtyCheckoutMenu above.
   openCheckoutConfirm(name: string, remote: boolean, x: number, y: number) {
     this.menu = null; // only one popover open at a time

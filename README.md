@@ -2,169 +2,105 @@
 
 # 🐱 GitCat
 
-**A cozy, safety-first desktop Git client.**
+**Git you can take back.**
 
-Tauri 2 + Rust + Svelte 5, with a clean neutral canvas (white / charcoal-dark, color reserved for meaning) — and Tama, a cat mascot who reacts to what's actually happening and keeps a snapshot under you before every mutation.
+A cozy, safety-first desktop Git client — Tauri 2 + Rust + Svelte 5. Every mutation snapshots first, so ⌘Z always works.
 
 [![CI](https://github.com/zangjiucheng/GitCat/actions/workflows/ci.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/ci.yml)
 [![Docs](https://github.com/zangjiucheng/GitCat/actions/workflows/docs.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/docs.yml)
 [![Release](https://github.com/zangjiucheng/GitCat/actions/workflows/release.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/release.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-**[Website & docs](https://zangjiucheng.github.io/GitCat/)**
+**[Website & docs](https://zangjiucheng.github.io/GitCat/)** · **[Download](https://github.com/zangjiucheng/GitCat/releases)** · **[User guide](https://zangjiucheng.github.io/GitCat/guide/)**
 
-![GitCat screenshot](docs/screenshot.png)
+![GitCat — the commit graph](docs/public/screenshots/graph.png)
 
 </div>
 
-## What is this?
+## Why
 
-GitCat is a desktop Git GUI built around one idea: every operation that touches your history should be reversible. A **Safety Manager** snapshots your repo before every mutation, so a global Undo (⌘Z) is always one keystroke away — and Undo is itself undoable.
+Every Git GUI makes it easy to run a dangerous command. GitCat is built so you can take it back: a **Safety Manager** snapshots refs, index, worktree and stash before every mutation, so a global Undo (⌘Z) is always one keystroke away — and Undo is itself undoable.
+
+## Features
+
+- **Fast commit graph** — git2 reads and a Rust swimlane layout on a virtualized canvas, no depth cap. 150k commits scroll smoothly with the text still readable.
+- **Everyday git, made safe** — stage by file, hunk or line; commit, stash, branch, tag, checkout; fetch / pull / push; merge, cherry-pick, revert, and rebase (linear plus a drag-to-reorder planner), behind a real 3-way conflict resolver.
+- **Diffs that aren't just text** — syntax highlighting, plus side-by-side before/after previews for images and PDFs, rendered natively and zoomable.
+- **The deep cuts** — submodules, patch export/apply, `git bisect`, `git blame` with rename-following, per-file history, author and pickaxe search, a `git-filter-repo` wizard, external diff/merge tools, reflog rescue and dangling-object recovery.
+- **⌘K everything** — fuzzy search across commits, refs and actions, vim-style keys, and a real native menu.
+- **Plugins** *(1.1)* — ⌘K commands, hooks, side panels, named tools, and Tama skins and reactions.
+- **English, 中文 & 한국어** — the whole interface, switchable live with no reload.
+- **`gitcat .`** — open a repo from your terminal the way `code .` does. WSL-aware.
+
+Full list: **[Features](https://zangjiucheng.github.io/GitCat/features)**.
+
+## Screenshots
+
+| | |
+| --- | --- |
+| <img src="docs/public/screenshots/commit-detail.png" alt="Commit detail panel with a syntax-highlighted diff" /><br>**Commit detail & diff** | <img src="docs/public/screenshots/command-palette.png" alt="The command palette" /><br>**⌘K command palette** |
+| <img src="docs/public/screenshots/settings.png" alt="Settings, with the language and graph-layout options" /><br>**Settings** | <img src="docs/public/screenshots/chinese.png" alt="The whole UI in Simplified Chinese" /><br>**Chinese (中文) interface** |
+| <img src="docs/public/screenshots/korean.png" alt="The whole UI in Korean" /><br>**Korean (한국어) interface** | <img src="docs/public/screenshots/graph-light.png" alt="The commit graph in the light theme" /><br>**Light theme** |
 
 ## Meet Tama
 
 <p align="center">
-  <img src="design/assets/optimized/tama_hero.webp" width="110" alt="Tama waving hello" />
-  <img src="design/assets/optimized/tama_curious.webp" width="110" alt="Tama curious" />
-  <img src="design/assets/optimized/tama_thinking.webp" width="110" alt="Tama thinking" />
-  <img src="design/assets/optimized/tama_confident.webp" width="110" alt="Tama confident" />
-  <img src="design/assets/optimized/tama_happy.webp" width="110" alt="Tama celebrating" />
-  <img src="design/assets/optimized/tama_alarm.webp" width="110" alt="Tama alarmed" />
-  <img src="design/assets/optimized/tama_shocked.webp" width="110" alt="Tama shocked" />
-  <img src="design/assets/optimized/tama_sleep.webp" width="110" alt="Tama napping" />
+  <img src="design/assets/optimized/tama_hero.webp" width="96" alt="Tama waving hello" />
+  <img src="design/assets/optimized/tama_curious.webp" width="96" alt="Tama curious" />
+  <img src="design/assets/optimized/tama_thinking.webp" width="96" alt="Tama thinking" />
+  <img src="design/assets/optimized/tama_confident.webp" width="96" alt="Tama confident" />
+  <img src="design/assets/optimized/tama_happy.webp" width="96" alt="Tama celebrating" />
+  <img src="design/assets/optimized/tama_alarm.webp" width="96" alt="Tama alarmed" />
+  <img src="design/assets/optimized/tama_shocked.webp" width="96" alt="Tama shocked" />
+  <img src="design/assets/optimized/tama_sleep.webp" width="96" alt="Tama napping" />
 </p>
 
-Tama is GitCat's Safety Manager, not a mascot bolted on for cuteness — the one pinning a snapshot before every mutation. Eight expressions are wired into real moments across the app: curious while you search, thinking hard mid-rebase, genuinely alarmed right before something irreversible, and celebrating once it's safely done.
-
-## Features
-
-**Core graph + history**
-
-- Fast commit graph (git2 read + a hand-tuned Rust swimlane layout), streamed onto a virtualized canvas — no hard cap on history depth, newest commits paint almost instantly, and scrolling stays smooth *with readable text* even on a 150k-commit repo (a scroll-blit render path copies the frame and only redraws the newly-exposed strip)
-- Instant everyday operations — checkout, creating/renaming/deleting a branch or tag, and staging update the graph immediately instead of re-walking the whole history each time
-- Orientation at a glance — a dedicated branch/tag column, a clear "you are here" marker on the current HEAD (accent ring + row bar), and commits already merged into your branch drawn dimmed so unmerged work stands out; `⌘⇧H` (or the crosshair button) recentres on HEAD from anywhere
-- Branch actions on the graph itself — right-click a branch or tag label to check out / rename / delete (or check out a remote branch), separate from the commit menu; hover a label to see its full name
-- Full commit detail panel: author/committer split, GPG status, diffstat, file tree, syntax-highlighted diff that can expand to a full-page view (with a resizable file list, and full paths on hover)
-- ⌘K command palette — fuzzy search across commits and refs (including branches that aren't currently shown in the sidebar), quick actions, and an in-app Help page
-- Vim-style keyboard navigation — `j`/`k`, `gg`/`G`, Ctrl-D/Ctrl-U, and `/` to search
-- Per-file history with rename-following, like `git log --follow` — a renamed file's history continues seamlessly under its old path
-- Search commits by author (`git log --author`) or by diff content / pickaxe (`git log -S`/`-G`) across all history — find every commit by a person, or every commit whose diff touched a string, not just what a message mentions
-
-**Working directory**
-
-- Stage or unstage whole files, or select specific lines or a whole hunk to stage, unstage, or discard (a `git add -p` equivalent) — per-hunk toolbar plus per-line checkboxes with shift-click range select
-- Write commits, discard changes, and stash — save / apply / pop / drop
-- `git blame` (line-annotation) view — per-hunk attribution (sha, author), an ignore-whitespace toggle, and follows the file's rename history automatically
-
-**Everyday git, made safe**
-
-- Sidebar: branches / remotes / tags / snapshots, resizable, with a branch context menu
-- Branch visibility filter — hide/show branches individually, "Hide all branches" for a clean slate, or flip on **Auto** to always show just the current branch plus anything with unpushed or unmerged work (auto-hides stale branches too)
-- Live refresh — picks up changes made outside GitCat (a terminal commit, another tool, a background fetch) on its own, with a manual Refresh button as a backup
-- Checkout a local branch, or a remote one — checking out `origin/feature-x` creates and switches to a local tracking branch automatically
-- Checkout dirty-tree resolution — when checking out would overwrite local changes, a chooser offers 3 modes in increasing order of risk: stash/switch/reapply, stash/switch/leave stashed (recoverable via Manage Stash), or force switch and discard your changes (genuinely irreversible, gated behind a typed danger-confirm)
-- New Branch lets you pick the start point (any local/remote ref), not just HEAD
-- Tags: create, delete, and push
-- Fetch / Pull / Push, from the top bar or the native Repository menu — Pull offers an explicit merge-or-rebase strategy choice and follows your configured upstream automatically; push a non-current branch or to a differently-named remote branch from the sidebar; force push / force-with-lease are gated behind the same danger-confirm flow as other irreversible actions
-- "Manage Remotes" dialog — add / edit / rename / remove
-- "Open Terminal" — drop into a real terminal at the repo's root when you need a raw shell, from the Tools menu/⌘K
-- Drag-and-drop cherry-pick and merge (shift-drag) onto HEAD, or right-click a commit row for cherry-pick / merge / revert — all backed by a real 3-way conflict resolver
-- Squash-merge, plus explicit fast-forward strategy choice: auto (default) / no-ff (always a real merge commit) / ff-only (refuse unless a fast-forward is possible)
-- Linear rebase onto any branch — including multi-commit conflict sequences and mid-sequence skip
-- Interactive rebase — a drag-to-reorder planner (pick / edit / squash / fixup / drop) before it ever touches your history
-- Submodules — init/update (including `--recursive`), add, deinit/remove, and "Open" to manage a submodule exactly like its own top-level repo
-- Patch export/apply (`git format-patch` / `git am`), with real 3-way conflict resolution through the existing conflict resolver
-- Pluggable external diff/merge tools — hand off a diff or a conflict to your own configured tool (e.g. VS Code, Beyond Compare) instead of GitCat's built-in view
-- `git bisect` — mark good/bad/skip, live canvas cues for the narrowing range, automatic first-bad detection
-- `git-filter-repo` wizard — scope, preview, typed-confirm, and a full backup/restore safety net for the one genuinely irreversible operation in the app
-
-**Safety Manager**
-
-- Every mutation snapshots first; global Undo (⌘Z) is itself undoable
-- Reflog rescue — browse and restore to any historical HEAD position
-- fsck-based dangling-object recovery — find and recover a commit no branch, tag, or (often) reflog points to anymore, as a new branch, without ever touching your current branch or HEAD
-- rerere status/toggle panel
-
-**Setup + polish**
-
-- First-run setup wizard: pick a repo (click, or drag a folder in), check/fix its git identity, jump into the graph — shown once, not on every launch
-- Multi-repository dashboard (`⌘O`) for tracking and quickly switching between repos you use often — with a search box to filter by name, path, or branch, and Enter to open the top hit
-- "Close Repository" — an in-app way back to the empty state
-- In-app `.gitignore` / `.mailmap` editors
-- A real native app menu (File / Repository / Edit / View / Tools / Window / Help) and About panel, not just a default OS stub
-- Works with repos on a WSL path (`\\wsl.localhost\<distro>\...`) — remote operations route through the distro's own git, so credentials resolve correctly instead of against Windows'
-- Dark theme by default (light available via the toggle)
-- Eight Tama expressions wired into every relevant moment across the app — Reflog Rescue, Dangling-Object Recovery, Plumbing, Pickaxe Search, and the Interactive Rebase planner all get mascot art, and filter-repo/conflict resolution shows a "thinking" face during real work instead of freezing on one expression the whole time
+Tama is the Safety Manager, not a mascot bolted on for cuteness — she's the one pinning the snapshot. Eight expressions wired to real moments: curious while you search, thinking hard mid-rebase, genuinely alarmed right before something irreversible, celebrating once it's safely done.
 
 ## Install
 
-Download the installer for your platform from the [Releases page](https://github.com/zangjiucheng/GitCat/releases) — macOS (Apple Silicon + Intel), Windows (x86_64 + arm64), and Linux (x86_64 + arm64, `.deb`/`.rpm`/`.AppImage`) are all built from the same tag via a 6-platform release matrix.
+Grab an installer from the **[Releases page](https://github.com/zangjiucheng/GitCat/releases)** — macOS (Apple Silicon + Intel), Windows (x86_64 + arm64) and Linux (x86_64 + arm64; `.deb`/`.rpm`/`.AppImage`), all built from the same tag.
 
-> Builds are currently **unsigned** (no code-signing certificate configured yet):
->
-> - **macOS**: right-click the app → **Open** the first time to get past Gatekeeper.
-> - **Windows**: click **More info** → **Run anyway** on the SmartScreen prompt.
+> Builds are **unsigned** for now. macOS: right-click → **Open** the first time. Windows: **More info → Run anyway**. Full per-platform steps, including macOS Sequoia, are in the [install guide](https://zangjiucheng.github.io/GitCat/install).
 
-## Open from the command line
+### `gitcat` on your PATH
 
-Point GitCat at a repo straight from a terminal, the way `code .` works in VS Code:
+Run **Install 'gitcat' command** from Settings → Command line (or ⌘K), then open a new terminal:
 
 ```bash
 gitcat .                 # open the repo in the current directory
 gitcat ~/src/my-project  # open a repo by path
 ```
 
-A relative path resolves against your current directory. If the folder isn't a git repository, GitCat still opens and tells you so, rather than loading nothing.
-
-This needs the `gitcat` command on your `PATH`. Open GitCat and run **Install 'gitcat' command** from Settings > Command line (or from ⌘K) on any platform; it writes a small launcher that opens the app without blocking your terminal:
-
-- **macOS** — `/usr/local/bin/gitcat` (you may be asked for your password).
-- **Linux** — `~/.local/bin/gitcat` (make sure that folder is on your `PATH`). The `.deb`/`.rpm` packages already put `gitcat` on `PATH` too, so this is mainly for the AppImage.
-- **Windows** — `gitcat.cmd` under `%LOCALAPPDATA%\Microsoft\WindowsApps`, which is on `PATH` by default. It also drops a `gitcat` launcher into each installed WSL distro (`~/.local/bin/gitcat`), so `gitcat .` works from a WSL shell too and opens the app on the repo at its `\\wsl.localhost\<distro>\...` path.
-
-Open a new terminal afterwards so it picks up the change.
+It writes a launcher to `/usr/local/bin` (macOS), `~/.local/bin` (Linux), or `%LOCALAPPDATA%\Microsoft\WindowsApps` (Windows, plus one inside each WSL distro). The `.deb`/`.rpm` packages already put `gitcat` on `PATH`.
 
 ## Development
 
-Requires [Rust](https://www.rust-lang.org/tools/install), [Node](https://nodejs.org) 22+, and [pnpm](https://pnpm.io) 10. On Linux, Tauri also needs WebKitGTK/GTK3 dev headers at build time — see `.github/workflows/*.yml` for the apt packages, or on NixOS run `nix develop` to drop into a shell with everything (Rust, Node, pnpm, WebKitGTK, and friends) already wired up via `flake.nix`.
-
-The exact pnpm version lives in `package.json`'s `packageManager` field, which is what keeps `pnpm-lock.yaml` from being rewritten by whichever pnpm you happen to have. Any pnpm 10 honours it on its own. Older pnpm does not — it will run as itself and fail here — so if you have pnpm 9 or none at all, let corepack (bundled with Node) handle it:
-
-```bash
-corepack enable pnpm
-```
-
-Then, from the repo root:
+Needs [Rust](https://www.rust-lang.org/tools/install), [Node](https://nodejs.org) 22+ and [pnpm](https://pnpm.io) 10 (`corepack enable pnpm` if you don't have it — the exact version is pinned in `package.json`'s `packageManager`). On Linux, Tauri also wants WebKitGTK/GTK3 dev headers; on NixOS, `nix develop` has everything.
 
 ```bash
 pnpm install
-pnpm tauri dev      # launch the app in dev mode
+pnpm tauri dev      # launch the app
+pnpm demo           # build a rich throwaway repo at ~/gitcat-demo to poke at
 ```
 
-Want a repo to poke at instead of pointing GitCat at something real? `pnpm demo` builds one at `~/gitcat-demo` with branches, tags, a submodule, stashes, a diverged remote, a mix of unmerged branches (some conflicting with `main` on purpose — including one on a large file — some merging cleanly, good for trying the multi-branch merge tool), and a bisectable bug — see `scripts/make-demo-repo.sh` for the full rundown.
+| Command | What it does |
+| --- | --- |
+| `pnpm check` | svelte-check (type-check the frontend) |
+| `pnpm test` | vitest (frontend unit tests) |
+| `pnpm test:e2e` | playwright (real browser, mocked IPC) |
+| `pnpm screenshots` | regenerate `docs/public/screenshots/` |
+| `pnpm docs:dev` | run the docs site locally |
+| `cargo test` | the Rust suite (from `src-tauri/`) |
 
-Other useful commands:
-
-```bash
-pnpm check          # svelte-check (type-check the frontend)
-pnpm build          # build the frontend
-pnpm test           # vitest (frontend unit tests)
-pnpm test:e2e       # playwright (real browser, mocked IPC — see e2e/fixtures/tauriMock.ts)
-pnpm docs:dev       # run the docs site (docs/) locally at localhost:5173
-
-cd src-tauri
-cargo build         # build the Rust core
-cargo test          # run the Rust test suite
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
 
 ## Tech stack
 
-- **Rust core** (`src-tauri/`) — [git2](https://github.com/rust-lang/git2-rs) for reads, the `git` CLI for writes (every mutation snapshots first), [tauri-specta](https://github.com/specta-rs/tauri-specta) for a fully typed IPC boundary auto-generated into `src/ipc/bindings.ts`
-- **Frontend** — Svelte 5 "islands" (one per feature: resolver, bisect, reflog, rerere, plumbing, filter-repo, setup wizard, repositories dashboard, sidebar, ⌘K, commit detail) layered over a hand-tuned vanilla canvas for the commit graph itself
-- **CI/CD** — GitHub Actions: `cargo test` + `pnpm test` on every push/PR, a 6-platform release matrix (macOS/Linux/Windows × arm64/x86_64) on tagged releases, and a [VitePress](https://vitepress.dev) docs site (`docs/`) auto-deployed to [GitHub Pages](https://zangjiucheng.github.io/GitCat/) on every change
+- **Rust core** (`src-tauri/`) — [git2](https://github.com/rust-lang/git2-rs) for reads, the `git` CLI for writes (every mutation snapshots first), [tauri-specta](https://github.com/specta-rs/tauri-specta) for a typed IPC boundary generated into `src/ipc/bindings.ts`
+- **Frontend** — Svelte 5 islands (one per feature) over a hand-tuned vanilla canvas for the graph itself
+- **CI/CD** — `cargo test` + `pnpm test` on every push, a 6-platform release matrix on tags, and a [VitePress](https://vitepress.dev) site auto-deployed to [GitHub Pages](https://zangjiucheng.github.io/GitCat/)
 
 ## License
 
-GitCat is free software, licensed under the [GNU General Public License v3.0 or later](LICENSE).
-
-Copyright (C) 2026 Jiucheng Zang
+Free software under the [GNU General Public License v3.0 or later](LICENSE). Copyright © 2026 Jiucheng Zang.

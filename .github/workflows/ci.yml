@@ -99,6 +99,13 @@ jobs:
       # with no extra system packages installed beyond the runner's stock image.
       # => No `apt-get install` step is needed here.
 
+      # tauri-build validates bundle.resources at COMPILE time, and
+      # tauri.linux.conf.json bundles resources/pdfium/libpdfium.so (#37). The
+      # lib is fetched, not committed — pull it before any cargo build/test.
+      # Node is preinstalled on GitHub runners; working-directory is src-tauri.
+      - name: Fetch PDFium native library
+        run: node ../scripts/fetch-pdfium.mjs
+
       - name: Build
         run: cargo build --locked
 
@@ -214,6 +221,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+
+      # See the Linux job: tauri.windows.conf.json bundles
+      # resources/pdfium/pdfium.dll (#37), which tauri-build checks at compile
+      # time. Node + tar ship on windows-latest; working-directory is src-tauri.
+      - name: Fetch PDFium native library
+        run: node ../scripts/fetch-pdfium.mjs
 
       - name: Build
         run: cargo build --locked

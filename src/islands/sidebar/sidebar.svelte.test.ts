@@ -1,5 +1,5 @@
 // Tests for the sidebar (refs tree + branch context menu) controller.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../legacy/bridge", () => ({
   CUR_REPO: "/repo",
@@ -9,9 +9,22 @@ vi.mock("../../legacy/bridge", () => ({
   updateBranchPill: vi.fn(),
   relTime: (t: number) => t + "s ago",
   enterSubmodule: vi.fn(),
+  goToOid: vi.fn(() => true),
+  // Design-mode-only label fallback (legacy/main.ts's goToRefLabel returns false
+  // outright whenever a real repo is loaded) — default false so every test that
+  // isn't about it keeps falling through to the message-selection ladder.
+  goToRefLabel: vi.fn(() => false),
+  get graphStreamComplete() {
+    return mockStreamComplete;
+  },
+  get graphIncomplete() {
+    return mockGraphIncomplete;
+  },
 }));
 
 let mockInTauri = false;
+let mockStreamComplete = true;
+let mockGraphIncomplete = false;
 vi.mock("../../ipc/env", () => ({
   get IN_TAURI() {
     return mockInTauri;
@@ -120,6 +133,11 @@ function resetAll() {
   sidebarCtrl.newSubmodulePath = "";
   sidebarCtrl.newSubmoduleBranch = "";
   mockInTauri = false;
+  mockStreamComplete = true;
+  mockGraphIncomplete = false;
+  // A jump warning held from a previous test (see warnJumpFailed's hold) must
+  // not fire into the next one's mocks.
+  sidebarCtrl.cancelJumpWarning();
   vi.clearAllMocks();
   // Default: no submodules, so the many pre-existing "refresh"/checkout/etc.
   // tests below that never touch submodule_status at all don't have to care
@@ -1422,8 +1440,11 @@ describe("openDirtyCheckoutMenu / closeDirtyCheckoutMenu (#34)", () => {
   });
 });
 
-// A branch row's own click/Enter no longer checks out immediately — it opens
-// this confirm popover instead (see CheckoutConfirm's own doc comment).
+// A branch row's own click/Enter jumps the graph to that ref's tip rather
+// than checking out — checkout instead opens this confirm popover, via
+// double-click on any branch row (local or remote), or a remote row's
+// right-click/⋮ (a local row's right-click/⋮ open the branch menu instead;
+// see CheckoutConfirm's own doc comment).
 describe("openCheckoutConfirm / closeCheckoutConfirm", () => {
   it("positions the popover clamped to the viewport width", () => {
     sidebarCtrl.openCheckoutConfirm("feature", false, window.innerWidth, 40);
@@ -2634,5 +2655,197 @@ describe("sidebar folder collapse state", () => {
     expect(sidebarCtrl.folderPaths("tag")).toEqual([]);
     sidebarCtrl.tags = [{ name: "v1/rc1", sha: "1" }];
     expect(sidebarCtrl.folderPaths("tag")).toEqual(["v1"]);
+  });
+});
+
+describe("jumpToRef (click a sidebar ref -> select its tip commit)", () => {
+  // Failure warnings are held for JUMP_WARN_HOLD_MS so a double-click can cancel
+  // them (see warnJumpFailed) — fake timers let each test assert the message
+  // WITHOUT the hold turning every warn assertion into a race. Success is still
+  // synchronous, so the happy-path tests need no flush at all.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockStreamComplete = true;
+    vi.mocked(bridge.goToOid).mockReturnValue(true);
+    // vi.clearAllMocks() (resetAll) clears CALLS but keeps an implementation set
+    // by mockReturnValue, so the one test that makes the label fallback succeed
+    // would otherwise leak "true" into every test after it.
+    vi.mocked(bridge.goToRefLabel).mockReturnValue(false);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  // Long enough to clear the hold, whatever it's tuned to.
+  const flushWarning = () => vi.advanceTimersByTime(2000);
+
+  it("hands the ref's full 40-char sha to the graph, untouched", () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    sidebarCtrl.jumpToRef("local", "feature/x", sha);
+    expect(bridge.goToOid).toHaveBeenCalledWith(sha);
+    flushWarning();
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+  });
+
+  it("says the graph is still loading when the stream hasn't finished", () => {
+    // graphStreamComplete only ever flips true from the real app's IN_TAURI-gated
+    // stream handling — this scenario is specifically the real app mid-stream, not
+    // design mode (which never takes this branch; see the next test).
+    mockInTauri = true;
+    mockStreamComplete = false;
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));
+    flushWarning();
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("Still loading"));
+  });
+
+  it("design mode never claims the graph is still loading (there's no real stream) — falls through to the unreachable-commit hint", () => {
+    mockInTauri = false;
+    mockStreamComplete = false;
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));
+    flushWarning();
+    const msg = vi.mocked(bridge.tama.warn).mock.calls[0][0] as string;
+    expect(msg).not.toContain("Still loading");
+    expect(msg).toContain("main");
+  });
+
+  it("points an unticked branch at its checkbox", () => {
+    sidebarCtrl.visibleLocal = ["main"]; // feature/x is filtered out
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "feature/x", "b".repeat(40));
+    flushWarning();
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("checkbox"));
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("feature/x"));
+  });
+
+  it("never tells a TAG to tick a checkbox — tags have none, and never seed the walk", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("tag", "v1.0.0", "c".repeat(40));
+    flushWarning();
+    const msg = vi.mocked(bridge.tama.warn).mock.calls[0][0] as string;
+    expect(msg).toContain("v1.0.0");
+    expect(msg).not.toContain("checkbox");
+  });
+
+  it("a TICKED branch that still isn't there is reported as unreachable, not as hidden", () => {
+    sidebarCtrl.visibleLocal = null; // no filter: everything is ticked
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "main", "d".repeat(40));
+    flushWarning();
+    const msg = vi.mocked(bridge.tama.warn).mock.calls[0][0] as string;
+    expect(msg).not.toContain("checkbox");
+    expect(msg).toContain("main");
+  });
+
+  it("warns without calling the graph at all when the ref carries no sha", () => {
+    sidebarCtrl.jumpToRef("local", "main", "");
+    expect(bridge.goToOid).not.toHaveBeenCalled();
+    flushWarning();
+    expect(bridge.tama.warn).toHaveBeenCalled();
+  });
+
+  // ── the graph itself stopped short (PR review #2) ────────────────────────
+  it("blames the truncated/errored graph, not the branch, when a SHOWN branch's commit is missing", () => {
+    // The self-contradiction this replaces: execution only gets past the
+    // isBranchVisible check because the branch IS shown, so "no branch currently
+    // shown reaches its commit" argued with itself.
+    sidebarCtrl.visibleLocal = null; // no filter: `main` is shown
+    mockGraphIncomplete = true;
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "main", "e".repeat(40));
+    flushWarning();
+    const msg = vi.mocked(bridge.tama.warn).mock.calls[0][0] as string;
+    expect(msg).toContain("main");
+    expect(msg).toContain("Only part of the history is loaded");
+    expect(msg).not.toContain("no branch currently shown");
+  });
+
+  it("still points an UNTICKED branch at its checkbox even when the graph is incomplete — that fix is actionable", () => {
+    sidebarCtrl.visibleLocal = ["main"]; // feature/x is filtered out
+    mockGraphIncomplete = true;
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "feature/x", "f".repeat(40));
+    flushWarning();
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("checkbox"));
+  });
+
+  it("a complete graph never reaches the incomplete message", () => {
+    sidebarCtrl.visibleLocal = null;
+    mockGraphIncomplete = false;
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "main", "e".repeat(40));
+    flushWarning();
+    const msg = vi.mocked(bridge.tama.warn).mock.calls[0][0] as string;
+    expect(msg).not.toContain("Only part of the history is loaded");
+    expect(msg).toContain("no branch currently shown");
+  });
+
+  // ── design-mode label fallback (PR review #1) ────────────────────────────
+  it("falls back to a label match when the oid join fails, and says nothing on success", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    vi.mocked(bridge.goToRefLabel).mockReturnValue(true);
+    sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));
+    expect(bridge.goToRefLabel).toHaveBeenCalledWith("main");
+    flushWarning();
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+  });
+
+  it("never consults the label fallback when the oid join already landed", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(true);
+    sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));
+    expect(bridge.goToRefLabel).not.toHaveBeenCalled();
+  });
+
+  // ── the failure warning is held, so a double-click can cancel it (#3) ────
+  it("holds a failure warning back rather than firing it synchronously", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));
+    expect(bridge.tama.warn).not.toHaveBeenCalled(); // still pending
+    flushWarning();
+    expect(bridge.tama.warn).toHaveBeenCalled();
+  });
+
+  it("cancelJumpWarning drops the pending warning — the double-click-to-checkout case", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "main", "a".repeat(40)); // first click of a double-click
+    sidebarCtrl.cancelJumpWarning(); // what every ondblclick handler does
+    flushWarning();
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+  });
+
+  it("closing the repo drops a held warning — Tama must not scold about a ref of a repo that's gone", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));
+    sidebarCtrl.reset(); // what closing the repo does
+    flushWarning();
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+  });
+
+  it("a later SUCCESSFUL jump supersedes an armed warning — no scolding about the ref you left", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("tag", "v0.9.0", "a".repeat(40)); // not loaded -> warning armed
+    vi.advanceTimersByTime(100); // still inside the hold
+    vi.mocked(bridge.goToOid).mockReturnValue(true);
+    sidebarCtrl.jumpToRef("tag", "v1.0.0", "b".repeat(40)); // lands fine
+    flushWarning();
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a later FAILING jump replaces the armed warning rather than adding to it", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(false);
+    sidebarCtrl.jumpToRef("tag", "v0.9.0", "a".repeat(40));
+    vi.advanceTimersByTime(100);
+    sidebarCtrl.jumpToRef("tag", "v1.0.0", "b".repeat(40));
+    flushWarning();
+    expect(bridge.tama.warn).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(bridge.tama.warn).mock.calls[0][0]).toContain("v1.0.0");
+  });
+
+  it("a SUCCESSFUL jump is never delayed — no timer on the common case", () => {
+    vi.mocked(bridge.goToOid).mockReturnValue(true);
+    sidebarCtrl.jumpToRef("local", "main", "a".repeat(40));
+    expect(bridge.goToOid).toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

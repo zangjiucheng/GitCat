@@ -15,11 +15,28 @@
 *.gif   binary
 *.ico   binary
 *.webp  binary
-*.mp4   binary
-*.webm  binary
 *.woff  binary
 *.woff2 binary
 *.ttf   binary
 *.otf   binary
 *.glb   binary
 *.wasm  binary
+
+# Large media in Git LFS. Video is the only thing in this repo big enough to
+# matter: the homepage demo has been re-recorded three times and every version
+# is still in the pack, so roughly 63 MB of a ~127 MB clone is video — over
+# half of it files that no longer exist on any branch.
+#
+# This stops the bleeding going forward (each future re-record costs a pointer,
+# not another 15 MB blob) but does NOT shrink an existing clone: the blobs
+# already in history only go away with `git lfs migrate import --everything`
+# and a force-push, which rewrites every SHA and breaks open PRs and forks.
+#
+# `-text` here replaces the plain `binary` these two patterns used to carry —
+# `binary` is shorthand for `-text -diff`, and LFS needs its own `diff=lfs`.
+#
+# Anything checked out through LFS must be fetched by CI that reads it:
+# .github/workflows/docs.yml passes `lfs: true` to actions/checkout for exactly
+# this reason. Without it the built site ships 130-byte pointer files.
+*.mp4   filter=lfs diff=lfs merge=lfs -text
+*.webm  filter=lfs diff=lfs merge=lfs -text

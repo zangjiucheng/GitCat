@@ -1,0 +1,22 @@
+// 패치 내보내기 모달 문자열. 키는 `exportpatches.<key>`가 돼요.
+export default {
+  title: "패치 내보내기",
+  subtitle_pre: "커밋 범위를 하나로 묶은 ",
+  subtitle_mid: " 파일로 내보내요(",
+  subtitle_post: ") — 공유하거나 메일로 보내기 좋아요.",
+  ph_from: "시작… 예: origin/main",
+  ph_to: "끝… 예: HEAD",
+  range_hint: "“시작” 다음부터 “끝”까지(포함) 모든 커밋이에요.",
+  export_btn: "내보내기…",
+  exporting: "내보내는 중…",
+  open_repo_first: "먼저 저장소를 열어주세요.",
+  err_enter_rev: "{label}: 리비전을 입력해주세요.",
+  err_leading_dash: "{label}: ‘-’로 시작할 수 없어요.",
+  dlg_export: "패치 내보내기",
+  err_save_dialog: "저장 대화상자를 열지 못했어요 — {e}",
+  say_demo: "패치를 내보냈어요 (demo).",
+  say_exporting: "패치 내보내는 중…",
+  say_exported: "내보냈어요.",
+  err_export: "내보내기에 실패했어요.",
+  err_export_e: "내보내기에 실패했어요 — {e}",
+};

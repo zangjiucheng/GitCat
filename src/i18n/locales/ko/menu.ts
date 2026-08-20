@@ -1,0 +1,58 @@
+// 네이티브 OS 메뉴 레이블(macOS 앱 메뉴 / Windows-Linux 메뉴 바). legacy/main.ts의
+// syncNativeMenu를 통해 Rust(src-tauri/src/menu.rs)로 전달되며, 각 키는
+// 메뉴 항목 id나 `sub.*` 서브메뉴 제목에 매핑돼요. 미리 정의된 항목(잘라내기/
+// 복사/붙여넣기/종료/최소화/…)은 OS가 자체적으로 현지화하므로 여기 나열하지
+// 않아요. 키는 `menu.<key>`가 돼요.
+export default {
+  // 서브메뉴 제목
+  file: "파일",
+  repository: "저장소",
+  edit: "편집",
+  view: "보기",
+  tools: "도구",
+  window: "윈도우",
+  help: "도움말",
+  search: "검색",
+  history: "히스토리",
+  patches: "패치",
+
+  // 메뉴 항목
+  about: "GitCat 정보",
+  open_repo: "저장소 열기…",
+  close_repo: "저장소 닫기",
+  new_branch: "새 브랜치…",
+  fetch: "페치",
+  pull: "풀",
+  push: "푸시",
+  refresh: "새로고침",
+  toggle_theme: "테마 전환",
+  cmdk: "명령 팔레트…",
+  code_search: "코드 검색…",
+  pickaxe_search: "커밋 내용 검색…",
+  bisect: "Bisect…",
+  reflog: "Reflog…",
+  rerere: "Rerere…",
+  plumbing: "Plumbing…",
+  repo_summary: "저장소 요약…",
+  dangling_recovery: "고립된 커밋…",
+  export_patches: "패치 내보내기…",
+  apply_patch: "패치 적용…",
+  remotes: "원격 관리…",
+  repositories: "저장소 목록…",
+  external_tools: "외부 도구…",
+  plugins: "플러그인…",
+  settings: "설정…",
+  repo_files: "저장소 파일(.gitignore / .mailmap)…",
+  uncommitted_changes: "커밋 안 된 변경사항",
+  pull_merge: "풀(병합)",
+  pull_rebase: "풀(리베이스)",
+  open_terminal: "터미널 열기",
+  force_push_lease: "강제 푸시(안전)",
+  force_push_override: "강제 푸시(원격 덮어쓰기)",
+  reset_head: "HEAD를 커밋으로 리셋…",
+  filter_repo: "히스토리 재작성(filter-repo)…",
+  new_window: "새 창",
+  open_github: "GitHub에서 GitCat 보기",
+  report_issue: "문제 신고…",
+  check_updates: "업데이트 확인…",
+};

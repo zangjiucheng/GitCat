@@ -21,6 +21,7 @@ import { blameCtrl } from "../blame/blame.svelte.ts";
 import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
 import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
+import { previewKind } from "../diffpreview/preview-kind";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
 
 function esc(s: unknown): string {
@@ -58,7 +59,10 @@ type DiffFile = { lang: string; lines: [string, string][]; truncated: boolean; b
 export type DiffRow =
   | { kind: "hunk"; text: string }
   | { kind: "line"; ln: number | ""; mk: string; cls: string; html: string }
-  | { kind: "note"; text: string };
+  | { kind: "note"; text: string }
+  // #37: an image/PDF file — render a visual before/after instead of a note.
+  // The row carries the two diff sides as `rev` tokens preview_blob resolves.
+  | { kind: "preview"; repo: string; path: string; oldPath: string | null; newRev: string; oldRev: string };
 
 type Hero = { kind: "loaded"; n: number; ms: number } | { kind: "empty" };
 
@@ -408,6 +412,24 @@ class DetailState {
         return;
       }
       if (d.binary) {
+        // #37: images/PDFs get a visual before/after instead of the placeholder.
+        // Old side is the first-parent tree ("<sha>^"), new side this commit
+        // ("<sha>"); an add/delete/rename resolves one side to absent in the
+        // backend, which the preview renders as a single side.
+        if (IN_TAURI && this.commit && resolved && previewKind(resolved)) {
+          const ce = this.curChanged.find((c) => c.p === resolved);
+          this.diffRows = [
+            {
+              kind: "preview",
+              repo: bridge.CUR_REPO as unknown as string,
+              path: resolved,
+              oldPath: ce?.oldPath ?? null,
+              newRev: this.commit.sha,
+              oldRev: this.commit.sha + "^",
+            },
+          ];
+          return;
+        }
         this.diffRows = [{ kind: "note", text: "binary file — not shown" }];
         return;
       }
@@ -528,7 +550,11 @@ class DetailState {
 
   copySha() {
     if (!this.commit) return;
-    copyToClipboard(this.commit.sha);
+    // Copy the FULL 40-char oid (BACKEND.oids[row]), not the short sha shown in
+    // the header (#43) — copying a hash is almost always to paste into a git
+    // command. Falls back to the short sha in design mode (no BACKEND).
+    const backend: any = bridge.BACKEND;
+    copyToClipboard((backend && backend.oids && backend.oids[this.commit.row]) || this.commit.sha);
     this.copied = true;
     setTimeout(() => {
       this.copied = false;

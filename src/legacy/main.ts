@@ -37,7 +37,36 @@ import { t, be, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
+// No fallback needed here: a rendered element's resolved fontFamily is never
+// empty. FONT_MONO below is a different case — see its note.
 const FONT_UI=getComputedStyle(document.body).fontFamily;
+// The canvas's fixed-width face, read from the SAME --mono the DOM uses rather
+// than hardcoded separately at each call site below, so the graph and the DOM
+// diff view stop disagreeing about what "monospace" means.
+//
+// The fallback is not belt-and-braces: an empty custom property composes to
+// "11px ", which a canvas rejects SILENTLY — ctx.font keeps whatever was set
+// last, so the sha would quietly render in the UI face with nothing thrown.
+//
+// Read ONCE, at module load. That is safe only while --mono stays a single
+// unscoped declaration: this const sits outside readTheme()'s re-read path, and
+// a language switch only repaints. Scoping --mono per theme or per locale means
+// re-reading it here too.
+//
+// A consistency fix, not a coverage one — as long as --mono names no CJK or
+// Hangul family (it doesn't today), non-Latin glyphs come from Blink's
+// per-character system fallback regardless; measured, 个 is the same width under
+// the old stack, the new one, and a deliberately nonexistent family. Adding one
+// would change that, and this note with it.
+//
+// Not free, either: wherever the named faces are installed, the sha column
+// moves off the generic monospace face onto the first of them and gets slightly
+// wider. That is every stock Windows box (Windows Terminal ships Cascadia
+// Code), and any Linux box carrying cascadia-code or the MS core fonts; macOS
+// resolved ui-monospace to SF Mono under the old stack already, so it is
+// unchanged. AUTHOR_GUTTER reserves enough for the wider sha — nothing
+// collides — but it is a visible restyle, not a no-op.
+const FONT_MONO=getComputedStyle(document.documentElement).getPropertyValue("--mono").trim()||"ui-monospace,monospace";
 const app=$("#app");
 
 /* Painted Tama art (Nano-Banana / Gemini), embedded as WebP data URIs.
@@ -524,6 +553,10 @@ function renderContent(st, rowLo, rowHi, strip){
     if(l.some&&l.some(x=>x&&x.kind==="head")){ headRow=r; break; }
   }
   ctx.textBaseline="middle"; ctx.font=layout.chipFont;
+  // Inline ref-chip bounds are frame-constant (lastTx + window width), so compute
+  // once here and reuse across rows instead of allocating per row in the loop;
+  // chipEntryAt recomputes the same on pointer events (#30). Unused in column mode.
+  const chipBounds=inlineChipBounds();
   for(let r=first;r<=last;r++){
     const y=r*rowH+rowH*0.5-st+bh, x=laneX(G.commitLane[r]), col=LANE_COLORS[G.commitColor[r]];
     const bisectDim = B && !(r>B.lo&&r<B.hi) && r!==B.good && r!==B.bad;
@@ -565,7 +598,7 @@ function renderContent(st, rowLo, rowHi, strip){
     // they don't all fit. In column mode (bcw>0) they live in the left
     // BRANCH/TAG gutter and the subject stays put at cx; inline (bcw===0) they
     // sit before the subject, advancing cx past whatever was drawn.
-    if(bcw>0){ drawGutterChips(r,BRANCH_PAD_L,bcw-6,y,col,6,false); }
+    if(bcw>0){ drawGutterChips(r,BRANCH_PAD_L,bcw-6,y,col,6); }
     else {
       // Same breathing room after the last chip that column mode's message
       // gets after ITS divider (MSG_TEXT_PAD, applied above to cx already) —
@@ -586,7 +619,7 @@ function renderContent(st, rowLo, rowHi, strip){
       // alike, and long before this limit is in play. That one predates the
       // chips and is left alone here.
       const cx0=cx;
-      cx=drawGutterChips(r,cx,W-AUTHOR_GUTTER-MIN_SUBJECT_W-MSG_TEXT_PAD,y,col,8,true);
+      cx=drawGutterChips(r,cx,chipBounds.xLimit,y,col,chipBounds.gap);
       if(cx>cx0) cx+=MSG_TEXT_PAD;
     }
     // Skip the per-row message/author/sha text while scrolling FAST (fastScroll):
@@ -604,7 +637,7 @@ function renderContent(st, rowLo, rowHi, strip){
       let s=msgOf(r); if(s.length>LABEL_MAX) s=s.slice(0,LABEL_MAX); const maxw=W-cx-AUTHOR_GUTTER;
       if(ctx.measureText(s).width>maxw){while(s.length>4&&ctx.measureText(s+"…").width>maxw)s=s.slice(0,-1);s+="…";}
       ctx.fillText(s,cx,y);
-      ctx.fillStyle=theme.muted; ctx.textAlign="right"; ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px ui-monospace,monospace";
+      ctx.fillStyle=theme.muted; ctx.textAlign="right"; ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px "+FONT_MONO;
       const sha=hhex(r), shaW=ctx.measureText(sha).width;
       // Author preview — right next to the sha, so who wrote a commit is
       // visible at a glance without opening its detail panel. Own (slightly
@@ -614,7 +647,11 @@ function renderContent(st, rowLo, rowHi, strip){
       let a=authorOf(r); if(a.length>LABEL_MAX) a=a.slice(0,LABEL_MAX); const maxAuthorW=AUTHOR_GUTTER-96-8;
       if(ctx.measureText(a).width>maxAuthorW){while(a.length>1&&ctx.measureText(a+"…").width>maxAuthorW)a=a.slice(0,-1);a+="…";}
       ctx.fillText(a,W-14-shaW-8,y);
-      ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px ui-monospace,monospace";
+      // Back to mono. Not a duplicate of the line above the author preview —
+      // that preview clobbered ctx.font with FONT_UI, and without restoring it
+      // the sha draws in the UI face. Silently: a canvas never complains about
+      // the font it was handed.
+      ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px "+FONT_MONO;
       ctx.fillText(sha,W-14,y); ctx.textAlign="left";
     }
     ctx.globalAlpha=1;
@@ -753,11 +790,13 @@ function drawWorkdirBand(){
   else if(hover){ ctx.beginPath(); ctx.arc(x,y,dotR+2.6,0,TAU); ctx.strokeStyle=theme.muted; ctx.lineWidth=1; ctx.stroke(); }
   ctx.textBaseline="middle"; ctx.textAlign="left";
   ctx.font=Math.round(12.5*Math.min(1.25,layout.zoom))+"px "+FONT_UI; ctx.fillStyle=theme.text;
-  ctx.fillText("Uncommitted changes",x+dotR+14,y);
+  ctx.fillText(t("workdir.uncommitted_changes"),x+dotR+14,y);
   const s=workdirCtrl.status;
   const nConflict=s?s.conflicted:0, nStaged=s?s.staged.length:0, nUnstaged=s?s.unstaged.length:0;
-  const badge=nConflict?(nConflict+" conflicted"):(nStaged||nUnstaged)?(nStaged+" staged · "+nUnstaged+" unstaged"):"clean";
-  ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px ui-monospace,monospace";
+  const badge=nConflict?t("workdir.n_conflicted",{n:nConflict})
+    :(nStaged||nUnstaged)?t("workdir.staged_unstaged",{staged:nStaged,unstaged:nUnstaged})
+    :t("workdir.clean");
+  ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px "+FONT_MONO;
   ctx.fillStyle=nConflict?theme.danger:theme.muted; ctx.textAlign="right";
   ctx.fillText(badge,W-14,y); ctx.textAlign="left";
   ctx.strokeStyle=theme.border; ctx.lineWidth=1;
@@ -899,36 +938,53 @@ function fitChips(list,cap,x0,xLimit,gap){
   }
   return out;
 }
+const PLUS_RESERVE=34;
+// The inline-mode gap between chips (and after the last chip before the "+N"
+// pill). Named so the draw call site (drawGutterChips in inline mode) and the
+// on-demand hit test (inlineChipBounds -> chipEntryAt) can't drift apart.
+const CHIP_GAP_INLINE=8;
+// Greedy chip fit + the "+N" pill's re-fit, shared by the draw path
+// (drawGutterChips) and the on-demand hit test (chipEntryAt) so both lay a row's
+// chips out at byte-identical spans. Fit once with no reservation; only if some
+// overflow, re-fit leaving room for the pill so it never collides with the last
+// chip. Returns the placed chips (x/width) and how many didn't fit.
+function fitChipsWithPill(list,cap,x0,xLimit,gap){
+  let placed=fitChips(list,cap,x0,xLimit,gap);
+  let overflow=list.length-placed.length;
+  if(overflow>0){
+    placed=fitChips(list,cap,x0,xLimit-PLUS_RESERVE-gap,gap);
+    overflow=list.length-placed.length;
+  }
+  return {placed,overflow};
+}
+// Row-independent inline chip bounds — where drawGutterChips lays chips out in
+// inline mode (bcw===0): starting just past the graph|message divider
+// (lastTx+MSG_TEXT_PAD, matching the draw loop's own `cx`, which is
+// tx+MSG_TEXT_PAD with tx===lastTx after every full render / pinned to lastTx in
+// a strip render — the same invariant dividerAt relies on), limited so the
+// subject keeps MIN_SUBJECT_W plus its trailing pad. Shared with chipEntryAt so
+// on-demand hit-testing reproduces the exact spans the frame painted, with no
+// per-frame recorded map to retain or prune (#30).
+function inlineChipBounds(){
+  return {x0:lastTx+MSG_TEXT_PAD, xLimit:view.cssW-AUTHOR_GUTTER-MIN_SUBJECT_W-MSG_TEXT_PAD, gap:CHIP_GAP_INLINE};
+}
 // Draw a row's ref chips into the gutter (or inline before the subject), plus a
 // "+N" pill when some don't fit — recording that pill's x-span in overflowHit so
 // a click there cycles the row (see endPointer). Returns the x just past the
 // last thing drawn (inline mode advances the subject past it). `rowColor` is
 // the row's lane colour — every chip tints to it in both layouts (see
-// paintChip). Reserved room for the pill (RESERVE) is generous enough for a
-// two-digit count so it always fits. With `recordHits`, ALSO records every
-// placed chip's own x-span in chipHit (row -> spans) for chipEntryAt, which
-// answers "which chip is under this x" for the hover tooltip (labelAt) and the
-// label context menu. Only the inline call site asks for that: column mode
-// resolves refs from its whole gutter cell and never consults chipEntryAt, so
-// building the spans there would be per-frame waste. Both maps are cleared for
-// the row either way, so a layout switch can't leave stale spans behind.
-const PLUS_RESERVE=34;
-function drawGutterChips(row,x0,xLimit,y,rowColor,gap,recordHits){
-  overflowHit.delete(row); chipHit.delete(row);
+// paintChip). Reserved room for the pill (PLUS_RESERVE) is generous enough for a
+// two-digit count so it always fits. Which individual chip sits under a given x
+// (for the hover tooltip + label menu) is answered on demand by chipEntryAt,
+// which replays this same fit — so nothing per-chip is recorded here.
+function drawGutterChips(row,x0,xLimit,y,rowColor,gap){
+  overflowHit.delete(row);
   const list=displayChipsFor(row);
   if(!list.length) return x0;
   const cap=showAllTags?list.length:1;
-  // First fit with no reservation; if everything intended fits, no pill needed.
-  let placed=fitChips(list,cap,x0,xLimit,gap);
-  let overflow=list.length-placed.length;
-  if(overflow>0){
-    // Re-fit leaving room for the pill, so it never collides with the last chip.
-    placed=fitChips(list,cap,x0,xLimit-PLUS_RESERVE-gap,gap);
-    overflow=list.length-placed.length;
-  }
+  const {placed,overflow}=fitChipsWithPill(list,cap,x0,xLimit,gap);
   let endX=x0;
   for(const c of placed){ paintChip(c.x,y,c.text,c.w,c.entry,rowColor); endX=c.x+c.w; }
-  if(recordHits) chipHit.set(row, placed.map(c=>({x0:c.x, x1:c.x+c.w, entry:c.entry})));
   if(overflow>0){
     const px=placed.length?endX+gap:x0;
     ctx.font=layout.chipFont;
@@ -1037,17 +1093,39 @@ let down=null, sbDrag=null, colDrag=null;
 // last-drawn tx (both layouts — inline's persisted graph width is real and
 // draggable exactly like column layout's, it's just anchored at 0 instead of
 // bcw). A COL_HANDLE-px grab zone each side.
-function dividerAt(x){ const bcw=layout.branchColW;
+function dividerAt(x){
+  // No non-empty graph, no divider (#29). lastTx is module state that only
+  // renderContent writes, and renderContent early-returns (`if(N===0) return`)
+  // before writing it when the graph is empty — which is exactly what closeRepo()
+  // leaves behind via bootEmpty()'s truthy `{N:0}` placeholder (so a plain `!G`
+  // misses it), as well as a never-opened boot (G===null). lastTx thus keeps the
+  // last repo's value, so the "graph" case below would otherwise match a stale
+  // lastTx, exposing an invisible col-resize strip on the empty canvas and
+  // letting a drag persist a colW.graph override onto the next repo opened. A
+  // divider is a property of a rendered graph, so it shouldn't resolve without
+  // one — same `!G||!G.N` guard the render tick uses.
+  if(!G||!G.N) return null;
+  const bcw=layout.branchColW;
   if(bcw>0&&Math.abs(x-bcw)<=COL_HANDLE) return "branch";
   if(lastTx>COL_HANDLE&&Math.abs(x-lastTx)<=COL_HANDLE) return "graph";
   return null; }
-// The painted chip under screen-x `mx` in `row` (inline mode) — chipHit spans
-// are recorded per rendered row by drawGutterChips, which only fills them in
-// this layout. Null over the "+N" pill (overflowPillAt covers that), over plain
-// subject text, and everywhere in column mode.
+// The painted chip under screen-x `mx` in `row` (inline mode). Recomputes the
+// row's chip spans on demand — the SAME displayChipsFor + fitChipsWithPill layout
+// drawGutterChips paints, at the shared inlineChipBounds — rather than reading a
+// per-frame recorded map. Hit-testing runs on pointer events (a handful of times
+// a second), not per frame (~60×/s), so the work is cheap here and nothing has to
+// be retained or pruned as rows scroll (#30). Null over the "+N" pill
+// (overflowPillAt covers that), over plain subject text, and everywhere in column
+// mode (bcw>0), which resolves refs from its whole gutter cell and never asks
+// which individual chip was hit.
 function chipEntryAt(mx,row){
-  const spans=chipHit.get(row); if(!spans) return null;
-  for(const s of spans) if(mx>=s.x0&&mx<=s.x1) return s.entry;
+  if(layout.branchColW>0||!G||row<0) return null;
+  const list=displayChipsFor(row);
+  if(!list.length) return null;
+  const {x0,xLimit,gap}=inlineChipBounds();
+  const cap=showAllTags?list.length:1;
+  const {placed}=fitChipsWithPill(list,cap,x0,xLimit,gap);
+  for(const c of placed) if(mx>=c.x&&mx<=c.x+c.w) return c.entry;
   return null;
 }
 // True when screen-x `mx` is over `row`'s "+N" overflow pill (inline mode; the
@@ -1217,7 +1295,13 @@ cv.addEventListener("dblclick",(e)=>{
   const dv=dividerAt(p.x);
   if(dv){ if(dv==="branch") colW.branch=null; else colW.graph=null; saveColW(); recomputeLayout(); dirty=true; return; }
   const hit=hitTest(p.x,p.y);
-  if(!hit||hit.row<0) return;
+  if(!hit) return;
+  // The pinned "Uncommitted changes" band (sentinel row -2) gets the same
+  // gesture as a commit row: select it, then open its expanded diff. It has to
+  // be handled before the row<0 guard below, which exists to ignore the other
+  // negative sentinels.
+  if(hit.row===-2){ selectWorkdir(); workdirCtrl.expandDiff(); return; }
+  if(hit.row<0) return;
   select(hit.row);
   detailCtrl.expandDiff();
 });
@@ -1273,11 +1357,15 @@ cv.addEventListener("contextmenu",(e)=>{
     if(br){ sidebarCtrl.openMenuAt(br.label, br.kind==="head", null, e.clientX, e.clientY); return; }
     // A remote-tracking branch label (e.g. origin/main, upstream/3.13) → the
     // sidebar's checkout-confirm, which creates a local branch tracking it —
-    // the same action clicking that remote in the sidebar performs.
+    // the same popover double-clicking (or right-clicking, or the ⋮ button
+    // on) that remote in the sidebar opens.
     const rem=pool.find(r=>r&&r.kind==="remote");
     if(rem){ sidebarCtrl.openCheckoutConfirm(rem.label, true, e.clientX, e.clientY); return; }
   }
-  const sha=(BACKEND&&BACKEND.rows[row])?BACKEND.rows[row].sha:hhex(row);
+  // Full oid (BACKEND.oids[row]), not the short display sha, so the menu's
+  // "Copy full SHA" really copies the full hash and git ops get an unambiguous
+  // ref (#43). openAt derives shortSha from it via slice(0,7).
+  const sha=(BACKEND&&BACKEND.oids&&BACKEND.oids[row])?BACKEND.oids[row]:((BACKEND&&BACKEND.rows[row])?BACKEND.rows[row].sha:hhex(row));
   commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), e.clientX, e.clientY);
 });
 cv.addEventListener("keydown",(e)=>{
@@ -1602,7 +1690,7 @@ class TamaMascot{
       case "commit.created": Safety.seal(); this._tele(); return null;
       case "snapshot.surfaced":{const b=Safety.seal();this._tele();this.set("hint");this.say(t("snapshot.surfaced",{ref:shortBackup(b.ref)}));return b;}
       case "op.long": this.set("thinking"); this.say(""); this._teleText((p.label||t("legacy.op_working"))+" · 0 / "+(p.total||10000)); return null;
-      case "op.progress": this._teleText((p.label||"working")+" · "+p.done+" / "+p.total); return null;
+      case "op.progress": this._teleText((p.label||t("legacy.op_working"))+" · "+p.done+" / "+p.total); return null;
       case "op.done": this.set(this.sticky&&this.sticky!=="thinking"?this.sticky:"idle"); this._tele(); return null;
       case "mutation.caution":{const b=Safety.seal();this._tele();this.set("warn");const cnt=p.count?t(p.count===1?"mutation.commit_one":"mutation.commit_many",{n:p.count}):t("mutation.commit_some");this.say(t("mutation.caution",{cnt,ref:shortBackup(b.ref)}),4200);return b;}
       case "mutation.destructive":{const b=Safety.seal();this._tele();this.set("danger");this.say(t("mutation.destructive",{label:p.label||t("mutation.this_label"),ref:shortBackup(b.ref)}),6000);return b;}
@@ -1759,9 +1847,10 @@ function selectWorkdir(){ state.selectedRow=-2; workdirCtrl.select(CUR_REPO); di
 // best-effort, same convention as cmdk's own jump().
 function goToUncommitted(){ selectWorkdir(); state.scrollTarget=0; try{cv.focus()}catch(_){} }
 // Jump to the current commit (HEAD = the current branch's tip). Finds HEAD's row
-// across ALL loaded rows (the "head"-kind ref), selects it, and centres it in the
-// scrollable viewport (same recipe reloadGraph's own reselect uses). No-op if
-// HEAD isn't among the loaded commits (detached/off-screen-only-in-history).
+// across ALL loaded rows (the "head"-kind ref), then hands off to focusRow to
+// select it, centre it in the scrollable viewport, and focus the canvas. Warns
+// via Tama instead (rather than focusRow) if HEAD isn't among the loaded
+// commits (detached/off-screen-only-in-history).
 function goToHead(){
   if(!G||!G.N) return;
   let hr=-1;
@@ -1770,10 +1859,74 @@ function goToHead(){
     if(l.some&&l.some(x=>x&&x.kind==="head")){ hr=r; break; }
   }
   if(hr<0){ Tama.warn(t("legacy.head_not_located")); return; }
-  select(hr);
-  state.scrollTarget=clampScroll(hr*layout.rowH-(view.cssH-bandH())/2);
+  focusRow(hr);
+}
+// Select `row`, centre it in the scrollable viewport (below the pinned band —
+// see bandH()), and put keyboard focus on the canvas so the arrow keys keep
+// working from where you landed. Shared by goToHead and goToOid. Not the only
+// copy of this recipe, though: onGraphBatch's pendingReselect restore
+// deliberately keeps its own copy instead of calling focusRow (it must not
+// steal focus to the canvas after a background reload), and cmdk.svelte.ts's
+// own ⌘K jump keeps a third copy with a deliberately different, off-centre
+// scroll factor.
+function focusRow(row){
+  select(row);
+  state.scrollTarget=clampScroll(row*layout.rowH-(view.cssH-bandH())/2);
   dirty=true;
   try{cv.focus()}catch(_){}
+}
+// Jump to a commit by its FULL 40-char oid. Joins on BACKEND.oids (parallel to
+// rows), never on rows[].sha — that one is a 7-char short hash, so a full oid
+// would never match it, and truncating to compare would collide on a large
+// repo and land on the wrong commit. Returns whether a row was found: the
+// caller knows which ref it was chasing and owns the "not here" message.
+function goToOid(oid){
+  if(!oid||!BACKEND||!BACKEND.oids) return false;
+  const row=BACKEND.oids.indexOf(oid);
+  if(row<0) return false;
+  focusRow(row);
+  return true;
+}
+// Design-mode-only counterpart to goToOid: find a row by ref LABEL instead.
+// In plain-browser design mode BACKEND stays null (loadGraph's `else` branch
+// builds G from generateGraph instead), so there are no oids to join on at all
+// and goToOid above can only ever return false — which made every sidebar ref
+// click warn "isn't in the loaded graph" instead of demoing the jump. The
+// synthetic graph does carry ref LABELS though (generateGraph's refs/allRefs:
+// "main", the BR branch names, the v0.x.y tags, the showcase rows), and several
+// of them are exactly what the design-mode sidebar lists, so a label match is
+// the only join available here — and it is enough to make the demo work.
+//
+// The `BACKEND` guard is the point of this function, not an optimisation: with
+// a real repo open the oid join is authoritative, and falling back to a label
+// there could quietly land on a row whose chip says the right name while the
+// ref itself has since moved, masking a genuine "that commit isn't loaded"
+// — which is precisely what the sidebar's jump_* messages exist to tell apart.
+// Please don't "simplify" the guard away.
+//
+// Scans allRefs (falling back to the single refs[r]) exactly like goToHead
+// above, and hands off to the same focusRow, so a design-mode jump lands and
+// scrolls identically to a real one.
+//
+// FIRST match wins, and that is load-bearing rather than incidental: rows run
+// newest-first, so the lowest matching row is the newest commit carrying that
+// label — the tip, which is what a sidebar click asks for. It matters because
+// generateGraph reuses each BR name up to eight times (`BR[bn%BR.length]`, see
+// its `bn<48` loop), so most branch labels genuinely appear on several rows.
+//
+// Not every demo ref resolves, and that's expected: only some of the sidebar's
+// DEMO_* names ("main", "feat/inline-diff", "fix/lane-cull", "origin/main")
+// exist as labels in this synthetic graph. The demo tags and most demo remotes
+// have no counterpart at all, so clicking those still warns in design mode.
+// That is the honest answer — inventing matching rows just to silence it would
+// make the preview lie about what a jump does.
+function goToRefLabel(label){
+  if(!label||BACKEND||!G||!G.N) return false;
+  for(let r=0;r<G.N;r++){
+    const l=(G.allRefs&&G.allRefs[r])||(G.refs&&G.refs[r]?[G.refs[r]]:[]);
+    if(l.some&&l.some(x=>x&&x.label===label)){ focusRow(r); return true; }
+  }
+  return false;
 }
 // In-app Help page (#helpScrim / index.html) — opened from ⌘K ▸ Help. Toggles the
 // scrim's `.on` class (same show/hide the other scrim modals use); closes on the
@@ -2023,14 +2176,6 @@ function setGraphLabelLayout(v){ graphLabelInline=(v!=="column"); recomputeLayou
 const refRot=new Map();
 let refRotEpoch=0;
 const overflowHit=new Map();
-// Every rendered row's PAINTED chip x-spans (CSS px, scroll-independent),
-// entry included — chipEntryAt reads this to answer "which MergedChip is
-// under this x", which feeds both the hover tooltip (labelAt) and the
-// label-context-menu's chip targeting, instead of either re-deriving layout.
-// Cleared per row exactly like overflowHit above, but only POPULATED inline
-// (drawGutterChips' `recordHits`): column mode resolves refs from its whole
-// gutter cell and never asks which individual chip was hit.
-const chipHit=new Map();
 function rowSha(row){ return (BACKEND&&BACKEND.rows[row]&&BACKEND.rows[row].sha)||("r"+row); }
 // This row's refs exactly as the backend delivered them (no priority sort, no
 // rotation): the FULL list when available (allRefs), else the single primary
@@ -2531,8 +2676,23 @@ let graphRequestSeq=0;
 //                 HEAD oid (moved ⇒ recompute dimming), and whole-ref-set
 //                 signature (unchanged + HEAD unchanged ⇒ pure worktree change).
 let loadedOids=new Set();
-let graphStreamComplete=false;
+export let graphStreamComplete=false;
 let lastLoadTruncated=false;
+// Whether the last FINISHED load is known to be missing history it would
+// otherwise have walked — memory-capped (payload.truncated) OR stopped by a
+// revwalk error partway (payload.error). Both leave graphStreamComplete true
+// over a graph that is genuinely incomplete, so "this ref's commit isn't in
+// the loaded rows" stops meaning "nothing shown reaches it" and starts meaning
+// "we never loaded that far". The sidebar's jumpToRef reads this (via
+// bridge.ts) to pick that message instead of the not-reachable one.
+//
+// Deliberately SEPARATE from lastLoadTruncated rather than replacing it:
+// lastLoadTruncated is the narrower fact (memory cap only), and it has two
+// readers of its own — cacheCurrentGraph's "safe to cache" guard and
+// tryFastRefresh's "is loadedOids trustworthy" guard. Both are about the
+// INCREMENTAL machinery; this flag is about what to tell the user. See the
+// KNOWN GAP note at tryFastRefresh, which the same widening would also fix.
+export let graphIncomplete=false;
 let loadedSeedTips=new Set();
 let loadedHeadOid=null;
 let lastRefSig=null;
@@ -2549,15 +2709,25 @@ let lastRefSig=null;
 const GRAPH_CACHE_CAP=8;
 const graphCache=new LruCache(GRAPH_CACHE_CAP);
 // Snapshot the CURRENTLY-open graph under its path before we navigate away, so a
-// later return restores it. Only caches a COMPLETE, non-truncated load — a
-// half-streamed or memory-capped graph would restore wrong. Cheap: it stores
-// references, not deep copies (the live BACKEND/G are about to be REPLACED by the
-// next load, never mutated in place, so the snapshot stays frozen).
+// later return restores it. Only caches a FINISHED, non-truncated load — a
+// half-streamed or memory-capped graph would restore wrong. "Non-truncated" is
+// NOT the same as "whole": a load whose revwalk errored partway also finishes
+// with lastLoadTruncated false and so IS cached, which is why the entry carries
+// graphIncomplete along with it (see below) rather than the restore assuming
+// the graph is complete. Cheap: it stores references, not deep copies (the live
+// BACKEND/G are about to be REPLACED by the next load, never mutated in place,
+// so the snapshot stays frozen).
 function cacheCurrentGraph(){
   if(!CUR_REPO || !BACKEND || !graphStreamComplete || lastLoadTruncated) return;
   graphCache.set(CUR_REPO, {
     backend:BACKEND, g:G, loadedOids, seedTips:loadedSeedTips, headOid:loadedHeadOid,
     refSig:lastRefSig, refRot:new Map(refRot), scrollTarget:state.scrollTarget,
+    // Carried through the cache rather than recomputed on restore: the guard
+    // above rejects a TRUNCATED load, but not one whose revwalk errored partway
+    // (that leaves lastLoadTruncated false), so an entry here can legitimately
+    // be an incomplete graph. Hardcoding `false` on restore would tell the
+    // sidebar the graph is whole when it isn't.
+    incomplete:graphIncomplete,
   });
 }
 // Put a previously-cached graph for `path` straight back on screen — no stream,
@@ -2572,9 +2742,9 @@ function restoreGraphFromCache(path){
   graphCache.delete(path);
   BACKEND=c.backend; G=c.g; loadedOids=c.loadedOids;
   loadedSeedTips=c.seedTips; loadedHeadOid=c.headOid; lastRefSig=c.refSig;
-  graphStreamComplete=true; lastLoadTruncated=false;
+  graphStreamComplete=true; lastLoadTruncated=false; graphIncomplete=c.incomplete;
   refRot.clear(); for(const [k,v] of c.refRot) refRot.set(k,v);
-  overflowHit.clear(); chipHit.clear(); bufferValid=false;
+  overflowHit.clear(); bufferValid=false;
   recomputeLayout();                                  // rebuild scroll bounds for this G.N
   state.scrollTop=state.scrollTarget=clampScroll(c.scrollTarget); // land back at the same place
   // Selection resets to none, exactly like a fresh load (loadGraph) would — the
@@ -2611,11 +2781,17 @@ async function startGraphStream(path){
   BACKEND = { n:0, oids:[], lane:[], color:[], merge:[], gapStart:[0], gapTop:[], gapBot:[], gapColor:[], rows:[], refs:[], allRefs:[], ncol:7, laneCount:0 };
   // A fresh graph (repo switch or refresh) invalidates any per-commit label
   // rotation the user had spun up — the ref set itself may have changed.
-  refRot.clear(); overflowHit.clear(); chipHit.clear();
+  refRot.clear(); overflowHit.clear();
   // A fresh stream: the incremental-refresh baseline is now stale until this
   // load finishes. loadedOids is rebuilt from scratch as batches arrive; the
   // fast path (see reloadGraph) is disabled until `done` sets graphStreamComplete.
   graphStreamComplete=false;
+  // The PREVIOUS repo's truncation/error says nothing about this one, and only
+  // this stream's own `done` can decide. Its one reader (jumpToRef) can't even
+  // reach it mid-stream — graphStreamComplete is false from here until `done`,
+  // and that check comes first — so this is purely about never leaving the two
+  // flags disagreeing.
+  graphIncomplete=false;
   loadedOids=new Set();
   setGraphLoadingPill(true,0);
   // Batches arrive via the global "graph-batch" event (listener registered just
@@ -2632,8 +2808,7 @@ async function startGraphStream(path){
 // openRepo below, so a new window (?repo=) whose first graph load fires during
 // boot can't miss early batches.
 if(IN_TAURI) window.__TAURI__.event.listen("graph-batch", (e)=>onGraphBatch(e.payload));
-// "graph-batch" event handler (registered once in src/main.ts, mirroring its
-// own "repo-changed" listener) — grows BACKEND/G with one incremental slice
+// "graph-batch" event handler — grows BACKEND/G with one incremental slice
 // at a time as the backend's revwalk+layout produces it, instead of the old
 // "wait for one giant response, then populate everything at once" shape.
 //
@@ -2741,6 +2916,9 @@ function onGraphBatch(payload){
     // "is this commit loaded?", so a truncated load forces full reloads).
     graphStreamComplete=true;
     lastLoadTruncated=!!payload.truncated;
+    // Assigned unconditionally (not just when one of the two is set), so a
+    // clean finish clears whatever the previous load left behind.
+    graphIncomplete=!!payload.truncated||!!payload.error;
     // The `ancestor`/dimming bit is no longer computed during the stream — that
     // needed an up-front full HEAD-ancestor revwalk that delayed the very first
     // frame (see commands.rs `stream_graph_core`). Now that the whole set is
@@ -2868,6 +3046,10 @@ async function openRepo(path){
       await startGraphStream(path);
     }
     CUR_REPO = path;
+    // #39: tell the backend this window now shows `path`, so a later
+    // `gitcat <same repo>` focuses this window instead of opening a duplicate.
+    // Fire-and-forget; re-keys on an in-place repo switch (see instance_focus.rs).
+    if(IN_TAURI) void commands.setOpenRepo(path);
     // Auto-prune old Safety-Manager snapshots per the user's retention policy,
     // once per repo-open. Fire-and-forget (never awaited — must not delay the
     // open); a no-op unless the policy is set to something other than "off".
@@ -2899,7 +3081,7 @@ async function openRepo(path){
     const bp=$(".branch-pill"); if(bp) bp.style.display="";
     // MISS only: BACKEND is empty at this point (startGraphStream() just reset
     // it) — this paints the canvas's OWN empty/reset state immediately;
-    // onGraphBatch() (registered in src/main.ts) takes over from here as
+    // onGraphBatch() (registered in legacy/main.ts) takes over from here as
     // "graph-batch" events stream in, growing BACKEND/G and eventually
     // showing the "Loaded N commits…" toast itself once the walk finishes. On a
     // cache HIT the restored graph is already on screen — nothing to reset.
@@ -3092,6 +3274,15 @@ async function tryFastRefresh(){
   // Guard 1: only a COMPLETE, non-truncated load has a trustworthy loadedOids
   // to answer "is this commit already loaded?" — mid-stream or memory-capped,
   // fall back to full reload.
+  //
+  // KNOWN GAP (deliberately NOT fixed here — widening this changes reload
+  // behaviour well beyond the sidebar-jump work that added graphIncomplete):
+  // a load whose revwalk ERRORED partway also has a knowingly-partial
+  // loadedOids, but it leaves lastLoadTruncated false (only payload.truncated
+  // sets that), so it slips through this guard and a refs-only fast refresh
+  // keeps serving the degraded graph instead of re-walking. graphIncomplete
+  // (declared beside graphStreamComplete above) is exactly that broader fact;
+  // testing it here instead would close this.
   if(!BACKEND || !graphStreamComplete || lastLoadTruncated){ dlog("reload", "FULL — buffer not ready", lastLoadTruncated?"(truncated)":"(streaming)"); return false; }
   let cur;
   try{
@@ -3287,6 +3478,9 @@ function bootEmpty(){
 // reset the submodule-nav strip that renders the breadcrumb).
 async function closeRepo(){
   if(!IN_TAURI||!CUR_REPO) return;
+  // #39: this window no longer shows a repo — drop its focus-registry entry so
+  // `gitcat <that repo>` opens fresh rather than focusing an empty window.
+  void commands.clearOpenRepo();
   await bisectCtrl.cancelIfRunning();
   bootEmpty();
   NAV_STACK.length=0;
@@ -3428,7 +3622,7 @@ i18nEvents.addEventListener("change",()=>{
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section

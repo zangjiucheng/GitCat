@@ -16,7 +16,7 @@ export default {
   loading: "loading…",
   show_less: "Show less",
   show_more: "Show more",
-  click_to_copy: "Click to copy",
+  click_to_copy: "Click to copy the full hash",
   copied: "copied ✓",
   row_of: "row {row} / {total}",
   cant_revert_merge: "Can't revert a merge commit",

@@ -239,17 +239,53 @@ fn revs_in(tail: &str) -> Vec<String> {
         .collect()
 }
 
-/// From the log's `# first bad commit: [<sha>] <subject>` line, extract the sha.
+/// From the log's `# first <term> commit: [<sha>] <subject>` line, extract the sha.
+///
+/// Matches AROUND the term rather than on any fixed spelling of it. The term is
+/// whatever `--term-bad`/`--term-new` is set to ("bad" by default), and git
+/// 2.55.0 started QUOTING it:
+///
+/// ```text
+/// git <= 2.54:  # first bad commit: [<sha>] <subject>
+/// git >= 2.55:  # first 'bad' commit: [<sha>] <subject>
+/// ```
+///
+/// Its release notes file that under "Fixes since v2.54" — `"git bisect" now
+/// uses the selected terms (e.g., old/new) more consistently in its output` —
+/// which is fair, since `bisect log` was never a stable API. But the old
+/// hardcoded `"# first bad commit:"` then matched nothing on 2.55, and this
+/// returning None forever is not a cosmetic failure:
+///
+///   - `run_bisect`'s loop only exits once `first_bad` is Some, so an automated
+///     run spun forever, forking a fresh `git` every pass.
+///   - `read_status` drives the whole feature, so a manual bisect never reported
+///     convergence either — the UI kept asking for good/bad after git was done.
+///
+/// Hence matching the shape, not the spelling: one brittle literal traded for
+/// another would just move the breakage to the next term change (or to anyone
+/// who runs `git bisect start --term-old=works --term-new=broken`).
 fn parse_first_bad(log: &[String]) -> Option<String> {
     for line in log {
         let l = line.trim_start();
-        if let Some(rest) = l.strip_prefix("# first bad commit:") {
-            let start = rest.find('[')?;
-            let end = rest[start..].find(']')? + start;
-            let sha = rest[start + 1..end].trim();
-            if !sha.is_empty() {
-                return Some(sha.to_string());
-            }
+        let Some(rest) = l.strip_prefix("# first ") else {
+            continue;
+        };
+        // A bisect term cannot contain whitespace, so the FIRST " commit:" is
+        // always the separator and never something inside the subject.
+        let Some((_term, rest)) = rest.split_once(" commit:") else {
+            continue;
+        };
+        // `continue`, not `?`: a malformed line must not abort the whole scan
+        // the way the previous version's `?` did.
+        let Some(start) = rest.find('[') else {
+            continue;
+        };
+        let Some(end) = rest[start..].find(']').map(|e| e + start) else {
+            continue;
+        };
+        let sha = rest[start + 1..end].trim();
+        if !sha.is_empty() {
+            return Some(sha.to_string());
         }
     }
     None
@@ -905,4 +941,96 @@ pub async fn bisect_run_start(app: AppHandle<Wry>, path: String, command: String
 pub fn bisect_run_cancel(state: State<BisectRunState>) -> Result<(), String> {
     state.request_cancel();
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests for the `bisect log` parsers.
+//
+// These exist because tests/bisect.rs drives a REAL `git`, so it only ever
+// exercises whatever version the machine happens to have — which is exactly how
+// the 2.55 term-quoting change reached users unnoticed: every CI runner had git
+// 2.54 until GitHub rolled the image, and then the integration tests did not
+// fail cleanly, they HUNG (run_bisect loops until first_bad is Some), burning
+// hours per run before anyone could read a diagnosis out of them.
+//
+// Pinning the literal output of both git generations here means the next
+// wording change fails in milliseconds with a readable assertion, on every
+// machine, regardless of the local git.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::parse_first_bad;
+
+    fn log(lines: &[&str]) -> Vec<String> {
+        lines.iter().map(|s| s.to_string()).collect()
+    }
+
+    const SHA: &str = "4d56b16affec63e7ff8ef7a2279814aff66453f4";
+
+    /// git <= 2.54 wrote the term bare.
+    #[test]
+    fn parses_the_unquoted_term_of_git_2_54_and_earlier() {
+        let l = log(&[
+            "git bisect start 'HEAD' 'root'",
+            &format!("# first bad commit: [{SHA}] c3"),
+        ]);
+        assert_eq!(parse_first_bad(&l).as_deref(), Some(SHA));
+    }
+
+    /// git >= 2.55 quotes it. This is the exact line that hung the app.
+    #[test]
+    fn parses_the_quoted_term_of_git_2_55_and_later() {
+        let l = log(&[
+            "git bisect start 'HEAD' 'root'",
+            &format!("# first 'bad' commit: [{SHA}] c3"),
+        ]);
+        assert_eq!(parse_first_bad(&l).as_deref(), Some(SHA));
+    }
+
+    /// `git bisect start --term-old=works --term-new=broken` — the reason git
+    /// quotes the term at all, so it has to work too.
+    #[test]
+    fn parses_a_custom_term() {
+        for line in [
+            format!("# first 'broken' commit: [{SHA}] c3"),
+            format!("# first 'new' commit: [{SHA}] c3"),
+            format!("# first broken commit: [{SHA}] c3"),
+        ] {
+            assert_eq!(parse_first_bad(&log(&[&line])).as_deref(), Some(SHA), "failed on: {line}");
+        }
+    }
+
+    #[test]
+    fn returns_none_while_the_bisect_is_still_running() {
+        let l = log(&[
+            "git bisect start 'HEAD' 'root'",
+            &format!("# bad: [{SHA}] c5"),
+            "# status: waiting for both 'good' and 'bad' commits",
+        ]);
+        assert_eq!(parse_first_bad(&l), None);
+    }
+
+    /// A subject containing " commit:" must not be mistaken for the separator.
+    #[test]
+    fn is_not_confused_by_a_subject_containing_the_separator() {
+        let l = log(&[&format!("# first 'bad' commit: [{SHA}] revert commit: oops")]);
+        assert_eq!(parse_first_bad(&l).as_deref(), Some(SHA));
+    }
+
+    /// The old implementation used `?` here, so ONE malformed line returned
+    /// None for the whole log instead of scanning on.
+    #[test]
+    fn a_malformed_line_does_not_abort_the_scan() {
+        let l = log(&[
+            "# first 'bad' commit: no brackets here",
+            &format!("# first 'bad' commit: [{SHA}] c3"),
+        ]);
+        assert_eq!(parse_first_bad(&l).as_deref(), Some(SHA));
+    }
+
+    #[test]
+    fn ignores_an_empty_sha() {
+        let l = log(&["# first 'bad' commit: [] c3"]);
+        assert_eq!(parse_first_bad(&l), None);
+    }
 }

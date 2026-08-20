@@ -63,6 +63,27 @@ export {
   // Hoisted `function`, so no TDZ risk (same reasoning as select/openRepo above).
   goToUncommitted,
   goToHead,
+  // Jump to a commit by full oid — the sidebar's click-to-jump (see
+  // sidebar.svelte.ts's jumpToRef). Returns false when no loaded row has that
+  // oid, leaving the "why not" message to the caller, which knows the ref name.
+  goToOid,
+  // Design-mode-only sibling of goToOid: jump by ref LABEL. Returns false
+  // outright whenever a real repo is loaded — see its own doc comment in
+  // legacy/main.ts for why that guard is load-bearing rather than an
+  // optimisation. jumpToRef calls it only after goToOid has already failed.
+  // Hoisted `function`, so no TDZ risk (same reasoning as select/openRepo above).
+  goToRefLabel,
+  // Whether the current graph load has finished streaming. Read by jumpToRef to
+  // tell "not loaded yet" from "not in the graph at all". A mid-file `export
+  // let` in legacy/main.ts, so this live re-export is TDZ-safe — same reasoning
+  // as CUR_REPO above.
+  graphStreamComplete,
+  // Whether the last finished load is KNOWN to be missing history (memory-capped
+  // or a revwalk that errored partway). jumpToRef reads it to say "the graph is
+  // only partly loaded" rather than accusing a branch that IS shown of being
+  // unreachable. A mid-file `export let` in legacy/main.ts — same live-re-export
+  // TDZ-safety as graphStreamComplete above.
+  graphIncomplete,
   openHelpPage,
   // Focus mode — collapse/restore both side panels (⌘\); a hoisted function too.
   toggleFocusMode,
@@ -129,7 +150,7 @@ export {
   // re-export TDZ-safety as setTamaEnabled/applyTamaSkin above.
   setTamaMotionPreset,
   setTamaPoseOverrides,
-  // "graph-batch" event handler — src/main.ts's own event listener forwards
+  // "graph-batch" event handler — legacy/main.ts's own event listener forwards
   // every batch here (mirrors "repo-changed"/refreshFromExternalChange's own
   // shape). Hoisted `function`, no TDZ risk (same reasoning as
   // openRepo/pickRepo above).
