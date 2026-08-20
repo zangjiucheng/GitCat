@@ -46,6 +46,7 @@ jobs:
   gate:
     name: Decide whether to build
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       should_build: ${{ steps.gate.outputs.should_build }}
       version: ${{ steps.gate.outputs.version }}
@@ -91,6 +92,7 @@ jobs:
     needs: gate
     if: needs.gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       release_id: ${{ steps.create.outputs.result }}
     steps:
@@ -131,6 +133,7 @@ jobs:
     needs: [gate, prepare]
     if: needs.gate.outputs.should_build == 'true'
     runs-on: macos-latest # Apple Silicon (arm64)
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -197,6 +200,7 @@ jobs:
     needs: [gate, prepare]
     if: needs.gate.outputs.should_build == 'true'
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -247,6 +251,7 @@ jobs:
     # draft before publish); its result is intentionally not required.
     if: always() && needs.gate.outputs.should_build == 'true' && needs.build.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Publish (undraft, keep prerelease)
         env:
