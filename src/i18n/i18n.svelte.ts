@@ -26,16 +26,13 @@ export const LOCALES: { id: Locale; label: string }[] = [
   { id: "ko", label: "한국어" },
 ];
 
-// ONE glob over every locale dir — `./locales/<loc>/<namespace>.ts` — so adding
-// a language is PURELY ADDITIVE: create `locales/<loc>/`, add the id to `Locale`
-// + `LOCALES` above, and it's picked up here with no edit. `import.meta.glob`
-// MUST be called DIRECTLY — Vite only static-replaces the literal
-// `import.meta.glob(...)` call form; aliasing it to a variable leaves it
-// undefined at runtime (throws on load / under vitest). `./locales/*/*.ts` is
-// still a literal pattern, so that requirement is met. Typed by vite/client
-// (src/vite-env.d.ts).
 type GlobMod = { default?: Record<string, string> };
-const allModules = import.meta.glob("./locales/*/*.ts", { eager: true }) as Record<string, GlobMod>;
+
+// Only English is loaded eagerly at startup (root fallback chain)
+const enModules = import.meta.glob("./locales/en/*.ts", { eager: true }) as Record<string, GlobMod>;
+
+// Other locales (zh, ko, etc.) are loaded dynamically on demand
+const lazyModules = import.meta.glob("./locales/*/*.ts") as Record<string, () => Promise<GlobMod>>;
 
 // path -> { "<loc>": { "<namespace>.<key>": value } }. The filename is the
 // namespace and the parent dir is the locale.
@@ -51,7 +48,28 @@ function buildDicts(mods: Record<string, GlobMod>): Record<string, Record<string
   return out;
 }
 
-const DICTS: Record<string, Record<string, string>> = buildDicts(allModules);
+const DICTS: Record<string, Record<string, string>> = buildDicts(enModules);
+
+/** Dynamically load non-English locale modules when requested. */
+export async function loadLocale(loc: Locale): Promise<void> {
+  if (loc === "en" || DICTS[loc]) return;
+
+  const prefix = `./locales/${loc}/`;
+  const targets = Object.entries(lazyModules).filter(([p]) => p.startsWith(prefix));
+
+  const loaded = await Promise.all(
+    targets.map(async ([path, importer]) => {
+      const mod = await importer();
+      return [path, mod] as [string, GlobMod];
+    })
+  );
+
+  const out: Record<string, GlobMod> = {};
+  for (const [path, mod] of loaded) out[path] = mod;
+
+  const newDict = buildDicts(out);
+  DICTS[loc] = newDict[loc] ?? {};
+}
 
 const STORAGE_KEY = "gitcat.locale";
 function readStored(): Locale {
@@ -64,9 +82,15 @@ function readStored(): Locale {
   return "en";
 }
 
+const initialLocale = readStored();
+// Load non-English locale if saved as initial preference
+if (initialLocale !== "en") {
+  void loadLocale(initialLocale);
+}
+
 // The reactive current locale. Module-level `$state` (Svelte 5) so a template
 // that reads it — via `t()` or `locale()` — re-renders when it changes.
-let current = $state<Locale>(readStored());
+let current = $state<Locale>(initialLocale);
 
 /** The active locale. Reactive: reading this in a template tracks it. */
 export function locale(): Locale {
@@ -80,13 +104,17 @@ export const i18nEvents = new EventTarget();
 /** Switch language: update the reactive locale, persist, and notify subscribers. */
 export function setLocale(loc: Locale): void {
   if (loc === current) return;
-  current = loc;
-  try {
-    localStorage.setItem(STORAGE_KEY, loc);
-  } catch {
-    // ignore — see readStored()
-  }
-  i18nEvents.dispatchEvent(new CustomEvent("change", { detail: loc }));
+  
+  // Lazy load target locale before updating state
+  void loadLocale(loc).then(() => {
+    current = loc;
+    try {
+      localStorage.setItem(STORAGE_KEY, loc);
+    } catch {
+      // ignore — see readStored()
+    }
+    i18nEvents.dispatchEvent(new CustomEvent("change", { detail: loc }));
+  });
 }
 
 /**
