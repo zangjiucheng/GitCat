@@ -45,13 +45,28 @@ impl TempRepo {
         std::fs::create_dir_all(&dir).expect("mkdir temp repo");
         let repo = TempRepo { dir };
         repo.must(&["init", "-q", "-b", "main"]);
+        repo.apply_test_config();
+        repo
+    }
+
+    /// The repo-LOCAL config every throwaway working-tree repo needs, in one
+    /// place because there is more than one way a test builds one: `init`
+    /// above, and `patch.rs`'s `clone_of`, which used to hand-copy a subset of
+    /// this list and drifted out of sync with it.
+    ///
+    /// Everything here is set LOCALLY on purpose. `git()` below neutralizes the
+    /// host's global/system config for its OWN invocations, but the code under
+    /// test shells out to `git` itself with no such environment — so anything
+    /// that must hold for the code under test has to live in the repo, where it
+    /// outranks the host's global config.
+    pub fn apply_test_config(&self) {
         // CRITICAL: without this, a commit hangs forever on a GPG passphrase prompt.
-        repo.must(&["config", "commit.gpgsign", "false"]);
+        self.must(&["config", "commit.gpgsign", "false"]);
         // Separate config key from commit.gpgsign — needed once a test creates
         // an annotated tag (`git tag -a`, e.g. tests/plumbing.rs); without this,
         // a host with tag signing defaulted on would hang the ENTIRE shared
         // test binary (this file is `mod common`'d by every tests/*.rs file).
-        repo.must(&["config", "tag.gpgsign", "false"]);
+        self.must(&["config", "tag.gpgsign", "false"]);
         // CRITICAL: repo-LOCAL identity, independent of any GIT_AUTHOR_*/GIT_COMMITTER_*
         // env vars (see `git()` below) or the machine's global/system git config. Code
         // under test (e.g. git_pick::cherry_pick_continue) shells out to git directly
@@ -63,16 +78,35 @@ impl TempRepo {
         // config sits above that fallback and below explicit env vars in git's identity
         // resolution, so this makes every throwaway repo self-sufficient regardless of
         // the host's global config or GECOS data.
-        repo.must(&["config", "user.name", "GitCat Test"]);
-        repo.must(&["config", "user.email", "test@gitcat.example"]);
+        self.must(&["config", "user.name", "GitCat Test"]);
+        self.must(&["config", "user.email", "test@gitcat.example"]);
+        // Line endings, for the same reason as the identity above: Git for
+        // Windows installs `core.autocrlf=true` by default, which rewrites LF to
+        // CRLF on every checkout. A test writes "base\nline2\n", the code under
+        // test performs an operation that re-checkouts the file, and the
+        // assertion then compares against "base\r\nline2\r\n" — 58 failures on a
+        // Windows host, all of them the test being platform-naive rather than
+        // anything being wrong. Twelve more showed up as `is_clean()` returning
+        // false, the same cause wearing a different hat: git reports a file as
+        // modified when its line endings no longer match what the index expects.
+        //
+        // `core.eol` as well as autocrlf: autocrlf alone still leaves `eol` to
+        // decide the checkout form for paths marked `text` by a .gitattributes
+        // file, and some tests write one.
+        //
+        // This does NOT mean the app is untested against CRLF working trees —
+        // it means these assertions are about git plumbing, not about line
+        // endings, and a real user's autocrlf setting has no business deciding
+        // whether they pass.
+        self.must(&["config", "core.autocrlf", "false"]);
+        self.must(&["config", "core.eol", "lf"]);
         // Disable background auto-gc/maintenance: a test that creates MANY commits
         // rapidly (dashboard's `stays_cheap_…` runs a 300-commit loop) otherwise
         // intermittently trips `git gc --auto` repacking behind the next commit —
         // observed as a flaky CI failure "error: bad tree object HEAD" mid-loop.
         // No test needs gc, so turn it off outright for every throwaway repo.
-        repo.must(&["config", "gc.auto", "0"]);
-        repo.must(&["config", "maintenance.auto", "false"]);
-        repo
+        self.must(&["config", "gc.auto", "0"]);
+        self.must(&["config", "maintenance.auto", "false"]);
     }
 
     /// A bare repo (no working tree) — stands in for a real remote in
