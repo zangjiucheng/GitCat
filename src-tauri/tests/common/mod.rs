@@ -20,6 +20,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Process-wide monotonic tie-breaker: several tests (or several #[test] fns
@@ -27,6 +28,57 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// `SystemTime::now()` within the same clock tick, so pid+nanos alone is not
 /// always unique — this closes that race deterministically.
 static SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// A git config file this test binary owns, pointed at by `GIT_CONFIG_GLOBAL`
+/// for the WHOLE PROCESS — so that every `git` run during the test run reads
+/// it, including the ones the code under test spawns for itself.
+///
+/// Repo-local config cannot cover those. `git submodule add` clones the child
+/// into an independent repository, and it does so *inside* the call under
+/// test, so there is no moment for a test to configure that repo before its
+/// working tree is written. On a host with Git for Windows' default
+/// `core.autocrlf=true`, nine `tests/submodule.rs` assertions then compared
+/// `"hello\n"` against the `"hello\r\n"` git had just legitimately written.
+///
+/// This also subsumes the `/dev/null` the `git()` helper used to point at: an
+/// empty-but-for-our-own-keys file blocks the host's `rerere.autoupdate` and
+/// friends exactly as well, and now there is one answer to "which global
+/// config does a test see" rather than two.
+///
+/// Named per-pid rather than uniquely: it is a ~40-byte file, one per test
+/// binary, overwritten on pid reuse. Nothing owns it to clean it up, which is
+/// a deliberate trade for a fixed-size file — unlike a leaked repo tree, it
+/// cannot poison a later run.
+fn global_git_config() -> &'static PathBuf {
+    static PATH: OnceLock<PathBuf> = OnceLock::new();
+    PATH.get_or_init(|| {
+        let path = std::env::temp_dir().join(format!("gitcat-test-gitconfig-{}", std::process::id()));
+        std::fs::write(
+            &path,
+            // autocrlf off so nothing is rewritten on checkout; eol=lf because
+            // autocrlf alone leaves `eol` (default: native) to decide the
+            // checkout form for paths a .gitattributes marks as `text`.
+            "[core]\n\tautocrlf = false\n\teol = lf\n",
+        )
+        .expect("write the test-run git config");
+        // Set for the process, not per-command: the whole point is to reach
+        // git invocations this fixture never makes, so there is no command
+        // line to put it on.
+        //
+        // `set_var` in a multi-threaded process is the known-sharp part. It is
+        // mitigated rather than eliminated: OnceLock makes it happen exactly
+        // once, and every test's first act is building a TempRepo, so the
+        // write lands before that thread spawns any git. A thread already
+        // mid-spawn when the very first test initializes could in principle
+        // miss it — in practice the first TempRepo is constructed before any
+        // test has reached the code under test. If this ever does flake, the
+        // fix is to hoist it into a `#[ctor]`-style pre-main rather than to
+        // paper over it here.
+        std::env::set_var("GIT_CONFIG_GLOBAL", &path);
+        std::env::set_var("GIT_CONFIG_SYSTEM", &path);
+        path
+    })
+}
 
 /// A disposable git repository under the OS temp dir. Auto-removed on `Drop`.
 pub struct TempRepo {
@@ -43,6 +95,7 @@ impl TempRepo {
         let dir = std::env::temp_dir()
             .join(format!("gitcat-test-{tag}-{}-{}-{}", std::process::id(), nanos, seq));
         std::fs::create_dir_all(&dir).expect("mkdir temp repo");
+        global_git_config(); // before the first git of the run — see its doc
         let repo = TempRepo { dir };
         repo.must(&["init", "-q", "-b", "main"]);
         repo.apply_test_config();
@@ -54,11 +107,12 @@ impl TempRepo {
     /// above, and `patch.rs`'s `clone_of`, which used to hand-copy a subset of
     /// this list and drifted out of sync with it.
     ///
-    /// Everything here is set LOCALLY on purpose. `git()` below neutralizes the
-    /// host's global/system config for its OWN invocations, but the code under
-    /// test shells out to `git` itself with no such environment — so anything
-    /// that must hold for the code under test has to live in the repo, where it
-    /// outranks the host's global config.
+    /// Everything here is set LOCALLY on purpose: these are per-repo facts
+    /// (this repo's identity, this repo's gc policy), not properties of the
+    /// test run. Settings that must hold for EVERY git in the run — including
+    /// the ones the code under test spawns, and the ones inside submodule
+    /// clones no test ever gets to configure — belong in the run's own global
+    /// config instead; see `global_git_config`.
     pub fn apply_test_config(&self) {
         // CRITICAL: without this, a commit hangs forever on a GPG passphrase prompt.
         self.must(&["config", "commit.gpgsign", "false"]);
@@ -80,26 +134,6 @@ impl TempRepo {
         // the host's global config or GECOS data.
         self.must(&["config", "user.name", "GitCat Test"]);
         self.must(&["config", "user.email", "test@gitcat.example"]);
-        // Line endings, for the same reason as the identity above: Git for
-        // Windows installs `core.autocrlf=true` by default, which rewrites LF to
-        // CRLF on every checkout. A test writes "base\nline2\n", the code under
-        // test performs an operation that re-checkouts the file, and the
-        // assertion then compares against "base\r\nline2\r\n" — 58 failures on a
-        // Windows host, all of them the test being platform-naive rather than
-        // anything being wrong. Twelve more showed up as `is_clean()` returning
-        // false, the same cause wearing a different hat: git reports a file as
-        // modified when its line endings no longer match what the index expects.
-        //
-        // `core.eol` as well as autocrlf: autocrlf alone still leaves `eol` to
-        // decide the checkout form for paths marked `text` by a .gitattributes
-        // file, and some tests write one.
-        //
-        // This does NOT mean the app is untested against CRLF working trees —
-        // it means these assertions are about git plumbing, not about line
-        // endings, and a real user's autocrlf setting has no business deciding
-        // whether they pass.
-        self.must(&["config", "core.autocrlf", "false"]);
-        self.must(&["config", "core.eol", "lf"]);
         // Disable background auto-gc/maintenance: a test that creates MANY commits
         // rapidly (dashboard's `stays_cheap_…` runs a 300-commit loop) otherwise
         // intermittently trips `git gc --auto` repacking behind the next commit —
@@ -120,6 +154,7 @@ impl TempRepo {
         let dir = std::env::temp_dir()
             .join(format!("gitcat-test-{tag}-{}-{}-{}", std::process::id(), nanos, seq));
         std::fs::create_dir_all(&dir).expect("mkdir temp bare repo");
+        global_git_config();
         let repo = TempRepo { dir };
         repo.must(&["init", "-q", "--bare", "-b", "main"]);
         repo
@@ -133,23 +168,32 @@ impl TempRepo {
     /// Run `git -C <dir> <args…>` with reproducible author/committer identity
     /// and dates, capturing (exit-ok, trimmed stdout, trimmed stderr).
     /// Isolates every invocation from the HOST's own global/system git config
-    /// (`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` point at `/dev/null`, git
-    /// >=2.32) — fixes a real blocking bug: `rerere.autoupdate`,
-    /// `rerere.enabled`, or any other setting a developer's or CI runner's own
-    /// dotfiles happen to set would otherwise silently leak into every test
-    /// repo and make assertions machine-dependent (verified: a personal
-    /// `~/.config/git/config` with `rerere.autoupdate=true` made an M5a rerere
-    /// replay assertion pass locally while it would fail on a clean runner
-    /// with no such config). Local (repo) config, set explicitly via `must`
-    /// calls below, is completely unaffected — only the global/system
-    /// fallback layers are neutralized.
+    /// (`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM`, git >=2.32) — fixes a real
+    /// blocking bug: `rerere.autoupdate`, `rerere.enabled`, or any other
+    /// setting a developer's or CI runner's own dotfiles happen to set would
+    /// otherwise silently leak into every test repo and make assertions
+    /// machine-dependent (verified: a personal `~/.config/git/config` with
+    /// `rerere.autoupdate=true` made an M5a rerere replay assertion pass
+    /// locally while it would fail on a clean runner with no such config).
+    /// Local (repo) config, set explicitly via `must` calls below, is
+    /// completely unaffected — only the global/system fallback layers are
+    /// replaced.
+    ///
+    /// These used to point at `/dev/null`. They now point at the run's own
+    /// config file (see `global_git_config`), which blocks the host's settings
+    /// just as well and additionally carries the line-ending keys — so a git
+    /// the fixture runs and a git the code under test runs see the SAME global
+    /// config, rather than one seeing none and the other seeing the host's.
+    /// Setting them here as well as process-wide is redundant by design: it
+    /// keeps the guarantee visible at the call site, where the comment above
+    /// explains why it matters.
     pub fn git(&self, args: &[&str]) -> (bool, String, String) {
         let out = Command::new("git")
             .arg("-C")
             .arg(&self.dir)
             .args(args)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_CONFIG_GLOBAL", global_git_config())
+            .env("GIT_CONFIG_SYSTEM", global_git_config())
             .env("GIT_AUTHOR_NAME", "GitCat Test")
             .env("GIT_AUTHOR_EMAIL", "test@gitcat.example")
             .env("GIT_COMMITTER_NAME", "GitCat Test")
