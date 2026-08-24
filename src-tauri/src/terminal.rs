@@ -243,7 +243,28 @@ mod tests {
         let repo = TempGitDir::init();
         let mut session = open_pty_shell(&repo.path()).expect("should spawn a real shell");
         let mut reader = session.master.try_clone_reader().expect("should clone a reader");
-        session.writer.write_all(b"echo hello_gitcat_terminal\n").expect("should write to the shell");
+
+        // Play enough of a terminal for the shell to start talking.
+        //
+        // ConPTY opens by asking the terminal where its cursor is — a Device
+        // Status Report, `ESC[6n` — and BLOCKS until something answers. In the
+        // app xterm.js answers automatically, which is why the drawer works;
+        // this test IS the terminal, and answering is not optional. Measured:
+        // without the reply the master side yields exactly those four bytes
+        // and nothing else — not even cmd.exe's banner — however long you
+        // wait. With it, ~290 bytes arrive at once: banner, prompt, echo, all.
+        //
+        // Windows-only on purpose. No unix pty asks this, and there the escape
+        // would not be consumed by anything — it would land in the line buffer
+        // and end up prefixed to the command, which happens to still satisfy
+        // the assertion below (via the shell's "not found" message quoting it)
+        // while testing nothing at all.
+        #[cfg(windows)]
+        session.writer.write_all(b"\x1b[1;1R").expect("should answer the cursor-position query");
+        // CRLF, not LF: cmd.exe submits a line on CR. A unix pty translates CR
+        // to NL on input (ICRNL), so this reads the same on both.
+        session.writer.write_all(b"echo hello_gitcat_terminal\r\n").expect("should write to the shell");
+        session.writer.flush().expect("should flush");
 
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         std::thread::spawn(move || {
