@@ -6,7 +6,9 @@ description: How to stage and commit in GitCat — the working-directory view, h
 
 Committing in GitCat happens in the **working-directory view**. Open it by selecting the **Uncommitted changes** row pinned at the top of the graph (or **Tools ▸ Uncommitted Changes**, which jumps straight to it).
 
-This is a real staging view — not a flat list of file paths — split into **Staged** and **Unstaged** changes, with a diff for whatever file you select.
+Like the commit detail panel, it's split into tabs: **Commit** (write your message and commit), **Changes** (stage and review), and **Stash**.
+
+The **Changes** tab is a real staging view — not a flat list of file paths — split into **Staged** and **Unstaged** trees beside a diff for whatever file you select. Whether the file trees sit above or beside the diff follows the detail panel's placement setting — see [Settings](/guide/settings).
 
 ## Staging whole files
 
@@ -27,20 +29,20 @@ This lets you split one messy working file into several clean, focused commits w
 
 ## Writing the commit
 
-With the changes you want staged, write your message and commit. A few things worth knowing:
+With the changes you want staged, switch to the **Commit** tab to write your message and commit. A few things worth knowing:
 
 - Your commit is authored with the **git identity** for this repo (see [Opening a repository](/guide/opening-a-repository) to check or change it).
 - The commit is a normal, snapshotted operation — it appears immediately on the graph, and it's covered by [Undo](/guide/undo-safety) like everything else.
 
 ## Stashing
 
-When you need to set changes aside without committing them, use **stash**. GitCat supports the operations you actually reach for day to day:
+When you need to set changes aside without committing them, use the **Stash** tab. GitCat supports the operations you actually reach for day to day:
 
 - **Save** the current working changes to a stash,
 - **Apply** a stash (keep it in the list) or **Pop** it (apply and remove),
 - **Drop** a stash you no longer need.
 
-Stashes are listed in the sidebar and stay recoverable, so a "stash → switch branch → come back" flow is safe and visible.
+Stashes stay recoverable there, so a "stash → switch branch → come back" flow is safe and visible.
 
 ## Reading a file's past while you work
 

@@ -51,7 +51,7 @@ GitCat is built around one idea: every operation that touches your history shoul
 - Every mutation snapshots first. Global Undo (⌘Z) is always one keystroke away — and Undo is itself undoable, so there's no "point of no return" hiding behind a single click.
 - **Reflog rescue** — browse every historical HEAD position this repo remembers and restore to any of them; the restore itself is just another snapshot-first, undoable mutation.
 - **rerere status/toggle panel** — see what git has already recorded a resolution for, and flip `rerere.enabled` without touching a terminal.
-- **Checkout dirty-tree resolution** — when switching branches would overwrite local changes, a chooser offers three explicit paths in increasing order of risk: stash → switch → reapply; stash → switch → leave stashed (recoverable later via Manage Stash); or force-switch and discard, genuinely irreversible and gated behind a typed danger-confirm.
+- **Checkout dirty-tree resolution** — when switching branches would overwrite local changes, a chooser offers three explicit paths in increasing order of risk: stash → switch → reapply; stash → switch → leave stashed (recoverable later from the working directory's own Stash tab); or force-switch and discard, genuinely irreversible and gated behind a typed danger-confirm.
 - **Force push**, with a real choice between force-with-lease (refuses if the remote moved since your last fetch) and a raw override — both gated behind the same typed danger-confirm flow as every other irreversible action.
 - **Dangling-object recovery** — runs `git fsck` to find a commit no branch, tag, or (often) reflog points to anymore, and recovers it as a new branch without ever touching your current branch or HEAD.
 
