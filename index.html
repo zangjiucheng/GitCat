@@ -24,7 +24,7 @@
   --mono:ui-monospace,"SF Mono","Menlo","Cascadia Code","Consolas",monospace;
   --display:"SF Pro Rounded",ui-rounded,"Nunito","Segoe UI Variable",system-ui,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
   --r-card:12px; --r-panel:10px; --r-control:8px; --r-pill:999px; --r-chip:4px;
-  --topbar-h:46px; --sidebar-w:264px; --detail-w:344px; --ribbon-w:46px; --nook-h:132px; --row-h:26px; --term-h:280px;
+  --topbar-h:46px; --sidebar-w:264px; --detail-w:344px; --detail-h:320px; --ribbon-w:46px; --nook-h:132px; --row-h:26px; --term-h:280px;
   --shadow:0 6px 20px rgba(16,18,27,.10), 0 1px 3px rgba(16,18,27,.08);
   color-scheme:light;
 }
@@ -76,6 +76,26 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 /* graceful degradation for narrower windows so the graph keeps room */
 @media (max-width:1180px){:root{--sidebar-w:224px;--detail-w:300px}}
 @media (max-width:980px){:root{--sidebar-w:200px;--detail-w:264px}}
+
+/* Bottom placement (settings: detailPanelPlacement). The panel leaves the
+   third COLUMN and takes a fourth ROW spanning the full width, so a commit
+   message and a diff each get the window's width instead of a 344px column.
+   The graph gives up height rather than width; its canvas needs no changes,
+   because main.ts's ResizeObserver on the graph wrapper already reads both
+   axes from getBoundingClientRect. Width and height are separate properties
+   on purpose: the ranges differ, and each placement keeps its own size
+   across a switch. */
+[data-detail-placement="bottom"] .app{
+  grid-template-columns:var(--sidebar-w) minmax(0,1fr);
+  grid-template-rows:var(--topbar-h) auto minmax(0,1fr) var(--detail-h);
+  grid-template-areas:"topbar topbar" "subnav subnav" "sidebar graph" "detail detail"}
+[data-detail-placement="bottom"] .detail{border-left:none;border-top:1px solid var(--border)}
+
+/* A bottom panel's competitor for space is the graph's height, so this keys
+   off viewport HEIGHT — unlike the width queries above, which are about a
+   narrow window. */
+@media (max-height:900px){:root{--detail-h:280px}}
+@media (max-height:720px){:root{--detail-h:220px}}
 
 /* ============================== TOP BAR ==============================
    Three zones, left to right: [brand + repo IDENTITY: repo-pick, branch
