@@ -268,10 +268,14 @@ The command's output is everything `print`ed, plus any `tama.react` lines, plus
 Handlers run in a fresh, isolated Luau VM built for **untrusted code**:
 
 - **Only safe libraries** are loaded — `string`, `math`, `table`, and Luau's
-  base library (`print`, `pairs`, `pcall`, `tostring`, …). There is **no `os`,
+  base library (`print`, `pairs`, `ipairs`, `tostring`, …). There is **no `os`,
   no `io`, no network**, and **no `require` / `load` / `loadstring` / `dofile`**
   — a script cannot touch the filesystem, spawn processes (except through
-  `git()`), open sockets, or load more code.
+  `git()`), open sockets, or load more code. Luau's base library also has a few
+  globals removed for safety: `pcall` and `xpcall` (so a handler cannot catch
+  and swallow the memory or time limit), plus `getfenv`, `setfenv`, and
+  `newproxy`. The `STRIPPED_GLOBALS` list in `plugin_lua.rs` is the source of
+  truth for what the sandbox deletes.
 - **Hard limits**: a ~64 MB memory ceiling (an allocation past it aborts the
   script) and a wall-clock time budget of a few seconds (a runaway loop is
   killed). Either limit, any Lua compile/runtime error, or a missing/ill-typed
