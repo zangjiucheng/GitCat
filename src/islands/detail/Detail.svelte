@@ -56,9 +56,11 @@
     }
   });
 
-  function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape" && detailCtrl.diffExpanded) detailCtrl.collapseDiff();
-  }
+  // Escape-closes-the-expanded-diff-modal handling moved to DetailPanel.svelte
+  // (the #detail slot's permanently-mounted owner) — this component can now
+  // be unmounted (working tree selected) while `detailCtrl.diffExpanded`
+  // stays true, so the listener needs a lifetime that outlives this
+  // component's own, not this component's own <svelte:window>.
 
   // Resizable file-tree panel in the expanded-diff modal. The diff pane is
   // white-space:pre (horizontal scroll, no wrap — see .diff-line), so resizing
@@ -67,8 +69,6 @@
   // persistence now live in Splitter.svelte; this is just the bound value.
   let diffxTreeW = $state(280);
 </script>
-
-<svelte:window on:keydown={onKeydown} />
 
 {#if detailCtrl.hero}
   <div class="tama-hero">
