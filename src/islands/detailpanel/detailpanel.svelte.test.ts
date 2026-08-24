@@ -22,6 +22,7 @@ vi.mock("../../legacy/bridge", () => ({
 }));
 
 import { COMMIT_VIEW_TABS, WORKTREE_VIEW_TABS, detailPanelCtrl } from "./detailpanel.svelte.ts";
+import { settingsCtrl } from "../settings/settings.svelte.ts";
 
 describe("the tab registries", () => {
   // Tabs are data, not markup branches, so adding one later is an array
@@ -74,5 +75,39 @@ describe("detailPanelCtrl", () => {
   it("hands back the right registry per view", () => {
     expect(detailPanelCtrl.tabsFor("commit")).toBe(COMMIT_VIEW_TABS);
     expect(detailPanelCtrl.tabsFor("worktree")).toBe(WORKTREE_VIEW_TABS);
+  });
+});
+
+// Corrections 2 and 3: `changesSplitAxis` must be a live reactive derivation
+// of settingsCtrl's own $state field, NOT a one-time read of the
+// data-detail-placement DOM attribute (which Svelte cannot track — that was
+// the actual bug an earlier draft had). A test that only checked the mapping
+// for a hardcoded starting value would still pass under that bug, since the
+// attribute-reading version would also get the mapping right on first read.
+// So this drives the change through settingsCtrl.setDetailPanelPlacement (the
+// real setter, same as the Settings UI calls) and asserts the derived field
+// follows — proving the *link* stays live, not just that the ternary is
+// correct in isolation.
+describe("changesSplitAxis", () => {
+  it("is \"x\" (panes side by side) when placement is bottom", () => {
+    settingsCtrl.setDetailPanelPlacement("bottom");
+    expect(detailPanelCtrl.changesSplitAxis).toBe("x");
+  });
+
+  it("is \"y\" (panes stacked) when placement is right", () => {
+    settingsCtrl.setDetailPanelPlacement("right");
+    expect(detailPanelCtrl.changesSplitAxis).toBe("y");
+  });
+
+  // The regression Correction 3 exists to prevent: flip the setting back and
+  // forth on the SAME running instance and confirm the derived value tracks
+  // each change, rather than latching onto whichever value was read first.
+  it("follows the setting when it changes again on a live instance", () => {
+    settingsCtrl.setDetailPanelPlacement("bottom");
+    expect(detailPanelCtrl.changesSplitAxis).toBe("x");
+    settingsCtrl.setDetailPanelPlacement("right");
+    expect(detailPanelCtrl.changesSplitAxis).toBe("y");
+    settingsCtrl.setDetailPanelPlacement("bottom");
+    expect(detailPanelCtrl.changesSplitAxis).toBe("x");
   });
 });
