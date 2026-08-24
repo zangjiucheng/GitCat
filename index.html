@@ -840,6 +840,15 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    expands upward, so its chevron is the same glyph rotated 90°. */
 .detail.collapsed .detail-handle-bottom{top:0;bottom:0;height:auto}
 .detail.collapsed .detail-handle-bottom::after{content:'\2039';transform:rotate(90deg)}
+/* The detail panel's tab strip (src/islands/detailpanel/TabStrip.svelte).
+   Sticks to the top of the panel so it stays reachable while a long tab
+   scrolls under it. */
+.d-tabs{display:flex;gap:2px;flex:none;position:sticky;top:0;z-index:4;
+  background:var(--panel);border-bottom:1px solid var(--border);padding:0 6px}
+.d-tab{background:none;border:none;border-bottom:2px solid transparent;
+  color:var(--muted);font-size:12px;padding:7px 10px;cursor:pointer}
+.d-tab:hover{color:var(--text)}
+.d-tab.on{color:var(--text);border-bottom-color:var(--accent)}
 .detail section{padding:12px 14px;border-bottom:1px solid var(--border)}
 .detail .empty{color:var(--muted);text-align:center;padding:48px 20px;font-size:12.5px;line-height:1.7}
 .d-subject{font-size:17px;font-weight:700;font-family:var(--display);line-height:1.35;color:var(--text);letter-spacing:.1px}

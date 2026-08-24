@@ -21,6 +21,9 @@ export default {
   row_of: "第 {row} / {total} 行",
   cant_revert_merge: "无法回退一个合并 commit",
   revert_commit: "回退此 commit",
+  // 标签名称。指的是你当前**查看**的这个 commit —— 与 workdir.commit(你正在
+  // 编写的那个)故意分开的独立键。
+  tab_commit: "提交",
   // 作者 / 提交者。
   author: "作者",
   committer: "提交者",

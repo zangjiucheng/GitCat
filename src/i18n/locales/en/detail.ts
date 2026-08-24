@@ -21,6 +21,9 @@ export default {
   row_of: "row {row} / {total}",
   cant_revert_merge: "Can't revert a merge commit",
   revert_commit: "Revert commit",
+  // Tab label. Names the commit you are LOOKING at — deliberately a separate
+  // key from workdir.commit, which names the one you are writing.
+  tab_commit: "Commit",
   // Author / committer.
   author: "Author",
   committer: "Committer",
