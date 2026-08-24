@@ -19,7 +19,7 @@
     TAMA_MOMENT_FIELDS,
     tamaPoseLabel,
   } from "./settings.svelte.ts";
-  import type { ThemeMode, SnapshotRetentionMode, GraphLabelPriority, GraphLabelLayout, TamaMotionPreset } from "./settings.svelte.ts";
+  import type { ThemeMode, SnapshotRetentionMode, GraphLabelPriority, GraphLabelLayout, DetailPanelPlacement, TamaMotionPreset } from "./settings.svelte.ts";
   import type { ConfigScope } from "../../ipc/bindings";
   import { playTamaSound } from "../../legacy/sound.ts";
   import { updaterCtrl } from "../updater/updater.svelte.ts";
@@ -141,6 +141,19 @@
         >
           <option value="inline">{t("settings.label_layout_inline")}</option>
           <option value="column">{t("settings.label_layout_column")}</option>
+        </select>
+      </div>
+
+      <p class="mut" style="font-size:11.5px;margin:0 0 8px">
+        {t("settings.detail_placement_desc")}
+      </p>
+      <div class="rm-form" style="margin-bottom:14px;max-width:220px">
+        <select
+          value={settingsCtrl.detailPanelPlacement}
+          onchange={(e) => settingsCtrl.setDetailPanelPlacement((e.target as HTMLSelectElement).value as DetailPanelPlacement)}
+        >
+          <option value="right">{t("settings.detail_placement_right")}</option>
+          <option value="bottom">{t("settings.detail_placement_bottom")}</option>
         </select>
       </div>
 

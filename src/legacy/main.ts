@@ -2141,6 +2141,14 @@ function applyThemeMode(mode){
   if(mode==="system"){ document.documentElement.removeAttribute("data-theme"); readTheme(); saveSettings({themeMode:"system"}); }
   else applyTheme(mode);
 }
+// The detail panel's edge, as one attribute on the document root — the same
+// route applyTheme uses, so the shell's layout stays entirely in CSS (see
+// index.html's two .app grid definitions) rather than being computed here.
+// Called live by settings.svelte.ts's setDetailPanelPlacement, and once at
+// boot from the persisted value.
+function applyDetailPlacement(v){
+  document.documentElement.setAttribute("data-detail-placement", v==="bottom"?"bottom":"right");
+}
 // Whether the canvas draws EVERY ref chip on a commit row (multiple tags
 // included) or just the first one (this app's original, still-default
 // behavior) — read once per draw() call (a cached flag, not loadSettings()
@@ -3502,6 +3510,7 @@ applyThemeMode(loadSettings().themeMode);
 setGraphShowAllTags(loadSettings().showAllCommitTags);
 setGraphLabelPriority(loadSettings().graphLabelPriority);
 setGraphLabelLayout(loadSettings().graphLabelLayout);
+applyDetailPlacement(loadSettings().detailPanelPlacement);
 setTamaEnabled(loadSettings().tamaEnabled);
 // PER-47: re-apply a persisted Tama skin at boot. Fire-and-forget + self-gates
 // on IN_TAURI internally; if the skin's plugin was removed/disabled or its load
@@ -3624,7 +3633,7 @@ function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
-  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, setTamaEnabled, onGraphBatch,
+  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, applyDetailPlacement, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
   // above for the full design) — enterSubmodule/navigateToRepo are hoisted
   // `function` declarations, so no TDZ risk (same reasoning as

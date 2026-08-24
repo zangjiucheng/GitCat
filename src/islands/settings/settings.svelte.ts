@@ -114,6 +114,11 @@ export type GraphLabelPriority = "tag" | "branch";
 // keeps this app's original resizable left column. See legacy/main.ts's
 // graphLabelInline for what actually changes at draw time.
 export type GraphLabelLayout = "inline" | "column";
+// Which edge of the window the detail panel occupies. A layout preference,
+// so it lives here rather than in the Rust config: nothing on the backend
+// reads it. "right" is the original and stays the default — see
+// docs/superpowers/specs/2026-08-24-detail-panel-placement-design.md.
+export type DetailPanelPlacement = "right" | "bottom";
 
 // ── Tama customization (PER-54) ────────────────────────────────────────────
 // PER-54: how lively Tama's idle animation + state-change timing feel.
@@ -214,6 +219,7 @@ export interface PersistedSettings {
   // with one Settings select. A deliberate, user-confirmed spec decision —
   // not an unexamined leftover default.
   graphLabelLayout: GraphLabelLayout;
+  detailPanelPlacement: DetailPanelPlacement;
   // Periodically `git fetch --all --prune` while a repo is open, so
   // ahead/behind counts and incoming remote changes stay current without a
   // manual Pull. Off by default — unlike autoCheckUpdates (checking GitHub
@@ -301,7 +307,7 @@ export const AUTO_FETCH_INTERVAL_OPTIONS = [5, 10, 15, 30, 60] as const;
 // sound.ts had no master-gain multiplier at all before this setting
 // existed, so anything below 1 here would quietly make every sound quieter
 // than it used to be for users who never touch this slider.
-const DEFAULTS: PersistedSettings = {
+export const DEFAULTS: PersistedSettings = {
   themeMode: "dark",
   cherryPickRecordOriginDefault: false,
   autoCheckUpdates: true,
@@ -311,6 +317,7 @@ const DEFAULTS: PersistedSettings = {
   showAllCommitTags: false,
   graphLabelPriority: "tag",
   graphLabelLayout: "inline",
+  detailPanelPlacement: "right",
   autoFetchEnabled: false,
   autoFetchIntervalMinutes: 15,
   autoMaintenanceEnabled: false,
@@ -512,6 +519,7 @@ class SettingsState {
   showAllCommitTags = $state(DEFAULTS.showAllCommitTags);
   graphLabelPriority = $state<GraphLabelPriority>(DEFAULTS.graphLabelPriority);
   graphLabelLayout = $state<GraphLabelLayout>(DEFAULTS.graphLabelLayout);
+  detailPanelPlacement = $state<DetailPanelPlacement>(DEFAULTS.detailPanelPlacement);
   autoFetchEnabled = $state(DEFAULTS.autoFetchEnabled);
   autoFetchIntervalMinutes = $state(DEFAULTS.autoFetchIntervalMinutes);
   autoMaintenanceEnabled = $state(DEFAULTS.autoMaintenanceEnabled);
@@ -821,6 +829,7 @@ class SettingsState {
     this.showAllCommitTags = s.showAllCommitTags;
     this.graphLabelPriority = s.graphLabelPriority;
     this.graphLabelLayout = s.graphLabelLayout;
+    this.detailPanelPlacement = s.detailPanelPlacement;
     this.autoFetchEnabled = s.autoFetchEnabled;
     this.autoFetchIntervalMinutes = s.autoFetchIntervalMinutes;
     this.autoMaintenanceEnabled = s.autoMaintenanceEnabled;
@@ -905,6 +914,12 @@ class SettingsState {
     this.graphLabelLayout = v;
     saveSettings({ graphLabelLayout: v });
     bridge.setGraphLabelLayout(v); // flips the canvas layout live — see legacy/main.ts
+  }
+
+  setDetailPanelPlacement(v: DetailPanelPlacement): void {
+    this.detailPanelPlacement = v;
+    saveSettings({ detailPanelPlacement: v });
+    bridge.setDetailPanelPlacement(v); // moves the panel live — see legacy/main.ts
   }
 
   // The background timer itself lives in main.ts (mirrors the existing

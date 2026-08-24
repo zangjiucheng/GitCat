@@ -35,6 +35,10 @@ export default {
     "「行内」把 commit 的引用标记画在其标题文字前面;「左侧列」把它们放在一个独立、可调整宽度的列里。",
   label_layout_inline: "行内(标题前)",
   label_layout_column: "左侧列",
+  detail_placement: "详情面板",
+  detail_placement_desc: "显示所选提交的面板所在位置。",
+  detail_placement_right: "右侧",
+  detail_placement_bottom: "底部",
 
   // Cherry-pick
   cherrypick: "Cherry-pick",
