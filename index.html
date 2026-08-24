@@ -752,6 +752,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   opacity:0;transition:opacity .1s ease;background:var(--accent);box-shadow:0 0 8px color-mix(in srgb,var(--accent) 55%,transparent)}
 .resize-guide.on{opacity:.9}
 .resize-guide.will-collapse{background:var(--warning);box-shadow:0 0 8px color-mix(in srgb,var(--warning) 55%,transparent)}
+/* A drag on a horizontal edge (the bottom panel) needs the guide to be a
+   horizontal line. Same element, re-oriented per drag — see resizeGuide(). */
+.resize-guide.horiz{top:auto;bottom:auto;left:0;right:0;width:auto;height:2px;margin-left:0;margin-top:-1px}
 .perf{position:absolute;top:10px;right:14px;z-index:6;display:flex;align-items:center;gap:8px;
   font-family:var(--mono);font-size:11px;color:var(--muted);
   background:var(--panel);border:1px solid var(--border);
@@ -792,7 +795,20 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .resize-handle:hover,.resize-handle.active{background:color-mix(in srgb,var(--accent2) 45%,transparent)}
 .sidebar-handle{right:-3px}
 .detail-handle{left:-3px}
+[data-detail-placement="right"]  #resizeDetailBottom{display:none}
+[data-detail-placement="bottom"] #resizeDetail{display:none}
+/* The bottom placement's handle sits on a TOP edge, not a left edge like
+   .detail-handle above, so it gets its own positioning rather than
+   inheriting that. `width:auto` overrides .resize-handle's own `width:6px` —
+   without it, `left`+`right`+`width` would all be non-auto and the browser
+   drops `right`, leaving a 6px sliver instead of a full-width top edge. */
+.detail-handle-bottom{position:absolute;left:0;right:0;top:0;width:auto;height:6px;cursor:row-resize;z-index:5}
 .resizing,.resizing *{cursor:col-resize!important;user-select:none!important}
+/* The bottom panel's handle drags along the vertical (row) axis, so the
+   locked-in cursor during that drag needs to be row-resize, not the
+   col-resize the sidebar/right-detail drags use — see wireResizeHandle's
+   `vert` branch in main.ts, which adds this class only for axis:"y". */
+.resizing-y,.resizing-y *{cursor:row-resize!important}
 /* Collapse: dragging a resize handle PAST its own normal minimum (see
    wireResizeHandle's own doc comment in legacy/main.ts) now keeps shrinking
    the panel instead of just clamping flat at that floor — release past the
@@ -2144,7 +2160,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   </main>
 
   <!-- ============================ DETAIL PANEL ============================ -->
-  <section class="detail" id="detail"><div class="resize-handle detail-handle" id="resizeDetail" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><!-- filled by the Detail Svelte island (src/islands/detail) --></section>
+  <section class="detail" id="detail"><div class="resize-handle detail-handle" id="resizeDetail" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><div class="resize-handle detail-handle-bottom" id="resizeDetailBottom" role="button" tabindex="0" aria-label="Resize detail panel"></div><!-- filled by the Detail Svelte island (src/islands/detail) --></section>
 
 </div>
 

@@ -59,3 +59,43 @@ test("the bottom placement puts the panel on its own full-width row", async ({ p
   expect(graph!.width).toBeGreaterThan(rightGraph!.width);
   expect(detail!.y).toBeGreaterThan(graph!.y);
 });
+
+test("the bottom panel resizes by dragging its top edge", async ({ page }) => {
+  await page.goto("/");
+  await skipWizard(page);
+  await usePlacement(page, "bottom");
+
+  const before = (await page.locator("#detail").boundingBox())!;
+  const handle = page.locator("#resizeDetailBottom");
+  const hb = (await handle.boundingBox())!;
+
+  // The wizard scrim (dismissed by usePlacement's reload+skipWizard) has a
+  // fade-out transition, so it can still intercept pointer events for a
+  // moment after its "on" class is gone. hover() performs Playwright's usual
+  // actionability wait (including "receives pointer events" at this exact
+  // spot) before the raw page.mouse calls below, which — unlike a locator
+  // action — don't wait for that on their own.
+  await handle.hover();
+  await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hb.x + hb.width / 2, hb.y - 120);
+  // The size is committed on release, not during the drag — a guide line
+  // tracks the cursor meanwhile, so the panel must still be its old height.
+  const midDrag = (await page.locator("#detail").boundingBox())!;
+  expect(Math.abs(midDrag.height - before.height)).toBeLessThan(2);
+  await page.mouse.up();
+
+  const after = (await page.locator("#detail").boundingBox())!;
+  expect(after.height).toBeGreaterThan(before.height + 80);
+});
+
+test("only the handle for the current placement is reachable", async ({ page }) => {
+  await page.goto("/");
+  await skipWizard(page);
+  await expect(page.locator("#resizeDetail")).toBeVisible();
+  await expect(page.locator("#resizeDetailBottom")).toBeHidden();
+
+  await usePlacement(page, "bottom");
+  await expect(page.locator("#resizeDetailBottom")).toBeVisible();
+  await expect(page.locator("#resizeDetail")).toBeHidden();
+});

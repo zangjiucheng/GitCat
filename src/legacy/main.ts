@@ -13,6 +13,7 @@ import { submoduleNavCtrl } from "../islands/submodulenav/submodulenav.svelte.ts
 import { ribbonTickFracs, RIBBON_TOP_FRAC, RIBBON_BOT_FRAC, RIBBON_MIN_TICK_PX } from "./ribbon.ts";
 import { displayChips } from "./reforder.ts";
 import { LruCache } from "./graphcache.ts";
+import { clampResize } from "./resize.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
 import { repoSummaryCtrl } from "../islands/reposummary/reposummary.svelte.ts";
 import { pluginHooksCtrl } from "../islands/pluginhooks/pluginhooks.svelte.ts";
@@ -1975,8 +1976,11 @@ function highlight(src,lang){
 // reflow that fires the canvas ResizeObserver. Created lazily, reused by both
 // handles.
 let resizeGuideEl=null;
-function resizeGuide(){
+function resizeGuide(vert){
   if(!resizeGuideEl){ resizeGuideEl=document.createElement("div"); resizeGuideEl.className="resize-guide"; document.body.appendChild(resizeGuideEl); }
+  // One element, re-oriented per drag: only one drag can be in flight at a
+  // time, so a second element would just be state to keep in sync.
+  resizeGuideEl.classList.toggle("horiz",!!vert);
   return resizeGuideEl;
 }
 
@@ -1999,10 +2003,11 @@ function resizeGuide(){
 // (tracked via `dragged`, same "did the pointer actually move" signal
 // index.html's own hint text promises) restores `lastExpandedW`, the most
 // recent width the panel actually rested at before collapsing.
-function wireResizeHandle(handle,cssVar,min,max,fromRight,railW){
+function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
   if(!handle) return;
+  const vert=axis==="y";
   const root=document.documentElement;
-  let startX=0,startW=0,dragged=false,collapsed=false,pendingW=0;
+  let start=0,startSize=0,dragged=false,collapsed=false,pending=0;
   let lastExpandedW=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||min;
   const collapseAt=(min+railW)/2;
   function setCollapsed(v){
@@ -2011,23 +2016,22 @@ function wireResizeHandle(handle,cssVar,min,max,fromRight,railW){
     handle.title=v?"Click to expand":"Drag to resize — drag past the edge to collapse";
   }
   function onMove(e){
-    const dx=e.clientX-startX;
-    if(Math.abs(dx)>3) dragged=true;
-    const raw=fromRight?startW-dx:startW+dx;
-    pendingW=Math.max(railW,Math.min(max,raw));
-    // Move ONLY the guide line — leave the panel width (the CSS var) alone so
+    const d=(vert?e.clientY:e.clientX)-start;
+    if(Math.abs(d)>3) dragged=true;
+    pending=clampResize(startSize,d,fromFarEdge,railW,max);
+    // Move ONLY the guide line — leave the panel size (the CSS var) alone so
     // nothing reflows/re-renders mid-drag. The guide sits at the clamped cursor
-    // x (where the panel edge WILL land): once the width is pinned at railW/max
-    // the line stops there instead of running off with the cursor.
-    const clampedDx=fromRight?(startW-pendingW):(pendingW-startW);
-    const g=resizeGuide();
-    g.style.left=(startX+clampedDx)+"px";
-    g.classList.toggle("will-collapse", pendingW<min);
+    // position (where the panel edge WILL land): once the size is pinned at
+    // railW/max the line stops there instead of running off with the cursor.
+    const clampedD=fromFarEdge?(startSize-pending):(pending-startSize);
+    const g=resizeGuide(vert);
+    if(vert) g.style.top=(start+clampedD)+"px"; else g.style.left=(start+clampedD)+"px";
+    g.classList.toggle("will-collapse", pending<min);
   }
   function onUp(){
     document.removeEventListener("pointermove",onMove);
     document.removeEventListener("pointerup",onUp);
-    handle.classList.remove("active"); root.classList.remove("resizing");
+    handle.classList.remove("active"); root.classList.remove("resizing","resizing-y");
     resizeGuide().classList.remove("on","will-collapse"); // hide the guide line
     if(!dragged){
       // A plain click, no drag at all: only meaningful while collapsed
@@ -2036,28 +2040,31 @@ function wireResizeHandle(handle,cssVar,min,max,fromRight,railW){
       if(collapsed){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
       return;
     }
-    // Commit the width the guide landed on — the ONE reflow of the whole drag.
-    // Same resting-state decision as before, now keyed off `pendingW` (the CSS
+    // Commit the size the guide landed on — the ONE reflow of the whole drag.
+    // Same resting-state decision as before, now keyed off `pending` (the CSS
     // var was never touched mid-drag) instead of reading it back live.
-    if(pendingW<min){
-      if(pendingW<=collapseAt){ setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
+    if(pending<min){
+      if(pending<=collapseAt){ setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
       else { setCollapsed(false); root.style.setProperty(cssVar, min+"px"); lastExpandedW=min; }
     } else {
-      setCollapsed(false); root.style.setProperty(cssVar, pendingW+"px"); lastExpandedW=pendingW;
+      setCollapsed(false); root.style.setProperty(cssVar, pending+"px"); lastExpandedW=pending;
     }
   }
-  function beginDrag(startClientX){
-    startX=startClientX; dragged=false;
-    startW=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||handle.parentElement.getBoundingClientRect().width;
-    pendingW=startW;
-    handle.classList.add("active"); root.classList.add("resizing");
+  function beginDrag(startClient){
+    start=startClient; dragged=false;
+    const box=handle.parentElement.getBoundingClientRect();
+    startSize=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||(vert?box.height:box.width);
+    pending=startSize;
+    handle.classList.add("active"); root.classList.add("resizing"); if(vert) root.classList.add("resizing-y");
     // Park the guide line at the current edge and show it — it takes over the
     // visual during the drag while the panels stay put.
-    const g=resizeGuide(); g.style.left=startClientX+"px"; g.classList.add("on"); g.classList.remove("will-collapse");
+    const g=resizeGuide(vert);
+    if(vert) g.style.top=startClient+"px"; else g.style.left=startClient+"px";
+    g.classList.add("on"); g.classList.remove("will-collapse");
     document.addEventListener("pointermove",onMove);
     document.addEventListener("pointerup",onUp);
   }
-  handle.addEventListener("pointerdown",e=>{ e.preventDefault(); beginDrag(e.clientX); });
+  handle.addEventListener("pointerdown",e=>{ e.preventDefault(); beginDrag(vert?e.clientY:e.clientX); });
   // Keyboard equivalent of the reopen-by-click path above — the handle is a
   // real (tabindex="0" role="button") focusable control (see index.html),
   // not just a drag target, so Enter/Space should work exactly like a plain
@@ -2074,16 +2081,25 @@ function wireResizeHandle(handle,cssVar,min,max,fromRight,railW){
   function expand(){ if(!collapsed) return; setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
   return { isCollapsed:()=>collapsed, collapse, expand };
 }
-const panelHandles=[
-  wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28),
-  wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true,28),
-].filter(Boolean);
+const sidebarHandle=wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28);
+const detailRightHandle=wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true,28);
+const detailBottomHandle=wireResizeHandle($("#resizeDetailBottom"),"--detail-h",180,720,true,28,"y");
+const panelHandles=[sidebarHandle,detailRightHandle].filter(Boolean);
+// Focus mode collapses the panels flanking the graph. Which detail handle
+// that is depends on the placement, and the placement can change without a
+// reload — so this is resolved per press rather than baked into the array
+// above (which stays sidebar-first for the ⌘⇧F handler that indexes it).
+function activePanelHandles(){
+  const bottom=document.documentElement.getAttribute("data-detail-placement")==="bottom";
+  return [sidebarHandle,bottom?detailBottomHandle:detailRightHandle].filter(Boolean);
+}
 // Focus mode (⌘\ / Ctrl+\): collapse BOTH side panels to give the graph the full
 // width, or restore both when they're already collapsed — a straight toggle
 // between "both open" and "both closed". Ignored while typing in a field.
 function toggleFocusMode(){
-  const allCollapsed=panelHandles.length>0 && panelHandles.every(h=>h.isCollapsed());
-  panelHandles.forEach(h=> allCollapsed ? h.expand() : h.collapse());
+  const hs=activePanelHandles();
+  const allCollapsed=hs.length>0 && hs.every(h=>h.isCollapsed());
+  hs.forEach(h=> allCollapsed ? h.expand() : h.collapse());
 }
 document.addEventListener("keydown",e=>{
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.code==="Backslash"&&!e.target.closest("input,textarea,[contenteditable=true]")){
