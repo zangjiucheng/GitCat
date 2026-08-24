@@ -62,7 +62,7 @@ import SnapshotPreview from "./islands/snapshotpreview/SnapshotPreview.svelte";
 import About from "./islands/about/About.svelte";
 import { aboutCtrl } from "./islands/about/about.svelte.ts";
 import { updaterCtrl } from "./islands/updater/updater.svelte.ts";
-import Detail from "./islands/detail/Detail.svelte";
+import DetailPanel from "./islands/detailpanel/DetailPanel.svelte";
 import { workdirCtrl } from "./islands/workdir/workdir.svelte.ts";
 import BisectDrawer from "./islands/bisectdrawer/BisectDrawer.svelte";
 import { openBisectEntry } from "./islands/bisectdrawer/bisectdrawer.svelte.ts";
@@ -127,14 +127,13 @@ mount(SnapshotPreview, { target: document.body });
 mount(About, { target: document.body });
 // Workdir is NOT mounted as its own top-level tree here even though the
 // design spec's own §4 "Wiring" prose describes a second `mount(Workdir, …)`
-// alongside Detail's — that would double-render the panel: Detail.svelte
-// (below) already peer-imports the Workdir COMPONENT (not just its
-// controller) and nests `<Workdir />` inline as the leading branch of its own
-// `{#if}` chain (exactly as the spec's own Detail.svelte snippet in that same
-// section shows), so mounting Workdir a second time onto the identical
-// `#detail` node would render the staging panel twice whenever
-// `workdirCtrl.selected` is true. One mount point, one source of truth.
-mount(Detail, { target: document.getElementById("detail")! });
+// alongside Detail's — that would double-render the panel: DetailPanel.svelte
+// (below) is the #detail slot's single owner, peer-importing both the Detail
+// and Workdir COMPONENTS (not just their controllers) and picking between
+// them itself based on `workdirCtrl.selected`, so mounting Workdir a second
+// time onto the identical `#detail` node would render the staging panel
+// twice. One mount point, one source of truth.
+mount(DetailPanel, { target: document.getElementById("detail")! });
 // Bisect's pre-start floating panel — see index.html's own doc comment on
 // the removed DRAWER section for why this (and Reflog/Rerere/Plumbing
 // below) are no longer mounted into a permanent drawer pane. MUST mount

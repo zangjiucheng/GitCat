@@ -1,8 +1,6 @@
 <script lang="ts">
   import { detailCtrl, type TreeDir } from "./detail.svelte.ts";
   import * as bridge from "../../legacy/bridge";
-  import { workdirCtrl } from "../workdir/workdir.svelte.ts";
-  import Workdir from "../workdir/Workdir.svelte";
   import BinaryDiffPreview from "../diffpreview/BinaryDiffPreview.svelte";
   import { resolver } from "../resolver/resolver.svelte.ts";
   import { dashboardCtrl } from "../dashboard/dashboard.svelte.ts";
@@ -72,9 +70,7 @@
 
 <svelte:window on:keydown={onKeydown} />
 
-{#if workdirCtrl.selected}
-  <Workdir />
-{:else if detailCtrl.hero}
+{#if detailCtrl.hero}
   <div class="tama-hero">
     <img class="tama-hero-img" src={bridge.TAMA_IMG.hero} alt={detailCtrl.hero.kind === "empty" ? "Tama" : t("detail.hero_alt")} />
     {#if detailCtrl.hero.kind === "loaded"}
