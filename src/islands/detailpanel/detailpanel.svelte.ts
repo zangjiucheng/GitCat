@@ -86,3 +86,37 @@ class DetailPanelState {
 }
 
 export const detailPanelCtrl = new DetailPanelState();
+
+/**
+ * Per-axis bounds for the "changes" tab's file-list/diff `Splitter`, shared
+ * by the commit view (Task 7) and — Task 8 — the working-tree view, so
+ * neither declares its own copy of the numbers (the same duplication
+ * `changesSplitAxis` above was introduced to avoid).
+ *
+ * A width and a height are different physical quantities bounded by
+ * different available space, so this is two full configs rather than one
+ * range serving both:
+ *
+ * - "x" (bottom placement): the file list sits beside the diff in a row that
+ *   spans the whole window, so its width can be generous. Reuses the
+ *   expanded-diff modal's own established width bounds for the identical
+ *   widget — a file tree beside its diff (Detail.svelte's `.diffx-files`
+ *   Splitter: min 160, max 620, default 280) — rather than inventing new
+ *   numbers for what is visually the same control, just embedded in the
+ *   panel instead of a modal.
+ * - "y" (right placement): the file list stacks ABOVE the diff inside a
+ *   column only 240-560px wide (legacy/main.ts's own `--detail-w` bounds for
+ *   that column). A max as generous as "x"'s — or as the bottom PANEL's own
+ *   height ceiling (720, `--detail-h`) — would let the file list swallow the
+ *   whole column on an ordinary laptop screen, leaving nothing for the diff
+ *   it sits above. Both its max and its default are smaller, so the diff
+ *   pane keeps room by default.
+ *
+ * Separate storage keys, not one shared key: a width remembered in pixels
+ * makes a poor height, and vice versa — sharing a key would silently reapply
+ * one axis's saved size to the other the next time placement changes.
+ */
+export const CHANGES_SPLIT: Record<"x" | "y", { min: number; max: number; defaultSize: number; storageKey: string }> = {
+  x: { min: 160, max: 620, defaultSize: 280, storageKey: "gitcat.detailChangesW" },
+  y: { min: 160, max: 420, defaultSize: 200, storageKey: "gitcat.detailChangesH" },
+};

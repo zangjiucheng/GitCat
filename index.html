@@ -1038,6 +1038,21 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .d-splitter.vert{width:auto;height:8px;margin:-4px 0;cursor:row-resize}
 .d-splitter.vert::after{top:3px;bottom:auto;left:0;right:0;width:auto;height:2px}
 
+/* The "changes" tab: a file list beside its diff (src/islands/detail/
+   Detail.svelte, and — Task 8 — Workdir.svelte). The axis is the only thing
+   the placement changes, which is what keeps this ONE internal layout
+   rather than one per placement. A 240-560px-wide right-hand column cannot
+   hold two panes side by side, so that placement stacks them instead;
+   the bottom placement's full-width row can, so it lays them out side by
+   side. `.detail section` still applies inside both panes (unchanged
+   padding/border for the moved markup), so only the two containers
+   themselves need rules here. */
+.d-split{display:flex;min-height:0;flex:1}
+[data-detail-placement="right"]  .d-split{flex-direction:column}
+[data-detail-placement="bottom"] .d-split{flex-direction:row}
+.d-split-files{min-height:0;overflow:auto}
+.d-split-diff{flex:1;min-width:0;min-height:0;overflow:auto}
+
 /* ============================== WORKDIR (staging + commit + stash) ==============================
    Renders in the SAME #detail slot as the sections above, swapped in by
    Workdir.svelte whenever the pinned "Uncommitted changes" row is selected

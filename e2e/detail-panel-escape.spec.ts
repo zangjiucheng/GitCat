@@ -37,7 +37,11 @@ test("Escape still closes the expanded diff after a trip through the working tre
 
   // Select HEAD (design mode's synthetic graph marks row 0 "head") so the
   // panel shows a real commit with a diff instead of the empty-state hero.
+  // #diffview now lives under the commit view's "changes" tab (Task 7), not
+  // the default "commit" tab, so it has to be selected before #diffview
+  // exists at all.
   await page.locator("#gotoHeadBtn").click();
+  await page.locator("#detail .d-tabs .d-tab").nth(1).click();
   await expect(page.locator("#diffview")).toBeVisible();
 
   // Open the expanded-diff modal from the commit view's inline diff header.
@@ -54,7 +58,10 @@ test("Escape still closes the expanded diff after a trip through the working tre
   await page.keyboard.press("Escape");
 
   // Switch back to the commit view and check the modal's underlying state
-  // actually changed, not just that it was temporarily offscreen.
+  // actually changed, not just that it was temporarily offscreen. The
+  // "changes" tab selection lives on detailPanelCtrl (not Detail.svelte's own
+  // state), so it survives Detail being unmounted/remounted by the trip
+  // through the working tree above — no tab click needed here.
   await page.locator("#gotoHeadBtn").click();
   await expect(page.locator("#diffview")).toBeVisible();
   await expect(page.locator("#detail .scrim")).not.toHaveClass(/\bon\b/);

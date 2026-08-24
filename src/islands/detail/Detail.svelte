@@ -15,6 +15,8 @@
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import Splitter from "../detailpanel/Splitter.svelte";
+  import TabStrip from "../detailpanel/TabStrip.svelte";
+  import { detailPanelCtrl, COMMIT_VIEW_TABS, CHANGES_SPLIT } from "../detailpanel/detailpanel.svelte.ts";
 
   // Matches TamaMascot's own `this.reduced` check (src/legacy/main.ts) —
   // Svelte's transition: directives don't honor prefers-reduced-motion on
@@ -68,6 +70,16 @@
   // cheap enough to update live on every pointermove. Sizing, clamping and
   // persistence now live in Splitter.svelte; this is just the bound value.
   let diffxTreeW = $state(280);
+
+  // The "changes" tab's own file-list/diff Splitter — a separate pane from
+  // the expanded-diff modal's diffxTreeW above, with its own per-axis
+  // min/max/default/storageKey (see CHANGES_SPLIT's doc comment). Seeded from
+  // whichever axis is current; Splitter.svelte overwrites this from storage
+  // on mount, and the {#key detailPanelCtrl.changesSplitAxis} wrapper below
+  // remounts it (re-seeding from the OTHER axis's own storage) whenever the
+  // placement changes live, rather than carrying one axis's pixel value over
+  // as the other's.
+  let filesSize = $state(CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].defaultSize);
 </script>
 
 {#if detailCtrl.hero}
@@ -110,6 +122,13 @@
   {@const c = detailCtrl.commit}
   {@const gpg = detailCtrl.gpgBadge}
   {@const cov = detailCtrl.coverage}
+  <!-- The commit view's two tabs (Task 7): the message and the diff stop
+       competing for the same room, each getting the panel's full width in
+       its own tab — including in the right-hand column, the default, where
+       six sections used to stack in a 344px width. Outside {#key c.sha} so
+       switching commits doesn't refade/rebuild the tab strip itself, only
+       the content beneath it. -->
+  <TabStrip tabs={COMMIT_VIEW_TABS} active={detailPanelCtrl.commitTab} onselect={(id) => detailPanelCtrl.select("commit", id)} />
   <!-- Keyed on sha so switching commits re-mounts (and fades) this wrapper
        instead of every field just snapping to new values in place — a
        plain DOM/opacity transition, no canvas involvement. Scoped to the
@@ -118,6 +137,7 @@
        be wasteful, not just unnecessary. -->
   {#key c.sha}
   <div transition:fade={{ duration: REDUCE_MOTION ? 0 : 120 }}>
+  {#if detailPanelCtrl.commitTab === "commit"}
   <section>
     <div class="d-subject">{c.subject}</div>
     <div class="d-body" id="dBody" class:clamped={detailCtrl.bodyLong && !detailCtrl.bodyExpanded}>
@@ -184,50 +204,80 @@
       </div>
     {/if}
   </section>
-  <section>
-    <div class="d-lab-row">
-      <h4 class="d-lab" style="margin:0">{t("detail.changes")}</h4>
-      {@render treeCtl()}
-    </div>
-    <div class="diffstat" id="diffstat">
-      {#if detailCtrl.diffLoading}
-        <span class="mut mono" style="font-size:11px"><span class="spinner"></span> {t("detail.loading_diff")}</span>
-      {:else if detailCtrl.diffstat}
-        {@const s = detailCtrl.diffstat}
-        <span class="nums"><span class="add">+{s.add}</span> <span class="del">&minus;{s.del}</span></span>
-        <div class="stat-bar">
-          <i class="a" style="width:{Math.round((100 * s.add) / ((s.add + s.del) || 1))}%"></i>
-          <i class="d" style="width:{Math.round((100 * s.del) / ((s.add + s.del) || 1))}%"></i>
+  {:else}
+  <!-- The "changes" tab: a file list beside its diff (index.html's .d-split
+       rules). The axis is the only thing the placement changes — CHANGES_SPLIT
+       and detailPanelCtrl.changesSplitAxis (detailpanel.svelte.ts) are the
+       single source of truth both this tab and the working tree's own (Task
+       8) read, rather than each declaring its own copy. Keyed on the axis so
+       a live placement switch re-mounts the Splitter and re-seeds `filesSize`
+       from THAT axis's own storage key, instead of carrying one axis's pixel
+       value over as the other's. -->
+  {#key detailPanelCtrl.changesSplitAxis}
+  <div class="d-split">
+    <div
+      class="d-split-files"
+      style={detailPanelCtrl.changesSplitAxis === "x" ? `width:${filesSize}px` : `height:${filesSize}px`}
+    >
+      <section>
+        <div class="d-lab-row">
+          <h4 class="d-lab" style="margin:0">{t("detail.changes")}</h4>
+          {@render treeCtl()}
         </div>
-        <span class="mut mono" style="font-size:11px">{s.files} {s.files === 1 ? t("detail.file") : t("detail.files_plural")}{s.truncated ? t("detail.capped_suffix") : ""}</span>
-      {/if}
-    </div>
-    <div class="tree" id="tree" data-vimnav-list>
-      {#if detailCtrl.treeLoading}
-        <div class="mut" style="padding:6px 4px"><span class="spinner"></span> {t("detail.loading_files")}</div>
-      {:else if !detailCtrl.tree.files.length && !Object.keys(detailCtrl.tree.dirs).length}
-        <div class="mut" style="padding:6px 4px">{t("detail.no_file_changes")}</div>
-      {:else}
-        {@render dirNode(detailCtrl.tree)}
-      {/if}
-    </div>
-  </section>
-  <section>
-    <h4 class="d-lab">{t("detail.diff")}</h4>
-    <div class="diffview" id="diffview" bind:this={diffviewEl}>
-      {#if detailCtrl.diffLoading}
-        <div class="diff-file-h mut"><span class="spinner"></span> {t("detail.loading_diff")}</div>
-      {:else}
-        <div class="diff-file-h">
-          <span class="diff-file-h-name">{detailCtrl.diffHeader}</span>
-          <button class="wd-act" title={t("detail.expand_diff")} aria-label={t("detail.expand_diff_aria")} onclick={() => detailCtrl.expandDiff()}>
-            <Maximize2 class="ico" size={13} aria-hidden="true" />
-          </button>
+        <div class="diffstat" id="diffstat">
+          {#if detailCtrl.diffLoading}
+            <span class="mut mono" style="font-size:11px"><span class="spinner"></span> {t("detail.loading_diff")}</span>
+          {:else if detailCtrl.diffstat}
+            {@const s = detailCtrl.diffstat}
+            <span class="nums"><span class="add">+{s.add}</span> <span class="del">&minus;{s.del}</span></span>
+            <div class="stat-bar">
+              <i class="a" style="width:{Math.round((100 * s.add) / ((s.add + s.del) || 1))}%"></i>
+              <i class="d" style="width:{Math.round((100 * s.del) / ((s.add + s.del) || 1))}%"></i>
+            </div>
+            <span class="mut mono" style="font-size:11px">{s.files} {s.files === 1 ? t("detail.file") : t("detail.files_plural")}{s.truncated ? t("detail.capped_suffix") : ""}</span>
+          {/if}
         </div>
-        <div class="diff-rows">{@render diffLineRows()}</div>
-      {/if}
+        <div class="tree" id="tree" data-vimnav-list>
+          {#if detailCtrl.treeLoading}
+            <div class="mut" style="padding:6px 4px"><span class="spinner"></span> {t("detail.loading_files")}</div>
+          {:else if !detailCtrl.tree.files.length && !Object.keys(detailCtrl.tree.dirs).length}
+            <div class="mut" style="padding:6px 4px">{t("detail.no_file_changes")}</div>
+          {:else}
+            {@render dirNode(detailCtrl.tree)}
+          {/if}
+        </div>
+      </section>
     </div>
-  </section>
+    <Splitter
+      axis={detailPanelCtrl.changesSplitAxis}
+      bind:size={filesSize}
+      min={CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].min}
+      max={CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].max}
+      defaultSize={CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].defaultSize}
+      label={t("detail.resize_file_list")}
+      storageKey={CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].storageKey}
+    />
+    <div class="d-split-diff">
+      <section>
+        <h4 class="d-lab">{t("detail.diff")}</h4>
+        <div class="diffview" id="diffview" bind:this={diffviewEl}>
+          {#if detailCtrl.diffLoading}
+            <div class="diff-file-h mut"><span class="spinner"></span> {t("detail.loading_diff")}</div>
+          {:else}
+            <div class="diff-file-h">
+              <span class="diff-file-h-name">{detailCtrl.diffHeader}</span>
+              <button class="wd-act" title={t("detail.expand_diff")} aria-label={t("detail.expand_diff_aria")} onclick={() => detailCtrl.expandDiff()}>
+                <Maximize2 class="ico" size={13} aria-hidden="true" />
+              </button>
+            </div>
+            <div class="diff-rows">{@render diffLineRows()}</div>
+          {/if}
+        </div>
+      </section>
+    </div>
+  </div>
+  {/key}
+  {/if}
   </div>
   {/key}
 

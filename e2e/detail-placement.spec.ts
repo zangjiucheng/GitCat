@@ -168,3 +168,36 @@ test("dragging the bottom panel taller never exceeds 60% of a short viewport", a
   // And it actually grew up near that ceiling, not just failed to move at all.
   expect(after.height).toBeGreaterThan(700 * 0.6 - 40);
 });
+
+test("the commit view splits its message from its diff across two tabs", async ({ page }) => {
+  await page.goto("/");
+  await skipWizard(page);
+  await page.locator('#refLocal [data-branch="main"]').click();
+
+  const tabs = page.locator("#detail .d-tabs .d-tab");
+  await expect(tabs).toHaveCount(2);
+
+  // The message tab is first and active, so selecting a commit still shows
+  // you what it says before what it touched.
+  await expect(tabs.nth(0)).toHaveClass(/\bon\b/);
+  await expect(page.locator("#detail .d-body")).toBeVisible();
+
+  await tabs.nth(1).click();
+  await expect(tabs.nth(1)).toHaveClass(/\bon\b/);
+  await expect(page.locator("#detail #tree")).toBeVisible();
+});
+
+test("the changes split follows the placement", async ({ page }) => {
+  await page.goto("/");
+  await skipWizard(page);
+  await page.locator('#refLocal [data-branch="main"]').click();
+  await page.locator("#detail .d-tabs .d-tab").nth(1).click();
+
+  // Right-hand column: too narrow for panes side by side, so they stack.
+  await expect(page.locator("#detail .d-split")).toHaveCSS("flex-direction", "column");
+
+  await usePlacement(page, "bottom");
+  await page.locator('#refLocal [data-branch="main"]').click();
+  await page.locator("#detail .d-tabs .d-tab").nth(1).click();
+  await expect(page.locator("#detail .d-split")).toHaveCSS("flex-direction", "row");
+});
