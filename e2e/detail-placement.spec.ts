@@ -201,3 +201,40 @@ test("the changes split follows the placement", async ({ page }) => {
   await page.locator("#detail .d-tabs .d-tab").nth(1).click();
   await expect(page.locator("#detail .d-split")).toHaveCSS("flex-direction", "row");
 });
+
+// Task 8: the working tree's own three tabs. Reached via Ctrl+Shift+U (the
+// "jump to Uncommitted Changes" shortcut — legacy/main.ts's goToUncommitted),
+// the same route e2e/detail-panel-escape.spec.ts already drives — not
+// #refLocal, which only ever selects a commit/branch row, never the pinned
+// uncommitted-changes row.
+test("the working tree gets its own three tabs", async ({ page }) => {
+  await page.goto("/");
+  await skipWizard(page);
+  await page.keyboard.press("Control+Shift+U");
+
+  const tabs = page.locator("#detail .d-tabs .d-tab");
+  await expect(tabs).toHaveCount(3);
+
+  // The stash was the last of six stacked sections. Now it is one click.
+  await tabs.nth(2).click();
+  await expect(tabs.nth(2)).toHaveClass(/\bon\b/);
+});
+
+test("each view remembers its own tab across a switch", async ({ page }) => {
+  await page.goto("/");
+  await skipWizard(page);
+  // #gotoHeadBtn (topbar) selects a real commit — same entry point
+  // e2e/detail-panel-escape.spec.ts uses to reach the commit view without a
+  // real repo/backend (design mode's synthetic graph marks row 0 "head").
+  await page.locator("#gotoHeadBtn").click();
+  await page.locator("#detail .d-tabs .d-tab").nth(1).click(); // commit view -> changes
+
+  // Switch to the working tree and back; the commit view must still be on
+  // the tab it was reading — detailPanelCtrl keeps the two views' active
+  // tabs independent (see its own doc comment), so a trip through the
+  // working tree must not reset the commit view's own selection.
+  await page.keyboard.press("Control+Shift+U");
+  await expect(page.locator("#detail .d-tabs .d-tab")).toHaveCount(3); // the working tree's own tabs, not the commit view's
+  await page.locator("#gotoHeadBtn").click();
+  await expect(page.locator("#detail .d-tabs .d-tab").nth(1)).toHaveClass(/\bon\b/);
+});

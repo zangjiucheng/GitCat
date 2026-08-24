@@ -120,3 +120,37 @@ export const CHANGES_SPLIT: Record<"x" | "y", { min: number; max: number; defaul
   x: { min: 160, max: 620, defaultSize: 280, storageKey: "gitcat.detailChangesW" },
   y: { min: 160, max: 420, defaultSize: 200, storageKey: "gitcat.detailChangesH" },
 };
+
+/**
+ * Per-axis bounds for the working-tree view's OWN "changes" tab `Splitter` —
+ * a sibling of `CHANGES_SPLIT` above, not a reuse of it, even though both
+ * control the same-looking widget (a file list beside a diff). The working
+ * tree's file-list pane stacks TWO trees (staged, then unstaged), not the
+ * commit view's one, and that extra content only actually competes for room
+ * on the axis where panes STACK:
+ *
+ * - "x" (bottom placement): the file-list column sits beside the diff in a
+ *   row spanning the full window. A second tree stacked inside that column
+ *   costs vertical space, not horizontal, so there is no reason to widen it
+ *   past what a single tree already needs — reuses CHANGES_SPLIT's own "x"
+ *   numbers verbatim (min 160, max 620, default 280).
+ * - "y" (right placement): the file-list pane stacks ABOVE the diff, so it is
+ *   exactly the axis a second tree eats into. CHANGES_SPLIT's own "y" (max
+ *   420, default 200) was sized for ONE tree; reusing it here would either
+ *   leave the unstaged tree scrolled mostly out of view by default, or force
+ *   it that way at the max too. This raises both: max 560 (leaving at least
+ *   ~160px for the diff below, out of the same 720px `--detail-h` ceiling
+ *   CHANGES_SPLIT's own reasoning above is measured against) and default 260
+ *   (enough for a first glance at both trees before the diff, without
+ *   reducing the diff to a sliver on first open).
+ *
+ * Own storage keys, per axis AND per view — not just because a width makes a
+ * poor height (CHANGES_SPLIT's own reason), but because a size remembered for
+ * ONE tree's worth of content is also a poor default for two: switching
+ * between the commit view's single-tree "changes" tab and the working tree's
+ * two-tree one must never silently reapply one's saved size to the other.
+ */
+export const WORKTREE_CHANGES_SPLIT: Record<"x" | "y", { min: number; max: number; defaultSize: number; storageKey: string }> = {
+  x: { min: 160, max: 620, defaultSize: 280, storageKey: "gitcat.workdirChangesW" },
+  y: { min: 200, max: 560, defaultSize: 260, storageKey: "gitcat.workdirChangesH" },
+};

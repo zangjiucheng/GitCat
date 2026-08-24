@@ -1,11 +1,16 @@
 // Working-tree changes (status, stage/unstage, discard, commit, stash) —
 // controller (Svelte 5 runes singleton).
 //
-// Owns the pinned "Uncommitted changes" row's data AND the right-hand
-// `#detail` pane's content whenever that row is selected (see
-// legacy/main.ts's `selectWorkdir()`/the `-2` row sentinel, and
-// Detail.svelte's leading `{#if workdirCtrl.selected}` branch — same slot,
-// swapped content, exact shape as bisectDrawerCtrl peer-importing bisectCtrl).
+// Owns the pinned "Uncommitted changes" row's data AND the `#detail` pane's
+// content whenever that row is selected (see legacy/main.ts's
+// `selectWorkdir()`/the `-2` row sentinel). DetailPanel.svelte owns the
+// #detail slot itself and picks Workdir.svelte over Detail.svelte based on
+// `workdirCtrl.selected` — the two views used to be nested (Detail.svelte
+// rendered <Workdir /> inside its own leading `{#if}` branch), but that
+// nesting was removed once each view needed its own tab strip/splitter, so
+// this controller's data now backs a sibling component, not content inside
+// Detail's own tree. Same "controller swapped in as content, exact shape as
+// bisectDrawerCtrl peer-importing bisectCtrl" relationship either way.
 //
 // Two independent re-entrancy locks, deliberately NOT shared:
 //   * `busy`/`busyTarget` — stage/unstage/stage-all/discard/commit/stash-save,

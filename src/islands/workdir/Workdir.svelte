@@ -16,6 +16,9 @@
   import ChevronsDownUp from "@lucide/svelte/icons/chevrons-down-up";
   import ChevronsUpDown from "@lucide/svelte/icons/chevrons-up-down";
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
+  import Splitter from "../detailpanel/Splitter.svelte";
+  import TabStrip from "../detailpanel/TabStrip.svelte";
+  import { detailPanelCtrl, WORKTREE_VIEW_TABS, WORKTREE_CHANGES_SPLIT } from "../detailpanel/detailpanel.svelte.ts";
 
   // "Open in external diff" (backlog #12) — added to BOTH staged (4th icon,
   // was 3) and unstaged (5th icon, was 4) rows: unlike Blame/History (which
@@ -104,58 +107,49 @@
     }
   }
 
-  // Resizable file-list panel in that modal — an own copy of Detail.svelte's
-  // diffx splitter (same localStorage key so the two modals share one width).
-  const DIFFX_TREE_MIN = 160,
-    DIFFX_TREE_MAX = 620,
-    DIFFX_TREE_DEFAULT = 280,
-    DIFFX_TREE_LS = "gitcat.diffxTreeW";
-  let diffxTreeW = $state<number>(
-    (() => {
-      const v = Number(localStorage.getItem(DIFFX_TREE_LS));
-      return Number.isFinite(v) && v >= DIFFX_TREE_MIN && v <= DIFFX_TREE_MAX ? v : DIFFX_TREE_DEFAULT;
-    })(),
-  );
-  let diffxResizing = $state(false);
-  function saveDiffxWidth() {
-    try {
-      localStorage.setItem(DIFFX_TREE_LS, String(Math.round(diffxTreeW)));
-    } catch {
-      /* private mode / quota — width just won't persist */
-    }
-  }
-  function startDiffxResize(e: PointerEvent) {
-    e.preventDefault();
-    const startX = e.clientX,
-      startW = diffxTreeW;
-    diffxResizing = true;
-    document.body.style.userSelect = "none";
-    const move = (ev: PointerEvent) => {
-      diffxTreeW = Math.max(DIFFX_TREE_MIN, Math.min(DIFFX_TREE_MAX, startW + (ev.clientX - startX)));
-    };
-    const up = () => {
-      diffxResizing = false;
-      document.body.style.userSelect = "";
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      saveDiffxWidth();
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  }
-  function onSplitterKey(e: KeyboardEvent) {
-    const step = e.shiftKey ? 32 : 8;
-    if (e.key === "ArrowLeft") diffxTreeW = Math.max(DIFFX_TREE_MIN, diffxTreeW - step);
-    else if (e.key === "ArrowRight") diffxTreeW = Math.min(DIFFX_TREE_MAX, diffxTreeW + step);
-    else return;
-    e.preventDefault();
-    saveDiffxWidth();
-  }
+  // Resizable file-list panel in that modal — used to be a complete second
+  // inline copy of Detail.svelte's own diffx splitter (same constants, same
+  // hand-rolled .diffx-splitter markup+a11y attributes, same storage key),
+  // left that way until this file's Task 8 restructuring made touching it
+  // unavoidable anyway. Now the shared Splitter component, with the exact
+  // constants the old copy used (min 160 / max 620 / default 280) and the
+  // SAME storage key ("gitcat.diffxTreeW") — both this modal and Detail.svelte's
+  // own expanded-diff modal already shared that key, so keeping it exact
+  // preserves whichever width the user last dragged instead of silently
+  // resetting it.
+  let diffxTreeW = $state(280);
+
+  // The "changes" tab's own file-list/diff Splitter (Task 8) — a separate
+  // pane from the expanded-diff modal's diffxTreeW above, sized by
+  // WORKTREE_CHANGES_SPLIT (detailpanel.svelte.ts) rather than CHANGES_SPLIT:
+  // this file-list column stacks the staged AND unstaged trees, not the
+  // commit view's one, so it needs its own bounds — see that constant's own
+  // doc comment for the full reasoning. Seeded from whichever axis is
+  // current; Splitter.svelte overwrites this from storage on mount, and the
+  // {#key detailPanelCtrl.changesSplitAxis} wrapper below remounts it
+  // (re-seeding from the OTHER axis's own storage) whenever the placement
+  // changes live, rather than carrying one axis's pixel value over as the
+  // other's — exact same convention as Detail.svelte's own "changes" tab.
+  let filesSize = $state(WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].defaultSize);
 </script>
 
 <svelte:window on:keydown={onKeydown} />
 
 {#if workdirCtrl.selected}
+  <!-- The working tree's three tabs (Task 8): the six sections that used to
+       stack in this panel — most crampingly in the right-hand column, the
+       default, where they competed for a 344px width — now split into the
+       commit box, the staged/unstaged trees beside their diff, and the
+       stash (previously the last section, requiring a scroll to reach; now
+       one click). Same TabStrip/detailPanelCtrl registry Task 7 gave the
+       commit view, so both views share one tab-strip implementation. -->
+  <TabStrip
+    tabs={WORKTREE_VIEW_TABS}
+    active={detailPanelCtrl.worktreeTab}
+    onselect={(id) => detailPanelCtrl.select("worktree", id)}
+  />
+
+  {#if detailPanelCtrl.worktreeTab === "commit"}
   <section>
     <div class="d-subject">{t("workdir.uncommitted_changes")}</div>
     <div class="d-body" style="margin-top:2px">
@@ -219,7 +213,21 @@
       </button>
     </div>
   </section>
-
+  {:else if detailPanelCtrl.worktreeTab === "changes"}
+  <!-- The "changes" tab: staged + unstaged trees beside their diff, same
+       .d-split/.d-split-files/.d-split-diff rules Detail.svelte's own
+       "changes" tab uses (index.html) — the axis is the only thing the
+       placement changes, read from detailPanelCtrl.changesSplitAxis (never a
+       local derivation — see that field's own doc comment on why a
+       $derived reading a DOM attribute can't track it). Keyed on the axis so
+       a live placement switch remounts the Splitter and re-seeds `filesSize`
+       from THAT axis's own storage key. -->
+  {#key detailPanelCtrl.changesSplitAxis}
+  <div class="d-split">
+    <div
+      class="d-split-files"
+      style={detailPanelCtrl.changesSplitAxis === "x" ? `width:${filesSize}px` : `height:${filesSize}px`}
+    >
   <section>
     <div class="wd-sec-head">
       <h4 class="d-lab" style="margin:0">{t("workdir.staged", { n: workdirCtrl.status?.staged.length ?? 0 })}</h4>
@@ -271,7 +279,17 @@
       </div>
     {/if}
   </section>
-
+    </div>
+    <Splitter
+      axis={detailPanelCtrl.changesSplitAxis}
+      bind:size={filesSize}
+      min={WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].min}
+      max={WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].max}
+      defaultSize={WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].defaultSize}
+      label={t("workdir.resize_file_list")}
+      storageKey={WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].storageKey}
+    />
+    <div class="d-split-diff">
   {#if workdirCtrl.selectedDiffFile}
     {@const file = workdirCtrl.selectedDiffFile}
     <section>
@@ -287,7 +305,10 @@
       </div>
     </section>
   {/if}
-
+    </div>
+  </div>
+  {/key}
+  {:else}
   <section>
     <div class="wd-sec-head">
       <h4 class="d-lab" style="margin:0">{t("workdir.stash")}</h4>
@@ -352,6 +373,7 @@
       <button class="wd-stash-new" onclick={() => workdirCtrl.openStashForm()}>&#65291; {t("workdir.stash_changes")}</button>
     {/if}
   </section>
+  {/if}
 
   <!-- Expanded uncommitted-changes diff — the SAME near-fullscreen .diffx modal
        the commit view uses (see Detail.svelte), for reading a big working-tree
@@ -405,25 +427,15 @@
             {/if}
           </div>
         </div>
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <div
-          class="diffx-splitter"
-          class:active={diffxResizing}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t("workdir.resize_file_list")}
-          aria-valuenow={Math.round(diffxTreeW)}
-          aria-valuemin={DIFFX_TREE_MIN}
-          aria-valuemax={DIFFX_TREE_MAX}
-          tabindex="0"
-          onpointerdown={startDiffxResize}
-          ondblclick={() => {
-            diffxTreeW = DIFFX_TREE_DEFAULT;
-            saveDiffxWidth();
-          }}
-          onkeydown={onSplitterKey}
-        ></div>
+        <Splitter
+          axis="x"
+          bind:size={diffxTreeW}
+          min={160}
+          max={620}
+          defaultSize={280}
+          label={t("workdir.resize_file_list")}
+          storageKey="gitcat.diffxTreeW"
+        />
         <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
           {#if workdirCtrl.selectedDiffFile}
             {@const file = workdirCtrl.selectedDiffFile}
