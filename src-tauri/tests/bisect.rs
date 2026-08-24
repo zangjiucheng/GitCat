@@ -27,6 +27,33 @@ fn short(oid: Oid) -> String {
     oid.to_string().chars().take(7).collect()
 }
 
+/// Absolute path to the `bisect_judge` example — the good/bad/skip judgement
+/// these automated-run tests hand to `run_bisect`.
+///
+/// A program, not a shell script: `run_test_command` runs the judgement
+/// through `sh -c` on unix and `cmd /C` on Windows, and the two share no
+/// spelling of what these tests need (state across invocations, a bounded
+/// block). An executable is invoked identically by both. See the example's
+/// own header.
+///
+/// Found relative to this test binary rather than by guessing a target dir:
+/// `cargo test` builds examples, and `target/<profile>/examples/` is a
+/// sibling of the `deps/` this binary lives in — which stays correct under
+/// CARGO_TARGET_DIR, `--release`, and cross-compilation alike.
+fn judge_exe() -> String {
+    let mut p = std::env::current_exe().expect("the test binary knows its own path");
+    p.pop();
+    if p.file_name().and_then(|n| n.to_str()) == Some("deps") {
+        p.pop();
+    }
+    p.push("examples");
+    p.push(if cfg!(windows) { "bisect_judge.exe" } else { "bisect_judge" });
+    assert!(p.exists(), "bisect_judge example not built at {p:?} — `cargo test` should have built it");
+    // Quoted: a checkout can sit under a path with spaces, and both shells
+    // read a double-quoted first token as one program name.
+    format!("\"{}\"", p.display())
+}
+
 /// Returns (repo, original branch, root oid = good, K oid = first-bad, head oid = bad).
 fn build_repo(tag: &str) -> (TempRepo, String, Oid, Oid, Oid) {
     let repo = TempRepo::init(tag);
@@ -173,8 +200,16 @@ fn bisect_run_converges_via_scripted_good_bad_command() {
 
     // Deterministic stand-in for a real regression test: "good" (exit 0) iff
     // bug.txt (introduced at K and present in every descendant) is absent.
+    //
+    // Written to run under BOTH shells `run_test_command` uses — `sh -c` on
+    // unix, `cmd /C` on Windows. `test ! -f` is a POSIX builtin cmd.exe does
+    // not have; `git cat-file -e` is the same question asked of a program both
+    // shells can run, and `&&`/`||`/`exit` mean the same thing in each. During
+    // a bisect the working tree matches HEAD, so asking HEAD is equivalent to
+    // asking the filesystem.
     let mut progress_calls = 0usize;
-    let result: BisectStatus = run_bisect(&path, "test ! -f bug.txt", || false, |_status| progress_calls += 1);
+    let judge = "git cat-file -e HEAD:bug.txt && exit 1 || exit 0";
+    let result: BisectStatus = run_bisect(&path, judge, || false, |_status| progress_calls += 1);
 
     assert!(result.first_bad.is_some(), "automated run did not converge: {}", result.message);
     assert_eq!(
@@ -213,14 +248,8 @@ fn bisect_run_handles_a_skip_exit_code_and_still_converges() {
     // script's own side channel across separate invocations), and every bad
     // commit after that is reported bad normally. Mirrors exactly the
     // existing manual-skip test's "skip the first non-K bad commit
-    // encountered" shape, just moved into the test script.
-    let k_line = format!("line {K_IDX}");
-    let command = format!(
-        "if grep -qx '{k_line}' history.txt; then exit 1; \
-         elif [ -f bug.txt ]; then \
-           if [ ! -f .gitcat-skip-marker ]; then touch .gitcat-skip-marker; exit 125; else exit 1; fi; \
-         else exit 0; fi"
-    );
+    // encountered" shape, just moved into the judge.
+    let command = format!("{} skip-once {K_IDX} .gitcat-skip-marker", judge_exe());
 
     let result: BisectStatus = run_bisect(&path, &command, || false, |_| {});
 
@@ -322,7 +351,7 @@ fn bisect_run_cancel_stops_the_loop_before_convergence() {
     // cancellation — so cancellation is observed at the very next
     // between-steps check, before a second step ever runs, deterministically
     // well short of the ~4 steps a 15-commit bisect needs to converge.
-    let command = "if [ ! -f .gitcat-first-run ]; then touch .gitcat-first-run; sleep 0.5; fi; exit 0";
+    let command = format!("{} slow-first .gitcat-first-run 500", judge_exe());
 
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_for_run = cancel.clone();
@@ -331,7 +360,7 @@ fn bisect_run_cancel_stops_the_loop_before_convergence() {
         let mut n = 0usize;
         let result = run_bisect(
             &path_for_run,
-            command,
+            &command,
             move || cancel_for_run.load(Ordering::SeqCst),
             |_status| n += 1,
         );
@@ -390,11 +419,11 @@ fn bisect_run_start_refuses_a_second_concurrent_call_while_one_is_in_flight() {
     // sleeps well past the time it takes the main thread to notice and
     // attempt a concurrent second call — so the second call is guaranteed to
     // race against a genuinely in-flight first run, not a already-finished one.
-    let command = "if [ ! -f .gitcat-inflight ]; then touch .gitcat-inflight; sleep 0.5; fi; exit 0";
+    let command = format!("{} slow-first .gitcat-inflight 500", judge_exe());
 
     let state1 = state.clone();
     let path1 = path.clone();
-    let command1 = command.to_string();
+    let command1 = command.clone();
     let handle = std::thread::spawn(move || try_run_bisect(&state1, &path1, &command1, || false, |_| {}));
 
     let marker = repo.dir.join(".gitcat-inflight");
