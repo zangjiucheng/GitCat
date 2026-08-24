@@ -686,6 +686,13 @@ impl BisectRunState {
 /// restore-scope caveat in spirit) rather than a silent one — fixing it
 /// properly would need a way to verify actual `cmd.exe` behavior across
 /// Windows versions, which this change does not attempt speculatively.
+///
+/// One concrete instance of that gap has since been found and closed at the
+/// source rather than here: a quoted command (a path containing a space) used
+/// to reach cmd.exe with Rust's `\"` escaping, which cmd does not understand,
+/// so it answered "is not recognized as an internal or external command" with
+/// exit 1 — landing in the 1..=127 arm and condemning the commit. See
+/// `run_test_command`'s `raw_arg`. The general shape of the gap remains.
 enum Step {
     Good,
     Bad,
@@ -720,11 +727,27 @@ fn classify_exit(status: &ExitStatus) -> Step {
 /// exit-code convention this result is fed into, and its documented gap on
 /// Windows.
 fn run_test_command(path: &str, command: &str) -> Result<ExitStatus, String> {
-    let mut cmd = if cfg!(target_os = "windows") {
+    #[cfg(windows)]
+    let mut cmd = {
+        use std::os::windows::process::CommandExt;
         let mut c = Command::new("cmd");
-        c.arg("/C").arg(command);
+        c.arg("/C");
+        // raw_arg, NOT arg. Rust escapes a `"` inside an argument as `\"`,
+        // which is the MSVC convention; cmd.exe does not know it and reads the
+        // backslash as part of the program name. So a perfectly ordinary
+        // command — anything quoted because its path has a space, e.g.
+        // `"C:\Program Files\ci\test.bat"` — came back as "is not recognized
+        // as an internal or external command", exit code 1.
+        //
+        // Exit 1 is inside `classify_exit`'s 1..=127, so that was reported as
+        // BAD: a command that never ran at all silently condemned the commit,
+        // and the bisect converged on the wrong one. Measured both ways before
+        // and after; `.arg` gives 1, `raw_arg` gives the command's own status.
+        c.raw_arg(command);
         c
-    } else {
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
         let mut c = Command::new("sh");
         c.arg("-c").arg(command);
         c
