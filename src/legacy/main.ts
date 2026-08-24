@@ -13,7 +13,7 @@ import { submoduleNavCtrl } from "../islands/submodulenav/submodulenav.svelte.ts
 import { ribbonTickFracs, RIBBON_TOP_FRAC, RIBBON_BOT_FRAC, RIBBON_MIN_TICK_PX } from "./ribbon.ts";
 import { displayChips } from "./reforder.ts";
 import { LruCache } from "./graphcache.ts";
-import { clampResize } from "./resize.ts";
+import { clampResize, dragCeiling } from "./resize.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
 import { repoSummaryCtrl } from "../islands/reposummary/reposummary.svelte.ts";
 import { pluginHooksCtrl } from "../islands/pluginhooks/pluginhooks.svelte.ts";
@@ -2007,18 +2007,35 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
   if(!handle) return;
   const vert=axis==="y";
   const root=document.documentElement;
-  let start=0,startSize=0,dragged=false,collapsed=false,pending=0;
+  let start=0,startSize=0,dragged=false,pending=0;
   let lastExpandedW=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||min;
   const collapseAt=(min+railW)/2;
+  // `collapsed` is read from the parent's own `.collapsed` class rather than
+  // kept as a private variable on this closure: the right-edge and bottom
+  // detail handles share the SAME parent (#detail), and a live placement
+  // switch can hand control from one handle to the other mid-session
+  // (see activePanelHandles()). A private mirror would desync — e.g.
+  // collapsing via the bottom handle, then switching to "right" without a
+  // reload, would leave the right handle's own `collapsed` stuck `false`
+  // while `#detail` (and thus the panel's actual visual state) was still
+  // collapsed, making the reopen click/keydown paths below no-ops.
+  function isCollapsed(){ return handle.parentElement.classList.contains("collapsed"); }
   function setCollapsed(v){
-    collapsed=v;
     handle.parentElement.classList.toggle("collapsed",v);
     handle.title=v?"Click to expand":"Drag to resize — drag past the edge to collapse";
   }
+  // The design spec caps a vertical (bottom-panel) drag at 60% of the
+  // viewport height on top of the fixed `max`, so a short window can't have
+  // its graph row squeezed to nothing — the max-height media queries only
+  // change the *default* --detail-h, never this drag ceiling. Resolved fresh
+  // on every call (not cached once per drag) so a resize while the drag is
+  // in progress is honored too; dragCeiling/clampResize stay pure and
+  // unaware of `window` — this is the one spot that reads it.
+  function dragMax(){ return vert ? dragCeiling(max, window.innerHeight) : max; }
   function onMove(e){
     const d=(vert?e.clientY:e.clientX)-start;
     if(Math.abs(d)>3) dragged=true;
-    pending=clampResize(startSize,d,fromFarEdge,railW,max);
+    pending=clampResize(startSize,d,fromFarEdge,railW,dragMax());
     // Move ONLY the guide line — leave the panel size (the CSS var) alone so
     // nothing reflows/re-renders mid-drag. The guide sits at the clamped cursor
     // position (where the panel edge WILL land): once the size is pinned at
@@ -2037,7 +2054,7 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
       // A plain click, no drag at all: only meaningful while collapsed
       // (reopen); a click on an already-expanded handle is a no-op, same as
       // today.
-      if(collapsed){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
+      if(isCollapsed()){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
       return;
     }
     // Commit the size the guide landed on — the ONE reflow of the whole drag.
@@ -2073,13 +2090,13 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
   handle.addEventListener("keydown",e=>{
     if(e.key!=="Enter"&&e.key!==" ") return;
     e.preventDefault();
-    if(collapsed){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
+    if(isCollapsed()){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
   });
   // Programmatic collapse/expand, so the focus-mode shortcut (below) can drive
   // the panel exactly like a drag-past-edge / click-to-reopen would.
-  function collapse(){ if(collapsed) return; setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
-  function expand(){ if(!collapsed) return; setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
-  return { isCollapsed:()=>collapsed, collapse, expand };
+  function collapse(){ if(isCollapsed()) return; setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
+  function expand(){ if(!isCollapsed()) return; setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
+  return { isCollapsed, collapse, expand };
 }
 const sidebarHandle=wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28);
 const detailRightHandle=wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true,28);

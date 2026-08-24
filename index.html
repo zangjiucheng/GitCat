@@ -828,6 +828,18 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .sidebar.collapsed .resize-handle:hover,.detail.collapsed .resize-handle:hover{background:var(--panel);color:var(--text)}
 .sidebar.collapsed .resize-handle::after{content:'\203A'}
 .detail.collapsed .resize-handle::after{content:'\2039'}
+/* The generic `.detail.collapsed .resize-handle` rule above was written for
+   the vertical rail (right-hand placement): it stretches left/right/width
+   to fill the rail but leaves top/bottom/height alone, which is fine when
+   .resize-handle's own top:0;bottom:0 already spans the panel. The bottom
+   placement's handle is the opposite axis — its own rule sets a fixed
+   top:0;height:6px — so collapsing it needs the complementary override here,
+   or the reopen affordance is a 6px sliver at the top of the 28px rail
+   instead of filling it. Same reasoning for the chevron: '\2039' points left
+   (expand-leftward, correct for the right-hand rail) but the bottom rail
+   expands upward, so its chevron is the same glyph rotated 90°. */
+.detail.collapsed .detail-handle-bottom{top:0;bottom:0;height:auto}
+.detail.collapsed .detail-handle-bottom::after{content:'\2039';transform:rotate(90deg)}
 .detail section{padding:12px 14px;border-bottom:1px solid var(--border)}
 .detail .empty{color:var(--muted);text-align:center;padding:48px 20px;font-size:12.5px;line-height:1.7}
 .d-subject{font-size:17px;font-weight:700;font-family:var(--display);line-height:1.35;color:var(--text);letter-spacing:.1px}

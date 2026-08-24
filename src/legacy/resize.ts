@@ -14,3 +14,17 @@ export function clampResize(startSize: number, delta: number, fromFarEdge: boole
   const raw = fromFarEdge ? startSize - delta : startSize + delta;
   return Math.max(railW, Math.min(max, raw));
 }
+
+// The design spec's viewport-relative ceiling for a vertical (bottom-panel)
+// drag: never more than 60% of the viewport height, on top of the panel's
+// own fixed `max` — a short window can't have its graph row squeezed to
+// nothing. The `max-height` media queries on `--detail-h` only change the
+// panel's *default* size, never this drag ceiling, so the caller must apply
+// this separately at drag time.
+//
+// Takes `viewportHeight` as a plain argument, rather than reading `window`
+// itself, so this stays pure and testable — the caller (main.ts) resolves
+// `window.innerHeight` and passes it in, freshly, on every drag/move.
+export function dragCeiling(max: number, viewportHeight: number): number {
+  return Math.min(max, viewportHeight * 0.6);
+}
