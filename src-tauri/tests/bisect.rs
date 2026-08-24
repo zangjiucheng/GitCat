@@ -13,11 +13,17 @@ mod common;
 
 use common::TempRepo;
 use git2::{Oid, Repository, RepositoryState};
-use gitcat_lib::git_bisect::{
-    bisect_mark, bisect_reset, bisect_start, bisect_status, run_bisect, try_run_bisect, BisectRunState, BisectStatus,
-};
+use gitcat_lib::git_bisect::{bisect_mark, bisect_reset, bisect_start, bisect_status, run_bisect, BisectStatus};
+// Used only by the #[cfg(unix)] automated-run tests below, so gated with them —
+// see the note above `bisect_run_handles_a_skip_exit_code_and_still_converges`
+// for why those three cannot run on Windows.
+#[cfg(unix)]
+use gitcat_lib::git_bisect::{try_run_bisect, BisectRunState};
+#[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
 use std::sync::Arc;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 const N: usize = 15;
@@ -173,8 +179,16 @@ fn bisect_run_converges_via_scripted_good_bad_command() {
 
     // Deterministic stand-in for a real regression test: "good" (exit 0) iff
     // bug.txt (introduced at K and present in every descendant) is absent.
+    //
+    // Written to run under BOTH shells `run_test_command` uses — `sh -c` on
+    // unix, `cmd /C` on Windows. `test ! -f` is a POSIX builtin cmd.exe does
+    // not have; `git cat-file -e` is the same question asked of a program both
+    // shells can run, and `&&`/`||`/`exit` mean the same thing in each. During
+    // a bisect the working tree matches HEAD, so asking HEAD is equivalent to
+    // asking the filesystem.
     let mut progress_calls = 0usize;
-    let result: BisectStatus = run_bisect(&path, "test ! -f bug.txt", || false, |_status| progress_calls += 1);
+    let judge = "git cat-file -e HEAD:bug.txt && exit 1 || exit 0";
+    let result: BisectStatus = run_bisect(&path, judge, || false, |_status| progress_calls += 1);
 
     assert!(result.first_bad.is_some(), "automated run did not converge: {}", result.message);
     assert_eq!(
@@ -197,6 +211,19 @@ fn bisect_run_converges_via_scripted_good_bad_command() {
     assert!(repo.is_clean(), "working tree dirty after reset");
 }
 
+// Unix-only, and not because the code under test is: `run_bisect` handles
+// Windows fine (`run_test_command` shells out through `cmd /C` there). It
+// is the SCAFFOLDING that has no portable form. This judge command needs
+// two things from its shell — state that survives between separate
+// invocations (a marker file), and a bounded block so the main thread can
+// observe the run mid-flight — and there is no spelling of those that both
+// `sh -c` and `cmd /C` accept. cmd has no `sleep`, and `timeout /t` needs a
+// console this deliberately does not give it (see `no_console_window`).
+//
+// The convergence test above IS portable and does cover the run loop on
+// Windows. What is uncovered here is skip handling, cancellation and the
+// concurrency refusal. See #100.
+#[cfg(unix)]
 #[test]
 fn bisect_run_handles_a_skip_exit_code_and_still_converges() {
     std::env::set_var("LC_ALL", "C");
@@ -307,6 +334,19 @@ fn bisect_run_refuses_cleanly_when_no_bisect_is_in_progress() {
     );
 }
 
+// Unix-only, and not because the code under test is: `run_bisect` handles
+// Windows fine (`run_test_command` shells out through `cmd /C` there). It
+// is the SCAFFOLDING that has no portable form. This judge command needs
+// two things from its shell — state that survives between separate
+// invocations (a marker file), and a bounded block so the main thread can
+// observe the run mid-flight — and there is no spelling of those that both
+// `sh -c` and `cmd /C` accept. cmd has no `sleep`, and `timeout /t` needs a
+// console this deliberately does not give it (see `no_console_window`).
+//
+// The convergence test above IS portable and does cover the run loop on
+// Windows. What is uncovered here is skip handling, cancellation and the
+// concurrency refusal. See #100.
+#[cfg(unix)]
 #[test]
 fn bisect_run_cancel_stops_the_loop_before_convergence() {
     std::env::set_var("LC_ALL", "C");
@@ -375,6 +415,19 @@ fn bisect_run_cancel_stops_the_loop_before_convergence() {
 // — same reasoning as testing `run_bisect` directly above. Coordination via
 // a marker-file side channel mirrors `bisect_run_cancel_stops_the_loop_
 // before_convergence` above exactly.
+// Unix-only, and not because the code under test is: `run_bisect` handles
+// Windows fine (`run_test_command` shells out through `cmd /C` there). It
+// is the SCAFFOLDING that has no portable form. This judge command needs
+// two things from its shell — state that survives between separate
+// invocations (a marker file), and a bounded block so the main thread can
+// observe the run mid-flight — and there is no spelling of those that both
+// `sh -c` and `cmd /C` accept. cmd has no `sleep`, and `timeout /t` needs a
+// console this deliberately does not give it (see `no_console_window`).
+//
+// The convergence test above IS portable and does cover the run loop on
+// Windows. What is uncovered here is skip handling, cancellation and the
+// concurrency refusal. See #100.
+#[cfg(unix)]
 #[test]
 fn bisect_run_start_refuses_a_second_concurrent_call_while_one_is_in_flight() {
     std::env::set_var("LC_ALL", "C");
