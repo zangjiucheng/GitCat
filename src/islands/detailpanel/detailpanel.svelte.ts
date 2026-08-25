@@ -87,11 +87,34 @@ class DetailPanelState {
 
 export const detailPanelCtrl = new DetailPanelState();
 
+/** Everything a `Splitter` needs to size, clamp and remember one pane. */
+export interface SplitBounds {
+  min: number;
+  max: number;
+  defaultSize: number;
+  storageKey: string;
+}
+
+/**
+ * The expanded-diff modal's file-tree pane — the same widget (a file tree
+ * beside its diff) both `Detail.svelte` and `Workdir.svelte` open at
+ * near-fullscreen size, sharing one storage key so the width the user drags
+ * in either is the width the other opens at.
+ *
+ * It lives here, with the panel's own bounds, because it is what the "x"
+ * entries below are derived from: the two are visually the same control, and
+ * the modal's numbers were the established ones. Both modals used to spell
+ * these literals out inline, which made that derivation a claim in a comment
+ * rather than something the code enforced — editing the number here moved
+ * nothing.
+ */
+export const DIFFX_SPLIT: SplitBounds = { min: 160, max: 620, defaultSize: 280, storageKey: "gitcat.diffxTreeW" };
+
 /**
  * Per-axis bounds for the "changes" tab's file-list/diff `Splitter`, shared
- * by the commit view (Task 7) and — Task 8 — the working-tree view, so
- * neither declares its own copy of the numbers (the same duplication
- * `changesSplitAxis` above was introduced to avoid).
+ * by the commit view and the working-tree view so neither declares its own
+ * copy of the numbers (the same duplication `changesSplitAxis` above was
+ * introduced to avoid).
  *
  * A width and a height are different physical quantities bounded by
  * different available space, so this is two full configs rather than one
@@ -116,8 +139,8 @@ export const detailPanelCtrl = new DetailPanelState();
  * makes a poor height, and vice versa — sharing a key would silently reapply
  * one axis's saved size to the other the next time placement changes.
  */
-export const CHANGES_SPLIT: Record<"x" | "y", { min: number; max: number; defaultSize: number; storageKey: string }> = {
-  x: { min: 160, max: 620, defaultSize: 280, storageKey: "gitcat.detailChangesW" },
+export const CHANGES_SPLIT: Record<"x" | "y", SplitBounds> = {
+  x: { ...DIFFX_SPLIT, storageKey: "gitcat.detailChangesW" },
   y: { min: 160, max: 420, defaultSize: 200, storageKey: "gitcat.detailChangesH" },
 };
 
@@ -132,8 +155,8 @@ export const CHANGES_SPLIT: Record<"x" | "y", { min: number; max: number; defaul
  * - "x" (bottom placement): the file-list column sits beside the diff in a
  *   row spanning the full window. A second tree stacked inside that column
  *   costs vertical space, not horizontal, so there is no reason to widen it
- *   past what a single tree already needs — reuses CHANGES_SPLIT's own "x"
- *   numbers verbatim (min 160, max 620, default 280).
+ *   past what a single tree already needs — spreads `CHANGES_SPLIT.x`,
+ *   which is itself `DIFFX_SPLIT`.
  * - "y" (right placement): the file-list pane stacks ABOVE the diff, so it is
  *   exactly the axis a second tree eats into. CHANGES_SPLIT's own "y" (max
  *   420, default 200) was sized for ONE tree; reusing it here would either
@@ -150,7 +173,7 @@ export const CHANGES_SPLIT: Record<"x" | "y", { min: number; max: number; defaul
  * between the commit view's single-tree "changes" tab and the working tree's
  * two-tree one must never silently reapply one's saved size to the other.
  */
-export const WORKTREE_CHANGES_SPLIT: Record<"x" | "y", { min: number; max: number; defaultSize: number; storageKey: string }> = {
-  x: { min: 160, max: 620, defaultSize: 280, storageKey: "gitcat.workdirChangesW" },
+export const WORKTREE_CHANGES_SPLIT: Record<"x" | "y", SplitBounds> = {
+  x: { ...CHANGES_SPLIT.x, storageKey: "gitcat.workdirChangesW" },
   y: { min: 200, max: 560, defaultSize: 260, storageKey: "gitcat.workdirChangesH" },
 };

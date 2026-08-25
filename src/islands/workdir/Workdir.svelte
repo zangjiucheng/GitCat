@@ -18,7 +18,7 @@
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import Splitter from "../detailpanel/Splitter.svelte";
   import TabStrip from "../detailpanel/TabStrip.svelte";
-  import { detailPanelCtrl, WORKTREE_VIEW_TABS, WORKTREE_CHANGES_SPLIT } from "../detailpanel/detailpanel.svelte.ts";
+  import { detailPanelCtrl, WORKTREE_VIEW_TABS, WORKTREE_CHANGES_SPLIT, DIFFX_SPLIT } from "../detailpanel/detailpanel.svelte.ts";
 
   // "Open in external diff" (backlog #12) — added to BOTH staged (4th icon,
   // was 3) and unstaged (5th icon, was 4) rows: unlike Blame/History (which
@@ -108,16 +108,14 @@
   }
 
   // Resizable file-list panel in that modal — used to be a complete second
-  // inline copy of Detail.svelte's own diffx splitter (same constants, same
-  // hand-rolled .diffx-splitter markup+a11y attributes, same storage key),
-  // left that way until this file's Task 8 restructuring made touching it
-  // unavoidable anyway. Now the shared Splitter component, with the exact
-  // constants the old copy used (min 160 / max 620 / default 280) and the
-  // SAME storage key ("gitcat.diffxTreeW") — both this modal and Detail.svelte's
-  // own expanded-diff modal already shared that key, so keeping it exact
+  // inline copy of Detail.svelte's own expanded-diff splitter: same constants,
+  // same hand-rolled markup and a11y attributes, same storage key. It is now
+  // the shared Splitter component bounded by the shared DIFFX_SPLIT, whose
+  // storage key ("gitcat.diffxTreeW") is the one the old copy used — both this
+  // modal and Detail.svelte's own already shared that key, so keeping it exact
   // preserves whichever width the user last dragged instead of silently
   // resetting it.
-  let diffxTreeW = $state(280);
+  let diffxTreeW = $state(DIFFX_SPLIT.defaultSize);
 
   // The "changes" tab's own file-list/diff Splitter (Task 8) — a separate
   // pane from the expanded-diff modal's diffxTreeW above, sized by
@@ -437,11 +435,11 @@
       <Splitter
         axis="x"
         bind:size={diffxTreeW}
-        min={160}
-        max={620}
-        defaultSize={280}
+        min={DIFFX_SPLIT.min}
+        max={DIFFX_SPLIT.max}
+        defaultSize={DIFFX_SPLIT.defaultSize}
         label={t("workdir.resize_file_list")}
-        storageKey="gitcat.diffxTreeW"
+        storageKey={DIFFX_SPLIT.storageKey}
       />
       <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
         {#if workdirCtrl.selectedDiffFile}

@@ -16,7 +16,7 @@
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import Splitter from "../detailpanel/Splitter.svelte";
   import TabStrip from "../detailpanel/TabStrip.svelte";
-  import { detailPanelCtrl, COMMIT_VIEW_TABS, CHANGES_SPLIT } from "../detailpanel/detailpanel.svelte.ts";
+  import { detailPanelCtrl, COMMIT_VIEW_TABS, CHANGES_SPLIT, DIFFX_SPLIT } from "../detailpanel/detailpanel.svelte.ts";
 
   // Matches TamaMascot's own `this.reduced` check (src/legacy/main.ts) —
   // Svelte's transition: directives don't honor prefers-reduced-motion on
@@ -68,8 +68,9 @@
   // white-space:pre (horizontal scroll, no wrap — see .diff-line), so resizing
   // only changes container widths, never reflows/re-highlights the diff text —
   // cheap enough to update live on every pointermove. Sizing, clamping and
-  // persistence now live in Splitter.svelte; this is just the bound value.
-  let diffxTreeW = $state(280);
+  // persistence now live in Splitter.svelte; this is just the bound value,
+  // seeded from the same DIFFX_SPLIT the Splitter below is bounded by.
+  let diffxTreeW = $state(DIFFX_SPLIT.defaultSize);
 
   // The "changes" tab's own file-list/diff Splitter — a separate pane from
   // the expanded-diff modal's diffxTreeW above, with its own per-axis
@@ -316,11 +317,11 @@
         <Splitter
           axis="x"
           bind:size={diffxTreeW}
-          min={160}
-          max={620}
-          defaultSize={280}
+          min={DIFFX_SPLIT.min}
+          max={DIFFX_SPLIT.max}
+          defaultSize={DIFFX_SPLIT.defaultSize}
           label={t("detail.resize_file_list")}
-          storageKey="gitcat.diffxTreeW"
+          storageKey={DIFFX_SPLIT.storageKey}
         />
         <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
           {#if detailCtrl.diffLoading}
