@@ -144,11 +144,18 @@
         </select>
       </div>
 
+      <!-- A real <label>, not another <h4 class="d-lab"> heading like the
+           groups above: this control had no accessible name at all — only the
+           description paragraph below, which nothing associates with the
+           <select>. `settings.detail_placement` already shipped in all three
+           locales for exactly this and was going unused. -->
+      <label class="d-lab" for="detailPlacement" style="display:block">{t("settings.detail_placement")}</label>
       <p class="mut" style="font-size:11.5px;margin:0 0 8px">
         {t("settings.detail_placement_desc")}
       </p>
       <div class="rm-form" style="margin-bottom:14px;max-width:220px">
         <select
+          id="detailPlacement"
           value={settingsCtrl.detailPanelPlacement}
           onchange={(e) => settingsCtrl.setDetailPanelPlacement((e.target as HTMLSelectElement).value as DetailPanelPlacement)}
         >
