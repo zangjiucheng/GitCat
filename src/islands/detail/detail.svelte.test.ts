@@ -361,7 +361,7 @@ describe("coverage", () => {
 // use don't fit). Detail.svelte only ever renders this button inside its
 // `{:else if detailCtrl.commit}` branch (the hero card and the working tree's
 // own panel — DetailPanel.svelte swapping in Workdir.svelte — are mutually
-// exclusive with it), and, since Task 7, additionally only while
+// exclusive with it), and, since the panel became tabbed, additionally only while
 // detailPanelCtrl.commitTab === "commit" (the OTHER tab, "changes", shows the
 // diffstat/tree/diff instead). So "not shown for the hero/empty state, the
 // working tree, or the changes tab" is structurally guaranteed by that

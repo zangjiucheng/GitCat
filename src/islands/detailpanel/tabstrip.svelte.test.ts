@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 // COMMIT_VIEW_TABS/WORKTREE_VIEW_TABS live in detailpanel.svelte.ts, which
-// (via Correction 2's split-axis derivation) imports settingsCtrl from
+// (for the placement-driven split axis) imports settingsCtrl from
 // settings.svelte.ts — and that in turn imports legacy/bridge, a live
 // re-export of legacy/main.ts, a whole vanilla canvas app that boots on
 // import and does `$("#cv").getContext("2d")` at module scope, throwing in

@@ -123,7 +123,7 @@
   {@const c = detailCtrl.commit}
   {@const gpg = detailCtrl.gpgBadge}
   {@const cov = detailCtrl.coverage}
-  <!-- The commit view's two tabs (Task 7): the message and the diff stop
+  <!-- The commit view's two tabs: the message and the diff stop
        competing for the same room, each getting the panel's full width in
        its own tab — including in the right-hand column, the default, where
        six sections used to stack in a 344px width. Outside {#key c.sha} so

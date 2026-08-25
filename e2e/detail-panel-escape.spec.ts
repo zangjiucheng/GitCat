@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
-// Regression coverage for the Task 6 refactor (DetailPanel.svelte owning the
-// #detail slot instead of Detail.svelte nesting Workdir inside itself).
+// Regression coverage for DetailPanel.svelte owning the #detail slot instead
+// of Detail.svelte nesting Workdir inside itself.
 //
 // The expanded-diff modal's Escape handler used to live on Detail.svelte's
 // own <svelte:window> — safe ONLY because Detail used to be the #detail
@@ -37,9 +37,8 @@ test("Escape still closes the expanded diff after a trip through the working tre
 
   // Select HEAD (design mode's synthetic graph marks row 0 "head") so the
   // panel shows a real commit with a diff instead of the empty-state hero.
-  // #diffview now lives under the commit view's "changes" tab (Task 7), not
-  // the default "commit" tab, so it has to be selected before #diffview
-  // exists at all.
+  // #diffview lives under the commit view's "changes" tab, not the default
+  // "commit" tab, so it has to be selected before #diffview exists at all.
   await page.locator("#gotoHeadBtn").click();
   await page.locator("#detail .d-tabs .d-tab").nth(1).click();
   await expect(page.locator("#diffview")).toBeVisible();

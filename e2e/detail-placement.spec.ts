@@ -1,5 +1,5 @@
-// The detail panel's placement (settings: detailPanelPlacement) is applied by
-// Task 1 as a `data-detail-placement` attribute on <html>. This spec checks
+// The detail panel's placement (settings: detailPanelPlacement) is applied as a
+// `data-detail-placement` attribute on <html>. This spec checks
 // the CSS consequence: the .app grid actually relocates the panel from the
 // third column to a full-width bottom row, and the graph gives up height
 // instead of width when it does.
@@ -225,7 +225,7 @@ test("the changes split follows the placement", async ({ page }) => {
   await expect(page.locator("#detail .d-split")).toHaveCSS("flex-direction", "row");
 });
 
-// Task 8: the working tree's own three tabs. Reached via Ctrl+Shift+U (the
+// The working tree's own three tabs. Reached via Ctrl+Shift+U (the
 // "jump to Uncommitted Changes" shortcut — legacy/main.ts's goToUncommitted),
 // the same route e2e/detail-panel-escape.spec.ts already drives — not
 // #refLocal, which only ever selects a commit/branch row, never the pinned

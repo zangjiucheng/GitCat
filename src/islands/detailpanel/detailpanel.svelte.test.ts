@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// detailpanel.svelte.ts imports settingsCtrl from settings.svelte.ts for
-// Correction 2's split-axis derivation. settings.svelte.ts in turn imports
+// detailpanel.svelte.ts imports settingsCtrl from settings.svelte.ts to derive
+// the split axis from the placement. settings.svelte.ts in turn imports
 // legacy/bridge, which re-exports legacy/main.ts — a whole vanilla canvas app
 // that boots on import and does `$("#cv").getContext("2d")` at module scope,
 // throwing in bare jsdom (see resolver.svelte.test.ts's own "isolation" test
@@ -99,9 +99,10 @@ describe("changesSplitAxis", () => {
     expect(detailPanelCtrl.changesSplitAxis).toBe("y");
   });
 
-  // The regression Correction 3 exists to prevent: flip the setting back and
-  // forth on the SAME running instance and confirm the derived value tracks
-  // each change, rather than latching onto whichever value was read first.
+  // The regression that made this a $derived over the settings FIELD rather
+  // than a read of the root attribute CSS uses: flip the setting back and forth
+  // on the SAME running instance and confirm the derived value tracks each
+  // change, rather than latching onto whichever value was read first.
   it("follows the setting when it changes again on a live instance", () => {
     settingsCtrl.setDetailPanelPlacement("bottom");
     expect(detailPanelCtrl.changesSplitAxis).toBe("x");

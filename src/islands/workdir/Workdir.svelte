@@ -117,7 +117,7 @@
   // resetting it.
   let diffxTreeW = $state(DIFFX_SPLIT.defaultSize);
 
-  // The "changes" tab's own file-list/diff Splitter (Task 8) — a separate
+  // The "changes" tab's own file-list/diff Splitter — a separate
   // pane from the expanded-diff modal's diffxTreeW above, sized by
   // WORKTREE_CHANGES_SPLIT (detailpanel.svelte.ts) rather than CHANGES_SPLIT:
   // this file-list column stacks the staged AND unstaged trees, not the
@@ -133,13 +133,13 @@
 
 <svelte:window on:keydown={onKeydown} />
 
-<!-- The working tree's three tabs (Task 8): the six sections that used to
+<!-- The working tree's three tabs: the six sections that used to
      stack in this panel — most crampingly in the right-hand column, the
      default, where they competed for a 344px width — now split into the
      commit box, the staged/unstaged trees beside their diff, and the
      stash (previously the last section, requiring a scroll to reach; now
-     one click). Same TabStrip/detailPanelCtrl registry Task 7 gave the
-     commit view, so both views share one tab-strip implementation. -->
+     one click). Same TabStrip/detailPanelCtrl registry as the commit view,
+     so both views share one tab-strip implementation. -->
 <TabStrip
   tabs={WORKTREE_VIEW_TABS}
   active={detailPanelCtrl.worktreeTab}
