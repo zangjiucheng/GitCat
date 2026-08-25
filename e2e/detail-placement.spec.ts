@@ -129,6 +129,29 @@ test("collapsing via focus mode doesn't desync the two detail handles across a l
   await expect(page.locator("#detail")).not.toHaveClass(/collapsed/);
 });
 
+test("expanding after a live placement switch restores both axes, not just one", async ({ page }) => {
+  await page.goto("/");
+  await skipWizard(page);
+  await usePlacement(page, "bottom");
+
+  // Collapse through the BOTTOM handle, which parks --detail-h at the rail.
+  await page.keyboard.press("Control+Backslash");
+  await expect(page.locator("#detail")).toHaveClass(/collapsed/);
+
+  // Switch placement live, then expand through the RIGHT handle instead.
+  await page.evaluate(() => document.documentElement.setAttribute("data-detail-placement", "right"));
+  await page.locator("#resizeDetail").click();
+  await expect(page.locator("#detail")).not.toHaveClass(/collapsed/);
+
+  // Back to the bottom placement. Each handle owns a different custom
+  // property, so an expand that moved only the right handle's own left
+  // --detail-h sitting at the 28px rail: an uncollapsed panel with its
+  // content clipped and no chevron left to reopen it with.
+  await page.evaluate(() => document.documentElement.setAttribute("data-detail-placement", "bottom"));
+  const box = (await page.locator("#detail").boundingBox())!;
+  expect(box.height).toBeGreaterThan(100);
+});
+
 test("the collapsed bottom rail is fully reachable, not just a thin strip", async ({ page }) => {
   await page.goto("/");
   await skipWizard(page);

@@ -1984,9 +1984,10 @@ function resizeGuide(vert){
   return resizeGuideEl;
 }
 
-// sidebar/detail drag-to-resize. The panel width is NOT live-updated during the
-// drag anymore — a guide line (above) tracks the cursor and the width lands in
-// the `--sidebar-w`/`--detail-w` custom property only on release, so the layout
+// sidebar/detail drag-to-resize. The panel size is NOT live-updated during the
+// drag anymore — a guide line (above) tracks the cursor and the size lands in
+// the handle's own custom property (`--sidebar-w`, `--detail-w` or — for the
+// bottom placement's own handle — `--detail-h`) only on release, so the layout
 // reflows + the canvas re-renders exactly once instead of every pointermove.
 //
 // Collapse (added on top of the original resize-only behavior): dragging
@@ -2001,15 +2002,31 @@ function resizeGuide(vert){
 // the handle itself — now stretched by CSS to fill the whole (railW-wide)
 // panel and showing a chevron — IS the reopen affordance: a plain click
 // (tracked via `dragged`, same "did the pointer actually move" signal
-// index.html's own hint text promises) restores `lastExpandedW`, the most
-// recent width the panel actually rested at before collapsing.
+// index.html's own hint text promises) restores `lastExpandedSize`, the most
+// recent size the panel actually rested at before collapsing.
+//
+// One panel can have MORE than one handle: #detail has a right-edge one
+// (--detail-w) and a bottom-edge one (--detail-h), and which is live depends
+// on the placement setting, which can change without a reload. Handles sharing
+// a panel are peers (panelHandlePeers below) so that collapsing or expanding
+// through any one of them moves all of their sizes together.
+const panelHandlePeers=new Map();
 function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
   if(!handle) return;
   const vert=axis==="y";
   const root=document.documentElement;
+  const panel=handle.parentElement;
   let start=0,startSize=0,dragged=false,pending=0;
-  let lastExpandedW=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||min;
+  // Named for a size, not a width: for the bottom placement's handle this same
+  // variable holds a HEIGHT.
+  let lastExpandedSize=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||min;
   const collapseAt=(min+railW)/2;
+  const peers=panelHandlePeers.get(panel)||[];
+  panelHandlePeers.set(panel,peers);
+  // What a peer does when SOMEONE ELSE'S handle collapses or expands this
+  // panel: move its own custom property to match, to its own remembered size.
+  const me={ applyCollapsed(v){ root.style.setProperty(cssVar,(v?railW:lastExpandedSize)+"px"); } };
+  peers.push(me);
   // `collapsed` is read from the parent's own `.collapsed` class rather than
   // kept as a private variable on this closure: the right-edge and bottom
   // detail handles share the SAME parent (#detail), and a live placement
@@ -2019,10 +2036,19 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
   // reload, would leave the right handle's own `collapsed` stuck `false`
   // while `#detail` (and thus the panel's actual visual state) was still
   // collapsed, making the reopen click/keydown paths below no-ops.
-  function isCollapsed(){ return handle.parentElement.classList.contains("collapsed"); }
+  function isCollapsed(){ return panel.classList.contains("collapsed"); }
   function setCollapsed(v){
-    handle.parentElement.classList.toggle("collapsed",v);
+    const was=isCollapsed();
+    panel.classList.toggle("collapsed",v);
     handle.title=v?"Click to expand":"Drag to resize — drag past the edge to collapse";
+    // The `collapsed` class is shared (see isCollapsed), but each handle owns a
+    // DIFFERENT custom property — so flipping only this one's leaves the other
+    // axis wherever it was. Collapse #detail in "bottom" (⌘\), switch to
+    // "right", expand there: the class clears but --detail-h is still 28px, and
+    // switching back gives you an UNcollapsed 28px-tall panel with its content
+    // clipped and no chevron left to recover with. So a state change here moves
+    // every handle on this panel, each to its own remembered size.
+    if(was!==v) for(const p of peers) if(p!==me) p.applyCollapsed(v);
   }
   // The design spec caps a vertical (bottom-panel) drag at 60% of the
   // viewport height on top of the fixed `max`, so a short window can't have
@@ -2054,7 +2080,7 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
       // A plain click, no drag at all: only meaningful while collapsed
       // (reopen); a click on an already-expanded handle is a no-op, same as
       // today.
-      if(isCollapsed()){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
+      if(isCollapsed()){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedSize+"px"); }
       return;
     }
     // Commit the size the guide landed on — the ONE reflow of the whole drag.
@@ -2062,14 +2088,14 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
     // var was never touched mid-drag) instead of reading it back live.
     if(pending<min){
       if(pending<=collapseAt){ setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
-      else { setCollapsed(false); root.style.setProperty(cssVar, min+"px"); lastExpandedW=min; }
+      else { setCollapsed(false); root.style.setProperty(cssVar, min+"px"); lastExpandedSize=min; }
     } else {
-      setCollapsed(false); root.style.setProperty(cssVar, pending+"px"); lastExpandedW=pending;
+      setCollapsed(false); root.style.setProperty(cssVar, pending+"px"); lastExpandedSize=pending;
     }
   }
   function beginDrag(startClient){
     start=startClient; dragged=false;
-    const box=handle.parentElement.getBoundingClientRect();
+    const box=panel.getBoundingClientRect();
     startSize=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||(vert?box.height:box.width);
     pending=startSize;
     handle.classList.add("active"); root.classList.add("resizing"); if(vert) root.classList.add("resizing-y");
@@ -2090,12 +2116,12 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
   handle.addEventListener("keydown",e=>{
     if(e.key!=="Enter"&&e.key!==" ") return;
     e.preventDefault();
-    if(isCollapsed()){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
+    if(isCollapsed()){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedSize+"px"); }
   });
   // Programmatic collapse/expand, so the focus-mode shortcut (below) can drive
   // the panel exactly like a drag-past-edge / click-to-reopen would.
   function collapse(){ if(isCollapsed()) return; setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
-  function expand(){ if(!isCollapsed()) return; setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
+  function expand(){ if(!isCollapsed()) return; setCollapsed(false); root.style.setProperty(cssVar, lastExpandedSize+"px"); }
   return { isCollapsed, collapse, expand };
 }
 const sidebarHandle=wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28);
