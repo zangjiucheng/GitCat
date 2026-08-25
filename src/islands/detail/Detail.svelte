@@ -136,7 +136,11 @@
        large file tree/diff, so re-triggering a transition per-line would
        be wasteful, not just unnecessary. -->
   {#key c.sha}
-  <div transition:fade={{ duration: REDUCE_MOTION ? 0 : 120 }}>
+  <!-- .d-view (index.html): the panel is a flex column, and this is the item
+       that takes whatever height the tab strip leaves. Without a class here
+       the panel's height would stop at this wrapper — it sits between .detail
+       and .d-split, so a taller panel would never reach the diff. -->
+  <div class="d-view" transition:fade={{ duration: REDUCE_MOTION ? 0 : 120 }}>
   {#if detailPanelCtrl.commitTab === "commit"}
   <section>
     <div class="d-subject">{c.subject}</div>

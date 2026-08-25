@@ -785,7 +785,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cp-ghost.pending .spinner{display:inline-block}
 
 /* ============================== DETAIL PANEL ============================== */
-.detail{grid-area:detail;min-height:0;overflow:auto;background:var(--panel);border-left:1px solid var(--border);position:relative}
+/* A flex COLUMN, not a plain block: the tab strip takes its natural height and
+   the tab's own content (.d-view below) takes all the rest, so making the
+   panel taller actually makes its diff taller. As a block the panel's height
+   reached nothing inside it — dragging a bottom panel from 320px to 600px left
+   the content exactly where it was and added ~400px of empty panel underneath. */
+.detail{grid-area:detail;min-height:0;overflow:auto;background:var(--panel);border-left:1px solid var(--border);position:relative;
+  display:flex;flex-direction:column}
 /* Drag handles on the sidebar's right edge and the detail panel's left edge —
    live-resize the .app grid's --sidebar-w/--detail-w custom properties (see
    src/legacy/main.ts's wireResizeHandle); the existing canvas ResizeObserver
@@ -849,6 +855,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   color:var(--muted);font-size:12px;padding:7px 10px;cursor:pointer}
 .d-tab:hover{color:var(--text)}
 .d-tab.on{color:var(--text);border-bottom-color:var(--accent)}
+/* One tab's content (the wrapper both views put their active tab inside).
+   flex:1 hands it every pixel the tab strip didn't take, and its own flex
+   column passes that height on down to the "changes" tab's diff — which is
+   the whole point of being able to make the panel taller. A tab that is just
+   stacked sections overflows and scrolls HERE instead, which is what the
+   panel itself used to do. */
+.d-view{flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto}
 .detail section{padding:12px 14px;border-bottom:1px solid var(--border)}
 .detail .empty{color:var(--muted);text-align:center;padding:48px 20px;font-size:12.5px;line-height:1.7}
 .d-subject{font-size:17px;font-weight:700;font-family:var(--display);line-height:1.35;color:var(--text);letter-spacing:.1px}
@@ -1050,8 +1063,18 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .d-split{display:flex;min-height:0;flex:1}
 [data-detail-placement="right"]  .d-split{flex-direction:column}
 [data-detail-placement="bottom"] .d-split{flex-direction:row}
-.d-split-files{min-height:0;overflow:auto}
-.d-split-diff{flex:1;min-width:0;min-height:0;overflow:auto}
+/* flex:none so the size the Splitter puts on this pane (a width on the row
+   axis, a height on the column one) is the size it keeps — never shrunk to
+   make room for the diff beside/below it. */
+.d-split-files{flex:none;min-height:0;overflow:auto}
+/* The diff pane takes the rest and passes it down: its section fills the
+   pane, and .diffview fills the section. The max-height:320px .diffview
+   carries — the cramped read this whole placement setting exists to fix — is
+   for a diff sharing a scroller with everything else, so it is dropped here
+   where the diff has a pane of its own to fill. */
+.d-split-diff{flex:1;min-width:0;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.d-split-diff>section{flex:1;min-height:0;display:flex;flex-direction:column}
+.d-split-diff .diffview{flex:1;min-height:0;max-height:none}
 
 /* ============================== WORKDIR (staging + commit + stash) ==============================
    Renders in the SAME #detail slot as the sections above, swapped in by

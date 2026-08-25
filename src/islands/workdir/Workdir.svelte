@@ -149,6 +149,13 @@
     onselect={(id) => detailPanelCtrl.select("worktree", id)}
   />
 
+  <!-- .d-view (index.html): the panel is a flex column and this is the item
+       that takes whatever height the tab strip leaves, so the "changes" tab's
+       diff below can fill a taller panel instead of stopping at .diffview's
+       320px cap. It is also this tab content's own scroller — the panel used
+       to be that — so a tab of stacked sections still scrolls. Detail.svelte's
+       commit view wraps its own tabs the same way. -->
+  <div class="d-view">
   {#if detailPanelCtrl.worktreeTab === "commit"}
   <section>
     <div class="d-subject">{t("workdir.uncommitted_changes")}</div>
@@ -374,6 +381,7 @@
     {/if}
   </section>
   {/if}
+  </div>
 
   <!-- Expanded uncommitted-changes diff — the SAME near-fullscreen .diffx modal
        the commit view uses (see Detail.svelte), for reading a big working-tree
