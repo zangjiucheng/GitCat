@@ -181,10 +181,13 @@ class PluginPanelsState {
     this.runningButtons = {};
     this.tamaImg = bridge.TAMA_IMG.curious;
     this.open = true;
-    // Run each command-output widget on open. forEach index is the stable key
-    // the view reads back via outputs[i] and re-run passes to runCommandOutput.
+    // Do NOT auto-run command-output widgets on open — a command may mutate the
+    // repo (snapshot_before_mutation). Require an explicit user re-run click.
+    // Seed idle placeholders so the view still has a stable outputs[i] key.
     panel.items.forEach((item, i) => {
-      if (item.type === "command-output") void this.runCommandOutput(i);
+      if (item.type === "command-output") {
+        this.setOutput(i, { running: false, text: "", error: null });
+      }
     });
   }
 
