@@ -792,11 +792,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    the content exactly where it was and added ~400px of empty panel underneath. */
 .detail{grid-area:detail;min-height:0;overflow:auto;background:var(--panel);border-left:1px solid var(--border);position:relative;
   display:flex;flex-direction:column}
-/* Drag handles on the sidebar's right edge and the detail panel's left edge —
-   live-resize the .app grid's --sidebar-w/--detail-w custom properties (see
-   src/legacy/main.ts's wireResizeHandle); the existing canvas ResizeObserver
-   already reacts to the resulting .canvas-wrap size change, no extra wiring
-   needed there. */
+/* Drag handles on the sidebar's right edge and the detail panel's left/bottom edges —
+   drag a guide line and commit the size to the handle's own custom property
+   (`--sidebar-w`, `--detail-w` for the right placement, or `--detail-h` for
+   the bottom placement) only on release, so the layout reflows + the canvas
+   re-renders exactly once. See src/legacy/main.ts's wireResizeHandle for the details. */
 .resize-handle{position:absolute;top:0;bottom:0;width:6px;z-index:5;cursor:col-resize;background:transparent;transition:background-color .12s}
 .resize-handle:hover,.resize-handle.active{background:color-mix(in srgb,var(--accent2) 45%,transparent)}
 .sidebar-handle{right:-3px}

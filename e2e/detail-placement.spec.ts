@@ -143,10 +143,10 @@ test("expanding after a live placement switch restores both axes, not just one",
   await page.locator("#resizeDetail").click();
   await expect(page.locator("#detail")).not.toHaveClass(/collapsed/);
 
-  // Back to the bottom placement. Each handle owns a different custom
-  // property, so an expand that moved only the right handle's own left
-  // --detail-h sitting at the 28px rail: an uncollapsed panel with its
-  // content clipped and no chevron left to reopen it with.
+  // Back to the bottom placement. Both handles own separate properties, so if
+  // expanding the right handle hadn't also restored the bottom one's --detail-h
+  // from the rail, the panel would be uncollapsed but only 28px tall—content
+  // clipped and no chevron left to reopen it.
   await page.evaluate(() => document.documentElement.setAttribute("data-detail-placement", "bottom"));
   const box = (await page.locator("#detail").boundingBox())!;
   expect(box.height).toBeGreaterThan(100);
