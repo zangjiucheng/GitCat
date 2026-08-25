@@ -135,331 +135,329 @@
 
 <svelte:window on:keydown={onKeydown} />
 
-{#if workdirCtrl.selected}
-  <!-- The working tree's three tabs (Task 8): the six sections that used to
-       stack in this panel — most crampingly in the right-hand column, the
-       default, where they competed for a 344px width — now split into the
-       commit box, the staged/unstaged trees beside their diff, and the
-       stash (previously the last section, requiring a scroll to reach; now
-       one click). Same TabStrip/detailPanelCtrl registry Task 7 gave the
-       commit view, so both views share one tab-strip implementation. -->
-  <TabStrip
-    tabs={WORKTREE_VIEW_TABS}
-    active={detailPanelCtrl.worktreeTab}
-    onselect={(id) => detailPanelCtrl.select("worktree", id)}
-  />
+<!-- The working tree's three tabs (Task 8): the six sections that used to
+     stack in this panel — most crampingly in the right-hand column, the
+     default, where they competed for a 344px width — now split into the
+     commit box, the staged/unstaged trees beside their diff, and the
+     stash (previously the last section, requiring a scroll to reach; now
+     one click). Same TabStrip/detailPanelCtrl registry Task 7 gave the
+     commit view, so both views share one tab-strip implementation. -->
+<TabStrip
+  tabs={WORKTREE_VIEW_TABS}
+  active={detailPanelCtrl.worktreeTab}
+  onselect={(id) => detailPanelCtrl.select("worktree", id)}
+/>
 
-  <!-- .d-view (index.html): the panel is a flex column and this is the item
-       that takes whatever height the tab strip leaves, so the "changes" tab's
-       diff below can fill a taller panel instead of stopping at .diffview's
-       320px cap. It is also this tab content's own scroller — the panel used
-       to be that — so a tab of stacked sections still scrolls. Detail.svelte's
-       commit view wraps its own tabs the same way. -->
-  <div class="d-view">
-  {#if detailPanelCtrl.worktreeTab === "commit"}
-  <section>
-    <div class="d-subject">{t("workdir.uncommitted_changes")}</div>
-    <div class="d-body" style="margin-top:2px">
-      {#if workdirCtrl.status?.branch}
-        {t("workdir.on")} <b class="mono">{workdirCtrl.status.branch}</b>
+<!-- .d-view (index.html): the panel is a flex column and this is the item
+     that takes whatever height the tab strip leaves, so the "changes" tab's
+     diff below can fill a taller panel instead of stopping at .diffview's
+     320px cap. It is also this tab content's own scroller — the panel used
+     to be that — so a tab of stacked sections still scrolls. Detail.svelte's
+     commit view wraps its own tabs the same way. -->
+<div class="d-view">
+{#if detailPanelCtrl.worktreeTab === "commit"}
+<section>
+  <div class="d-subject">{t("workdir.uncommitted_changes")}</div>
+  <div class="d-body" style="margin-top:2px">
+    {#if workdirCtrl.status?.branch}
+      {t("workdir.on")} <b class="mono">{workdirCtrl.status.branch}</b>
+    {:else}
+      {t("workdir.detached_head")}
+    {/if}
+  </div>
+  <div class="id-strip">
+    {#if workdirCtrl.status}
+      {@const s = workdirCtrl.status}
+      {#if s.conflicted}
+        <span class="gpg bad">{t("workdir.n_conflicted", { n: s.conflicted })}</span>
+      {:else if s.staged.length || s.unstaged.length}
+        <span class="hash">{t("workdir.staged_unstaged", { staged: s.staged.length, unstaged: s.unstaged.length })}</span>
       {:else}
-        {t("workdir.detached_head")}
+        <span class="gpg good">&#10003; {t("workdir.clean")}</span>
       {/if}
-    </div>
-    <div class="id-strip">
-      {#if workdirCtrl.status}
-        {@const s = workdirCtrl.status}
-        {#if s.conflicted}
-          <span class="gpg bad">{t("workdir.n_conflicted", { n: s.conflicted })}</span>
-        {:else if s.staged.length || s.unstaged.length}
-          <span class="hash">{t("workdir.staged_unstaged", { staged: s.staged.length, unstaged: s.unstaged.length })}</span>
-        {:else}
-          <span class="gpg good">&#10003; {t("workdir.clean")}</span>
-        {/if}
-      {/if}
-      {#if workdirCtrl.loading}<span class="spinner"></span>{/if}
-    </div>
-    {#if workdirCtrl.status?.conflicted}
-      <div class="pl-err" style="margin-top:10px">
-        {t("workdir.conflicted_hint", { n: workdirCtrl.status.conflicted, files: workdirCtrl.status.conflicted === 1 ? t("workdir.file") : t("workdir.files_plural") })}
-      </div>
     {/if}
-  </section>
-
-  <section>
-    <div class="d-lab-row">
-      <h4 class="d-lab" style="margin:0">{t("workdir.commit")}</h4>
-      <button
-        class="wd-stage-all"
-        title={t("workdir.generate_tip")}
-        disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"}
-        onclick={() => workdirCtrl.generateMessage(repo())}
-      >
-        {#if workdirCtrl.generating}<span class="spinner"></span> {t("workdir.generating")}{:else}&#10024; {t("workdir.generate")}{/if}
-      </button>
+    {#if workdirCtrl.loading}<span class="spinner"></span>{/if}
+  </div>
+  {#if workdirCtrl.status?.conflicted}
+    <div class="pl-err" style="margin-top:10px">
+      {t("workdir.conflicted_hint", { n: workdirCtrl.status.conflicted, files: workdirCtrl.status.conflicted === 1 ? t("workdir.file") : t("workdir.files_plural") })}
     </div>
-    <textarea
-      class="wd-msg"
-      rows="3"
-      bind:this={msgEl}
-      placeholder={workdirCtrl.amend ? t("workdir.msg_placeholder_amend") : t("workdir.msg_placeholder")}
-      bind:value={workdirCtrl.message}
-      disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"}
-    ></textarea>
-    <div class="wd-commit-row">
-      <label class="wd-amend"
-        ><input type="checkbox" bind:checked={workdirCtrl.amend} disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"} /> {t("workdir.amend_previous")}</label
-      >
-      <button
-        class="btn"
-        disabled={(workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__") || (!workdirCtrl.amend && !workdirCtrl.message.trim())}
-        onclick={() => workdirCtrl.commit(repo())}
-      >
-        {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"}<span class="spinner"></span>{/if}
-        {workdirCtrl.amend ? t("workdir.amend") : t("workdir.commit_btn")}
-      </button>
-    </div>
-  </section>
-  {:else if detailPanelCtrl.worktreeTab === "changes"}
-  <!-- The "changes" tab: staged + unstaged trees beside their diff, same
-       .d-split/.d-split-files/.d-split-diff rules Detail.svelte's own
-       "changes" tab uses (index.html) — the axis is the only thing the
-       placement changes, read from detailPanelCtrl.changesSplitAxis (never a
-       local derivation — see that field's own doc comment on why a
-       $derived reading a DOM attribute can't track it). Keyed on the axis so
-       a live placement switch remounts the Splitter and re-seeds `filesSize`
-       from THAT axis's own storage key. -->
-  {#key detailPanelCtrl.changesSplitAxis}
-  <div class="d-split">
-    <div
-      class="d-split-files"
-      style={detailPanelCtrl.changesSplitAxis === "x" ? `width:${filesSize}px` : `height:${filesSize}px`}
-    >
-  <section>
-    <div class="wd-sec-head">
-      <h4 class="d-lab" style="margin:0">{t("workdir.staged", { n: workdirCtrl.status?.staged.length ?? 0 })}</h4>
-      <div class="wd-sec-actions">
-        {@render treeCtl("staged", workdirCtrl.stagedHasDirs)}
-        {#if workdirCtrl.status?.staged.length}
-          <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageAll(repo())}>
-            {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__unstage_all__"}<span class="spinner"></span>{:else}{t("workdir.unstage_all")}{/if}
-          </button>
-        {/if}
-      </div>
-    </div>
-    {#if !workdirCtrl.status?.staged.length}
-      <div class="mut" style="font-size:12px">{t("workdir.nothing_staged")}</div>
-    {:else}
-      <div class="wd-files tree">
-        {@render stagedDirNode(workdirCtrl.stagedTree)}
-      </div>
-    {/if}
-  </section>
-
-  <section>
-    <div class="wd-sec-head">
-      <h4 class="d-lab" style="margin:0">{t("workdir.unstaged", { n: workdirCtrl.status?.unstaged.length ?? 0 })}</h4>
-      <div class="wd-sec-actions">
-        {@render treeCtl("unstaged", workdirCtrl.unstagedHasDirs)}
-        {#if workdirCtrl.status?.unstaged.length}
-          <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageAll(repo())}>
-            {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__all__"}<span class="spinner"></span>{:else}{t("workdir.stage_all")}{/if}
-          </button>
-        {/if}
-        {#if workdirCtrl.hasChanges}
-          <button
-            class="wd-stage-all wd-discard-all"
-            disabled={workdirCtrl.busy}
-            title={t("workdir.discard_all_tip")}
-            onclick={() => workdirCtrl.discardAll(repo())}
-          >
-            {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__discard_all__"}<span class="spinner"></span>{:else}{t("workdir.discard_all")}{/if}
-          </button>
-        {/if}
-      </div>
-    </div>
-    {#if !workdirCtrl.status?.unstaged.length}
-      <div class="mut" style="font-size:12px">{t("workdir.no_unstaged")}</div>
-    {:else}
-      <div class="wd-files tree">
-        {@render unstagedDirNode(workdirCtrl.unstagedTree)}
-      </div>
-    {/if}
-  </section>
-    </div>
-    <Splitter
-      axis={detailPanelCtrl.changesSplitAxis}
-      bind:size={filesSize}
-      min={WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].min}
-      max={WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].max}
-      defaultSize={WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].defaultSize}
-      label={t("workdir.resize_file_list")}
-      storageKey={WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].storageKey}
-    />
-    <div class="d-split-diff">
-  {#if workdirCtrl.selectedDiffFile}
-    {@const file = workdirCtrl.selectedDiffFile}
-    <section>
-      <div class="wd-sec-head">
-        <h4 class="d-lab" style="margin:0">{t("workdir.diff")}</h4>
-        {@render workdirLinesBar(file)}
-        <button class="wd-act" title={t("workdir.expand_diff")} aria-label={t("workdir.expand_diff_aria")} onclick={() => workdirCtrl.expandDiff()}>
-          <Maximize2 class="ico" size={13} aria-hidden="true" />
-        </button>
-      </div>
-      <div class="diffview" bind:this={diffviewEl}>
-        {@render workdirDiffBody(file)}
-      </div>
-    </section>
   {/if}
+</section>
+
+<section>
+  <div class="d-lab-row">
+    <h4 class="d-lab" style="margin:0">{t("workdir.commit")}</h4>
+    <button
+      class="wd-stage-all"
+      title={t("workdir.generate_tip")}
+      disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"}
+      onclick={() => workdirCtrl.generateMessage(repo())}
+    >
+      {#if workdirCtrl.generating}<span class="spinner"></span> {t("workdir.generating")}{:else}&#10024; {t("workdir.generate")}{/if}
+    </button>
+  </div>
+  <textarea
+    class="wd-msg"
+    rows="3"
+    bind:this={msgEl}
+    placeholder={workdirCtrl.amend ? t("workdir.msg_placeholder_amend") : t("workdir.msg_placeholder")}
+    bind:value={workdirCtrl.message}
+    disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"}
+  ></textarea>
+  <div class="wd-commit-row">
+    <label class="wd-amend"
+      ><input type="checkbox" bind:checked={workdirCtrl.amend} disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"} /> {t("workdir.amend_previous")}</label
+    >
+    <button
+      class="btn"
+      disabled={(workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__") || (!workdirCtrl.amend && !workdirCtrl.message.trim())}
+      onclick={() => workdirCtrl.commit(repo())}
+    >
+      {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__commit__"}<span class="spinner"></span>{/if}
+      {workdirCtrl.amend ? t("workdir.amend") : t("workdir.commit_btn")}
+    </button>
+  </div>
+</section>
+{:else if detailPanelCtrl.worktreeTab === "changes"}
+<!-- The "changes" tab: staged + unstaged trees beside their diff, same
+     .d-split/.d-split-files/.d-split-diff rules Detail.svelte's own
+     "changes" tab uses (index.html) — the axis is the only thing the
+     placement changes, read from detailPanelCtrl.changesSplitAxis (never a
+     local derivation — see that field's own doc comment on why a
+     $derived reading a DOM attribute can't track it). Keyed on the axis so
+     a live placement switch remounts the Splitter and re-seeds `filesSize`
+     from THAT axis's own storage key. -->
+{#key detailPanelCtrl.changesSplitAxis}
+<div class="d-split">
+  <div
+    class="d-split-files"
+    style={detailPanelCtrl.changesSplitAxis === "x" ? `width:${filesSize}px` : `height:${filesSize}px`}
+  >
+<section>
+  <div class="wd-sec-head">
+    <h4 class="d-lab" style="margin:0">{t("workdir.staged", { n: workdirCtrl.status?.staged.length ?? 0 })}</h4>
+    <div class="wd-sec-actions">
+      {@render treeCtl("staged", workdirCtrl.stagedHasDirs)}
+      {#if workdirCtrl.status?.staged.length}
+        <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageAll(repo())}>
+          {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__unstage_all__"}<span class="spinner"></span>{:else}{t("workdir.unstage_all")}{/if}
+        </button>
+      {/if}
     </div>
   </div>
-  {/key}
+  {#if !workdirCtrl.status?.staged.length}
+    <div class="mut" style="font-size:12px">{t("workdir.nothing_staged")}</div>
   {:else}
+    <div class="wd-files tree">
+      {@render stagedDirNode(workdirCtrl.stagedTree)}
+    </div>
+  {/if}
+</section>
+
+<section>
+  <div class="wd-sec-head">
+    <h4 class="d-lab" style="margin:0">{t("workdir.unstaged", { n: workdirCtrl.status?.unstaged.length ?? 0 })}</h4>
+    <div class="wd-sec-actions">
+      {@render treeCtl("unstaged", workdirCtrl.unstagedHasDirs)}
+      {#if workdirCtrl.status?.unstaged.length}
+        <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageAll(repo())}>
+          {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__all__"}<span class="spinner"></span>{:else}{t("workdir.stage_all")}{/if}
+        </button>
+      {/if}
+      {#if workdirCtrl.hasChanges}
+        <button
+          class="wd-stage-all wd-discard-all"
+          disabled={workdirCtrl.busy}
+          title={t("workdir.discard_all_tip")}
+          onclick={() => workdirCtrl.discardAll(repo())}
+        >
+          {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__discard_all__"}<span class="spinner"></span>{:else}{t("workdir.discard_all")}{/if}
+        </button>
+      {/if}
+    </div>
+  </div>
+  {#if !workdirCtrl.status?.unstaged.length}
+    <div class="mut" style="font-size:12px">{t("workdir.no_unstaged")}</div>
+  {:else}
+    <div class="wd-files tree">
+      {@render unstagedDirNode(workdirCtrl.unstagedTree)}
+    </div>
+  {/if}
+</section>
+  </div>
+  <Splitter
+    axis={detailPanelCtrl.changesSplitAxis}
+    bind:size={filesSize}
+    min={WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].min}
+    max={WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].max}
+    defaultSize={WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].defaultSize}
+    label={t("workdir.resize_file_list")}
+    storageKey={WORKTREE_CHANGES_SPLIT[detailPanelCtrl.changesSplitAxis].storageKey}
+  />
+  <div class="d-split-diff">
+{#if workdirCtrl.selectedDiffFile}
+  {@const file = workdirCtrl.selectedDiffFile}
   <section>
     <div class="wd-sec-head">
-      <h4 class="d-lab" style="margin:0">{t("workdir.stash")}</h4>
+      <h4 class="d-lab" style="margin:0">{t("workdir.diff")}</h4>
+      {@render workdirLinesBar(file)}
+      <button class="wd-act" title={t("workdir.expand_diff")} aria-label={t("workdir.expand_diff_aria")} onclick={() => workdirCtrl.expandDiff()}>
+        <Maximize2 class="ico" size={13} aria-hidden="true" />
+      </button>
     </div>
-    {#if !workdirCtrl.stashes.length}
-      <div class="mut" style="font-size:12px">{t("workdir.no_stashes")}</div>
-    {:else}
-      <div class="wd-stash-list">
-        {#each workdirCtrl.stashes as s (s.index)}
-          <div class="wd-stash-item">
-            <span class="dot" style="background:var(--accent2)"></span>
-            <div class="wd-stash-main">
-              <span class="wd-stash-msg">{s.message || t("workdir.no_message")}</span>
-              <span class="wd-stash-meta mut mono">stash@{"{" + s.index + "}"} &#183; {s.sha}{s.branch ? " · " + s.branch : ""}</span>
-            </div>
-            {#if workdirCtrl.stashBusy && workdirCtrl.stashBusyTarget === s.index}
-              <span class="spinner"></span>
-            {:else}
-              <div class="wd-stash-act">
-                <button title={t("workdir.stash_apply_tip")} disabled={workdirCtrl.stashBusy} onclick={() => workdirCtrl.applyStash(repo(), s.index)}>{t("workdir.apply")}</button>
-                <button title={t("workdir.stash_pop_tip")} disabled={workdirCtrl.stashBusy} onclick={() => workdirCtrl.popStash(repo(), s.index)}>{t("workdir.pop")}</button>
-                <button
-                  class="danger"
-                  title={t("workdir.stash_drop_tip")}
-                  disabled={workdirCtrl.stashBusy}
-                  onclick={() => workdirCtrl.confirmDropStash(repo(), s.index)}><Trash2 class="ico" size={12} aria-hidden="true" /></button
-                >
-              </div>
-            {/if}
+    <div class="diffview" bind:this={diffviewEl}>
+      {@render workdirDiffBody(file)}
+    </div>
+  </section>
+{/if}
+  </div>
+</div>
+{/key}
+{:else}
+<section>
+  <div class="wd-sec-head">
+    <h4 class="d-lab" style="margin:0">{t("workdir.stash")}</h4>
+  </div>
+  {#if !workdirCtrl.stashes.length}
+    <div class="mut" style="font-size:12px">{t("workdir.no_stashes")}</div>
+  {:else}
+    <div class="wd-stash-list">
+      {#each workdirCtrl.stashes as s (s.index)}
+        <div class="wd-stash-item">
+          <span class="dot" style="background:var(--accent2)"></span>
+          <div class="wd-stash-main">
+            <span class="wd-stash-msg">{s.message || t("workdir.no_message")}</span>
+            <span class="wd-stash-meta mut mono">stash@{"{" + s.index + "}"} &#183; {s.sha}{s.branch ? " · " + s.branch : ""}</span>
           </div>
-        {/each}
-      </div>
-    {/if}
-
-    {#if workdirCtrl.stashOpen}
-      <div class="wd-stash-form" class:busy={workdirCtrl.busy && workdirCtrl.busyTarget === "__stash__"}>
-        <input
-          placeholder={t("workdir.stash_msg_placeholder")}
-          spellcheck="false"
-          autocomplete="off"
-          bind:value={workdirCtrl.stashMessage}
-          disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__stash__"}
-          onkeydown={(e) => e.key === "Enter" && workdirCtrl.saveStash(repo())}
-        />
-        <div class="nb-row">
-          <label class="wd-amend"
-            ><input
-              type="checkbox"
-              bind:checked={workdirCtrl.stashIncludeUntracked}
-              disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__stash__"}
-            /> {t("workdir.include_untracked")}</label
-          >
-          {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__stash__"}
+          {#if workdirCtrl.stashBusy && workdirCtrl.stashBusyTarget === s.index}
             <span class="spinner"></span>
           {:else}
-            <button class="btn ghost" style="padding:4px 10px" onclick={() => workdirCtrl.cancelStashForm()}>{t("common.cancel")}</button>
-            <button class="btn" style="padding:4px 10px" onclick={() => workdirCtrl.saveStash(repo())}>{t("common.save")}</button>
+            <div class="wd-stash-act">
+              <button title={t("workdir.stash_apply_tip")} disabled={workdirCtrl.stashBusy} onclick={() => workdirCtrl.applyStash(repo(), s.index)}>{t("workdir.apply")}</button>
+              <button title={t("workdir.stash_pop_tip")} disabled={workdirCtrl.stashBusy} onclick={() => workdirCtrl.popStash(repo(), s.index)}>{t("workdir.pop")}</button>
+              <button
+                class="danger"
+                title={t("workdir.stash_drop_tip")}
+                disabled={workdirCtrl.stashBusy}
+                onclick={() => workdirCtrl.confirmDropStash(repo(), s.index)}><Trash2 class="ico" size={12} aria-hidden="true" /></button
+              >
+            </div>
           {/if}
         </div>
-      </div>
-    {:else}
-      <button class="wd-stash-new" onclick={() => workdirCtrl.openStashForm()}>&#65291; {t("workdir.stash_changes")}</button>
-    {/if}
-  </section>
+      {/each}
+    </div>
   {/if}
-  </div>
 
-  <!-- Expanded uncommitted-changes diff — the SAME near-fullscreen .diffx modal
-       the commit view uses (see Detail.svelte), for reading a big working-tree
-       change comfortably: the staged/unstaged file lists on the left, the
-       selected file's diff (with the full per-hunk / per-line staging intact) on
-       the right. A top-level scrim so it's a direct child of .detail, same as
-       the commit modal (index.html's `.detail.collapsed>*:not(.scrim)` exempts
-       it from the Focus-mode panel collapse). -->
-  <div class="scrim" class:on={workdirCtrl.diffExpanded}>
-    <div class="modal diffx">
-      <div class="modal-head">
-        <div class="diffx-head-main">
-          <h3>{t("workdir.uncommitted_changes")}</h3>
-          <p>{#if workdirCtrl.status?.branch}{t("workdir.on")} <span class="mono">{workdirCtrl.status.branch}</span>{:else}{t("workdir.detached_head")}{/if}</p>
-        </div>
-      </div>
-      <div class="modal-body diffx-body">
-        <div class="diffx-files" style="width:{diffxTreeW}px">
-          <div class="diffx-files-scroll tree" data-vimnav-list>
-            <div class="diffx-files-head">
-              <span class="d-lab" style="margin:0">{t("workdir.staged", { n: workdirCtrl.status?.staged.length ?? 0 })}</span>
-              <div class="wd-sec-actions">
-                {@render treeCtl("staged", workdirCtrl.stagedHasDirs)}
-                {#if workdirCtrl.status?.staged.length}
-                  <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageAll(repo())}>
-                    {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__unstage_all__"}<span class="spinner"></span>{:else}{t("workdir.unstage_all")}{/if}
-                  </button>
-                {/if}
-              </div>
-            </div>
-            {#if !workdirCtrl.status?.staged.length}
-              <div class="mut" style="font-size:12px;padding:2px 4px">{t("workdir.nothing_staged")}</div>
-            {:else}
-              {@render stagedDirNode(workdirCtrl.stagedTree)}
-            {/if}
-            <div class="diffx-files-head" style="margin-top:12px">
-              <span class="d-lab" style="margin:0">{t("workdir.unstaged", { n: workdirCtrl.status?.unstaged.length ?? 0 })}</span>
-              <div class="wd-sec-actions">
-                {@render treeCtl("unstaged", workdirCtrl.unstagedHasDirs)}
-                {#if workdirCtrl.status?.unstaged.length}
-                  <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageAll(repo())}>
-                    {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__all__"}<span class="spinner"></span>{:else}{t("workdir.stage_all")}{/if}
-                  </button>
-                {/if}
-              </div>
-            </div>
-            {#if !workdirCtrl.status?.unstaged.length}
-              <div class="mut" style="font-size:12px;padding:2px 4px">{t("workdir.no_unstaged")}</div>
-            {:else}
-              {@render unstagedDirNode(workdirCtrl.unstagedTree)}
-            {/if}
-          </div>
-        </div>
-        <Splitter
-          axis="x"
-          bind:size={diffxTreeW}
-          min={160}
-          max={620}
-          defaultSize={280}
-          label={t("workdir.resize_file_list")}
-          storageKey="gitcat.diffxTreeW"
-        />
-        <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
-          {#if workdirCtrl.selectedDiffFile}
-            {@const file = workdirCtrl.selectedDiffFile}
-            {@render workdirLinesBar(file)}
-            {@render workdirDiffBody(file)}
-          {:else}
-            <div class="diff-file-h mut">{t("workdir.select_file_hint")}</div>
-          {/if}
-        </div>
-      </div>
-      <div class="modal-foot">
-        <button class="btn ghost" onclick={() => workdirCtrl.collapseDiff()}>{t("common.close")}</button>
+  {#if workdirCtrl.stashOpen}
+    <div class="wd-stash-form" class:busy={workdirCtrl.busy && workdirCtrl.busyTarget === "__stash__"}>
+      <input
+        placeholder={t("workdir.stash_msg_placeholder")}
+        spellcheck="false"
+        autocomplete="off"
+        bind:value={workdirCtrl.stashMessage}
+        disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__stash__"}
+        onkeydown={(e) => e.key === "Enter" && workdirCtrl.saveStash(repo())}
+      />
+      <div class="nb-row">
+        <label class="wd-amend"
+          ><input
+            type="checkbox"
+            bind:checked={workdirCtrl.stashIncludeUntracked}
+            disabled={workdirCtrl.busy && workdirCtrl.busyTarget === "__stash__"}
+          /> {t("workdir.include_untracked")}</label
+        >
+        {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__stash__"}
+          <span class="spinner"></span>
+        {:else}
+          <button class="btn ghost" style="padding:4px 10px" onclick={() => workdirCtrl.cancelStashForm()}>{t("common.cancel")}</button>
+          <button class="btn" style="padding:4px 10px" onclick={() => workdirCtrl.saveStash(repo())}>{t("common.save")}</button>
+        {/if}
       </div>
     </div>
-  </div>
+  {:else}
+    <button class="wd-stash-new" onclick={() => workdirCtrl.openStashForm()}>&#65291; {t("workdir.stash_changes")}</button>
+  {/if}
+</section>
 {/if}
+</div>
+
+<!-- Expanded uncommitted-changes diff — the SAME near-fullscreen .diffx modal
+     the commit view uses (see Detail.svelte), for reading a big working-tree
+     change comfortably: the staged/unstaged file lists on the left, the
+     selected file's diff (with the full per-hunk / per-line staging intact) on
+     the right. A top-level scrim so it's a direct child of .detail, same as
+     the commit modal (index.html's `.detail.collapsed>*:not(.scrim)` exempts
+     it from the Focus-mode panel collapse). -->
+<div class="scrim" class:on={workdirCtrl.diffExpanded}>
+  <div class="modal diffx">
+    <div class="modal-head">
+      <div class="diffx-head-main">
+        <h3>{t("workdir.uncommitted_changes")}</h3>
+        <p>{#if workdirCtrl.status?.branch}{t("workdir.on")} <span class="mono">{workdirCtrl.status.branch}</span>{:else}{t("workdir.detached_head")}{/if}</p>
+      </div>
+    </div>
+    <div class="modal-body diffx-body">
+      <div class="diffx-files" style="width:{diffxTreeW}px">
+        <div class="diffx-files-scroll tree" data-vimnav-list>
+          <div class="diffx-files-head">
+            <span class="d-lab" style="margin:0">{t("workdir.staged", { n: workdirCtrl.status?.staged.length ?? 0 })}</span>
+            <div class="wd-sec-actions">
+              {@render treeCtl("staged", workdirCtrl.stagedHasDirs)}
+              {#if workdirCtrl.status?.staged.length}
+                <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.unstageAll(repo())}>
+                  {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__unstage_all__"}<span class="spinner"></span>{:else}{t("workdir.unstage_all")}{/if}
+                </button>
+              {/if}
+            </div>
+          </div>
+          {#if !workdirCtrl.status?.staged.length}
+            <div class="mut" style="font-size:12px;padding:2px 4px">{t("workdir.nothing_staged")}</div>
+          {:else}
+            {@render stagedDirNode(workdirCtrl.stagedTree)}
+          {/if}
+          <div class="diffx-files-head" style="margin-top:12px">
+            <span class="d-lab" style="margin:0">{t("workdir.unstaged", { n: workdirCtrl.status?.unstaged.length ?? 0 })}</span>
+            <div class="wd-sec-actions">
+              {@render treeCtl("unstaged", workdirCtrl.unstagedHasDirs)}
+              {#if workdirCtrl.status?.unstaged.length}
+                <button class="wd-stage-all" disabled={workdirCtrl.busy} onclick={() => workdirCtrl.stageAll(repo())}>
+                  {#if workdirCtrl.busy && workdirCtrl.busyTarget === "__all__"}<span class="spinner"></span>{:else}{t("workdir.stage_all")}{/if}
+                </button>
+              {/if}
+            </div>
+          </div>
+          {#if !workdirCtrl.status?.unstaged.length}
+            <div class="mut" style="font-size:12px;padding:2px 4px">{t("workdir.no_unstaged")}</div>
+          {:else}
+            {@render unstagedDirNode(workdirCtrl.unstagedTree)}
+          {/if}
+        </div>
+      </div>
+      <Splitter
+        axis="x"
+        bind:size={diffxTreeW}
+        min={160}
+        max={620}
+        defaultSize={280}
+        label={t("workdir.resize_file_list")}
+        storageKey="gitcat.diffxTreeW"
+      />
+      <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
+        {#if workdirCtrl.selectedDiffFile}
+          {@const file = workdirCtrl.selectedDiffFile}
+          {@render workdirLinesBar(file)}
+          {@render workdirDiffBody(file)}
+        {:else}
+          <div class="diff-file-h mut">{t("workdir.select_file_hint")}</div>
+        {/if}
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick={() => workdirCtrl.collapseDiff()}>{t("common.close")}</button>
+    </div>
+  </div>
+</div>
 
 <!-- Per-file right-click menu (opened from an unstaged file row's contextmenu).
      A transparent full-screen backdrop dismisses it on the next click/right-
