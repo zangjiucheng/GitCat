@@ -50,7 +50,7 @@ function output(partial: Partial<CommandOutput>): CommandOutput {
   return { stdout: "", exitCode: 0, success: true, ...partial };
 }
 
-// Let queued microtasks/timers settle (openPanel kicks off command-output runs
+// Let queued microtasks/timers settle (openPanel used to kick off command-output runs
 // without awaiting them).
 function flush(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0));
@@ -188,30 +188,26 @@ describe("openPanel — modal state + command-output runs", () => {
     expect(pluginPanelsCtrl.panel?.id).toBe("info");
   });
 
-  it("runs each command-output item on open (declarative runPluginCommand, repo ctx)", async () => {
+  it("does NOT auto-run command-output items on open (avoids silent repo mutation)", async () => {
     await loadAcme();
     vi.mocked(commands.runPluginCommand).mockResolvedValue(ok(output({ stdout: "on branch main" })));
 
     pluginPanelsCtrl.openPanel("acme", "info");
     await flush();
 
-    // The panel's single command-output widget (item index 3) ran.
-    expect(commands.runPluginCommand).toHaveBeenCalledTimes(1);
-    expect(commands.runPluginCommand).toHaveBeenCalledWith("acme", "status", expect.objectContaining({ repo: "/repo", sha: null }));
-    expect(pluginPanelsCtrl.outputs[3]).toMatchObject({ running: false, text: "on branch main", error: null });
+    // Opening only seeds idle slots — no backend command runs until the user clicks.
+    expect(commands.runPluginCommand).not.toHaveBeenCalled();
+    expect(pluginPanelsCtrl.outputs[3]).toMatchObject({ running: false, text: "", error: null });
   });
 
-  it("the button widget does NOT auto-run on open (only command-output does)", async () => {
+  it("button widgets also do not auto-run on open", async () => {
     await loadAcme();
     vi.mocked(commands.runPluginCommand).mockResolvedValue(ok(output({ stdout: "x" })));
 
     pluginPanelsCtrl.openPanel("acme", "info");
     await flush();
 
-    // Only "status" (command-output) ran — never the "doit" button command.
-    const called = vi.mocked(commands.runPluginCommand).mock.calls.map((c) => c[1]);
-    expect(called).toEqual(["status"]);
-    expect(called).not.toContain("doit");
+    expect(commands.runPluginCommand).not.toHaveBeenCalled();
   });
 
   it("a non-zero command-output still shows stdout, with an exit note", async () => {
@@ -220,6 +216,7 @@ describe("openPanel — modal state + command-output runs", () => {
 
     pluginPanelsCtrl.openPanel("acme", "info");
     await flush();
+    await pluginPanelsCtrl.runCommandOutput(3);
 
     expect(pluginPanelsCtrl.outputs[3]).toMatchObject({ text: "partial", error: "Exited 2." });
   });
@@ -230,6 +227,7 @@ describe("openPanel — modal state + command-output runs", () => {
 
     pluginPanelsCtrl.openPanel("acme", "info");
     await flush();
+    await pluginPanelsCtrl.runCommandOutput(3);
 
     expect(pluginPanelsCtrl.outputs[3]).toMatchObject({ running: false, text: "", error: "no such command" });
   });
@@ -239,6 +237,7 @@ describe("openPanel — modal state + command-output runs", () => {
     vi.mocked(commands.runPluginCommand).mockResolvedValue(ok(output({ stdout: "first" })));
     pluginPanelsCtrl.openPanel("acme", "info");
     await flush();
+    await pluginPanelsCtrl.runCommandOutput(3);
     expect(pluginPanelsCtrl.outputs[3]?.text).toBe("first");
 
     vi.mocked(commands.runPluginCommand).mockResolvedValue(ok(output({ stdout: "second" })));

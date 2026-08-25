@@ -1,0 +1,8 @@
+fix: Do not auto-run plugin panel command-output on open
+
+- Opening a panel no longer executes command-output widgets
+- Seed idle output slots; user must click re-run to execute (avoids silent repo mutation)
+
+Fixes #61
+
+Signed-off-by: Vedant Madane <6527493+VedantMadane@users.noreply.github.com>
