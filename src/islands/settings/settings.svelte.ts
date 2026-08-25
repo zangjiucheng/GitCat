@@ -473,6 +473,34 @@ export function applyPersistedTamaMotion(): void {
 // the plain-filled-in-fields case.
 const DEMO_IDENTITY: GitIdentity = { name: "Demo User", email: "demo@example.com", configured: true, local: false };
 
+/**
+ * The persisted prefs, read ONCE at module init, so the `$state` fields below
+ * can start out holding what is actually saved rather than `DEFAULTS`.
+ *
+ * They used to seed only inside `show()`, which meant that from boot until the
+ * user first opened the Settings dialog the store disagreed with the DOM: the
+ * boot sequence (legacy/main.ts) reads `loadSettings()` directly and applies
+ * the saved values to the document, while anything reading the store got the
+ * default. For `detailPanelPlacement` that was visible breakage, not just
+ * untidiness — `detailPanelCtrl.changesSplitAxis` derives the "changes" tab's
+ * split axis from this field, so a user whose saved placement was "bottom"
+ * booted with CSS laying the two panes out in a row while Svelte rendered the
+ * stacked-axis splitter for them: a 0px-wide, undraggable divider, a pane
+ * given a height where it needed a width, and pane sizes loaded from the wrong
+ * storage key. Opening and closing Settings silently repaired it.
+ *
+ * Seeded for every app-level pref, not just that one field: the desync was a
+ * property of *when* the seed ran, not of which field it ran for, and the same
+ * shape was already reachable through `tamaEnabled` (Detail.svelte's hero
+ * bubble reads it directly). `show()` still re-reads storage on every open —
+ * this only fixes the window before the first open.
+ *
+ * Read at init rather than lazily per field so every field sees ONE consistent
+ * snapshot, and so a storage failure is handled once (loadSettings falls back
+ * to DEFAULTS internally).
+ */
+const BOOT = loadSettings();
+
 class SettingsState {
   open = $state(false);
   activeTab = $state<SettingsTab>("general");
@@ -510,23 +538,23 @@ class SettingsState {
   }
 
   // ── app-level prefs (instant-apply, no Save button) ─────────────────────
-  themeMode = $state<ThemeMode>(DEFAULTS.themeMode);
-  cherryPickRecordOriginDefault = $state(DEFAULTS.cherryPickRecordOriginDefault);
-  autoCheckUpdates = $state(DEFAULTS.autoCheckUpdates);
-  useNightlyChannel = $state(DEFAULTS.useNightlyChannel);
-  soundEffectsEnabled = $state(DEFAULTS.soundEffectsEnabled);
-  soundEffectsVolume = $state(DEFAULTS.soundEffectsVolume);
-  showAllCommitTags = $state(DEFAULTS.showAllCommitTags);
-  graphLabelPriority = $state<GraphLabelPriority>(DEFAULTS.graphLabelPriority);
-  graphLabelLayout = $state<GraphLabelLayout>(DEFAULTS.graphLabelLayout);
-  detailPanelPlacement = $state<DetailPanelPlacement>(DEFAULTS.detailPanelPlacement);
-  autoFetchEnabled = $state(DEFAULTS.autoFetchEnabled);
-  autoFetchIntervalMinutes = $state(DEFAULTS.autoFetchIntervalMinutes);
-  autoMaintenanceEnabled = $state(DEFAULTS.autoMaintenanceEnabled);
-  snapshotRetentionMode = $state<SnapshotRetentionMode>(DEFAULTS.snapshotRetentionMode);
-  snapshotRetentionCount = $state(DEFAULTS.snapshotRetentionCount);
-  snapshotRetentionDays = $state(DEFAULTS.snapshotRetentionDays);
-  tamaEnabled = $state(DEFAULTS.tamaEnabled);
+  themeMode = $state<ThemeMode>(BOOT.themeMode);
+  cherryPickRecordOriginDefault = $state(BOOT.cherryPickRecordOriginDefault);
+  autoCheckUpdates = $state(BOOT.autoCheckUpdates);
+  useNightlyChannel = $state(BOOT.useNightlyChannel);
+  soundEffectsEnabled = $state(BOOT.soundEffectsEnabled);
+  soundEffectsVolume = $state(BOOT.soundEffectsVolume);
+  showAllCommitTags = $state(BOOT.showAllCommitTags);
+  graphLabelPriority = $state<GraphLabelPriority>(BOOT.graphLabelPriority);
+  graphLabelLayout = $state<GraphLabelLayout>(BOOT.graphLabelLayout);
+  detailPanelPlacement = $state<DetailPanelPlacement>(BOOT.detailPanelPlacement);
+  autoFetchEnabled = $state(BOOT.autoFetchEnabled);
+  autoFetchIntervalMinutes = $state(BOOT.autoFetchIntervalMinutes);
+  autoMaintenanceEnabled = $state(BOOT.autoMaintenanceEnabled);
+  snapshotRetentionMode = $state<SnapshotRetentionMode>(BOOT.snapshotRetentionMode);
+  snapshotRetentionCount = $state(BOOT.snapshotRetentionCount);
+  snapshotRetentionDays = $state(BOOT.snapshotRetentionDays);
+  tamaEnabled = $state(BOOT.tamaEnabled);
 
   // ── Tama motion + expression remap (PER-54) — app-level, pure frontend ────
   // The motion preset drives her idle-animation liveliness + state-change timing
@@ -535,15 +563,15 @@ class SettingsState {
   // localStorage in show() and re-apply at boot (applyPersistedTamaMotion). The
   // override map is copied on seed/write (never mutated in place) so each $state
   // reassignment is actually observed.
-  tamaMotionPreset = $state<TamaMotionPreset>(DEFAULTS.tamaMotionPreset);
-  tamaPoseOverrides = $state<Record<string, string>>({ ...DEFAULTS.tamaPoseOverrides });
+  tamaMotionPreset = $state<TamaMotionPreset>(BOOT.tamaMotionPreset);
+  tamaPoseOverrides = $state<Record<string, string>>({ ...BOOT.tamaPoseOverrides });
 
   // ── Tama skin picker (PER-47) — app-level, NOT repo-scoped ──────────────
   // The active skin's plugin id (null = built-in). Seeded from localStorage in
   // show(); the picker's <select> binds to it. tamaSkinBusy disables the
   // control while a load is in flight; tamaSkinError surfaces an interactive
   // load failure (the boot path stays silent — see applyPersistedTamaSkin).
-  tamaSkinPluginId = $state<string | null>(DEFAULTS.tamaSkinPluginId);
+  tamaSkinPluginId = $state<string | null>(BOOT.tamaSkinPluginId);
   tamaSkinBusy = $state(false);
   tamaSkinError = $state("");
 

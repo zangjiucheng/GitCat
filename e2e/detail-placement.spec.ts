@@ -238,3 +238,79 @@ test("each view remembers its own tab across a switch", async ({ page }) => {
   await page.locator("#gotoHeadBtn").click();
   await expect(page.locator("#detail .d-tabs .d-tab").nth(1)).toHaveClass(/\bon\b/);
 });
+
+// The panel's placement reaches the DOM twice, from two independent readers:
+// legacy/main.ts stamps `data-detail-placement` on <html> from its own boot
+// `loadSettings()`, and the islands render from `settingsCtrl`. Asserting only
+// the attribute — which every test above this one does — cannot see the two
+// disagreeing, which is exactly how a boot where the store still held the
+// default shipped. These two check the island side.
+test("the island renders the saved placement at boot, not just the root attribute", async ({ page }) => {
+  await page.goto("/");
+  await skipWizard(page);
+  await usePlacement(page, "bottom");
+  await page.locator("#gotoHeadBtn").click();
+  await page.locator("#detail .d-tabs .d-tab").nth(1).click();
+
+  await expect(page.locator("html")).toHaveAttribute("data-detail-placement", "bottom");
+
+  // Everything below is rendered from detailPanelCtrl.changesSplitAxis, i.e.
+  // from settingsCtrl — not from the attribute above. Bottom lays the two
+  // panes out in a row, so the divider is the vertical kind (dragged along x)
+  // and the file pane is sized by WIDTH.
+  const splitter = page.locator("#detail .d-split > .d-splitter");
+  await expect(splitter).not.toHaveClass(/\bvert\b/);
+  await expect(splitter).toHaveAttribute("aria-orientation", "vertical");
+  const box = (await splitter.boundingBox())!;
+  expect(box.width, "a row-axis divider needs a grabbable width").toBeGreaterThan(0);
+  await expect(page.locator("#detail .d-split-files")).toHaveAttribute("style", /width:/);
+
+  // And the mirror, so this can't pass by rendering one axis unconditionally.
+  await usePlacement(page, "right");
+  await page.locator("#gotoHeadBtn").click();
+  await page.locator("#detail .d-tabs .d-tab").nth(1).click();
+  await expect(page.locator("#detail .d-split > .d-splitter")).toHaveClass(/\bvert\b/);
+  await expect(page.locator("#detail .d-split-files")).toHaveAttribute("style", /height:/);
+});
+
+test("the changes divider drags, and resizes the file pane, in both placements", async ({ page }) => {
+  await page.goto("/");
+  await skipWizard(page);
+  await page.locator("#gotoHeadBtn").click();
+  await page.locator("#detail .d-tabs .d-tab").nth(1).click();
+
+  const files = page.locator("#detail .d-split-files");
+  const splitter = page.locator("#detail .d-split > .d-splitter");
+
+  // Right placement: the panes stack, so the divider drags DOWN and the file
+  // pane gets taller.
+  const beforeY = (await files.boundingBox())!;
+  const hbY = (await splitter.boundingBox())!;
+  expect(hbY.height, "a column-axis divider needs a grabbable height").toBeGreaterThan(0);
+  await splitter.hover();
+  await page.mouse.move(hbY.x + hbY.width / 2, hbY.y + hbY.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hbY.x + hbY.width / 2, hbY.y + hbY.height / 2 + 90);
+  await page.mouse.up();
+  const afterY = (await files.boundingBox())!;
+  expect(afterY.height).toBeGreaterThan(beforeY.height + 60);
+
+  // Bottom placement: the panes sit side by side, so the divider drags RIGHT
+  // and the file pane gets wider. This is the half that a store still holding
+  // the default placement at boot could not do at all — the divider rendered
+  // as the stacked kind, 0px wide and impossible to grab.
+  await usePlacement(page, "bottom");
+  await page.locator("#gotoHeadBtn").click();
+  await page.locator("#detail .d-tabs .d-tab").nth(1).click();
+
+  const beforeX = (await files.boundingBox())!;
+  const hbX = (await splitter.boundingBox())!;
+  expect(hbX.width, "a row-axis divider needs a grabbable width").toBeGreaterThan(0);
+  await splitter.hover();
+  await page.mouse.move(hbX.x + hbX.width / 2, hbX.y + hbX.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hbX.x + hbX.width / 2 + 90, hbX.y + hbX.height / 2);
+  await page.mouse.up();
+  const afterX = (await files.boundingBox())!;
+  expect(afterX.width).toBeGreaterThan(beforeX.width + 60);
+});
