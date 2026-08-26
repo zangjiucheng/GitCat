@@ -29,7 +29,22 @@
 // rather than hanging, so a test's first failure always points at the gap.
 import { test as base, expect, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { TempRepo } from "./tempRepo";
+
+// One recorded invoke — command name plus its raw args — pushed by the
+// staging-command cases below so a spec can assert "the mock backend
+// received the expected command with the expected arguments" without the
+// mock having to actually replay the mutation against the fixture repo (see
+// RecordedCall's own case-by-case doc comments: these handlers deliberately
+// return a plausible canned WorkdirResult rather than shelling out to git,
+// same "answer the read paths honestly, stub the rest" spirit as e.g.
+// `conflict_status`/`bisect_status` above — a real mutation would also need
+// staging.ts's `stage_all`/`discard_file` etc. to be replayed exactly right
+// by a second, drifting implementation here, which is exactly what this
+// mock's own file header warns against for the graph/layout case).
+export type RecordedCall = { cmd: string; args: any };
 
 type RefChip = { n: string; t: "head" | "branch" | "remote" | "tag" };
 type CommitRow = {
@@ -144,8 +159,32 @@ function listRefs(repo: TempRepo) {
   return { head, locals, remotes, tags };
 }
 
+// `TempRepo.git()` (tempRepo.ts) trims the ENTIRE command output — leading
+// and trailing. That's harmless for the other read helpers in this file
+// (log/refs/numstat output never starts with meaningful whitespace), but
+// `git status --porcelain`'s own format is "XY path", where an unstaged-ONLY
+// change reports X as a literal space (" M path"). If that happens to be the
+// very FIRST line of the whole command's output — an unstaged-only change
+// that sorts first alphabetically, e.g. plain "README.md" ahead of a "docs/"
+// entry — `.trim()` eats that leading space, shifting the whole line left by
+// one and corrupting both the status char AND the first letter of the path
+// (" M README.md" -> "M README.md", parsed as X='M' Y=' ' path="EADME.md").
+// Shelling out here directly (bypassing TempRepo.git()) and trimming only
+// the trailing newline `git` always appends avoids that.
+function gitStatusPorcelain(repo: TempRepo, ...args: string[]): string {
+  return execFileSync("git", ["status", ...args], { cwd: repo.dir, encoding: "utf8" }).replace(/\r?\n+$/, "");
+}
+
 function workdirStatus(repo: TempRepo) {
-  const porcelain = repo.git("status", "--porcelain=v1");
+  // `-uall`: without it, `git status --porcelain` collapses an entirely
+  // untracked directory into one "?? dir/" line instead of listing its files
+  // individually — the real backend (git2's status API) does NOT collapse
+  // like that, so a fixture repo with an untracked file inside a new folder
+  // needs this to match: buildWdTree (workdir.svelte.ts) would otherwise
+  // build a "dir/" node containing one file with an empty name instead of the
+  // real per-file tree, and "stage a whole folder" would target the wrong
+  // (shallower) path.
+  const porcelain = gitStatusPorcelain(repo, "--porcelain=v1", "-uall");
   const staged: any[] = [];
   const unstaged: any[] = [];
   for (const line of porcelain ? porcelain.split("\n") : []) {
@@ -155,6 +194,97 @@ function workdirStatus(repo: TempRepo) {
   }
   const head = repo.git("symbolic-ref", "-q", "--short", "HEAD").trim() || null;
   return { staged, unstaged, conflicted: 0, branch: head, hasStash: false };
+}
+
+// Minimal unified-diff -> hunks parser for `workdir_file_diff`'s canned
+// FileChange. Not exercised by any staging spec today (every test drives the
+// stage/unstage/discard/commit/stash buttons directly, which stopPropagation
+// past the file row's own onclick — see workdir.svelte.ts's WdTreeFile
+// rendering), but a real repo fixture with real staged/unstaged content makes
+// it cheap to answer honestly rather than throwing, in case a future test
+// does click into a file's diff.
+function parseHunks(diffText: string) {
+  const hunks: { header: string; lines: { kind: string; oldNo: number | null; newNo: number | null; text: string }[] }[] = [];
+  let cur: (typeof hunks)[number] | null = null;
+  let oldNo = 0,
+    newNo = 0;
+  for (const line of diffText ? diffText.split("\n") : []) {
+    const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (m) {
+      oldNo = Number(m[1]);
+      newNo = Number(m[2]);
+      cur = { header: line, lines: [] };
+      hunks.push(cur);
+      continue;
+    }
+    if (!cur) continue;
+    if (line.startsWith("+")) cur.lines.push({ kind: "+", oldNo: null, newNo: newNo++, text: line.slice(1) });
+    else if (line.startsWith("-")) cur.lines.push({ kind: "-", oldNo: oldNo++, newNo: null, text: line.slice(1) });
+    else if (line.startsWith(" ")) cur.lines.push({ kind: " ", oldNo: oldNo++, newNo: newNo++, text: line.slice(1) });
+    // other prefixes ("\ No newline at end of file", etc.) carry no line info
+  }
+  return hunks;
+}
+
+function workdirFileDiff(repo: TempRepo, file: string, staged: boolean) {
+  let raw = "";
+  try {
+    raw = staged ? repo.git("diff", "--cached", "-U3", "--", file) : repo.git("diff", "-U3", "--", file);
+  } catch {
+    raw = "";
+  }
+  let hunks = parseHunks(raw);
+  let binary = false;
+  // An untracked file has nothing for plain `git diff` to show — synthesize a
+  // single "every line added" hunk from its on-disk content instead, mirroring
+  // how the real backend treats a new file's diff.
+  if (!hunks.length && !staged) {
+    try {
+      const content = readFileSync(join(repo.dir, file), "utf8");
+      const lines = content.length ? content.replace(/\n$/, "").split("\n") : [];
+      if (lines.length) {
+        hunks = [
+          {
+            header: `@@ -0,0 +1,${lines.length} @@`,
+            lines: lines.map((text, i) => ({ kind: "+" as const, oldNo: null, newNo: i + 1, text })),
+          },
+        ];
+      }
+    } catch {
+      binary = true;
+    }
+  }
+  return {
+    path: file,
+    oldPath: null,
+    status: "M",
+    additions: hunks.reduce((a, h) => a + h.lines.filter((l) => l.kind === "+").length, 0),
+    deletions: hunks.reduce((a, h) => a + h.lines.filter((l) => l.kind === "-").length, 0),
+    binary,
+    truncated: false,
+    lang: "",
+    hunks,
+  };
+}
+
+// `git stash list --format=%gd\x01%H\x01%gs` — mirrors the real backend's own
+// format string (see bindings.ts's stash_list doc comment) so a stash created
+// by a real `git stash push` (not this mock — see stash_save's own doc
+// comment) still lists correctly.
+function stashList(repo: TempRepo) {
+  const SEP = "\x01";
+  let raw = "";
+  try {
+    raw = repo.git("stash", "list", `--format=%gd${SEP}%H${SEP}%gs`);
+  } catch {
+    raw = "";
+  }
+  if (!raw) return [];
+  return raw.split("\n").map((line) => {
+    const [gd, sha, subject] = line.split(SEP);
+    const m = /stash@\{(\d+)\}/.exec(gd);
+    return { index: m ? Number(m[1]) : 0, sha, branch: null, message: subject };
+  });
 }
 
 function commitDetail(repo: TempRepo, sha: string) {
@@ -210,11 +340,23 @@ function dashboardRepoStatus(repo: TempRepo) {
   };
 }
 
-function makeInvokeHandler(repo: TempRepo) {
+function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[]) {
   // Starts EMPTY on purpose: a test that means to open a repo has to go through
   // the picker like a user does, rather than finding its repo pre-tracked.
   const tracked: { path: string; lastOpenedAt: number | null }[] = [];
   const trackedList = () => tracked.map((t) => ({ ...t }));
+  // A blank, always-successful WorkdirResult — every staging mutation below
+  // returns a copy of this (with its own `message`), since none of them
+  // replay the mutation against the fixture repo (see RecordedCall's doc
+  // comment above for why).
+  const workdirOk = (message: string) => ({
+    ok: true,
+    message,
+    conflictedFiles: [],
+    backupRef: null,
+    backupPatch: null,
+    droppedStashRef: null,
+  });
 
   return async (cmd: string, args: any): Promise<unknown> => {
     switch (cmd) {
@@ -284,6 +426,46 @@ function makeInvokeHandler(repo: TempRepo) {
         return [];
       case "workdir_status":
         return workdirStatus(repo);
+      // TAURI_INVOKE's return value is the RAW payload — bindings.ts's own
+      // async wrapper (workdirFileDiff/stashList) does the {status,data}
+      // Result-wrapping on top of whatever comes back here, exactly like the
+      // pre-existing workdir_status/list_refs cases above already do.
+      case "workdir_file_diff":
+        return workdirFileDiff(repo, args.file, args.staged);
+      // ── staging commands (bindings.ts) ──────────────────────────────────
+      // Each records {cmd, args} into `calls` (see RecordedCall's doc comment)
+      // and answers with a plausible WorkdirResult, WITHOUT replaying the
+      // mutation against the fixture repo. That is deliberate: a staging e2e
+      // spec's job is to prove a control is reachable in both panel
+      // placements and fires the right command with the right arguments —
+      // not to re-verify git plumbing src-tauri/tests already covers, and a
+      // second, drifting reimplementation of "what stage_all does to a real
+      // index" is exactly the kind of thing this file's own header warns
+      // against (see the graph/layout note above).
+      case "stage_file":
+        calls.push({ cmd, args });
+        return workdirOk(`Staged ${args.file}.`);
+      case "unstage_file":
+        calls.push({ cmd, args });
+        return workdirOk(`Unstaged ${args.file}.`);
+      case "stage_all":
+        calls.push({ cmd, args });
+        return workdirOk("Staged all changes.");
+      case "unstage_all":
+        calls.push({ cmd, args });
+        return workdirOk("Unstaged all changes.");
+      case "discard_file":
+        calls.push({ cmd, args });
+        return { ...workdirOk(`Discarded ${args.file}.`), backupPatch: "mock-backup.patch" };
+      case "commit":
+        calls.push({ cmd, args });
+        return workdirOk(args.amend ? "Amended." : "Committed.");
+      case "stash_save":
+        calls.push({ cmd, args });
+        return { ...workdirOk("Stashed."), backupRef: "refs/gitcat-backup/mock" };
+      case "stash_list":
+        calls.push({ cmd, args });
+        return stashList(repo);
       case "commit_detail":
         return commitDetail(repo, args.sha);
       case "watch_repo":
@@ -308,8 +490,8 @@ function makeInvokeHandler(repo: TempRepo) {
 }
 
 /** Wires the mock Tauri bridge into `page` and returns once the app can see IN_TAURI === true. */
-async function installTauriMock(page: Page, repo: TempRepo): Promise<void> {
-  await page.exposeFunction("__e2eInvoke", makeInvokeHandler(repo));
+async function installTauriMock(page: Page, repo: TempRepo, calls: RecordedCall[]): Promise<void> {
+  await page.exposeFunction("__e2eInvoke", makeInvokeHandler(repo, calls));
   await page.addInitScript((repoDir: string) => {
     // Skip the first-run setup wizard (src/islands/setupwizard) — it auto-opens
     // over the hero card whenever IN_TAURI is true and no repo is open yet,
@@ -370,6 +552,11 @@ async function installTauriMock(page: Page, repo: TempRepo): Promise<void> {
 
 type Fixtures = {
   repo: TempRepo;
+  // Staging commands (see RecordedCall's own doc comment) push into this
+  // array as they're invoked. It's plain Node-side state — the same process
+  // running the test — so a spec reads it back directly, no page.evaluate
+  // round trip needed.
+  calls: RecordedCall[];
 };
 
 export const test = base.extend<Fixtures>({
@@ -382,8 +569,12 @@ export const test = base.extend<Fixtures>({
       repo.dispose();
     }
   },
-  page: async ({ page, repo }, use) => {
-    await installTauriMock(page, repo);
+  // eslint-disable-next-line no-empty-pattern
+  calls: async ({}, use) => {
+    await use([]);
+  },
+  page: async ({ page, repo, calls }, use) => {
+    await installTauriMock(page, repo, calls);
     await use(page);
   },
 });
