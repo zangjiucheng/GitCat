@@ -36,6 +36,18 @@ export class TempRepo {
     return repo;
   }
 
+  // WARNING: `.trim()` here strips the ENTIRE command's output, leading and
+  // trailing. That's fine for the callers in this file, but a caller who
+  // parses multi-line, column-sensitive plumbing output through this method
+  // (`git status --porcelain` is the known case) can lose real leading
+  // whitespace: an unstaged-only status line reports its unchanged side as a
+  // literal space (" M path"), and if that line lands FIRST in the output,
+  // this trim eats it — shifting the whole line left by one character and
+  // corrupting both the status char and the path's first letter. See
+  // e2e/fixtures/tauriMock.ts's `gitStatusPorcelain` doc comment for the full
+  // writeup and the workaround (shell out directly there instead of through
+  // this method). Not fixed here to avoid changing this fixture's behavior
+  // for every existing caller.
   git(...args: string[]): string {
     return execFileSync("git", args, { cwd: this.dir, encoding: "utf8" }).trim();
   }

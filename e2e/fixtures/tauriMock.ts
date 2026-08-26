@@ -326,6 +326,12 @@ function commitDetail(repo: TempRepo, sha: string) {
 // tracked_repos.json too — one list per test, in memory, no file involved.
 function dashboardRepoStatus(repo: TempRepo) {
   const branch = repo.git("symbolic-ref", "-q", "--short", "HEAD").trim() || null;
+  // Deliberately still going through TempRepo.git() (not gitStatusPorcelain()
+  // above) despite that helper's own doc comment: only `porcelain.length > 0`
+  // is read below, as a plain dirty/clean boolean, never a per-line status
+  // char or path — the exact two things TempRepo.git()'s blanket `.trim()`
+  // can corrupt (see gitStatusPorcelain's doc comment). A stripped leading
+  // space still leaves a non-empty string, so this call site is safe as-is.
   const porcelain = repo.git("status", "--porcelain=v1");
   return {
     branch,

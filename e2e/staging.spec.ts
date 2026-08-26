@@ -94,15 +94,28 @@ async function openChangesTab(page: Page) {
   await expect(tabs.nth(1)).toHaveClass(/\bon\b/);
 }
 
+// Live guard, called once per test right after `page.goto("/")`: if the
+// `setPlacement` seeding above ever stopped working — a localStorage key
+// rename, a future settings-blob migration/validation, an init-script
+// ordering change — every test in the `for (const placement …)` loop
+// below would keep passing while silently exercising the "right" layout
+// twice instead of genuinely covering both placements. This spec is the
+// evidence staging is reachable in EITHER placement, so that failure mode
+// has to be loud, not silent.
+async function expectPlacementApplied(page: Page, placement: "right" | "bottom") {
+  await expect(page.locator("html")).toHaveAttribute("data-detail-placement", placement);
+}
+
 for (const placement of ["right", "bottom"] as const) {
   test.describe(`placement: ${placement}`, () => {
     test.beforeEach(async ({ page }) => {
       await setPlacement(page, placement);
     });
 
-    test("stage a file, and unstage it", async ({ page, repo, calls }) => {
+    test("stage one file, unstage another", async ({ page, repo, calls }) => {
       setupWorkdirRepo(repo);
       await page.goto("/");
+      await expectPlacementApplied(page, placement);
       await openRepo(page);
       await openChangesTab(page);
 
@@ -133,6 +146,7 @@ for (const placement of ["right", "bottom"] as const) {
     test("stage a whole folder", async ({ page, repo, calls }) => {
       setupWorkdirRepo(repo);
       await page.goto("/");
+      await expectPlacementApplied(page, placement);
       await openRepo(page);
       await openChangesTab(page);
 
@@ -151,6 +165,7 @@ for (const placement of ["right", "bottom"] as const) {
     test("discard a file", async ({ page, repo, calls }) => {
       setupWorkdirRepo(repo);
       await page.goto("/");
+      await expectPlacementApplied(page, placement);
       await openRepo(page);
       await openChangesTab(page);
 
@@ -192,6 +207,7 @@ for (const placement of ["right", "bottom"] as const) {
     test("type a commit message and commit", async ({ page, repo, calls }) => {
       setupWorkdirRepo(repo);
       await page.goto("/");
+      await expectPlacementApplied(page, placement);
       await openRepo(page);
       // The Commit tab is index 0 — the default tab a fresh working-tree
       // selection lands on, so no tab click needed here.
@@ -217,6 +233,7 @@ for (const placement of ["right", "bottom"] as const) {
     test("open the Stash tab", async ({ page, repo, calls }) => {
       setupWorkdirRepo(repo);
       await page.goto("/");
+      await expectPlacementApplied(page, placement);
       await openRepo(page);
       await page.keyboard.press("Control+Shift+U");
 
