@@ -9,6 +9,7 @@
   internal layout serve both placements.
 -->
 <script lang="ts">
+  import { t } from "../../i18n/i18n.svelte.ts";
   import { clampSplit, loadSplitSize, saveSplitSize } from "./splitter.ts";
 
   let {
@@ -71,6 +72,8 @@
   }
 </script>
 
+<!-- aria-label names WHAT this divider resizes; the title hints HOW, the way
+     the panel-edge handles do. Double-click to reset is otherwise invisible. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
@@ -81,6 +84,7 @@
   tabindex="0"
   aria-orientation={axis === "x" ? "vertical" : "horizontal"}
   aria-label={label}
+  title={t("common.splitter_tip")}
   aria-valuenow={Math.round(size)}
   aria-valuemin={min}
   aria-valuemax={max}
