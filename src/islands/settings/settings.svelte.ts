@@ -116,8 +116,8 @@ export type GraphLabelPriority = "tag" | "branch";
 export type GraphLabelLayout = "inline" | "column";
 // Which edge of the window the detail panel occupies. A layout preference,
 // so it lives here rather than in the Rust config: nothing on the backend
-// reads it. "right" is the original and stays the default — see
-// docs/superpowers/specs/2026-08-24-detail-panel-placement-design.md.
+// reads it. "right" is the original and stays the default, so an existing
+// user's layout only moves if they choose to move it.
 export type DetailPanelPlacement = "right" | "bottom";
 
 // ── Tama customization (PER-54) ────────────────────────────────────────────
