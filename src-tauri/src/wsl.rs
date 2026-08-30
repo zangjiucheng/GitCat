@@ -65,14 +65,17 @@ use crate::procutil::{output_with_timeout, NoConsoleWindowExt, SUBPROCESS_TIMEOU
 /// given — Linux paths ARE case-sensitive.
 ///
 /// Also strips a leading `\\?\UNC\` (Windows' own "extended-length path"
-/// form) before matching: `repo_registry::normalize` runs every tracked
-/// repo's path through `std::fs::canonicalize`, which on Windows rewrites
-/// `\\wsl.localhost\Ubuntu\...` to `\\?\UNC\wsl.localhost\Ubuntu\...` —
-/// without this, a WSL repo opened via the Dashboard (any tracked repo)
-/// would silently stop being recognized as WSL at all here, even though a
-/// freshly-picked, not-yet-tracked path still matched. `\\?\C:\...` (a
-/// local drive in extended form) correctly still returns `None` below —
-/// only the `UNC` marker specifically continues on to the host check.
+/// form) before matching. Nothing in the app deliberately produces that
+/// shape any more — `repo_registry::normalize` and
+/// `windows::classify_initial_arg` both run `std::fs::canonicalize`'s output
+/// back through `strip_windows_verbatim_prefix` (see #42) — but a registry
+/// file written before that fix still holds it until the migration on load
+/// rewrites it, and a verbatim path can always arrive from somewhere this
+/// module doesn't own. Matching it costs one `strip_prefix`, and getting it
+/// wrong means a WSL repo silently stops being recognized as WSL at all.
+/// `\\?\C:\...` (a local drive in extended form) correctly still returns
+/// `None` below — only the `UNC` marker specifically continues on to the
+/// host check.
 pub fn wsl_target(path: &str) -> Option<(String, String)> {
     let forward = path.replace('\\', "/");
     let mut segments = forward.split('/').filter(|s| !s.is_empty());
@@ -488,10 +491,11 @@ mod tests {
         assert_eq!(wsl_target("/home/me/repo"), None); // a WSL-internal path with no Windows host at all
     }
 
-    // repo_registry::normalize() runs every TRACKED repo's path through
-    // std::fs::canonicalize, which on Windows rewrites a UNC path to this
-    // "extended-length" \\?\UNC\... form — a repo opened from the Dashboard
-    // (as opposed to freshly picked and never tracked) hits this shape.
+    // std::fs::canonicalize rewrites a UNC path to this "extended-length"
+    // \\?\UNC\... form on Windows. Since #42 the app strips that before it
+    // stores or opens anything, so this is a compatibility path now — a
+    // registry file written by an older build still carries the shape until
+    // load_from's migration rewrites it.
     #[test]
     fn strips_the_extended_length_unc_prefix_canonicalize_adds() {
         assert_eq!(
@@ -510,8 +514,9 @@ mod tests {
     }
 
     // The SAME extended-length form exists for ordinary local drive paths
-    // (\\?\C:\...) — canonicalize's most common case by far. Must not be
-    // mistaken for WSL just because it also starts with \\?\.
+    // (\\?\C:\...) — canonicalize's most common case by far, and the one that
+    // sent the built-in terminal to C:\Windows in #42. Must not be mistaken
+    // for WSL just because it also starts with \\?\.
     #[test]
     fn extended_length_local_drive_paths_are_not_wsl() {
         assert_eq!(wsl_target(r"\\?\C:\Users\me\repo"), None);

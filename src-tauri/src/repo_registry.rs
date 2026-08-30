@@ -153,7 +153,7 @@ pub fn load_from(path: &Path) -> Result<Vec<TrackedRepo>, String> {
         }
     };
     match serde_json::from_str::<RegistryFile>(&text) {
-        Ok(file) => Ok(file.repos),
+        Ok(file) => Ok(migrate_verbatim_paths(file.repos)),
         Err(_) => {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             let backup = path.with_file_name(format!(
@@ -164,6 +164,32 @@ pub fn load_from(path: &Path) -> Result<Vec<TrackedRepo>, String> {
             Ok(Vec::new())
         }
     }
+}
+
+/// Entries written before the #42 fix carry the extended-length spelling
+/// `normalize` used to produce (`\\?\C:\...`), which no longer matches the plain
+/// key it returns now — so without this an existing registry would track every
+/// repo a second time on its next open, and each one's saved branch-visibility
+/// filter would read as "never set". Strip on the way in so the old and new keys
+/// agree immediately; the next `save_to` persists the migrated form, after which
+/// this is a no-op.
+///
+/// The dedup is not hypothetical tidiness: a path that failed to canonicalize was
+/// already stored plain, so one repo could legitimately hold BOTH spellings, and
+/// stripping collapses them onto a single key. Keeps the more-recently-opened of
+/// the two (`None` — added but never opened — loses to any real timestamp) and
+/// leaves the file's existing order otherwise untouched.
+fn migrate_verbatim_paths(repos: Vec<TrackedRepo>) -> Vec<TrackedRepo> {
+    let mut out: Vec<TrackedRepo> = Vec::with_capacity(repos.len());
+    for mut repo in repos {
+        repo.path = crate::windows::strip_windows_verbatim_prefix(repo.path);
+        match out.iter_mut().find(|r| r.path == repo.path) {
+            Some(kept) if repo.last_opened_at > kept.last_opened_at => *kept = repo,
+            Some(_) => {}
+            None => out.push(repo),
+        }
+    }
+    out
 }
 
 /// Process-wide lock serializing every registry read-modify-write sequence
@@ -207,9 +233,19 @@ pub fn save_to(path: &Path, repos: &[TrackedRepo]) -> Result<(), String> {
 ///
 /// `pub` for the same integration-testability reason as [`load_from`].
 pub fn normalize(path: &str) -> String {
-    std::fs::canonicalize(path)
+    let canon = std::fs::canonicalize(path)
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| path.to_string())
+        .unwrap_or_else(|_| path.to_string());
+    // #42: on Windows `canonicalize` always hands back an extended-length
+    // "verbatim" path (`\\?\C:\...`, or `\\?\UNC\...` for a share). That prefix
+    // is valid for the Win32 file APIs and almost nothing else: cmd.exe reads it
+    // as a UNC path, refuses to use it as a working directory, and falls back to
+    // `C:\Windows` — so the built-in terminal opened somewhere else entirely for
+    // every repo reached through the Dashboard, which is the only way a repo's
+    // path comes from here. The same string is what the UI shows and what
+    // `wsl::wsl_target` has to parse. Store the ordinary form instead; see
+    // `windows::strip_windows_verbatim_prefix`.
+    crate::windows::strip_windows_verbatim_prefix(canon)
 }
 
 /// Most-recently-opened first (`last_opened_at` descending). A repo that's
@@ -564,6 +600,89 @@ mod tests {
         let repos = load_from(&path).expect("load should succeed");
         assert_eq!(repos.len(), 1);
         assert!(repos[0].repo_summary_shown);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn row(path: &str, last_opened_at: Option<i64>) -> TrackedRepo {
+        TrackedRepo {
+            path: path.to_string(),
+            last_opened_at,
+            repo_summary_shown: false,
+            visible_local_branches: None,
+            visible_remote_branches: None,
+            auto_branch_visibility: false,
+        }
+    }
+
+    // #42: an entry stored by a pre-fix build keeps the extended-length spelling.
+    // Left alone it would no longer match the key `normalize` returns now, so the
+    // repo would be tracked twice and its branch-visibility filter would read as
+    // unset. Pure string work, so this runs on every platform.
+    #[test]
+    fn stored_verbatim_paths_are_migrated_to_the_ordinary_form() {
+        let out = migrate_verbatim_paths(vec![
+            row(r"\\?\C:\Users\me\proj", Some(20)),
+            row(r"\\?\UNC\wsl.localhost\Ubuntu\home\me\proj", Some(10)),
+            row("/home/me/proj", Some(5)),
+        ]);
+        assert_eq!(out[0].path, r"C:\Users\me\proj");
+        assert_eq!(out[1].path, r"\\wsl.localhost\Ubuntu\home\me\proj");
+        // Already-plain entries (every Unix path, and any Windows path that
+        // failed to canonicalize) pass through untouched.
+        assert_eq!(out[2].path, "/home/me/proj");
+        assert_eq!(out.len(), 3, "distinct repos must stay distinct");
+    }
+
+    // A path that failed to canonicalize was already stored plain, so ONE repo
+    // could hold both spellings; stripping collapses them onto one key. The
+    // surviving row must be the more recently opened one, or the migration
+    // silently loses a repo's place in the Dashboard's recency order.
+    #[test]
+    fn migration_collapses_both_spellings_of_one_repo_keeping_the_newer() {
+        let out = migrate_verbatim_paths(vec![
+            row(r"\\?\C:\Users\me\proj", Some(10)),
+            row(r"C:\Users\me\proj", Some(99)),
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].path, r"C:\Users\me\proj");
+        assert_eq!(out[0].last_opened_at, Some(99));
+
+        // Same pair, opposite order — the newer one still wins.
+        let out = migrate_verbatim_paths(vec![
+            row(r"\\?\C:\Users\me\proj", Some(99)),
+            row(r"C:\Users\me\proj", Some(10)),
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].last_opened_at, Some(99));
+
+        // Added-but-never-opened (None) loses to any real timestamp, whichever
+        // side of the pair it is on.
+        let out = migrate_verbatim_paths(vec![
+            row(r"\\?\C:\Users\me\proj", None),
+            row(r"C:\Users\me\proj", Some(1)),
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].last_opened_at, Some(1));
+    }
+
+    // The migration has to run where the data actually arrives — reading the
+    // file — not only when something calls the helper directly.
+    #[test]
+    fn load_from_migrates_a_registry_written_by_an_older_build() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitcat-registry-test-verbatim-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("tracked_repos.json");
+        save_to(&path, &[row(r"\\?\C:\Users\me\proj", Some(7))]).expect("save should succeed");
+
+        let repos = load_from(&path).expect("load should succeed");
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].path, r"C:\Users\me\proj");
+        assert_eq!(repos[0].last_opened_at, Some(7), "migration must not disturb the rest of the row");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
