@@ -6,5 +6,7 @@ export default {
   save: "保存",
   remove: "移除",
   loading: "加载中…",
+  // 两个面板之间分隔条的提示（islands/detailpanel/Splitter）。
+  splitter_tip: "拖动调整大小 — 双击复原",
   install: "安装",
 };

@@ -15,7 +15,7 @@ The full reference is on its way. Here's the outline of what it covers.
 ### General
 
 - **Appearance** — theme (match system / light / dark).
-- **Graph** — show all tags on a commit; whether tags or branches take priority in a crowded gutter.
+- **Graph** — show all tags on a commit; whether tags or branches take priority in a crowded gutter; where the [detail panel](/guide/commit-graph#selecting-a-commit) sits — **right side** (the default) or **bottom**.
 - **Cherry-pick** — record origin (`-x`) by default.
 - **Updates** — check for updates now, automatic check on launch, and the nightly-build channel.
 - **Auto-fetch** — periodically fetch from all remotes, and how often.

@@ -24,7 +24,7 @@
   --mono:ui-monospace,"SF Mono","Menlo","Cascadia Code","Consolas",monospace;
   --display:"SF Pro Rounded",ui-rounded,"Nunito","Segoe UI Variable",system-ui,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
   --r-card:12px; --r-panel:10px; --r-control:8px; --r-pill:999px; --r-chip:4px;
-  --topbar-h:46px; --sidebar-w:264px; --detail-w:344px; --ribbon-w:46px; --nook-h:132px; --row-h:26px; --term-h:280px;
+  --topbar-h:46px; --sidebar-w:264px; --detail-w:344px; --detail-h:320px; --ribbon-w:46px; --nook-h:132px; --row-h:26px; --term-h:280px;
   --shadow:0 6px 20px rgba(16,18,27,.10), 0 1px 3px rgba(16,18,27,.08);
   color-scheme:light;
 }
@@ -76,6 +76,26 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 /* graceful degradation for narrower windows so the graph keeps room */
 @media (max-width:1180px){:root{--sidebar-w:224px;--detail-w:300px}}
 @media (max-width:980px){:root{--sidebar-w:200px;--detail-w:264px}}
+
+/* Bottom placement (settings: detailPanelPlacement). The panel leaves the
+   third COLUMN and takes a fourth ROW spanning the full width, so a commit
+   message and a diff each get the window's width instead of a 344px column.
+   The graph gives up height rather than width; its canvas needs no changes,
+   because main.ts's ResizeObserver on the graph wrapper already reads both
+   axes from getBoundingClientRect. Width and height are separate properties
+   on purpose: the ranges differ, and each placement keeps its own size
+   across a switch. */
+[data-detail-placement="bottom"] .app{
+  grid-template-columns:var(--sidebar-w) minmax(0,1fr);
+  grid-template-rows:var(--topbar-h) auto minmax(0,1fr) var(--detail-h);
+  grid-template-areas:"topbar topbar" "subnav subnav" "sidebar graph" "detail detail"}
+[data-detail-placement="bottom"] .detail{border-left:none;border-top:1px solid var(--border)}
+
+/* A bottom panel's competitor for space is the graph's height, so this keys
+   off viewport HEIGHT — unlike the width queries above, which are about a
+   narrow window. */
+@media (max-height:900px){:root{--detail-h:280px}}
+@media (max-height:720px){:root{--detail-h:220px}}
 
 /* ============================== TOP BAR ==============================
    Three zones, left to right: [brand + repo IDENTITY: repo-pick, branch
@@ -732,6 +752,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   opacity:0;transition:opacity .1s ease;background:var(--accent);box-shadow:0 0 8px color-mix(in srgb,var(--accent) 55%,transparent)}
 .resize-guide.on{opacity:.9}
 .resize-guide.will-collapse{background:var(--warning);box-shadow:0 0 8px color-mix(in srgb,var(--warning) 55%,transparent)}
+/* A drag on a horizontal edge (the bottom panel) needs the guide to be a
+   horizontal line. Same element, re-oriented per drag — see resizeGuide(). */
+.resize-guide.horiz{top:auto;bottom:auto;left:0;right:0;width:auto;height:2px;margin-left:0;margin-top:-1px}
 .perf{position:absolute;top:10px;right:14px;z-index:6;display:flex;align-items:center;gap:8px;
   font-family:var(--mono);font-size:11px;color:var(--muted);
   background:var(--panel);border:1px solid var(--border);
@@ -762,17 +785,36 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cp-ghost.pending .spinner{display:inline-block}
 
 /* ============================== DETAIL PANEL ============================== */
-.detail{grid-area:detail;min-height:0;overflow:auto;background:var(--panel);border-left:1px solid var(--border);position:relative}
-/* Drag handles on the sidebar's right edge and the detail panel's left edge —
-   live-resize the .app grid's --sidebar-w/--detail-w custom properties (see
-   src/legacy/main.ts's wireResizeHandle); the existing canvas ResizeObserver
-   already reacts to the resulting .canvas-wrap size change, no extra wiring
-   needed there. */
+/* A flex COLUMN, not a plain block: the tab strip takes its natural height and
+   the tab's own content (.d-view below) takes all the rest, so making the
+   panel taller actually makes its diff taller. As a block the panel's height
+   reached nothing inside it — dragging a bottom panel from 320px to 600px left
+   the content exactly where it was and added ~400px of empty panel underneath. */
+.detail{grid-area:detail;min-height:0;overflow:auto;background:var(--panel);border-left:1px solid var(--border);position:relative;
+  display:flex;flex-direction:column}
+/* Drag handles on the sidebar's right edge and the detail panel's left/bottom edges —
+   drag a guide line and commit the size to the handle's own custom property
+   (`--sidebar-w`, `--detail-w` for the right placement, or `--detail-h` for
+   the bottom placement) only on release, so the layout reflows + the canvas
+   re-renders exactly once. See src/legacy/main.ts's wireResizeHandle for the details. */
 .resize-handle{position:absolute;top:0;bottom:0;width:6px;z-index:5;cursor:col-resize;background:transparent;transition:background-color .12s}
 .resize-handle:hover,.resize-handle.active{background:color-mix(in srgb,var(--accent2) 45%,transparent)}
 .sidebar-handle{right:-3px}
 .detail-handle{left:-3px}
+[data-detail-placement="right"]  #resizeDetailBottom{display:none}
+[data-detail-placement="bottom"] #resizeDetail{display:none}
+/* The bottom placement's handle sits on a TOP edge, not a left edge like
+   .detail-handle above, so it gets its own positioning rather than
+   inheriting that. `width:auto` overrides .resize-handle's own `width:6px` —
+   without it, `left`+`right`+`width` would all be non-auto and the browser
+   drops `right`, leaving a 6px sliver instead of a full-width top edge. */
+.detail-handle-bottom{position:absolute;left:0;right:0;top:0;width:auto;height:6px;cursor:row-resize;z-index:5}
 .resizing,.resizing *{cursor:col-resize!important;user-select:none!important}
+/* The bottom panel's handle drags along the vertical (row) axis, so the
+   locked-in cursor during that drag needs to be row-resize, not the
+   col-resize the sidebar/right-detail drags use — see wireResizeHandle's
+   `vert` branch in main.ts, which adds this class only for axis:"y". */
+.resizing-y,.resizing-y *{cursor:row-resize!important}
 /* Collapse: dragging a resize handle PAST its own normal minimum (see
    wireResizeHandle's own doc comment in legacy/main.ts) now keeps shrinking
    the panel instead of just clamping flat at that floor — release past the
@@ -792,6 +834,34 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .sidebar.collapsed .resize-handle:hover,.detail.collapsed .resize-handle:hover{background:var(--panel);color:var(--text)}
 .sidebar.collapsed .resize-handle::after{content:'\203A'}
 .detail.collapsed .resize-handle::after{content:'\2039'}
+/* The generic `.detail.collapsed .resize-handle` rule above was written for
+   the vertical rail (right-hand placement): it stretches left/right/width
+   to fill the rail but leaves top/bottom/height alone, which is fine when
+   .resize-handle's own top:0;bottom:0 already spans the panel. The bottom
+   placement's handle is the opposite axis — its own rule sets a fixed
+   top:0;height:6px — so collapsing it needs the complementary override here,
+   or the reopen affordance is a 6px sliver at the top of the 28px rail
+   instead of filling it. Same reasoning for the chevron: '\2039' points left
+   (expand-leftward, correct for the right-hand rail) but the bottom rail
+   expands upward, so its chevron is the same glyph rotated 90°. */
+.detail.collapsed .detail-handle-bottom{top:0;bottom:0;height:auto}
+.detail.collapsed .detail-handle-bottom::after{content:'\2039';transform:rotate(90deg)}
+/* The detail panel's tab strip (src/islands/detailpanel/TabStrip.svelte).
+   Sticks to the top of the panel so it stays reachable while a long tab
+   scrolls under it. */
+.d-tabs{display:flex;gap:2px;flex:none;position:sticky;top:0;z-index:4;
+  background:var(--panel);border-bottom:1px solid var(--border);padding:0 6px}
+.d-tab{background:none;border:none;border-bottom:2px solid transparent;
+  color:var(--muted);font-size:12px;padding:7px 10px;cursor:pointer}
+.d-tab:hover{color:var(--text)}
+.d-tab.on{color:var(--text);border-bottom-color:var(--accent)}
+/* One tab's content (the wrapper both views put their active tab inside).
+   flex:1 hands it every pixel the tab strip didn't take, and its own flex
+   column passes that height on down to the "changes" tab's diff — which is
+   the whole point of being able to make the panel taller. A tab that is just
+   stacked sections overflows and scrolls HERE instead, which is what the
+   panel itself used to do. */
+.d-view{flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto}
 .detail section{padding:12px 14px;border-bottom:1px solid var(--border)}
 .detail .empty{color:var(--muted);text-align:center;padding:48px 20px;font-size:12.5px;line-height:1.7}
 .d-subject{font-size:17px;font-weight:700;font-family:var(--display);line-height:1.35;color:var(--text);letter-spacing:.1px}
@@ -958,13 +1028,54 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .diffx-files-head{display:flex;align-items:center;gap:8px;padding:10px 10px 6px;flex:none}
 .diffx-files-scroll{flex:1;min-height:0;overflow:auto;margin-top:0;padding:0 10px 10px}
 .diffx-diff{flex:1;min-width:0;min-height:0;max-height:none;border:0;border-radius:0}
-/* Drag handle between the file tree and the diff (Detail.svelte). 8px grab zone
-   with negative margins so it overlaps the .diffx-files border-right instead of
-   adding a gutter; the accent rule appears on hover/drag/keyboard-focus. */
-.diffx-splitter{flex:none;width:8px;margin:0 -4px;cursor:col-resize;position:relative;z-index:5;align-self:stretch}
-.diffx-splitter::after{content:"";position:absolute;top:0;bottom:0;left:3px;width:2px;border-radius:2px;background:transparent;transition:background .12s}
-.diffx-splitter:hover::after,.diffx-splitter.active::after,.diffx-splitter:focus-visible::after{background:var(--accent)}
-.diffx-splitter:focus-visible{outline:none}
+/* The shared two-pane divider (src/islands/detailpanel/Splitter.svelte), used
+   by the expanded-diff modal in each of Detail.svelte and Workdir.svelte, and
+   by both of the detail panel's "changes" tabs. An 8px grab zone with negative
+   margins so it overlaps the neighbouring pane's border instead of adding a
+   gutter; the accent rule appears on hover/drag/keyboard-focus. `.vert` is the
+   stacked case (axis="y"), where the divider is a horizontal bar instead of a
+   vertical one. */
+.d-splitter{flex:none;width:8px;margin:0 -4px;cursor:col-resize;position:relative;z-index:5;align-self:stretch}
+.d-splitter::after{content:"";position:absolute;top:0;bottom:0;left:3px;width:1px;background:var(--border);transition:background .12s}
+/* The same --accent2 the panel-edge handles highlight with, so "you can drag
+   this" is one colour to learn rather than two. Not the same rendering: those
+   wash a 6px band at 45% opacity, this paints a 1px line solid, which is what
+   a hairline needs to register at all. */
+.d-splitter:hover::after,.d-splitter.active::after,.d-splitter:focus-visible::after{background:var(--accent2)}
+.d-splitter:focus-visible{outline:none}
+.d-splitter.vert{width:auto;height:8px;margin:-4px 0;cursor:row-resize}
+.d-splitter.vert::after{top:3px;bottom:auto;left:0;right:0;width:auto;height:1px}
+
+/* The "changes" tab: a file list beside its diff (src/islands/detail/
+   Detail.svelte and src/islands/workdir/Workdir.svelte). The axis is the only thing
+   the placement changes, which is what keeps this ONE internal layout
+   rather than one per placement. A 240-560px-wide right-hand column cannot
+   hold two panes side by side, so that placement stacks them instead;
+   the bottom placement's full-width row can, so it lays them out side by
+   side. `.detail section` still applies inside both panes (unchanged
+   padding/border for the moved markup), so only the two containers
+   themselves need rules here. */
+.d-split{display:flex;min-height:0;flex:1}
+[data-detail-placement="right"]  .d-split{flex-direction:column}
+[data-detail-placement="bottom"] .d-split{flex-direction:row}
+/* flex:none so the size the Splitter puts on this pane (a width on the row
+   axis, a height on the column one) is the size it keeps — never shrunk to
+   make room for the diff beside/below it. */
+.d-split-files{flex:none;min-height:0;overflow:auto}
+/* The diff pane takes the rest and passes it down: its section fills the
+   pane, and .diffview fills the section. The max-height:320px .diffview
+   carries — the cramped read this whole placement setting exists to fix — is
+   for a diff sharing a scroller with everything else, so it is dropped here
+   where the diff has a pane of its own to fill. */
+.d-split-diff{flex:1;min-width:0;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.d-split-diff>section{flex:1;min-height:0;display:flex;flex-direction:column}
+.d-split-diff .diffview{flex:1;min-height:0;max-height:none}
+/* `.detail section` carries a bottom border so one section is separated from
+   the next. The LAST section in a pane has nothing below it to separate from,
+   so that border just draws a stray line along the pane's edge — which is what
+   this drops. Only the last one: the working tree stacks Staged above Unstaged
+   in the same files pane, and the border between those two is a real divider. */
+.d-split-files>section:last-child,.d-split-diff>section:last-child{border-bottom:none}
 
 /* ============================== WORKDIR (staging + commit + stash) ==============================
    Renders in the SAME #detail slot as the sections above, swapped in by
@@ -2124,7 +2235,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   </main>
 
   <!-- ============================ DETAIL PANEL ============================ -->
-  <section class="detail" id="detail"><div class="resize-handle detail-handle" id="resizeDetail" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><!-- filled by the Detail Svelte island (src/islands/detail) --></section>
+  <section class="detail" id="detail"><div class="resize-handle detail-handle" id="resizeDetail" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><div class="resize-handle detail-handle-bottom" id="resizeDetailBottom" role="button" tabindex="0" aria-label="Resize detail panel"></div><!-- filled by the Detail Svelte island (src/islands/detail) --></section>
 
 </div>
 

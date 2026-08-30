@@ -35,6 +35,12 @@ export default {
     "인라인은 커밋의 ref 칩을 제목 텍스트 바로 앞에 표시하고, 왼쪽 열은 크기를 조절할 수 있는 별도의 열에 따로 모아서 표시해요.",
   label_layout_inline: "인라인(제목 앞)",
   label_layout_column: "왼쪽 열",
+  // 상세 패널이 어느 쪽에 붙는지. 하단에 두면 커밋 메시지와 diff가 창 전체
+  // 폭을 씁니다. 오른쪽이 원래 자리이고 기본값이에요.
+  detail_placement: "상세 패널",
+  detail_placement_desc: "선택한 커밋을 보여주는 패널이 놓이는 자리예요.",
+  detail_placement_right: "오른쪽",
+  detail_placement_bottom: "아래쪽",
 
   // 체리픽
   cherrypick: "체리픽",

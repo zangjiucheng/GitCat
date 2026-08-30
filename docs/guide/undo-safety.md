@@ -45,7 +45,7 @@ The Safety Manager is more than one Undo key. A family of tools (all under **Too
 
 A few operations can lose work in a way a snapshot can't fully paper over, so GitCat gates them explicitly rather than letting you stumble into them:
 
-- **Switching branches with uncommitted changes** — instead of silently stashing or refusing, GitCat offers three explicit paths in increasing order of risk: **stash → switch → reapply**; **stash → switch → leave stashed** (recover it later from Manage Stash); or **force-switch and discard**, which is genuinely irreversible and sits behind a typed danger-confirm.
+- **Switching branches with uncommitted changes** — instead of silently stashing or refusing, GitCat offers three explicit paths in increasing order of risk: **stash → switch → reapply**; **stash → switch → leave stashed** (recover it later from the working-directory view's **Stash** tab — see [Committing & staging](/guide/committing)); or **force-switch and discard**, which is genuinely irreversible and sits behind a typed danger-confirm.
 - **Force push** — a real choice between **force-with-lease** (refuses if the remote moved since your last fetch) and a raw **override**, both behind the same typed danger-confirm. See [Syncing with remotes](/guide/remotes).
 - **Rewriting history with `filter-repo`** — the one genuinely irreversible-by-normal-Undo operation gets its own dedicated wizard with a full backup and restore step on top of the usual snapshot. See [Rewriting history](/guide/rewriting-history).
 

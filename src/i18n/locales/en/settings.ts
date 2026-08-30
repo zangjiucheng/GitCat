@@ -35,6 +35,13 @@ export default {
     "Inline draws a commit's ref chips right before its subject text; Left column keeps them in a separate, resizable column.",
   label_layout_inline: "Inline (before the subject)",
   label_layout_column: "Left column",
+  // Which edge the detail panel sits on. The bottom placement gives a commit
+  // message and a diff the window's full width; the right-hand column is the
+  // original and the default.
+  detail_placement: "Detail panel",
+  detail_placement_desc: "Where the panel showing the selected commit sits.",
+  detail_placement_right: "Right side",
+  detail_placement_bottom: "Bottom",
 
   // Cherry-pick
   cherrypick: "Cherry-pick",

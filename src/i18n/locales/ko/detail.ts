@@ -21,6 +21,9 @@ export default {
   row_of: "{row} / {total}행",
   cant_revert_merge: "병합 커밋은 되돌릴 수 없어요",
   revert_commit: "커밋 되돌리기",
+  // 탭 이름. 지금 **보고 있는** 커밋이에요 — 쓰고 있는 커밋을 가리키는
+  // workdir.commit과는 일부러 다른 키예요.
+  tab_commit: "커밋",
   // 작성자 / 커미터.
   author: "작성자",
   committer: "커미터",

@@ -98,6 +98,7 @@ import {
   hasTamaSkin,
   pickSkinCopyLine,
   tamaPoseLabel,
+  DEFAULTS,
 } from "./settings.svelte.ts";
 // The built-in characters are a pure frontend registry (bundled webp asset URLs
 // + a voice pitch) — imported for real, not mocked, so the built-in-path tests
@@ -245,6 +246,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       showAllCommitTags: false,
       graphLabelPriority: "tag",
       graphLabelLayout: "inline",
+      detailPanelPlacement: "right",
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
       autoMaintenanceEnabled: false,
@@ -273,6 +275,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       showAllCommitTags: false,
       graphLabelPriority: "tag",
       graphLabelLayout: "inline",
+      detailPanelPlacement: "right",
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
       autoMaintenanceEnabled: false,
@@ -299,6 +302,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       showAllCommitTags: false,
       graphLabelPriority: "tag",
       graphLabelLayout: "inline",
+      detailPanelPlacement: "right",
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
       autoMaintenanceEnabled: false,
@@ -334,6 +338,7 @@ describe("loadSettings / saveSettings — localStorage persistence", () => {
       showAllCommitTags: false,
       graphLabelPriority: "tag",
       graphLabelLayout: "inline",
+      detailPanelPlacement: "right",
       autoFetchEnabled: false,
       autoFetchIntervalMinutes: 15,
       autoMaintenanceEnabled: false,
@@ -1084,5 +1089,24 @@ describe("applyPersistedTamaMotion (boot, PER-54)", () => {
 
     expect(bridge.setTamaMotionPreset).toHaveBeenCalledWith("calm");
     expect(bridge.setTamaPoseOverrides).toHaveBeenCalledWith({ idle: "sleep" });
+  });
+});
+
+describe("detailPanelPlacement", () => {
+  it("defaults to the right-hand column, so no existing layout moves", () => {
+    expect(DEFAULTS.detailPanelPlacement).toBe("right");
+  });
+
+  it("round-trips through the persisted blob", () => {
+    saveSettings({ detailPanelPlacement: "bottom" });
+    expect(loadSettings().detailPanelPlacement).toBe("bottom");
+  });
+
+  // A hand-edited or older localStorage blob has no such key. It must read as
+  // the default rather than undefined, or the attribute lands as the string
+  // "undefined" and no grid matches it.
+  it("falls back to the default when the stored blob predates the key", () => {
+    localStorage.setItem("gitcat.settings", JSON.stringify({ themeMode: "dark" }));
+    expect(loadSettings().detailPanelPlacement).toBe("right");
   });
 });

@@ -20,6 +20,8 @@ export default {
   amend_previous: "이전 커밋 수정",
   amend: "수정",
   commit_btn: "커밋",
+  // 스테이지된 것과 안 된 것을 함께 담는 탭 이름이에요.
+  changes: "변경",
   // 스테이징됨 / 스테이징 안 됨 섹션.
   staged: "스테이징됨 ({n})",
   unstage_all: "전체 스테이징 해제",

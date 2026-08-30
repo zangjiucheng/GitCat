@@ -358,18 +358,19 @@ describe("coverage", () => {
 // Detail.svelte / detail.svelte.ts's revertCommit() doc comment for why: no
 // per-commit-row context menu exists anywhere, and revert always applies onto
 // HEAD given only the source commit, so the drag gestures cherry-pick/merge
-// use don't fit). Detail.svelte only ever renders this button inside the
-// `{:else if detailCtrl.commit}` branch of its `{#if workdirCtrl.selected}
-// {:else if detailCtrl.hero} {:else if detailCtrl.commit}` chain — the SAME
-// chain that already keeps the hero card and the workdir pinned row's own
-// panel mutually exclusive with the commit detail view. So "not shown for
-// the hero/empty state or the workdir pinned row" is structurally guaranteed
-// by that chain (there's no separate .svelte-component render harness in
-// this repo — every other island's test suite is controller-only, same as
-// this file); what IS unit-testable here is the controller-level guard this
-// button's handler relies on: revertCommit() is a no-op without a selected
-// commit (covers hero/empty), and calls the right backend entry point with
-// the right repo+sha when one is selected.
+// use don't fit). Detail.svelte only ever renders this button inside its
+// `{:else if detailCtrl.commit}` branch (the hero card and the working tree's
+// own panel — DetailPanel.svelte swapping in Workdir.svelte — are mutually
+// exclusive with it), and, since the panel became tabbed, additionally only while
+// detailPanelCtrl.commitTab === "commit" (the OTHER tab, "changes", shows the
+// diffstat/tree/diff instead). So "not shown for the hero/empty state, the
+// working tree, or the changes tab" is structurally guaranteed by that
+// markup (there's no separate .svelte-component render harness in this repo
+// — every other island's test suite is controller-only, same as this file);
+// what IS unit-testable here is the controller-level guard this button's
+// handler relies on: revertCommit() is a no-op without a selected commit
+// (covers hero/empty), and calls the right backend entry point with the
+// right repo+sha when one is selected.
 describe("revertCommit", () => {
   it("is a no-op when there is no selected commit (hero/empty state)", async () => {
     setDemoGraph();
