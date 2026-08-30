@@ -723,6 +723,12 @@ fn discard_file_reverses_an_unstaged_rename() {
 // reject only NUL/CR/LF, not every control character (e.g. a legitimate tab).
 // ---------------------------------------------------------------------------
 
+// Unix-only: a tab is not a legal character in a Windows filename, so the file
+// this test needs cannot be created there at all (`std::fs::write` fails with
+// ERROR_INVALID_NAME). The behaviour under test — that `stage_file` does not
+// reject a path git itself accepts — is unchanged on Windows; there is simply
+// no way to construct the input.
+#[cfg(unix)]
 #[test]
 fn stage_file_accepts_a_tab_containing_filename() {
     let repo = TempRepo::init("workdir_tab_filename");

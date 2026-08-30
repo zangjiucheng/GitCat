@@ -1048,8 +1048,16 @@ fn submodule_sync_rewrites_git_config_url_after_gitmodules_is_hand_edited() {
     parent.must(&["commit", "-q", "-m", "point sub at a new home"]);
 
     // Confirm the split BEFORE syncing: .gitmodules moved, .git/config did not.
-    let gitmodules = parent.read(".gitmodules");
-    assert!(gitmodules.contains(&child_new.path()), "expected .gitmodules to record the new url");
+    //
+    // Read the value back through `git config` rather than substring-matching
+    // the file's text. `git config` ESCAPES backslashes when it writes a value,
+    // so a Windows path lands in the file doubled —
+    // `url = C:\\Users\\…\\child` — and a `contains(path)` on the raw text can
+    // never match. Reading it back also makes the assertion about the recorded
+    // VALUE rather than about the file's formatting, which is what this line
+    // was always trying to say.
+    let (_, gitmodules_url, _) = parent.git(&["config", "--get", "-f", ".gitmodules", "submodule.sub.url"]);
+    assert_eq!(gitmodules_url, child_new.path(), "expected .gitmodules to record the new url");
     let (_, url_still_stale, _) = parent.git(&["config", "--get", "submodule.sub.url"]);
     assert_eq!(url_still_stale, child.path(), ".git/config must still be stale before sync runs");
 
@@ -1284,8 +1292,22 @@ fn submodule_deinit_recovers_offline_via_init_and_update() {
 
     // Simulate the original source repo becoming permanently unreachable
     // (moved/deleted) — the offline-recovery property must not depend on it.
-    let moved_away = child.dir.with_file_name("submodule_deinit_offline_child_GONE");
+    //
+    // The destination name is derived from `child`'s own directory, which
+    // already carries pid + nanos + a counter. It used to be a FIXED string,
+    // which made this test poison itself: once the rename succeeded, nothing
+    // owned the result — `child`'s Drop removes `child.dir`, which no longer
+    // exists — so the renamed repo leaked into the temp dir, and every later
+    // run then hit `rename` onto an existing non-empty directory (ENOTEMPTY on
+    // unix, ERROR_DIR_NOT_EMPTY on Windows). CI never saw it because a fresh
+    // runner always starts with an empty temp dir.
+    let moved_away = child.dir.with_file_name(format!(
+        "{}-GONE",
+        child.dir.file_name().expect("temp repo dir has a final component").to_string_lossy()
+    ));
     std::fs::rename(&child.dir, &moved_away).expect("simulate the origin going away");
+    // Hand the renamed directory to a TempRepo purely so its Drop cleans up.
+    let _moved_away_owner = TempRepo { dir: moved_away.clone() };
 
     // init re-registers the (now-unreachable) url from .gitmodules — this
     // never dereferences the url, so it succeeds regardless.
@@ -1752,6 +1774,11 @@ fn bug2_remove_refuses_when_a_nested_submodule_of_a_submodule_is_dirty() {
     assert!(!status_after.contains("D  sub"), "sub's gitlink must not have been staged for deletion: {status_after:?}");
 }
 
+// Unix-only: the precondition is a read-only DIRECTORY, which is what makes
+// the `.gitmodules` rewrite fail. Windows ignores the read-only attribute for
+// that purpose — there is no equivalent using file attributes, and an ACL deny
+// would be more machinery than this test is worth.
+#[cfg(unix)]
 #[test]
 fn bug3_remove_propagates_a_failed_gitmodules_fallback_instead_of_reporting_ok() {
     // BUG 3: the `.gitmodules` section-removal fallback (for when `git rm -f`
@@ -1804,6 +1831,9 @@ fn bug3_remove_propagates_a_failed_gitmodules_fallback_instead_of_reporting_ok()
     );
 }
 
+// Unix-only: needs a dangling symlink, which on Windows requires either
+// Developer Mode or elevation — not something a test run can assume.
+#[cfg(unix)]
 #[test]
 fn bug4_force_deinit_backs_up_a_dangling_symlinks_target_instead_of_refusing() {
     // BUG 4: the untracked-file backup loop called `fs::read(&src)`, which

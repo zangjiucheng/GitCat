@@ -37,10 +37,11 @@ fn clone_of(src: &TempRepo, tag: &str) -> TempRepo {
         .expect("failed to spawn git clone");
     assert!(out.status.success(), "git clone failed: {}", String::from_utf8_lossy(&out.stderr));
     let repo = TempRepo { dir };
-    repo.must(&["config", "commit.gpgsign", "false"]);
-    repo.must(&["config", "tag.gpgsign", "false"]);
-    repo.must(&["config", "user.name", "GitCat Test"]);
-    repo.must(&["config", "user.email", "test@gitcat.example"]);
+    // A clone starts with none of the source repo's local config, so it needs
+    // the same treatment `TempRepo::init` gives. This used to be a hand-copied
+    // subset of that list, which is how it ended up missing the line-ending
+    // settings and failing three tests on Windows.
+    repo.apply_test_config();
     repo
 }
 
