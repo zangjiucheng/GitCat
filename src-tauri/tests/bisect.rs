@@ -13,17 +13,11 @@ mod common;
 
 use common::TempRepo;
 use git2::{Oid, Repository, RepositoryState};
-use gitcat_lib::git_bisect::{bisect_mark, bisect_reset, bisect_start, bisect_status, run_bisect, BisectStatus};
-// Used only by the #[cfg(unix)] automated-run tests below, so gated with them —
-// see the note above `bisect_run_handles_a_skip_exit_code_and_still_converges`
-// for why those three cannot run on Windows.
-#[cfg(unix)]
-use gitcat_lib::git_bisect::{try_run_bisect, BisectRunState};
-#[cfg(unix)]
+use gitcat_lib::git_bisect::{
+    bisect_mark, bisect_reset, bisect_start, bisect_status, run_bisect, try_run_bisect, BisectRunState, BisectStatus,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(unix)]
 use std::sync::Arc;
-#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 const N: usize = 15;
@@ -31,6 +25,33 @@ const K_IDX: usize = 6;
 
 fn short(oid: Oid) -> String {
     oid.to_string().chars().take(7).collect()
+}
+
+/// Absolute path to the `bisect_judge` example — the good/bad/skip judgement
+/// these automated-run tests hand to `run_bisect`.
+///
+/// A program, not a shell script: `run_test_command` runs the judgement
+/// through `sh -c` on unix and `cmd /C` on Windows, and the two share no
+/// spelling of what these tests need (state across invocations, a bounded
+/// block). An executable is invoked identically by both. See the example's
+/// own header.
+///
+/// Found relative to this test binary rather than by guessing a target dir:
+/// `cargo test` builds examples, and `target/<profile>/examples/` is a
+/// sibling of the `deps/` this binary lives in — which stays correct under
+/// CARGO_TARGET_DIR, `--release`, and cross-compilation alike.
+fn judge_exe() -> String {
+    let mut p = std::env::current_exe().expect("the test binary knows its own path");
+    p.pop();
+    if p.file_name().and_then(|n| n.to_str()) == Some("deps") {
+        p.pop();
+    }
+    p.push("examples");
+    p.push(if cfg!(windows) { "bisect_judge.exe" } else { "bisect_judge" });
+    assert!(p.exists(), "bisect_judge example not built at {p:?} — `cargo test` should have built it");
+    // Quoted: a checkout can sit under a path with spaces, and both shells
+    // read a double-quoted first token as one program name.
+    format!("\"{}\"", p.display())
 }
 
 /// Returns (repo, original branch, root oid = good, K oid = first-bad, head oid = bad).
@@ -211,19 +232,6 @@ fn bisect_run_converges_via_scripted_good_bad_command() {
     assert!(repo.is_clean(), "working tree dirty after reset");
 }
 
-// Unix-only, and not because the code under test is: `run_bisect` handles
-// Windows fine (`run_test_command` shells out through `cmd /C` there). It
-// is the SCAFFOLDING that has no portable form. This judge command needs
-// two things from its shell — state that survives between separate
-// invocations (a marker file), and a bounded block so the main thread can
-// observe the run mid-flight — and there is no spelling of those that both
-// `sh -c` and `cmd /C` accept. cmd has no `sleep`, and `timeout /t` needs a
-// console this deliberately does not give it (see `no_console_window`).
-//
-// The convergence test above IS portable and does cover the run loop on
-// Windows. What is uncovered here is skip handling, cancellation and the
-// concurrency refusal. See #100.
-#[cfg(unix)]
 #[test]
 fn bisect_run_handles_a_skip_exit_code_and_still_converges() {
     std::env::set_var("LC_ALL", "C");
@@ -240,14 +248,8 @@ fn bisect_run_handles_a_skip_exit_code_and_still_converges() {
     // script's own side channel across separate invocations), and every bad
     // commit after that is reported bad normally. Mirrors exactly the
     // existing manual-skip test's "skip the first non-K bad commit
-    // encountered" shape, just moved into the test script.
-    let k_line = format!("line {K_IDX}");
-    let command = format!(
-        "if grep -qx '{k_line}' history.txt; then exit 1; \
-         elif [ -f bug.txt ]; then \
-           if [ ! -f .gitcat-skip-marker ]; then touch .gitcat-skip-marker; exit 125; else exit 1; fi; \
-         else exit 0; fi"
-    );
+    // encountered" shape, just moved into the judge.
+    let command = format!("{} skip-once {K_IDX} .gitcat-skip-marker", judge_exe());
 
     let result: BisectStatus = run_bisect(&path, &command, || false, |_| {});
 
@@ -334,19 +336,6 @@ fn bisect_run_refuses_cleanly_when_no_bisect_is_in_progress() {
     );
 }
 
-// Unix-only, and not because the code under test is: `run_bisect` handles
-// Windows fine (`run_test_command` shells out through `cmd /C` there). It
-// is the SCAFFOLDING that has no portable form. This judge command needs
-// two things from its shell — state that survives between separate
-// invocations (a marker file), and a bounded block so the main thread can
-// observe the run mid-flight — and there is no spelling of those that both
-// `sh -c` and `cmd /C` accept. cmd has no `sleep`, and `timeout /t` needs a
-// console this deliberately does not give it (see `no_console_window`).
-//
-// The convergence test above IS portable and does cover the run loop on
-// Windows. What is uncovered here is skip handling, cancellation and the
-// concurrency refusal. See #100.
-#[cfg(unix)]
 #[test]
 fn bisect_run_cancel_stops_the_loop_before_convergence() {
     std::env::set_var("LC_ALL", "C");
@@ -362,7 +351,7 @@ fn bisect_run_cancel_stops_the_loop_before_convergence() {
     // cancellation — so cancellation is observed at the very next
     // between-steps check, before a second step ever runs, deterministically
     // well short of the ~4 steps a 15-commit bisect needs to converge.
-    let command = "if [ ! -f .gitcat-first-run ]; then touch .gitcat-first-run; sleep 0.5; fi; exit 0";
+    let command = format!("{} slow-first .gitcat-first-run 500", judge_exe());
 
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_for_run = cancel.clone();
@@ -371,7 +360,7 @@ fn bisect_run_cancel_stops_the_loop_before_convergence() {
         let mut n = 0usize;
         let result = run_bisect(
             &path_for_run,
-            command,
+            &command,
             move || cancel_for_run.load(Ordering::SeqCst),
             |_status| n += 1,
         );
@@ -415,19 +404,6 @@ fn bisect_run_cancel_stops_the_loop_before_convergence() {
 // — same reasoning as testing `run_bisect` directly above. Coordination via
 // a marker-file side channel mirrors `bisect_run_cancel_stops_the_loop_
 // before_convergence` above exactly.
-// Unix-only, and not because the code under test is: `run_bisect` handles
-// Windows fine (`run_test_command` shells out through `cmd /C` there). It
-// is the SCAFFOLDING that has no portable form. This judge command needs
-// two things from its shell — state that survives between separate
-// invocations (a marker file), and a bounded block so the main thread can
-// observe the run mid-flight — and there is no spelling of those that both
-// `sh -c` and `cmd /C` accept. cmd has no `sleep`, and `timeout /t` needs a
-// console this deliberately does not give it (see `no_console_window`).
-//
-// The convergence test above IS portable and does cover the run loop on
-// Windows. What is uncovered here is skip handling, cancellation and the
-// concurrency refusal. See #100.
-#[cfg(unix)]
 #[test]
 fn bisect_run_start_refuses_a_second_concurrent_call_while_one_is_in_flight() {
     std::env::set_var("LC_ALL", "C");
@@ -443,11 +419,11 @@ fn bisect_run_start_refuses_a_second_concurrent_call_while_one_is_in_flight() {
     // sleeps well past the time it takes the main thread to notice and
     // attempt a concurrent second call — so the second call is guaranteed to
     // race against a genuinely in-flight first run, not a already-finished one.
-    let command = "if [ ! -f .gitcat-inflight ]; then touch .gitcat-inflight; sleep 0.5; fi; exit 0";
+    let command = format!("{} slow-first .gitcat-inflight 500", judge_exe());
 
     let state1 = state.clone();
     let path1 = path.clone();
-    let command1 = command.to_string();
+    let command1 = command.clone();
     let handle = std::thread::spawn(move || try_run_bisect(&state1, &path1, &command1, || false, |_| {}));
 
     let marker = repo.dir.join(".gitcat-inflight");

@@ -92,4 +92,11 @@ fn delay_load_comctl32_on_windows() {
     // Provides __delayLoadHelper2, which the delay-load stubs call. Without it
     // the link fails with LNK2001 on that symbol.
     println!("cargo:rustc-link-arg=delayimp.lib");
+    // LNK4199: "/DELAYLOAD:comctl32.dll ignored; no imports found". These flags
+    // are unscoped because the target that needs them — the lib's own unittest
+    // binary — cannot be addressed on its own (see above), so they also reach
+    // targets that never touch comctl32. `examples/bisect_judge.rs`, which
+    // links no part of the app, is one. The flag being a no-op there is the
+    // intended outcome, not something to report on every build.
+    println!("cargo:rustc-link-arg=/IGNORE:4199");
 }
