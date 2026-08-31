@@ -26,9 +26,16 @@ vi.mock("../../ipc/bindings", () => ({
 // mock it so the real (non-demo) branches run.
 vi.mock("../../ipc/env", () => ({ IN_TAURI: true }));
 
+// The detail island owns the file selection `{file}` is filled from (#76).
+// Mocked for the same reason bridge is: importing the real one drags in the
+// resolver/blame/filehistory/externaltools graph this controller has no
+// business booting.
+vi.mock("../detail/detail.svelte.ts", () => ({ detailCtrl: { selectedFile: null as string | null } }));
+
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { CommandOutput, Plugin } from "../../ipc/bindings";
+import { detailCtrl } from "../detail/detail.svelte.ts";
 import { parseTamaReaction, pluginCommandsCtrl } from "./plugincommands.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
@@ -52,6 +59,7 @@ function resetCtrl() {
   pluginCommandsCtrl.onActionsChanged = null;
   (bridge.state as unknown as { selectedRow: number }).selectedRow = -1;
   (bridge.BACKEND as unknown as { rows: Array<{ sha: string }> }).rows = [];
+  detailCtrl.selectedFile = null;
 }
 
 beforeEach(() => {
@@ -407,5 +415,84 @@ describe("invoke — missing repo", () => {
 
     expect(bridgeNull.tama.warn).toHaveBeenCalled();
     expect(bindingsNull.commands.runPluginCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe("invoke — the `file` context fills {file} (#76)", () => {
+  // A `file` command placed in the MENU, not the palette: build() drops it from
+  // the action list, but a panel button can still name it, so the context index
+  // has to carry it. That is what the "ids only" test below leans on.
+  const acme = plugin({
+    id: "acme",
+    name: "Acme",
+    commands: [
+      { id: "lint", label: "Lint this file", run: "lint {file}", handler: null, context: "file", placement: "palette", mutates: false },
+      { id: "count", label: "Count lines", run: "wc -l {file}", handler: null, context: "file", placement: "menu", mutates: false },
+    ],
+  });
+
+  it("sends the file the detail island has selected", async () => {
+    detailCtrl.selectedFile = "src/legacy/main.ts";
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({ stdout: "clean", success: true })));
+
+    await pluginCommandsCtrl.invoke("acme", "lint", "file");
+
+    expect(commands.runPluginCommand).toHaveBeenCalledWith(
+      "acme",
+      "lint",
+      expect.objectContaining({ repo: "/repo", file: "src/legacy/main.ts" }),
+    );
+  });
+
+  it("REFUSES to run when no file is selected, rather than expanding {file} to nothing", async () => {
+    // The behaviour this whole guard exists for: an unfilled token expands to
+    // the empty string, so `rm -rf {repo}/{file}` would become `rm -rf /repo/`.
+    detailCtrl.selectedFile = null;
+
+    await pluginCommandsCtrl.invoke("acme", "lint", "file");
+
+    expect(commands.runPluginCommand).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalled();
+  });
+
+  it("resolves the context from the manifest when the caller has only ids (panel buttons)", async () => {
+    // pluginpanels' runButton knows a plugin id and a command id and nothing
+    // else. Without the index it would fall through to "none" and send no file.
+    vi.mocked(commands.listPlugins).mockResolvedValueOnce(ok([acme]));
+    await pluginCommandsCtrl.ensureLoaded();
+    detailCtrl.selectedFile = "README.md";
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({ stdout: "12", success: true })));
+
+    await pluginCommandsCtrl.invoke("acme", "count");
+
+    expect(commands.runPluginCommand).toHaveBeenCalledWith(
+      "acme",
+      "count",
+      expect.objectContaining({ file: "README.md" }),
+    );
+  });
+
+  it("a disabled plugin's commands are not in the context index", async () => {
+    vi.mocked(commands.listPlugins).mockResolvedValueOnce(ok([plugin({ ...acme, enabled: false })]));
+    await pluginCommandsCtrl.ensureLoaded();
+    detailCtrl.selectedFile = "README.md";
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({ stdout: "", success: true })));
+
+    // Falls back to "none": no file is gathered, and nothing is refused either.
+    await pluginCommandsCtrl.invoke("acme", "count");
+
+    expect(commands.runPluginCommand).toHaveBeenCalledWith("acme", "count", expect.objectContaining({ file: null }));
+  });
+
+  it("leaves the `commit` context's existing permissiveness alone", async () => {
+    // Deliberately NOT symmetrical with `file`: {sha} has shipped, and plugins
+    // may already rely on running without a selection. Changing that belongs in
+    // its own change, not smuggled in with a new token.
+    (bridge.state as unknown as { selectedRow: number }).selectedRow = -1;
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({ stdout: "ok", success: true })));
+
+    await pluginCommandsCtrl.invoke("acme", "onCommit", "commit");
+
+    expect(commands.runPluginCommand).toHaveBeenCalledWith("acme", "onCommit", expect.objectContaining({ sha: null }));
   });
 });

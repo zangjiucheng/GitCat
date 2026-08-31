@@ -116,7 +116,7 @@ Each entry in `commands[]` contributes one invocable action.
 | --- | --- |
 | `none` *(default)* | Always applicable; needs no selection. |
 | `commit` | Needs a selected commit (fills `{sha}`). |
-| `file` | Needs a selected file. |
+| `file` | Needs a selected file (fills `{file}`). With nothing selected the command is **not run** — GitCat says so rather than expanding `{file}` to nothing. |
 | `repo` | Repo-scoped — needs only the open repository. |
 
 > **What's populated today.** The built-in ⌘K invocation always fills `{repo}`, and fills `{sha}` for a `commit`-context command. The other tokens are recognized by the expander and reserved for richer selection contexts, but are not yet populated from the palette, so they currently expand to an empty string. Write your templates against the full grammar; just know that `file`/`files`/`diff`/`branch`/`ref` come from the UI later.
@@ -141,11 +141,18 @@ A `run` string is a template. Before running it, GitCat substitutes `{...}` toke
 | --- | --- |
 | `{repo}` | The repository's path. **Also the working directory** the command runs in. |
 | `{sha}` | The selected commit's id. |
-| `{file}` | A single selected file path. |
+| `{file}` | The selected file, relative to the repository root. Filled for a `file`-context command. |
 | `{files}` | Several selected file paths, each quoted, space-joined. |
 | `{diff}` | Diff text. |
 | `{branch}` | A branch name. |
 | `{ref}` | A full ref / tag / symbolic ref. |
+
+**Which tokens are filled today.** `{repo}` always; `{sha}` for a `commit`
+command; `{file}` for a `file` command. `{files}`, `{diff}`, `{branch}` and
+`{ref}` are recognized by the expander but nothing fills them yet, so they
+currently expand to nothing — write your `run` against the three above, and get
+the rest from git itself (your command runs with the repository as its working
+directory, so `git branch --show-current` and friends are right there).
 
 Rules the expander follows:
 
