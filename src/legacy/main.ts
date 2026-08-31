@@ -2469,16 +2469,11 @@ function armDanger(ctx){
   // it's always present.
   const typeLabel=$("#dangerTypeLabel");
   typeLabel.textContent="Type the "+(ctx.typeNoun||"branch name")+" ";
-  const tn=document.createElement("b"); tn.className="mono"; tn.id="dangerTypeName"; tn.textContent=ctx.name;
-  typeLabel.appendChild(tn);
-  typeLabel.appendChild(document.createTextNode(" to "+(ctx.typeVerb||"arm the rewrite")+":"));
-  const inp=$("#confirmInput"); inp.placeholder=ctx.name; inp.value="";
-  $("#dangerGo").textContent=ctx.confirmLabel||"Confirm"; $("#dangerGo").disabled=true;
-  openScrim("#dangerScrim"); setTimeout(()=>inp.focus(),30);
-}
-function disarmDanger(){ closeScrim("#dangerScrim"); const ci=$("#confirmInput"); if(ci) ci.value=""; const gg=$("#dangerGo"); if(gg) gg.disabled=true; dangerCtx=null; }
-$("#confirmInput").addEventListener("input",e=>{ const want=dangerCtx?dangerCtx.name:"main"; $("#dangerGo").disabled=e.target.value.trim()!==want; });
-$("#dangerCancel").addEventListener("click",()=>{ disarmDanger(); Tama.event("mutation.cancel"); });
+  const noun = ctx.typeNoun ? t(ctx.typeNoun) : t("sidebar.branch_name");
+  const verb = ctx.typeVerb ? t(ctx.typeVerb) : t("sidebar.arm_rewrite");
+
+  typeLabel.textContent = t("filterrepo.danger_type_label", { noun, verb });
+  $("#dangerGo").textContent = ctx.confirmLabel ? t(ctx.confirmLabel) : t("common.confirm");
 let dangerBusy=false;
 $("#dangerGo").addEventListener("click",async ()=>{
   if(dangerBusy) return;
