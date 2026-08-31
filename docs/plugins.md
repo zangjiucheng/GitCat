@@ -56,6 +56,7 @@ A manifest is a small JSON document. Here's a complete, annotated example:
 | `id` | ✅ | string | Stable, unique identifier. Must match `^[a-z0-9][a-z0-9-]*$` — start with a lowercase letter or digit, then lowercase letters, digits, and `-` only. No uppercase, spaces, underscores, or dots. Used as the enable/remove key. Installing a second plugin with the same `id` is rejected. |
 | `name` | ✅ | string | Human-readable display name (shown in Settings and as the ⌘K hint). Must be non-empty. |
 | `version` | ✅ | string | Any non-empty string (e.g. `"1.0.0"`). Not parsed or compared — it's just for your reference. |
+| `minGitcatVersion` | — | string | The oldest GitCat that can run this plugin, e.g. `"1.3.0"` (`"1.3"` works too — a missing component reads as zero). Omit it and the plugin installs on any host. See [Requiring a GitCat version](#requiring-a-gitcat-version). |
 | `description` | — | string | Optional one-liner. |
 | `enabled` | — | boolean | Defaults to `true` when omitted — a freshly installed plugin is active until you disable it. |
 | `commands` | — | array | Zero or more [commands](#commands). Defaults to `[]`. |
@@ -64,6 +65,34 @@ A manifest is a small JSON document. Here's a complete, annotated example:
 | `lua` | — | string | Optional path (relative to the plugin folder) to a main Luau script — required only if any command/hook uses a `handler`. See [Scripting with Luau](#scripting-with-luau). |
 
 A manifest must be a regular file no larger than **256 KB** (a `plugin.json` is tiny by design).
+
+### Requiring a GitCat version
+
+<a id="requiring-a-gitcat-version"></a>
+
+If your plugin uses something a newer GitCat introduced — a placeholder token, a
+widget type, a manifest field — say so with `minGitcatVersion`:
+
+```json
+{ "id": "my-plugin", "name": "My Plugin", "version": "1.0.0", "minGitcatVersion": "1.3.0" }
+```
+
+An older host then **refuses the install** with a message naming both versions,
+instead of accepting the plugin and misbehaving later.
+
+That "misbehaving later" is worth being concrete about, because it is quiet. An
+unrecognized placeholder token expands to the **empty string**, so a `run` of
+`rm {file}` written against a GitCat that has `{file}` becomes plain `rm` on one
+that doesn't. Nothing errors, nothing warns; the command simply runs with your
+argument deleted. Declaring the floor is what turns that into a refusal at the
+one moment a person is present to read it.
+
+**One honest limitation.** The gate only protects hosts that have the gate.
+GitCat 1.2 and earlier ignore `minGitcatVersion` entirely, so the first
+generation of gated plugins still installs silently on them. That is
+unavoidable — an older release cannot be taught to read a field that did not
+exist when it shipped — and it is not a reason to leave the field out. Every
+host from 1.3 on honours it.
 
 ## Commands
 

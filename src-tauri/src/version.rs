@@ -35,9 +35,62 @@
 /// structure — parse it where you need to order two versions.
 pub const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// A version reduced to the three numbers that order it.
+pub type Version = (u64, u64, u64);
+
+/// Parse `major[.minor[.patch]]` into the triple that orders it, or `None` if
+/// the string is not a version at all.
+///
+/// Two deliberate leniencies, both in the direction of accepting what an author
+/// obviously meant:
+///
+/// * A missing component reads as zero, so `"1.3"` is `1.3.0`. A plugin author
+///   writing the two-component form means the 1.3 line, and refusing it would
+///   be pedantry with an install error attached.
+/// * A `-prerelease` or `+build` suffix is DROPPED before parsing. Nightly
+///   builds carry one (`1.3.0-nightly.4`), and a plugin asking for 1.3.0 wants
+///   the feature set, not a particular build of it. The corollary is that a
+///   nightly counts as its base version, which is the answer that makes a
+///   nightly useful for testing plugins.
+///
+/// Anything else — empty, non-numeric, more than three components, a component
+/// that overflows `u64` — is `None`, and callers turn that into a manifest
+/// error rather than guessing.
+pub fn parse(v: &str) -> Option<Version> {
+    let core = v.trim();
+    let core = core.split(['-', '+']).next()?;
+    if core.is_empty() {
+        return None;
+    }
+    let mut parts = core.split('.');
+    let mut out = [0u64; 3];
+    for slot in out.iter_mut() {
+        match parts.next() {
+            None => break,
+            Some(p) => *slot = p.parse().ok()?,
+        }
+    }
+    if parts.next().is_some() {
+        return None; // four or more components is not a version we understand
+    }
+    Some((out[0], out[1], out[2]))
+}
+
+/// Is this host at least `required`?
+///
+/// `None` means `required` is not parseable as a version — the caller's job is
+/// to report that as a bad manifest, NOT to fall back to allowing the install.
+/// Silently admitting a plugin whose floor we could not read is exactly the
+/// failure mode this whole mechanism exists to prevent.
+pub fn host_meets(required: &str) -> Option<bool> {
+    let required = parse(required)?;
+    let host = parse(HOST_VERSION).expect("HOST_VERSION comes from Cargo.toml and always parses");
+    Some(host >= required)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::HOST_VERSION;
+    use super::{host_meets, parse, HOST_VERSION};
     use std::path::PathBuf;
 
     /// The repository root: the parent of `src-tauri/`, which is what Cargo
@@ -105,6 +158,42 @@ mod tests {
         text.lines()
             .find_map(|line| quoted_value(line, "version"))
             .unwrap_or_else(|| panic!("nix/package.nix has no `version = \"…\";` attribute"))
+    }
+
+    #[test]
+    fn parse_accepts_the_forms_a_manifest_author_actually_writes() {
+        assert_eq!(parse("1.3.0"), Some((1, 3, 0)));
+        assert_eq!(parse("1.3"), Some((1, 3, 0)), "a missing component reads as zero");
+        assert_eq!(parse("2"), Some((2, 0, 0)));
+        assert_eq!(parse(" 1.3.0 "), Some((1, 3, 0)), "surrounding whitespace is not a syntax error");
+        assert_eq!(parse("1.3.0-nightly.4"), Some((1, 3, 0)), "a prerelease counts as its base version");
+        assert_eq!(parse("1.3.0+build7"), Some((1, 3, 0)), "build metadata is dropped");
+        assert_eq!(parse("10.0.0"), Some((10, 0, 0)), "components are numbers, not characters");
+    }
+
+    #[test]
+    fn parse_rejects_what_is_not_a_version() {
+        for bad in ["", "   ", "banana", "1.x", "1.3.0.1", "v1.3.0", "1..0", "-1.0.0", "1.3.-0"] {
+            assert_eq!(parse(bad), None, "{bad:?} must not parse as a version");
+        }
+    }
+
+    #[test]
+    fn parse_orders_by_number_not_by_string() {
+        // The whole reason this is a triple and not a string compare: "10" < "9"
+        // lexicographically, and a plugin floor of 1.9.0 must not lock out 1.10.0.
+        assert!(parse("1.10.0") > parse("1.9.0"));
+        assert!(parse("2.0.0") > parse("1.99.99"));
+    }
+
+    #[test]
+    fn host_meets_compares_against_this_build_and_reports_an_unreadable_floor() {
+        let (maj, min, patch) = parse(HOST_VERSION).expect("the host version must parse");
+        assert_eq!(host_meets(HOST_VERSION), Some(true), "a host always meets its own version");
+        assert_eq!(host_meets(&format!("{maj}.{min}.{patch}")), Some(true));
+        assert_eq!(host_meets(&format!("{}.0.0", maj + 1)), Some(false), "a newer major is not met");
+        assert_eq!(host_meets("0.0.1"), Some(true), "an ancient floor is met");
+        assert_eq!(host_meets("banana"), None, "an unreadable floor is None, never a silent yes");
     }
 
     /// The whole point of this module. `src-tauri/Cargo.toml` is authoritative
