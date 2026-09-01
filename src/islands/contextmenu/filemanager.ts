@@ -8,6 +8,17 @@
 //
 // Shared by all three item builders rather than repeated in each, since the
 // open half has two callers (a folder row and the topbar repo chip).
+//
+// Both go through our own Rust commands rather than `@tauri-apps/plugin-opener`
+// directly, which is the obvious-looking shortcut and was tried first. The
+// reveal half would work — `opener:default` already allows `revealItemInDir`.
+// The open half will not: `allow-open-path`'s scope check ends in
+// `self.allowed.iter().any(...)`, false for an empty allow list, so the
+// capability has to carry one, and the only pattern wide enough for
+// "whichever repo is open" is `**`. That hands the webview the right to ask
+// the OS to open ANY path with its default application, and this app runs
+// third-party plugin code in that webview. `src-tauri/src/file_manager.rs`
+// carries the full reasoning and the trust gate.
 
 import { be, t } from "../../i18n/i18n.svelte.ts";
 import * as bridge from "../../legacy/bridge";

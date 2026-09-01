@@ -7,9 +7,14 @@
 // INSIDE. Same reason `openDirLabelKey` is its own family of strings.
 //
 // Both file trees have folder rows (Detail's commit tree, and Workdir's
-// staged and unstaged trees), and each already has its own actions to put
-// above these, so the trio is built once here for the same reason the file
-// one is.
+// staged and unstaged trees), so the trio is built once here for the same
+// reason the file one is.
+//
+// Unlike the file trio, though, these do not always follow something: a
+// working-tree folder row has stage-or-unstage above them, a commit's folder
+// row has nothing. That is why `separatorBefore` below is marked
+// unconditionally and ContextMenu.svelte drops it at index 0, rather than
+// each caller deciding — the builder cannot see what it is being appended to.
 
 import { t } from "../../i18n/i18n.svelte.ts";
 import { openDir } from "./filemanager.ts";
