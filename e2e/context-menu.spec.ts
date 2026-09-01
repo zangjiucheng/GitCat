@@ -22,6 +22,9 @@ async function skipWizard(page: import("@playwright/test").Page) {
 // its first file row.
 async function fileRows(page: import("@playwright/test").Page) {
   await page.locator('#refLocal [data-branch="main"]').click();
+  // The commit's files live under the detail panel's "Changes" tab, which is
+  // not the one a commit opens on.
+  await page.locator("#detail .d-tabs .d-tab").nth(1).click();
   // #tree, not "#detail .file": the same file-tree snippet is rendered twice,
   // once inline and once inside the expanded-diff modal, so an unscoped
   // selector matches every row twice.
@@ -104,6 +107,7 @@ test("right-clicking a folder row opens its own menu, with no leading divider", 
   await page.goto("/");
   await skipWizard(page);
   await page.locator('#refLocal [data-branch="main"]').click();
+  await page.locator("#detail .d-tabs .d-tab").nth(1).click(); // the "Changes" tab
 
   // #tree for the same reason fileRows() scopes to it: the tree snippet is
   // rendered twice, inline and inside the expanded-diff modal.
