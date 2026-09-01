@@ -179,7 +179,10 @@ for (const placement of ["right", "bottom"] as const) {
         .filter({ has: page.locator(".wd-path", { hasText: /^todo\.txt$/ }) });
       await expect(row).toBeVisible();
       await row.click({ button: "right" });
-      const menuItem = page.locator(".wd-rowmenu-item.danger");
+      // The shared context menu (islands/contextmenu), not Workdir's old
+      // hand-rolled popover — that markup is gone now that every file tree
+      // uses the one island.
+      const menuItem = page.locator(".ctxmenu-item.danger");
       await expect(menuItem).toBeVisible();
       await menuItem.click();
 

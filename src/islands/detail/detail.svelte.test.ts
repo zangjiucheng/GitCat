@@ -50,11 +50,13 @@ import { resolver } from "../resolver/resolver.svelte.ts";
 import { blameCtrl } from "../blame/blame.svelte.ts";
 import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
 import { detailCtrl } from "./detail.svelte.ts";
+import { contextMenuCtrl } from "../contextmenu/contextmenu.svelte.ts";
 
 vi.mock("../../ipc/bindings", () => ({
   commands: {
     commitDetail: vi.fn(),
     plumbingInspect: vi.fn(),
+    revealPathInFileManager: vi.fn(async () => ({ status: "ok", data: null })),
   },
 }));
 
@@ -667,5 +669,81 @@ describe("long commit-message body toggle", () => {
     expect(detailCtrl.bodyExpanded).toBe(true);
     detailCtrl.select(1);
     expect(detailCtrl.bodyExpanded).toBe(false);
+  });
+});
+
+describe("file row context menu", () => {
+  const modified = { p: "src/main.rs", st: "M", oldPath: null, name: "main.rs", add: 1, del: 0, i: 0 };
+  const deleted = { p: "old/gone.rs", st: "D", oldPath: null, name: "gone.rs", add: 0, del: 9, i: 1 };
+
+  // Addressed by id, not label: the labels are translated, and one of them
+  // is platform-dependent (see legacy/platform.ts), so asserting on text
+  // would make this test depend on the locale and the user agent.
+  function ids() {
+    return (contextMenuCtrl.menu?.items ?? []).map((i) => i.id);
+  }
+  function item(id: string) {
+    const found = (contextMenuCtrl.menu?.items ?? []).find((i) => i.id === id);
+    if (!found) throw new Error(`no menu item ${id}; got ${ids().join(", ")}`);
+    return found;
+  }
+
+  beforeEach(() => {
+    contextMenuCtrl.close();
+    setDemoGraph();
+    detailCtrl.select(0);
+  });
+
+  // The three actions the row already had as icon buttons come first, then a
+  // divider, then the three this menu adds. Right-clicking should show
+  // everything that can be done to the file, not a second, smaller set.
+  it("offers the row's existing actions and the new ones, in that order", () => {
+    detailCtrl.openFileMenu(modified, 10, 20);
+    expect(ids()).toEqual(["blame", "history", "external-diff", "reveal", "copy-path", "copy-full-path"]);
+    expect(contextMenuCtrl.menu?.x).toBe(10);
+    expect(contextMenuCtrl.menu?.y).toBe(20);
+    expect(item("reveal").separatorBefore).toBe(true);
+  });
+
+  it("copy path puts git's own repo-relative spelling on the clipboard", () => {
+    const writeText = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText } });
+    detailCtrl.openFileMenu(modified, 0, 0);
+    contextMenuCtrl.run(item("copy-path"));
+    expect(writeText).toHaveBeenCalledWith("src/main.rs");
+  });
+
+  it("copy full path joins it onto the repo", () => {
+    const writeText = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText } });
+    detailCtrl.openFileMenu(modified, 0, 0);
+    contextMenuCtrl.run(item("copy-full-path"));
+    expect(writeText).toHaveBeenCalledWith("/repo/src/main.rs");
+  });
+
+  it("reveal asks the backend for the repo plus the relative path", () => {
+    detailCtrl.openFileMenu(modified, 0, 0);
+    contextMenuCtrl.run(item("reveal"));
+    expect(commands.revealPathInFileManager).toHaveBeenCalledWith("/repo", "src/main.rs");
+  });
+
+  // A commit's file list includes what that commit DELETED. There is nothing
+  // on disk to show, so the item is disabled rather than left to fail — but
+  // it stays visible so the menu keeps the same shape from row to row.
+  it("disables reveal for a file the commit deleted, without hiding it", () => {
+    vi.mocked(commands.revealPathInFileManager).mockClear();
+    detailCtrl.openFileMenu(deleted, 0, 0);
+    expect(ids()).toContain("reveal");
+    expect(item("reveal").disabled).toBe(true);
+    contextMenuCtrl.run(item("reveal"));
+    expect(commands.revealPathInFileManager).not.toHaveBeenCalled();
+  });
+
+  // Copying a path is still meaningful for a deleted file — you often want
+  // it precisely to go looking for what happened to it.
+  it("still offers both copies for a deleted file", () => {
+    detailCtrl.openFileMenu(deleted, 0, 0);
+    expect(item("copy-path").disabled).toBeFalsy();
+    expect(item("copy-full-path").disabled).toBeFalsy();
   });
 });

@@ -15,6 +15,8 @@ import { displayChips } from "./reforder.ts";
 import { LruCache } from "./graphcache.ts";
 import { clampResize, dragCeiling } from "./resize.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
+import { contextMenuCtrl } from "../islands/contextmenu/contextmenu.svelte.ts";
+import { repoMenuItems } from "../islands/contextmenu/repoitems.ts";
 import { repoSummaryCtrl } from "../islands/reposummary/reposummary.svelte.ts";
 import { pluginHooksCtrl } from "../islands/pluginhooks/pluginhooks.svelte.ts";
 import { syncProgressCtrl } from "../islands/syncprogress/syncprogress.svelte.ts";
@@ -3559,6 +3561,15 @@ async function closeRepo(){
 // whether or not a repo is currently open (the dashboard's own "+ Add
 // repository…" is where the native picker still lives).
 $(".repo-pick").addEventListener("click", ()=>dashboardCtrl.show());
+// Right-click the same chip for the repo-level actions. GitCat has no repo
+// tabs to hang these on (one repo per window, see src-tauri/src/windows.rs),
+// and this chip is the only thing in the UI that names the open repo.
+// repoMenuItems() returns nothing when no repo is open, and open([]) is a
+// no-op, so an empty chip right-clicks to nothing rather than to dead entries.
+$(".repo-pick").addEventListener("contextmenu", (e)=>{
+  e.preventDefault();
+  contextMenuCtrl.open(repoMenuItems(CUR_REPO), e.clientX, e.clientY);
+});
 
 // Persisted settings (Settings modal, src/islands/settings) — defaults match
 // what this boot sequence used to hardcode, so an existing user with nothing
