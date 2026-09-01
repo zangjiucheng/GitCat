@@ -8,7 +8,7 @@
 // surfaces that look identical to a user.
 
 import { t } from "../../i18n/i18n.svelte.ts";
-import { commands } from "../../ipc/bindings";
+import { revealPath } from "./filemanager.ts";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
 import { joinRepoPath } from "../../legacy/paths.ts";
 import { revealLabelKey } from "../../legacy/platform.ts";
@@ -38,7 +38,7 @@ export function filePathMenuItems(repo: string, relative: string, opts: { onDisk
       // belongs here rather than on whatever happens to come before it.
       separatorBefore: true,
       disabled: !onDisk || !repo,
-      run: () => void commands.revealPathInFileManager(repo, relative),
+      run: () => void revealPath(repo, relative),
     },
     { id: "copy-path", label: t("common.copy_path"), run: () => copyToClipboard(relative) },
     { id: "copy-full-path", label: t("common.copy_full_path"), run: () => copyToClipboard(joinRepoPath(repo, relative)) },

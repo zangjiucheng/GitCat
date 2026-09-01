@@ -846,21 +846,34 @@ class WorkdirState {
   // gain three menu entries would be the kind of second copy that goes stale.
   // The commit-side menu (detailCtrl.openFileMenu) has no such split and does
   // carry all of its row's actions.
-  openRowMenu(file: string, untracked: boolean, staged: boolean, x: number, y: number): void {
+  openRowMenu(file: string, untracked: boolean, staged: boolean, onDisk: boolean, x: number, y: number): void {
     const repo = this.repo;
     contextMenuCtrl.open(
       [
         staged
           ? { id: "unstage", label: t("workdir.unstage"), disabled: this.busy, run: () => void this.unstageFile(repo, file) }
           : { id: "stage", label: t("workdir.stage"), disabled: this.busy, run: () => void this.stageFile(repo, file) },
-        {
-          id: "discard",
-          label: t("workdir.discard_changes"),
-          danger: true,
-          disabled: this.busy,
-          run: () => this.confirmDiscard(file, untracked),
-        },
-        ...filePathMenuItems(repo, file),
+        // Unstaged rows only. A staged row's `untracked` is always false, so
+        // discard would take discardFile's tracked branch and act on the
+        // WORKTREE: for a file staged with no unstaged edits there is no
+        // index-to-worktree delta to back up and the call fails after the user
+        // has typed the filename to confirm; for a file in both lists it throws
+        // away the unstaged edits and leaves the staged change untouched.
+        // Neither is what "discard" reads as on the staged side — and the
+        // staged rows carry no trash button either, so offering it here would
+        // also break the rule the rest of these menus follow.
+        ...(staged
+          ? []
+          : [
+              {
+                id: "discard",
+                label: t("workdir.discard_changes"),
+                danger: true,
+                disabled: this.busy,
+                run: () => this.confirmDiscard(file, untracked),
+              },
+            ]),
+        ...filePathMenuItems(repo, file, { onDisk }),
       ],
       x,
       y,

@@ -638,7 +638,7 @@
         e.preventDefault();
         // Select first, so the menu always acts on the highlighted row.
         workdirCtrl.selectDiffFile(f.path, true);
-        workdirCtrl.openRowMenu(f.path, f.status === "?", true, e.clientX, e.clientY);
+        workdirCtrl.openRowMenu(f.path, f.status === "?", true, f.status !== "D", e.clientX, e.clientY);
       }}
       onkeydown={(e) => (e.key === "Enter" || e.key === " ") && workdirCtrl.selectDiffFile(f.path, true)}
     >
@@ -740,7 +740,7 @@
       oncontextmenu={(e) => {
         e.preventDefault();
         workdirCtrl.selectDiffFile(f.path, false);
-        workdirCtrl.openRowMenu(f.path, f.status === "?", false, e.clientX, e.clientY);
+        workdirCtrl.openRowMenu(f.path, f.status === "?", false, f.status !== "D", e.clientX, e.clientY);
       }}
     >
       <span class="st" data-status={f.status}>{STATUS_LABEL[f.status] ?? f.status}</span>

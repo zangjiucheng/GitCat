@@ -5,7 +5,7 @@
 // where the repo-level actions live.
 
 import { t } from "../../i18n/i18n.svelte.ts";
-import { commands } from "../../ipc/bindings";
+import { openDir } from "./filemanager.ts";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
 import { openDirLabelKey } from "../../legacy/platform.ts";
 import { terminalCtrl } from "../terminal/terminal.svelte.ts";
@@ -39,7 +39,7 @@ export function repoMenuItems(repo: string): ContextMenuItem[] {
       //
       // The empty relative is the repo itself — the same command a folder row
       // uses, so the two cannot drift apart (see diritems.ts).
-      run: () => void commands.openDirInFileManager(repo, ""),
+      run: () => void openDir(repo, ""),
     },
     { id: "copy-path", label: t("common.copy_path"), run: () => copyToClipboard(repo) },
   ];

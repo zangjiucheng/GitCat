@@ -7,6 +7,8 @@ export default {
   remove: "移除",
   loading: "加载中…",
   // 两个面板之间分隔条的提示（islands/detailpanel/Splitter）。
+  warn_reveal_failed: "无法在文件管理器中显示 — {reason}",
+  warn_open_dir_failed: "无法打开该文件夹 — {reason}",
   splitter_tip: "拖动调整大小 — 双击复原",
   install: "安装",
 

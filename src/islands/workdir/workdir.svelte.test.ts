@@ -554,18 +554,40 @@ describe("discard all (stash-backed)", () => {
   // island (see contextmenu.svelte.ts), so what this asserts is the item list
   // the controller builds, not a popover state of its own.
   it("offers stage for an unstaged row, and unstage for a staged one", () => {
-    workdirCtrl.openRowMenu("b.ts", false, false, 120, 240);
+    workdirCtrl.openRowMenu("b.ts", false, false, true, 120, 240);
     expect(contextMenuCtrl.menu?.items.map((i: ContextMenuItem) => i.id)).toEqual(["stage", "discard", "reveal", "copy-path", "copy-full-path"]);
     expect(contextMenuCtrl.menu?.x).toBe(120);
     expect(contextMenuCtrl.menu?.y).toBe(240);
 
-    workdirCtrl.openRowMenu("b.ts", false, true, 0, 0);
-    expect(contextMenuCtrl.menu?.items.map((i: ContextMenuItem) => i.id)).toEqual(["unstage", "discard", "reveal", "copy-path", "copy-full-path"]);
+    workdirCtrl.openRowMenu("b.ts", false, true, true, 0, 0);
+    expect(contextMenuCtrl.menu?.items.map((i: ContextMenuItem) => i.id)).toEqual(["unstage", "reveal", "copy-path", "copy-full-path"]);
+    contextMenuCtrl.close();
+  });
+
+  // A staged row's `untracked` is always false, so discard would take
+  // discardFile's tracked branch and act on the WORKTREE — failing outright
+  // when there is no unstaged delta to back up, and silently throwing away
+  // the unstaged edits when there is. Neither is what the word means here,
+  // and the staged rows carry no trash button either.
+  it("does not offer discard on a staged row", () => {
+    workdirCtrl.openRowMenu("b.ts", false, true, true, 0, 0);
+    expect(contextMenuCtrl.menu?.items.some((i: ContextMenuItem) => i.id === "discard")).toBe(false);
+    contextMenuCtrl.close();
+  });
+
+  // A file the working tree lists as deleted has nothing to show, so reveal
+  // is disabled — the same rule the commit view's rows already follow. Both
+  // copies stay live: a gone file's path is often exactly what you want.
+  it("disables reveal for a row that is no longer on disk", () => {
+    workdirCtrl.openRowMenu("gone.ts", false, false, false, 0, 0);
+    const items = contextMenuCtrl.menu?.items ?? [];
+    expect(items.find((i: ContextMenuItem) => i.id === "reveal")?.disabled).toBe(true);
+    expect(items.find((i: ContextMenuItem) => i.id === "copy-path")?.disabled).toBeFalsy();
     contextMenuCtrl.close();
   });
 
   it("discard is the destructive one, and routes through the same typed confirm as the row button", () => {
-    workdirCtrl.openRowMenu("b.ts", true, false, 0, 0);
+    workdirCtrl.openRowMenu("b.ts", true, false, true, 0, 0);
     const discard = contextMenuCtrl.menu?.items.find((i: ContextMenuItem) => i.id === "discard");
     expect(discard?.danger).toBe(true);
     contextMenuCtrl.run(discard!);
@@ -580,7 +602,7 @@ describe("discard all (stash-backed)", () => {
   // tree ends up in a state nobody asked for.
   it("disables its own actions while the panel is busy", () => {
     workdirCtrl.busy = true;
-    workdirCtrl.openRowMenu("b.ts", false, false, 0, 0);
+    workdirCtrl.openRowMenu("b.ts", false, false, true, 0, 0);
     const items = contextMenuCtrl.menu?.items ?? [];
     expect(items.find((i: ContextMenuItem) => i.id === "stage")?.disabled).toBe(true);
     expect(items.find((i: ContextMenuItem) => i.id === "discard")?.disabled).toBe(true);

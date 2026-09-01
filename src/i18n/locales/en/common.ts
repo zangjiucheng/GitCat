@@ -9,6 +9,10 @@ export default {
   // Tooltip on the divider between two panes (islands/detailpanel/Splitter).
   // Names the gesture, not the panes — the divider's accessible name already
   // says which list it resizes. Double-click is otherwise undiscoverable.
+  // Shown when the OS file manager refuses the path — most often a file
+  // from an older commit that is no longer on disk.
+  warn_reveal_failed: "Couldn't show that in the file manager — {reason}",
+  warn_open_dir_failed: "Couldn't open that folder — {reason}",
   splitter_tip: "Drag to resize — double-click to reset",
   install: "Install",
 

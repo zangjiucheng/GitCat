@@ -114,6 +114,10 @@ test("right-clicking a folder row opens its own menu, with no leading divider", 
   const folder = page.locator("#tree details.dir > summary").first();
   await expect(folder).toBeVisible();
 
+  // Captured BEFORE the right-click: reading it afterwards and comparing it
+  // to itself is an assertion that cannot fail.
+  const openBefore = await folder.evaluate((el) => (el.parentElement as HTMLDetailsElement).open);
+
   await folder.click({ button: "right" });
 
   const menu = page.locator(".ctxmenu");
@@ -128,10 +132,10 @@ test("right-clicking a folder row opens its own menu, with no leading divider", 
   // A right-click must not toggle the folder open or closed — <details>
   // reacts to a plain click, and the handler has to preventDefault so the
   // native menu does not appear either.
-  const openState = await folder.evaluate((el) => (el.parentElement as HTMLDetailsElement).open);
+  expect(await folder.evaluate((el) => (el.parentElement as HTMLDetailsElement).open)).toBe(openBefore);
+
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
-  expect(await folder.evaluate((el) => (el.parentElement as HTMLDetailsElement).open)).toBe(openState);
 
   expect(errors).toEqual([]);
 });

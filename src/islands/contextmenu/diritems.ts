@@ -12,7 +12,7 @@
 // one is.
 
 import { t } from "../../i18n/i18n.svelte.ts";
-import { commands } from "../../ipc/bindings";
+import { openDir } from "./filemanager.ts";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
 import { joinRepoPath } from "../../legacy/paths.ts";
 import { openDirLabelKey } from "../../legacy/platform.ts";
@@ -43,7 +43,7 @@ export function dirPathMenuItems(repo: string, relative: string): ContextMenuIte
       // belongs here rather than on whatever happens to come before it.
       separatorBefore: true,
       disabled: !repo,
-      run: () => void commands.openDirInFileManager(repo, relative),
+      run: () => void openDir(repo, relative),
     },
     { id: "copy-path", label: t("common.copy_path"), run: () => copyToClipboard(relative) },
     { id: "copy-full-path", label: t("common.copy_full_path"), run: () => copyToClipboard(joinRepoPath(repo, relative)) },

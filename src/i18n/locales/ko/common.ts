@@ -9,6 +9,10 @@ export default {
   // 두 창 사이 분할선의 툴팁이에요(islands/detailpanel/Splitter). 어떤 목록을
   // 조절하는지는 접근성 이름이 이미 말해주니, 여기선 동작만 알려줘요.
   // 두 번 클릭은 알려주지 않으면 알 수가 없는 동작이라 넣었어요.
+  // OS 파일 관리자가 경로를 거부했을 때 나와요. 대개 예전 커밋의
+  // 파일이라 지금 디스크에 없는 경우예요.
+  warn_reveal_failed: "파일 관리자에서 못 열었어요 — {reason}",
+  warn_open_dir_failed: "그 폴더를 못 열었어요 — {reason}",
   splitter_tip: "끌어서 크기 조절 — 두 번 클릭하면 원래대로",
   install: "설치",
 
