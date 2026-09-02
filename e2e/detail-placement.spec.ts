@@ -348,6 +348,12 @@ test("the resize guide keeps its axis through the fade and leaks no inset across
   const guide = page.locator(".resize-guide");
   const bottom = page.locator("#resizeDetailBottom");
   const hb = (await bottom.boundingBox())!;
+  // hover() first, for the reason the drag test above records: the dismissed
+  // wizard scrim keeps intercepting pointer events through its fade-out, and
+  // the raw page.mouse calls below do no actionability wait of their own. Skip
+  // it and pointerdown never reaches the handle, so the guide — created lazily
+  // by beginDrag — is never created at all.
+  await bottom.hover();
   await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
   await page.mouse.down();
   await page.mouse.move(hb.x + hb.width / 2, hb.y - 120);
@@ -370,6 +376,7 @@ test("the resize guide keeps its axis through the fade and leaks no inset across
   // both placements, so the second drag needs no placement change at all.
   const side = page.locator("#resizeSidebar");
   const sb = (await side.boundingBox())!;
+  await side.hover();
   await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
   await page.mouse.down();
   await page.mouse.move(sb.x + sb.width / 2 + 60, sb.y + sb.height / 2);
