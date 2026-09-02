@@ -1983,6 +1983,11 @@ function resizeGuide(vert){
   // One element, re-oriented per drag: only one drag can be in flight at a
   // time, so a second element would just be state to keep in sync.
   resizeGuideEl.classList.toggle("horiz",!!vert);
+  // ...which is exactly why the OTHER axis's inline inset has to go with it. A
+  // vertical drag sets `top` and a horizontal one sets `left`, so a leftover
+  // `top` from a bottom-panel drag would make the next sidebar guide start at
+  // that Y instead of spanning the window.
+  if(vert) resizeGuideEl.style.left=""; else resizeGuideEl.style.top="";
   return resizeGuideEl;
 }
 
@@ -2027,7 +2032,12 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
   panelHandlePeers.set(panel,peers);
   // What a peer does when SOMEONE ELSE'S handle collapses or expands this
   // panel: move its own custom property to match, to its own remembered size.
-  const me={ applyCollapsed(v){ root.style.setProperty(cssVar,(v?railW:lastExpandedSize)+"px"); } };
+  // The tooltip describes THIS handle's own state, so it moves with the
+  // collapse rather than only on the handle that initiated it — collapsing via
+  // the bottom edge (or ⌘\) used to leave the right handle still offering to
+  // "drag to resize" something already collapsed.
+  const handleTitle=v=>v?"Click to expand":"Drag to resize — drag past the edge to collapse";
+  const me={ applyCollapsed(v){ root.style.setProperty(cssVar,(v?railW:lastExpandedSize)+"px"); handle.title=handleTitle(v); } };
   peers.push(me);
   // `collapsed` is read from the parent's own `.collapsed` class rather than
   // kept as a private variable on this closure: the right-edge and bottom
@@ -2042,7 +2052,7 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
   function setCollapsed(v){
     const was=isCollapsed();
     panel.classList.toggle("collapsed",v);
-    handle.title=v?"Click to expand":"Drag to resize — drag past the edge to collapse";
+    handle.title=handleTitle(v);
     // The `collapsed` class is shared (see isCollapsed), but each handle owns a
     // DIFFERENT custom property — so flipping only this one's leaves the other
     // axis wherever it was. Collapse #detail in "bottom" (⌘\), switch to
@@ -2077,7 +2087,10 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
     document.removeEventListener("pointermove",onMove);
     document.removeEventListener("pointerup",onUp);
     handle.classList.remove("active"); root.classList.remove("resizing","resizing-y");
-    resizeGuide().classList.remove("on","will-collapse"); // hide the guide line
+    // Pass `vert` here too: calling this bare drops the `horiz` class while the
+    // line is still fading out, so it snaps from a horizontal bar to a vertical
+    // one mid-fade.
+    resizeGuide(vert).classList.remove("on","will-collapse"); // hide the guide line
     if(!dragged){
       // A plain click, no drag at all: only meaningful while collapsed
       // (reopen); a click on an already-expanded handle is a no-op, same as

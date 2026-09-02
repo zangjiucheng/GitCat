@@ -337,3 +337,74 @@ test("the changes divider drags, and resizes the file pane, in both placements",
   const afterX = (await files.boundingBox())!;
   expect(afterX.width).toBeGreaterThan(beforeX.width + 60);
 });
+
+// One guide element serves both handles, so anything it keeps from the last
+// drag shows up on the next one — on the opposite axis.
+test("the resize guide keeps its axis through the fade and leaks no inset across axes", async ({ page }) => {
+  await page.goto("/");
+  await skipWizard(page);
+  await usePlacement(page, "bottom");
+
+  const guide = page.locator(".resize-guide");
+  const bottom = page.locator("#resizeDetailBottom");
+  const hb = (await bottom.boundingBox())!;
+  // hover() first, for the reason the drag test above records: the dismissed
+  // wizard scrim keeps intercepting pointer events through its fade-out, and
+  // the raw page.mouse calls below do no actionability wait of their own. Skip
+  // it and pointerdown never reaches the handle, so the guide — created lazily
+  // by beginDrag — is never created at all.
+  await bottom.hover();
+  await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hb.x + hb.width / 2, hb.y - 120);
+  await expect(guide).toHaveClass(/horiz/);
+  await page.mouse.up();
+
+  // Read once, WITHOUT a retrying matcher: the bug is that onUp dropped `horiz`
+  // while the line was still fading, so the line snapped from horizontal to
+  // vertical mid-fade. A retrying expect would happily wait out the fade and
+  // miss it.
+  expect(await guide.evaluate((el) => el.classList.contains("horiz"))).toBe(true);
+
+  // That vertical drag set an inline `top`. A horizontal drag sets `left` and
+  // never touches `top`, so without clearing it the sidebar's guide would start
+  // at the bottom panel's last Y instead of spanning the window.
+  //
+  // Deliberately NO reload between the two drags: a reload throws the guide
+  // element away, and a fresh one trivially has no inline `top` — which would
+  // make the assertion below unable to fail. The sidebar handle is present in
+  // both placements, so the second drag needs no placement change at all.
+  const side = page.locator("#resizeSidebar");
+  const sb = (await side.boundingBox())!;
+  await side.hover();
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(sb.x + sb.width / 2 + 60, sb.y + sb.height / 2);
+  expect(await guide.evaluate((el) => (el as HTMLElement).style.top)).toBe("");
+  await page.mouse.up();
+});
+
+// The tooltip describes the handle's own state, so a collapse has to move it on
+// BOTH of #detail's handles, not just the one that started it.
+test("both detail handles carry a tooltip, and it follows a collapse from either edge", async ({ page }) => {
+  await page.goto("/");
+  await skipWizard(page);
+  await usePlacement(page, "bottom");
+
+  const bottom = page.locator("#resizeDetailBottom");
+  const right = page.locator("#resizeDetail");
+  await expect(bottom).toHaveAttribute("title", /Drag to resize/);
+
+  // Collapse through the bottom handle (focus mode resolves to it in this
+  // placement), then read the RIGHT handle — the peer that did not initiate it.
+  await page.keyboard.press("Control+Backslash");
+  await expect(page.locator("#detail")).toHaveClass(/collapsed/);
+  await expect(bottom).toHaveAttribute("title", /Click to expand/);
+  await expect(right).toHaveAttribute("title", /Click to expand/);
+
+  await page.keyboard.press("Control+Backslash");
+  await expect(page.locator("#detail")).not.toHaveClass(/collapsed/);
+  await expect(right).toHaveAttribute("title", /Drag to resize/);
+  await expect(bottom).toHaveAttribute("title", /Drag to resize/);
+});
+

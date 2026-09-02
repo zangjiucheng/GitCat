@@ -183,13 +183,50 @@ fn migrate_verbatim_paths(repos: Vec<TrackedRepo>) -> Vec<TrackedRepo> {
     let mut out: Vec<TrackedRepo> = Vec::with_capacity(repos.len());
     for mut repo in repos {
         repo.path = crate::windows::strip_windows_verbatim_prefix(repo.path);
-        match out.iter_mut().find(|r| r.path == repo.path) {
-            Some(kept) if repo.last_opened_at > kept.last_opened_at => *kept = repo,
-            Some(_) => {}
+        match out.iter().position(|r| r.path == repo.path) {
+            // `remove` + `insert` at the same index rather than push: collapsing
+            // a pair must not move the repo in the file's existing order.
+            Some(i) => {
+                let kept = out.remove(i);
+                out.insert(i, coalesce_duplicate(kept, repo));
+            }
             None => out.push(repo),
         }
     }
     out
+}
+
+/// Collapse two rows that turned out to name the same repo.
+///
+/// This used to keep the more recently opened row WHOLE, which quietly threw
+/// away everything the other row remembered. That is worse than it sounds: the
+/// newer row is often the one that was added and barely used, while the older
+/// spelling carries the branch filter the user actually curated. And since the
+/// collapse happens once, automatically, on the upgrade that strips the
+/// verbatim prefix — and the next `save_to` persists the result — whatever it
+/// drops is dropped for good.
+///
+/// So recency decides ORDERING, and every other field comes from whichever row
+/// actually has something to say.
+fn coalesce_duplicate(a: TrackedRepo, b: TrackedRepo) -> TrackedRepo {
+    let (newer, older) = if b.last_opened_at > a.last_opened_at { (b, a) } else { (a, b) };
+    // Auto mode OWNS visible_local_branches — it recomputes and overwrites the
+    // list — so the flag has to travel with whichever row supplies that list.
+    // Reading the flag off the newer row while taking the older row's list
+    // would leave the two describing different states.
+    let local_from_newer = newer.visible_local_branches.is_some();
+    TrackedRepo {
+        path: newer.path,
+        last_opened_at: newer.last_opened_at.or(older.last_opened_at),
+        // Either row having shown it means the user has already seen it; `false`
+        // would re-arm a one-time auto-show they dismissed.
+        repo_summary_shown: newer.repo_summary_shown || older.repo_summary_shown,
+        auto_branch_visibility: if local_from_newer { newer.auto_branch_visibility } else { older.auto_branch_visibility },
+        // `None` means "no filter at all", not "an empty filter", so a newer row
+        // that never had one must not erase the older row's.
+        visible_local_branches: newer.visible_local_branches.or(older.visible_local_branches),
+        visible_remote_branches: newer.visible_remote_branches.or(older.visible_remote_branches),
+    }
 }
 
 /// Process-wide lock serializing every registry read-modify-write sequence
@@ -664,6 +701,58 @@ mod tests {
         ]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].last_opened_at, Some(1));
+    }
+
+    // Collapsing a pair must not throw away what the losing row remembered.
+    // This runs once, automatically, on upgrade, and `save_to` then persists
+    // the result — so anything dropped here is dropped permanently.
+    #[test]
+    fn migration_coalesces_the_pair_rather_than_overwriting_the_older_row() {
+        // The shape that actually bites: the newer row is one that was added and
+        // barely used, while the older spelling carries the curated filter.
+        let mut old_row = row(r"\\?\C:\Users\me\proj", Some(10));
+        old_row.visible_local_branches = Some(vec!["main".into(), "dev".into()]);
+        old_row.visible_remote_branches = Some(vec!["origin/main".into()]);
+        old_row.auto_branch_visibility = true;
+        old_row.repo_summary_shown = true;
+
+        let out = migrate_verbatim_paths(vec![old_row, row(r"C:\Users\me\proj", Some(99))]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].last_opened_at, Some(99), "recency still decides ordering");
+        assert_eq!(
+            out[0].visible_local_branches.as_deref(),
+            Some(["main".to_string(), "dev".to_string()].as_slice()),
+            "a newer row with no filter must not erase the older row's"
+        );
+        assert_eq!(out[0].visible_remote_branches.as_deref(), Some(["origin/main".to_string()].as_slice()));
+        assert!(out[0].auto_branch_visibility, "the flag travels with the list it owns");
+        assert!(out[0].repo_summary_shown, "already-seen must not be re-armed");
+    }
+
+    #[test]
+    fn coalescing_prefers_the_newer_rows_filter_when_both_have_one() {
+        let mut older = row(r"\\?\C:\p", Some(10));
+        older.visible_local_branches = Some(vec!["stale".into()]);
+        older.auto_branch_visibility = true;
+        let mut newer = row(r"C:\p", Some(99));
+        newer.visible_local_branches = Some(vec!["current".into()]);
+        newer.auto_branch_visibility = false;
+
+        let out = migrate_verbatim_paths(vec![older, newer]);
+        assert_eq!(out[0].visible_local_branches.as_deref(), Some(["current".to_string()].as_slice()));
+        assert!(!out[0].auto_branch_visibility, "the flag comes from whichever row supplied the list");
+    }
+
+    #[test]
+    fn coalescing_keeps_the_repos_place_in_the_files_order() {
+        let out = migrate_verbatim_paths(vec![
+            row("/a", Some(1)),
+            row(r"\\?\C:\dup", Some(2)),
+            row("/b", Some(3)),
+            row(r"C:\dup", Some(99)),
+        ]);
+        let paths: Vec<&str> = out.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(paths, vec!["/a", r"C:\dup", "/b"], "the collapsed row keeps the first spelling's slot");
     }
 
     // The migration has to run where the data actually arrives — reading the
