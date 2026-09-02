@@ -23,6 +23,8 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { t, be } from "@/i18n/i18n.svelte.ts";
+import { detailCtrl } from "../detail/detail.svelte.ts";
+import { workdirCtrl } from "../workdir/workdir.svelte.ts";
 import type { Plugin, PluginContext, PlaceholderCtx } from "../../ipc/bindings";
 import type { ActionItem } from "../cmdk/cmdk.svelte.ts";
 
@@ -174,6 +176,7 @@ class PluginCommandsState {
     }
     try {
       const res = await commands.listPlugins();
+      if (res.status === "ok") this.indexContexts(res.data);
       this.actions = res.status === "ok" ? this.build(res.data) : [];
     } catch {
       // A failed registry read must never break the palette — the static
@@ -205,23 +208,65 @@ class PluginCommandsState {
     return out;
   }
 
-  // The one thing a palette entry does: call the backend command. Declarative
-  // — this never touches the manifest's `run` template (the Rust side expands
-  // it). Builds the PlaceholderCtx from what the bridge actually exposes: the
-  // open repo always, plus the selected commit's sha for a `commit` command.
-  // (The bridge exposes no selected-file state, so a `file` command falls back
-  // to repo-only — see selectedSha's counterpart absence.)
-  async invoke(pluginId: string, commandId: string, context?: PluginContext): Promise<void> {
+  // Build the placeholder context a command's `run` template gets expanded
+  // against, or null — having already told the user what was missing — when
+  // the selection the command declared it needs isn't there.
+  //
+  // `context` is the command's OWN declared context. Callers holding the
+  // manifest entry pass it; the ones that don't (a panel button knows only a
+  // command id) leave it out and it is looked up. That lookup is what lets
+  // every declarative surface fill the same tokens from the same state without
+  // each one restating the rule.
+  //
+  // A `file` command with nothing selected is REFUSED rather than run with an
+  // empty `{file}`. The asymmetry with `commit` is deliberate: an unfilled
+  // token expands to the EMPTY STRING (see plugin_exec.rs's substitute), so
+  // `rm -rf {repo}/{file}` with no selection is `rm -rf <repo>/` — the whole
+  // repository. `{file}` is new here, so nothing can depend on the old
+  // repo-only behaviour; `{sha}` keeps its existing permissiveness rather than
+  // changing under plugins that already ship.
+  ctxFor(pluginId: string, commandId: string, context?: PluginContext): PlaceholderCtx | null {
     const repo = bridge.CUR_REPO as unknown as string | null;
     if (!repo) {
       bridge.tama.warn(t("plugincommands.open_repo_first"));
-      return;
+      return null;
     }
+    const kind = context ?? this.contexts.get(`${pluginId}:${commandId}`) ?? "none";
     const ctx: PlaceholderCtx = { repo, sha: null, file: null, files: [], diff: null, branch: null, ref: null };
-    if (context === "commit") {
+    if (kind === "commit") {
       const sha = this.selectedSha();
       if (sha) ctx.sha = sha;
     }
+    if (kind === "file") {
+      const file = this.selectedFile();
+      if (!file) {
+        bridge.tama.warn(t("plugincommands.select_file_first"));
+        return null;
+      }
+      ctx.file = file;
+    }
+    return ctx;
+  }
+
+  // `pluginId:commandId` -> the context that command declared. Indexed over
+  // EVERY command of every enabled plugin, not just the palette-placed subset
+  // build() keeps, because a panel button can name a `menu`-only command.
+  private contexts = new Map<string, PluginContext>();
+
+  private indexContexts(plugins: Plugin[]): void {
+    this.contexts.clear();
+    for (const p of plugins) {
+      if (p.enabled === false) continue;
+      for (const c of p.commands ?? []) this.contexts.set(`${p.id}:${c.id}`, c.context ?? "none");
+    }
+  }
+
+  // The one thing a palette entry does: call the backend command. Declarative
+  // — this never touches the manifest's `run` template (the Rust side expands
+  // it).
+  async invoke(pluginId: string, commandId: string, context?: PluginContext): Promise<void> {
+    const ctx = this.ctxFor(pluginId, commandId, context);
+    if (!ctx) return; // ctxFor has already warned about what was missing
     if (!IN_TAURI) {
       bridge.tama.say(t("plugincommands.demo_run"));
       return;
@@ -270,6 +315,36 @@ class PluginCommandsState {
       const backend = bridge.BACKEND as unknown as { rows: Array<{ sha?: string }> } | null;
       const m = backend && backend.rows ? backend.rows[row] : null;
       return (m && m.sha) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // The file the user is actually LOOKING AT, which is not one field.
+  //
+  // `#detail` shows either the pinned working-tree row or a commit, never both
+  // — Detail.svelte branches on `workdirCtrl.selected` to decide which — and
+  // each side keeps its OWN file selection: `workdirCtrl.selectedDiffFile` and
+  // `detailCtrl.selectedFile`. Reading only detail's is how a command ends up
+  // with a path from a commit that has left the screen, which is worse than
+  // the empty `{file}` the refusal in ctxFor() exists to prevent: an empty
+  // token makes the command fail loudly, a stale one is a REAL path that a
+  // `mutates` command will act on without complaint.
+  //
+  // Detail's field also outlives its own view. setCommit() returns at
+  // `if (!c) return` before the block that clears it, and deselect() clears
+  // `commit` but not the file, so after clicking empty canvas the last file is
+  // still sitting there. Gating on `commit` is what keeps that from counting
+  // as a selection.
+  //
+  // Peer-island singleton imports, the same route cmdk uses to reach this
+  // controller. Neither detail's nor workdir's import graph leads back here,
+  // so there is no cycle to break.
+  private selectedFile(): string | null {
+    try {
+      if (workdirCtrl.selected) return workdirCtrl.selectedDiffFile || null;
+      if (!detailCtrl.commit) return null;
+      return detailCtrl.selectedFile || null;
     } catch {
       return null;
     }

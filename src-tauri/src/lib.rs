@@ -51,6 +51,7 @@ pub mod instance_focus; // #39: focus the existing window for an already-open re
 pub mod cli_shim; // "Install 'gitcat' command in PATH": writes a VS Code `code`-style launcher (macOS /usr/local/bin, Linux ~/.local/bin, Windows WindowsApps)
 pub mod i18n_err; // PER-82: app-authored errors as `i18n:<key>` strings the frontend's be() translates (raw git stderr stays passthrough)
 pub mod updater; // channel-aware "check for updates" (stable vs nightly endpoint + downgrade-allowing comparator)
+pub mod version; // #65: the host version, from Cargo.toml alone — plus the test that fails when the four files that copy it drift
 pub mod wsl; // routes git_remote.rs's/submodule.rs's network commands through wsl.exe on a WSL-path repo, so credentials resolve inside the distro
 
 use tauri::Manager;

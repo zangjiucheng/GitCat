@@ -56,6 +56,7 @@ A manifest is a small JSON document. Here's a complete, annotated example:
 | `id` | ✅ | string | Stable, unique identifier. Must match `^[a-z0-9][a-z0-9-]*$` — start with a lowercase letter or digit, then lowercase letters, digits, and `-` only. No uppercase, spaces, underscores, or dots. Used as the enable/remove key. Installing a second plugin with the same `id` is rejected. |
 | `name` | ✅ | string | Human-readable display name (shown in Settings and as the ⌘K hint). Must be non-empty. |
 | `version` | ✅ | string | Any non-empty string (e.g. `"1.0.0"`). Not parsed or compared — it's just for your reference. |
+| `minGitcatVersion` | — | string | The oldest GitCat that can run this plugin, e.g. `"1.3.0"` (`"1.3"` works too — a missing component reads as zero). Omit it and the plugin installs on any host. See [Requiring a GitCat version](#requiring-a-gitcat-version). |
 | `description` | — | string | Optional one-liner. |
 | `enabled` | — | boolean | Defaults to `true` when omitted — a freshly installed plugin is active until you disable it. |
 | `commands` | — | array | Zero or more [commands](#commands). Defaults to `[]`. |
@@ -64,6 +65,34 @@ A manifest is a small JSON document. Here's a complete, annotated example:
 | `lua` | — | string | Optional path (relative to the plugin folder) to a main Luau script — required only if any command/hook uses a `handler`. See [Scripting with Luau](#scripting-with-luau). |
 
 A manifest must be a regular file no larger than **256 KB** (a `plugin.json` is tiny by design).
+
+### Requiring a GitCat version
+
+<a id="requiring-a-gitcat-version"></a>
+
+If your plugin uses something a newer GitCat introduced — a placeholder token, a
+widget type, a manifest field — say so with `minGitcatVersion`:
+
+```json
+{ "id": "my-plugin", "name": "My Plugin", "version": "1.0.0", "minGitcatVersion": "1.3.0" }
+```
+
+An older host then **refuses the install** with a message naming both versions,
+instead of accepting the plugin and misbehaving later.
+
+That "misbehaving later" is worth being concrete about, because it is quiet. An
+unrecognized placeholder token expands to the **empty string**, so a `run` of
+`rm {file}` written against a GitCat that has `{file}` becomes plain `rm` on one
+that doesn't. Nothing errors, nothing warns; the command simply runs with your
+argument deleted. Declaring the floor is what turns that into a refusal at the
+one moment a person is present to read it.
+
+**One honest limitation.** The gate only protects hosts that have the gate.
+GitCat 1.2 and earlier ignore `minGitcatVersion` entirely, so the first
+generation of gated plugins still installs silently on them. That is
+unavoidable — an older release cannot be taught to read a field that did not
+exist when it shipped — and it is not a reason to leave the field out. Every
+host from 1.3 on honours it.
 
 ## Commands
 
@@ -87,7 +116,7 @@ Each entry in `commands[]` contributes one invocable action.
 | --- | --- |
 | `none` *(default)* | Always applicable; needs no selection. |
 | `commit` | Needs a selected commit (fills `{sha}`). |
-| `file` | Needs a selected file. |
+| `file` | Needs a selected file (fills `{file}`). With nothing selected the command is **not run** — GitCat says so rather than expanding `{file}` to nothing. |
 | `repo` | Repo-scoped — needs only the open repository. |
 
 > **What's populated today.** The built-in ⌘K invocation always fills `{repo}`, and fills `{sha}` for a `commit`-context command. The other tokens are recognized by the expander and reserved for richer selection contexts, but are not yet populated from the palette, so they currently expand to an empty string. Write your templates against the full grammar; just know that `file`/`files`/`diff`/`branch`/`ref` come from the UI later.
@@ -112,11 +141,18 @@ A `run` string is a template. Before running it, GitCat substitutes `{...}` toke
 | --- | --- |
 | `{repo}` | The repository's path. **Also the working directory** the command runs in. |
 | `{sha}` | The selected commit's id. |
-| `{file}` | A single selected file path. |
+| `{file}` | The selected file, relative to the repository root. Filled for a `file`-context command, from whichever view is open — the working tree's selection when Uncommitted changes is showing, the commit's otherwise. |
 | `{files}` | Several selected file paths, each quoted, space-joined. |
 | `{diff}` | Diff text. |
 | `{branch}` | A branch name. |
 | `{ref}` | A full ref / tag / symbolic ref. |
+
+**Which tokens are filled today.** `{repo}` always; `{sha}` for a `commit`
+command; `{file}` for a `file` command. `{files}`, `{diff}`, `{branch}` and
+`{ref}` are recognized by the expander but nothing fills them yet, so they
+currently expand to nothing — write your `run` against the three above, and get
+the rest from git itself (your command runs with the repository as its working
+directory, so `git branch --show-current` and friends are right there).
 
 Rules the expander follows:
 

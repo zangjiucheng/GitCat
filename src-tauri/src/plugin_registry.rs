@@ -287,6 +287,25 @@ pub struct Plugin {
     pub id: String,
     pub name: String,
     pub version: String,
+    /// The OLDEST GitCat that can run this plugin — `"1.3.0"`, or `"1.3"` (a
+    /// missing component reads as zero). Absent means "any host", which is
+    /// every manifest written before this field existed.
+    ///
+    /// This exists because of one specific, quiet failure mode:
+    /// [`plugin_exec::substitute`](crate::plugin_exec) expands an UNRECOGNIZED
+    /// placeholder token to the EMPTY STRING. So a plugin authored against a
+    /// newer GitCat does not fail loudly on an older host — a `run` of
+    /// `rm {file}` simply becomes `rm`. Declaring the floor turns that into a
+    /// refusal at install time, which is the only point where the user is
+    /// present to read it.
+    ///
+    /// Honest limitation, also stated in `docs/plugins.md`: the gate only
+    /// protects hosts that HAVE the gate. GitCat 1.2 and earlier ignore this
+    /// field entirely, so the first generation of gated plugins still installs
+    /// silently onto them. Unavoidable, and not a reason to skip it — every
+    /// host from here on is covered.
+    #[serde(default)]
+    pub min_gitcat_version: Option<String>,
     pub description: Option<String>,
     /// Defaults to `true` when a manifest omits it — a freshly installed
     /// plugin is active unless the user disables it.
@@ -457,6 +476,16 @@ pub fn validate_manifest(plugin: &Plugin) -> Result<(), String> {
     }
     if plugin.version.trim().is_empty() {
         return Err(ierr("err_plugins.missing_version"));
+    }
+    // SYNTAX only. Whether THIS host satisfies the floor is decided at install
+    // time by `read_and_validate_manifest`, before the manifest is even fully
+    // parsed — see the probe there for why the order matters. Here we only
+    // refuse a value that is not a version at all, so a typo can never be read
+    // as "no floor declared".
+    if let Some(min) = plugin.min_gitcat_version.as_deref() {
+        if crate::version::parse(min).is_none() {
+            return Err(ierrp("err_plugins.min_version_invalid", &[("value", &format!("{min:?}"))]));
+        }
     }
     // Each command/hook must declare EXACTLY ONE of a non-empty shell `run` or a
     // non-empty Luau `handler` (PER-56) — never neither, never both. A `handler`
@@ -642,6 +671,46 @@ pub fn read_and_validate_manifest(source: &Path) -> Result<Plugin, String> {
             &[("path", &manifest.display().to_string()), ("limit", &MAX_MANIFEST_BYTES.to_string())],
         ));
     }
+    // ── The version gate runs FIRST, off a probe, and deliberately so ───────
+    //
+    // The gate exists to tell a user "this plugin needs GitCat 1.4 or newer"
+    // instead of letting a newer manifest run here with its unknown tokens
+    // silently expanding to nothing. That message is only reachable if the
+    // version is read BEFORE anything else can reject the manifest for being
+    // written against a newer GitCat.
+    //
+    // Today's `Plugin` parse is permissive (serde ignores unknown fields), so
+    // ordering looks academic. It stops being academic the moment strict
+    // parsing lands (#64): `deny_unknown_fields` would have serde reject a
+    // manifest carrying a field this host has never heard of, and the user
+    // would get `unknown field "foo"` instead of the version message that
+    // actually explains what to do about it. Probing one field first is what
+    // keeps that from happening — do not fold this back into the main parse.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct VersionProbe {
+        min_gitcat_version: Option<String>,
+    }
+    let probe: VersionProbe = serde_json::from_str(&text).map_err(|e| {
+        ierrp("err_plugins.manifest_invalid", &[("path", &manifest.display().to_string()), ("detail", &e.to_string())])
+    })?;
+    if let Some(required) = probe.min_gitcat_version.as_deref() {
+        match crate::version::host_meets(required) {
+            // An unreadable floor is a manifest error, never a silent pass —
+            // see version::host_meets.
+            None => {
+                return Err(ierrp("err_plugins.min_version_invalid", &[("value", &format!("{required:?}"))]))
+            }
+            Some(false) => {
+                return Err(ierrp(
+                    "err_plugins.needs_newer_gitcat",
+                    &[("required", required), ("host", crate::version::HOST_VERSION)],
+                ))
+            }
+            Some(true) => {}
+        }
+    }
+
     let mut plugin: Plugin = serde_json::from_str(&text).map_err(|e| {
         ierrp("err_plugins.manifest_invalid", &[("path", &manifest.display().to_string()), ("detail", &e.to_string())])
     })?;
@@ -1067,6 +1136,7 @@ mod tests {
             id: id.to_string(),
             name: "Sample".into(),
             version: "1.0.0".into(),
+            min_gitcat_version: None,
             description: Some("a test plugin".into()),
             enabled: true,
             commands: vec![PluginCommand {
@@ -1272,6 +1342,102 @@ mod tests {
         assert_eq!(installed.id, "frompath");
         assert_eq!(installed.version, "2.0.0");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // -- minGitcatVersion gate (#63) -----------------------------------------
+
+    /// Write a manifest carrying `min` (or none) and try to install it.
+    fn install_with_min(tag: &str, min: Option<&str>) -> Result<Plugin, String> {
+        let dir = temp_dir(tag);
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("plugin.json");
+        let field = min.map(|m| format!(r#","minGitcatVersion":"{m}""#)).unwrap_or_default();
+        std::fs::write(&manifest, format!(r#"{{"id":"gated","name":"Gated","version":"1.0.0"{field}}}"#)).unwrap();
+        let out = read_and_validate_manifest(&manifest);
+        let _ = std::fs::remove_dir_all(&dir);
+        out
+    }
+
+    #[test]
+    fn a_floor_this_host_meets_installs_and_survives_a_round_trip() {
+        let plugin = install_with_min("min-ok", Some(crate::version::HOST_VERSION))
+            .expect("a plugin whose floor is exactly this host must install");
+        assert_eq!(plugin.min_gitcat_version.as_deref(), Some(crate::version::HOST_VERSION));
+
+        install_with_min("min-old", Some("0.0.1")).expect("an ancient floor must install");
+        let none = install_with_min("min-absent", None).expect("no floor at all must install");
+        assert_eq!(none.min_gitcat_version, None, "absent must stay absent, not become an empty string");
+
+        // The field has to survive the registry file, or the gate would silently
+        // vanish from every plugin the moment it was saved.
+        let dir = temp_dir("min-roundtrip");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join(FILE_NAME);
+        let mut p = sample_plugin("gated");
+        p.min_gitcat_version = Some("1.3".into());
+        save_to(&store, &[p]).unwrap();
+        let loaded = load_from(&store).unwrap();
+        assert_eq!(loaded[0].min_gitcat_version.as_deref(), Some("1.3"), "minGitcatVersion must round-trip");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_floor_above_this_host_is_refused_with_both_versions_in_the_message() {
+        let (major, _, _) = crate::version::parse(crate::version::HOST_VERSION).unwrap();
+        let too_new = format!("{}.0.0", major + 1);
+        let err = install_with_min("min-too-new", Some(&too_new)).expect_err("a newer floor must be refused");
+        assert!(err.contains("err_plugins.needs_newer_gitcat"), "got: {err}");
+        // Both numbers travel with the error: the user needs to know what the
+        // plugin wants AND what they have, or the message is unactionable.
+        assert!(err.contains(&too_new), "the required version must be in the error: {err}");
+        assert!(err.contains(crate::version::HOST_VERSION), "the host version must be in the error: {err}");
+    }
+
+    #[test]
+    fn an_unreadable_floor_is_a_manifest_error_never_a_silent_pass() {
+        // The dangerous outcome is not "wrongly refused", it is "wrongly
+        // admitted": a typo that reads as `no floor declared` puts us back to
+        // the silent empty-string expansion this gate exists to stop.
+        for bad in ["banana", "", "1.2.3.4", "v1.2.3"] {
+            let err = install_with_min("min-bad", Some(bad))
+                .expect_err("an unreadable minGitcatVersion must be refused, not ignored");
+            assert!(err.contains("err_plugins.min_version_invalid"), "{bad:?} got: {err}");
+        }
+        // validate_manifest rejects the same value on its own, so the check does
+        // not depend on going through the install path.
+        let mut p = sample_plugin("gated");
+        p.min_gitcat_version = Some("banana".into());
+        assert!(validate_manifest(&p).unwrap_err().contains("err_plugins.min_version_invalid"));
+        p.min_gitcat_version = Some("1.3".into());
+        assert!(validate_manifest(&p).is_ok(), "a readable floor must validate");
+    }
+
+    #[test]
+    fn the_version_gate_reports_before_any_other_manifest_complaint() {
+        // The ordering this whole design turns on. This manifest is ALSO invalid
+        // for an unrelated reason (an id with a space), and the version message
+        // still wins — because the probe runs before the full parse and before
+        // validate_manifest. When strict parsing lands (#64) it is this ordering
+        // that keeps a 1.4-authored manifest from reporting `unknown field` on a
+        // 1.3 host instead of "you need a newer GitCat".
+        let (major, _, _) = crate::version::parse(crate::version::HOST_VERSION).unwrap();
+        let dir = temp_dir("min-order");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("plugin.json");
+        std::fs::write(
+            &manifest,
+            format!(
+                r#"{{"id":"NOT A VALID ID","name":"","version":"","minGitcatVersion":"{}.0.0"}}"#,
+                major + 1
+            ),
+        )
+        .unwrap();
+        let err = read_and_validate_manifest(&manifest).expect_err("must be refused");
+        assert!(
+            err.contains("err_plugins.needs_newer_gitcat"),
+            "the version gate must win over id/name/version validation; got: {err}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

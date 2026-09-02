@@ -4066,7 +4066,27 @@ export type Plugin = {
  * [`is_valid_id`]). Unique within the registry; used as the remove/enable
  * key and half of a command's `(pluginId, commandId)` address.
  */
-id: string; name: string; version: string; description: string | null; 
+id: string; name: string; version: string; 
+/**
+ * The OLDEST GitCat that can run this plugin — `"1.3.0"`, or `"1.3"` (a
+ * missing component reads as zero). Absent means "any host", which is
+ * every manifest written before this field existed.
+ * 
+ * This exists because of one specific, quiet failure mode:
+ * [`plugin_exec::substitute`](crate::plugin_exec) expands an UNRECOGNIZED
+ * placeholder token to the EMPTY STRING. So a plugin authored against a
+ * newer GitCat does not fail loudly on an older host — a `run` of
+ * `rm {file}` simply becomes `rm`. Declaring the floor turns that into a
+ * refusal at install time, which is the only point where the user is
+ * present to read it.
+ * 
+ * Honest limitation, also stated in `docs/plugins.md`: the gate only
+ * protects hosts that HAVE the gate. GitCat 1.2 and earlier ignore this
+ * field entirely, so the first generation of gated plugins still installs
+ * silently onto them. Unavoidable, and not a reason to skip it — every
+ * host from here on is covered.
+ */
+minGitcatVersion?: string | null; description: string | null; 
 /**
  * Defaults to `true` when a manifest omits it — a freshly installed
  * plugin is active unless the user disables it.

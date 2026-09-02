@@ -33,7 +33,7 @@ import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { t, be } from "@/i18n/i18n.svelte.ts";
 import { parseTamaReaction, pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
-import type { Plugin, PluginPanel, PlaceholderCtx } from "../../ipc/bindings";
+import type { Plugin, PluginPanel } from "../../ipc/bindings";
 import type { ActionItem } from "../cmdk/cmdk.svelte.ts";
 
 // The live render state of a single `command-output` widget: its captured
@@ -192,16 +192,6 @@ class PluginPanelsState {
     this.open = false;
   }
 
-  // Repo-only placeholder context — the declarative path expands the command's
-  // OWN template against this on the backend. Panels carry no per-widget
-  // commit/file selection, so (unlike plugincommands.invoke's `commit`-context
-  // sha gathering) this is deliberately just the open repo. Read CUR_REPO at
-  // call time (live binding — never destructured).
-  private ctx(): PlaceholderCtx {
-    const repo = bridge.CUR_REPO as unknown as string | null;
-    return { repo: repo ?? null, sha: null, file: null, files: [], diff: null, branch: null, ref: null };
-  }
-
   private setOutput(index: number, value: PanelOutput): void {
     this.outputs = { ...this.outputs, [index]: value };
   }
@@ -227,8 +217,21 @@ class PluginPanelsState {
       return;
     }
 
+    // Same placeholder context the palette builds, from the same state, keyed
+    // off the CONTEXT THE COMMAND DECLARED — so a widget naming a `file`
+    // command gets `{file}` filled exactly like the ⌘K entry for it would,
+    // and is refused the same way when nothing is selected. A panel widget
+    // carries no selection of its own; the command it names is what decides
+    // what it needs.
+    const ctx = pluginCommandsCtrl.ctxFor(pluginId, item.command);
+    if (!ctx) {
+      // ctxFor has already warned through Tama; the panel just stops showing a
+      // spinner for output that is never coming.
+      this.setOutput(index, { running: false, text: "", error: t("pluginpanels.err_command_failed") });
+      return;
+    }
     try {
-      const res = await commands.runPluginCommand(pluginId, item.command, this.ctx());
+      const res = await commands.runPluginCommand(pluginId, item.command, ctx);
       if (res.status !== "ok") {
         this.setOutput(index, { running: false, text: "", error: be(res.error) || t("pluginpanels.err_command_failed") });
         return;

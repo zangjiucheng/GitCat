@@ -11,9 +11,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../legacy/bridge", () => ({
   CUR_REPO: "/repo",
   tama: { set: vi.fn(), say: vi.fn(), warn: vi.fn(), event: vi.fn() },
-  // pluginCommandsCtrl.invoke (which runButton delegates to) reads these for a
-  // `commit` context; runButton passes no context, so they stay untouched, but
-  // they're present so the module never dereferences an undefined bridge field.
+  // pluginCommandsCtrl.ctxFor (which both runButton and runCommandOutput go
+  // through) reads these for a `commit` command. Since #76 the context is
+  // resolved from the MANIFEST when the caller passes none, so a panel widget
+  // naming a `commit` command does now reach these.
   state: { selectedRow: -1 },
   BACKEND: { rows: [] as Array<{ sha: string }> },
   TAMA_IMG: { curious: "curious.png" },
@@ -30,9 +31,24 @@ vi.mock("../../ipc/bindings", () => ({
 // mock it so the real (non-demo) branches run.
 vi.mock("../../ipc/env", () => ({ IN_TAURI: true }));
 
+// The detail island owns the file selection a `file` command's {file} is
+// filled from (#76). Mocked so this test does not boot detail's own import
+// graph (resolver/blame/filehistory/externaltools) just to read one string.
+vi.mock("../detail/detail.svelte.ts", () => ({
+  detailCtrl: { selectedFile: null as string | null, commit: {} as unknown },
+}));
+
+// ...and the working tree, which keeps its own file selection. `selected` says
+// which of the two `#detail` is showing; false here means the commit view.
+vi.mock("../workdir/workdir.svelte.ts", () => ({
+  workdirCtrl: { selected: false, selectedDiffFile: null as string | null },
+}));
+
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { CommandOutput, Plugin, PluginPanel } from "../../ipc/bindings";
+import { detailCtrl } from "../detail/detail.svelte.ts";
+import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "./pluginpanels.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
@@ -305,5 +321,68 @@ describe("design mode (!IN_TAURI) is graceful", () => {
     await ctrl.runButton("acme", "doit");
     expect(bindingsDemo.commands.runPluginCommand).not.toHaveBeenCalled();
     expect(ctrl.runningButtons.doit).toBeUndefined();
+  });
+});
+
+describe("a widget inherits the context its command declared (#76)", () => {
+  const filePanel: PluginPanel = {
+    id: "review",
+    title: "Review",
+    items: [{ type: "command-output", command: "lint", label: "Lint" }],
+  };
+  const acme = plugin({
+    id: "acme",
+    name: "Acme",
+    panels: [filePanel],
+    commands: [
+      { id: "lint", label: "Lint", run: "lint {file}", handler: null, context: "file", placement: "palette", mutates: false },
+    ],
+  });
+
+  beforeEach(() => {
+    detailCtrl.selectedFile = null;
+    // pluginCommandsCtrl caches its manifest read; force a fresh one so this
+    // suite's own plugin lands in its context index.
+    pluginCommandsCtrl.loaded = false;
+    pluginCommandsCtrl.actions = [];
+  });
+
+  // openPanel() fires the command-output run itself; these tests want to drive
+  // runCommandOutput directly, so open the panel and let that first, unmocked
+  // run settle before asserting on a second, deliberate one.
+  async function openReview(): Promise<void> {
+    vi.mocked(commands.listPlugins).mockResolvedValue(ok([acme]));
+    await pluginCommandsCtrl.ensureLoaded();
+    await pluginPanelsCtrl.ensureLoaded();
+    vi.mocked(commands.runPluginCommand).mockResolvedValue(ok(output({ stdout: "", success: true })));
+    pluginPanelsCtrl.openPanel("acme", "review");
+    await flush();
+    vi.clearAllMocks();
+  }
+
+  it("a command-output widget naming a `file` command gets {file} filled", async () => {
+    await openReview();
+    detailCtrl.selectedFile = "src/app.ts";
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({ stdout: "clean", success: true })));
+
+    await pluginPanelsCtrl.runCommandOutput(0);
+
+    expect(commands.runPluginCommand).toHaveBeenCalledWith(
+      "acme",
+      "lint",
+      expect.objectContaining({ repo: "/repo", file: "src/app.ts" }),
+    );
+  });
+
+  it("the same widget shows an error instead of running with an empty {file}", async () => {
+    await openReview();
+    detailCtrl.selectedFile = null;
+
+    await pluginPanelsCtrl.runCommandOutput(0);
+
+    expect(commands.runPluginCommand).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalled();
+    // and the spinner must not be left running for output that never comes
+    expect(pluginPanelsCtrl.outputs[0]).toEqual(expect.objectContaining({ running: false }));
   });
 });

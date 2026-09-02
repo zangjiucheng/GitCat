@@ -17,6 +17,9 @@ export default {
     "Plugin id {id} is invalid — it must start with a lowercase letter or digit and then contain only lowercase letters, digits, and '-'.",
   missing_name: "Plugin manifest is missing a non-empty name.",
   missing_version: "Plugin manifest is missing a non-empty version.",
+  needs_newer_gitcat: "This plugin needs GitCat {required} or newer — this copy is {host}. Update GitCat, then install it again.",
+  min_version_invalid:
+    "Plugin manifest has an unreadable minGitcatVersion {value} — it must look like \"1.3.0\".",
   cmd_exactly_one_both:
     "Plugin command {id} must declare exactly one of a non-empty `run` (shell) or a non-empty `handler` (Luau) — it declares both.",
   cmd_exactly_one_neither:
