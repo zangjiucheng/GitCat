@@ -30,12 +30,21 @@ vi.mock("../../ipc/env", () => ({ IN_TAURI: true }));
 // Mocked for the same reason bridge is: importing the real one drags in the
 // resolver/blame/filehistory/externaltools graph this controller has no
 // business booting.
-vi.mock("../detail/detail.svelte.ts", () => ({ detailCtrl: { selectedFile: null as string | null } }));
+vi.mock("../detail/detail.svelte.ts", () => ({
+  detailCtrl: { selectedFile: null as string | null, commit: {} as unknown },
+}));
+
+// The working tree keeps its OWN file selection, and `selected` is what says
+// which of the two views `#detail` is currently showing.
+vi.mock("../workdir/workdir.svelte.ts", () => ({
+  workdirCtrl: { selected: false, selectedDiffFile: null as string | null },
+}));
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import type { CommandOutput, Plugin } from "../../ipc/bindings";
 import { detailCtrl } from "../detail/detail.svelte.ts";
+import { workdirCtrl } from "../workdir/workdir.svelte.ts";
 import { parseTamaReaction, pluginCommandsCtrl } from "./plugincommands.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
@@ -60,6 +69,9 @@ function resetCtrl() {
   (bridge.state as unknown as { selectedRow: number }).selectedRow = -1;
   (bridge.BACKEND as unknown as { rows: Array<{ sha: string }> }).rows = [];
   detailCtrl.selectedFile = null;
+  (detailCtrl as { commit: unknown }).commit = { sha: "abc" };
+  workdirCtrl.selected = false;
+  workdirCtrl.selectedDiffFile = null;
 }
 
 beforeEach(() => {
@@ -494,5 +506,67 @@ describe("invoke — the `file` context fills {file} (#76)", () => {
     await pluginCommandsCtrl.invoke("acme", "onCommit", "commit");
 
     expect(commands.runPluginCommand).toHaveBeenCalledWith("acme", "onCommit", expect.objectContaining({ sha: null }));
+  });
+});
+
+describe("{file} follows the view the user is actually looking at", () => {
+  // Every case here passes the context explicitly, so no manifest is needed —
+  // what is under test is which selection {file} comes from, not how the
+  // context is resolved (that has its own suite above).
+  it("takes the WORKING TREE's selection when the pinned row is what is showing", async () => {
+    // The bug: detail's field survives the switch to the working tree, so
+    // reading only it hands the command a file from a commit that has left the
+    // screen — a real path a `mutates` command would act on without complaint.
+    detailCtrl.selectedFile = "src/from-a-commit.ts";
+    workdirCtrl.selected = true;
+    workdirCtrl.selectedDiffFile = "src/in-the-worktree.ts";
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({})));
+
+    await pluginCommandsCtrl.invoke("acme", "lint", "file");
+
+    expect(commands.runPluginCommand).toHaveBeenCalledWith(
+      "acme",
+      "lint",
+      expect.objectContaining({ file: "src/in-the-worktree.ts" }),
+    );
+  });
+
+  it("refuses while the working tree is showing with no file picked, stale detail field or not", async () => {
+    detailCtrl.selectedFile = "src/from-a-commit.ts";
+    workdirCtrl.selected = true;
+    workdirCtrl.selectedDiffFile = null;
+
+    await pluginCommandsCtrl.invoke("acme", "lint", "file");
+
+    expect(commands.runPluginCommand).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalled();
+  });
+
+  it("refuses after deselecting, where detail keeps the last file but shows no commit", async () => {
+    // deselect() clears `commit` and not the file, and setCommit(null) returns
+    // before the block that would have cleared it.
+    detailCtrl.selectedFile = "src/still-here.ts";
+    (detailCtrl as { commit: unknown }).commit = null;
+    workdirCtrl.selected = false;
+
+    await pluginCommandsCtrl.invoke("acme", "lint", "file");
+
+    expect(commands.runPluginCommand).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalled();
+  });
+
+  it("still uses the commit view's file when a commit is what is showing", async () => {
+    detailCtrl.selectedFile = "src/from-a-commit.ts";
+    workdirCtrl.selected = false;
+    workdirCtrl.selectedDiffFile = "src/ignored.ts";
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({})));
+
+    await pluginCommandsCtrl.invoke("acme", "lint", "file");
+
+    expect(commands.runPluginCommand).toHaveBeenCalledWith(
+      "acme",
+      "lint",
+      expect.objectContaining({ file: "src/from-a-commit.ts" }),
+    );
   });
 });

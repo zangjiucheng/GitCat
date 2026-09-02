@@ -34,7 +34,15 @@ vi.mock("../../ipc/env", () => ({ IN_TAURI: true }));
 // The detail island owns the file selection a `file` command's {file} is
 // filled from (#76). Mocked so this test does not boot detail's own import
 // graph (resolver/blame/filehistory/externaltools) just to read one string.
-vi.mock("../detail/detail.svelte.ts", () => ({ detailCtrl: { selectedFile: null as string | null } }));
+vi.mock("../detail/detail.svelte.ts", () => ({
+  detailCtrl: { selectedFile: null as string | null, commit: {} as unknown },
+}));
+
+// ...and the working tree, which keeps its own file selection. `selected` says
+// which of the two `#detail` is showing; false here means the commit view.
+vi.mock("../workdir/workdir.svelte.ts", () => ({
+  workdirCtrl: { selected: false, selectedDiffFile: null as string | null },
+}));
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";

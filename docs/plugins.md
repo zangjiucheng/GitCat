@@ -141,7 +141,7 @@ A `run` string is a template. Before running it, GitCat substitutes `{...}` toke
 | --- | --- |
 | `{repo}` | The repository's path. **Also the working directory** the command runs in. |
 | `{sha}` | The selected commit's id. |
-| `{file}` | The selected file, relative to the repository root. Filled for a `file`-context command. |
+| `{file}` | The selected file, relative to the repository root. Filled for a `file`-context command, from whichever view is open — the working tree's selection when Uncommitted changes is showing, the commit's otherwise. |
 | `{files}` | Several selected file paths, each quoted, space-joined. |
 | `{diff}` | Diff text. |
 | `{branch}` | A branch name. |

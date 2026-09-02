@@ -24,6 +24,7 @@ import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { t, be } from "@/i18n/i18n.svelte.ts";
 import { detailCtrl } from "../detail/detail.svelte.ts";
+import { workdirCtrl } from "../workdir/workdir.svelte.ts";
 import type { Plugin, PluginContext, PlaceholderCtx } from "../../ipc/bindings";
 import type { ActionItem } from "../cmdk/cmdk.svelte.ts";
 
@@ -319,17 +320,30 @@ class PluginCommandsState {
     }
   }
 
-  // The currently-selected file, repo-relative, straight off the detail
-  // island's own selection state — the same string the diff view is showing.
-  // Null when no file is selected, which includes every moment before a commit
-  // (or the working-tree row) has been opened, since selectFile() is what sets
-  // it and switching commits clears it.
+  // The file the user is actually LOOKING AT, which is not one field.
   //
-  // Peer-island singleton import, the same route cmdk already uses to reach
-  // this controller. detail's own import graph does not lead back here, so
-  // there is no cycle to break.
+  // `#detail` shows either the pinned working-tree row or a commit, never both
+  // — Detail.svelte branches on `workdirCtrl.selected` to decide which — and
+  // each side keeps its OWN file selection: `workdirCtrl.selectedDiffFile` and
+  // `detailCtrl.selectedFile`. Reading only detail's is how a command ends up
+  // with a path from a commit that has left the screen, which is worse than
+  // the empty `{file}` the refusal in ctxFor() exists to prevent: an empty
+  // token makes the command fail loudly, a stale one is a REAL path that a
+  // `mutates` command will act on without complaint.
+  //
+  // Detail's field also outlives its own view. setCommit() returns at
+  // `if (!c) return` before the block that clears it, and deselect() clears
+  // `commit` but not the file, so after clicking empty canvas the last file is
+  // still sitting there. Gating on `commit` is what keeps that from counting
+  // as a selection.
+  //
+  // Peer-island singleton imports, the same route cmdk uses to reach this
+  // controller. Neither detail's nor workdir's import graph leads back here,
+  // so there is no cycle to break.
   private selectedFile(): string | null {
     try {
+      if (workdirCtrl.selected) return workdirCtrl.selectedDiffFile || null;
+      if (!detailCtrl.commit) return null;
       return detailCtrl.selectedFile || null;
     } catch {
       return null;
