@@ -50,7 +50,9 @@
     xterm.loadAddon(fitAddon);
     xterm.open(containerEl);
     xterm.onData((data) => terminalCtrl.write(data));
-    terminalCtrl.onData = (bytes) => xterm?.write(bytes);
+    // attachOutput, not a bare assignment: anything the shell said before this
+    // component existed is still queued, and this is what flushes it.
+    terminalCtrl.attachOutput((bytes) => xterm?.write(bytes));
 
     // Re-theme on a light/dark toggle — same "no change event exists,
     // observe the attribute directly" approach the rest of this codebase

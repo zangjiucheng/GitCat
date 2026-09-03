@@ -12,6 +12,13 @@ const MODALS = [
   { name: "Plugins", selector: ".modal.plugins-modal" },
   { name: "External Tools", selector: ".modal.external-tools" },
   { name: "Tama Gallery", selector: ".modal.tama-gallery" },
+  // #82/#83: the three that needed more than the mechanical change. Terminal
+  // carries xterm's 334 kB and must stay mounted once opened; BisectDrawer is
+  // the one island that does not go into document.body; PluginPanel is reached
+  // through the plugin panel registry rather than a fixed call site.
+  { name: "Terminal", selector: ".term-drawer" },
+  { name: "Bisect drawer", selector: ".bisect-panel" },
+  { name: "Plugin panel", selector: ".modal.pluginpanel" },
 ];
 
 test("none of the lazily mounted modals is in the DOM at boot", async ({ page }) => {

@@ -27,7 +27,6 @@ import { resetHeadCtrl } from "./islands/resethead/resethead.svelte.ts";
 import ExportPatches from "./islands/exportpatches/ExportPatches.svelte";
 import { exportPatchesCtrl } from "./islands/exportpatches/exportpatches.svelte.ts";
 import { applyPatchCtrl } from "./islands/applypatch/applypatch.svelte.ts";
-import Terminal from "./islands/terminal/Terminal.svelte";
 import { terminalCtrl } from "./islands/terminal/terminal.svelte.ts";
 import PickaxeSearch from "./islands/pickaxesearch/PickaxeSearch.svelte";
 import { pickaxeSearchCtrl } from "./islands/pickaxesearch/pickaxesearch.svelte.ts";
@@ -37,6 +36,8 @@ import Dashboard from "./islands/dashboard/Dashboard.svelte";
 import { dashboardCtrl } from "./islands/dashboard/dashboard.svelte.ts";
 import { externalToolsCtrl } from "./islands/externaltools/externaltools.svelte.ts";
 import { tamaGalleryCtrl } from "./islands/tamagallery/tamagallery.svelte.ts";
+import { bisectDrawerCtrl } from "./islands/bisectdrawer/bisectdrawer.svelte.ts";
+import { pluginPanelsCtrl } from "./islands/pluginpanels/pluginpanels.svelte.ts";
 import { mountOnFirstOpen } from "./lazyisland.svelte.ts";
 import { pluginsCtrl } from "./islands/plugins/plugins.svelte.ts";
 import { settingsCtrl, loadSettings } from "./islands/settings/settings.svelte.ts";
@@ -54,7 +55,6 @@ import SetupWizard from "./islands/setupwizard/SetupWizard.svelte";
 import { setupWizardCtrl } from "./islands/setupwizard/setupwizard.svelte.ts";
 import Cmdk from "./islands/cmdk/Cmdk.svelte";
 import { cmdkCtrl } from "./islands/cmdk/cmdk.svelte.ts";
-import PluginPanel from "./islands/pluginpanels/PluginPanel.svelte";
 import VimNav from "./islands/vimnav/VimNav.svelte";
 import SnapshotPreview from "./islands/snapshotpreview/SnapshotPreview.svelte";
 import About from "./islands/about/About.svelte";
@@ -62,7 +62,6 @@ import { aboutCtrl } from "./islands/about/about.svelte.ts";
 import { updaterCtrl } from "./islands/updater/updater.svelte.ts";
 import DetailPanel from "./islands/detailpanel/DetailPanel.svelte";
 import { workdirCtrl } from "./islands/workdir/workdir.svelte.ts";
-import BisectDrawer from "./islands/bisectdrawer/BisectDrawer.svelte";
 import { openBisectEntry } from "./islands/bisectdrawer/bisectdrawer.svelte.ts";
 import Sidebar from "./islands/sidebar/Sidebar.svelte";
 import { sidebarCtrl } from "./islands/sidebar/sidebar.svelte.ts";
@@ -143,7 +142,14 @@ mount(DetailPanel, { target: document.getElementById("detail")! });
 // below) are no longer mounted into a permanent drawer pane. MUST mount
 // inside #canvasWrap, not document.body: its position:absolute floats
 // relative to that element, same as #deltaReadout.
-mount(BisectDrawer, { target: document.getElementById("bisectPanelMount")! });
+// Lazily mounted (#83). The one island that does NOT go into document.body:
+// #bisectPanelMount is static markup in index.html, so it is there whenever
+// the first open happens — the lookup just moves off the boot path with it.
+mountOnFirstOpen(
+  () => bisectDrawerCtrl.open,
+  () => import("./islands/bisectdrawer/BisectDrawer.svelte"),
+  () => document.getElementById("bisectPanelMount")!,
+);
 
 mount(Sidebar, { target: document.getElementById("sidebarRefs")! });
 sidebarCtrl.refresh(bridge.CUR_REPO as unknown as string);
@@ -175,7 +181,9 @@ mount(Plumbing, { target: document.body });
 // into a drawer. Purely declarative: it renders a plugin's DECLARED widgets
 // (heading/text/button/command-output) and only ever runs that plugin's OWN
 // commands via the same runPluginCommand path PER-42 uses.
-mount(PluginPanel, { target: document.body });
+// Lazily mounted (#83). Driven by the plugin panel registry rather than a
+// fixed call site, but every route into it ends at pluginPanelsCtrl.open.
+mountOnFirstOpen(() => pluginPanelsCtrl.open, () => import("./islands/pluginpanels/PluginPanel.svelte"));
 // Fetch/Pull live-progress modal — opened by doFetch/doPull (legacy/main.ts),
 // which is reached from both the topbar buttons and the native Fetch/Pull menu.
 mount(SyncProgress, { target: document.body });
@@ -267,7 +275,15 @@ mount(RepoFiles, { target: document.body });
 // and visually toggled (`.term-drawer.on`) rather than shown/hidden by a
 // controller-owned boolean gating the whole component's render, keeping its
 // one xterm.js instance alive (and its scrollback intact) across hide/show.
-mount(Terminal, { target: document.body });
+// Lazily mounted (#82) — the big one: xterm is 334 kB that every user paid
+// for at boot whether or not they ever opened a terminal.
+//
+// The keep-alive the comment above describes is unaffected: mountOnFirstOpen
+// mounts once and never unmounts, so the one xterm instance and its
+// scrollback still survive every hide/show exactly as before. What DID need
+// handling is the other end — the shell can start talking before the chunk
+// lands, so terminalCtrl now queues output until the view attaches.
+mountOnFirstOpen(() => terminalCtrl.open, () => import("./islands/terminal/Terminal.svelte"));
 // Tama Gallery: a hidden Easter egg (see tamagallery.svelte.ts's own header
 // doc) — same on-demand-modal treatment as every other one above, but with
 // no menu/⌘K entry point anywhere; legacy/main.ts's own click-counter on
