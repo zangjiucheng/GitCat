@@ -29,18 +29,16 @@ import { exportPatchesCtrl } from "./islands/exportpatches/exportpatches.svelte.
 import { applyPatchCtrl } from "./islands/applypatch/applypatch.svelte.ts";
 import Terminal from "./islands/terminal/Terminal.svelte";
 import { terminalCtrl } from "./islands/terminal/terminal.svelte.ts";
-import TamaGallery from "./islands/tamagallery/TamaGallery.svelte";
 import PickaxeSearch from "./islands/pickaxesearch/PickaxeSearch.svelte";
 import { pickaxeSearchCtrl } from "./islands/pickaxesearch/pickaxesearch.svelte.ts";
 import CodeSearch from "./islands/codesearch/CodeSearch.svelte";
 import { codeSearchCtrl } from "./islands/codesearch/codesearch.svelte.ts";
 import Dashboard from "./islands/dashboard/Dashboard.svelte";
 import { dashboardCtrl } from "./islands/dashboard/dashboard.svelte.ts";
-import ExternalTools from "./islands/externaltools/ExternalTools.svelte";
 import { externalToolsCtrl } from "./islands/externaltools/externaltools.svelte.ts";
-import Plugins from "./islands/plugins/Plugins.svelte";
+import { tamaGalleryCtrl } from "./islands/tamagallery/tamagallery.svelte.ts";
+import { mountOnFirstOpen } from "./lazyisland.svelte.ts";
 import { pluginsCtrl } from "./islands/plugins/plugins.svelte.ts";
-import Settings from "./islands/settings/Settings.svelte";
 import { settingsCtrl, loadSettings } from "./islands/settings/settings.svelte.ts";
 import DanglingRecovery from "./islands/danglingrecovery/DanglingRecovery.svelte";
 import { danglingRecoveryCtrl } from "./islands/danglingrecovery/danglingrecovery.svelte.ts";
@@ -228,19 +226,27 @@ mount(Dashboard, { target: document.body });
 // any file/commit target itself (unlike its own "Open in external diff"/
 // "Resolve with external tool" buttons, which live on Detail.svelte/
 // Workdir.svelte's file rows and Resolver.svelte instead).
-mount(ExternalTools, { target: document.body });
+// Lazily mounted (#81): the view is downloaded and mounted the first time its
+// controller opens it, not at boot. The CONTROLLER stays eager above — the
+// menu/⌘K wiring below calls straight into it — so only the markup is deferred.
+// See lazyisland.svelte.ts for what makes an island eligible; the ones that do
+// work when they mount are deliberately still eager.
+mountOnFirstOpen(
+  () => externalToolsCtrl.open,
+  () => import("./islands/externaltools/ExternalTools.svelte"),
+);
 // Plugins manager (PER-49 follow-up): the installed-plugin registry moved out
 // of the old Settings → Plugins tab into its own VS Code Extensions-style
 // two-pane view — app-level (no repo needed) like External Tools/Dashboard, so
 // the same on-demand-modal + Tools-menu/⌘K treatment. It OWNS the plugin list;
 // the Settings Tama skin picker now reads pluginsCtrl.plugins.
-mount(Plugins, { target: document.body });
+mountOnFirstOpen(() => pluginsCtrl.open, () => import("./islands/plugins/Plugins.svelte"));
 // App Settings: theme/cherry-pick-default/auto-update-check prefs (app-level,
 // like External Tools/Dashboard above) plus a Git Identity section scoped to
 // whichever repo is open (forwards bridge.CUR_REPO, like Remotes) — see
 // settings.svelte.ts's own header doc for why these live in localStorage
 // rather than a new Rust settings file.
-mount(Settings, { target: document.body });
+mountOnFirstOpen(() => settingsCtrl.open, () => import("./islands/settings/Settings.svelte"));
 // fsck-based dangling-object recovery (backlog #13): same on-demand-modal
 // treatment as External Tools/Dashboard/Pickaxe Search/Export Patches/
 // Remotes/Reflog/Rerere/Plumbing above — repo-scoped (forwards
@@ -266,7 +272,10 @@ mount(Terminal, { target: document.body });
 // doc) — same on-demand-modal treatment as every other one above, but with
 // no menu/⌘K entry point anywhere; legacy/main.ts's own click-counter on
 // the nook portrait is the only way in.
-mount(TamaGallery, { target: document.body });
+mountOnFirstOpen(
+  () => tamaGalleryCtrl.open,
+  () => import("./islands/tamagallery/TamaGallery.svelte"),
+);
 
 // Native app menu -> frontend action bridge (see src-tauri/src/menu.rs).
 // Only the items whose action lives in Svelte-controller land forward here —
