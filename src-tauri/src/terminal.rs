@@ -82,10 +82,59 @@ struct TerminalExitEvent {
     id: String,
 }
 
-/// Spawns the user's own shell (`CommandBuilder::new_default_prog()` —
-/// resolves `$SHELL`/the passwd-db entry on unix, the platform default on
-/// Windows; see the vendored `portable-pty` `cmdbuilder.rs`'s own
-/// `get_shell()`, not reimplemented here) with its cwd set to `path`.
+/// What to run, and where, for a repo at `path` — the whole platform decision,
+/// kept pure so it can be asserted without spawning anything (`get_argv`,
+/// `get_cwd` and `is_default_prog` are all public on `CommandBuilder`). A
+/// machine with no WSL installed can still check the WSL branch is built right,
+/// which is the only part of this that a test here can reach.
+///
+/// The ordinary case is the user's own shell (`new_default_prog()` — resolves
+/// `$SHELL`/the passwd-db entry on unix, the platform default on Windows; see
+/// `portable-pty`'s own `get_shell()`, not reimplemented here) with its cwd set
+/// to the repo.
+///
+/// A repo living inside a WSL distro is reached over a UNC share
+/// (`\\wsl.localhost\<distro>\...`), and that case cannot go through the
+/// ordinary branch for two independent reasons:
+///
+/// 1. cmd.exe — the Windows default, so what `new_default_prog()` resolves to —
+///    refuses a UNC working directory outright. It prints "UNC paths are not
+///    supported" and starts in `C:\Windows` instead, which is #42's own symptom
+///    (measured directly: a process started with `\\localhost\C$\Temp` as its
+///    working directory reports `CWD=C:\Windows`).
+/// 2. Even if it could, a Windows shell sitting on a 9p mount is the wrong
+///    tool. Its `git` is the Windows build reaching into the distro's
+///    filesystem — exactly what `wsl::git_command` exists to avoid for every
+///    other git call this app makes.
+///
+/// So a WSL repo gets the distro's own shell, already in the repo, via
+/// `wsl.exe -d <distro> --cd <linux path>`: the same routing decision
+/// `wsl::git_command` makes, one layer up. `--cd` is what sets the directory
+/// INSIDE the distro; the outer process keeps whatever cwd it inherits, since
+/// nothing Windows-side needs one.
+///
+/// The verbatim-prefix strip is belt and braces. #42's own fix means
+/// `repo_registry::normalize` no longer stores that shape, but a path arriving
+/// with it would silently reopen the same bug, and one `strip_prefix` is a lot
+/// cheaper than trusting every caller upstream to have done it.
+fn pty_command_for(path: &str) -> CommandBuilder {
+    let path = crate::windows::strip_windows_verbatim_prefix(path.to_string());
+    if let Some((distro, linux_path)) = crate::wsl::wsl_target(&path) {
+        let mut cmd = CommandBuilder::new("wsl.exe");
+        cmd.arg("-d");
+        cmd.arg(&distro);
+        cmd.arg("--cd");
+        cmd.arg(&linux_path);
+        return cmd;
+    }
+    let mut cmd = CommandBuilder::new_default_prog();
+    cmd.cwd(&path);
+    cmd
+}
+
+/// Spawns a shell for the repo at `path` — see [`pty_command_for`] for which
+/// shell, and where.
+///
 /// `trust::open_repo` gates this exactly like every other command that
 /// touches a repo path — a terminal is a much more powerful escape hatch
 /// than any git operation this app performs, so it gets no exemption.
@@ -98,8 +147,7 @@ fn open_pty_shell(path: &str) -> Result<TerminalSession, String> {
         .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
 
-    let mut cmd = CommandBuilder::new_default_prog();
-    cmd.cwd(path);
+    let cmd = pty_command_for(path);
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     // Dropping our own copy of the slave side is required on unix: as long
     // as ANY fd for the slave stays open in this process — even one nobody
@@ -243,7 +291,28 @@ mod tests {
         let repo = TempGitDir::init();
         let mut session = open_pty_shell(&repo.path()).expect("should spawn a real shell");
         let mut reader = session.master.try_clone_reader().expect("should clone a reader");
-        session.writer.write_all(b"echo hello_gitcat_terminal\n").expect("should write to the shell");
+
+        // Play enough of a terminal for the shell to start talking.
+        //
+        // ConPTY opens by asking the terminal where its cursor is — a Device
+        // Status Report, `ESC[6n` — and BLOCKS until something answers. In the
+        // app xterm.js answers automatically, which is why the drawer works;
+        // this test IS the terminal, and answering is not optional. Measured:
+        // without the reply the master side yields exactly those four bytes
+        // and nothing else — not even cmd.exe's banner — however long you
+        // wait. With it, ~290 bytes arrive at once: banner, prompt, echo, all.
+        //
+        // Windows-only on purpose. No unix pty asks this, and there the escape
+        // would not be consumed by anything — it would land in the line buffer
+        // and end up prefixed to the command, which happens to still satisfy
+        // the assertion below (via the shell's "not found" message quoting it)
+        // while testing nothing at all.
+        #[cfg(windows)]
+        session.writer.write_all(b"\x1b[1;1R").expect("should answer the cursor-position query");
+        // CRLF, not LF: cmd.exe submits a line on CR. A unix pty translates CR
+        // to NL on input (ICRNL), so this reads the same on both.
+        session.writer.write_all(b"echo hello_gitcat_terminal\r\n").expect("should write to the shell");
+        session.writer.flush().expect("should flush");
 
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         std::thread::spawn(move || {
@@ -281,6 +350,60 @@ mod tests {
             Err(e) => assert!(e.contains("err_misc.cannot_open_repo_cap")),
             Ok(_) => panic!("expected a nonexistent path to be refused before spawning anything"),
         }
+    }
+
+    // #42. These assert the command that WOULD be spawned, not a spawn: the WSL
+    // branch cannot be executed on a machine without a distro installed, and the
+    // part that was wrong was which command got built, not how it ran.
+    fn argv(cmd: &CommandBuilder) -> Vec<String> {
+        cmd.get_argv().iter().map(|a| a.to_string_lossy().into_owned()).collect()
+    }
+
+    #[test]
+    fn an_ordinary_repo_gets_the_default_shell_cwd_to_the_repo() {
+        let cmd = pty_command_for("/home/me/proj");
+        assert!(cmd.is_default_prog(), "an ordinary path must use the user's own shell");
+        assert_eq!(cmd.get_cwd().map(|c| c.to_string_lossy().into_owned()), Some("/home/me/proj".to_string()));
+    }
+
+    // The reported bug: cmd.exe rejects a verbatim path as a working directory
+    // and starts in C:\Windows. repo_registry no longer stores that shape, but
+    // this must not depend on that.
+    #[test]
+    fn a_verbatim_windows_path_is_reduced_before_it_becomes_a_cwd() {
+        let cmd = pty_command_for(r"\\?\C:\Users\me\proj");
+        assert!(cmd.is_default_prog());
+        assert_eq!(
+            cmd.get_cwd().map(|c| c.to_string_lossy().into_owned()),
+            Some(r"C:\Users\me\proj".to_string()),
+            "a \\\\?\\ cwd is exactly what cmd.exe refuses"
+        );
+    }
+
+    // A WSL repo is a UNC share, which cmd.exe refuses just as flatly — and a
+    // Windows shell would be the wrong shell for it anyway.
+    #[test]
+    fn a_wsl_repo_gets_the_distros_own_shell_at_the_repo() {
+        let cmd = pty_command_for(r"\\wsl.localhost\Ubuntu\home\me\proj");
+        assert!(!cmd.is_default_prog(), "a WSL repo must not fall through to the Windows default shell");
+        assert_eq!(argv(&cmd), vec!["wsl.exe", "-d", "Ubuntu", "--cd", "/home/me/proj"]);
+        assert!(cmd.get_cwd().is_none(), "--cd sets the directory inside the distro; the outer process needs no cwd");
+    }
+
+    // The same repo as stored by a build that predates the repo_registry fix.
+    #[test]
+    fn a_wsl_repo_in_verbatim_unc_form_routes_the_same_way() {
+        let cmd = pty_command_for(r"\\?\UNC\wsl.localhost\Debian\srv\app");
+        assert_eq!(argv(&cmd), vec!["wsl.exe", "-d", "Debian", "--cd", "/srv/app"]);
+    }
+
+    // A real network share is NOT WSL: routing it through wsl.exe would be
+    // nonsense, so it stays on the ordinary branch. cmd.exe still cannot take a
+    // UNC cwd there — that is a separate gap, deliberately not papered over here.
+    #[test]
+    fn a_plain_network_share_is_not_treated_as_wsl() {
+        let cmd = pty_command_for(r"\\server\share\repo");
+        assert!(cmd.is_default_prog());
     }
 
     #[test]

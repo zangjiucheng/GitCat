@@ -153,7 +153,7 @@ pub fn load_from(path: &Path) -> Result<Vec<TrackedRepo>, String> {
         }
     };
     match serde_json::from_str::<RegistryFile>(&text) {
-        Ok(file) => Ok(file.repos),
+        Ok(file) => Ok(migrate_verbatim_paths(file.repos)),
         Err(_) => {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             let backup = path.with_file_name(format!(
@@ -163,6 +163,69 @@ pub fn load_from(path: &Path) -> Result<Vec<TrackedRepo>, String> {
             let _ = std::fs::rename(path, &backup); // best-effort; proceed regardless
             Ok(Vec::new())
         }
+    }
+}
+
+/// Entries written before the #42 fix carry the extended-length spelling
+/// `normalize` used to produce (`\\?\C:\...`), which no longer matches the plain
+/// key it returns now — so without this an existing registry would track every
+/// repo a second time on its next open, and each one's saved branch-visibility
+/// filter would read as "never set". Strip on the way in so the old and new keys
+/// agree immediately; the next `save_to` persists the migrated form, after which
+/// this is a no-op.
+///
+/// The dedup is not hypothetical tidiness: a path that failed to canonicalize was
+/// already stored plain, so one repo could legitimately hold BOTH spellings, and
+/// stripping collapses them onto a single key. Keeps the more-recently-opened of
+/// the two (`None` — added but never opened — loses to any real timestamp) and
+/// leaves the file's existing order otherwise untouched.
+fn migrate_verbatim_paths(repos: Vec<TrackedRepo>) -> Vec<TrackedRepo> {
+    let mut out: Vec<TrackedRepo> = Vec::with_capacity(repos.len());
+    for mut repo in repos {
+        repo.path = crate::windows::strip_windows_verbatim_prefix(repo.path);
+        match out.iter().position(|r| r.path == repo.path) {
+            // `remove` + `insert` at the same index rather than push: collapsing
+            // a pair must not move the repo in the file's existing order.
+            Some(i) => {
+                let kept = out.remove(i);
+                out.insert(i, coalesce_duplicate(kept, repo));
+            }
+            None => out.push(repo),
+        }
+    }
+    out
+}
+
+/// Collapse two rows that turned out to name the same repo.
+///
+/// This used to keep the more recently opened row WHOLE, which quietly threw
+/// away everything the other row remembered. That is worse than it sounds: the
+/// newer row is often the one that was added and barely used, while the older
+/// spelling carries the branch filter the user actually curated. And since the
+/// collapse happens once, automatically, on the upgrade that strips the
+/// verbatim prefix — and the next `save_to` persists the result — whatever it
+/// drops is dropped for good.
+///
+/// So recency decides ORDERING, and every other field comes from whichever row
+/// actually has something to say.
+fn coalesce_duplicate(a: TrackedRepo, b: TrackedRepo) -> TrackedRepo {
+    let (newer, older) = if b.last_opened_at > a.last_opened_at { (b, a) } else { (a, b) };
+    // Auto mode OWNS visible_local_branches — it recomputes and overwrites the
+    // list — so the flag has to travel with whichever row supplies that list.
+    // Reading the flag off the newer row while taking the older row's list
+    // would leave the two describing different states.
+    let local_from_newer = newer.visible_local_branches.is_some();
+    TrackedRepo {
+        path: newer.path,
+        last_opened_at: newer.last_opened_at.or(older.last_opened_at),
+        // Either row having shown it means the user has already seen it; `false`
+        // would re-arm a one-time auto-show they dismissed.
+        repo_summary_shown: newer.repo_summary_shown || older.repo_summary_shown,
+        auto_branch_visibility: if local_from_newer { newer.auto_branch_visibility } else { older.auto_branch_visibility },
+        // `None` means "no filter at all", not "an empty filter", so a newer row
+        // that never had one must not erase the older row's.
+        visible_local_branches: newer.visible_local_branches.or(older.visible_local_branches),
+        visible_remote_branches: newer.visible_remote_branches.or(older.visible_remote_branches),
     }
 }
 
@@ -207,9 +270,19 @@ pub fn save_to(path: &Path, repos: &[TrackedRepo]) -> Result<(), String> {
 ///
 /// `pub` for the same integration-testability reason as [`load_from`].
 pub fn normalize(path: &str) -> String {
-    std::fs::canonicalize(path)
+    let canon = std::fs::canonicalize(path)
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| path.to_string())
+        .unwrap_or_else(|_| path.to_string());
+    // #42: on Windows `canonicalize` always hands back an extended-length
+    // "verbatim" path (`\\?\C:\...`, or `\\?\UNC\...` for a share). That prefix
+    // is valid for the Win32 file APIs and almost nothing else: cmd.exe reads it
+    // as a UNC path, refuses to use it as a working directory, and falls back to
+    // `C:\Windows` — so the built-in terminal opened somewhere else entirely for
+    // every repo reached through the Dashboard, which is the only way a repo's
+    // path comes from here. The same string is what the UI shows and what
+    // `wsl::wsl_target` has to parse. Store the ordinary form instead; see
+    // `windows::strip_windows_verbatim_prefix`.
+    crate::windows::strip_windows_verbatim_prefix(canon)
 }
 
 /// Most-recently-opened first (`last_opened_at` descending). A repo that's
@@ -564,6 +637,141 @@ mod tests {
         let repos = load_from(&path).expect("load should succeed");
         assert_eq!(repos.len(), 1);
         assert!(repos[0].repo_summary_shown);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn row(path: &str, last_opened_at: Option<i64>) -> TrackedRepo {
+        TrackedRepo {
+            path: path.to_string(),
+            last_opened_at,
+            repo_summary_shown: false,
+            visible_local_branches: None,
+            visible_remote_branches: None,
+            auto_branch_visibility: false,
+        }
+    }
+
+    // #42: an entry stored by a pre-fix build keeps the extended-length spelling.
+    // Left alone it would no longer match the key `normalize` returns now, so the
+    // repo would be tracked twice and its branch-visibility filter would read as
+    // unset. Pure string work, so this runs on every platform.
+    #[test]
+    fn stored_verbatim_paths_are_migrated_to_the_ordinary_form() {
+        let out = migrate_verbatim_paths(vec![
+            row(r"\\?\C:\Users\me\proj", Some(20)),
+            row(r"\\?\UNC\wsl.localhost\Ubuntu\home\me\proj", Some(10)),
+            row("/home/me/proj", Some(5)),
+        ]);
+        assert_eq!(out[0].path, r"C:\Users\me\proj");
+        assert_eq!(out[1].path, r"\\wsl.localhost\Ubuntu\home\me\proj");
+        // Already-plain entries (every Unix path, and any Windows path that
+        // failed to canonicalize) pass through untouched.
+        assert_eq!(out[2].path, "/home/me/proj");
+        assert_eq!(out.len(), 3, "distinct repos must stay distinct");
+    }
+
+    // A path that failed to canonicalize was already stored plain, so ONE repo
+    // could hold both spellings; stripping collapses them onto one key. The
+    // surviving row must be the more recently opened one, or the migration
+    // silently loses a repo's place in the Dashboard's recency order.
+    #[test]
+    fn migration_collapses_both_spellings_of_one_repo_keeping_the_newer() {
+        let out = migrate_verbatim_paths(vec![
+            row(r"\\?\C:\Users\me\proj", Some(10)),
+            row(r"C:\Users\me\proj", Some(99)),
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].path, r"C:\Users\me\proj");
+        assert_eq!(out[0].last_opened_at, Some(99));
+
+        // Same pair, opposite order — the newer one still wins.
+        let out = migrate_verbatim_paths(vec![
+            row(r"\\?\C:\Users\me\proj", Some(99)),
+            row(r"C:\Users\me\proj", Some(10)),
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].last_opened_at, Some(99));
+
+        // Added-but-never-opened (None) loses to any real timestamp, whichever
+        // side of the pair it is on.
+        let out = migrate_verbatim_paths(vec![
+            row(r"\\?\C:\Users\me\proj", None),
+            row(r"C:\Users\me\proj", Some(1)),
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].last_opened_at, Some(1));
+    }
+
+    // Collapsing a pair must not throw away what the losing row remembered.
+    // This runs once, automatically, on upgrade, and `save_to` then persists
+    // the result — so anything dropped here is dropped permanently.
+    #[test]
+    fn migration_coalesces_the_pair_rather_than_overwriting_the_older_row() {
+        // The shape that actually bites: the newer row is one that was added and
+        // barely used, while the older spelling carries the curated filter.
+        let mut old_row = row(r"\\?\C:\Users\me\proj", Some(10));
+        old_row.visible_local_branches = Some(vec!["main".into(), "dev".into()]);
+        old_row.visible_remote_branches = Some(vec!["origin/main".into()]);
+        old_row.auto_branch_visibility = true;
+        old_row.repo_summary_shown = true;
+
+        let out = migrate_verbatim_paths(vec![old_row, row(r"C:\Users\me\proj", Some(99))]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].last_opened_at, Some(99), "recency still decides ordering");
+        assert_eq!(
+            out[0].visible_local_branches.as_deref(),
+            Some(["main".to_string(), "dev".to_string()].as_slice()),
+            "a newer row with no filter must not erase the older row's"
+        );
+        assert_eq!(out[0].visible_remote_branches.as_deref(), Some(["origin/main".to_string()].as_slice()));
+        assert!(out[0].auto_branch_visibility, "the flag travels with the list it owns");
+        assert!(out[0].repo_summary_shown, "already-seen must not be re-armed");
+    }
+
+    #[test]
+    fn coalescing_prefers_the_newer_rows_filter_when_both_have_one() {
+        let mut older = row(r"\\?\C:\p", Some(10));
+        older.visible_local_branches = Some(vec!["stale".into()]);
+        older.auto_branch_visibility = true;
+        let mut newer = row(r"C:\p", Some(99));
+        newer.visible_local_branches = Some(vec!["current".into()]);
+        newer.auto_branch_visibility = false;
+
+        let out = migrate_verbatim_paths(vec![older, newer]);
+        assert_eq!(out[0].visible_local_branches.as_deref(), Some(["current".to_string()].as_slice()));
+        assert!(!out[0].auto_branch_visibility, "the flag comes from whichever row supplied the list");
+    }
+
+    #[test]
+    fn coalescing_keeps_the_repos_place_in_the_files_order() {
+        let out = migrate_verbatim_paths(vec![
+            row("/a", Some(1)),
+            row(r"\\?\C:\dup", Some(2)),
+            row("/b", Some(3)),
+            row(r"C:\dup", Some(99)),
+        ]);
+        let paths: Vec<&str> = out.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(paths, vec!["/a", r"C:\dup", "/b"], "the collapsed row keeps the first spelling's slot");
+    }
+
+    // The migration has to run where the data actually arrives — reading the
+    // file — not only when something calls the helper directly.
+    #[test]
+    fn load_from_migrates_a_registry_written_by_an_older_build() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitcat-registry-test-verbatim-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("tracked_repos.json");
+        save_to(&path, &[row(r"\\?\C:\Users\me\proj", Some(7))]).expect("save should succeed");
+
+        let repos = load_from(&path).expect("load should succeed");
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].path, r"C:\Users\me\proj");
+        assert_eq!(repos[0].last_opened_at, Some(7), "migration must not disturb the rest of the row");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

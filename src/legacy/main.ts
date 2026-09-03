@@ -13,7 +13,10 @@ import { submoduleNavCtrl } from "../islands/submodulenav/submodulenav.svelte.ts
 import { ribbonTickFracs, RIBBON_TOP_FRAC, RIBBON_BOT_FRAC, RIBBON_MIN_TICK_PX } from "./ribbon.ts";
 import { displayChips } from "./reforder.ts";
 import { LruCache } from "./graphcache.ts";
+import { clampResize, dragCeiling } from "./resize.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
+import { contextMenuCtrl } from "../islands/contextmenu/contextmenu.svelte.ts";
+import { repoMenuItems } from "../islands/contextmenu/repoitems.ts";
 import { repoSummaryCtrl } from "../islands/reposummary/reposummary.svelte.ts";
 import { pluginHooksCtrl } from "../islands/pluginhooks/pluginhooks.svelte.ts";
 import { syncProgressCtrl } from "../islands/syncprogress/syncprogress.svelte.ts";
@@ -1975,14 +1978,23 @@ function highlight(src,lang){
 // reflow that fires the canvas ResizeObserver. Created lazily, reused by both
 // handles.
 let resizeGuideEl=null;
-function resizeGuide(){
+function resizeGuide(vert){
   if(!resizeGuideEl){ resizeGuideEl=document.createElement("div"); resizeGuideEl.className="resize-guide"; document.body.appendChild(resizeGuideEl); }
+  // One element, re-oriented per drag: only one drag can be in flight at a
+  // time, so a second element would just be state to keep in sync.
+  resizeGuideEl.classList.toggle("horiz",!!vert);
+  // ...which is exactly why the OTHER axis's inline inset has to go with it. A
+  // vertical drag sets `top` and a horizontal one sets `left`, so a leftover
+  // `top` from a bottom-panel drag would make the next sidebar guide start at
+  // that Y instead of spanning the window.
+  if(vert) resizeGuideEl.style.left=""; else resizeGuideEl.style.top="";
   return resizeGuideEl;
 }
 
-// sidebar/detail drag-to-resize. The panel width is NOT live-updated during the
-// drag anymore — a guide line (above) tracks the cursor and the width lands in
-// the `--sidebar-w`/`--detail-w` custom property only on release, so the layout
+// sidebar/detail drag-to-resize. The panel size is NOT live-updated during the
+// drag anymore — a guide line (above) tracks the cursor and the size lands in
+// the handle's own custom property (`--sidebar-w`, `--detail-w` or — for the
+// bottom placement's own handle — `--detail-h`) only on release, so the layout
 // reflows + the canvas re-renders exactly once instead of every pointermove.
 //
 // Collapse (added on top of the original resize-only behavior): dragging
@@ -1997,67 +2009,120 @@ function resizeGuide(){
 // the handle itself — now stretched by CSS to fill the whole (railW-wide)
 // panel and showing a chevron — IS the reopen affordance: a plain click
 // (tracked via `dragged`, same "did the pointer actually move" signal
-// index.html's own hint text promises) restores `lastExpandedW`, the most
-// recent width the panel actually rested at before collapsing.
-function wireResizeHandle(handle,cssVar,min,max,fromRight,railW){
+// index.html's own hint text promises) restores `lastExpandedSize`, the most
+// recent size the panel actually rested at before collapsing.
+//
+// One panel can have MORE than one handle: #detail has a right-edge one
+// (--detail-w) and a bottom-edge one (--detail-h), and which is live depends
+// on the placement setting, which can change without a reload. Handles sharing
+// a panel are peers (panelHandlePeers below) so that collapsing or expanding
+// through any one of them moves all of their sizes together.
+const panelHandlePeers=new Map();
+function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
   if(!handle) return;
+  const vert=axis==="y";
   const root=document.documentElement;
-  let startX=0,startW=0,dragged=false,collapsed=false,pendingW=0;
-  let lastExpandedW=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||min;
+  const panel=handle.parentElement;
+  let start=0,startSize=0,dragged=false,pending=0;
+  // Named for a size, not a width: for the bottom placement's handle this same
+  // variable holds a HEIGHT.
+  let lastExpandedSize=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||min;
   const collapseAt=(min+railW)/2;
+  const peers=panelHandlePeers.get(panel)||[];
+  panelHandlePeers.set(panel,peers);
+  // What a peer does when SOMEONE ELSE'S handle collapses or expands this
+  // panel: move its own custom property to match, to its own remembered size.
+  // The tooltip describes THIS handle's own state, so it moves with the
+  // collapse rather than only on the handle that initiated it — collapsing via
+  // the bottom edge (or ⌘\) used to leave the right handle still offering to
+  // "drag to resize" something already collapsed.
+  const handleTitle=v=>v?"Click to expand":"Drag to resize — drag past the edge to collapse";
+  const me={ applyCollapsed(v){ root.style.setProperty(cssVar,(v?railW:lastExpandedSize)+"px"); handle.title=handleTitle(v); } };
+  peers.push(me);
+  // `collapsed` is read from the parent's own `.collapsed` class rather than
+  // kept as a private variable on this closure: the right-edge and bottom
+  // detail handles share the SAME parent (#detail), and a live placement
+  // switch can hand control from one handle to the other mid-session
+  // (see activePanelHandles()). A private mirror would desync — e.g.
+  // collapsing via the bottom handle, then switching to "right" without a
+  // reload, would leave the right handle's own `collapsed` stuck `false`
+  // while `#detail` (and thus the panel's actual visual state) was still
+  // collapsed, making the reopen click/keydown paths below no-ops.
+  function isCollapsed(){ return panel.classList.contains("collapsed"); }
   function setCollapsed(v){
-    collapsed=v;
-    handle.parentElement.classList.toggle("collapsed",v);
-    handle.title=v?"Click to expand":"Drag to resize — drag past the edge to collapse";
+    const was=isCollapsed();
+    panel.classList.toggle("collapsed",v);
+    handle.title=handleTitle(v);
+    // The `collapsed` class is shared (see isCollapsed), but each handle owns a
+    // DIFFERENT custom property — so flipping only this one's leaves the other
+    // axis wherever it was. Collapse #detail in "bottom" (⌘\), switch to
+    // "right", expand there: the class clears but --detail-h is still 28px, and
+    // switching back gives you an UNcollapsed 28px-tall panel with its content
+    // clipped and no chevron left to recover with. So a state change here moves
+    // every handle on this panel, each to its own remembered size.
+    if(was!==v) for(const p of peers) if(p!==me) p.applyCollapsed(v);
   }
+  // The design spec caps a vertical (bottom-panel) drag at 60% of the
+  // viewport height on top of the fixed `max`, so a short window can't have
+  // its graph row squeezed to nothing — the max-height media queries only
+  // change the *default* --detail-h, never this drag ceiling. Resolved fresh
+  // on every call (not cached once per drag) so a resize while the drag is
+  // in progress is honored too; dragCeiling/clampResize stay pure and
+  // unaware of `window` — this is the one spot that reads it.
+  function dragMax(){ return vert ? dragCeiling(max, window.innerHeight) : max; }
   function onMove(e){
-    const dx=e.clientX-startX;
-    if(Math.abs(dx)>3) dragged=true;
-    const raw=fromRight?startW-dx:startW+dx;
-    pendingW=Math.max(railW,Math.min(max,raw));
-    // Move ONLY the guide line — leave the panel width (the CSS var) alone so
+    const d=(vert?e.clientY:e.clientX)-start;
+    if(Math.abs(d)>3) dragged=true;
+    pending=clampResize(startSize,d,fromFarEdge,railW,dragMax());
+    // Move ONLY the guide line — leave the panel size (the CSS var) alone so
     // nothing reflows/re-renders mid-drag. The guide sits at the clamped cursor
-    // x (where the panel edge WILL land): once the width is pinned at railW/max
-    // the line stops there instead of running off with the cursor.
-    const clampedDx=fromRight?(startW-pendingW):(pendingW-startW);
-    const g=resizeGuide();
-    g.style.left=(startX+clampedDx)+"px";
-    g.classList.toggle("will-collapse", pendingW<min);
+    // position (where the panel edge WILL land): once the size is pinned at
+    // railW/max the line stops there instead of running off with the cursor.
+    const clampedD=fromFarEdge?(startSize-pending):(pending-startSize);
+    const g=resizeGuide(vert);
+    if(vert) g.style.top=(start+clampedD)+"px"; else g.style.left=(start+clampedD)+"px";
+    g.classList.toggle("will-collapse", pending<min);
   }
   function onUp(){
     document.removeEventListener("pointermove",onMove);
     document.removeEventListener("pointerup",onUp);
-    handle.classList.remove("active"); root.classList.remove("resizing");
-    resizeGuide().classList.remove("on","will-collapse"); // hide the guide line
+    handle.classList.remove("active"); root.classList.remove("resizing","resizing-y");
+    // Pass `vert` here too: calling this bare drops the `horiz` class while the
+    // line is still fading out, so it snaps from a horizontal bar to a vertical
+    // one mid-fade.
+    resizeGuide(vert).classList.remove("on","will-collapse"); // hide the guide line
     if(!dragged){
       // A plain click, no drag at all: only meaningful while collapsed
       // (reopen); a click on an already-expanded handle is a no-op, same as
       // today.
-      if(collapsed){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
+      if(isCollapsed()){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedSize+"px"); }
       return;
     }
-    // Commit the width the guide landed on — the ONE reflow of the whole drag.
-    // Same resting-state decision as before, now keyed off `pendingW` (the CSS
+    // Commit the size the guide landed on — the ONE reflow of the whole drag.
+    // Same resting-state decision as before, now keyed off `pending` (the CSS
     // var was never touched mid-drag) instead of reading it back live.
-    if(pendingW<min){
-      if(pendingW<=collapseAt){ setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
-      else { setCollapsed(false); root.style.setProperty(cssVar, min+"px"); lastExpandedW=min; }
+    if(pending<min){
+      if(pending<=collapseAt){ setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
+      else { setCollapsed(false); root.style.setProperty(cssVar, min+"px"); lastExpandedSize=min; }
     } else {
-      setCollapsed(false); root.style.setProperty(cssVar, pendingW+"px"); lastExpandedW=pendingW;
+      setCollapsed(false); root.style.setProperty(cssVar, pending+"px"); lastExpandedSize=pending;
     }
   }
-  function beginDrag(startClientX){
-    startX=startClientX; dragged=false;
-    startW=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||handle.parentElement.getBoundingClientRect().width;
-    pendingW=startW;
-    handle.classList.add("active"); root.classList.add("resizing");
+  function beginDrag(startClient){
+    start=startClient; dragged=false;
+    const box=panel.getBoundingClientRect();
+    startSize=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||(vert?box.height:box.width);
+    pending=startSize;
+    handle.classList.add("active"); root.classList.add("resizing"); if(vert) root.classList.add("resizing-y");
     // Park the guide line at the current edge and show it — it takes over the
     // visual during the drag while the panels stay put.
-    const g=resizeGuide(); g.style.left=startClientX+"px"; g.classList.add("on"); g.classList.remove("will-collapse");
+    const g=resizeGuide(vert);
+    if(vert) g.style.top=startClient+"px"; else g.style.left=startClient+"px";
+    g.classList.add("on"); g.classList.remove("will-collapse");
     document.addEventListener("pointermove",onMove);
     document.addEventListener("pointerup",onUp);
   }
-  handle.addEventListener("pointerdown",e=>{ e.preventDefault(); beginDrag(e.clientX); });
+  handle.addEventListener("pointerdown",e=>{ e.preventDefault(); beginDrag(vert?e.clientY:e.clientX); });
   // Keyboard equivalent of the reopen-by-click path above — the handle is a
   // real (tabindex="0" role="button") focusable control (see index.html),
   // not just a drag target, so Enter/Space should work exactly like a plain
@@ -2066,24 +2131,33 @@ function wireResizeHandle(handle,cssVar,min,max,fromRight,railW){
   handle.addEventListener("keydown",e=>{
     if(e.key!=="Enter"&&e.key!==" ") return;
     e.preventDefault();
-    if(collapsed){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
+    if(isCollapsed()){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedSize+"px"); }
   });
   // Programmatic collapse/expand, so the focus-mode shortcut (below) can drive
   // the panel exactly like a drag-past-edge / click-to-reopen would.
-  function collapse(){ if(collapsed) return; setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
-  function expand(){ if(!collapsed) return; setCollapsed(false); root.style.setProperty(cssVar, lastExpandedW+"px"); }
-  return { isCollapsed:()=>collapsed, collapse, expand };
+  function collapse(){ if(isCollapsed()) return; setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
+  function expand(){ if(!isCollapsed()) return; setCollapsed(false); root.style.setProperty(cssVar, lastExpandedSize+"px"); }
+  return { isCollapsed, collapse, expand };
 }
-const panelHandles=[
-  wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28),
-  wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true,28),
-].filter(Boolean);
+const sidebarHandle=wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28);
+const detailRightHandle=wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true,28);
+const detailBottomHandle=wireResizeHandle($("#resizeDetailBottom"),"--detail-h",180,720,true,28,"y");
+const panelHandles=[sidebarHandle,detailRightHandle].filter(Boolean);
+// Focus mode collapses the panels flanking the graph. Which detail handle
+// that is depends on the placement, and the placement can change without a
+// reload — so this is resolved per press rather than baked into the array
+// above (which stays sidebar-first for the ⌘⇧F handler that indexes it).
+function activePanelHandles(){
+  const bottom=document.documentElement.getAttribute("data-detail-placement")==="bottom";
+  return [sidebarHandle,bottom?detailBottomHandle:detailRightHandle].filter(Boolean);
+}
 // Focus mode (⌘\ / Ctrl+\): collapse BOTH side panels to give the graph the full
 // width, or restore both when they're already collapsed — a straight toggle
 // between "both open" and "both closed". Ignored while typing in a field.
 function toggleFocusMode(){
-  const allCollapsed=panelHandles.length>0 && panelHandles.every(h=>h.isCollapsed());
-  panelHandles.forEach(h=> allCollapsed ? h.expand() : h.collapse());
+  const hs=activePanelHandles();
+  const allCollapsed=hs.length>0 && hs.every(h=>h.isCollapsed());
+  hs.forEach(h=> allCollapsed ? h.expand() : h.collapse());
 }
 document.addEventListener("keydown",e=>{
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.code==="Backslash"&&!e.target.closest("input,textarea,[contenteditable=true]")){
@@ -2140,6 +2214,14 @@ function applyTheme(name){ document.documentElement.setAttribute("data-theme",na
 function applyThemeMode(mode){
   if(mode==="system"){ document.documentElement.removeAttribute("data-theme"); readTheme(); saveSettings({themeMode:"system"}); }
   else applyTheme(mode);
+}
+// The detail panel's edge, as one attribute on the document root — the same
+// route applyTheme uses, so the shell's layout stays entirely in CSS (see
+// index.html's two .app grid definitions) rather than being computed here.
+// Called live by settings.svelte.ts's setDetailPanelPlacement, and once at
+// boot from the persisted value.
+function applyDetailPlacement(v){
+  document.documentElement.setAttribute("data-detail-placement", v==="bottom"?"bottom":"right");
 }
 // Whether the canvas draws EVERY ref chip on a commit row (multiple tags
 // included) or just the first one (this app's original, still-default
@@ -3492,6 +3574,15 @@ async function closeRepo(){
 // whether or not a repo is currently open (the dashboard's own "+ Add
 // repository…" is where the native picker still lives).
 $(".repo-pick").addEventListener("click", ()=>dashboardCtrl.show());
+// Right-click the same chip for the repo-level actions. GitCat has no repo
+// tabs to hang these on (one repo per window, see src-tauri/src/windows.rs),
+// and this chip is the only thing in the UI that names the open repo.
+// repoMenuItems() returns nothing when no repo is open, and open([]) is a
+// no-op, so an empty chip right-clicks to nothing rather than to dead entries.
+$(".repo-pick").addEventListener("contextmenu", (e)=>{
+  e.preventDefault();
+  contextMenuCtrl.open(repoMenuItems(CUR_REPO), e.clientX, e.clientY);
+});
 
 // Persisted settings (Settings modal, src/islands/settings) — defaults match
 // what this boot sequence used to hardcode, so an existing user with nothing
@@ -3502,6 +3593,7 @@ applyThemeMode(loadSettings().themeMode);
 setGraphShowAllTags(loadSettings().showAllCommitTags);
 setGraphLabelPriority(loadSettings().graphLabelPriority);
 setGraphLabelLayout(loadSettings().graphLabelLayout);
+applyDetailPlacement(loadSettings().detailPanelPlacement);
 setTamaEnabled(loadSettings().tamaEnabled);
 // PER-47: re-apply a persisted Tama skin at boot. Fire-and-forget + self-gates
 // on IN_TAURI internally; if the skin's plugin was removed/disabled or its load
@@ -3624,7 +3716,7 @@ function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
-  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, setTamaEnabled, onGraphBatch,
+  openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, applyDetailPlacement, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
   // above for the full design) — enterSubmodule/navigateToRepo are hoisted
   // `function` declarations, so no TDZ risk (same reasoning as

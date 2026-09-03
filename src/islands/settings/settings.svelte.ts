@@ -114,6 +114,11 @@ export type GraphLabelPriority = "tag" | "branch";
 // keeps this app's original resizable left column. See legacy/main.ts's
 // graphLabelInline for what actually changes at draw time.
 export type GraphLabelLayout = "inline" | "column";
+// Which edge of the window the detail panel occupies. A layout preference,
+// so it lives here rather than in the Rust config: nothing on the backend
+// reads it. "right" is the original and stays the default, so an existing
+// user's layout only moves if they choose to move it.
+export type DetailPanelPlacement = "right" | "bottom";
 
 // ── Tama customization (PER-54) ────────────────────────────────────────────
 // PER-54: how lively Tama's idle animation + state-change timing feel.
@@ -214,6 +219,7 @@ export interface PersistedSettings {
   // with one Settings select. A deliberate, user-confirmed spec decision —
   // not an unexamined leftover default.
   graphLabelLayout: GraphLabelLayout;
+  detailPanelPlacement: DetailPanelPlacement;
   // Periodically `git fetch --all --prune` while a repo is open, so
   // ahead/behind counts and incoming remote changes stay current without a
   // manual Pull. Off by default — unlike autoCheckUpdates (checking GitHub
@@ -301,7 +307,7 @@ export const AUTO_FETCH_INTERVAL_OPTIONS = [5, 10, 15, 30, 60] as const;
 // sound.ts had no master-gain multiplier at all before this setting
 // existed, so anything below 1 here would quietly make every sound quieter
 // than it used to be for users who never touch this slider.
-const DEFAULTS: PersistedSettings = {
+export const DEFAULTS: PersistedSettings = {
   themeMode: "dark",
   cherryPickRecordOriginDefault: false,
   autoCheckUpdates: true,
@@ -311,6 +317,7 @@ const DEFAULTS: PersistedSettings = {
   showAllCommitTags: false,
   graphLabelPriority: "tag",
   graphLabelLayout: "inline",
+  detailPanelPlacement: "right",
   autoFetchEnabled: false,
   autoFetchIntervalMinutes: 15,
   autoMaintenanceEnabled: false,
@@ -466,6 +473,34 @@ export function applyPersistedTamaMotion(): void {
 // the plain-filled-in-fields case.
 const DEMO_IDENTITY: GitIdentity = { name: "Demo User", email: "demo@example.com", configured: true, local: false };
 
+/**
+ * The persisted prefs, read ONCE at module init, so the `$state` fields below
+ * can start out holding what is actually saved rather than `DEFAULTS`.
+ *
+ * They used to seed only inside `show()`, which meant that from boot until the
+ * user first opened the Settings dialog the store disagreed with the DOM: the
+ * boot sequence (legacy/main.ts) reads `loadSettings()` directly and applies
+ * the saved values to the document, while anything reading the store got the
+ * default. For `detailPanelPlacement` that was visible breakage, not just
+ * untidiness — `detailPanelCtrl.changesSplitAxis` derives the "changes" tab's
+ * split axis from this field, so a user whose saved placement was "bottom"
+ * booted with CSS laying the two panes out in a row while Svelte rendered the
+ * stacked-axis splitter for them: a 0px-wide, undraggable divider, a pane
+ * given a height where it needed a width, and pane sizes loaded from the wrong
+ * storage key. Opening and closing Settings silently repaired it.
+ *
+ * Seeded for every app-level pref, not just that one field: the desync was a
+ * property of *when* the seed ran, not of which field it ran for, and the same
+ * shape was already reachable through `tamaEnabled` (Detail.svelte's hero
+ * bubble reads it directly). `show()` still re-reads storage on every open —
+ * this only fixes the window before the first open.
+ *
+ * Read at init rather than lazily per field so every field sees ONE consistent
+ * snapshot, and so a storage failure is handled once (loadSettings falls back
+ * to DEFAULTS internally).
+ */
+const BOOT = loadSettings();
+
 class SettingsState {
   open = $state(false);
   activeTab = $state<SettingsTab>("general");
@@ -503,22 +538,23 @@ class SettingsState {
   }
 
   // ── app-level prefs (instant-apply, no Save button) ─────────────────────
-  themeMode = $state<ThemeMode>(DEFAULTS.themeMode);
-  cherryPickRecordOriginDefault = $state(DEFAULTS.cherryPickRecordOriginDefault);
-  autoCheckUpdates = $state(DEFAULTS.autoCheckUpdates);
-  useNightlyChannel = $state(DEFAULTS.useNightlyChannel);
-  soundEffectsEnabled = $state(DEFAULTS.soundEffectsEnabled);
-  soundEffectsVolume = $state(DEFAULTS.soundEffectsVolume);
-  showAllCommitTags = $state(DEFAULTS.showAllCommitTags);
-  graphLabelPriority = $state<GraphLabelPriority>(DEFAULTS.graphLabelPriority);
-  graphLabelLayout = $state<GraphLabelLayout>(DEFAULTS.graphLabelLayout);
-  autoFetchEnabled = $state(DEFAULTS.autoFetchEnabled);
-  autoFetchIntervalMinutes = $state(DEFAULTS.autoFetchIntervalMinutes);
-  autoMaintenanceEnabled = $state(DEFAULTS.autoMaintenanceEnabled);
-  snapshotRetentionMode = $state<SnapshotRetentionMode>(DEFAULTS.snapshotRetentionMode);
-  snapshotRetentionCount = $state(DEFAULTS.snapshotRetentionCount);
-  snapshotRetentionDays = $state(DEFAULTS.snapshotRetentionDays);
-  tamaEnabled = $state(DEFAULTS.tamaEnabled);
+  themeMode = $state<ThemeMode>(BOOT.themeMode);
+  cherryPickRecordOriginDefault = $state(BOOT.cherryPickRecordOriginDefault);
+  autoCheckUpdates = $state(BOOT.autoCheckUpdates);
+  useNightlyChannel = $state(BOOT.useNightlyChannel);
+  soundEffectsEnabled = $state(BOOT.soundEffectsEnabled);
+  soundEffectsVolume = $state(BOOT.soundEffectsVolume);
+  showAllCommitTags = $state(BOOT.showAllCommitTags);
+  graphLabelPriority = $state<GraphLabelPriority>(BOOT.graphLabelPriority);
+  graphLabelLayout = $state<GraphLabelLayout>(BOOT.graphLabelLayout);
+  detailPanelPlacement = $state<DetailPanelPlacement>(BOOT.detailPanelPlacement);
+  autoFetchEnabled = $state(BOOT.autoFetchEnabled);
+  autoFetchIntervalMinutes = $state(BOOT.autoFetchIntervalMinutes);
+  autoMaintenanceEnabled = $state(BOOT.autoMaintenanceEnabled);
+  snapshotRetentionMode = $state<SnapshotRetentionMode>(BOOT.snapshotRetentionMode);
+  snapshotRetentionCount = $state(BOOT.snapshotRetentionCount);
+  snapshotRetentionDays = $state(BOOT.snapshotRetentionDays);
+  tamaEnabled = $state(BOOT.tamaEnabled);
 
   // ── Tama motion + expression remap (PER-54) — app-level, pure frontend ────
   // The motion preset drives her idle-animation liveliness + state-change timing
@@ -527,15 +563,15 @@ class SettingsState {
   // localStorage in show() and re-apply at boot (applyPersistedTamaMotion). The
   // override map is copied on seed/write (never mutated in place) so each $state
   // reassignment is actually observed.
-  tamaMotionPreset = $state<TamaMotionPreset>(DEFAULTS.tamaMotionPreset);
-  tamaPoseOverrides = $state<Record<string, string>>({ ...DEFAULTS.tamaPoseOverrides });
+  tamaMotionPreset = $state<TamaMotionPreset>(BOOT.tamaMotionPreset);
+  tamaPoseOverrides = $state<Record<string, string>>({ ...BOOT.tamaPoseOverrides });
 
   // ── Tama skin picker (PER-47) — app-level, NOT repo-scoped ──────────────
   // The active skin's plugin id (null = built-in). Seeded from localStorage in
   // show(); the picker's <select> binds to it. tamaSkinBusy disables the
   // control while a load is in flight; tamaSkinError surfaces an interactive
   // load failure (the boot path stays silent — see applyPersistedTamaSkin).
-  tamaSkinPluginId = $state<string | null>(DEFAULTS.tamaSkinPluginId);
+  tamaSkinPluginId = $state<string | null>(BOOT.tamaSkinPluginId);
   tamaSkinBusy = $state(false);
   tamaSkinError = $state("");
 
@@ -821,6 +857,7 @@ class SettingsState {
     this.showAllCommitTags = s.showAllCommitTags;
     this.graphLabelPriority = s.graphLabelPriority;
     this.graphLabelLayout = s.graphLabelLayout;
+    this.detailPanelPlacement = s.detailPanelPlacement;
     this.autoFetchEnabled = s.autoFetchEnabled;
     this.autoFetchIntervalMinutes = s.autoFetchIntervalMinutes;
     this.autoMaintenanceEnabled = s.autoMaintenanceEnabled;
@@ -905,6 +942,12 @@ class SettingsState {
     this.graphLabelLayout = v;
     saveSettings({ graphLabelLayout: v });
     bridge.setGraphLabelLayout(v); // flips the canvas layout live — see legacy/main.ts
+  }
+
+  setDetailPanelPlacement(v: DetailPanelPlacement): void {
+    this.detailPanelPlacement = v;
+    saveSettings({ detailPanelPlacement: v });
+    bridge.setDetailPanelPlacement(v); // moves the panel live — see legacy/main.ts
   }
 
   // The background timer itself lives in main.ts (mirrors the existing

@@ -3251,6 +3251,42 @@ async terminalKill(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * JS: `commands.revealPathInFileManager(repo, relative)` — a file row's
+ * "Show in <file manager>": opens the containing folder with the file
+ * selected. `async` + `run_blocking` because the trust gate is a git2
+ * `Repository::open`, exactly as in `terminal_spawn`.
+ */
+async revealPathInFileManager(repo: string, relative: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reveal_path_in_file_manager", { repo, relative }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.openDirInFileManager(repo, relative)` — the topbar repo
+ * chip's and a folder row's "Open in <file manager>".
+ * 
+ * `open_path`, not the reveal above: revealing a directory opens its PARENT
+ * with the directory merely selected, and a folder is a thing you want to be
+ * INSIDE. That distinction is the whole reason the two labels use different
+ * verbs (see `legacy/platform.ts`).
+ * 
+ * An empty `relative` means the repo itself, which is what the repo chip
+ * passes. `resolve_in_repo` already drops the nothing-at-all case, so the
+ * chip and a folder row go through one command rather than two that would
+ * have to be kept in step.
+ */
+async openDirInFileManager(repo: string, relative: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_dir_in_file_manager", { repo, relative }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.openRepoInNewWindow(path)` — the Dashboard's "Open in New
  * Window" row action (see `src/islands/dashboard/dashboard.svelte.ts`'s
  * `openRepositoryInNewWindow`). Deliberately synchronous/non-async:
@@ -4030,7 +4066,27 @@ export type Plugin = {
  * [`is_valid_id`]). Unique within the registry; used as the remove/enable
  * key and half of a command's `(pluginId, commandId)` address.
  */
-id: string; name: string; version: string; description: string | null; 
+id: string; name: string; version: string; 
+/**
+ * The OLDEST GitCat that can run this plugin — `"1.3.0"`, or `"1.3"` (a
+ * missing component reads as zero). Absent means "any host", which is
+ * every manifest written before this field existed.
+ * 
+ * This exists because of one specific, quiet failure mode:
+ * [`plugin_exec::substitute`](crate::plugin_exec) expands an UNRECOGNIZED
+ * placeholder token to the EMPTY STRING. So a plugin authored against a
+ * newer GitCat does not fail loudly on an older host — a `run` of
+ * `rm {file}` simply becomes `rm`. Declaring the floor turns that into a
+ * refusal at install time, which is the only point where the user is
+ * present to read it.
+ * 
+ * Honest limitation, also stated in `docs/plugins.md`: the gate only
+ * protects hosts that HAVE the gate. GitCat 1.2 and earlier ignore this
+ * field entirely, so the first generation of gated plugins still installs
+ * silently onto them. Unavoidable, and not a reason to skip it — every
+ * host from here on is covered.
+ */
+minGitcatVersion?: string | null; description: string | null; 
 /**
  * Defaults to `true` when a manifest omits it — a freshly installed
  * plugin is active unless the user disables it.

@@ -20,6 +20,8 @@ export default {
   amend_previous: "修补上一个 commit",
   amend: "修补",
   commit_btn: "提交",
+  // 同时覆盖已暂存和未暂存改动的标签名称。
+  changes: "更改",
   // 已暂存 / 未暂存区域。
   staged: "已暂存({n})",
   unstage_all: "全部取消暂存",

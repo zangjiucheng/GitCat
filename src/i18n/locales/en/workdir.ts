@@ -20,6 +20,8 @@ export default {
   amend_previous: "Amend previous commit",
   amend: "Amend",
   commit_btn: "Commit",
+  // Tab label covering both the staged and unstaged trees.
+  changes: "Changes",
   // Staged / unstaged sections.
   staged: "Staged ({n})",
   unstage_all: "Unstage all",

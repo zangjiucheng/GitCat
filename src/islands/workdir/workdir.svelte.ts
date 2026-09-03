@@ -1,11 +1,16 @@
 // Working-tree changes (status, stage/unstage, discard, commit, stash) —
 // controller (Svelte 5 runes singleton).
 //
-// Owns the pinned "Uncommitted changes" row's data AND the right-hand
-// `#detail` pane's content whenever that row is selected (see
-// legacy/main.ts's `selectWorkdir()`/the `-2` row sentinel, and
-// Detail.svelte's leading `{#if workdirCtrl.selected}` branch — same slot,
-// swapped content, exact shape as bisectDrawerCtrl peer-importing bisectCtrl).
+// Owns the pinned "Uncommitted changes" row's data AND the `#detail` pane's
+// content whenever that row is selected (see legacy/main.ts's
+// `selectWorkdir()`/the `-2` row sentinel). DetailPanel.svelte owns the
+// #detail slot itself and picks Workdir.svelte over Detail.svelte based on
+// `workdirCtrl.selected` — the two views used to be nested (Detail.svelte
+// rendered <Workdir /> inside its own leading `{#if}` branch), but that
+// nesting was removed once each view needed its own tab strip/splitter, so
+// this controller's data now backs a sibling component, not content inside
+// Detail's own tree. Same "controller swapped in as content, exact shape as
+// bisectDrawerCtrl peer-importing bisectCtrl" relationship either way.
 //
 // Two independent re-entrancy locks, deliberately NOT shared:
 //   * `busy`/`busyTarget` — stage/unstage/stage-all/discard/commit/stash-save,
@@ -64,6 +69,10 @@ import { resolver } from "../resolver/resolver.svelte.ts";
 import { tamaConfirmCtrl } from "../tamaconfirm/tamaconfirm.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { ICON_BACKUP } from "../../legacy/icons";
+import { t } from "../../i18n/i18n.svelte.ts";
+import { contextMenuCtrl } from "../contextmenu/contextmenu.svelte.ts";
+import { filePathMenuItems } from "../contextmenu/fileitems.ts";
+import { dirPathMenuItems } from "../contextmenu/diritems.ts";
 import type { DiffLineRow, FileChange, HunkSelection, SelectedLine, StashEntry, WorkdirEntry, WorkdirStatus } from "../../ipc/bindings";
 
 function esc(s: unknown): string {
@@ -820,16 +829,82 @@ class WorkdirState {
     }
   }
 
-  // Per-file right-click menu (see Workdir.svelte's file rows). Position is the
-  // click point; `untracked` is the row's status === "?" so confirmDiscard picks
-  // the right git op. `closeRowMenu` is also wired to a window click/scroll so
-  // the menu dismisses like any popover.
-  rowMenu = $state<{ file: string; untracked: boolean; x: number; y: number } | null>(null);
-  openRowMenu(file: string, untracked: boolean, x: number, y: number): void {
-    this.rowMenu = { file, untracked, x, y };
+  // Per-file right-click menu (see Workdir.svelte's file rows). `untracked` is
+  // the row's status === "?" so confirmDiscard picks the right git op;
+  // `staged` picks between staging and unstaging, since one row list is the
+  // index and the other the working tree.
+  //
+  // Renders through the shared contextmenu island rather than the popover this
+  // file used to hand-roll — see contextmenu.svelte.ts's header for why one
+  // exists. Dismissal, viewport clamping and closing-before-running all come
+  // from there now, so `closeRowMenu` is gone with the markup that needed it.
+  //
+  // Blame / History / external diff are NOT here even though the row shows
+  // buttons for them: whether they apply to a given row is decided by
+  // canBlameWorkdirFile()/blameTargetForWorkdirFile() in Workdir.svelte, which
+  // is where that per-status knowledge lives. Duplicating those rules here to
+  // gain three menu entries would be the kind of second copy that goes stale.
+  // The commit-side menu (detailCtrl.openFileMenu) has no such split and does
+  // carry all of its row's actions.
+  openRowMenu(file: string, untracked: boolean, staged: boolean, onDisk: boolean, x: number, y: number): void {
+    const repo = this.repo;
+    contextMenuCtrl.open(
+      [
+        staged
+          ? { id: "unstage", label: t("workdir.unstage"), disabled: this.busy, run: () => void this.unstageFile(repo, file) }
+          : { id: "stage", label: t("workdir.stage"), disabled: this.busy, run: () => void this.stageFile(repo, file) },
+        // Unstaged rows only. A staged row's `untracked` is always false, so
+        // discard would take discardFile's tracked branch and act on the
+        // WORKTREE: for a file staged with no unstaged edits there is no
+        // index-to-worktree delta to back up and the call fails after the user
+        // has typed the filename to confirm; for a file in both lists it throws
+        // away the unstaged edits and leaves the staged change untouched.
+        // Neither is what "discard" reads as on the staged side — and the
+        // staged rows carry no trash button either, so offering it here would
+        // also break the rule the rest of these menus follow.
+        ...(staged
+          ? []
+          : [
+              {
+                id: "discard",
+                label: t("workdir.discard_changes"),
+                danger: true,
+                disabled: this.busy,
+                run: () => this.confirmDiscard(file, untracked),
+              },
+            ]),
+        ...filePathMenuItems(repo, file, { onDisk }),
+      ],
+      x,
+      y,
+    );
   }
-  closeRowMenu(): void {
-    this.rowMenu = null;
+
+  // Right-click menu for a FOLDER row in either tree.
+  //
+  // Carries the one action the row already exposes as an icon button, for the
+  // same reason a file row's menu carries its three: a menu offering LESS
+  // than the visible buttons is a strange thing to discover. Staging a folder
+  // is `git add` on the directory, which is exactly what the button does —
+  // stageFile/unstageFile take a path, and neither cares that it names a
+  // directory.
+  //
+  // No discard: the button row has none either, and a typed-confirm scrim
+  // naming a whole directory is a different, much larger decision than
+  // discarding one file. Nothing is selected first — a folder is not a diff
+  // target.
+  openDirRowMenu(path: string, staged: boolean, x: number, y: number): void {
+    const repo = this.repo;
+    contextMenuCtrl.open(
+      [
+        staged
+          ? { id: "unstage", label: t("workdir.unstage_folder"), disabled: this.busy, run: () => void this.unstageFile(repo, path) }
+          : { id: "stage", label: t("workdir.stage_folder"), disabled: this.busy, run: () => void this.stageFile(repo, path) },
+        ...dirPathMenuItems(repo, path),
+      ],
+      x,
+      y,
+    );
   }
 
   // ── discard (destructive — routes through the shared typed-confirm scrim

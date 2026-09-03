@@ -137,6 +137,10 @@ export {
   // branchColW live via recomputeLayout(), same live-re-export safety as
   // setGraphLabelPriority above.
   setGraphLabelLayout,
+  // Settings island's "detail panel" placement (Right / Bottom) — moves the
+  // commit-detail panel by setting one attribute on the document root, same
+  // live-re-export safety as setGraphLabelLayout above.
+  applyDetailPlacement as setDetailPanelPlacement,
   // Settings island's "Tama" visibility toggle — applies the `.tama-off` CSS
   // class immediately, same live-re-export safety as applyThemeMode/
   // setGraphShowAllTags above (hoisted `function`, no TDZ risk).

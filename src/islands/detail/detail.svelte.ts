@@ -23,6 +23,9 @@ import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { previewKind } from "../diffpreview/preview-kind";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
+import { contextMenuCtrl } from "../contextmenu/contextmenu.svelte.ts";
+import { filePathMenuItems } from "../contextmenu/fileitems.ts";
+import { dirPathMenuItems } from "../contextmenu/diritems.ts";
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
@@ -537,6 +540,46 @@ class DetailState {
     if (!c) return;
     const repo = bridge.CUR_REPO as unknown as string;
     void externalToolsCtrl.openDiff(repo, f.p, false, c.sha + "^", c.sha);
+  }
+
+  // Right-click menu for a file row (see Detail.svelte's file tree). Carries
+  // the three actions the row already exposes as icon buttons — a context
+  // menu that offered LESS than the visible buttons would be a strange thing
+  // to discover — then, after a divider, the three this menu exists for.
+  //
+  // `reveal` is the one item that can be inapplicable: a commit's file list
+  // includes what that commit DELETED, and there is nothing on disk to show
+  // for those. It is disabled rather than dropped, so the menu keeps the same
+  // shape from row to row and the items below it don't move under the cursor.
+  // Both copies stay live even then — a deleted file's path is often exactly
+  // what you want, to go and find out what happened to it.
+  openFileMenu(f: { p: string; st: string; oldPath: string | null }, x: number, y: number): void {
+    const repo = bridge.CUR_REPO as unknown as string;
+    const gone = f.st === "D";
+    contextMenuCtrl.open(
+      [
+        { id: "blame", label: t("detail.blame"), run: () => void this.blameFile(f) },
+        { id: "history", label: t("detail.history"), run: () => void this.historyFile(f) },
+        { id: "external-diff", label: t("detail.open_external_diff"), run: () => this.openExternalDiff(f) },
+        ...filePathMenuItems(repo, f.p, { onDisk: !gone }),
+      ],
+      x,
+      y,
+    );
+  }
+
+  // Right-click menu for a FOLDER row in the same tree. Folder rows carry no
+  // icon buttons of their own here, so this is the path trio alone — a
+  // directory has no blame, no history, and no diff of its own to open.
+  //
+  // Deliberately not a plain reuse of openFileMenu: a folder takes the other
+  // verb (see contextmenu/diritems.ts). Nothing is selected first either,
+  // unlike a file row — a folder is not a diff target, so `selectedFile`
+  // would have to be cleared or left pointing somewhere unrelated, and both
+  // are worse than leaving the current selection alone.
+  openDirMenu(path: string, x: number, y: number): void {
+    const repo = bridge.CUR_REPO as unknown as string;
+    contextMenuCtrl.open(dirPathMenuItems(repo, path), x, y);
   }
 
   expandDiff() {

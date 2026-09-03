@@ -33,6 +33,7 @@ pub mod preview; // #37: raw image/PDF blob bytes for a visual before/after diff
 pub mod procutil; // suppresses the console window Windows flashes open per subprocess spawn
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod repo_files; // backlog #14 (final item): .gitignore/.mailmap in-app editors — allow-listed repo-root file read/write
+pub mod file_manager; // row/repo context menus: hand a path to the desktop file browser, trust-gated (see its module doc)
 pub mod repo_registry; // backlog #11: app-level tracked-repos JSON persistence
 pub mod repo_summary; // Repository Summary: git-log-derived churn/contributor/activity/problem-area diagnostics
 pub mod rerere; // M5a: git-rerere status/toggle panel
@@ -50,6 +51,7 @@ pub mod instance_focus; // #39: focus the existing window for an already-open re
 pub mod cli_shim; // "Install 'gitcat' command in PATH": writes a VS Code `code`-style launcher (macOS /usr/local/bin, Linux ~/.local/bin, Windows WindowsApps)
 pub mod i18n_err; // PER-82: app-authored errors as `i18n:<key>` strings the frontend's be() translates (raw git stderr stays passthrough)
 pub mod updater; // channel-aware "check for updates" (stable vs nightly endpoint + downgrade-allowing comparator)
+pub mod version; // #65: the host version, from Cargo.toml alone — plus the test that fails when the four files that copy it drift
 pub mod wsl; // routes git_remote.rs's/submodule.rs's network commands through wsl.exe on a WSL-path repo, so credentials resolve inside the distro
 
 use tauri::Manager;
@@ -347,6 +349,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
         terminal::terminal_write,
         terminal::terminal_resize,
         terminal::terminal_kill,
+        // Right-click menus: reveal a file, or open the repo, in the
+        // desktop file browser. Rust-side so neither needs a blanket
+        // opener scope in the webview — see file_manager.rs's module doc.
+        file_manager::reveal_path_in_file_manager,
+        file_manager::open_dir_in_file_manager,
         // Multi-window: the Dashboard's "Open in New Window" row action (the
         // generic "New Window" menu item is handled entirely in Rust, see
         // menu.rs's own handle_event — no command round trip for that path).

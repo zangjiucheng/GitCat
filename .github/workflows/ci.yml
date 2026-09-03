@@ -188,20 +188,24 @@ jobs:
   # otherwise unverified until a tagged release runs the 6-platform matrix. This
   # catches a Windows-only compile break on the PR instead.
   #
-  # Compile-only, on purpose:
+  # Compile-only, on purpose — but the reason changed, so read this before
+  # assuming it still can't run:
   #  - `cargo build` covers the app/library binary.
   #  - `cargo test --lib --no-run` additionally COMPILES the library unit-test
-  #    code on Windows (Windows-clean: the handful of Unix-only cases are
-  #    #[cfg(unix)]-guarded), catching a Windows test-compile break too. `--lib`
-  #    skips the tests/ integration suite (submodule / repo_registry /
-  #    repo_files), which uses unguarded std::os::unix APIs and doesn't compile
-  #    on Windows yet (a separate follow-up).
-  #  - We deliberately do NOT run the tests. The Tauri library's test binary
-  #    transitively links the WebView2/wry native stack and fails to resolve a
-  #    DLL entry point at startup on a stock runner (exit 0xc0000139,
-  #    STATUS_ENTRYPOINT_NOT_FOUND) before any test executes. The cli_shim
-  #    launcher tests are platform-agnostic pure functions already run by the
-  #    Linux `rust` job, so running them here would add nothing regardless.
+  #    code on Windows, catching a Windows test-compile break too.
+  #  - The whole test suite now COMPILES on Windows, and the library test
+  #    binary now STARTS. It used to die at startup with exit 0xc0000139
+  #    (STATUS_ENTRYPOINT_NOT_FOUND) before any test ran, because it imports a
+  #    comctl32 v6 export without the manifest that binds v6; build.rs
+  #    delay-loads comctl32 to fix that, and the two remaining Unix-only cases
+  #    in tests/submodule.rs are #[cfg(unix)]-guarded.
+  #  - We still do NOT run the tests here, and that is now a real choice rather
+  #    than an impossibility. Locally the suite is 613 passed / 88 failed on
+  #    Windows: one library test (a ConPTY round-trip that reads nothing) plus
+  #    an integration cluster concentrated in workdir/merge/rebase/submodule.
+  #    Those are pre-existing Windows gaps that have never been allowed to run
+  #    before, not regressions. Turning the run on is a follow-up that belongs
+  #    with fixing them — flipping it now would just make every PR red.
   # No apt/system-deps step: Windows runners ship the MSVC toolchain and WebView2
   # SDK, and libgit2-sys builds its vendored copy with `cc`, same as on Linux.
   rust-windows:
