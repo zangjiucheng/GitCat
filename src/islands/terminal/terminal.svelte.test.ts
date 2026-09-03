@@ -51,6 +51,7 @@ function resetTerminal() {
   terminalCtrl.busy = false;
   terminalCtrl.exited = false;
   terminalCtrl.onData = null;
+  (terminalCtrl as unknown as { pendingOutput: Uint8Array[] }).pendingOutput = [];
   mockInTauri = false;
   vi.clearAllMocks();
   handlers = {};
@@ -262,6 +263,68 @@ describe("write / resize", () => {
   it("resize is a no-op without a live session", async () => {
     await terminalCtrl.resize(80, 24);
     expect(commands.terminalResize).not.toHaveBeenCalled();
+  });
+});
+
+describe("output that arrives before the view exists (#82)", () => {
+  // Terminal.svelte is mounted on FIRST OPEN now, so there is a real window
+  // between the shell being spawned and there being an xterm to write into.
+  // Before attachOutput() the listener's `this.onData?.()` swallowed anything
+  // that landed in it — which is the shell's own prompt, every first open.
+  const b64 = (s: string) => btoa(s);
+  const decode = (b: Uint8Array) => new TextDecoder().decode(b);
+
+  async function spawnSession() {
+    mockInTauri = true;
+    vi.mocked(commands.terminalSpawn).mockResolvedValueOnce(ok("term-1"));
+    await terminalCtrl.toggle("/repo");
+  }
+
+  it("queues it and flushes in order once the view attaches", async () => {
+    await spawnSession();
+
+    // The shell talks first. Nothing is attached yet.
+    handlers["terminal-output"]({ payload: { id: "term-1", data: b64("$ ") } });
+    handlers["terminal-output"]({ payload: { id: "term-1", data: b64("echo hi\r\n") } });
+
+    const received: Uint8Array[] = [];
+    terminalCtrl.attachOutput((bytes) => received.push(bytes));
+
+    expect(received.map(decode)).toEqual(["$ ", "echo hi\r\n"]);
+  });
+
+  it("goes straight through once attached, with nothing left queued", async () => {
+    await spawnSession();
+    const received: Uint8Array[] = [];
+    terminalCtrl.attachOutput((bytes) => received.push(bytes));
+
+    handlers["terminal-output"]({ payload: { id: "term-1", data: b64("live") } });
+
+    expect(received.map(decode)).toEqual(["live"]);
+    expect((terminalCtrl as unknown as { pendingOutput: Uint8Array[] }).pendingOutput).toHaveLength(0);
+  });
+
+  it("caps the queue and keeps the newest, since the tail is what gets read", async () => {
+    await spawnSession();
+    // 300 chunks against a 256 cap: the first 44 fall off the front.
+    for (let i = 0; i < 300; i++) {
+      handlers["terminal-output"]({ payload: { id: "term-1", data: b64(`${i}|`) } });
+    }
+    const received: Uint8Array[] = [];
+    terminalCtrl.attachOutput((bytes) => received.push(bytes));
+
+    expect(received).toHaveLength(256);
+    expect(decode(received[0])).toBe("44|");
+    expect(decode(received[255])).toBe("299|");
+  });
+
+  it("still ignores a superseded session's output rather than queueing it", async () => {
+    await spawnSession();
+    handlers["terminal-output"]({ payload: { id: "term-0-stale", data: b64("ghost") } });
+
+    const received: Uint8Array[] = [];
+    terminalCtrl.attachOutput((bytes) => received.push(bytes));
+    expect(received).toHaveLength(0);
   });
 });
 
