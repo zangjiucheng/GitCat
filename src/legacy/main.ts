@@ -2397,14 +2397,22 @@ async function globalUndo(){
 $("#undoBtn").addEventListener("click",globalUndo);
 // ⌘Z / Ctrl+Z — global undo. The modifier test is EXACT, not "at least
 // Cmd/Ctrl": ⌘⇧Z means Redo in every other desktop app and ⌥⌘Z means undo
-// nowhere, so neither may reach globalUndo() — both did until now. Matching on
-// e.code (physical key) rather than e.key keeps the chord on the same cap for
-// Dvorak and for layouts where ⌘ changes the reported character.
+// nowhere, so neither may reach globalUndo() — both did until now.
+//
+// Matched on the GLYPH (e.key), not the physical position. e.code "KeyZ" is the
+// bottom-left letter key of a US keyboard, which prints "w" on AZERTY and "y"
+// on QWERTZ — so an e.code match would undo when a French user pressed the key
+// labelled W (stealing their ⌘W / Close Window, which the File menu binds via
+// Tauri's predefined item) and do nothing at all on the key labelled Z. Same
+// reasoning the zoom handler above spells out for "+": only the glyph travels.
+// The ⌘\ handler below stays on e.code deliberately — punctuation is where
+// position IS the portable thing.
+//
 // ⌘⇧Z is claimed here rather than left unbound: an unclaimed chord is how the
 // loose match crept back in, and a user pressing it deserves to be told Redo
 // doesn't exist yet instead of silently undoing a second time.
 document.addEventListener("keydown",e=>{
-  if(!(e.metaKey||e.ctrlKey)||e.altKey||e.code!=="KeyZ") return;
+  if(!(e.metaKey||e.ctrlKey)||e.altKey||e.key.toLowerCase()!=="z") return;
   if(e.target.closest("input,textarea,[contenteditable=true]")) return;
   e.preventDefault();
   if(e.shiftKey){ Tama.say(t("legacy.redo_unsupported"),3200); return; }

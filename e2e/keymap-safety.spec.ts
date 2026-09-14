@@ -64,6 +64,72 @@ test.describe("global undo", () => {
     await page.keyboard.press("Control+Z");
     await expect(cheer).toHaveClass(/\bshow\b/);
   });
+
+  // The chord follows the LETTER, not the physical key position. e.code "KeyZ"
+  // is the bottom-left letter key of a US keyboard, which prints "w" on AZERTY
+  // and "y" on QWERTZ — so matching it would undo when a French user pressed
+  // the key labelled W (stealing their ⌘W, which File ▸ Close Window binds) and
+  // do nothing on the key they think is Z.
+  //
+  // Playwright's own keyboard always sends a US mapping, so the two layouts are
+  // synthesised directly. They dispatch on document.body rather than document
+  // because the handler calls e.target.closest(), which document does not have.
+  test("undo follows the glyph, not the physical key", async ({ page }) => {
+    await page.goto("/");
+    await skipWizard(page);
+    const cheer = page.locator("#tamaCheer");
+
+    // AZERTY: the user presses the key labelled W. It sits on the KeyZ POSITION.
+    await page.evaluate(() => {
+      document.body.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "w", code: "KeyZ", ctrlKey: true, bubbles: true }),
+      );
+    });
+    await expect(cheer).not.toHaveClass(/\bshow\b/);
+
+    // QWERTZ: the user presses the key labelled Z. It sits on the KeyY position.
+    await page.evaluate(() => {
+      document.body.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "z", code: "KeyY", ctrlKey: true, bubbles: true }),
+      );
+    });
+    await expect(cheer).toHaveClass(/\bshow\b/);
+  });
+});
+
+test.describe("code search suppresses find-in-page", () => {
+  // Half this handler's job is stopping the webview's own find bar; the other
+  // half is opening Search Code. The text-input guard gates the SECOND half
+  // only — a native find bar popping up over the commit box is exactly what
+  // the first half exists to prevent, and it matters most while typing.
+  //
+  // Observed through defaultPrevented on a synthetic event, because Playwright
+  // cannot see the webview's native find UI.
+  test("⌘F is preventDefaulted even inside a text field, and with no repo", async ({ page }) => {
+    await page.goto("/");
+    await skipWizard(page);
+
+    const prevented = await page.evaluate(() => {
+      const ta = document.createElement("textarea");
+      document.body.appendChild(ta);
+      ta.focus();
+      const e = new KeyboardEvent("keydown", {
+        key: "f",
+        code: "KeyF",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      ta.dispatchEvent(e);
+      const out = e.defaultPrevented;
+      ta.remove();
+      return out;
+    });
+    expect(prevented).toBe(true);
+
+    // ...and Search Code still did not open, which is the guard doing its half.
+    await expect(page.locator(".scrim:has(.modal.codesearch)")).not.toHaveClass(/\bon\b/);
+  });
 });
 
 // The ⌘F guard needs a repo open: CodeSearch.svelte returns early when
