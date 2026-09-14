@@ -80,6 +80,59 @@ test("Escape closes ONLY the top layer, leaving the expanded diff open", async (
   await expect(page.locator("#detail .scrim")).not.toHaveClass(/\bon\b/);
 });
 
+// Overlays STACK. Settings' nightly toggle opens About on top of it, and before
+// About pushed a scope of its own the modal scope Settings held claimed Escape
+// and trapped Tab — so Escape closed Settings behind the About scrim and Tab
+// never reached About's controls.
+test("a dialog opened over another gets Escape and Tab, not the one beneath", async ({ page }) => {
+  await page.keyboard.press("Control+Comma");
+  await expect(settings(page)).toHaveClass(/\bon\b/);
+
+  // The nightly-channel toggle is what opens About on top of Settings. Located
+  // by its label rather than by index, so re-ordering the panel does not
+  // silently point this test at some other checkbox.
+  const nightly = page.locator(".modal.settings label", { hasText: /nightly/i }).locator("input");
+  await expect(nightly, "the nightly toggle moved — this test needs a path that opens About").toBeVisible();
+  await nightly.click();
+
+  const about = page.locator(".modal.about-modal");
+  await expect(about).toBeVisible();
+
+  // Tab belongs to the dialog on top.
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press("Tab");
+    expect(
+      await page.evaluate(() => !!document.activeElement?.closest(".about-modal")),
+      `focus left About on Tab #${i + 1}`,
+    ).toBe(true);
+  }
+
+  // And so does Escape: About closes, Settings stays.
+  await page.keyboard.press("Escape");
+  await expect(about).toHaveCount(0);
+  await expect(settings(page)).toHaveClass(/\bon\b/);
+
+  // The scope underneath is live again, so the next Escape closes Settings.
+  await page.keyboard.press("Escape");
+  await expect(settings(page)).not.toHaveClass(/\bon\b/);
+});
+
+test("Escape closes the dialog from inside one of its own fields", async ({ page }) => {
+  // pushScope focuses INTO the dialog on open, so "focus is in a field" is the
+  // normal case, not an edge one. The text-input guard used to deny Escape here
+  // and the dialog simply could not be closed by keyboard.
+  await page.keyboard.press("Control+Comma");
+  await expect(settings(page)).toHaveClass(/\bon\b/);
+
+  const field = page.locator(".modal.settings input").first();
+  await expect(field).toBeVisible();
+  await field.focus();
+  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("INPUT");
+
+  await page.keyboard.press("Escape");
+  await expect(settings(page)).not.toHaveClass(/\bon\b/);
+});
+
 test("Tab is confined to the open dialog", async ({ page }) => {
   await page.keyboard.press("Control+Comma");
   await expect(settings(page)).toHaveClass(/\bon\b/);

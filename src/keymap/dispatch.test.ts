@@ -188,6 +188,31 @@ describe("Escape", () => {
     expect(outer).not.toHaveBeenCalled();
   });
 
+  it("resolves from inside a text field, because Escape is not typed text", () => {
+    // Found while fixing a stacked-overlay bug: the default text-input deny
+    // applied to Escape too, so a dialog could not be closed from any of its
+    // own inputs — which is MOST of the time, since pushScope focuses into the
+    // dialog on open. The exemption lives in the Escape path rather than on
+    // each binding, so no future scope can forget it.
+    const target = { closest: () => ({}) };
+    const fired = vi.fn();
+    const r = run(
+      [live({ id: "close", chords: ["Escape"], run: fired })],
+      ev({ key: "Escape", target: target as unknown as EventTarget }),
+    );
+    expect(r.ran?.b.id).toBe("close");
+    expect(fired).toHaveBeenCalled();
+  });
+
+  it("still applies the text guard to non-Escape keys in the same scope", () => {
+    const target = { closest: () => ({}) };
+    const r = run(
+      [live({ id: "letter", chords: ["j"], run: () => {} })],
+      ev({ key: "j", target: target as unknown as EventTarget }),
+    );
+    expect(r.ran).toBeNull();
+  });
+
   it("a live binding with no run() would swallow the key — so compile refuses it", () => {
     // fire() only consults run() when it exists, so a live row without one
     // claims the chord, preventDefaults it and does nothing. This used to be

@@ -46,10 +46,17 @@ function textProbe(e: KeyboardEvent, withSelect: boolean): boolean {
   return withSelect ? memoSelect : memoText;
 }
 
-function guardsPass(c: Compiled, e: KeyboardEvent, scope: ScopeId, platform: Platform): boolean {
+function guardsPass(
+  c: Compiled,
+  e: KeyboardEvent,
+  scope: ScopeId,
+  platform: Platform,
+  /** Escape's dedicated path passes false — see the call site. */
+  probeText = true,
+): boolean {
   const b = c.b;
   if (b.platform && b.platform !== platform) return false;
-  if (!b.allowInTextInput) {
+  if (probeText && !b.allowInTextInput) {
     const wantsSelect = (b.when as readonly GuardName[] | undefined)?.includes("notTextInputOrSelect");
     if (textProbe(e, !!wantsSelect)) return false;
   }
@@ -109,7 +116,13 @@ export function dispatch(
       if (spec?.escape === "transparent") continue;
       if (spec?.escape === "native") return NONE;
       const c = tables.escapeByScope.get(s);
-      if (c && guardsPass(c, e, s, platform)) {
+      // The text-input probe is SKIPPED for Escape, and it has to be: Escape
+      // cannot be typed into a field, so the default deny would mean a dialog
+      // could not be closed from any of its own inputs — which is most of the
+      // time, since pushScope focuses into the dialog on open. Making it an
+      // implicit property of the Escape path rather than an allowInTextInput
+      // flag on each binding means no future scope can forget it.
+      if (c && guardsPass(c, e, s, platform, false)) {
         const r = fire(c, e, s, platform, shadowed);
         if (r) return r;
       }

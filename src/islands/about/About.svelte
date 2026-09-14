@@ -13,18 +13,40 @@
   import * as bridge from "../../legacy/bridge";
   import { t } from "@/i18n/i18n.svelte.ts";
   import Link from "@lucide/svelte/icons/link";
+  import { keymap } from "@/keymap/registry.ts";
+  import type { ScopeHandle } from "@/keymap/scopes.ts";
 
-  function onKeydown(e: KeyboardEvent) {
-    if (e.key !== "Escape" || !aboutCtrl.open) return;
-    aboutCtrl.close();
-  }
+  // About can open ON TOP of Settings — the nightly-channel toggle does exactly
+  // that (Settings.svelte's onNightlyToggle). Settings holds a `modal` scope
+  // while it is open, and that scope claims Escape and traps Tab, so a window
+  // handler here would never run: Escape would close SETTLINGS behind this
+  // scrim and Tab would stay in the dialog underneath.
+  //
+  // Pushing a scope of its own is the fix and needs no special case. Both push
+  // "modal" (rank 100), the stack keeps insertion order within a rank, so the
+  // later push sits on top — closeTopScope() and the Tab trap both walk
+  // top-down and find About first.
+  let root = $state<HTMLElement | undefined>(undefined);
+  let scope: ScopeHandle | null = null;
+  $effect(() => {
+    if (aboutCtrl.open && root && !scope) {
+      scope = keymap.pushScope("modal", { el: root, onEscape: () => aboutCtrl.close() });
+    } else if (!aboutCtrl.open && scope) {
+      scope.release();
+      scope = null;
+    }
+  });
+  // This island unmounts its content rather than toggling class:on, so the
+  // teardown path is the normal one here, not the edge case.
+  $effect(() => () => {
+    scope?.release();
+    scope = null;
+  });
 </script>
-
-<svelte:window on:keydown={onKeydown} />
 
 {#if aboutCtrl.open}
   <div class="scrim on">
-    <div class="modal about-modal">
+    <div class="modal about-modal" bind:this={root} tabindex="-1">
       <button class="about-close" aria-label={t("common.close")} onclick={() => aboutCtrl.close()}>&#10005;</button>
 
       <div class="about-tama-wrap">
