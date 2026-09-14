@@ -2166,6 +2166,7 @@ function toggleFocusMode(){
   const allCollapsed=hs.length>0 && hs.every(h=>h.isCollapsed());
   hs.forEach(h=> allCollapsed ? h.expand() : h.collapse());
 }
+// @keymap-owns view.focusMode
 document.addEventListener("keydown",e=>{
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.code==="Backslash"&&!e.target.closest("input,textarea,[contenteditable=true]")){
     e.preventDefault(); toggleFocusMode();
@@ -2187,6 +2188,7 @@ document.addEventListener("keydown",e=>{
 // ⌘⇧U / Ctrl+Shift+U — jump straight to the working tree (the "Uncommitted
 // changes" row + panel), same as ⌘K ▸ Uncommitted Changes. Plain ⌘U is taken
 // (half-page scroll, see vimnav), hence Shift. Ignored while typing in a field.
+// @keymap-owns nav.uncommitted
 document.addEventListener("keydown",e=>{
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.shiftKey&&e.key.toLowerCase()==="u"&&!e.target.closest("input,textarea,[contenteditable=true]")){
     e.preventDefault(); goToUncommitted();
@@ -2194,6 +2196,7 @@ document.addEventListener("keydown",e=>{
 });
 // ⌘⇧H / Ctrl+Shift+H — jump to the current commit (HEAD), centring it. Also the
 // #gotoHeadBtn topbar button. Ignored while typing in a field.
+// @keymap-owns nav.head
 document.addEventListener("keydown",e=>{
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.shiftKey&&e.key.toLowerCase()==="h"&&!e.target.closest("input,textarea,[contenteditable=true]")){
     e.preventDefault(); goToHead();
@@ -2203,6 +2206,7 @@ $("#gotoHeadBtn")?.addEventListener("click",goToHead);
 // Remote sync: ⌘⇧D fetch (Download), ⌘⇧L pull, ⌘⇧P push — the topbar buttons'
 // keyboard twins. Each op guards on CUR_REPO / busy itself, so these just
 // invoke it. Ignored while typing in a field.
+// @keymap-owns remote.fetch remote.pull remote.push
 document.addEventListener("keydown",e=>{
   if(!(e.metaKey||e.ctrlKey)||e.altKey||!e.shiftKey) return;
   if(e.target.closest("input,textarea,[contenteditable=true]")) return;
@@ -2411,6 +2415,7 @@ $("#undoBtn").addEventListener("click",globalUndo);
 // ⌘⇧Z is claimed here rather than left unbound: an unclaimed chord is how the
 // loose match crept back in, and a user pressing it deserves to be told Redo
 // doesn't exist yet instead of silently undoing a second time.
+// @keymap-owns edit.undo edit.redoUnsupported
 document.addEventListener("keydown",e=>{
   if(!(e.metaKey||e.ctrlKey)||e.altKey||e.key.toLowerCase()!=="z") return;
   if(e.target.closest("input,textarea,[contenteditable=true]")) return;

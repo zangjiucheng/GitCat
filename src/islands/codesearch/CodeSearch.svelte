@@ -6,6 +6,7 @@
   import Eye from "@lucide/svelte/icons/eye";
   import History from "@lucide/svelte/icons/history";
 
+  // @keymap-owns search.code
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && codeSearchCtrl.open) {
       codeSearchCtrl.close();

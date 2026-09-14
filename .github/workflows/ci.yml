@@ -258,7 +258,7 @@ jobs:
       - name: Install Node
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: '22.18'
           cache: pnpm
 
       - name: Install dependencies
@@ -266,6 +266,12 @@ jobs:
 
       - name: Type-check (svelte-check)
         run: pnpm check
+
+      # src-tauri/src/keymap_generated.rs is committed but generated from
+      # src/keymap/accelerators.ts. Regenerating and diffing is what stops the
+      # Rust menu and the JS table drifting apart the way ⌘⇧F did.
+      - name: Keymap drift gate (codegen output is committed)
+        run: pnpm keymap:check
 
       - name: Build
         run: pnpm build

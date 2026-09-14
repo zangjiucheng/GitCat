@@ -20,6 +20,7 @@
     row?.scrollIntoView({ block: "nearest" });
   });
 
+  // @keymap-owns palette.toggle palette.slash
   function onWindowKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
       // The terminal gets first claim on its own keys. xterm's helper textarea
