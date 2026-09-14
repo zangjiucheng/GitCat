@@ -22,5 +22,12 @@ search.pickaxe  global  MS|code:KeyF  both  shadow  -  -  -  -  repoOpen,notText
 terminal.toggle  global  M|code:Backquote  accelerator  live  -  toggle  -  -  -  open-terminal  menu.open_terminal
 view.focusMode  global  M|code:Backslash MS|code:Backslash  js  shadow  -  toggle  -  -  notTextInput  -  vimnav.focus_mode
 window.new  global  M|code:KeyN  accelerator  live  -  -  -  -  -  new-window  menu.new_window
+workdir.amend  workdir  MS|key:Enter  js  live  -  -  -  allowInTextInput  repoOpen  -  vimnav.amend
+workdir.commit  workdir  M|key:Enter  js  live  -  -  -  allowInTextInput  repoOpen  -  vimnav.commit
+workdir.discard  workdir  |key:d  js  live  -  -  destructive  -  repoOpen  -  vimnav.discard
+workdir.stage  workdir  |key:s  js  live  -  -  -  -  repoOpen  -  vimnav.stage
+workdir.stageAll  workdir  |key:S  js  live  -  -  -  -  repoOpen  -  vimnav.stage_all
+workdir.unstage  workdir  |key:u  js  live  -  -  -  -  repoOpen  -  vimnav.unstage
+workdir.unstageAll  workdir  |key:U  js  live  -  -  -  -  repoOpen  -  vimnav.unstage_all
 "
 `;

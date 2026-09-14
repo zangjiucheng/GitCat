@@ -162,7 +162,7 @@
      320px cap. It is also this tab content's own scroller — the panel used
      to be that — so a tab of stacked sections still scrolls. Detail.svelte's
      commit view wraps its own tabs the same way. -->
-<div class="d-view">
+<div class="d-view" data-pane="workdir" tabindex="-1">
 {#if detailPanelCtrl.worktreeTab === "commit"}
 <section>
   <div class="d-subject">{t("workdir.uncommitted_changes")}</div>
@@ -643,6 +643,9 @@
       class:active={workdirCtrl.selectedDiffFile === f.path && workdirCtrl.selectedDiffStaged}
       role="button"
       tabindex="0"
+      data-wd-path={f.path}
+      data-wd-staged={true}
+      data-wd-untracked={f.status === "?"}
       onclick={() => workdirCtrl.selectDiffFile(f.path, true)}
       oncontextmenu={(e) => {
         e.preventDefault();
@@ -745,6 +748,9 @@
       class:active={workdirCtrl.selectedDiffFile === f.path && !workdirCtrl.selectedDiffStaged}
       role="button"
       tabindex="0"
+      data-wd-path={f.path}
+      data-wd-staged={false}
+      data-wd-untracked={f.status === "?"}
       onclick={() => workdirCtrl.selectDiffFile(f.path, false)}
       onkeydown={(e) => (e.key === "Enter" || e.key === " ") && workdirCtrl.selectDiffFile(f.path, false)}
       oncontextmenu={(e) => {

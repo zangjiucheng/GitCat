@@ -1,6 +1,13 @@
 // 键盘快捷键帮助浮层(vim 风格导航)。只翻译说明文字,按键符号(⌘K、j、k…)
 // 保持原样。键会变成 `vimnav.<key>`。
 export default {
+  commit: "提交已暂存的改动",
+  amend: "修补上一个提交",
+  stage: "暂存当前文件",
+  unstage: "取消暂存当前文件",
+  stage_all: "暂存全部",
+  unstage_all: "取消暂存全部",
+  discard: "丢弃当前文件(会先确认)",
   pane_graph: "聚焦提交图",
   pane_sidebar: "聚焦侧边栏",
   pane_detail: "聚焦详情面板",

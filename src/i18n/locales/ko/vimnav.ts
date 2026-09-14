@@ -1,6 +1,13 @@
 // 키보드 단축키 도움말 오버레이(vim 스타일 내비게이션). 설명만 번역하고, 키 글리프
 // (⌘K, j, k, …)는 그대로 둬요. 키는 `vimnav.<key>`가 돼요.
 export default {
+  commit: "스테이징된 변경사항 커밋",
+  amend: "마지막 커밋 수정",
+  stage: "포커스된 파일 스테이징",
+  unstage: "포커스된 파일 스테이징 해제",
+  stage_all: "모두 스테이징",
+  unstage_all: "모두 스테이징 해제",
+  discard: "포커스된 파일 버리기(확인 후)",
   pane_graph: "커밋 그래프로 포커스 이동",
   pane_sidebar: "사이드바로 포커스 이동",
   pane_detail: "상세 패널로 포커스 이동",

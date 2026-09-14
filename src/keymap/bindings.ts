@@ -1,6 +1,7 @@
 import { ACCELERATORS } from "./accelerators.ts";
 import { keymap } from "./registry.ts";
 import { focusPane } from "./panes.ts";
+import { workdirKeys } from "./actions/workdir.ts";
 import type { Binding } from "./types.ts";
 
 // THE TABLE. PR 1 ships it ENTIRELY in mode:"shadow": the dispatcher matches,
@@ -246,6 +247,102 @@ export const BINDINGS: readonly Binding[] = [
     labelKey: "vimnav.pane_detail",
     help: { section: "view", order: 3 },
     run: () => (focusPane("detail") ? undefined : false),
+  },
+
+  // ── working tree ───────────────────────────────────────────────────────
+  // The surface with the worst coverage in the audit: there was NO commit chord
+  // anywhere in src/ before this, so committing meant Tab-walking to the button.
+  //
+  // Every row binding acts on the FOCUSED row, read from the DOM
+  // (data-wd-path), not from selectedDiffFile — selecting a row to view its
+  // diff and moving a cursor over rows are different gestures, and conflating
+  // them would make `d` discard whatever was last previewed.
+  {
+    id: "workdir.commit",
+    chords: ["Mod+Enter"],
+    scope: "workdir",
+    when: ["repoOpen"],
+    // The ONLY binding in the table allowed inside a text input, and it has to
+    // be: the whole point is committing without leaving the message box.
+    allowInTextInput: true,
+    dispatch: "js",
+    labelKey: "vimnav.commit",
+    help: { section: "actions", order: 5 },
+    run: () => workdirKeys.commit(false),
+  },
+  {
+    id: "workdir.amend",
+    chords: ["Mod+Shift+Enter"],
+    scope: "workdir",
+    when: ["repoOpen"],
+    allowInTextInput: true,
+    dispatch: "js",
+    // NOT destructive, and compile() is what forced the question: it refuses
+    // destructive + allowInTextInput outright. `destructive` in this table
+    // means "irreversible without the Safety Manager" — reset --hard, discard,
+    // force push. An amend fires commit.created, which seals a snapshot, so ⌘Z
+    // rewinds it like any other commit. Marking it destructive would also be
+    // self-defeating: the rule exists to keep a BARE LETTER away from an
+    // irreversible op in a text field, and this is ⌘⇧Enter in the very box it
+    // amends from.
+    labelKey: "vimnav.amend",
+    help: { section: "actions", order: 6 },
+    run: () => workdirKeys.commit(true),
+  },
+  {
+    id: "workdir.stage",
+    chords: ["s"],
+    scope: "workdir",
+    when: ["repoOpen"],
+    dispatch: "js",
+    labelKey: "vimnav.stage",
+    help: { section: "actions", order: 7 },
+    run: () => workdirKeys.stage(),
+  },
+  {
+    id: "workdir.unstage",
+    chords: ["u"],
+    scope: "workdir",
+    when: ["repoOpen"],
+    dispatch: "js",
+    labelKey: "vimnav.unstage",
+    help: { section: "actions", order: 8 },
+    run: () => workdirKeys.unstage(),
+  },
+  {
+    id: "workdir.stageAll",
+    chords: ["S"],
+    scope: "workdir",
+    when: ["repoOpen"],
+    dispatch: "js",
+    labelKey: "vimnav.stage_all",
+    help: { section: "actions", order: 9 },
+    run: () => workdirKeys.stageAll(),
+  },
+  {
+    id: "workdir.unstageAll",
+    chords: ["U"],
+    scope: "workdir",
+    when: ["repoOpen"],
+    dispatch: "js",
+    labelKey: "vimnav.unstage_all",
+    help: { section: "actions", order: 10 },
+    run: () => workdirKeys.unstageAll(),
+  },
+  {
+    id: "workdir.discard",
+    chords: ["d"],
+    scope: "workdir",
+    when: ["repoOpen"],
+    dispatch: "js",
+    destructive: true,
+    labelKey: "vimnav.discard",
+    help: { section: "actions", order: 11 },
+    // Routed through the SAME confirmDiscard the context menu uses — a bare
+    // letter never reaches an irreversible git operation directly. Note there
+    // is deliberately no Shift+D for discard-all: rule 5 in #144 says Shift
+    // must not escalate a destructive verb to its bulk form.
+    run: () => workdirKeys.discard(),
   },
 
   // ── accelerator-only. No JS side at all: `run` is absent and the dispatcher

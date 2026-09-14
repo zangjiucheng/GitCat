@@ -50,7 +50,7 @@ describe("the real table compiles", () => {
   // The LIVE set, enumerated. Every other JS row must still be shadow, so
   // flipping one live is a visible decision in this list rather than a quiet
   // property change in a 300-line table. PR 1 shipped this list empty.
-  const LIVE = ["modal.close", "pane.graph", "pane.sidebar", "pane.detail"];
+  const LIVE = ["modal.close", "pane.graph", "pane.sidebar", "pane.detail", "workdir.commit", "workdir.amend", "workdir.stage", "workdir.unstage", "workdir.stageAll", "workdir.unstageAll", "workdir.discard"];
 
   it("keeps every JS binding in shadow mode except the enumerated live ones", () => {
     for (const x of BINDINGS) {
@@ -76,7 +76,9 @@ describe("the real table compiles", () => {
     // as working. "global" is legitimate for a binding that must work from
     // anywhere — the pane-focus chords are exactly that — but a SCOPED live
     // binding has to name a scope some controller actually pushes.
-    const PUSHED = ["modal"]; // grows as islands migrate
+    // "modal" is pushed by an island; "workdir" is derived from focus by
+    // panes.ts. Either way the scope is reachable, which is what matters.
+    const PUSHED = ["modal", "workdir"]; // grows as islands migrate
     for (const id of LIVE) {
       const x = BINDINGS.find((y) => y.id === id)!;
       expect(x, id).toBeTruthy();

@@ -1,6 +1,13 @@
 // Keyboard-shortcuts help overlay (vim-style nav). Only the descriptions are
 // translated; the key glyphs (⌘K, j, k, …) stay literal. Keys become `vimnav.<key>`.
 export default {
+  commit: "commit the staged changes",
+  amend: "amend the last commit",
+  stage: "stage the focused file",
+  unstage: "unstage the focused file",
+  stage_all: "stage everything",
+  unstage_all: "unstage everything",
+  discard: "discard the focused file (asks first)",
   pane_graph: "focus the commit graph",
   pane_sidebar: "focus the sidebar",
   pane_detail: "focus the detail panel",

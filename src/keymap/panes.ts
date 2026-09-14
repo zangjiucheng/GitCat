@@ -32,16 +32,25 @@ export const PANE_ATTR = "data-pane";
 /**
  * The three pane roots, and the scope each maps to.
  *
- * There is no workdir pane. `main.ts` refuses to mount Workdir a second time —
- * it renders INSIDE #detail, swapped in by DetailPanel when the working tree is
- * selected — so "workdir" is a state of the detail pane, not a region of its
- * own. The audit's ⌘1..4 is therefore ⌘1..3, and the workdir scope is pushed by
- * Workdir's own controller rather than derived from focus.
+ * There are three TOP-LEVEL panes and one nested one. `main.ts` refuses to
+ * mount Workdir a second time because it renders INSIDE #detail, swapped in by
+ * DetailPanel when the working tree is selected — so the audit's ⌘1..4 is
+ * ⌘1..3, and "workdir" is reached by focusing the detail pane rather than by a
+ * chord of its own. It still gets a marker, because `closest()` resolves to the
+ * innermost one and that is exactly what makes a bare `s` mean "stage" only
+ * where staging exists.
  */
 export const PANES: readonly { readonly name: string; readonly scope: ScopeId }[] = [
   { name: "graph", scope: "graph" },
   { name: "sidebar", scope: "sidebar" },
   { name: "detail", scope: "detail" },
+  // NESTED inside the detail pane, not a fourth region: Workdir.svelte's
+  // .d-view sits inside #detail, and paneScopeFor uses closest(), so focus in
+  // the working tree resolves to "workdir" and focus on the detail pane's own
+  // chrome (the tab strip) still resolves to "detail". That is what makes a
+  // bare `s` mean "stage" only where staging exists, without a pushed scope
+  // that would stay active after focus left for the sidebar.
+  { name: "workdir", scope: "workdir" },
 ];
 
 /** The pane scope for an element, or the graph when it is in none of them. */

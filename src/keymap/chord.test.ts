@@ -34,6 +34,14 @@ describe("parseChord — key classes", () => {
     expect(parseChord("G")).toMatchObject({ value: "G", matchOn: "key" });
   });
 
+  it("makes an UPPERCASE bare letter shiftOptional, because that is how it is typed", () => {
+    // Found by an e2e run, not by reading: "S" can only be produced WITH Shift
+    // held, so an exact mask demanding shiftKey === false made the chord
+    // unmatchable forever — and silently, since nothing throws.
+    expect(parseChord("S")).toMatchObject({ value: "S", shiftOptional: true });
+    expect(parseChord("j")).toMatchObject({ shiftOptional: false });
+  });
+
   it("makes bare punctuation shiftOptional AND altGrTolerant", () => {
     // "/" is Shift-typed on AZERTY/QWERTZ and "]" is AltGr+9 on QWERTZ.
     for (const p of ["/", "?", "+", "-", "]", "["]) {
@@ -114,10 +122,21 @@ describe("matchChord — the exact four-bit mask", () => {
     expect(matchChord(j, ev({ key: "c", code: "KeyJ" }))).toBe(false);
   });
 
-  it("ignores Shift on bare punctuation but not on a letter", () => {
+  it("ignores Shift on bare punctuation but not on a lowercase letter", () => {
     expect(matchChord(parseChord("/"), ev({ key: "/", shiftKey: true }))).toBe(true);
     expect(matchChord(parseChord("/"), ev({ key: "/" }))).toBe(true);
     expect(matchChord(parseChord("j"), ev({ key: "j", shiftKey: true }))).toBe(false);
+  });
+
+  it("matches an uppercase letter as it is actually typed: Shift held", () => {
+    const S = parseChord("S");
+    expect(matchChord(S, ev({ key: "S", shiftKey: true }))).toBe(true);
+    // Still an exact mask for everything else.
+    expect(matchChord(S, ev({ key: "S", shiftKey: true, altKey: true }))).toBe(false);
+    expect(matchChord(S, ev({ key: "S", metaKey: true, shiftKey: true }))).toBe(false);
+    // And the lowercase chord is untouched: Shift+s reports key "S".
+    expect(matchChord(parseChord("s"), ev({ key: "S", shiftKey: true }))).toBe(false);
+    expect(matchChord(parseChord("s"), ev({ key: "s" }))).toBe(true);
   });
 
   it("tolerates AltGr (ctrl+alt together) on bare punctuation only", () => {

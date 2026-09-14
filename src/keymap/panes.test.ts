@@ -11,14 +11,31 @@ beforeEach(() => {
     <button id="topbar">topbar</button>
     <aside data-pane="sidebar" tabindex="-1"><button id="refrow">main</button></aside>
     <main data-pane="graph" tabindex="-1"><canvas id="cv"></canvas></main>
-    <section data-pane="detail" tabindex="-1"><div id="file" tabindex="0">a.ts</div></section>`;
+    <section data-pane="detail" tabindex="-1">
+      <div id="file" tabindex="0">a.ts</div>
+      <div data-pane="workdir" tabindex="-1"><div id="wdrow" tabindex="0">b.ts</div></div>
+    </section>`;
 });
 
 describe("the pane set", () => {
-  it("is three panes, not four", () => {
+  it("is three top-level panes plus one nested inside detail", () => {
     // Workdir renders INSIDE #detail (main.ts refuses to mount it a second
-    // time), so "workdir" is a state of the detail pane, not a region.
-    expect(PANES.map((p) => p.name)).toEqual(["graph", "sidebar", "detail"]);
+    // time), so there is no fourth REGION and no ⌘4 — but it still gets a
+    // marker, because closest() resolves to the innermost one and that is what
+    // makes a bare `s` mean "stage" only where staging exists.
+    expect(PANES.map((p) => p.name)).toEqual(["graph", "sidebar", "detail", "workdir"]);
+  });
+
+  it("resolves the innermost marker when panes nest", () => {
+    document.body.innerHTML = `
+      <section data-pane="detail" tabindex="-1">
+        <div class="tabs"><button id="tab">Changes</button></div>
+        <div data-pane="workdir"><div id="row" tabindex="0">a.ts</div></div>
+      </section>`;
+    // The detail pane's own chrome stays "detail"; only the working tree's
+    // content is "workdir".
+    expect(paneScopeFor(document.getElementById("tab"))).toBe("detail");
+    expect(paneScopeFor(document.getElementById("row"))).toBe("workdir");
   });
 });
 
@@ -82,7 +99,10 @@ describe("focusPane", () => {
   });
 
   it("reports failure for a pane that is not in the document", () => {
-    // The binding declines on false rather than swallowing the chord.
+    // The binding declines on false rather than swallowing the chord. Workdir
+    // is only in the DOM while the working tree is selected, so this is the
+    // real case, not a synthetic one.
+    document.body.innerHTML = `<main data-pane="graph" tabindex="-1"></main>`;
     expect(focusPane("workdir")).toBe(false);
   });
 

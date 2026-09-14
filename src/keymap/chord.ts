@@ -85,6 +85,12 @@ export function parseChord(spec: string, matchOnOverride?: MatchOn): Chord {
     // Bare letter: vim keys bind to the GLYPH. vimnav.svelte.ts models tig/gitui,
     // so a Dvorak user pressing the cap labelled "j" must get "j".
     matchOn = "key";
+    // An UPPERCASE bare letter is shiftOptional, and it has to be: "S" can only
+    // be typed WITH Shift held, so an exact mask demanding shiftKey === false
+    // would make the chord unmatchable forever — silently, since nothing throws.
+    // The glyph already carries the shift, and a lowercase chord is unaffected
+    // because Shift+s reports e.key "S", never "s".
+    if (rest !== rest.toLowerCase()) shiftOptional = true;
   } else if (rest.length === 1 && DIGIT.test(rest)) {
     throw new Error(`keymap: write a bare digit as "Digit${rest}", not "${rest}"`);
   } else if (rest.length === 1) {
