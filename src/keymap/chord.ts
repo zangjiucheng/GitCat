@@ -165,7 +165,14 @@ const DISPLAY: Record<string, string> = {
   BracketLeft: "[", BracketRight: "]",
 };
 function keyLabel(c: Chord): string {
-  if (c.matchOn === "key") return c.value.length === 1 ? c.value.toUpperCase() : c.value;
+  if (c.matchOn === "key") {
+    // Single characters keep their CASE. Uppercasing them made `s` and `S`
+    // (stage vs stage-all) and `u`/`U` render as the same glyph in the help
+    // overlay — so the one surface whose job is teaching those keys apart
+    // showed them as identical. A Mod+letter chord is uppercased below, where
+    // there is no lowercase twin to confuse it with.
+    return c.value;
+  }
   if (c.value.startsWith("Key")) return c.value.slice(3);
   if (c.value.startsWith("Digit")) return c.value.slice(5);
   return DISPLAY[c.value] ?? c.value;
