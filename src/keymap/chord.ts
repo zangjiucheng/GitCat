@@ -41,6 +41,7 @@ const CODE_TOKEN =
 const NAMED_KEY =
   /^(?:Escape|Enter|Tab|Backspace|Delete|Home|End|PageUp|PageDown|Arrow(?:Up|Down|Left|Right)|F(?:[1-9]|1[0-2]))$/;
 const LETTER = /^\p{L}$/u;
+const LETTER_CODE = /^Key[A-Z]$/;
 const DIGIT = /^[0-9]$/;
 
 /**
@@ -127,7 +128,22 @@ export function matchChord(c: Chord, e: KeyboardEvent): boolean {
   if (c.shiftOptional) { need &= ~SHIFT; got &= ~SHIFT; }
   if (need !== got) return false;
 
-  return c.matchOn === "code" ? e.code === c.value : e.key === c.value;
+  if (c.matchOn !== "code") return e.key === c.value;
+  // Mod+LETTER compares the glyph, not the position. e.code "KeyZ" is the
+  // bottom-left letter key of a US keyboard, which prints "w" on AZERTY and "y"
+  // on QWERTZ — so a position match would fire ⌘Z when a French user pressed
+  // the key labelled W (stealing their ⌘W / Close Window) and never fire on the
+  // key they have labelled Z. The chord is written on menus as a LETTER, so the
+  // letter is what has to match.
+  //
+  // Mod+punctuation and Mod+digit stay on e.code: "\" and "," move between
+  // layouts as positions, which is exactly why legacy/main.ts chose e.code for
+  // ⌘\ in the first place, and digits sit in the same place on every Latin
+  // layout. Bare keys are unaffected — they were already glyph-matched.
+  if (c.mod && LETTER_CODE.test(c.value)) {
+    return e.key.toLowerCase() === c.value.slice(3).toLowerCase();
+  }
+  return e.code === c.value;
 }
 
 /** Stable canonical key for the (chord, scope) uniqueness gate and the trie.

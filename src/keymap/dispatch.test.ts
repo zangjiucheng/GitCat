@@ -150,7 +150,7 @@ describe("the scope walk", () => {
 
   it("stops descending at a modal scope", () => {
     const r = run(
-      [live({ id: "outer", chords: ["j"], run: () => {} }), live({ id: "m", chords: ["x"], scope: "palette" } as never)],
+      [live({ id: "outer", chords: ["j"], run: () => {} }), live({ id: "m", chords: ["x"], scope: "palette", run: () => {} } as never)],
       ev({ key: "j" }),
       ["global", "palette"],
       [["palette", { id: "palette", rank: 100, modal: true, escape: "own" } as ScopeSpec]],
@@ -161,7 +161,9 @@ describe("the scope walk", () => {
   it("resolves a layer:always binding regardless of stack depth", () => {
     const r = run(
       [live({ id: "palette", chords: ["Mod+KeyK"], layer: "always", when: ["inTauri"], run: () => {} } as never)],
-      ev({ code: "KeyK", metaKey: true }),
+      // key AND code: Mod+letter matches the glyph now, so a code-only event
+      // is no longer a valid ⌘K.
+      ev({ key: "k", code: "KeyK", metaKey: true }),
       ["global", "palette"],
       [["palette", { id: "palette", rank: 100, modal: true, escape: "own" } as ScopeSpec]],
     );
@@ -186,14 +188,15 @@ describe("Escape", () => {
     expect(outer).not.toHaveBeenCalled();
   });
 
-  it("a live binding with no run() still claims the key", () => {
-    // Documenting a real edge rather than wishing it away: fire() only consults
-    // run() when it exists, so a live row without one swallows the chord. No
-    // PR-1 binding is in that shape (every JS row is shadow), but a later PR
-    // adding an Escape row and forgetting run() would silently eat Escape.
-    const r = run([live({ id: "noRun", chords: ["Escape"] })], ev({ key: "Escape" }));
-    expect(r.ran?.b.id).toBe("noRun");
-    expect(r.claim).toBe(true);
+  it("a live binding with no run() would swallow the key — so compile refuses it", () => {
+    // fire() only consults run() when it exists, so a live row without one
+    // claims the chord, preventDefaults it and does nothing. This used to be
+    // documented as an accepted edge; it was not an edge at all — three
+    // accelerator-only rows were in exactly that shape and were eating ⌘N, ⌘⇧N
+    // and ⌘`. The dispatcher behaviour is unchanged; the table can no longer
+    // express the shape.
+    expect(() => run([live({ id: "noRun", chords: ["Escape"], run: undefined } as never)], ev({ key: "Escape" })))
+      .toThrow(/has no run\(\)/);
   });
 
   it("runs the top scope's Escape binding", () => {

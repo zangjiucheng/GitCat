@@ -141,6 +141,47 @@ test("a chord in a text field shadows nothing", async ({ page }) => {
   expect(await shadowCount(page, "edit.undo")).toBe(0);
 });
 
+// The three accelerator-only rows have no JS side. They must never claim a key:
+// fire() treats a missing run() as a successful claim, so before the fix ⌘N,
+// ⌘⇧N and ⌘` were preventDefault'd and stopImmediatePropagation'd — with the
+// PR asserting inertness the whole time.
+test("accelerator-only chords are not claimed", async ({ page }) => {
+  const prevented = await page.evaluate(() => {
+    const out: Record<string, boolean> = {};
+    for (const [name, init] of [
+      ["Ctrl+N", { key: "n", code: "KeyN", ctrlKey: true }],
+      ["Ctrl+Shift+N", { key: "N", code: "KeyN", ctrlKey: true, shiftKey: true }],
+      ["Ctrl+`", { key: "`", code: "Backquote", ctrlKey: true }],
+    ] as const) {
+      const e = new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(e);
+      out[name] = e.defaultPrevented;
+    }
+    return out;
+  });
+  expect(prevented).toEqual({ "Ctrl+N": false, "Ctrl+Shift+N": false, "Ctrl+`": false });
+
+  // And nothing was recorded as having run.
+  const fires = await page.evaluate(
+    () => (window as unknown as { __keymap?: { dump(): { fires: Record<string, number> } } }).__keymap?.dump().fires,
+  );
+  expect(fires).toEqual({});
+});
+
+// ⌘K has no text guard in Cmdk.svelte — deliberately, since it is how the
+// auto-focused palette closes. The shadow row has to match that or the
+// equivalence measurement reads 0 for the close path while the legacy handler
+// still toggles.
+test("the palette chord shadows from inside the palette's own input", async ({ page }) => {
+  await page.keyboard.press("Control+k");
+  await expect(page.locator("#cmdk")).toHaveClass(/\bon\b/);
+  await page.locator("#cmdk input").first().click();
+  await reset(page);
+
+  await page.keyboard.press("Control+k");
+  expect(await shadowCount(page, "palette.toggle")).toBe(1);
+});
+
 test("an unbound chord shadows nothing at all", async ({ page }) => {
   await page.keyboard.press("Control+Shift+Y");
   const dump = await page.evaluate(

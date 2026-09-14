@@ -57,37 +57,55 @@ describe("parseChord — key classes", () => {
 
 describe("matchChord — the exact four-bit mask", () => {
   it("matches the chord it was parsed from", () => {
-    expect(matchChord(parseChord("Mod+KeyZ"), ev({ code: "KeyZ", metaKey: true }))).toBe(true);
-    expect(matchChord(parseChord("Mod+KeyZ"), ev({ code: "KeyZ", ctrlKey: true }))).toBe(true);
+    expect(matchChord(parseChord("Mod+KeyZ"), ev({ key: "z", code: "KeyZ", metaKey: true }))).toBe(true);
+    expect(matchChord(parseChord("Mod+KeyZ"), ev({ key: "z", code: "KeyZ", ctrlKey: true }))).toBe(true);
   });
 
   // The whole point. Every one of these was accepted by the old
   // `(metaKey||ctrlKey) && key==="z"` form.
   it("rejects every extra modifier on ⌘Z", () => {
     const z = parseChord("Mod+KeyZ");
-    expect(matchChord(z, ev({ code: "KeyZ", metaKey: true, shiftKey: true }))).toBe(false);
-    expect(matchChord(z, ev({ code: "KeyZ", metaKey: true, altKey: true }))).toBe(false);
-    expect(matchChord(z, ev({ code: "KeyZ", ctrlKey: true, shiftKey: true }))).toBe(false);
-    expect(matchChord(z, ev({ code: "KeyZ" }))).toBe(false);
+    expect(matchChord(z, ev({ key: "z", code: "KeyZ", metaKey: true, shiftKey: true }))).toBe(false);
+    expect(matchChord(z, ev({ key: "z", code: "KeyZ", metaKey: true, altKey: true }))).toBe(false);
+    expect(matchChord(z, ev({ key: "z", code: "KeyZ", ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(matchChord(z, ev({ key: "z", code: "KeyZ" }))).toBe(false);
   });
 
   it("rejects ⌃⌘Z — both mod keys at once is not 'Mod'", () => {
-    expect(matchChord(parseChord("Mod+KeyZ"), ev({ code: "KeyZ", metaKey: true, ctrlKey: true }))).toBe(false);
+    expect(matchChord(parseChord("Mod+KeyZ"), ev({ key: "z", code: "KeyZ", metaKey: true, ctrlKey: true }))).toBe(false);
   });
 
   it("keeps Mod as meta-OR-ctrl on both platforms", () => {
     // Resolving Mod to Meta-on-macOS would silently unbind Ctrl+Z for a Mac
     // user on an external PC keyboard — which works today.
     const u = parseChord("Mod+Shift+KeyU");
-    expect(matchChord(u, ev({ code: "KeyU", metaKey: true, shiftKey: true }))).toBe(true);
-    expect(matchChord(u, ev({ code: "KeyU", ctrlKey: true, shiftKey: true }))).toBe(true);
+    expect(matchChord(u, ev({ key: "U", code: "KeyU", metaKey: true, shiftKey: true }))).toBe(true);
+    expect(matchChord(u, ev({ key: "U", code: "KeyU", ctrlKey: true, shiftKey: true }))).toBe(true);
   });
 
-  it("matches a code chord by position, not by the glyph the layout prints", () => {
+  // This test used to assert the opposite, and the opposite was the bug: a
+  // position match fires ⌘Z when a French user presses the key labelled W —
+  // stealing their ⌘W / Close Window — and never fires on the key they have
+  // labelled Z.
+  it("matches Mod+letter by the GLYPH, not the physical position", () => {
     const z = parseChord("Mod+KeyZ");
-    // A German layout reports key "y" on the physical Z cap.
-    expect(matchChord(z, ev({ code: "KeyZ", key: "y", metaKey: true }))).toBe(true);
-    expect(matchChord(z, ev({ code: "KeyY", key: "z", metaKey: true }))).toBe(false);
+    // QWERTZ: the key labelled Z sits on the physical KeyY position.
+    expect(matchChord(z, ev({ key: "z", code: "KeyY", metaKey: true }))).toBe(true);
+    // AZERTY: the physical KeyZ position prints "w". That is the user's ⌘W.
+    expect(matchChord(z, ev({ key: "w", code: "KeyZ", metaKey: true }))).toBe(false);
+    // Case-insensitive, so ⌘⇧Z-style chords resolve on the same letter.
+    expect(matchChord(parseChord("Mod+Shift+KeyU"), ev({ key: "U", code: "KeyU", metaKey: true, shiftKey: true }))).toBe(true);
+  });
+
+  it("keeps Mod+punctuation and Mod+digit on the physical position", () => {
+    // "\\" and "," move between layouts as positions — which is why
+    // legacy/main.ts chose e.code for ⌘\\ — and digits are in the same place
+    // on every Latin layout.
+    const bs = parseChord("Mod+Backslash");
+    expect(matchChord(bs, ev({ key: "`", code: "Backslash", metaKey: true }))).toBe(true);
+    expect(matchChord(bs, ev({ key: "\\", code: "Equal", metaKey: true }))).toBe(false);
+    const d1 = parseChord("Mod+Digit1");
+    expect(matchChord(d1, ev({ key: "&", code: "Digit1", metaKey: true }))).toBe(true);
   });
 
   it("matches a bare letter by glyph, not by position", () => {

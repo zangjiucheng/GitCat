@@ -28,6 +28,13 @@ export const BINDINGS: readonly Binding[] = [
     layer: "always",
     when: ["notInTerminal", "noScrimOpen"],
     dispatch: "js",
+    // Cmdk.svelte's ⌘K branch has NO text-input guard — deliberately, because
+    // ⌘K is how the auto-focused palette CLOSES. Without this the dispatcher's
+    // default-deny would refuse inside the palette's own input, the shadow
+    // counter would read 0 while the legacy handler still toggled, and the
+    // equivalence measurement would be quietly wrong for the close path.
+    // (The "/" row below keeps the guard, because "/" is a typed character.)
+    allowInTextInput: true,
     toggle: true, // menu.rs:118 deliberately gives the "cmdk" item NO accelerator
     labelKey: "vimnav.palette",
     help: { section: "search", order: 5 },

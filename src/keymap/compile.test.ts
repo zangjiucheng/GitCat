@@ -13,11 +13,14 @@ import { BINDINGS } from "./bindings.ts";
 import { GUARDS } from "./guards.ts";
 import type { Binding } from "./types.ts";
 
+// `run` is part of the base now: compile refuses a LIVE js binding without one,
+// because fire() would claim the chord and do nothing with it.
 const base = {
   chords: ["Mod+KeyJ"],
   scope: "global",
   dispatch: "js",
   labelKey: "vimnav.palette",
+  run: () => {},
 } as const;
 
 function b(over: Partial<Binding> & { id: string }): Binding {
@@ -29,6 +32,19 @@ describe("the real table compiles", () => {
     const t = compile(BINDINGS, GUARDS);
     expect(t.size).toBe(BINDINGS.length);
     expect(t.byId.size).toBe(BINDINGS.length);
+  });
+
+  it("puts no accelerator-only row in the real table's dispatch buckets", () => {
+    const t = compile(BINDINGS, GUARDS);
+    const reachable = new Set<string>();
+    for (const list of [...t.byCode.values(), ...t.byKey.values()]) {
+      for (const c of list) reachable.add(c.b.id);
+    }
+    for (const c of t.always) reachable.add(c.b.id);
+    for (const c of t.escapeByScope.values()) reachable.add(c.b.id);
+    for (const x of BINDINGS) {
+      if (x.dispatch === "accelerator") expect(reachable.has(x.id), `${x.id} is reachable`).toBe(false);
+    }
   });
 
   it("ships entirely in shadow mode except the accelerator-only rows", () => {
@@ -86,6 +102,31 @@ describe("registration throws", () => {
   it("rejects an unknown guard name and an empty chord list", () => {
     expect(() => compile([b({ id: "a", when: ["nope"] } as never)], GUARDS)).toThrow(/unknown guard/);
     expect(() => compile([b({ id: "a", chords: [] } as never)], GUARDS)).toThrow(/no chords/);
+  });
+
+  it("rejects a live js binding with no run(), which would swallow its chord", () => {
+    expect(() => compile([b({ id: "a", run: undefined } as never)], GUARDS))
+      .toThrow(/has no run\(\)/);
+    // shadow and accelerator rows legitimately have none.
+    expect(() => compile([b({ id: "s", mode: "shadow", owns: "x", run: undefined } as never)], GUARDS)).not.toThrow();
+    expect(() =>
+      compile([b({ id: "m", dispatch: "accelerator", menu: { id: "x" }, run: undefined } as never)], GUARDS),
+    ).not.toThrow();
+  });
+
+  it("keeps accelerator-only rows OUT of the dispatch tables", () => {
+    // They have no JS side at all — the native menu owns the chord. Leaving
+    // them in the buckets made fire() claim and preventDefault ⌘N, ⌘⇧N and ⌘`,
+    // which is precisely the inertness this PR claims not to break.
+    const t = compile(
+      [b({ id: "acc", dispatch: "accelerator", menu: { id: "x" }, run: undefined } as never)],
+      GUARDS,
+    );
+    expect(t.byCode.size).toBe(0);
+    expect(t.byKey.size).toBe(0);
+    expect(t.always).toHaveLength(0);
+    // Still registered, so codegen and the uniqueness gate can see it.
+    expect(t.byId.has("acc")).toBe(true);
   });
 
   it("rejects a chord the OS owns", () => {

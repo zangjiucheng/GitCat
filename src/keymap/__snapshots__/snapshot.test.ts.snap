@@ -8,7 +8,7 @@ edit.undo  global  M|code:KeyZ  js  shadow  -  -  destructive  -  notTextInput  
 nav.head  global  MS|code:KeyH  js  shadow  -  -  -  -  notTextInput  -  vimnav.jump_head
 nav.uncommitted  global  MS|code:KeyU  js  shadow  -  -  -  -  notTextInput  -  vimnav.jump_uncommitted
 palette.slash  global  |key:/  js  shadow  always  toggle  -  -  notTextInputOrSelect,noScrimOpen  -  vimnav.palette
-palette.toggle  global  M|code:KeyK MS|code:KeyK  js  shadow  always  toggle  -  -  notInTerminal,noScrimOpen  -  vimnav.palette
+palette.toggle  global  M|code:KeyK MS|code:KeyK  js  shadow  always  toggle  -  allowInTextInput  notInTerminal,noScrimOpen  -  vimnav.palette
 remote.fetch  global  MS|code:KeyD  js  shadow  -  -  -  -  notTextInput  -  vimnav.fetch
 remote.pull  global  MS|code:KeyL  js  shadow  -  -  -  -  notTextInput  -  vimnav.pull
 remote.push  global  MS|code:KeyP  js  shadow  -  -  destructive  -  notTextInput  -  vimnav.push
