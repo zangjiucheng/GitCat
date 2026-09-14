@@ -47,6 +47,11 @@ function upstreamOf(name: string): string | null {
   return locals?.find((b) => b.name === name)?.upstream ?? null;
 }
 
+/** Mutations in flight close every popover and no-op the actions behind them. */
+function busy(): boolean {
+  return !!(sidebarCtrl as unknown as { busy?: boolean }).busy;
+}
+
 export const sidebarKeys = {
   /**
    * Focus the ref filter.
@@ -74,6 +79,9 @@ export const sidebarKeys = {
   openMenu(): false | void {
     const ref = focusedRef();
     if (!ref) return false;
+    // The ⋮ buttons and the mouse handlers refuse while a mutation is in
+    // flight; a letter must not be the one way around that.
+    if (busy()) return false;
     const { x, y } = anchor(ref.el);
     if (ref.kind === "branch") {
       // The real upstream, not null: legacy/main.ts's canvas path passes null
@@ -88,7 +96,11 @@ export const sidebarKeys = {
       sidebarCtrl.openCheckoutConfirm(ref.name, true, x, y);
       return;
     }
-    return false; // tags have no popover of their own yet
+    // Tags DO have a popover — openTagMenu, the same one the ⋮ button and
+    // right-click open. An earlier comment here claimed they did not, which
+    // left tag rows as the one ref kind without the actions chord every other
+    // row gets. It takes the anchor ELEMENT rather than coordinates.
+    sidebarCtrl.openTagMenu(ref.name, ref.el);
   },
 
   /**
@@ -102,6 +114,9 @@ export const sidebarKeys = {
     const ref = focusedRef();
     if (!ref || ref.kind === "tag") return false;
     if (ref.isCurrent) return false; // already on it
+    // checkout() itself no-ops while busy, so without this the confirm dialog
+    // would open, be confirmed, and silently do nothing.
+    if (busy()) return false;
     const { x, y } = anchor(ref.el);
     sidebarCtrl.openCheckoutConfirm(ref.name, ref.kind === "remote", x, y);
   },

@@ -84,12 +84,20 @@ test("the sidebar is its own pane, and the ring shows it", async ({ page }) => {
   expect(pane).toBe("sidebar");
 
   const ring = await page.evaluate(() => {
-    const el = document.querySelector('[data-pane="sidebar"]')!;
-    const s = getComputedStyle(el).boxShadow;
-    return s !== "none" && s !== "";
+    // The ring is an ::after overlay, not a shadow on the pane itself — an
+    // inset shadow paints under descendants and was invisible over the canvas.
+    const cs = getComputedStyle(document.querySelector('[data-pane="sidebar"]')!, "::after");
+    return cs.content !== "none" && cs.boxShadow !== "none" && Number(cs.zIndex) > 0;
   });
   expect(ring).toBe(true);
 });
+
+// NOT TESTED HERE: `x` on a tag row. Tags live inside a <details> section that
+// ships collapsed, and design mode's fixture may carry none at all — a test
+// that silently skipped would be worse than none. The call is asserted exactly
+// in src/keymap/actions/sidebar.test.ts, which is where the bug was: the code
+// claimed tags had no popover and declined, leaving them the one ref kind
+// without the actions chord.
 
 test("no claimed key reaches document-bubble", async ({ page }) => {
   await firstBranch(page).focus();

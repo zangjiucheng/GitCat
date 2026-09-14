@@ -8,11 +8,13 @@ const fns = vi.hoisted(() => ({ expandSidebar: vi.fn() }));
 vi.mock("@/legacy/bridge", () => fns);
 
 const ctrl = vi.hoisted(() => ({
+  busy: false,
   locals: [
     { name: "main", upstream: "origin/main" },
     { name: "feat/x", upstream: null },
   ],
   openMenuAt: vi.fn(),
+  openTagMenu: vi.fn(),
   openCheckoutConfirm: vi.fn(),
   checkout: vi.fn(),
 }));
@@ -34,6 +36,7 @@ function rows() {
 
 beforeEach(() => {
   rows();
+  ctrl.busy = false;
   vi.clearAllMocks();
 });
 
@@ -93,11 +96,31 @@ describe("openMenu", () => {
     expect(ctrl.openMenuAt).not.toHaveBeenCalled();
   });
 
-  it("declines on a tag and with nothing focused", () => {
-    document.getElementById("tag")!.focus();
-    expect(sidebarKeys.openMenu()).toBe(false);
+  it("opens the TAG menu for a tag row — tags do have one", () => {
+    // The code here used to claim tags had no popover, which left them the one
+    // ref kind without the actions chord. openTagMenu takes the anchor element
+    // rather than coordinates.
+    const el = document.getElementById("tag")!;
+    el.focus();
+    expect(sidebarKeys.openMenu()).toBeUndefined();
+    expect(ctrl.openTagMenu).toHaveBeenCalledWith("v1.0.0", el);
+  });
+
+  it("declines with nothing focused", () => {
     document.getElementById("outside")!.focus();
     expect(sidebarKeys.openMenu()).toBe(false);
+  });
+
+  it("declines while a mutation is in flight", () => {
+    // The ⋮ buttons and the mouse handlers refuse there; a letter must not be
+    // the one way around it.
+    ctrl.busy = true;
+    document.getElementById("cur")!.focus();
+    expect(sidebarKeys.openMenu()).toBe(false);
+    document.getElementById("other")!.focus();
+    expect(sidebarKeys.checkout()).toBe(false);
+    expect(ctrl.openMenuAt).not.toHaveBeenCalled();
+    expect(ctrl.openCheckoutConfirm).not.toHaveBeenCalled();
   });
 });
 
