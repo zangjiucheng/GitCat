@@ -43,6 +43,7 @@ jobs:
   rust:
     name: Rust (build + test)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: src-tauri
@@ -211,6 +212,7 @@ jobs:
   rust-windows:
     name: Rust (Windows build)
     runs-on: windows-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: src-tauri
@@ -246,6 +248,7 @@ jobs:
   frontend:
     name: Frontend (check + build + test)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -290,6 +293,7 @@ jobs:
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v7

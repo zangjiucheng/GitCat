@@ -33,8 +33,8 @@ way, install only plugins you trust.
 
 ## Installing
 
-Settings → **Plugins** tab → **Install plugin…** → pick a plugin's `plugin.json`
-(or its folder). Toggle a plugin enabled/disabled or **Remove** it there.
+Tools ▶ **Plugins...** tab →**Install plugin…** → pick a plugin's `plugin.json`
+. Toggle a plugin enabled/disabled or **Remove** it there.
 Installed commands appear live in ⌘K; hooks fire automatically. The registry is
 persisted in `plugins.json` under the app config dir.
 
