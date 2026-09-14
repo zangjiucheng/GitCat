@@ -81,7 +81,8 @@ test.describe("design mode", () => {
 
     await page.keyboard.press("Control+Shift+U"); // to the working tree
     await expect(page.locator("#detail textarea.wd-msg")).toBeVisible();
-    await page.locator("[data-pane='workdir']").focus();
+    // No pane focusing needed: which view `t` acts on comes from
+    // workdirCtrl.selected, the same signal DetailPanel derives from.
     await page.keyboard.press("t");
 
     await page.locator("#gotoHeadBtn").click(); // back to the commit view
@@ -98,6 +99,28 @@ test.describe("design mode", () => {
     await msg.pressSequentially("tttt");
     await expect(msg).toHaveValue("tttt");
     expect(await activeTab(page).textContent()).toBe(before);
+  });
+
+  test("t follows the VISIBLE view even when focus is on the panel chrome", async ({ page }) => {
+    // Workdir's own tab strip lives in the parent `detail` pane. Deriving the
+    // view from the pane under focus cycled the HIDDEN commit tabs while the
+    // working tree was on screen: the visible strip did not move, and going
+    // back to a commit landed on a different tab than the one you left.
+    await openCommit(page);
+    const commitTabBefore = await activeTab(page).textContent();
+
+    await page.keyboard.press("Control+Shift+U");
+    await expect(page.locator("#detail textarea.wd-msg")).toBeVisible();
+
+    // Focus the TAB STRIP itself — chrome of the detail pane, not the workdir one.
+    await tabs(page).first().focus();
+    const wtBefore = await activeTab(page).textContent();
+    await page.keyboard.press("t");
+    await expect.poll(() => activeTab(page).textContent()).not.toBe(wtBefore);
+
+    // The commit view's own tab is untouched.
+    await page.locator("#gotoHeadBtn").click();
+    await expect.poll(() => activeTab(page).textContent()).toBe(commitTabBefore);
   });
 
   test("no claimed key reaches document-bubble", async ({ page }) => {

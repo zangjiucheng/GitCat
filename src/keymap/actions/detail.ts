@@ -7,11 +7,21 @@
 // to "workdir", everything else in #detail to "detail" (see panes.ts).
 
 import { detailPanelCtrl, type PanelView } from "@/islands/detailpanel/detailpanel.svelte.ts";
+import { workdirCtrl } from "@/islands/workdir/workdir.svelte.ts";
 
-/** Focus is inside the working tree's own region iff that pane marker is above it. */
-function viewFor(doc: Document = document): PanelView {
-  const pane = doc.activeElement?.closest?.("[data-pane]")?.getAttribute("data-pane");
-  return pane === "workdir" ? "worktree" : "commit";
+/**
+ * Which view the panel is SHOWING.
+ *
+ * Read from workdirCtrl.selected, the same signal DetailPanel itself derives
+ * from — not from the pane marker under focus. Those are different questions
+ * and the difference bites: Workdir's own tab strip, the expanded-diff header
+ * and #detail's chrome all sit in the parent `detail` pane, so a focus-based
+ * answer cycled the HIDDEN commit tabs while the working tree was on screen.
+ * The visible strip did not move, and switching back to a commit landed on a
+ * different tab than the one you left.
+ */
+function viewFor(): PanelView {
+  return workdirCtrl.selected ? "worktree" : "commit";
 }
 
 export const detailKeys = {
