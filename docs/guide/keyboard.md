@@ -31,3 +31,6 @@ The full walkthrough is on its way. Here's the outline of what it covers.
 | `` ⌘` `` | Toggle the built-in terminal |
 
 (On Windows/Linux, use `Ctrl` in place of `⌘`.)
+### Intentional exception
+
+Tama Gallery is intentionally mouse-only. It is an easter egg opened by clicking Tama's portrait seven times within 2.5 seconds, and is deliberately not exposed through `⌘K` or another keyboard shortcut.
