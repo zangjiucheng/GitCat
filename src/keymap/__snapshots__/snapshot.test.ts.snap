@@ -4,11 +4,11 @@ exports[`the keymap table matches its committed snapshot 1`] = `
 "app.settings  global  M|code:Comma  both  shadow  -  -  -  -  notTextInput  settings  menu.settings
 branch.new  global  MS|code:KeyN  accelerator  live  -  -  -  -  -  new-branch  menu.new_branch
 canvas.deselect  graph  |key:Escape  js  live  -  -  -  -  noScrimOpen  -  vimnav.deselect
-canvas.down  graph  |key:ArrowDown  js  live  -  -  -  -  graphHasRows  -  vimnav.select_next
-canvas.first  graph  |key:Home  js  live  -  -  -  -  graphHasRows  -  vimnav.select_first
-canvas.last  graph  |key:End  js  live  -  -  -  -  graphHasRows  -  vimnav.select_last
-canvas.menu  graph  |key:x S|key:F10  js  live  -  -  -  -  graphHasRows  -  vimnav.row_menu
-canvas.up  graph  |key:ArrowUp  js  live  -  -  -  -  graphHasRows  -  vimnav.select_prev
+canvas.down  graph  |key:ArrowDown  js  live  -  -  -  -  graphHasRows,noScrimOpen  -  vimnav.select_next
+canvas.first  graph  |key:Home  js  live  -  -  -  -  graphHasRows,noScrimOpen  -  vimnav.select_first
+canvas.last  graph  |key:End  js  live  -  -  -  -  graphHasRows,noScrimOpen  -  vimnav.select_last
+canvas.menu  graph  |key:x S|key:F10  js  live  -  -  -  -  graphHasRows,noScrimOpen  -  vimnav.row_menu
+canvas.up  graph  |key:ArrowUp  js  live  -  -  -  -  graphHasRows,noScrimOpen  -  vimnav.select_prev
 edit.redoUnsupported  global  MS|code:KeyZ  js  shadow  -  -  -  -  notTextInput  -  legacy.redo_unsupported
 edit.undo  global  M|code:KeyZ  js  shadow  -  -  destructive  -  notTextInput  -  vimnav.undo
 modal.close  modal  |key:Escape  js  live  -  -  -  -  -  -  vimnav.esc

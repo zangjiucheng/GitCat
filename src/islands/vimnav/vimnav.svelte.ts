@@ -73,7 +73,7 @@ export function moveDomFocus(dir: 1 | -1): boolean {
 // bisectdrawer.svelte.ts's focusBisectCurrent()/legacy main.ts's
 // reloadGraph() each independently duplicate — factored into one place
 // here rather than a fourth copy.
-function scrollRowIntoView(row: number) {
+export function scrollRowIntoView(row: number) {
   bridge.state.scrollTarget = bridge.clampScroll(row * bridge.layout.rowH - bridge.view.cssH * 0.4);
 }
 

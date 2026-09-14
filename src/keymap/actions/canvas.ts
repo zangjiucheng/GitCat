@@ -11,6 +11,7 @@
 // Enter on it did nothing.
 
 import * as bridge from "@/legacy/bridge";
+import { scrollRowIntoView } from "@/islands/vimnav/vimnav.svelte.ts";
 
 // legacy/main.ts:1875-1880 — three distinct values, and conflating the first
 // two is how a "nothing selected" check silently starts matching the band.
@@ -24,6 +25,24 @@ function selectedRow(): number {
 
 function rowCount(): number {
   return ((bridge.G as unknown as { N?: number } | null)?.N ?? 0);
+}
+
+/**
+ * Select a row AND bring it on screen.
+ *
+ * bridge.select() only sets state.selectedRow and swaps the detail panel — it
+ * does not scroll. vimnav's own j/k/gg/G always pair it with scrollRowIntoView
+ * for that reason, and because these bindings CLAIM their keys, the old canvas
+ * handler that used to move scrollTarget no longer runs. Without this the
+ * cursor walks off screen and the graph sits still, which reads as the key
+ * doing nothing at all.
+ *
+ * The band (row -2) is deliberately not scrolled to: it lives in fixed screen
+ * space above the graph and is always visible.
+ */
+function show(row: number): void {
+  bridge.select(row);
+  scrollRowIntoView(row);
 }
 
 export const canvasKeys = {
@@ -53,11 +72,11 @@ export const canvasKeys = {
     if (!n) return false;
     if (row === BAND) {
       if (dir < 0) return false; // already at the top
-      bridge.select(0);
+      show(0);
       return;
     }
     if (row === NONE) {
-      bridge.select(dir > 0 ? 0 : n - 1);
+      show(dir > 0 ? 0 : n - 1);
       return;
     }
     if (dir < 0 && row === 0) {
@@ -70,14 +89,14 @@ export const canvasKeys = {
     }
     const next = row + dir;
     if (next < 0 || next >= n) return false;
-    bridge.select(next);
+    show(next);
   },
 
   /** Jump to the first or last commit. Never lands on the band. */
   jump(where: "first" | "last"): false | void {
     const n = rowCount();
     if (!n) return false;
-    bridge.select(where === "first" ? 0 : n - 1);
+    show(where === "first" ? 0 : n - 1);
   },
 
   /**

@@ -121,6 +121,41 @@ test("Escape deselects — but only when there is nothing else to close", async 
   await expect(subject(page)).toHaveCount(0);
 });
 
+// NOT TESTED HERE: that the selection is scrolled ON SCREEN. bridge.select()
+// does not scroll, these bindings claim their keys so the old canvas handler
+// that moved scrollTarget no longer runs, and the first version of this suite
+// asserted only that the detail panel changed — which passed while the graph
+// sat still and the cursor walked off screen.
+//
+// The canvas draws its scroll position and exposes no DOM signal for it, and
+// `state` is not on window, so there is nothing here to assert against without
+// adding test-only plumbing to production code. The pairing is owned by
+// src/keymap/actions/canvas.test.ts instead, which asserts both that an
+// off-screen jump moves scrollTarget and that an on-screen one does not.
+
+test("graph keys stand down while an overlay is open", async ({ page }) => {
+  // The graph is the pane scope's fallback, so these bindings are live whenever
+  // focus is anywhere unremarkable — including under an open dialog. A live
+  // binding claims at window-capture, so without noScrimOpen the arrows and `x`
+  // would steal keys from the overlay.
+  await page.locator("#gotoHeadBtn").click();
+  await focusGraph(page);
+  const before = await subject(page).textContent();
+
+  await page.keyboard.press("Control+Comma");
+  const settings = page.locator(".scrim:has(.modal.settings)");
+  await expect(settings).toHaveClass(/\bon\b/);
+
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("End");
+  await page.keyboard.press("x");
+  await expect(page.locator(".cm-pop")).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await expect(settings).not.toHaveClass(/\bon\b/);
+  expect(await subject(page).textContent()).toBe(before);
+});
+
 test("no claimed key reaches document-bubble", async ({ page }) => {
   await focusGraph(page);
   for (const k of ["ArrowDown", "ArrowUp", "Home", "End", "Escape"]) {

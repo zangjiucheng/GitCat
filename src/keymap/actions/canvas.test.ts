@@ -4,7 +4,7 @@
 // which is why the row users visit most could not be reached by keyboard.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const st = vi.hoisted(() => ({ selectedRow: -1 }));
+const st = vi.hoisted(() => ({ selectedRow: -1, scrollTarget: 0 }));
 const fns = vi.hoisted(() => ({
   select: vi.fn(),
   deselect: vi.fn(),
@@ -18,6 +18,12 @@ vi.mock("@/legacy/bridge", () => ({
   get G() {
     return graphRef.current;
   },
+  // scrollRowIntoView reads these; the arithmetic is vimnav's, not under test
+  // here, but selecting without scrolling is exactly the bug this suite now
+  // guards, so the call has to be real rather than stubbed away.
+  clampScroll: (v: number) => Math.max(0, v),
+  layout: { rowH: 26 },
+  view: { cssH: 600 },
   ...fns,
 }));
 
@@ -44,6 +50,27 @@ describe("openMenu", () => {
 });
 
 describe("move", () => {
+  it("brings the row it selects ON SCREEN, not just into the detail panel", () => {
+    // bridge.select() does not scroll — vimnav's j/k always pair it with
+    // scrollRowIntoView. These bindings CLAIM their keys, so the old canvas
+    // handler that moved scrollTarget no longer runs; without the pairing the
+    // cursor walks off screen and the graph sits still.
+    // Enough rows that the last one is genuinely off screen — with the default
+    // five it already fits, and the assertion would pass for the wrong reason.
+    graphRef.current = { N: 500 };
+    st.selectedRow = 0;
+    st.scrollTarget = 0;
+    canvasKeys.jump("last");
+    expect(fns.select).toHaveBeenCalledWith(499);
+    expect(st.scrollTarget).toBeGreaterThan(0);
+
+    // And a row already in view needs no scroll, so this is not just "always
+    // sets scrollTarget".
+    st.scrollTarget = 0;
+    canvasKeys.jump("first");
+    expect(st.scrollTarget).toBe(0);
+  });
+
   it("steps down and up through real rows", () => {
     st.selectedRow = 2;
     canvasKeys.move(1);

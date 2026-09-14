@@ -352,6 +352,12 @@ export const BINDINGS: readonly Binding[] = [
   // synthesised event has none. `x` is #144's rule 3 — one key that opens the
   // actions menu for whatever the cursor is on, in every scope — which is what
   // keeps ~25 low-frequency operations off dedicated letters.
+  // Every one of these carries noScrimOpen, for the reason canvas.deselect
+  // already spells out: the graph is the pane scope's FALLBACK, so these
+  // bindings are live whenever focus is anywhere unremarkable — including while
+  // the expanded diff or a dialog is up. A live binding claims at
+  // window-capture, so without the guard the arrows, Home/End and `x` would
+  // steal keys from an open overlay. vimnav's j/k already refuse there.
   {
     id: "canvas.menu",
     chords: ["x", "Shift+F10"],
@@ -360,7 +366,7 @@ export const BINDINGS: readonly Binding[] = [
     // this mirrors opens the menu in design mode too (it passes CUR_REPO
     // through as-is), and a keyboard twin that refused where the mouse works
     // would be a worse kind of inconsistency than a menu over a demo graph.
-    when: ["graphHasRows"],
+    when: ["graphHasRows", "noScrimOpen"],
     dispatch: "js",
     labelKey: "vimnav.row_menu",
     help: { section: "actions", order: 12 },
@@ -373,7 +379,7 @@ export const BINDINGS: readonly Binding[] = [
     id: "canvas.down",
     chords: ["ArrowDown"],
     scope: "graph",
-    when: ["graphHasRows"],
+    when: ["graphHasRows", "noScrimOpen"],
     dispatch: "js",
     labelKey: "vimnav.select_next",
     help: { section: "navigate", order: 10 },
@@ -383,7 +389,7 @@ export const BINDINGS: readonly Binding[] = [
     id: "canvas.up",
     chords: ["ArrowUp"],
     scope: "graph",
-    when: ["graphHasRows"],
+    when: ["graphHasRows", "noScrimOpen"],
     dispatch: "js",
     labelKey: "vimnav.select_prev",
     help: { section: "navigate", order: 11 },
@@ -396,7 +402,7 @@ export const BINDINGS: readonly Binding[] = [
     id: "canvas.first",
     chords: ["Home"],
     scope: "graph",
-    when: ["graphHasRows"],
+    when: ["graphHasRows", "noScrimOpen"],
     dispatch: "js",
     labelKey: "vimnav.select_first",
     help: { section: "navigate", order: 12 },
@@ -408,7 +414,7 @@ export const BINDINGS: readonly Binding[] = [
     id: "canvas.last",
     chords: ["End"],
     scope: "graph",
-    when: ["graphHasRows"],
+    when: ["graphHasRows", "noScrimOpen"],
     dispatch: "js",
     labelKey: "vimnav.select_last",
     help: { section: "navigate", order: 13 },
