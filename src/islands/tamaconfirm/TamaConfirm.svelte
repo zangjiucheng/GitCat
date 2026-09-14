@@ -14,14 +14,25 @@
       tamaConfirmCtrl.cancel();
     } else if (e.key === "Enter") {
       e.preventDefault();
-      tamaConfirmCtrl.confirm();
+      // This listener is on <svelte:window> and tests only `open`, never where
+      // focus is — so an Enter typed into the commit textarea, the ref filter
+      // or a rename field reaches here. workdir's discardAll raises this dialog
+      // with kind:"danger", which made that stray Enter discard the whole
+      // working tree. A destructive prompt therefore resolves CANCEL on Enter;
+      // confirming it has to be a deliberate click or a focused button.
+      if (tamaConfirmCtrl.kind === "danger") tamaConfirmCtrl.cancel();
+      else tamaConfirmCtrl.confirm();
     }
   }
 </script>
 
 <svelte:window on:keydown={onKeydown} />
 
-<div class="scrim" class:on={tamaConfirmCtrl.open}>
+<!-- data-modal-blocking marks a scrim that nothing may open on top of. `.scrim.on`
+     alone can't carry that meaning: the in-panel expanded-diff overlay is also a
+     .scrim, so guarding on it blocks ⌘K merely because a diff is expanded, while
+     failing to distinguish a scrim that is holding an armed destructive action. -->
+<div class="scrim" data-modal-blocking class:on={tamaConfirmCtrl.open}>
   <div class="modal tamaconfirm">
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" src={face} alt="Tama" /></div>

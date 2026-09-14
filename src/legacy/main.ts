@@ -1378,7 +1378,14 @@ cv.addEventListener("keydown",(e)=>{
   else if(e.key==="PageDown")state.scrollTarget=clampScroll(state.scrollTarget+view.cssH*0.9);
   else if(e.key==="PageUp")state.scrollTarget=clampScroll(state.scrollTarget-view.cssH*0.9);
   else if(e.key==="Home")state.scrollTarget=0; else if(e.key==="End")state.scrollTarget=state.maxScroll;
-  else if(e.key==="+"||e.key==="=")zoomAt(view.cssH/2,120); else if(e.key==="-")zoomAt(view.cssH/2,-120);
+  // Zoom keys take an EXACT mask: ⌘+ / ⌘- / Ctrl+- are the webview's own page
+  // zoom and must reach it, and ⌥- is nothing at all — all three zoomed the
+  // graph here. Shift is not excluded: "+" IS Shift+= on a US layout.
+  // Deliberately e.key and not e.code: e.code is a physical position, and "+"
+  // sits on BracketRight on QWERTZ, so only the glyph is portable.
+  else if((e.key==="+"||e.key==="="||e.key==="-")&&!e.metaKey&&!e.ctrlKey&&!e.altKey){
+    zoomAt(view.cssH/2, e.key==="-" ? -120 : 120);
+  }
   else return; e.preventDefault(); dirty=true;
 });
 
@@ -2388,7 +2395,21 @@ async function globalUndo(){
   finally{ undoBusy=false; labelEl.innerHTML=label; Safety.updateBadge(); }
 }
 $("#undoBtn").addEventListener("click",globalUndo);
-document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="z"&&!e.target.closest("input,textarea,[contenteditable=true]")){e.preventDefault();globalUndo();} });
+// ⌘Z / Ctrl+Z — global undo. The modifier test is EXACT, not "at least
+// Cmd/Ctrl": ⌘⇧Z means Redo in every other desktop app and ⌥⌘Z means undo
+// nowhere, so neither may reach globalUndo() — both did until now. Matching on
+// e.code (physical key) rather than e.key keeps the chord on the same cap for
+// Dvorak and for layouts where ⌘ changes the reported character.
+// ⌘⇧Z is claimed here rather than left unbound: an unclaimed chord is how the
+// loose match crept back in, and a user pressing it deserves to be told Redo
+// doesn't exist yet instead of silently undoing a second time.
+document.addEventListener("keydown",e=>{
+  if(!(e.metaKey||e.ctrlKey)||e.altKey||e.code!=="KeyZ") return;
+  if(e.target.closest("input,textarea,[contenteditable=true]")) return;
+  e.preventDefault();
+  if(e.shiftKey){ Tama.say(t("legacy.redo_unsupported"),3200); return; }
+  globalUndo();
+});
 
 // remote sync: fetch / pull (ff-only) / push — one shared busy flag so an
 // in-flight network op can't overlap with another (see src-tauri/src/git_remote.rs
@@ -2482,17 +2503,23 @@ function armDanger(ctx){
   // the reset"). The name goes in via textContent (never innerHTML) so a
   // ref/sha can't inject markup, and #dangerTypeName is recreated every time so
   // it's always present.
+  // `ctx.phrase` is what the user must actually type, defaulting to ctx.name so
+  // every existing caller is unchanged. It exists because delete-branch,
+  // reset-to-upstream and force-push all arm this same gate with the branch
+  // name — three different verbs behind one passphrase, so typing it proves
+  // nothing about WHICH one you meant. Callers can now demand "<verb> <name>".
+  const phrase=ctx.phrase||ctx.name;
   const typeLabel=$("#dangerTypeLabel");
   typeLabel.textContent="Type the "+(ctx.typeNoun||"branch name")+" ";
-  const tn=document.createElement("b"); tn.className="mono"; tn.id="dangerTypeName"; tn.textContent=ctx.name;
+  const tn=document.createElement("b"); tn.className="mono"; tn.id="dangerTypeName"; tn.textContent=phrase;
   typeLabel.appendChild(tn);
   typeLabel.appendChild(document.createTextNode(" to "+(ctx.typeVerb||"arm the rewrite")+":"));
-  const inp=$("#confirmInput"); inp.placeholder=ctx.name; inp.value="";
+  const inp=$("#confirmInput"); inp.placeholder=phrase; inp.value="";
   $("#dangerGo").textContent=ctx.confirmLabel||"Confirm"; $("#dangerGo").disabled=true;
   openScrim("#dangerScrim"); setTimeout(()=>inp.focus(),30);
 }
 function disarmDanger(){ closeScrim("#dangerScrim"); const ci=$("#confirmInput"); if(ci) ci.value=""; const gg=$("#dangerGo"); if(gg) gg.disabled=true; dangerCtx=null; }
-$("#confirmInput").addEventListener("input",e=>{ const want=dangerCtx?dangerCtx.name:"main"; $("#dangerGo").disabled=e.target.value.trim()!==want; });
+$("#confirmInput").addEventListener("input",e=>{ const want=dangerCtx?(dangerCtx.phrase||dangerCtx.name):"main"; $("#dangerGo").disabled=e.target.value.trim()!==want; });
 $("#dangerCancel").addEventListener("click",()=>{ disarmDanger(); Tama.event("mutation.cancel"); });
 let dangerBusy=false;
 $("#dangerGo").addEventListener("click",async ()=>{

@@ -2,6 +2,7 @@
   import { codeSearchCtrl } from "./codesearch.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import { t } from "@/i18n/i18n.svelte.ts";
+  import { isTextInputFocused } from "../vimnav/vimnav.svelte.ts";
   import Eye from "@lucide/svelte/icons/eye";
   import History from "@lucide/svelte/icons/history";
 
@@ -15,6 +16,11 @@
     // native find-in-page. Needs a repo open to have anything to search.
     if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
       if (!bridge.CUR_REPO) return;
+      // This handler shipped with no guards at all: ⌘F while writing a commit
+      // message opened Search Code over the top of it, and it fired over an
+      // open confirm dialog too. Both guards match what ⌘K/"/" already do.
+      if (!codeSearchCtrl.open && isTextInputFocused(e.target as Element | null)) return;
+      if (!codeSearchCtrl.open && document.querySelector(".scrim.on")) return;
       e.preventDefault();
       codeSearchCtrl.show(bridge.CUR_REPO as unknown as string);
     }

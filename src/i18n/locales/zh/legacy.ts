@@ -6,6 +6,7 @@ export default {
   undo_no_snapshots: "还没有可以撤销的内容——尚未创建任何快照。",
   undo_stash_failed: "撤销(带 stash)失败。",
   undo_cancelled: "已取消撤销——你未提交的改动原封未动。",
+  redo_unsupported: "还没有重做功能——⌘Z 会逐个回退快照。",
   undo_nothing: "没有可以撤销的内容——还没有任何快照。",
   undo_failed: "撤销失败——{error}",
   fetched_demo: "已获取(演示)。にゃ〜",

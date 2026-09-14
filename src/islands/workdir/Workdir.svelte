@@ -59,6 +59,16 @@
   const WD_MSG_H_LS = "gitcat.wdMsgH",
     WD_MSG_H_MIN = 52;
   let msgEl = $state<HTMLTextAreaElement | undefined>(undefined);
+  // Persist the in-progress commit message, debounced. It lives here rather
+  // than in the controller because the textarea uses
+  // `bind:value={workdirCtrl.message}` — there is no setter to hook — and a
+  // localStorage write per keystroke is wasteful. The controller flushes
+  // separately in select(), so a repo switch inside this window still saves.
+  $effect(() => {
+    const msg = workdirCtrl.message;
+    const timer = setTimeout(() => workdirCtrl.saveDraft(msg), 400);
+    return () => clearTimeout(timer);
+  });
   $effect(() => {
     const el = msgEl;
     if (!el) return;
