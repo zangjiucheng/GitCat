@@ -1,6 +1,12 @@
 // 키보드 단축키 도움말 오버레이(vim 스타일 내비게이션). 설명만 번역하고, 키 글리프
 // (⌘K, j, k, …)는 그대로 둬요. 키는 `vimnav.<key>`가 돼요.
 export default {
+  row_menu: "선택된 행의 작업 메뉴 열기",
+  select_next: "다음 커밋 선택",
+  select_prev: "이전 커밋 선택(맨 위에서는 미커밋으로)",
+  select_first: "가장 최근 커밋 선택",
+  select_last: "가장 오래된 커밋 선택",
+  deselect: "선택 해제",
   commit: "스테이징된 변경사항 커밋",
   amend: "마지막 커밋 수정",
   stage: "포커스된 파일 스테이징",

@@ -1064,6 +1064,35 @@ function hitTest(mx,my){
 }
 function rel(e){const r=cv.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top};}
 
+// The keyboard twin of the contextmenu listener above. Ten commit operations —
+// cherry-pick, merge, revert, reset, export patch, branch/tag here, three
+// copies — hang off that menu and had NO keyboard opener at all, because every
+// one of the app's 12 oncontextmenu handlers reads e.clientX/e.clientY and a
+// synthesised event has none.
+//
+// The anchor is computed by INVERTING hitTest's own row math rather than
+// guessing: screen y = bh + row*rowH - scrollTop, plus half a row so the menu
+// hangs off the row's middle the way a click on its dot would. x is the lane
+// the commit's dot sits on, so the menu appears where the eye already is.
+//
+// Returns false when there is nothing to open a menu ON — no selection, or the
+// pinned Uncommitted band (row -2), for which none of those ten operations mean
+// anything. The binding declines on false rather than swallowing the key.
+function openCommitMenuForSelectedRow(){
+  const row=state.selectedRow;
+  if(!(row>=0)||!G||row>=G.N) return false;
+  const r=cv.getBoundingClientRect(), rowH=layout.rowH, bh=bandH();
+  const y=r.top+bh+(row*rowH)-state.scrollTop+rowH*0.5;
+  const x=r.left+laneX(G.commitLane?G.commitLane[row]:0);
+  // Keep the menu on screen even when the selected row has been scrolled to
+  // the very edge of the viewport.
+  const cx=Math.min(Math.max(x,r.left+8),r.right-8);
+  const cy=Math.min(Math.max(y,r.top+8),r.bottom-8);
+  const sha=(BACKEND&&BACKEND.oids&&BACKEND.oids[row])?BACKEND.oids[row]:hhex(row);
+  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), cx, cy);
+  return true;
+}
+
 cv.addEventListener("wheel",(e)=>{
   if(e.ctrlKey||e.metaKey){e.preventDefault();zoomAt(rel(e).y,-e.deltaY);return;}
   // Horizontal pan (see state.panX's own doc comment) — a real trackpad's
@@ -3739,7 +3768,7 @@ i18nEvents.addEventListener("change",()=>{
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, deselect, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, applyDetailPlacement, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
@@ -3748,4 +3777,6 @@ export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   // select/openRepo above). NAV_STACK itself is already exported directly at
   // its declaration above (`export let NAV_STACK`), same as CUR_REPO — not
   // re-listed here, that would be a duplicate export.
-  enterSubmodule, navigateToRepo };
+  enterSubmodule, navigateToRepo,
+  // Keyboard openers for surfaces that were pointer-only (see #144).
+  openCommitMenuForSelectedRow };

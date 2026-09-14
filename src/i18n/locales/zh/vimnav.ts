@@ -1,6 +1,12 @@
 // 键盘快捷键帮助浮层(vim 风格导航)。只翻译说明文字,按键符号(⌘K、j、k…)
 // 保持原样。键会变成 `vimnav.<key>`。
 export default {
+  row_menu: "打开当前行的操作菜单",
+  select_next: "选中下一个提交",
+  select_prev: "选中上一个提交(最顶部会进入未提交区)",
+  select_first: "选中最新的提交",
+  select_last: "选中最旧的提交",
+  deselect: "取消选中",
   commit: "提交已暂存的改动",
   amend: "修补上一个提交",
   stage: "暂存当前文件",

@@ -1,6 +1,12 @@
 // Keyboard-shortcuts help overlay (vim-style nav). Only the descriptions are
 // translated; the key glyphs (⌘K, j, k, …) stay literal. Keys become `vimnav.<key>`.
 export default {
+  row_menu: "open the actions menu for the selected row",
+  select_next: "select the next commit",
+  select_prev: "select the previous commit (steps up into Uncommitted)",
+  select_first: "select the newest commit",
+  select_last: "select the oldest commit",
+  deselect: "clear the selection",
   commit: "commit the staged changes",
   amend: "amend the last commit",
   stage: "stage the focused file",

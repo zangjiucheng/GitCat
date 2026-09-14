@@ -2,6 +2,7 @@ import { ACCELERATORS } from "./accelerators.ts";
 import { keymap } from "./registry.ts";
 import { focusPane } from "./panes.ts";
 import { workdirKeys } from "./actions/workdir.ts";
+import { canvasKeys } from "./actions/canvas.ts";
 import type { Binding } from "./types.ts";
 
 // THE TABLE. PR 1 ships it ENTIRELY in mode:"shadow": the dispatcher matches,
@@ -343,6 +344,92 @@ export const BINDINGS: readonly Binding[] = [
     // is deliberately no Shift+D for discard-all: rule 5 in #144 says Shift
     // must not escalate a destructive verb to its bulk form.
     run: () => workdirKeys.discard(),
+  },
+
+  // ── commit graph ───────────────────────────────────────────────────────
+  // Ten commit operations hung off a right-click with NO keyboard opener: every
+  // one of the app's 12 oncontextmenu handlers reads e.clientX/e.clientY, and a
+  // synthesised event has none. `x` is #144's rule 3 — one key that opens the
+  // actions menu for whatever the cursor is on, in every scope — which is what
+  // keeps ~25 low-frequency operations off dedicated letters.
+  {
+    id: "canvas.menu",
+    chords: ["x", "Shift+F10"],
+    scope: "graph",
+    // graphHasRows only, deliberately NOT repoOpen: the contextmenu listener
+    // this mirrors opens the menu in design mode too (it passes CUR_REPO
+    // through as-is), and a keyboard twin that refused where the mouse works
+    // would be a worse kind of inconsistency than a menu over a demo graph.
+    when: ["graphHasRows"],
+    dispatch: "js",
+    labelKey: "vimnav.row_menu",
+    help: { section: "actions", order: 12 },
+    run: () => canvasKeys.openMenu(),
+  },
+  // Arrow keys move the SELECTION. They moved state.scrollTarget before, while
+  // j/k moved the selection — two contradictory meanings of "navigate" on one
+  // surface, and the arrow one left the cursor behind wherever it started.
+  {
+    id: "canvas.down",
+    chords: ["ArrowDown"],
+    scope: "graph",
+    when: ["graphHasRows"],
+    dispatch: "js",
+    labelKey: "vimnav.select_next",
+    help: { section: "navigate", order: 10 },
+    run: () => canvasKeys.move(1),
+  },
+  {
+    id: "canvas.up",
+    chords: ["ArrowUp"],
+    scope: "graph",
+    when: ["graphHasRows"],
+    dispatch: "js",
+    labelKey: "vimnav.select_prev",
+    help: { section: "navigate", order: 11 },
+    // Stepping up off row 0 lands on the pinned Uncommitted band — row -2,
+    // which sits outside moveCanvasSelection's [0, N-1] clamp, so the row users
+    // visit most could not be reached by keyboard at all.
+    run: () => canvasKeys.move(-1),
+  },
+  {
+    id: "canvas.first",
+    chords: ["Home"],
+    scope: "graph",
+    when: ["graphHasRows"],
+    dispatch: "js",
+    labelKey: "vimnav.select_first",
+    help: { section: "navigate", order: 12 },
+    // Aliased to the same jump gg/G perform, so Home/End and gg/G stop meaning
+    // different things (Home set scrollTarget and left the cursor behind).
+    run: () => canvasKeys.jump("first"),
+  },
+  {
+    id: "canvas.last",
+    chords: ["End"],
+    scope: "graph",
+    when: ["graphHasRows"],
+    dispatch: "js",
+    labelKey: "vimnav.select_last",
+    help: { section: "navigate", order: 13 },
+    run: () => canvasKeys.jump("last"),
+  },
+  {
+    id: "canvas.deselect",
+    chords: ["Escape"],
+    scope: "graph",
+    // noScrimOpen is load-bearing, not defensive. The graph is the pane scope's
+    // fallback, so it is active whenever focus is anywhere unremarkable — which
+    // includes while the expanded-diff overlay is up. Without this guard the
+    // FIRST Escape after closing a dialog would deselect and CLAIM the key,
+    // suppressing the legacy handler that closes the overlay underneath.
+    when: ["noScrimOpen"],
+    dispatch: "js",
+    labelKey: "vimnav.deselect",
+    help: { section: "navigate", order: 14, hidden: true },
+    // The graph scope sits at the bottom of the stack, so every open overlay
+    // gets Escape first and this only runs when there is nothing else to close.
+    run: () => canvasKeys.deselect(),
   },
 
   // ── accelerator-only. No JS side at all: `run` is absent and the dispatcher
