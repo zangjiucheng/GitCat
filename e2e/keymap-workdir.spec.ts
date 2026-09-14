@@ -103,6 +103,65 @@ test("a bare letter in the commit message box types, it does not stage", async (
   await expect(page.locator("#dangerScrim")).not.toHaveClass(/\bon\b/);
 });
 
+test("⌘↵ in the stash field does not commit", async ({ page, repo, calls }) => {
+  // The stash message input is in the same pane as the commit box, and the
+  // commit chords are allowInTextInput so they can fire from that box. Without
+  // a marker distinguishing the two, ⌘↵ here committed staged changes instead
+  // of submitting the stash form.
+  seed(repo);
+  await page.goto("/");
+  await openRepo(page);
+  await page.keyboard.press("Control+Shift+U");
+
+  const tabs = page.locator("#detail .d-tabs .d-tab");
+  await expect(tabs).toHaveCount(3);
+  await tabs.nth(2).click(); // Stash
+
+  // The form is behind its own "+ Stash changes" button.
+  await page.locator(".wd-stash-new").click();
+  const stashMsg = page.locator(".wd-stash-form input").first();
+  await expect(stashMsg).toBeVisible();
+  await stashMsg.click();
+  await stashMsg.pressSequentially("wip");
+  await page.keyboard.press("Control+Enter");
+
+  // The commit chord declined, so the FIELD's own Enter handler ran and the
+  // stash was submitted — which is the whole point. Asserting on the backend
+  // rather than on the input, because a successful stash closes the form.
+  await expect.poll(() => calls.find((c) => c.cmd === "stash_save")).toBeTruthy();
+  expect(calls.find((c) => c.cmd === "commit")).toBeUndefined();
+});
+
+test("the focused-row chords still work inside the expanded diff", async ({ page, repo, calls }) => {
+  // The expanded-diff scrim is a SIBLING of .d-view, so closest("[data-pane]")
+  // resolved to #detail and every workdir letter went dead while the big diff
+  // was open — though vimnav's j/k still walked the very same rows.
+  seed(repo);
+  await page.goto("/");
+  await openRepo(page);
+  await openChanges(page);
+
+  const row = page.locator('[data-wd-path][data-wd-staged="false"]').first();
+  await row.click();
+  // The expand button sits in the inline diff's header — .wd-act is also the
+  // class on every row's action buttons, so it has to be named by its label.
+  await page.getByRole("button", { name: "Expand diff to full page" }).first().click();
+  const scrim = page.locator(".scrim.on .modal.diffx[data-pane='workdir']");
+  await expect(scrim).toBeVisible();
+
+  const inDiff = scrim.locator("[data-wd-path]").first();
+  await expect(inDiff).toBeVisible();
+  const path = await inDiff.getAttribute("data-wd-path");
+  await inDiff.focus();
+  expect(
+    await page.evaluate(() => document.activeElement?.closest("[data-pane]")?.getAttribute("data-pane")),
+  ).toBe("workdir");
+
+  await page.keyboard.press("s");
+  await expect.poll(() => calls.find((c) => c.cmd === "stage_file")).toBeTruthy();
+  expect(calls.find((c) => c.cmd === "stage_file")?.args).toMatchObject({ file: path });
+});
+
 // THE WORKFLOW. No mouse at all after the repo is open.
 test("stage and commit without touching the mouse", async ({ page, repo, calls }) => {
   seed(repo);
@@ -113,7 +172,7 @@ test("stage and commit without touching the mouse", async ({ page, repo, calls }
   await expect(page.locator("#detail textarea.wd-msg")).toBeVisible();
 
   // ⌘⇧S-style bulk staging: S stages everything, from anywhere in the pane.
-  await page.locator("[data-pane='workdir']").focus();
+  await page.locator("[data-pane='workdir']").first().focus();
   await page.keyboard.press("Shift+S");
   await expect.poll(() => calls.find((c) => c.cmd === "stage_all")).toBeTruthy();
 

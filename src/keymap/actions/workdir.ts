@@ -45,10 +45,26 @@ function repo(): string | null {
  * of these follows: a key that cannot act here keeps falling outward to the
  * detail pane and then to global, instead of silently doing nothing.
  */
+/**
+ * Is focus in a field that is NOT the commit box?
+ *
+ * The commit chords are allowInTextInput so they can fire from the message
+ * box — but the working tree holds other fields (the stash message, its
+ * include-untracked checkbox), and ⌘↵ in those means "submit this form", not
+ * "commit". Declining there also lets the field's own Enter handler run, which
+ * capture-phase dispatch would otherwise suppress.
+ */
+function inForeignField(doc: Document = document): boolean {
+  const el = doc.activeElement;
+  if (!el?.closest?.("input, textarea, select, [contenteditable=true]")) return false;
+  return !el.closest("[data-wd-commit-box]");
+}
+
 export const workdirKeys = {
   commit(amend: boolean): false | void {
     const r = repo();
     if (!r || workdirCtrl.busy) return false;
+    if (inForeignField()) return false;
     // Amend is a rewrite, so it goes through the same toggle the button does
     // rather than committing straight over the previous commit.
     if (amend) workdirCtrl.amend = true;

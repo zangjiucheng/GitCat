@@ -126,6 +126,32 @@ describe("bulk", () => {
 });
 
 describe("commit", () => {
+  /** Focus the commit box, or another field in the same pane. */
+  function field(kind: "commit" | "stash") {
+    document.body.innerHTML =
+      kind === "commit"
+        ? `<textarea id="f" data-wd-commit-box></textarea>`
+        : `<input id="f">`;
+    document.getElementById("f")!.focus();
+  }
+
+  it("fires from the commit box, which is the point of allowInTextInput", () => {
+    field("commit");
+    expect(workdirKeys.commit(false)).toBeUndefined();
+    expect(ctrl.commit).toHaveBeenCalledWith("/repo");
+  });
+
+  it("DECLINES from any other field in the pane", () => {
+    // The stash message input lives in the same pane. ⌘↵ there means "submit
+    // this form" — committing staged changes instead would be the worst kind
+    // of surprise, and capture-phase dispatch would also suppress the field's
+    // own Enter handler on the way.
+    field("stash");
+    expect(workdirKeys.commit(false)).toBe(false);
+    expect(workdirKeys.commit(true)).toBe(false);
+    expect(ctrl.commit).not.toHaveBeenCalled();
+  });
+
   it("commits without touching the amend toggle", () => {
     expect(workdirKeys.commit(false)).toBeUndefined();
     expect(ctrl.commit).toHaveBeenCalledWith("/repo");

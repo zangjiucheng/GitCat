@@ -205,8 +205,13 @@
       {#if workdirCtrl.generating}<span class="spinner"></span> {t("workdir.generating")}{:else}&#10024; {t("workdir.generate")}{/if}
     </button>
   </div>
+  <!-- data-wd-commit-box marks the ONE field ⌘↵ may fire from. The commit
+       chords set allowInTextInput so they work from here, and the stash message
+       input lives in this same pane — without a marker, ⌘↵ there would commit
+       staged changes instead of submitting the stash form. -->
   <textarea
     class="wd-msg"
+    data-wd-commit-box
     rows="3"
     bind:this={msgEl}
     placeholder={workdirCtrl.amend ? t("workdir.msg_placeholder_amend") : t("workdir.msg_placeholder")}
@@ -398,7 +403,17 @@
      the commit modal (index.html's `.detail.collapsed>*:not(.scrim)` exempts
      it from the Focus-mode panel collapse). -->
 <div class="scrim" class:on={workdirCtrl.diffExpanded}>
-  <div class="modal diffx">
+  <!-- The pane marker goes on the MODAL, not on the .scrim around it. The scrim
+       is position:fixed with a backdrop-filter, and [data-pane] carries a
+       position:relative rule for the focus ring — putting the marker on the
+       scrim silently overrode its positioning and turned a full-screen blurred
+       overlay into an in-flow element, which cost the drag-heavy placement
+       tests 25x their runtime before anything looked wrong.
+       The marker is still needed here at all because this modal is a SIBLING of
+       .d-view: without it closest("[data-pane]") resolves to #detail and every
+       focused-row chord goes dead while the expanded diff is open, even though
+       vimnav's j/k still walk the same rows. -->
+  <div class="modal diffx" data-pane="workdir">
     <div class="modal-head">
       <div class="diffx-head-main">
         <h3>{t("workdir.uncommitted_changes")}</h3>
