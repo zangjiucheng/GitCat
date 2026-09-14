@@ -10,6 +10,7 @@ import { compile, dumpKeymap } from "./compile.ts";
 import { dispatch as pureDispatch } from "./dispatch.ts";
 import type { ScopeHandle, ScopeId, ScopeOpts, ScopeSpec } from "./scopes.ts";
 import { focusInto, restoreFocus, saveFocus, trapTab } from "./focus.ts";
+import { activePaneScope } from "./panes.ts";
 import type { Binding, GuardTable, Tables } from "./types.ts";
 import { claim } from "./claim.ts";
 
@@ -146,7 +147,11 @@ class Keymap {
       }
     }
     if (this.tables.size === 0) return false;
-    const r = pureDispatch(e, this.stack, this.specs, this.tables, this.platform);
+    // The active pane is derived per keydown, never stored, and sits directly
+    // above "global" so a pushed scope (a modal, the palette) still outranks it.
+    const pane = activePaneScope();
+    const stack = pane === "global" ? this.stack : [this.stack[0], pane, ...this.stack.slice(1)];
+    const r = pureDispatch(e, stack, this.specs, this.tables, this.platform);
     for (let i = 0; i < r.shadowed.length; i++) {
       const id = r.shadowed[i].b.id;
       this.shadow[id] = (this.shadow[id] ?? 0) + 1;

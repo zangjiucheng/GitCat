@@ -39,7 +39,7 @@ function hasLayout(doc: Document): boolean {
   return doc.documentElement.getClientRects().length > 0;
 }
 
-function isHidden(el: HTMLElement): boolean {
+export function isHidden(el: HTMLElement): boolean {
   const view = el.ownerDocument.defaultView;
   const cs = view?.getComputedStyle(el);
   if (cs && (cs.visibility === "hidden" || cs.visibility === "collapse" || cs.display === "none")) return true;

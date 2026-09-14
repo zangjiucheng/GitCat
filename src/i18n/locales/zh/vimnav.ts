@@ -1,6 +1,9 @@
 // 键盘快捷键帮助浮层(vim 风格导航)。只翻译说明文字,按键符号(⌘K、j、k…)
 // 保持原样。键会变成 `vimnav.<key>`。
 export default {
+  pane_graph: "聚焦提交图",
+  pane_sidebar: "聚焦侧边栏",
+  pane_detail: "聚焦详情面板",
   title: "键盘快捷键",
   subtitle: "始终开启,在输入框里打字时会自动失效。",
   cmd_legend: "macOS 上是 Cmd,Windows/Linux 上是 Ctrl",

@@ -1,5 +1,6 @@
 import { ACCELERATORS } from "./accelerators.ts";
 import { keymap } from "./registry.ts";
+import { focusPane } from "./panes.ts";
 import type { Binding } from "./types.ts";
 
 // THE TABLE. PR 1 ships it ENTIRELY in mode:"shadow": the dispatcher matches,
@@ -190,6 +191,46 @@ export const BINDINGS: readonly Binding[] = [
     // Returning false when no activation offers an onEscape declines the key
     // rather than swallowing it, so Escape keeps falling outward.
     run: () => (keymap.closeTopScope() ? undefined : false),
+  },
+
+  // ── pane focus ─────────────────────────────────────────────────────────
+  // ⌘1..3, not ⌘1..4. There is no workdir pane: main.ts refuses to mount
+  // Workdir a second time because it renders INSIDE #detail, swapped in by
+  // DetailPanel when the working tree is selected. "workdir" is a state of the
+  // detail pane, not a region of its own.
+  //
+  // Live, and plain .focus() calls rather than scope overrides — DOM focus and
+  // keyboard scope then cannot disagree, because the scope is read back out of
+  // the focus these set (panes.ts).
+  {
+    id: "pane.graph",
+    chords: ["Mod+Digit1"],
+    scope: "global",
+    when: ["notTextInput"],
+    dispatch: "js",
+    labelKey: "vimnav.pane_graph",
+    help: { section: "view", order: 1 },
+    run: () => (focusPane("graph") ? undefined : false),
+  },
+  {
+    id: "pane.sidebar",
+    chords: ["Mod+Digit2"],
+    scope: "global",
+    when: ["notTextInput"],
+    dispatch: "js",
+    labelKey: "vimnav.pane_sidebar",
+    help: { section: "view", order: 2 },
+    run: () => (focusPane("sidebar") ? undefined : false),
+  },
+  {
+    id: "pane.detail",
+    chords: ["Mod+Digit3"],
+    scope: "global",
+    when: ["notTextInput"],
+    dispatch: "js",
+    labelKey: "vimnav.pane_detail",
+    help: { section: "view", order: 3 },
+    run: () => (focusPane("detail") ? undefined : false),
   },
 
   // ── accelerator-only. No JS side at all: `run` is absent and the dispatcher

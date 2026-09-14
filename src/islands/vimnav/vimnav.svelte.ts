@@ -25,6 +25,7 @@
 // demo-mode branch at all: it's pure keyboard plumbing, identical in both).
 
 import * as bridge from "../../legacy/bridge";
+import { isHidden } from "@/keymap/focus.ts";
 import { detailCtrl } from "../detail/detail.svelte.ts";
 
 // ── text-input guard ────────────────────────────────────────────────────
@@ -47,7 +48,13 @@ export function moveDomFocus(dir: 1 | -1): boolean {
   if (!active) return false;
   const container = active.closest("[data-vimnav-list]");
   if (!container) return false;
-  const rows = Array.from(container.querySelectorAll<HTMLElement>('[tabindex="0"]'));
+  // A row inside a CLOSED <details> is still in the DOM and still matches
+  // [tabindex="0"], so without this filter j/k walks onto invisible rows and
+  // the cursor appears to freeze — four of the sidebar's five sections ship
+  // closed, so that is the normal case, not an edge one.
+  const rows = Array.from(container.querySelectorAll<HTMLElement>('[tabindex="0"]')).filter(
+    (el) => !isHidden(el),
+  );
   if (!rows.length) return true;
   const idx = rows.indexOf(active as HTMLElement);
   if (idx < 0) {

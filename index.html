@@ -61,6 +61,15 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--ui);font-
   -webkit-font-smoothing:antialiased;overflow:hidden}
 button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:4px}
+/* Active-pane ring. Scoped single-letter bindings (PRs 4-8) act on whichever
+   pane has focus, so the user needs to see which one that is BEFORE pressing a
+   key that mutates a branch. inset box-shadow, not outline: the rule above is
+   universal and a second outline would double up on every focused control
+   inside the pane. Nothing is painted when focus is outside every pane — the
+   dispatcher falls back to the graph there, which is where those keys live
+   today, and a ring on a pane the user has not focused would be a lie. */
+[data-pane]{position:relative}
+[data-pane]:focus-within{box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent)}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:8px;border:2px solid transparent;background-clip:content-box}
 ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
@@ -2174,7 +2183,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   <nav class="subnav" id="submoduleNavMount"></nav>
 
   <!-- ============================ SIDEBAR ============================ -->
-  <aside class="sidebar">
+  <aside class="sidebar" data-pane="sidebar" tabindex="-1">
     <div id="sidebarRefs"><!-- filled by the Sidebar Svelte island (src/islands/sidebar) --></div>
 
     <!-- Tama's lamp-nook -->
@@ -2193,7 +2202,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   </aside>
 
   <!-- ============================ GRAPH ============================ -->
-  <main class="graph">
+  <main class="graph" data-pane="graph" tabindex="-1">
     <div class="ribbon" id="ribbon"><span class="rlabel">snapshots</span></div>
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="cv" tabindex="0"></canvas>
@@ -2240,7 +2249,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   </main>
 
   <!-- ============================ DETAIL PANEL ============================ -->
-  <section class="detail" id="detail"><div class="resize-handle detail-handle" id="resizeDetail" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><div class="resize-handle detail-handle-bottom" id="resizeDetailBottom" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><!-- filled by the Detail Svelte island (src/islands/detail) --></section>
+  <section class="detail" id="detail" data-pane="detail" tabindex="-1" aria-label="Commit detail"><div class="resize-handle detail-handle" id="resizeDetail" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><div class="resize-handle detail-handle-bottom" id="resizeDetailBottom" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><!-- filled by the Detail Svelte island (src/islands/detail) --></section>
 
 </div>
 

@@ -1,6 +1,9 @@
 // Keyboard-shortcuts help overlay (vim-style nav). Only the descriptions are
 // translated; the key glyphs (⌘K, j, k, …) stay literal. Keys become `vimnav.<key>`.
 export default {
+  pane_graph: "focus the commit graph",
+  pane_sidebar: "focus the sidebar",
+  pane_detail: "focus the detail panel",
   title: "Keyboard shortcuts",
   subtitle: "Always on, and never active while you're typing in a field.",
   cmd_legend: "Cmd on macOS, Ctrl on Windows/Linux",

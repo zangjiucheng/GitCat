@@ -1,6 +1,9 @@
 // 키보드 단축키 도움말 오버레이(vim 스타일 내비게이션). 설명만 번역하고, 키 글리프
 // (⌘K, j, k, …)는 그대로 둬요. 키는 `vimnav.<key>`가 돼요.
 export default {
+  pane_graph: "커밋 그래프로 포커스 이동",
+  pane_sidebar: "사이드바로 포커스 이동",
+  pane_detail: "상세 패널로 포커스 이동",
   title: "키보드 단축키",
   subtitle: "항상 켜져 있지만, 입력 필드에 타이핑하는 중에는 절대 작동하지 않아요.",
   cmd_legend: "macOS에서는 Cmd, Windows/Linux에서는 Ctrl",

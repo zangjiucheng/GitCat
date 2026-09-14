@@ -257,7 +257,7 @@
   {#if !workdirCtrl.status?.staged.length}
     <div class="mut" style="font-size:12px">{t("workdir.nothing_staged")}</div>
   {:else}
-    <div class="wd-files tree">
+    <div class="wd-files tree" data-vimnav-list>
       {@render stagedDirNode(workdirCtrl.stagedTree)}
     </div>
   {/if}
@@ -288,7 +288,7 @@
   {#if !workdirCtrl.status?.unstaged.length}
     <div class="mut" style="font-size:12px">{t("workdir.no_unstaged")}</div>
   {:else}
-    <div class="wd-files tree">
+    <div class="wd-files tree" data-vimnav-list>
       {@render unstagedDirNode(workdirCtrl.unstagedTree)}
     </div>
   {/if}
