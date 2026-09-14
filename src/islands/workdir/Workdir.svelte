@@ -319,7 +319,13 @@
         <Maximize2 class="ico" size={13} aria-hidden="true" />
       </button>
     </div>
-    <div class="diffview" bind:this={diffviewEl}>
+    <!-- A scrollable region takes tabindex="0" ON PURPOSE: WAI-ARIA APG says a
+         region the user must scroll has to be keyboard-reachable, and on macOS
+         WebKit a bare overflow:auto div is not focusable at all — which left a
+         long diff unreadable without a pointer. The linter rule does not know
+         about that exception. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div class="diffview" bind:this={diffviewEl} tabindex="0" role="region" aria-label={t("detail.diff_region")}>
       {@render workdirDiffBody(file)}
     </div>
   </section>
@@ -466,7 +472,13 @@
         label={t("workdir.resize_file_list")}
         storageKey={DIFFX_SPLIT.storageKey}
       />
-      <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
+      <!-- A scrollable region takes tabindex="0" ON PURPOSE: WAI-ARIA APG says a
+           region the user must scroll has to be keyboard-reachable, and on macOS
+           WebKit a bare overflow:auto div is not focusable at all — which left a
+           long diff unreadable without a pointer. The linter rule does not know
+           about that exception. -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div class="diffview diffx-diff" bind:this={diffviewExpandedEl} tabindex="0" role="region" aria-label={t("detail.diff_region")}>
         {#if workdirCtrl.selectedDiffFile}
           {@const file = workdirCtrl.selectedDiffFile}
           {@render workdirLinesBar(file)}

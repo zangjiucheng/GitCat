@@ -4,6 +4,7 @@ import { focusPane } from "./panes.ts";
 import { workdirKeys } from "./actions/workdir.ts";
 import { canvasKeys } from "./actions/canvas.ts";
 import { sidebarKeys } from "./actions/sidebar.ts";
+import { detailKeys } from "./actions/detail.ts";
 import type { Binding } from "./types.ts";
 
 // THE TABLE. PR 1 ships it ENTIRELY in mode:"shadow": the dispatcher matches,
@@ -474,6 +475,35 @@ export const BINDINGS: readonly Binding[] = [
     run: () => sidebarKeys.checkout(),
   },
 
+  // ── detail panel ───────────────────────────────────────────────────────
+  // NOTE on the diff itself: it gets no chord here. The fix that matters is in
+  // the markup — the region is a plain overflow:auto div, which on macOS WebKit
+  // is NOT tab-focusable, so a long diff was literally unreadable without a
+  // pointer while the same build behaved differently on Chromium. It now
+  // carries tabindex, so Tab reaches it and the browser scrolls it natively.
+  // A dedicated chord is deferred rather than invented: the obvious letter is
+  // Shift+D, and rule 5 in #144 reserves that (Shift must not escalate `d`,
+  // which is Discard in the working tree, to a bulk form).
+  // Both scopes, one binding each: the tab strip belongs to whichever view is
+  // showing, and detailKeys reads the pane marker to tell them apart.
+  {
+    id: "detail.tab",
+    chords: ["t"],
+    scope: "detail",
+    dispatch: "js",
+    labelKey: "vimnav.cycle_tab",
+    help: { section: "view", order: 20 },
+    run: () => detailKeys.cycleTab(1),
+  },
+  {
+    id: "workdir.tab",
+    chords: ["t"],
+    scope: "workdir",
+    dispatch: "js",
+    labelKey: "vimnav.cycle_tab",
+    help: { section: "view", order: 21, hidden: true },
+    run: () => detailKeys.cycleTab(1),
+  },
   // ── accelerator-only. No JS side at all: `run` is absent and the dispatcher
   //    never reaches them (no listener exists to shadow). They are here so
   //    codegen emits their accelerator and the (chord, scope) uniqueness gate

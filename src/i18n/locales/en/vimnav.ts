@@ -1,6 +1,8 @@
 // Keyboard-shortcuts help overlay (vim-style nav). Only the descriptions are
 // translated; the key glyphs (⌘K, j, k, …) stay literal. Keys become `vimnav.<key>`.
 export default {
+  cycle_tab: "next tab in the panel",
+  focus_diff: "focus the diff, so arrow keys scroll it",
   filter_refs_key: "focus the ref filter",
   checkout: "check out the focused branch (asks first)",
   row_menu: "open the actions menu for the selected row",

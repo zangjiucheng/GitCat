@@ -265,7 +265,13 @@
     <div class="d-split-diff">
       <section>
         <h4 class="d-lab">{t("detail.diff")}</h4>
-        <div class="diffview" id="diffview" bind:this={diffviewEl}>
+        <!-- A scrollable region takes tabindex="0" ON PURPOSE: WAI-ARIA APG says a
+             region the user must scroll has to be keyboard-reachable, and on macOS
+             WebKit a bare overflow:auto div is not focusable at all — which left a
+             long diff unreadable without a pointer. The linter rule does not know
+             about that exception. -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div class="diffview" id="diffview" bind:this={diffviewEl} tabindex="0" role="region" aria-label={t("detail.diff_region")}>
           {#if detailCtrl.diffLoading}
             <div class="diff-file-h mut"><span class="spinner"></span> {t("detail.loading_diff")}</div>
           {:else}
@@ -323,7 +329,13 @@
           label={t("detail.resize_file_list")}
           storageKey={DIFFX_SPLIT.storageKey}
         />
-        <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
+        <!-- A scrollable region takes tabindex="0" ON PURPOSE: WAI-ARIA APG says a
+             region the user must scroll has to be keyboard-reachable, and on macOS
+             WebKit a bare overflow:auto div is not focusable at all — which left a
+             long diff unreadable without a pointer. The linter rule does not know
+             about that exception. -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div class="diffview diffx-diff" bind:this={diffviewExpandedEl} tabindex="0" role="region" aria-label={t("detail.diff_region")}>
           {#if detailCtrl.diffLoading}
             <div class="diff-file-h mut"><span class="spinner"></span> {t("detail.loading_diff")}</div>
           {:else}

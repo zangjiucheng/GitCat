@@ -50,7 +50,7 @@ describe("the real table compiles", () => {
   // The LIVE set, enumerated. Every other JS row must still be shadow, so
   // flipping one live is a visible decision in this list rather than a quiet
   // property change in a 300-line table. PR 1 shipped this list empty.
-  const LIVE = ["modal.close", "pane.graph", "pane.sidebar", "pane.detail", "workdir.commit", "workdir.amend", "workdir.stage", "workdir.unstage", "workdir.stageAll", "workdir.unstageAll", "workdir.discard", "canvas.menu", "canvas.down", "canvas.up", "canvas.first", "canvas.last", "canvas.deselect", "sidebar.filter", "sidebar.menu", "sidebar.checkout"];
+  const LIVE = ["modal.close", "pane.graph", "pane.sidebar", "pane.detail", "workdir.commit", "workdir.amend", "workdir.stage", "workdir.unstage", "workdir.stageAll", "workdir.unstageAll", "workdir.discard", "canvas.menu", "canvas.down", "canvas.up", "canvas.first", "canvas.last", "canvas.deselect", "sidebar.filter", "sidebar.menu", "sidebar.checkout", "detail.tab", "workdir.tab"];
 
   it("keeps every JS binding in shadow mode except the enumerated live ones", () => {
     for (const x of BINDINGS) {
@@ -78,7 +78,7 @@ describe("the real table compiles", () => {
     // binding has to name a scope some controller actually pushes.
     // "modal" is pushed by an island; "workdir" is derived from focus by
     // panes.ts. Either way the scope is reachable, which is what matters.
-    const PUSHED = ["modal", "workdir", "graph", "sidebar"]; // grows as islands migrate
+    const PUSHED = ["modal", "workdir", "graph", "sidebar", "detail"]; // grows as islands migrate
     for (const id of LIVE) {
       const x = BINDINGS.find((y) => y.id === id)!;
       expect(x, id).toBeTruthy();
