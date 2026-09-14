@@ -14,7 +14,7 @@ export default {
 
   palette: "명령 팔레트(커밋, ref, 작업)",
   search_code: "코드 검색(파일 내용에서 찾기)",
-  filter_refs: "ref 필터(사이드바의 ref 검색창으로 포커스 이동)",
+  pickaxe: "커밋 내용 검색(pickaxe — diff가 특정 문자열을 건드린 커밋 찾기)",
   fetch: "페치(원격에서 다운로드)",
   pull: "풀",
   push: "푸시",

@@ -171,3 +171,28 @@ repoTest.describe("code search text-input guard", () => {
     await repoExpect(codeSearch).toHaveClass(/\bon\b/);
   });
 });
+
+// ⌘⇧F was declared twice for two different operations: menu.rs gave it to
+// pickaxe search, legacy/main.ts gave it to the sidebar's ref filter. That
+// produced three behaviours on three platforms — macOS took the native
+// accelerator and got pickaxe while the sidebar silently stole focus behind the
+// modal, Windows/Linux got both, and the dev server got only the ref filter.
+// The legacy listener is gone and a JS fallback for pickaxe replaces it, so the
+// chord now means one thing everywhere. See #131.
+repoTest.describe("the ⌘⇧F collision", () => {
+  repoTest("Ctrl+Shift+F opens pickaxe search, not the ref filter", async ({ page, repo }) => {
+    repo.writeFile("README.md", "# fixture\n");
+    repo.commit("Initial commit");
+
+    await page.goto("/");
+    await page.locator(".repo-pick").click();
+    await page.locator(".db-add").click();
+    await repoExpect(page.locator(".hero-stat .n")).toHaveText("1");
+
+    await page.keyboard.press("Control+Shift+F");
+    await repoExpect(page.locator(".scrim:has(.modal.pickaxe)")).toHaveClass(/\bon\b/);
+    // The ref filter must NOT have taken focus behind the modal, which is what
+    // the deleted listener did on every platform where both fired.
+    await repoExpect(page.locator("#refFilter")).not.toBeFocused();
+  });
+});

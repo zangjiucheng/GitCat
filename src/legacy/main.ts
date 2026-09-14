@@ -2149,11 +2149,9 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
 const sidebarHandle=wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28);
 const detailRightHandle=wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true,28);
 const detailBottomHandle=wireResizeHandle($("#resizeDetailBottom"),"--detail-h",180,720,true,28,"y");
-const panelHandles=[sidebarHandle,detailRightHandle].filter(Boolean);
 // Focus mode collapses the panels flanking the graph. Which detail handle
 // that is depends on the placement, and the placement can change without a
-// reload — so this is resolved per press rather than baked into the array
-// above (which stays sidebar-first for the ⌘⇧F handler that indexes it).
+// reload — so this is resolved per press rather than baked into a static array.
 function activePanelHandles(){
   const bottom=document.documentElement.getAttribute("data-detail-placement")==="bottom";
   return [sidebarHandle,bottom?detailBottomHandle:detailRightHandle].filter(Boolean);
@@ -2170,19 +2168,6 @@ function toggleFocusMode(){
 document.addEventListener("keydown",e=>{
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.code==="Backslash"&&!e.target.closest("input,textarea,[contenteditable=true]")){
     e.preventDefault(); toggleFocusMode();
-  }
-});
-// ⌘⇧F / Ctrl+Shift+F — jump to the sidebar's "Filter refs" search. (Plain ⌘F is
-// Search Code — the codesearch island owns it.) Expands the sidebar first if
-// it's collapsed (panelHandles[0] is the sidebar), then focuses + selects the
-// input on the next frame (so it's visible before focus() runs).
-function focusRefFilter(){
-  panelHandles[0]?.expand?.();
-  requestAnimationFrame(()=>{ const el=$("#refFilter"); if(el){ el.focus(); el.select&&el.select(); } });
-}
-document.addEventListener("keydown",e=>{
-  if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.shiftKey&&e.key.toLowerCase()==="f"&&!e.target.closest("input,textarea,[contenteditable=true]")){
-    e.preventDefault(); focusRefFilter();
   }
 });
 // ⌘⇧U / Ctrl+Shift+U — jump straight to the working tree (the "Uncommitted

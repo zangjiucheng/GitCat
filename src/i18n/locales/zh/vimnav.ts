@@ -14,7 +14,7 @@ export default {
 
   palette: "命令面板(提交、引用、操作)",
   search_code: "搜索代码(在文件内容里查找)",
-  filter_refs: "过滤引用(聚焦侧栏的引用搜索框)",
+  pickaxe: "搜索提交内容(pickaxe — 查找 diff 中改动过某字符串的提交)",
   fetch: "获取(从远程下载)",
   pull: "拉取",
   push: "推送",

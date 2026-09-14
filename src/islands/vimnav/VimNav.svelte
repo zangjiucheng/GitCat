@@ -27,7 +27,7 @@
           <div class="pl-kv">
             <div><span class="mono">/</span> or <span class="mono">⌘K</span> &#8212; {t("vimnav.palette")}</div>
             <div><span class="mono">⌘F</span> &#8212; {t("vimnav.search_code")}</div>
-            <div><span class="mono">⌘⇧F</span> &#8212; {t("vimnav.filter_refs")}</div>
+            <div><span class="mono">⌘⇧F</span> &#8212; {t("vimnav.pickaxe")}</div>
           </div>
           <h4 class="d-lab" style="margin-top:14px">{t("vimnav.sec_sync")}</h4>
           <div class="pl-kv">

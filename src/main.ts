@@ -572,6 +572,35 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
+// @keymap-owns search.pickaxe
+// ⌘⇧F / Ctrl+Shift+F — Search Commit Content (pickaxe). The native menu owns
+// this accelerator too (menu.rs -> "pickaxe-search"), but there is no native
+// menu at all under `vite dev`, so without this fallback the chord is dead in
+// development and in every Playwright run. Same idempotent-double-fire
+// reasoning as ⌘, and ⌘O below: pickaxeSearchCtrl.show() sets repo + open and
+// deliberately does not reset the form, so a Windows/Linux double-fire is
+// invisible.
+//
+// This chord USED to ALSO be bound to legacy's focusRefFilter(), which meant
+// three different behaviours on three platforms: macOS took the native
+// accelerator and got pickaxe (while the sidebar silently stole focus behind
+// the modal), Windows/Linux got both, and the dev server got only the ref
+// filter. That listener is deleted; see #144.
+window.addEventListener("keydown", (e) => {
+  if (
+    (e.metaKey || e.ctrlKey) &&
+    !e.altKey &&
+    e.shiftKey &&
+    e.code === "KeyF" &&
+    !(e.target as HTMLElement | null)?.closest("input,textarea,[contenteditable=true]")
+  ) {
+    const repo = bridge.CUR_REPO as unknown as string | null;
+    if (!repo) return;
+    e.preventDefault();
+    pickaxeSearchCtrl.show(repo);
+  }
+});
+
 // @keymap-owns repo.open
 // Same story for ⌘/Ctrl+O (open the repositories dashboard). The native
 // accelerator (menu.rs → "open-repo") fires reliably on macOS, but on Windows

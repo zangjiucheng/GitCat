@@ -67,6 +67,19 @@ export const BINDINGS: readonly Binding[] = [
     owns: "CodeSearch.svelte:17 onKeydown (wired at :34)",
   },
 
+  {
+    id: "search.pickaxe",
+    chords: [ACCELERATORS["pickaxe-search"]],
+    scope: "global",
+    when: ["repoOpen", "notTextInput"],
+    dispatch: "both", // menu.rs:160 + the new main.ts fallback added in commit E
+    menu: { id: "pickaxe-search" },
+    labelKey: "menu.pickaxe_search",
+    help: { section: "search", order: 20 },
+    mode: "shadow",
+    owns: "src/main.ts pickaxe ⌘⇧F fallback listener",
+  },
+
   // ── app chrome ─────────────────────────────────────────────────────────
   {
     id: "app.settings",

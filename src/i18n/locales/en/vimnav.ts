@@ -14,7 +14,7 @@ export default {
 
   palette: "command palette (commits, refs, actions)",
   search_code: "search code (find in file contents)",
-  filter_refs: "filter refs (focus the sidebar's ref search)",
+  pickaxe: "search commit content (pickaxe — find commits whose diff touched a string)",
   fetch: "fetch (download from the remote)",
   pull: "pull",
   push: "push",

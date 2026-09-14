@@ -14,6 +14,7 @@ remote.pull  global  MS|code:KeyL  js  shadow  -  -  -  -  notTextInput  -  vimn
 remote.push  global  MS|code:KeyP  js  shadow  -  -  destructive  -  notTextInput  -  vimnav.push
 repo.open  global  M|code:KeyO  both  shadow  -  -  -  -  notTextInput  open-repo  menu.open_repo
 search.code  global  M|code:KeyF  both  shadow  -  -  -  -  repoOpen,notTextInputOrSelect,noScrimOpen  code-search  vimnav.search_code
+search.pickaxe  global  MS|code:KeyF  both  shadow  -  -  -  -  repoOpen,notTextInput  pickaxe-search  menu.pickaxe_search
 terminal.toggle  global  M|code:Backquote  accelerator  live  -  toggle  -  -  -  open-terminal  menu.open_terminal
 view.focusMode  global  M|code:Backslash MS|code:Backslash  js  shadow  -  toggle  -  -  notTextInput  -  vimnav.focus_mode
 window.new  global  M|code:KeyN  accelerator  live  -  -  -  -  -  new-window  menu.new_window
