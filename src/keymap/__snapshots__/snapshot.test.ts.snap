@@ -10,9 +10,9 @@ nav.head  global  MS|code:KeyH  js  shadow  -  -  -  -  notTextInput  -  vimnav.
 nav.uncommitted  global  MS|code:KeyU  js  shadow  -  -  -  -  notTextInput  -  vimnav.jump_uncommitted
 palette.slash  global  |key:/  js  shadow  always  toggle  -  -  notTextInputOrSelect,noScrimOpen  -  vimnav.palette
 palette.toggle  global  M|code:KeyK MS|code:KeyK  js  shadow  always  toggle  -  allowInTextInput  notInTerminal,noScrimOpen  -  vimnav.palette
-pane.detail  global  M|code:Digit3  js  live  -  -  -  -  notTextInput  -  vimnav.pane_detail
-pane.graph  global  M|code:Digit1  js  live  -  -  -  -  notTextInput  -  vimnav.pane_graph
-pane.sidebar  global  M|code:Digit2  js  live  -  -  -  -  notTextInput  -  vimnav.pane_sidebar
+pane.detail  global  M|code:Digit3  js  live  -  -  -  allowInTextInput  -  -  vimnav.pane_detail
+pane.graph  global  M|code:Digit1  js  live  -  -  -  allowInTextInput  -  -  vimnav.pane_graph
+pane.sidebar  global  M|code:Digit2  js  live  -  -  -  allowInTextInput  -  -  vimnav.pane_sidebar
 remote.fetch  global  MS|code:KeyD  js  shadow  -  -  -  -  notTextInput  -  vimnav.fetch
 remote.pull  global  MS|code:KeyL  js  shadow  -  -  -  -  notTextInput  -  vimnav.pull
 remote.push  global  MS|code:KeyP  js  shadow  -  -  destructive  -  notTextInput  -  vimnav.push

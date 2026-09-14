@@ -206,7 +206,12 @@ export const BINDINGS: readonly Binding[] = [
     id: "pane.graph",
     chords: ["Mod+Digit1"],
     scope: "global",
-    when: ["notTextInput"],
+    // Works from inside a text field, and has to: focusPane lands on the pane's
+    // first real control, which for the sidebar is the ref filter INPUT. With
+    // the usual text guard, focus that entered a field could never leave by
+    // keyboard — the chord that exists to move between panes would be the one
+    // thing a field swallows.
+    allowInTextInput: true,
     dispatch: "js",
     labelKey: "vimnav.pane_graph",
     help: { section: "view", order: 1 },
@@ -216,7 +221,12 @@ export const BINDINGS: readonly Binding[] = [
     id: "pane.sidebar",
     chords: ["Mod+Digit2"],
     scope: "global",
-    when: ["notTextInput"],
+    // Works from inside a text field, and has to: focusPane lands on the pane's
+    // first real control, which for the sidebar is the ref filter INPUT. With
+    // the usual text guard, focus that entered a field could never leave by
+    // keyboard — the chord that exists to move between panes would be the one
+    // thing a field swallows.
+    allowInTextInput: true,
     dispatch: "js",
     labelKey: "vimnav.pane_sidebar",
     help: { section: "view", order: 2 },
@@ -226,7 +236,12 @@ export const BINDINGS: readonly Binding[] = [
     id: "pane.detail",
     chords: ["Mod+Digit3"],
     scope: "global",
-    when: ["notTextInput"],
+    // Works from inside a text field, and has to: focusPane lands on the pane's
+    // first real control, which for the sidebar is the ref filter INPUT. With
+    // the usual text guard, focus that entered a field could never leave by
+    // keyboard — the chord that exists to move between panes would be the one
+    // thing a field swallows.
+    allowInTextInput: true,
     dispatch: "js",
     labelKey: "vimnav.pane_detail",
     help: { section: "view", order: 3 },

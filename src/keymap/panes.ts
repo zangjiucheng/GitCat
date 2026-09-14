@@ -24,6 +24,7 @@
 // graph, which is where those keys live today.
 
 import type { ScopeId } from "./scopes.ts";
+import { focusablesIn } from "./focus.ts";
 
 /** Marks a pane root in index.html. Three of them; see PANES below. */
 export const PANE_ATTR = "data-pane";
@@ -71,9 +72,16 @@ export function activePaneScope(doc: Document = document): ScopeId {
 export function focusPane(name: string, doc: Document = document): boolean {
   const root = doc.querySelector<HTMLElement>(`[${PANE_ATTR}="${name}"]`);
   if (!root) return false;
-  // Prefer something already focusable inside the pane so the ring lands on a
-  // real control; fall back to the root, which carries tabindex="-1".
-  const inner = root.querySelector<HTMLElement>('[tabindex="0"]:not([disabled])');
+  // focusablesIn, NOT a raw [tabindex="0"] query. The raw query returns the
+  // first tabbable DESCENDANT, and #detail's is #resizeDetail — its own resize
+  // handle — so ⌘3 focused the splitter rather than the panel's content. Worse,
+  // that handle is display:none in the bottom placement, so focus() was a
+  // silent no-op while the chord still counted as handled. focusablesIn filters
+  // hidden nodes (a collapsed pane, a closed <details>) for exactly this.
+  //
+  // Resize handles are skipped outright: they are chrome for sizing the pane,
+  // never a place a "go to this pane" chord should land.
+  const inner = focusablesIn(root).find((el) => !el.classList.contains("resize-handle"));
   (inner ?? root).focus();
   return true;
 }

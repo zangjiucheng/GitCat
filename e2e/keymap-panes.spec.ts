@@ -20,12 +20,24 @@ const paneOf = (page: Page) =>
     return root?.getAttribute("data-pane") ?? "(none)";
   });
 
+/**
+ * Is the ring actually PAINTED, not merely declared?
+ *
+ * The first version of this read getComputedStyle(pane).boxShadow, which was
+ * set while an inset shadow sat underneath a full-bleed canvas and nothing was
+ * visible. This reads the ::after overlay that draws it and checks it covers
+ * the pane and sits above the content — the properties that make it visible.
+ */
 const ringOn = (page: Page, pane: string) =>
   page.evaluate((p) => {
     const el = document.querySelector(`[data-pane="${p}"]`);
     if (!el) return false;
-    const shadow = getComputedStyle(el).boxShadow;
-    return shadow !== "none" && shadow !== "";
+    const cs = getComputedStyle(el, "::after");
+    if (cs.content === "none") return false;
+    const shadow = cs.boxShadow;
+    if (!shadow || shadow === "none") return false;
+    // An overlay that is not on top of the pane's content is not a ring.
+    return Number(cs.zIndex) > 0 && cs.pointerEvents === "none";
   }, pane);
 
 test.beforeEach(async ({ page }) => {
@@ -39,6 +51,25 @@ test("all three pane roots exist and are programmatically focusable", async ({ p
   }
   // And there is no fourth: Workdir renders inside #detail.
   expect(await page.locator("[data-pane]").count()).toBe(3);
+});
+
+test("⌘3 lands on the panel's content, not on its resize handle", async ({ page }) => {
+  // #detail's first tabbable descendant IS #resizeDetail. A raw
+  // [tabindex="0"] query therefore focused the splitter — and in the bottom
+  // placement that handle is display:none, so focus() was a silent no-op while
+  // the chord still counted as handled.
+  await page.keyboard.press("Control+Digit3");
+  const landed = await page.evaluate(() => {
+    const el = document.activeElement as HTMLElement | null;
+    return {
+      inDetail: !!el?.closest('[data-pane="detail"]'),
+      onHandle: !!el?.classList.contains("resize-handle"),
+      visible: !!el && (el.offsetParent !== null || el.getClientRects().length > 0),
+    };
+  });
+  expect(landed.inDetail).toBe(true);
+  expect(landed.onHandle).toBe(false);
+  expect(landed.visible).toBe(true);
 });
 
 test("⌘1 / ⌘2 / ⌘3 move focus between the panes", async ({ page }) => {
@@ -91,22 +122,39 @@ test("focus outside every pane resolves to the graph, not to nothing", async ({ 
   expect(doubles).toEqual([]);
 });
 
-test("a chord in a text field does not steal focus to a pane", async ({ page }) => {
-  await page.keyboard.press("Control+k");
-  await expect(page.locator("#cmdk")).toHaveClass(/\bon\b/);
-  const input = page.locator("#cmdk input").first();
-  await input.click();
-
+// This test used to assert the opposite, and the opposite was a trap: focusPane
+// lands on the pane's first real control, which for the sidebar is the ref
+// filter INPUT — so with a text guard, focus that entered a field could never
+// leave by keyboard.
+test("a pane chord works from inside a text field — that is how you leave one", async ({ page }) => {
   await page.keyboard.press("Control+Digit2");
-  // notTextInput guard: the pane chord must not fire from inside the palette's
-  // own search field.
-  expect(await page.evaluate(() => !!document.activeElement?.closest("#cmdk"))).toBe(true);
+  const inField = await page.evaluate(() => document.activeElement?.tagName === "INPUT");
+
+  await page.keyboard.press("Control+Digit1");
+  expect(await paneOf(page)).toBe("graph");
+
+  // Worth stating what this test is really about: the sidebar's first control
+  // being an input is what made the old behaviour a trap rather than a nicety.
+  expect(inField, "the sidebar no longer focuses an input — re-check this test's premise").toBe(true);
+});
+
+test("a pane chord from the sidebar filter still leaves the sidebar", async ({ page }) => {
+  await page.keyboard.press("Control+Digit2");
+  await page.locator("#refFilter").focus();
+  await expect(page.locator("#refFilter")).toBeFocused();
+
+  await page.keyboard.press("Control+Digit3");
+  expect(await paneOf(page)).toBe("detail");
 });
 
 test("the pane scope sits below a pushed modal scope", async ({ page }) => {
   await page.keyboard.press("Control+Digit2");
   expect(await paneOf(page)).toBe("sidebar");
 
+  // Off the ref filter first: ⌘, carries a text-input guard of its own, and it
+  // is deliberate — legacy/main.ts added it so a stray Ctrl+, mid-edit cannot
+  // pop Settings. ⌘2 now lands on that input, so the test has to step out.
+  await page.locator('[data-pane="sidebar"] [tabindex="0"]').first().focus();
   await page.keyboard.press("Control+Comma");
   await expect(page.locator(".scrim:has(.modal.settings)")).toHaveClass(/\bon\b/);
 

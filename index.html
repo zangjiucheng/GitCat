@@ -69,7 +69,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    dispatcher falls back to the graph there, which is where those keys live
    today, and a ring on a pane the user has not focused would be a lie. */
 [data-pane]{position:relative}
-[data-pane]:focus-within{box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent)}
+/* Painted by a pseudo-element on TOP of the pane's content, not by an inset
+   box-shadow on the pane itself. An inset shadow paints beneath descendants,
+   and #cv is position:absolute;inset:0 over the whole graph pane — so the ring
+   was completely invisible there, on the one pane that is also the dispatcher's
+   fallback when focus is anywhere unremarkable. pointer-events:none so it never
+   intercepts a click on the canvas underneath. */
+[data-pane]:focus-within::after{content:"";position:absolute;inset:0;z-index:5;pointer-events:none;
+  box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent)}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:8px;border:2px solid transparent;background-clip:content-box}
 ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
