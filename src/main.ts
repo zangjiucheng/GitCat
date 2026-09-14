@@ -79,6 +79,7 @@ import ContextMenu from "./islands/contextmenu/ContextMenu.svelte";
 import { keymap } from "./keymap/registry.ts";
 import { BINDINGS } from "./keymap/bindings.ts";
 import { GUARDS } from "./keymap/guards.ts";
+import { defineScopes } from "./keymap/scopedefs.ts";
 
 // Keyboard table. Registered here rather than in keymap/boot.ts because
 // bindings.ts -> guards.ts -> legacy/bridge, so it can only load after the
@@ -88,6 +89,9 @@ import { GUARDS } from "./keymap/guards.ts";
 //
 // Every binding is mode:"shadow" in this PR: matched, counted, never run.
 keymap.register(BINDINGS, GUARDS);
+// Scope CONTRACTS (rank, modality, Escape policy) — declared before any island
+// can push one. See keymap/scopedefs.ts for why this is not a default.
+defineScopes();
 
 // Shared right-click menu. Mounted first because every other island can
 // open it, and it renders nothing until one does. Surfaces call

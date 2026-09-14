@@ -5,6 +5,7 @@ exports[`the keymap table matches its committed snapshot 1`] = `
 branch.new  global  MS|code:KeyN  accelerator  live  -  -  -  -  -  new-branch  menu.new_branch
 edit.redoUnsupported  global  MS|code:KeyZ  js  shadow  -  -  -  -  notTextInput  -  legacy.redo_unsupported
 edit.undo  global  M|code:KeyZ  js  shadow  -  -  destructive  -  notTextInput  -  vimnav.undo
+modal.close  modal  |key:Escape  js  live  -  -  -  -  -  -  vimnav.esc
 nav.head  global  MS|code:KeyH  js  shadow  -  -  -  -  notTextInput  -  vimnav.jump_head
 nav.uncommitted  global  MS|code:KeyU  js  shadow  -  -  -  -  notTextInput  -  vimnav.jump_uncommitted
 palette.slash  global  |key:/  js  shadow  always  toggle  -  -  notTextInputOrSelect,noScrimOpen  -  vimnav.palette

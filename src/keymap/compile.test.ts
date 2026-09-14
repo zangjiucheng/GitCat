@@ -47,20 +47,38 @@ describe("the real table compiles", () => {
     }
   });
 
-  it("ships entirely in shadow mode except the accelerator-only rows", () => {
-    // The property that makes PR 1 inert. A row with a JS side that is NOT
-    // shadow would run, so this is the assertion that has to fail first if
-    // someone flips a binding live without meaning to.
+  // The LIVE set, enumerated. Every other JS row must still be shadow, so
+  // flipping one live is a visible decision in this list rather than a quiet
+  // property change in a 300-line table. PR 1 shipped this list empty.
+  const LIVE = ["modal.close"];
+
+  it("keeps every JS binding in shadow mode except the enumerated live ones", () => {
     for (const x of BINDINGS) {
       if (x.dispatch === "accelerator") expect(x.mode, x.id).toBeUndefined();
+      else if (LIVE.includes(x.id)) expect(x.mode, x.id).toBeUndefined();
       else expect(x.mode, x.id).toBe("shadow");
     }
   });
 
-  it("gives every shadow binding a run() of undefined", () => {
+  it("gives every shadow binding a run() of undefined, and every live one a run()", () => {
     // A shadow run() is unreachable by construction; leaving one defined would
-    // be a loaded gun for whoever flips the row.
-    for (const x of BINDINGS) expect(x.run, x.id).toBeUndefined();
+    // be a loaded gun for whoever flips the row. The converse matters too: a
+    // live binding with no run() silently swallows its chord (see
+    // dispatch.test.ts's "a live binding with no run() still claims the key").
+    for (const x of BINDINGS) {
+      if (x.mode === "shadow") expect(x.run, x.id).toBeUndefined();
+      else if (x.dispatch !== "accelerator") expect(typeof x.run, x.id).toBe("function");
+    }
+  });
+
+  it("pairs every live JS binding with a scope that can actually be pushed", () => {
+    // A live binding in a scope nothing ever pushes is dead weight that reads
+    // as working.
+    for (const id of LIVE) {
+      const x = BINDINGS.find((y) => y.id === id)!;
+      expect(x, id).toBeTruthy();
+      expect(x.scope, id).not.toBe("global");
+    }
   });
 });
 

@@ -8,7 +8,8 @@
 import type { Platform } from "./chord.ts";
 import { compile, dumpKeymap } from "./compile.ts";
 import { dispatch as pureDispatch } from "./dispatch.ts";
-import type { ScopeHandle, ScopeId, ScopeSpec } from "./scopes.ts";
+import type { ScopeHandle, ScopeId, ScopeOpts, ScopeSpec } from "./scopes.ts";
+import { focusInto, restoreFocus, saveFocus, trapTab } from "./focus.ts";
 import type { Binding, GuardTable, Tables } from "./types.ts";
 import { claim } from "./claim.ts";
 
@@ -43,6 +44,8 @@ class Keymap {
   private stack: ScopeId[] = ["global"];
   private tokens: number[] = [0];
   private nextToken = 1;
+  /** token -> the activation's options and the node that had focus at push. */
+  private actives = new Map<number, { opts: ScopeOpts; saved: HTMLElement | null }>();
   private readonly platform: Platform = detectPlatform();
   readonly fires: Record<string, number> = {};
   readonly shadow: Record<string, number> = {};
@@ -71,14 +74,21 @@ class Keymap {
    * against the scope underneath. lazyisland.svelte.ts:8-11 states the
    * invariant that makes controller-side registration safe.
    */
-  pushScope(id: ScopeId): ScopeHandle {
+  pushScope(id: ScopeId, opts: ScopeOpts = {}): ScopeHandle {
     const spec = this.specs.get(id);
     if (!spec) throw new Error(`keymap: scope "${id}" was never defineScope()d`);
     const token = this.nextToken++;
+    // Focus is saved BEFORE anything moves it, and restored on release only if
+    // the saved node is still connected and visible — see focus.ts.
+    this.actives.set(token, {
+      opts,
+      saved: opts.restoreFocus === false ? null : saveFocus(),
+    });
     let i = this.stack.length;
     while (i > 0 && (this.specs.get(this.stack[i - 1])?.rank ?? 0) > spec.rank) i--;
     this.stack.splice(i, 0, id);
     this.tokens.splice(i, 0, token);
+    if (opts.el && opts.autoFocus !== false) focusInto(opts.el);
     let released = false;
     return {
       id, token,
@@ -87,12 +97,54 @@ class Keymap {
         released = true;
         const k = this.tokens.indexOf(token);
         if (k >= 0) { this.stack.splice(k, 1); this.tokens.splice(k, 1); }
+        const a = this.actives.get(token);
+        this.actives.delete(token);
+        if (a) restoreFocus(a.saved);
       },
     };
   }
 
+  /**
+   * Run the topmost activation's onEscape. Returns false when no activation
+   * offers one, so the binding can decline and let the walk continue outward
+   * rather than swallowing Escape.
+   */
+  closeTopScope(): boolean {
+    for (let i = this.tokens.length - 1; i >= 0; i--) {
+      const a = this.actives.get(this.tokens[i]);
+      if (!a?.opts.onEscape) continue;
+      a.opts.onEscape();
+      return true;
+    }
+    return false;
+  }
+
+  /** The element of the topmost activation that wants the Tab trap, if any. */
+  private trapRoot(): HTMLElement | null {
+    for (let i = this.tokens.length - 1; i >= 0; i--) {
+      const a = this.actives.get(this.tokens[i]);
+      if (!a?.opts.el) continue;
+      // The first activation WITH an element decides, even if it declines the
+      // trap: a palette above a modal must hand Tab to the palette's own
+      // handler, not to the modal's trap underneath it.
+      return a.opts.trapTab === false ? null : a.opts.el;
+    }
+    return null;
+  }
+
   /** Called only by host.ts. Returns true iff the event was claimed. */
   handle(e: KeyboardEvent): boolean {
+    // Tab is not a chord: no binding can express "every focusable inside this
+    // element, in document order", so it is handled structurally, before the
+    // table. Still behind the same IME bail as everything else.
+    if (e.key === "Tab" && !e.isComposing && e.keyCode !== 229 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const root = this.trapRoot();
+      if (root && trapTab(e, root)) {
+        e.preventDefault();
+        claim(e);
+        return true;
+      }
+    }
     if (this.tables.size === 0) return false;
     const r = pureDispatch(e, this.stack, this.specs, this.tables, this.platform);
     for (let i = 0; i < r.shadowed.length; i++) {

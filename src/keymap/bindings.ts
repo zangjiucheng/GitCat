@@ -1,4 +1,5 @@
 import { ACCELERATORS } from "./accelerators.ts";
+import { keymap } from "./registry.ts";
 import type { Binding } from "./types.ts";
 
 // THE TABLE. PR 1 ships it ENTIRELY in mode:"shadow": the dispatcher matches,
@@ -172,6 +173,24 @@ export const BINDINGS: readonly Binding[] = [
     mode: "shadow", owns: "legacy/main.ts:2406" },
   // Claimed rather than left unbound — legacy/main.ts:2403-2405: "an unclaimed
   // chord is how the loose match crept back in". A tombstone, hence hidden.
+
+  // ── scopes ─────────────────────────────────────────────────────────────
+  // The first LIVE binding in the stack. Escape takes a dedicated path in
+  // dispatch.ts: top scope only, then stop — which is the whole fix for one
+  // Escape dismissing two layers (#129). Every island that pushes "modal"
+  // inherits it, so this single row replaces a `<svelte:window>` handler per
+  // island as each one migrates.
+  {
+    id: "modal.close",
+    chords: ["Escape"],
+    scope: "modal",
+    dispatch: "js",
+    labelKey: "vimnav.esc",
+    help: { section: "actions", order: 90 },
+    // Returning false when no activation offers an onEscape declines the key
+    // rather than swallowing it, so Escape keeps falling outward.
+    run: () => (keymap.closeTopScope() ? undefined : false),
+  },
 
   // ── accelerator-only. No JS side at all: `run` is absent and the dispatcher
   //    never reaches them (no listener exists to shadow). They are here so

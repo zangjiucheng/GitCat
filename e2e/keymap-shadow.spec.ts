@@ -59,13 +59,14 @@ test("the registry is loaded, populated and entirely in shadow mode", async ({ p
   expect(dump, "window.__keymap is missing — did boot.ts stop loading?").toBeTruthy();
   expect(dump!.bindings.length).toBeGreaterThan(10);
 
-  // Accelerator-only rows have no JS side to shadow; everything else must be
-  // shadow, or PR 1 is not inert.
-  const notShadow = dump!.bindings.filter((b) => b.mode !== "shadow").map((b) => b.id);
-  expect(notShadow.every((id) => /^(branch\.new|window\.new|terminal\.toggle)$/.test(id))).toBe(true);
-
-  // Nothing has run. Ever.
-  expect(Object.keys(dump!.fires)).toEqual([]);
+  // Everything is still shadow except two enumerated sets: the accelerator-only
+  // rows, which have no JS side to shadow, and the live bindings a later PR has
+  // deliberately flipped. Keeping this an explicit list rather than a predicate
+  // means flipping one more shows up as a diff here, which is the whole point.
+  const ACCELERATOR_ONLY = ["branch.new", "window.new", "terminal.toggle"];
+  const LIVE = ["modal.close"]; // the scope stack's Escape, added with scopes
+  const notShadow = dump!.bindings.filter((b) => b.mode !== "shadow").map((b) => b.id).sort();
+  expect(notShadow).toEqual([...ACCELERATOR_ONLY, ...LIVE].sort());
 });
 
 test("Ctrl+Z: the legacy undo still fires AND edit.undo shadows it", async ({ page }) => {
@@ -95,7 +96,12 @@ test("Ctrl+K and / both shadow the palette, and the palette still opens", async 
   // Closing the palette leaves focus on its own (now hidden) input, and "/" is
   // a real typed character — the guard is supposed to swallow it there. Move
   // focus out first, or this would test the guard instead of the chord.
-  await page.locator("canvas#cv").click({ position: { x: 20, y: 20 } });
+  const canvas = page.locator("canvas#cv");
+  await expect(canvas).toBeVisible();
+  await canvas.click({ position: { x: 20, y: 20 } });
+  await expect
+    .poll(() => page.evaluate(() => !document.activeElement?.closest("#cmdk")))
+    .toBe(true);
   await reset(page);
 
   await page.keyboard.press("Slash");

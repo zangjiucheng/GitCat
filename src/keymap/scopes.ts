@@ -43,6 +43,32 @@ export interface ScopeSpec {
   readonly owner?: string;
 }
 
+/**
+ * Per-ACTIVATION options, as opposed to ScopeSpec's per-scope ones. Two
+ * different modals both push scope "modal" but each brings its own element,
+ * so this is what pushScope takes and ScopeSpec is what defineScope takes.
+ */
+export interface ScopeOpts {
+  /** The scope's DOM root. Required for the Tab trap and for focusing into it;
+   *  omit only for a scope with no UI of its own. */
+  readonly el?: HTMLElement | null;
+  /** Confine Tab to `el` while this is the top scope. Default true when `el`
+   *  is given. Set false for a surface that owns Tab itself — the palette
+   *  cycles results with it, and the terminal must hand it to the shell. */
+  readonly trapTab?: boolean;
+  /** Move focus into `el` on push. Default true when `el` is given. */
+  readonly autoFocus?: boolean;
+  /** Give focus back to whatever had it, on release. Default true. */
+  readonly restoreFocus?: boolean;
+  /**
+   * How this activation closes. The table carries ONE `modal.close` binding
+   * for Escape; the activation supplies the behaviour, so migrating an island
+   * adds no table row and the close logic stays with the controller that owns
+   * the state. Omit for a scope Escape should pass through.
+   */
+  readonly onEscape?: () => void;
+}
+
 export interface ScopeHandle {
   readonly id: ScopeId;
   readonly token: number;
