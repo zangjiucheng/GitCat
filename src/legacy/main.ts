@@ -2181,6 +2181,10 @@ const detailBottomHandle=wireResizeHandle($("#resizeDetailBottom"),"--detail-h",
 // Focus mode collapses the panels flanking the graph. Which detail handle
 // that is depends on the placement, and the placement can change without a
 // reload — so this is resolved per press rather than baked into a static array.
+// Expand the sidebar if it is collapsed. The scoped `f` binding (#148) needs
+// it for the same reason the deleted focusRefFilter did: focusing an input
+// inside a collapsed panel moves focus somewhere the user cannot see.
+function expandSidebar(){ sidebarHandle?.expand?.(); }
 function activePanelHandles(){
   const bottom=document.documentElement.getAttribute("data-detail-placement")==="bottom";
   return [sidebarHandle,bottom?detailBottomHandle:detailRightHandle].filter(Boolean);
@@ -3779,4 +3783,4 @@ export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   // re-listed here, that would be a duplicate export.
   enterSubmodule, navigateToRepo,
   // Keyboard openers for surfaces that were pointer-only (see #144).
-  openCommitMenuForSelectedRow };
+  openCommitMenuForSelectedRow, expandSidebar };

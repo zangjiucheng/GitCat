@@ -514,6 +514,7 @@
             class="ref-item"
             class:busy={sidebarCtrl.busy}
             style="--depth:{row.depth}"
+            data-remote={r.name}
             role="button"
             tabindex="0"
             onclick={(e) => {

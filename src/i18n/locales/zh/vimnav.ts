@@ -1,6 +1,8 @@
 // 键盘快捷键帮助浮层(vim 风格导航)。只翻译说明文字,按键符号(⌘K、j、k…)
 // 保持原样。键会变成 `vimnav.<key>`。
 export default {
+  filter_refs_key: "聚焦引用过滤框",
+  checkout: "切换到当前分支(会先确认)",
   row_menu: "打开当前行的操作菜单",
   select_next: "选中下一个提交",
   select_prev: "选中上一个提交(最顶部会进入未提交区)",

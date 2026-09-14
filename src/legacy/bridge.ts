@@ -183,6 +183,9 @@ export {
   // can only work from a pointer's clientX/clientY. Ten commit operations hang
   // off that menu and had no keyboard opener at all (#144).
   openCommitMenuForSelectedRow,
+  // Expands the sidebar panel if collapsed — the scoped `f` binding focuses
+  // #refFilter, and an input inside a collapsed panel cannot be seen.
+  expandSidebar,
 } from "./main";
 
 // bisect canvas bridge: bisectCtrl (the real modal, src/islands/bisect) syncs

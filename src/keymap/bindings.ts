@@ -3,6 +3,7 @@ import { keymap } from "./registry.ts";
 import { focusPane } from "./panes.ts";
 import { workdirKeys } from "./actions/workdir.ts";
 import { canvasKeys } from "./actions/canvas.ts";
+import { sidebarKeys } from "./actions/sidebar.ts";
 import type { Binding } from "./types.ts";
 
 // THE TABLE. PR 1 ships it ENTIRELY in mode:"shadow": the dispatcher matches,
@@ -436,6 +437,41 @@ export const BINDINGS: readonly Binding[] = [
     // The graph scope sits at the bottom of the stack, so every open overlay
     // gets Escape first and this only runs when there is nothing else to close.
     run: () => canvasKeys.deselect(),
+  },
+
+  // ── sidebar ────────────────────────────────────────────────────────────
+  {
+    id: "sidebar.filter",
+    chords: ["f"],
+    scope: "sidebar",
+    dispatch: "js",
+    labelKey: "vimnav.filter_refs_key",
+    help: { section: "search", order: 30 },
+    // Restores the only keyboard route to #refFilter, which PR 1 removed with
+    // the duplicate ⌘⇧F binding (#148) — as a scoped letter rather than
+    // another ⌘⇧ chord, per rule 1.
+    run: () => sidebarKeys.focusFilter(),
+  },
+  {
+    id: "sidebar.menu",
+    chords: ["x", "Shift+F10"],
+    scope: "sidebar",
+    dispatch: "js",
+    labelKey: "vimnav.row_menu",
+    help: { section: "actions", order: 13 },
+    run: () => sidebarKeys.openMenu(),
+  },
+  {
+    id: "sidebar.checkout",
+    chords: ["c"],
+    scope: "sidebar",
+    dispatch: "js",
+    labelKey: "vimnav.checkout",
+    help: { section: "actions", order: 14 },
+    // Through openCheckoutConfirm, never checkout() — that dialog is what
+    // handles a dirty working tree, and a bare letter must not decide on the
+    // user's behalf what happens to uncommitted changes.
+    run: () => sidebarKeys.checkout(),
   },
 
   // ── accelerator-only. No JS side at all: `run` is absent and the dispatcher

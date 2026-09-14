@@ -1,6 +1,8 @@
 // Keyboard-shortcuts help overlay (vim-style nav). Only the descriptions are
 // translated; the key glyphs (⌘K, j, k, …) stay literal. Keys become `vimnav.<key>`.
 export default {
+  filter_refs_key: "focus the ref filter",
+  checkout: "check out the focused branch (asks first)",
   row_menu: "open the actions menu for the selected row",
   select_next: "select the next commit",
   select_prev: "select the previous commit (steps up into Uncommitted)",
