@@ -927,6 +927,18 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .who .dt{font-size:11px;color:var(--muted);margin-top:3px}
 .who .dt-abs{font-size:10px;color:var(--muted);opacity:.7;margin-top:1px}
 .who.differ{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--warning) 45%,transparent)}
+/* The children carry the container's OUTER corners themselves, rather than
+   relying on its overflow:hidden to cut them.
+   .who.differ's ring is an INSET box-shadow, which follows its own element's
+   border-box — square, while the container is rounded. Clipping then removed
+   exactly the four outer corners of that ring, so the "author ≠ committer"
+   highlight read as a box with its corners missing. Rounding the children to
+   match makes the ring follow the same shape it is drawn inside.
+   first/last rather than nth-child: `.who-split.single` (Plumbing's tag view)
+   holds ONE .who, where both rules apply and round all four corners, which is
+   what that one wants. */
+.who-split>.who:first-child{border-top-left-radius:var(--r-panel);border-bottom-left-radius:var(--r-panel)}
+.who-split>.who:last-child{border-top-right-radius:var(--r-panel);border-bottom-right-radius:var(--r-panel)}
 .refs-here{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
 .d-lab{margin:0 0 6px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
 /* Section-label row with right-aligned tree controls (Collapse/Expand-all) —
