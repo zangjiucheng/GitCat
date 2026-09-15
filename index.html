@@ -1482,8 +1482,25 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   display:flex;align-items:center;justify-content:center;padding:24px;
   opacity:0;visibility:hidden;transition:opacity .16s ease,visibility 0s linear .16s}
 .scrim.on{opacity:1;visibility:visible;transition:opacity .16s ease}
+/* max-height + flex column is a SAFETY NET, not decoration. .modal is
+   overflow:hidden and had no height of its own, so a modal that outgrew the
+   window was not scrolled off — it was CUT OFF, with no scrollbar and no key
+   that could reach what was missing. .modal.repofiles at a 400px-tall window
+   was 545px of modal with its header AND its footer off-screen, and nothing
+   scrolled; the "?" shortcut overlay hits the same wall once its list grows.
+
+   On the base rule rather than on a list of the modals that need it. Two
+   thirds of them already cap themselves one way or another, and an opt-in
+   list is a second source of truth that nothing checks — the same shape of
+   bug as a hand-written shortcut list that drifts from the real bindings. A
+   variant that wants different behaviour still overrides this: .modal.diffx
+   keeps its 88vh and its overflow:hidden body, and every
+   `.modal.X .modal-body{max-height:NNvh}` outranks the body rule below on
+   specificity. */
 .modal{width:min(560px,96vw);background:var(--panel);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow);overflow:hidden;
+  max-height:calc(100vh - 48px);display:flex;flex-direction:column;
   transform:translateY(10px) scale(.98);transition:transform .2s cubic-bezier(.2,.8,.2,1)}
+.modal>.modal-body{overflow:auto;min-height:0}
 .scrim.on .modal{transform:none}
 .modal.danger{border-color:color-mix(in srgb,var(--danger) 55%,var(--border));box-shadow:0 0 0 1px color-mix(in srgb,var(--danger) 30%,transparent),var(--shadow)}
 .modal-head{display:flex;align-items:center;gap:12px;padding:16px 18px;background:color-mix(in srgb,var(--danger) 10%,var(--panel));border-bottom:1px solid var(--border)}
