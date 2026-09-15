@@ -24,7 +24,7 @@ import type { Page } from "@playwright/test";
  * exactly as it did before, which is precisely why this was easy to miss and
  * annoying to watch.
  */
-async function watchWhile(page: Page, subject: string, act: () => Promise<void>) {
+async function watchWhile(page: Page, subject: string, file: string, act: () => Promise<void>) {
   await page.evaluate(() => {
     const w = window as unknown as { __flash: string[] };
     w.__flash = [];
@@ -39,6 +39,7 @@ async function watchWhile(page: Page, subject: string, act: () => Promise<void>)
   return {
     frames: frames.length,
     lostSubject: frames.filter((f) => !f.includes(subject)).length,
+    lostFile: frames.filter((f) => !f.includes(file)).length,
     showedLoading: frames.filter((f) => /loading…/.test(f)).length,
   };
 }
@@ -56,17 +57,27 @@ test("re-selecting the commit already on screen does not flash the panel", async
 
   await page.locator('#refLocal [data-branch="main"]').click();
   await expect(page.locator("#detail")).toContainText("Add the widget");
-  await expect(page.locator("#detail .file")).not.toHaveCount(0);
-  const filesBefore = await page.locator("#detail .file").allTextContents();
 
-  const seen = await watchWhile(page, "Add the widget", async () => {
+  // The Changes tab, explicitly. The panel opens on Commit, and the only
+  // `.file` rows in the DOM until Changes is opened belong to the expanded-
+  // diff modal's own hidden copy of the tree — asserting on those compares a
+  // hidden element with itself and passes no matter what the user sees.
+  const tabs = page.locator("#detail .d-tabs .d-tab");
+  await tabs.filter({ hasText: /changes/i }).click();
+  const files = page.locator("#detail .file:visible");
+  await expect(files).not.toHaveCount(0);
+  const filesBefore = await files.allTextContents();
+
+  const seen = await watchWhile(page, "Add the widget", "widget.ts", async () => {
     await page.locator('#refLocal [data-branch="main"]').click(); // same sha
   });
 
   expect(seen.showedLoading, 'the panel flashed "loading…"').toBe(0);
   expect(seen.lostSubject, "the panel went blank mid-refresh").toBe(0);
-  // And it is still the same panel afterwards, not a rebuilt one.
-  expect(await page.locator("#detail .file").allTextContents()).toEqual(filesBefore);
+  expect(seen.lostFile, "the file tree emptied mid-refresh").toBe(0);
+  // And it is still the same tree afterwards, not a rebuilt one.
+  await expect(files).not.toHaveCount(0);
+  expect(await files.allTextContents()).toEqual(filesBefore);
 });
 
 test("switching to a different commit still loads it", async ({ page, repo }) => {
