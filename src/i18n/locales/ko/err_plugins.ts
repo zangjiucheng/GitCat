@@ -52,6 +52,8 @@ export default {
   manifest_too_large: "플러그인 매니페스트 {path}이(가) 너무 커요({bytes}바이트; 제한은 {limit}바이트예요).",
   manifest_too_large_limit: "플러그인 매니페스트 {path}이(가) 너무 커요(제한 {limit}바이트).",
   manifest_invalid: "{path}은(는) 유효한 플러그인 매니페스트가 아니에요: {detail}",
+  manifest_unknown_keys:
+    "플러그인 매니페스트 {path}에 GitCat이 이해하지 못하는 키가 있어요: {keys}. 철자를 확인해 주세요 — 더 새로운 GitCat용으로 작성된 플러그인이라면 GitCat을 업데이트한 뒤 다시 설치해 주세요.",
 
   // plugin_registry.rs — 설치 / 활성화 / 제거 / 스킨 조회
   already_installed: "id가 {id}인 플러그인이 이미 설치되어 있어요.",
