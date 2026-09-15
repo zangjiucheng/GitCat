@@ -66,6 +66,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::load_graph,
         compare::commit_range_summary, // #49: two-commit compare (merge-base + ahead/behind + net delta + capped chain)
+        compare::commit_range_diff,    // #49: the same range's actual per-file diff, on demand
         // Incremental graph refresh — the cheap snapshot + ancestor recompute
         // that let `reloadGraph` skip a full history re-walk when the commit
         // DAG is unchanged (checkout, branch/tag CRUD, staging).

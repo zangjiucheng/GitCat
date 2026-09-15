@@ -122,16 +122,97 @@ test("the arrows do not move the graph selection behind an open popover", async 
   // the selection underneath it — so dismissing the menu left you somewhere
   // else entirely.
   const box = await ready(page);
+  // Select row 2 first so there is a selection to witness, then open the menu
+  // on it. The DETAIL PANEL is the witness, not a second right-click at the
+  // same screen position: the arrows still SCROLL the canvas (the legacy cv
+  // keydown handler, which predates the keymap and takes over the moment the
+  // binding declines), so the same coordinates stop meaning the same row.
+  // Scrolling behind a popover is odd but harmless; silently retargeting the
+  // selection is the bug this guard exists for.
+  await page.mouse.click(box.x + ROW_X, rowY(box.y, 2));
+  const selected = await page.locator("#detail .d-subject").innerText();
+
   await page.mouse.click(box.x + ROW_X, rowY(box.y, 2), { button: "right" });
   await expect(menu(page)).toBeVisible();
-  const before = await menu(page).locator(".cm-head .sha").innerText();
 
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Escape");
 
-  // Re-open on the same row: if the arrows had moved the selection, the menu
-  // would now be keyed to a different commit.
+  await expect(page.locator("#detail .d-subject"), "the arrows retargeted the selection behind the menu").toHaveText(
+    selected,
+  );
+});
+
+// -- the full diff, not just the totals --------------------------------------
+
+const diffModal = (page: Page) => page.locator(".modal.diffx.rs-diffx");
+
+async function openCompare(page: Page, box: { x: number; y: number }) {
+  await page.mouse.click(box.x + ROW_X, rowY(box.y, 0));
   await page.mouse.click(box.x + ROW_X, rowY(box.y, 2), { button: "right" });
-  await expect(menu(page).locator(".cm-head .sha")).toHaveText(before);
+  await compareItem(page).click();
+  await expect(popover(page)).toBeVisible();
+}
+
+test("the popover opens the actual diff, not just the numbers", async ({ page }) => {
+  // The summary answers "how much"; this is the "what". Counting on the
+  // backend being right is not enough — the last time this feature shipped,
+  // the backend was correct and the entry point did not work at all.
+  const box = await ready(page);
+  await openCompare(page, box);
+
+  await popover(page).getByRole("button", { name: /view diff/i }).click();
+  await expect(diffModal(page)).toBeVisible();
+  await expect(popover(page), "the popover should step aside").toBeHidden();
+
+  // A file list, and real diff lines for the selected file.
+  await expect(diffModal(page).locator(".diffx-files .file").first()).toBeVisible();
+  await expect(diffModal(page).locator(".diffview .diff-line").first()).toBeVisible();
+  // Added and removed lines are distinguishable, which is the whole point of
+  // showing the diff rather than a count.
+  await expect(diffModal(page).locator(".diffview .diff-line.add").first()).toBeVisible();
+  await expect(diffModal(page).locator(".diffview .diff-line.del").first()).toBeVisible();
+});
+
+test("the diff modal names the same endpoints the popover did", async ({ page }) => {
+  // Two separate backend calls order the pair independently; if they ever
+  // disagree the popover would say "+2 −1" over a diff reading the other way.
+  const box = await ready(page);
+  await openCompare(page, box);
+  const endpoints = (await popover(page).locator(".cm-head .sha").innerText()).replace(/\s+/g, "");
+
+  await popover(page).getByRole("button", { name: /view diff/i }).click();
+  const head = (await diffModal(page).locator(".diffx-head-main p").innerText()).replace(/\s+/g, "");
+  for (const sha of endpoints.split("…")) {
+    expect(head, `the modal lost endpoint ${sha}`).toContain(sha);
+  }
+});
+
+test("Escape steps back from the diff to the graph, one level at a time", async ({ page }) => {
+  const box = await ready(page);
+  await openCompare(page, box);
+  await popover(page).getByRole("button", { name: /view diff/i }).click();
+  await expect(diffModal(page)).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(diffModal(page)).toBeHidden();
+  // …and does not leave the popover stranded behind it.
+  await expect(popover(page)).toBeHidden();
+});
+
+test("clicking a file in the modal shows that file's hunks", async ({ page }) => {
+  const box = await ready(page);
+  await openCompare(page, box);
+  await popover(page).getByRole("button", { name: /view diff/i }).click();
+
+  const files = diffModal(page).locator(".diffx-files .file");
+  await expect(files.first()).toHaveClass(/\bactive\b/);
+  const count = await files.count();
+  if (count > 1) {
+    await files.nth(1).click();
+    await expect(files.nth(1)).toHaveClass(/\bactive\b/);
+    await expect(files.first()).not.toHaveClass(/\bactive\b/);
+  }
+  await expect(diffModal(page).locator(".diffview .diff-line").first()).toBeVisible();
 });

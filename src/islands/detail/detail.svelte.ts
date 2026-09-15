@@ -26,6 +26,7 @@ import { copyToClipboard } from "../../legacy/clipboard.ts";
 import { contextMenuCtrl } from "../contextmenu/contextmenu.svelte.ts";
 import { filePathMenuItems } from "../contextmenu/fileitems.ts";
 import { dirPathMenuItems } from "../contextmenu/diritems.ts";
+import { buildDiffRows } from "./diffrows.ts";
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
@@ -479,20 +480,9 @@ class DetailState {
         this.diffRows = [{ kind: "note", text: "binary file — not shown" }];
         return;
       }
-      let n1 = 0,
-        n2 = 0;
-      const rows: DiffRow[] = [];
-      d.lines.forEach(([mk, txt]) => {
-        if (mk === "@@") {
-          rows.push({ kind: "hunk", text: txt });
-          return;
-        }
-        const cls = mk === "+" ? "add" : mk === "-" ? "del" : "";
-        const ln = mk === "+" ? n2++ : mk === "-" ? n1++ : (n1++, n2++);
-        rows.push({ kind: "line", ln, mk: mk === "+" || mk === "-" ? mk : "", cls, html: bridge.highlight(txt, d.lang) });
-      });
-      if (d.truncated) rows.push({ kind: "note", text: "… diff truncated (file capped)" });
-      this.diffRows = rows;
+      // Shared with the two-commit compare (#49) — see diffrows.ts for why the
+      // line numbering in particular is not duplicated.
+      this.diffRows = buildDiffRows(d);
     } finally {
       this.diffLoading = false;
     }

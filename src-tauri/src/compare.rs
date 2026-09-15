@@ -195,3 +195,77 @@ pub fn commit_range_summary_inner(path: &str, a: &str, b: &str) -> Result<RangeS
         truncated,
     })
 }
+
+/// The actual diff between the two endpoints, not just its totals.
+///
+/// Same `FileChange` rows a commit's own detail panel renders — produced by the
+/// SAME [`crate::commands::diff_trees`], which was extracted from
+/// `commit_detail_inner` for this. A second copy of that loop (rename/copy
+/// detection, binary handling, the per-file and whole-diff caps) would have
+/// drifted from the original one fix at a time.
+#[derive(Serialize, specta::Type, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RangeDiff {
+    /// Short shas, ORDERED the same way [`RangeSummary`] orders them, so the
+    /// diff reads forwards in time regardless of which endpoint was clicked.
+    pub from: String,
+    pub to: String,
+    pub files_changed: u32,
+    pub additions: u32,
+    pub deletions: u32,
+    /// Capped like a commit's own detail is; the frontend says so when set.
+    pub truncated: bool,
+    pub file_tree: Vec<crate::model::FileChange>,
+}
+
+/// The full diff between two commits. Read-only.
+///
+/// Split from [`commit_range_summary`] rather than folded into it: the summary
+/// opens a popover on every compare and wants to be cheap (one `Diff::stats`,
+/// no per-file patches), while this builds a `Patch` per file and is only
+/// asked for when the user actually opens the diff.
+///
+/// JS: `commands.commitRangeDiff(path, a, b)` -> `Result<RangeDiff, string>`.
+#[tauri::command]
+#[specta::specta]
+pub async fn commit_range_diff(path: String, a: String, b: String) -> Result<RangeDiff, String> {
+    crate::blocking::run_blocking(move || commit_range_diff_inner(&path, &a, &b)).await
+}
+
+/// `pub` for the integration suite, same reason as [`commit_range_summary_inner`].
+pub fn commit_range_diff_inner(path: &str, a: &str, b: &str) -> Result<RangeDiff, String> {
+    let repo = crate::trust::open_repo(path)
+        .map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))?;
+    let find = |rev: &str| {
+        repo.find_commit_by_prefix(rev)
+            .map_err(|e| ierrp("err_misc.not_a_valid_commit", &[("rev", &format!("{rev:?}")), ("detail", e.message())]))
+    };
+    let ca = find(a)?;
+    let cb = find(b)?;
+
+    // The SAME ordering rule as the summary, so the popover's "+12 −3" and the
+    // diff the user then opens can never disagree about which way round it is.
+    let (ahead_a, _) = repo
+        .graph_ahead_behind(ca.id(), cb.id())
+        .map_err(|e| e.message().to_string())?;
+    let (from, to) = if ahead_a == 0 { (&ca, &cb) } else { (&cb, &ca) };
+
+    let from_tree = from.tree().map_err(|e| e.message().to_string())?;
+    let to_tree = to.tree().map_err(|e| e.message().to_string())?;
+    let d = crate::commands::diff_trees(&repo, Some(&from_tree), Some(&to_tree))
+        .map_err(|e| e.message().to_string())?;
+
+    let short = |c: &git2::Commit| {
+        let s = c.id().to_string();
+        s[..7.min(s.len())].to_string()
+    };
+    Ok(RangeDiff {
+        from: short(from),
+        to: short(to),
+        files_changed: d.file_tree.len() as u32,
+        additions: d.additions as u32,
+        deletions: d.deletions as u32,
+        truncated: d.truncated,
+        file_tree: d.file_tree,
+    })
+}

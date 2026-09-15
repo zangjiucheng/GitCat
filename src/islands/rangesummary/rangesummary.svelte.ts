@@ -10,7 +10,9 @@
 // ahead/behind, one tree-to-tree diff, and a capped chain. This holds the
 // popover's position, the in-flight state, and the result.
 
-import { commands, type RangeSummary } from "@/ipc/bindings";
+import { commands, type RangeSummary, type RangeDiff, type FileChange } from "@/ipc/bindings";
+import { buildDiffRows } from "../detail/diffrows.ts";
+import type { DiffRow } from "../detail/detail.svelte.ts";
 import * as bridge from "@/legacy/bridge";
 import { be } from "@/i18n/i18n.svelte.ts";
 import { IN_TAURI } from "@/ipc/env";
@@ -32,6 +34,39 @@ const DEMO: RangeSummary = {
     { sha: "1e2f3a4", subject: "Bump deps" },
   ],
   truncated: false,
+};
+
+const DEMO_DIFF: RangeDiff = {
+  from: "a1b2c3d",
+  to: "9f8e7d6",
+  filesChanged: 1,
+  additions: 2,
+  deletions: 1,
+  truncated: false,
+  fileTree: [
+    {
+      path: "src/parser.ts",
+      oldPath: null,
+      status: "M",
+      additions: 2,
+      deletions: 1,
+      binary: false,
+      truncated: false,
+      lang: "ts",
+      hunks: [
+        {
+          header: "@@ -1,3 +1,4 @@",
+          lines: [
+            { kind: " ", oldNo: 1, newNo: 1, text: "export function parse(src: string) {" },
+            { kind: "-", oldNo: 2, newNo: null, text: "  return src.split(\"\\n\");" },
+            { kind: "+", oldNo: null, newNo: 2, text: "  if (!src) return [];" },
+            { kind: "+", oldNo: null, newNo: 3, text: "  return src.split(/\\r?\\n/);" },
+            { kind: " ", oldNo: 3, newNo: 4, text: "}" },
+          ],
+        },
+      ],
+    } as unknown as FileChange,
+  ],
 };
 
 class RangeSummaryState {
@@ -60,8 +95,15 @@ class RangeSummaryState {
    * the right-clicked one; both are FULL oids resolved by the caller, the same
    * way commitMenuCtrl.openAt's are — this does no BACKEND/G lookups of its own.
    */
+  #repo = "";
+  #aFull = "";
+  #bFull = "";
+
   async openAt(repo: string, a: string, b: string, x: number, y: number) {
     const mine = ++this.#seq;
+    this.#repo = repo;
+    this.#aFull = a;
+    this.#bFull = b;
     this.x = x;
     this.y = y;
     this.aShort = a.slice(0, 7);
@@ -99,6 +141,97 @@ class RangeSummaryState {
     this.error = null;
     this.aShort = "";
     this.bShort = "";
+  }
+
+  // ── the full diff (a modal, not the popover) ────────────────────────────
+  //
+  // Split from the summary on purpose, and the backend is split the same way:
+  // the popover opens on every compare and stays cheap (one Diff::stats, no
+  // per-file patches), while this builds a Patch per file and is only fetched
+  // when the user actually asks to see the diff.
+
+  diffOpen = $state(false);
+  diffLoading = $state(false);
+  diffError = $state<string | null>(null);
+  diff = $state<RangeDiff | null>(null);
+  /** Which file's hunks are on screen. */
+  selectedFile = $state<string | null>(null);
+  rows = $state<DiffRow[]>([]);
+
+  /** The two endpoints the OPEN diff is for — kept so closing the popover
+   *  underneath cannot blank the modal's own header. */
+  diffA = $state("");
+  diffB = $state("");
+
+  #diffSeq = 0;
+
+  async openDiff() {
+    const a = this.aShort, b = this.bShort;
+    const repo = this.#repo;
+    const mine = ++this.#diffSeq;
+    this.diffA = a;
+    this.diffB = b;
+    this.diff = null;
+    this.rows = [];
+    this.selectedFile = null;
+    this.diffError = null;
+    this.diffLoading = true;
+    this.diffOpen = true;
+    this.open = false; // the popover steps aside; the modal is the surface now
+
+    if (!IN_TAURI) {
+      this.diff = DEMO_DIFF;
+      this.diffLoading = false;
+      this.selectFile(DEMO_DIFF.fileTree[0]?.path ?? null);
+      return;
+    }
+    try {
+      const r = await commands.commitRangeDiff(repo, this.#aFull, this.#bFull);
+      if (mine !== this.#diffSeq) return;
+      if (r.status === "ok") {
+        this.diff = r.data;
+        this.selectFile(r.data.fileTree[0]?.path ?? null);
+      } else {
+        this.diffError = be(r.error);
+      }
+    } catch (e) {
+      if (mine !== this.#diffSeq) return;
+      this.diffError = String(e);
+    } finally {
+      if (mine === this.#diffSeq) this.diffLoading = false;
+    }
+  }
+
+  /** Show one file's hunks. Every file's diff is already in hand — no IPC. */
+  selectFile(path: string | null) {
+    this.selectedFile = path;
+    const f = path ? this.diff?.fileTree.find((x) => x.path === path) : undefined;
+    if (!f) {
+      this.rows = [];
+      return;
+    }
+    if (f.binary) {
+      this.rows = [{ kind: "note", text: "binary file — not shown" }];
+      return;
+    }
+    // Flatten the file's hunks into the [marker, text] shape the shared row
+    // builder takes — the same shape commit detail hands it.
+    const lines: [string, string][] = [];
+    for (const h of f.hunks ?? []) {
+      lines.push(["@@", h.header]);
+      for (const l of h.lines ?? []) lines.push([l.kind, l.text]);
+    }
+    this.rows = buildDiffRows({ lang: f.lang || "generic", lines, truncated: !!f.truncated });
+  }
+
+  closeDiff() {
+    this.#diffSeq++;
+    this.diffOpen = false;
+    this.diffLoading = false;
+    this.diff = null;
+    this.rows = [];
+    this.selectedFile = null;
+    this.diffError = null;
   }
 }
 

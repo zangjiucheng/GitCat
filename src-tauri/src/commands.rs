@@ -696,12 +696,51 @@ fn commit_detail_inner(path: &str, sha: &str) -> Result<CommitDetail, git2::Erro
         None
     };
 
+    let d = diff_trees(&repo, parent_tree.as_ref(), Some(&new_tree))?;
+
+    let short_sha = full_sha[..7.min(full_sha.len())].to_string();
+    Ok(CommitDetail {
+        sha: full_sha,
+        short_sha,
+        subject,
+        body,
+        message,
+        additions: d.additions,
+        deletions: d.deletions,
+        files_changed: d.file_tree.len(),
+        truncated: d.truncated,
+        file_tree: d.file_tree,
+    })
+}
+
+/// The part of a commit's detail that is not about the commit at all: the
+/// tree-to-tree diff, its per-file hunks, and the totals.
+///
+/// Extracted from [`commit_detail_inner`] so the two-commit compare (#49) can
+/// produce the SAME `FileChange` rows for an arbitrary pair of trees. The
+/// alternative was a second copy of this loop — the rename/copy detection, the
+/// binary handling, the per-file and whole-diff caps, the hunk truncation —
+/// which is exactly the kind of duplicate that drifts one fix at a time.
+pub(crate) struct TreeDiff {
+    pub file_tree: Vec<FileChange>,
+    pub additions: usize,
+    pub deletions: usize,
+    pub truncated: bool,
+}
+
+/// Diff `old` -> `new`. `None` on a side means the empty tree, which is how a
+/// root commit shows everything as added.
+pub(crate) fn diff_trees(
+    repo: &git2::Repository,
+    old: Option<&git2::Tree<'_>>,
+    new: Option<&git2::Tree<'_>>,
+) -> Result<TreeDiff, git2::Error> {
     let mut opts = DiffOptions::new();
     opts.context_lines(3)
         .include_typechange(true)
         .id_abbrev(7);
     let mut diff =
-        repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), Some(&mut opts))?;
+        repo.diff_tree_to_tree(old, new, Some(&mut opts))?;
 
     // Fold rename/copy detection in so status R/C (and old_path) are meaningful.
     let mut find = DiffFindOptions::new();
@@ -821,20 +860,7 @@ fn commit_detail_inner(path: &str, sha: &str) -> Result<CommitDetail, git2::Erro
             hunks,
         });
     }
-
-    let short_sha = full_sha[..7.min(full_sha.len())].to_string();
-    Ok(CommitDetail {
-        sha: full_sha,
-        short_sha,
-        subject,
-        body,
-        message,
-        additions: total_add,
-        deletions: total_del,
-        files_changed: file_tree.len(),
-        truncated: diff_truncated,
-        file_tree,
-    })
+    Ok(TreeDiff { file_tree, additions: total_add, deletions: total_del, truncated: diff_truncated })
 }
 
 /// Every commit reachable from `sha` by walking parent edges (`sha` itself

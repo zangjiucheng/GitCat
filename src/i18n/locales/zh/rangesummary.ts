@@ -1,5 +1,8 @@
 // 对比两个提交的浮层（#49）。键会变成 `rangesummary.<key>`。
 export default {
+  view_diff: "查看 diff…",
+  diff_title: "两者之间的改动",
+  diff_truncated: "diff 已截断 —— 文件太多。",
   title: "对比",
   commits: "中间有 {n} 个提交",
   diverged: "已分叉 —— 领先 {ahead}，落后 {behind}",

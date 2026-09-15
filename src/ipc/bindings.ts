@@ -62,6 +62,24 @@ async commitRangeSummary(path: string, a: string, b: string) : Promise<Result<Ra
 }
 },
 /**
+ * The full diff between two commits. Read-only.
+ * 
+ * Split from [`commit_range_summary`] rather than folded into it: the summary
+ * opens a popover on every compare and wants to be cheap (one `Diff::stats`,
+ * no per-file patches), while this builds a `Patch` per file and is only
+ * asked for when the user actually opens the diff.
+ * 
+ * JS: `commands.commitRangeDiff(path, a, b)` -> `Result<RangeDiff, string>`.
+ */
+async commitRangeDiff(path: string, a: string, b: string) : Promise<Result<RangeDiff, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("commit_range_diff", { path, a, b }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.graphFastRefresh(path)`. The cheap snapshot the frontend's
  * `reloadGraph` uses to decide whether a change can skip the full history
  * re-walk — seed tips + HEAD (full oids, for collision-free "already loaded?"
@@ -4325,6 +4343,25 @@ export type ProblemFile = { path: string; bugfixTouches: number; totalTouches: n
  * draws a plain vertical list, so lane/colour data would be unused weight.
  */
 export type RangeCommit = { sha: string; subject: string }
+/**
+ * The actual diff between the two endpoints, not just its totals.
+ * 
+ * Same `FileChange` rows a commit's own detail panel renders — produced by the
+ * SAME [`crate::commands::diff_trees`], which was extracted from
+ * `commit_detail_inner` for this. A second copy of that loop (rename/copy
+ * detection, binary handling, the per-file and whole-diff caps) would have
+ * drifted from the original one fix at a time.
+ */
+export type RangeDiff = { 
+/**
+ * Short shas, ORDERED the same way [`RangeSummary`] orders them, so the
+ * diff reads forwards in time regardless of which endpoint was clicked.
+ */
+from: string; to: string; filesChanged: number; additions: number; deletions: number; 
+/**
+ * Capped like a commit's own detail is; the frontend says so when set.
+ */
+truncated: boolean; fileTree: FileChange[] }
 /**
  * The answer to "what happened between these two commits".
  */

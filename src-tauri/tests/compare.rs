@@ -138,3 +138,58 @@ fn an_unresolvable_endpoint_is_an_error_not_a_silent_empty_range() {
         .expect_err("an unknown sha must be refused");
     assert!(err.contains("err_misc.not_a_valid_commit"), "got: {err}");
 }
+
+// -- the actual diff (not just the totals) -----------------------------------
+
+use gitcat_lib::compare::commit_range_diff_inner;
+
+#[test]
+fn the_range_diff_returns_the_files_and_their_hunks() {
+    let repo = TempRepo::init("cmpd-files");
+    let a = repo.commit("keep.txt", "untouched\n", "base");
+    repo.commit("added.txt", "brand new\n", "add a file");
+    let b = repo.commit("keep.txt", "untouched\nand a second line\n", "edit a file");
+
+    let d = commit_range_diff_inner(&repo.path(), &a, &b).expect("must diff");
+    assert_eq!(d.files_changed, 2, "one added, one edited");
+    let paths: Vec<&str> = d.file_tree.iter().map(|f| f.path.as_str()).collect();
+    assert!(paths.contains(&"added.txt") && paths.contains(&"keep.txt"), "got {paths:?}");
+
+    // The whole point of this command over the summary: real hunks, not counts.
+    let edited = d.file_tree.iter().find(|f| f.path == "keep.txt").unwrap();
+    assert!(!edited.hunks.is_empty(), "a text edit must carry its hunks");
+    assert!(
+        edited.hunks[0].lines.iter().any(|l| l.text.contains("and a second line")),
+        "the added line must be in the hunk"
+    );
+}
+
+#[test]
+fn the_diff_and_the_summary_agree_on_direction() {
+    // The two commands order the pair independently, so a drift between them
+    // would show "+2 -0" in the popover and a diff that reads the other way.
+    let repo = TempRepo::init("cmpd-direction");
+    let a = repo.commit("f.txt", "one\n", "base");
+    let b = repo.commit("f.txt", "one\ntwo\nthree\n", "add two lines");
+
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        let s = commit_range_summary_inner(&repo.path(), x, y).unwrap();
+        let d = commit_range_diff_inner(&repo.path(), x, y).unwrap();
+        assert_eq!((s.from.as_str(), s.to.as_str()), (d.from.as_str(), d.to.as_str()), "endpoints disagree");
+        assert_eq!(s.additions, d.additions, "additions disagree");
+        assert_eq!(s.deletions, d.deletions, "deletions disagree");
+        assert_eq!(s.files_changed, d.files_changed, "file counts disagree");
+    }
+}
+
+#[test]
+fn the_range_diff_still_answers_for_unrelated_roots() {
+    let repo = TempRepo::init("cmpd-orphan");
+    let a = repo.commit("a.txt", "a\n", "on main");
+    repo.must(&["checkout", "--orphan", "lonely"]);
+    repo.must(&["rm", "-rf", "--cached", "."]);
+    let b = repo.commit("b.txt", "b\n", "on the orphan");
+
+    let d = commit_range_diff_inner(&repo.path(), &a, &b).expect("must not error");
+    assert!(d.files_changed > 0);
+}
