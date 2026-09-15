@@ -878,6 +878,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    stacked sections overflows and scrolls HERE instead, which is what the
    panel itself used to do. */
 .d-view{flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto}
+/* One cell, both .d-view siblings stacked in it. See Detail.svelte's own
+   comment: `transition:` is bidirectional, so the outgoing view still takes
+   up space while it fades, and in a flex column the incoming one was laid
+   out below it — half height each, then a snap back to the top. minmax(0,1fr)
+   rather than auto so the row is the height the tab strip leaves and .d-view
+   can still scroll inside it. */
+.d-viewport{flex:1;min-height:0;display:grid;grid-template-rows:minmax(0,1fr)}
+.d-viewport>.d-view{grid-area:1/1;min-height:0}
 .detail section{padding:12px 14px;border-bottom:1px solid var(--border)}
 .detail .empty{color:var(--muted);text-align:center;padding:48px 20px;font-size:12.5px;line-height:1.7}
 .d-subject{font-size:17px;font-weight:700;font-family:var(--display);line-height:1.35;color:var(--text);letter-spacing:.1px}
