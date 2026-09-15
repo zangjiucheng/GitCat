@@ -55,6 +55,8 @@ export default {
   manifest_too_large: "Plugin manifest {path} is too large ({bytes} bytes; the limit is {limit} bytes).",
   manifest_too_large_limit: "Plugin manifest {path} is too large (limit {limit} bytes).",
   manifest_invalid: "{path} is not a valid plugin manifest: {detail}",
+  manifest_unknown_keys:
+    "Plugin manifest {path} declares keys GitCat does not understand: {keys}. Check the spelling — or, if the plugin was written for a newer GitCat, update GitCat and install it again.",
 
   // plugin_registry.rs — install / enable / remove / skin lookup
   already_installed: "A plugin with id {id} is already installed.",

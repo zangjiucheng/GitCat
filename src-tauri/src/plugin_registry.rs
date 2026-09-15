@@ -625,6 +625,51 @@ pub fn validate_manifest(plugin: &Plugin) -> Result<(), String> {
     Ok(())
 }
 
+/// Collect every key `declared` carries that `understood` does not, as dotted
+/// paths (`commands[0].mutatez`).
+///
+/// The known-key set is DERIVED, never listed: the manifest is parsed into
+/// [`Plugin`] exactly as permissively as it always was, that `Plugin` is
+/// serialized back, and anything in the author's JSON missing from the round
+/// trip is precisely what serde dropped on the floor. So the set cannot drift
+/// from the structs — which is the whole reason this is not
+/// `#[serde(deny_unknown_fields)]` on a parallel `PluginManifest` type tree:
+/// `PluginCommand`, `PluginHook`, `PluginPanel`, `PanelItem` and `TamaSkin`
+/// would all need twins, and a field added to one but not its twin would be
+/// REJECTED at install rather than merely ignored — a worse bug than the one
+/// being fixed, and a silent one.
+///
+/// And emphatically not `deny_unknown_fields` on [`Plugin`] itself: `Plugin` is
+/// also the persisted registry element inside `PluginsFile`, so one unknown key
+/// — a hand edit, or downgrading GitCat after installing a newer plugin — would
+/// send [`load_from`] down its rename-aside path and wipe every installed
+/// plugin. See that function, and `Plugin`'s own doc.
+///
+/// Only keys are compared, never values: a value serde re-serializes
+/// differently (a number's formatting, a default filled in) is not a finding.
+fn collect_unknown_keys(declared: &serde_json::Value, understood: &serde_json::Value, path: &str, out: &mut Vec<String>) {
+    use serde_json::Value;
+    match (declared, understood) {
+        (Value::Object(d), Value::Object(u)) => {
+            for (key, value) in d {
+                let child = if path.is_empty() { key.clone() } else { format!("{path}.{key}") };
+                match u.get(key) {
+                    Some(known) => collect_unknown_keys(value, known, &child, out),
+                    None => out.push(child),
+                }
+            }
+        }
+        // Index-wise: a successful parse round-trips each element in order, so
+        // `commands[2]` in the round trip is `commands[2]` in the source.
+        (Value::Array(d), Value::Array(u)) => {
+            for (i, (dv, uv)) in d.iter().zip(u.iter()).enumerate() {
+                collect_unknown_keys(dv, uv, &format!("{path}[{i}]"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Resolve `source` (a `plugin.json` file OR a directory containing one) to the
 /// manifest file, enforce the [`MAX_MANIFEST_BYTES`] size cap, then read,
 /// parse, and [`validate_manifest`] it. Returns the parsed [`Plugin`] WITHOUT
@@ -714,6 +759,32 @@ pub fn read_and_validate_manifest(source: &Path) -> Result<Plugin, String> {
     let mut plugin: Plugin = serde_json::from_str(&text).map_err(|e| {
         ierrp("err_plugins.manifest_invalid", &[("path", &manifest.display().to_string()), ("detail", &e.to_string())])
     })?;
+    // A key GitCat does not know used to be ignored in silence, so a misspelled
+    // `mutates` meant a command that quietly took no safety snapshot, and an
+    // author got no signal that half their manifest did nothing (#64).
+    //
+    // Checked here rather than through serde: see [`collect_unknown_keys`] for
+    // why `deny_unknown_fields` is wrong on `Plugin` (it is the persisted
+    // registry element — one unknown key would wipe the registry) and why a
+    // parallel strict type tree is worse than it looks.
+    //
+    // AFTER the version gate above, deliberately. A manifest written for a newer
+    // GitCat will be full of keys this host has never heard of; the useful
+    // message is "needs GitCat 1.4 or newer", not a list of them.
+    let declared: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        ierrp("err_plugins.manifest_invalid", &[("path", &manifest.display().to_string()), ("detail", &e.to_string())])
+    })?;
+    let understood = serde_json::to_value(&plugin).map_err(|e| {
+        ierrp("err_plugins.manifest_invalid", &[("path", &manifest.display().to_string()), ("detail", &e.to_string())])
+    })?;
+    let mut unknown = Vec::new();
+    collect_unknown_keys(&declared, &understood, "", &mut unknown);
+    if !unknown.is_empty() {
+        return Err(ierrp(
+            "err_plugins.manifest_unknown_keys",
+            &[("path", &manifest.display().to_string()), ("keys", &unknown.join(", "))],
+        ));
+    }
     validate_manifest(&plugin)?;
     // Capture the plugin's SOURCE directory (PER-47): the CANONICALIZED parent
     // of its manifest file, so a later skin load resolves relative asset paths
@@ -1180,6 +1251,105 @@ pub async fn load_plugin_skin(app: AppHandle<Wry>, plugin_id: String) -> Result<
 mod tests {
     use super::*;
 
+    // -- unknown manifest keys (#64) -----------------------------------------
+
+    #[test]
+    fn an_unknown_manifest_key_is_rejected_rather_than_ignored() {
+        // Silently ignoring it meant a misspelled `mutates` produced a command
+        // that quietly took no safety snapshot, and an author got no signal that
+        // half their manifest did nothing.
+        let dir = temp_dir("unknown-key");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("plugin.json");
+        std::fs::write(&manifest, r#"{"id":"alpha","name":"Alpha","version":"1.0.0","descriptoin":"typo"}"#).unwrap();
+
+        let err = read_and_validate_manifest(&manifest).expect_err("an unknown key must be refused");
+        assert!(err.contains("err_plugins.manifest_unknown_keys"), "got: {err}");
+        assert!(err.contains("descriptoin"), "the message must name the key; got: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unknown_key_inside_a_command_is_reported_with_its_path() {
+        // The nested case is the one that matters most: `mutates` misspelled on
+        // one command of five is invisible in a flat "unknown key" message, and
+        // it is exactly the key whose absence is dangerous.
+        let dir = temp_dir("unknown-nested");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("plugin.json");
+        std::fs::write(
+            &manifest,
+            r#"{"id":"alpha","name":"Alpha","version":"1.0.0","commands":[
+                 {"id":"safe","label":"Safe","run":"echo hi"},
+                 {"id":"risky","label":"Risky","run":"git reset --hard","mutatez":true}]}"#,
+        )
+        .unwrap();
+
+        let err = read_and_validate_manifest(&manifest).expect_err("an unknown nested key must be refused");
+        assert!(err.contains("commands[1].mutatez"), "the message must locate the key; got: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_key_the_struct_itself_produces_is_accepted() {
+        // The over-rejection guard, and it cannot drift: a real Plugin is
+        // serialized and fed back in as a manifest, so any field added to the
+        // struct is exercised here the day it is added. A hand-written "valid
+        // manifest" fixture would have to be remembered instead.
+        let dir = temp_dir("unknown-roundtrip");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("plugin.json");
+        let plugin = sample_plugin("alpha");
+        std::fs::write(&manifest, serde_json::to_string(&plugin).unwrap()).unwrap();
+
+        read_and_validate_manifest(&manifest).expect("a manifest made of the struct's own keys must be accepted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_registry_tolerates_unknown_keys_and_is_never_wiped_by_one() {
+        // THE trap this issue is named after. `Plugin` is also the persisted
+        // registry element, so `deny_unknown_fields` on it would send load_from
+        // down its rename-aside path on a single unknown key — from a hand edit,
+        // or from downgrading GitCat after installing a newer plugin — and
+        // silently drop EVERY installed plugin.
+        //
+        // Strictness belongs to the manifest read, never to the registry type.
+        let dir = temp_dir("registry-tolerant");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(FILE_NAME);
+        std::fs::write(
+            &path,
+            r#"{"version":1,"plugins":[
+                 {"id":"alpha","name":"Alpha","version":"1.0.0","fieldFromANewerGitcat":{"nested":true}}]}"#,
+        )
+        .unwrap();
+
+        let plugins = load_from(&path).expect("the registry must still load");
+        assert_eq!(plugins.len(), 1, "an unknown key wiped the registry");
+        assert_eq!(plugins[0].id, "alpha");
+        assert!(path.exists(), "the registry file was renamed aside");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn collect_unknown_keys_only_reports_keys_the_author_wrote() {
+        // A key the struct emits but the manifest omits (`dir`, every
+        // `#[serde(default)]` Option) is not a finding — the walk is over the
+        // DECLARED side, not the round trip.
+        let declared = serde_json::json!({"id": "a", "commands": [{"id": "c"}]});
+        let understood = serde_json::json!({"id": "a", "dir": null, "commands": [{"id": "c", "mutates": false}]});
+        let mut out = Vec::new();
+        collect_unknown_keys(&declared, &understood, "", &mut out);
+        assert!(out.is_empty(), "reported keys the author never wrote: {out:?}");
+
+        let declared = serde_json::json!({"id": "a", "commands": [{"id": "c", "nope": 1}], "alsoNope": 2});
+        let mut out = Vec::new();
+        collect_unknown_keys(&declared, &understood, "", &mut out);
+        out.sort();
+        assert_eq!(out, vec!["alsoNope".to_string(), "commands[0].nope".to_string()]);
+    }
+
     fn temp_dir(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "gitcat-plugin-registry-test-{tag}-{}-{}",
@@ -1473,11 +1643,15 @@ mod tests {
     #[test]
     fn the_version_gate_reports_before_any_other_manifest_complaint() {
         // The ordering this whole design turns on. This manifest is ALSO invalid
-        // for an unrelated reason (an id with a space), and the version message
-        // still wins — because the probe runs before the full parse and before
-        // validate_manifest. When strict parsing lands (#64) it is this ordering
-        // that keeps a 1.4-authored manifest from reporting `unknown field` on a
-        // 1.3 host instead of "you need a newer GitCat".
+        // for two unrelated reasons — an id with a space, and a key this host
+        // has never heard of — and the version message still wins, because the
+        // probe runs before the full parse, before the unknown-key check, and
+        // before validate_manifest.
+        //
+        // The unknown key is the point now that strict parsing has landed (#64):
+        // a manifest written for a newer GitCat is FULL of keys this host does
+        // not know, and listing them would bury the one message that says what
+        // to do about it.
         let (major, _, _) = crate::version::parse(crate::version::HOST_VERSION).unwrap();
         let dir = temp_dir("min-order");
         std::fs::create_dir_all(&dir).unwrap();
@@ -1485,7 +1659,7 @@ mod tests {
         std::fs::write(
             &manifest,
             format!(
-                r#"{{"id":"NOT A VALID ID","name":"","version":"","minGitcatVersion":"{}.0.0"}}"#,
+                r#"{{"id":"NOT A VALID ID","name":"","version":"","minGitcatVersion":"{}.0.0","somethingFromTheFuture":true}}"#,
                 major + 1
             ),
         )

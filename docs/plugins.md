@@ -51,6 +51,14 @@ A manifest is a small JSON document. Here's a complete, annotated example:
 
 ### Top-level fields
 
+> **Unknown keys are rejected.** Install refuses a manifest carrying a key GitCat
+> does not recognize, anywhere in it — including inside a command, hook or panel
+> — and names the key (`commands[1].mutatez`). A typo used to be ignored in
+> silence, so a misspelled `mutates` produced a command that quietly took no
+> safety snapshot. If the key belongs to a newer GitCat, declare
+> [`minGitcatVersion`](#requiring-a-gitcat-version): that check runs first, so
+> your users get "needs GitCat 1.4 or newer" instead of a list of keys.
+
 | Field | Required | Type | Notes |
 | --- | --- | --- | --- |
 | `id` | ✅ | string | Stable, unique identifier. Must match `^[a-z0-9][a-z0-9-]*$` — start with a lowercase letter or digit, then lowercase letters, digits, and `-` only. No uppercase, spaces, underscores, or dots. Used as the enable/remove key. Installing a second plugin with the same `id` is rejected. |
