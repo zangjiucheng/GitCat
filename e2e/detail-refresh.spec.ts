@@ -141,3 +141,71 @@ test("the working tree keeps the diff you were reading across a refresh", async 
 
   await expect(diff, "the open diff was dropped by a refresh").toContainText("buy milk");
 });
+
+test("switching commits crossfades in place instead of shuffling the panel", async ({ page, repo }) => {
+  // The commit view is wrapped in {#key c.sha} with transition:fade, and
+  // `transition:` is BIDIRECTIONAL — the outgoing view keeps its space for the
+  // whole 120ms while it fades. As a flex column that meant the incoming view
+  // was laid out BELOW the outgoing one, both squeezed to half height, and
+  // then the new one snapped to the top when the old was finally removed.
+  //
+  // Measured on a 642px panel before the fix:
+  //   frame 0   1 view   top  78            height 642
+  //   frame 3   2 views  tops 78 and 399    heights 321, 321
+  //
+  // That is the panel "rendering low and then flashing up". Overlapping both
+  // views in a single grid cell makes it a real crossfade: same position, same
+  // height, only opacity moves.
+  repo.writeFile("README.md", "# fixture\n");
+  repo.commit("Initial commit");
+  repo.branch("feature/widget");
+  repo.checkout("feature/widget");
+  repo.writeFile("widget.ts", "export const widget = 1;\n");
+  repo.commit("Add the widget");
+  repo.checkout("main");
+
+  await page.goto("/");
+  await page.locator(".repo-pick").click();
+  await page.locator(".db-add").click();
+  await expect(page.locator("#cntLocal")).toHaveText("2");
+  await page
+    .locator("#refLocal .ref-folder")
+    .filter({ has: page.locator(".rname", { hasText: /^feature$/ }) })
+    .click();
+
+  await page.locator('#refLocal [data-branch="main"]').click();
+  await expect(page.locator("#detail")).toContainText("Initial commit");
+
+  // Sample every frame: the shuffle lasts only as long as the fade, so a
+  // before/after comparison cannot see it.
+  await page.evaluate(() => {
+    const w = window as unknown as { __f: { views: number; tops: number[]; heights: number[] }[] };
+    w.__f = [];
+    let n = 0;
+    const det = document.getElementById("detail")!;
+    const tick = () => {
+      const views = [...det.querySelectorAll(".d-view")] as HTMLElement[];
+      w.__f.push({
+        views: views.length,
+        tops: views.map((v) => Math.round(v.getBoundingClientRect().top)),
+        heights: views.map((v) => Math.round(v.getBoundingClientRect().height)),
+      });
+      if (n++ < 60) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+
+  await page.locator('#refLocal [data-branch="feature/widget"]').click();
+  await page.waitForTimeout(1000);
+
+  const frames = await page.evaluate(
+    () => (window as unknown as { __f: { views: number; tops: number[]; heights: number[] }[] }).__f,
+  );
+  // The crossfade has to actually have happened, or this proves nothing.
+  expect(Math.max(...frames.map((f) => f.views)), "no crossfade was observed").toBe(2);
+
+  const tops = [...new Set(frames.flatMap((f) => f.tops))];
+  const heights = [...new Set(frames.flatMap((f) => f.heights))];
+  expect(tops, `the panel moved vertically mid-transition: tops ${tops.join(", ")}`).toHaveLength(1);
+  expect(heights, `the panel changed height mid-transition: ${heights.join(", ")}`).toHaveLength(1);
+});
