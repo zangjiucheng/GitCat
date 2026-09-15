@@ -20,8 +20,14 @@
     row?.scrollIntoView({ block: "nearest" });
   });
 
+  // @keymap-owns palette.toggle palette.slash
   function onWindowKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
+      // The terminal gets first claim on its own keys. xterm's helper textarea
+      // lets keydown bubble to window and Terminal.svelte registers no
+      // attachCustomKeyEventHandler, so without this bail Ctrl+K in the shell
+      // opens the palette instead of reaching readline's kill-line.
+      if (!cmdkCtrl.open && (e.target as Element | null)?.closest(".term-drawer")) return;
       if (!cmdkCtrl.open && document.querySelector(".scrim.on")) return; // don't cover an open confirm dialog
       e.preventDefault();
       cmdkCtrl.toggle();
@@ -31,6 +37,11 @@
     // the text-input guard the metaKey/ctrlKey check above doesn't (nobody
     // types Ctrl+K into a text field the same way they'd type a bare "/").
     if (e.key === "/") {
+      // Exact mask: ⌘/ , Ctrl+/ and ⌥/ all opened the palette because the
+      // branch tested no modifiers at all. Shift is deliberately NOT excluded
+      // — "/" is Shift-typed on AZERTY and QWERTZ, so rejecting Shift here
+      // would make the key unreachable for those layouts entirely.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isTextInputFocused(e.target as Element | null)) return;
       if (!cmdkCtrl.open && document.querySelector(".scrim.on")) return;
       e.preventDefault();

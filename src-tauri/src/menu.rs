@@ -26,7 +26,7 @@
 // worse outcome than just not having the item.
 use std::collections::HashMap;
 use tauri::{
-    menu::{Menu, MenuBuilder, MenuEvent, MenuItemBuilder, SubmenuBuilder},
+    menu::{Menu, MenuBuilder, MenuEvent, MenuItem, MenuItemBuilder, SubmenuBuilder},
     AppHandle, Emitter, Wry,
 };
 use tauri_plugin_opener::OpenerExt;
@@ -46,6 +46,23 @@ pub fn build(app: &AppHandle<Wry>, labels: &HashMap<String, String>) -> tauri::R
         labels.get(key).cloned().unwrap_or_else(|| default.to_string())
     };
 
+    // Every accelerator-bearing item goes through here: label from `lb`,
+    // accelerator from the generated table (src/keymap/accelerators.ts is the
+    // source; `pnpm keymap:check` fails CI if this file drifts from it). An id
+    // with no entry gets an unmodified builder — byte-identical to a plain
+    // `.build(app)?` — so ABSENCE is the default and PRESENCE the opt-in, which
+    // is the direction that keeps the deliberate omissions below (Close
+    // Repository, Fetch/Pull/Push, Command Palette, Toggle Theme) self-enforcing
+    // rather than looking like someone forgot.
+    let mk = |id: &'static str, default: &'static str| -> tauri::Result<MenuItem<Wry>> {
+        let b = MenuItemBuilder::with_id(id, lb(id, default));
+        match crate::keymap_generated::accel(id) {
+            Some(a) => b.accelerator(a),
+            None => b,
+        }
+        .build(app)
+    };
+
     let about_item = MenuItemBuilder::with_id("about", lb("about", "About GitCat")).build(app)?;
 
     #[cfg(target_os = "macos")]
@@ -62,17 +79,13 @@ pub fn build(app: &AppHandle<Wry>, labels: &HashMap<String, String>) -> tauri::R
         .build()?;
 
     let file_menu = {
-        let open_repo = MenuItemBuilder::with_id("open-repo", lb("open-repo", "Open Repository\u{2026}"))
-            .accelerator("CmdOrCtrl+O")
-            .build(app)?;
+        let open_repo = mk("open-repo", "Open Repository\u{2026}")?;
         // No accelerator: unlike Open (⌘O, a near-universal convention),
         // there's no equally obvious binding for "go back to no repo open" —
         // and it's mouse/menu-discoverable already, same reasoning as
         // Repository's Fetch/Pull/Push and View's Toggle Theme below.
         let close_repo = MenuItemBuilder::with_id("close-repo", lb("close-repo", "Close Repository")).build(app)?;
-        let new_branch = MenuItemBuilder::with_id("new-branch", lb("new-branch", "New Branch\u{2026}"))
-            .accelerator("CmdOrCtrl+Shift+N")
-            .build(app)?;
+        let new_branch = mk("new-branch", "New Branch\u{2026}")?;
         let b = SubmenuBuilder::new(app, lb("sub.file", "File"))
             .item(&open_repo)
             .item(&close_repo)
@@ -146,9 +159,7 @@ pub fn build(app: &AppHandle<Wry>, labels: &HashMap<String, String>) -> tauri::R
             // module doc). ⌘F: the near-universal "Find" binding, and this
             // is the closest thing GitCat has to it (no in-app text-search
             // elsewhere in the UI competes for it).
-            let code_search = MenuItemBuilder::with_id("code-search", lb("code-search", "Search Code\u{2026}"))
-                .accelerator("CmdOrCtrl+F")
-                .build(app)?;
+            let code_search = mk("code-search", "Search Code\u{2026}")?;
             // Pickaxe / diff-content search (backlog #10): searches the
             // whole history's DIFFS, not just commit messages — complements
             // Search Code above (which searches content, not diffs; see
@@ -156,9 +167,7 @@ pub fn build(app: &AppHandle<Wry>, labels: &HashMap<String, String>) -> tauri::R
             // "search across everything" binding several editors already
             // use for a project/history-wide search (e.g. VS Code's/Xcode's
             // own ⌘⇧F "Find in Files"), pairing with Search Code's plain ⌘F.
-            let pickaxe_search = MenuItemBuilder::with_id("pickaxe-search", lb("pickaxe-search", "Search Commit Content\u{2026}"))
-                .accelerator("CmdOrCtrl+Shift+F")
-                .build(app)?;
+            let pickaxe_search = mk("pickaxe-search", "Search Commit Content\u{2026}")?;
             SubmenuBuilder::new(app, lb("sub.search", "Search")).item(&code_search).item(&pickaxe_search).build()?
         };
 
@@ -234,9 +243,7 @@ pub fn build(app: &AppHandle<Wry>, labels: &HashMap<String, String>) -> tauri::R
         // than moving the item into the app menu (where macOS convention
         // usually places it) since that's a bigger, unrequested menu-
         // structure change than this binding itself calls for.
-        let settings = MenuItemBuilder::with_id("settings", lb("settings", "Settings\u{2026}"))
-            .accelerator("CmdOrCtrl+,")
-            .build(app)?;
+        let settings = mk("settings", "Settings\u{2026}")?;
         // .gitignore / .mailmap in-app editors (backlog #14, the FINAL
         // backlog item): view/edit these repo-root text files without
         // leaving GitCat — repo-scoped like History's own items above (not
@@ -261,7 +268,7 @@ pub fn build(app: &AppHandle<Wry>, labels: &HashMap<String, String>) -> tauri::R
         // ordering (a terminal is safe; the items below it are not).
         // CmdOrCtrl+` mirrors the same shortcut's meaning in every other
         // editor with an integrated terminal (VS Code, JetBrains IDEs, …).
-        let open_terminal = MenuItemBuilder::with_id("open-terminal", lb("open-terminal", "Open Terminal")).accelerator("CmdOrCtrl+`").build(app)?;
+        let open_terminal = mk("open-terminal", "Open Terminal")?;
         // Force push: TWO separate items (never one item + a checkbox) so a
         // user can never reach the destructive raw-force action by
         // fat-fingering the safer lease flow — see git_remote.rs's
@@ -321,7 +328,7 @@ pub fn build(app: &AppHandle<Wry>, labels: &HashMap<String, String>) -> tauri::R
         // this file — there's nothing for JS to do here at all.
         // CmdOrCtrl+Shift+N is already File's "New Branch…" — CmdOrCtrl+N is
         // otherwise unused.
-        let new_window = MenuItemBuilder::with_id("new-window", lb("new-window", "New Window")).accelerator("CmdOrCtrl+N").build(app)?;
+        let new_window = mk("new-window", "New Window")?;
         SubmenuBuilder::new(app, lb("sub.window", "Window")).item(&new_window).separator().minimize().build()?
     };
 

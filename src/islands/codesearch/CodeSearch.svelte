@@ -2,9 +2,11 @@
   import { codeSearchCtrl } from "./codesearch.svelte.ts";
   import * as bridge from "../../legacy/bridge";
   import { t } from "@/i18n/i18n.svelte.ts";
+  import { isTextInputFocused } from "../vimnav/vimnav.svelte.ts";
   import Eye from "@lucide/svelte/icons/eye";
   import History from "@lucide/svelte/icons/history";
 
+  // @keymap-owns search.code
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && codeSearchCtrl.open) {
       codeSearchCtrl.close();
@@ -14,8 +16,20 @@
     // ⌘⇧F stays free for the ref filter (see main.ts). Suppresses the webview's
     // native find-in-page. Needs a repo open to have anything to search.
     if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
-      if (!bridge.CUR_REPO) return;
+      // preventDefault happens BEFORE the guards, not after. Suppressing the
+      // webview's own find-in-page is half this handler's job, and it is the
+      // half that still matters while the user is typing — a native find bar
+      // popping up over the commit box is exactly what it exists to stop.
+      // Opening Search Code is the half the guards below gate.
       e.preventDefault();
+      // This handler shipped with no guards at all: ⌘F while writing a commit
+      // message opened Search Code over the top of it, and it fired over an
+      // open confirm dialog too. Both guards match what ⌘K/"/" already do.
+      if (!codeSearchCtrl.open && isTextInputFocused(e.target as Element | null)) return;
+      if (!codeSearchCtrl.open && document.querySelector(".scrim.on")) return;
+      // Last, not first: with no repo open there is nothing to search, but the
+      // native find bar still has to be suppressed.
+      if (!bridge.CUR_REPO) return;
       codeSearchCtrl.show(bridge.CUR_REPO as unknown as string);
     }
   }

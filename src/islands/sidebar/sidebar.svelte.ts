@@ -1597,6 +1597,10 @@ class SidebarState {
   }
 
   reset() {
+    // The filter is per-repo state like everything else here — leaving it set
+    // meant closing a repo and opening another showed a ref list silently
+    // narrowed by a string typed for the previous one.
+    this.filter = "";
     this.locals = [];
     this.remotes = [];
     this.tags = [];

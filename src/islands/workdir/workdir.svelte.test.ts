@@ -137,14 +137,41 @@ describe("select / deselect", () => {
     expect(workdirCtrl.stashes).toEqual([STASH_0]);
   });
 
-  it("select() resets any leftover draft message/amend/diff selection", () => {
-    workdirCtrl.message = "leftover";
+  // This test used to assert `message` was cleared, which is precisely the
+  // data-loss bug: select() runs on ⌘⇧U, on a repo switch, when the Dashboard
+  // opens and on close/reopen, so "reset the draft" meant "silently throw away
+  // whatever the user was typing". It is rewritten rather than patched — the
+  // amend/diff half of the contract is still real and still asserted.
+  it("select() resets amend + diff selection but NOT the draft message", () => {
     workdirCtrl.amend = true;
     workdirCtrl.selectedDiffFile = "x.ts";
     workdirCtrl.select("/repo");
-    expect(workdirCtrl.message).toBe("");
     expect(workdirCtrl.amend).toBe(false);
     expect(workdirCtrl.selectedDiffFile).toBeNull();
+  });
+
+  it("select() restores the repo's own draft, and re-selecting the same repo keeps it", () => {
+    workdirCtrl.select("/repo");
+    workdirCtrl.message = "half a sentence";
+    workdirCtrl.saveDraft(workdirCtrl.message);
+
+    workdirCtrl.select("/repo");
+    expect(workdirCtrl.message).toBe("half a sentence");
+  });
+
+  it("select() swaps drafts per repo and flushes the outgoing one first", () => {
+    workdirCtrl.select("/repo");
+    workdirCtrl.message = "message for repo A";
+    // No saveDraft() call here on purpose: this is the repo-switch-inside-the-
+    // debounce-window case, which select() itself has to flush.
+    workdirCtrl.select("/other");
+    expect(workdirCtrl.message).toBe("");
+
+    workdirCtrl.message = "message for repo B";
+    workdirCtrl.select("/repo");
+    expect(workdirCtrl.message).toBe("message for repo A");
+    workdirCtrl.select("/other");
+    expect(workdirCtrl.message).toBe("message for repo B");
   });
 
   it("deselect() closes the panel without touching the last-fetched status", () => {

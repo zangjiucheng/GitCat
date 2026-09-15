@@ -264,6 +264,73 @@ describe("handleGlobalKeydown — modifier guard (regression: Ctrl/Cmd+K used to
   });
 });
 
+describe("the help overlay's scope and focus", () => {
+  const key = (k: string) => new KeyboardEvent("keydown", { key: k, cancelable: true });
+
+  // The overlay hands focus to its own scrollable body — the list is longer
+  // than a short window and .modal-body is the only thing that scrolls. That
+  // makes two things the controller's job rather than the view's.
+  beforeEach(() => {
+    if (vimnavCtrl.helpOpen) vimnavCtrl.closeHelp();
+  });
+
+  it("snapshots the scope of the pane that was focused, not the one at render time", () => {
+    // The body it focuses sits in the scrim, outside every [data-pane], so
+    // reading document.activeElement again later answers "global" — and the
+    // leading group, the whole reason the list is generated, would vanish.
+    document.body.innerHTML = `<div data-pane="sidebar" tabindex="-1"><button id="row"></button></div>`;
+    document.getElementById("row")!.focus();
+
+    handleGlobalKeydown(key("?"));
+    expect(vimnavCtrl.helpOpen).toBe(true);
+    expect(vimnavCtrl.helpScope).toBe("sidebar");
+
+    // Focus then moves into the overlay, as the view does on open.
+    document.getElementById("row")!.blur();
+    expect(vimnavCtrl.helpScope).toBe("sidebar");
+  });
+
+  it("gives focus back to where it came from when it closes", () => {
+    // The scrim hides with visibility, not display, so focus left inside it
+    // would stay on a node the user can no longer see.
+    document.body.innerHTML = `<div data-pane="graph" tabindex="-1"><button id="row"></button></div>`;
+    const row = document.getElementById("row")!;
+    row.focus();
+
+    vimnavCtrl.openHelp();
+    document.body.insertAdjacentHTML("beforeend", `<div id="vimNavHelpScrim"><div id="body" tabindex="-1"></div></div>`);
+    document.getElementById("body")!.focus();
+
+    vimnavCtrl.closeHelp();
+    expect(document.activeElement).toBe(row);
+  });
+
+  it("lets go of the hidden overlay even when the node it came from is gone", () => {
+    document.body.innerHTML = `<div data-pane="graph" tabindex="-1"><button id="row"></button></div>`;
+    document.getElementById("row")!.focus();
+
+    vimnavCtrl.openHelp();
+    // The pane re-renders while the overlay is up; the saved node is detached.
+    document.body.innerHTML = `<div id="vimNavHelpScrim"><div id="body" tabindex="-1"></div></div>`;
+    const body = document.getElementById("body")!;
+    body.focus();
+
+    vimnavCtrl.closeHelp();
+    expect(document.activeElement).not.toBe(body);
+  });
+
+  it("does not re-snapshot the scope when ? closes an overlay that is already open", () => {
+    document.body.innerHTML = `<div data-pane="sidebar" tabindex="-1"><button id="row"></button></div>`;
+    document.getElementById("row")!.focus();
+    handleGlobalKeydown(key("?"));
+    expect(vimnavCtrl.helpScope).toBe("sidebar");
+
+    handleGlobalKeydown(key("?")); // toggles closed
+    expect(vimnavCtrl.helpOpen).toBe(false);
+    expect(vimnavCtrl.helpScope).toBe("sidebar");
+  });
+});
+
 describe("gg chord detection", () => {
   it("does not fire on the first g", () => {
     expect(noteGKey(1000)).toBe(false);

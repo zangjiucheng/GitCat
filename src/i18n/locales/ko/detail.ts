@@ -1,5 +1,6 @@
 // 커밋 상세 패널 문자열. 키는 `detail.<key>` 형태가 돼요.
 export default {
+  diff_region: "Diff — 방향키로 스크롤",
   // Tama 히어로 / 빈 상태.
   hero_alt: "GitCat의 수호자 Tama",
   hero_bubble_loaded:

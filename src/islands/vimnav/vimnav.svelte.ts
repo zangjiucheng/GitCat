@@ -25,6 +25,9 @@
 // demo-mode branch at all: it's pure keyboard plumbing, identical in both).
 
 import * as bridge from "../../legacy/bridge";
+import { isHidden, restoreFocus, saveFocus } from "@/keymap/focus.ts";
+import { activePaneScope } from "@/keymap/panes.ts";
+import type { ScopeId } from "@/keymap/scopes.ts";
 import { detailCtrl } from "../detail/detail.svelte.ts";
 
 // ── text-input guard ────────────────────────────────────────────────────
@@ -47,7 +50,13 @@ export function moveDomFocus(dir: 1 | -1): boolean {
   if (!active) return false;
   const container = active.closest("[data-vimnav-list]");
   if (!container) return false;
-  const rows = Array.from(container.querySelectorAll<HTMLElement>('[tabindex="0"]'));
+  // A row inside a CLOSED <details> is still in the DOM and still matches
+  // [tabindex="0"], so without this filter j/k walks onto invisible rows and
+  // the cursor appears to freeze — four of the sidebar's five sections ship
+  // closed, so that is the normal case, not an edge one.
+  const rows = Array.from(container.querySelectorAll<HTMLElement>('[tabindex="0"]')).filter(
+    (el) => !isHidden(el),
+  );
   if (!rows.length) return true;
   const idx = rows.indexOf(active as HTMLElement);
   if (idx < 0) {
@@ -66,7 +75,7 @@ export function moveDomFocus(dir: 1 | -1): boolean {
 // bisectdrawer.svelte.ts's focusBisectCurrent()/legacy main.ts's
 // reloadGraph() each independently duplicate — factored into one place
 // here rather than a fourth copy.
-function scrollRowIntoView(row: number) {
+export function scrollRowIntoView(row: number) {
   bridge.state.scrollTarget = bridge.clampScroll(row * bridge.layout.rowH - bridge.view.cssH * 0.4);
 }
 
@@ -143,18 +152,51 @@ function anyOtherScrimOpen(): boolean {
 class VimNavState {
   helpOpen = $state(false);
 
+  /**
+   * Which pane's keys lead the overlay — snapshotted when it OPENS, not read
+   * back at render time.
+   *
+   * The overlay moves focus into its own scrollable body so the arrow keys it
+   * documents can actually scroll it, and that body sits in the scrim, outside
+   * every [data-pane]. Deriving the scope from document.activeElement therefore
+   * answers "sidebar" on the first render and "global" on any later one — and
+   * the leading group, which is the entire reason this list is generated rather
+   * than hand-written, would silently disappear. Capturing it here, in the
+   * keydown that opened the overlay, is the only moment the answer is right.
+   */
+  helpScope = $state<ScopeId>("global");
+
+  /** Where focus was before the overlay took it, so closing gives it back. */
+  #restore: HTMLElement | null = null;
+
   toggleHelp() {
-    if (!this.helpOpen && anyOtherScrimOpen()) return; // don't cover another open modal
-    this.helpOpen = !this.helpOpen;
+    if (this.helpOpen) {
+      this.closeHelp();
+      return;
+    }
+    if (anyOtherScrimOpen()) return; // don't cover another open modal
+    this.openHelp();
   }
   // Unconditionally open the help (the ⌘K "Keyboard Shortcuts" action) — unlike
   // toggleHelp's `?` path, this is an explicit request, so it doesn't bail when
   // the palette is still closing.
   openHelp() {
+    if (this.helpOpen) return;
+    this.helpScope = activePaneScope();
+    this.#restore = saveFocus();
     this.helpOpen = true;
   }
   closeHelp() {
+    if (!this.helpOpen) return;
     this.helpOpen = false;
+    // The scrim hides with visibility, not display, so focus left inside it
+    // stays on a node the user can no longer see. Hand it back, and if the
+    // node we came from is gone, at least let go of the hidden one.
+    if (!restoreFocus(this.#restore)) {
+      const active = document.activeElement as HTMLElement | null;
+      if (active && active.closest("#vimNavHelpScrim")) active.blur();
+    }
+    this.#restore = null;
   }
 }
 export const vimnavCtrl = new VimNavState();

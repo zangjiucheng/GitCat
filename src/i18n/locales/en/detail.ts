@@ -1,5 +1,6 @@
 // Commit detail panel strings. Keys become `detail.<key>`.
 export default {
+  diff_region: "Diff — arrow keys scroll",
   // Tama hero / empty state.
   hero_alt: "Tama, GitCat's guardian",
   hero_bubble_loaded:

@@ -7,6 +7,7 @@ export default {
   undo_no_snapshots: "아직 실행 취소할 것이 없어요 — 스냅샷이 하나도 찍히지 않았어요.",
   undo_stash_failed: "실행 취소(스태시 사용)에 실패했어요.",
   undo_cancelled: "실행 취소를 취소했어요 — 커밋 안 된 변경사항은 그대로예요.",
+  redo_unsupported: "아직 다시 실행은 없어요 — ⌘Z로 스냅샷을 하나씩 되돌려요.",
   undo_nothing: "실행 취소할 것이 없어요 — 아직 스냅샷이 없어요.",
   undo_failed: "실행 취소에 실패했어요 — {error}",
   fetched_demo: "페치했다옹 (demo).",

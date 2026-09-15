@@ -17,6 +17,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "keymap:gen": "node --experimental-strip-types scripts/keymap-gen.ts",
+    "keymap:check": "pnpm keymap:gen && git diff --exit-code -- src-tauri/src/keymap_generated.rs",
     "demo": "bash scripts/make-demo-repo.sh",
     "flamegraph": "node scripts/profile.mjs",
     "docs:dev": "vitepress dev docs",

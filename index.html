@@ -61,6 +61,22 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--ui);font-
   -webkit-font-smoothing:antialiased;overflow:hidden}
 button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:4px}
+/* Active-pane ring. Scoped single-letter bindings (PRs 4-8) act on whichever
+   pane has focus, so the user needs to see which one that is BEFORE pressing a
+   key that mutates a branch. inset box-shadow, not outline: the rule above is
+   universal and a second outline would double up on every focused control
+   inside the pane. Nothing is painted when focus is outside every pane — the
+   dispatcher falls back to the graph there, which is where those keys live
+   today, and a ring on a pane the user has not focused would be a lie. */
+[data-pane]{position:relative}
+/* Painted by a pseudo-element on TOP of the pane's content, not by an inset
+   box-shadow on the pane itself. An inset shadow paints beneath descendants,
+   and #cv is position:absolute;inset:0 over the whole graph pane — so the ring
+   was completely invisible there, on the one pane that is also the dispatcher's
+   fallback when focus is anywhere unremarkable. pointer-events:none so it never
+   intercepts a click on the canvas underneath. */
+[data-pane]:focus-within::after{content:"";position:absolute;inset:0;z-index:5;pointer-events:none;
+  box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent)}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:8px;border:2px solid transparent;background-clip:content-box}
 ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
@@ -1262,12 +1278,25 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .pl-kv{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:4px;margin:10px 0}
 .pl-kv .mono{color:var(--text)}
 /* Keyboard-shortcuts reference (the ? overlay): a wider, two-column modal so
-   the whole cheat sheet fits at a glance; collapses to one column when narrow. */
-.modal.kbd-help{width:min(680px,94vw)}
-.kbd-cols{display:grid;grid-template-columns:1fr 1fr;gap:2px 28px}
+   the whole cheat sheet fits at a glance; collapses to one column when narrow.
+
+   The list is GENERATED from the binding table now, so its length is not ours
+   to predict: it grows with every binding added, and the leading group depends
+   on which pane has focus. So the modal is capped at the scrim's own padded box
+   and the body scrolls — without that cap it rendered 829px tall no matter the
+   window, and below a 900px-tall screen the footer and the last rows were cut
+   off with no way to reach them (.modal is overflow:hidden).
+
+   Balanced columns, not a 2-track grid: a grid row is as tall as its tallest
+   cell, so six groups of very different heights left large gaps and made the
+   overlay much taller than its content. */
+.modal.kbd-help{width:min(680px,94vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column}
+.modal.kbd-help .modal-body{overflow:auto;min-height:0}
+.kbd-cols{columns:2;column-gap:28px}
+.kbd-cols>section{break-inside:avoid;margin:0 0 12px}
 .kbd-cols .pl-kv{margin:8px 0 0}
 .kbd-cols .d-lab:first-child{margin-top:0}
-@media (max-width:560px){.kbd-cols{grid-template-columns:1fr}}
+@media (max-width:560px){.kbd-cols{columns:1}}
 .pl-parent{margin-right:8px;display:inline-block}
 .pl-msg{font-family:var(--mono);font-size:12px;line-height:1.55;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-panel);padding:10px 12px;white-space:pre-wrap;word-break:break-word;margin-top:4px;max-height:280px;overflow:auto}
 .pl-tree{max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:var(--r-panel);background:var(--bg);padding:4px}
@@ -2174,7 +2203,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   <nav class="subnav" id="submoduleNavMount"></nav>
 
   <!-- ============================ SIDEBAR ============================ -->
-  <aside class="sidebar">
+  <aside class="sidebar" data-pane="sidebar" tabindex="-1">
     <div id="sidebarRefs"><!-- filled by the Sidebar Svelte island (src/islands/sidebar) --></div>
 
     <!-- Tama's lamp-nook -->
@@ -2193,7 +2222,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   </aside>
 
   <!-- ============================ GRAPH ============================ -->
-  <main class="graph">
+  <main class="graph" data-pane="graph" tabindex="-1">
     <div class="ribbon" id="ribbon"><span class="rlabel">snapshots</span></div>
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="cv" tabindex="0"></canvas>
@@ -2240,7 +2269,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   </main>
 
   <!-- ============================ DETAIL PANEL ============================ -->
-  <section class="detail" id="detail"><div class="resize-handle detail-handle" id="resizeDetail" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><div class="resize-handle detail-handle-bottom" id="resizeDetailBottom" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><!-- filled by the Detail Svelte island (src/islands/detail) --></section>
+  <section class="detail" id="detail" data-pane="detail" tabindex="-1" aria-label="Commit detail"><div class="resize-handle detail-handle" id="resizeDetail" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><div class="resize-handle detail-handle-bottom" id="resizeDetailBottom" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><!-- filled by the Detail Svelte island (src/islands/detail) --></section>
 
 </div>
 
@@ -2256,7 +2285,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
       </section>
       <section>
         <h4 data-i18n="help.navigate_h">Navigate</h4>
-        <p data-i18n-html="help.navigate_p">Scroll or drag to move; <kbd>&#8984;</kbd>+scroll (or <kbd>+</kbd>/<kbd>-</kbd>) to zoom. <kbd>&#8984;K</kbd> opens the command palette. <kbd>&#8984;F</kbd> searches commit content, <kbd>&#8984;&#8679;F</kbd> filters refs. <kbd>&#8984;&#8679;H</kbd> jumps to HEAD, <kbd>&#8984;&#8679;U</kbd> to Uncommitted changes. <kbd>&#8984;\</kbd> toggles focus mode. Press <kbd>?</kbd> for every shortcut.</p>
+        <p data-i18n-html="help.navigate_p">Scroll or drag to move; <kbd>&#8984;</kbd>+scroll (or <kbd>+</kbd>/<kbd>-</kbd>) to zoom. <kbd>&#8984;K</kbd> opens the command palette. <kbd>&#8984;F</kbd> searches code, <kbd>&#8984;&#8679;F</kbd> searches commit content. <kbd>&#8984;&#8679;H</kbd> jumps to HEAD, <kbd>&#8984;&#8679;U</kbd> to Uncommitted changes. <kbd>&#8984;\</kbd> toggles focus mode. Press <kbd>?</kbd> for every shortcut.</p>
       </section>
       <section>
         <h4 data-i18n="help.commits_h">Commits</h4>
@@ -2287,7 +2316,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 <div class="rname-tip" id="graphLabelTip" style="display:none" aria-hidden="true"></div>
 
 <!-- ============================ DANGER MODAL (filter-repo) ============================ -->
-<div class="scrim" id="dangerScrim">
+<div class="scrim" id="dangerScrim" data-modal-blocking>
   <div class="modal danger">
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" id="dangerTamaImg" alt="Tama, alarmed"></div>

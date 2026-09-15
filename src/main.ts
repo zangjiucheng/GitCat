@@ -2,6 +2,10 @@
 // canvas, sidebar, mascot and starts the RAF loop), then mount the Svelte
 // islands over the DOM. Islands render their own scrim markup into <body>,
 // so the old #conflictScrim / #bisectScrim blocks are gone from the HTML.
+// Keyboard layer. Installed BEFORE the legacy import below so its capture-phase
+// listeners exist even if legacy/main.ts throws during module evaluation. See
+// src/keymap/boot.ts for what the hoist does and does not buy.
+import "./keymap/boot.ts";
 import "./legacy/main.ts";
 import { mount } from "svelte";
 import Resolver from "./islands/resolver/Resolver.svelte";
@@ -72,6 +76,22 @@ import * as bridge from "./legacy/bridge";
 import { dlog } from "./devlog";
 import { commands } from "./ipc/bindings";
 import ContextMenu from "./islands/contextmenu/ContextMenu.svelte";
+import { keymap } from "./keymap/registry.ts";
+import { BINDINGS } from "./keymap/bindings.ts";
+import { GUARDS } from "./keymap/guards.ts";
+import { defineScopes } from "./keymap/scopedefs.ts";
+
+// Keyboard table. Registered here rather than in keymap/boot.ts because
+// bindings.ts -> guards.ts -> legacy/bridge, so it can only load after the
+// legacy import above has evaluated. Until this line runs the dispatcher's
+// empty-table fast path returns on every key, so the window between the two is
+// inert by construction.
+//
+// Every binding is mode:"shadow" in this PR: matched, counted, never run.
+keymap.register(BINDINGS, GUARDS);
+// Scope CONTRACTS (rank, modality, Escape policy) — declared before any island
+// can push one. See keymap/scopedefs.ts for why this is not a default.
+defineScopes();
 
 // Shared right-click menu. Mounted first because every other island can
 // open it, and it renders nothing until one does. Surfaces call
@@ -535,6 +555,7 @@ document.getElementById("refreshBtn")?.addEventListener("click", () => {
   refreshFromExternalChange(true);
 });
 
+// @keymap-owns app.settings
 // Ctrl/⌘ + , opens Settings. The native menu registers this accelerator too
 // (menu.rs), but muda's Win32 accelerator handling of the literal "," key
 // doesn't reliably fire on Windows — this frontend fallback makes the shortcut
@@ -555,6 +576,36 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
+// @keymap-owns search.pickaxe
+// ⌘⇧F / Ctrl+Shift+F — Search Commit Content (pickaxe). The native menu owns
+// this accelerator too (menu.rs -> "pickaxe-search"), but there is no native
+// menu at all under `vite dev`, so without this fallback the chord is dead in
+// development and in every Playwright run. Same idempotent-double-fire
+// reasoning as ⌘, and ⌘O below: pickaxeSearchCtrl.show() sets repo + open and
+// deliberately does not reset the form, so a Windows/Linux double-fire is
+// invisible.
+//
+// This chord USED to ALSO be bound to legacy's focusRefFilter(), which meant
+// three different behaviours on three platforms: macOS took the native
+// accelerator and got pickaxe (while the sidebar silently stole focus behind
+// the modal), Windows/Linux got both, and the dev server got only the ref
+// filter. That listener is deleted; see #144.
+window.addEventListener("keydown", (e) => {
+  if (
+    (e.metaKey || e.ctrlKey) &&
+    !e.altKey &&
+    e.shiftKey &&
+    e.code === "KeyF" &&
+    !(e.target as HTMLElement | null)?.closest("input,textarea,[contenteditable=true]")
+  ) {
+    const repo = bridge.CUR_REPO as unknown as string | null;
+    if (!repo) return;
+    e.preventDefault();
+    pickaxeSearchCtrl.show(repo);
+  }
+});
+
+// @keymap-owns repo.open
 // Same story for ⌘/Ctrl+O (open the repositories dashboard). The native
 // accelerator (menu.rs → "open-repo") fires reliably on macOS, but on Windows
 // Ctrl+O is swallowed by the WebView2's own "open file" default before muda's

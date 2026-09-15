@@ -52,6 +52,10 @@ export {
   // TDZ risk (same reasoning as select/openRepo above).
   bandH,
   select,
+  // The real clear: select(-1) only tells detailCtrl to select a row that does
+  // not exist, whereas deselect() calls detailCtrl.deselect() and empties the
+  // panel. Hoisted `function`, no TDZ risk.
+  deselect,
   // selects the pinned "Uncommitted changes" row (state.selectedRow=-2) and
   // opens workdirCtrl's staging/commit view in #detail — the workdir-row
   // counterpart to select(row)/deselect() above. Hoisted `function`, so no
@@ -174,6 +178,14 @@ export {
   // Hoisted `function`, no TDZ risk.
   navigateToRepo,
   NAV_STACK,
+  // Opens the commit menu on the SELECTED row, anchored by inverting hitTest's
+  // own row math — the keyboard twin of the canvas contextmenu listener, which
+  // can only work from a pointer's clientX/clientY. Ten commit operations hang
+  // off that menu and had no keyboard opener at all (#144).
+  openCommitMenuForSelectedRow,
+  // Expands the sidebar panel if collapsed — the scoped `f` binding focuses
+  // #refFilter, and an input inside a collapsed panel cannot be seen.
+  expandSidebar,
 } from "./main";
 
 // bisect canvas bridge: bisectCtrl (the real modal, src/islands/bisect) syncs

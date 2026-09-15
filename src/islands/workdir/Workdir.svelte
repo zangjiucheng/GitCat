@@ -59,6 +59,16 @@
   const WD_MSG_H_LS = "gitcat.wdMsgH",
     WD_MSG_H_MIN = 52;
   let msgEl = $state<HTMLTextAreaElement | undefined>(undefined);
+  // Persist the in-progress commit message, debounced. It lives here rather
+  // than in the controller because the textarea uses
+  // `bind:value={workdirCtrl.message}` — there is no setter to hook — and a
+  // localStorage write per keystroke is wasteful. The controller flushes
+  // separately in select(), so a repo switch inside this window still saves.
+  $effect(() => {
+    const msg = workdirCtrl.message;
+    const timer = setTimeout(() => workdirCtrl.saveDraft(msg), 400);
+    return () => clearTimeout(timer);
+  });
   $effect(() => {
     const el = msgEl;
     if (!el) return;
@@ -152,7 +162,7 @@
      320px cap. It is also this tab content's own scroller — the panel used
      to be that — so a tab of stacked sections still scrolls. Detail.svelte's
      commit view wraps its own tabs the same way. -->
-<div class="d-view">
+<div class="d-view" data-pane="workdir" tabindex="-1">
 {#if detailPanelCtrl.worktreeTab === "commit"}
 <section>
   <div class="d-subject">{t("workdir.uncommitted_changes")}</div>
@@ -195,8 +205,13 @@
       {#if workdirCtrl.generating}<span class="spinner"></span> {t("workdir.generating")}{:else}&#10024; {t("workdir.generate")}{/if}
     </button>
   </div>
+  <!-- data-wd-commit-box marks the ONE field ⌘↵ may fire from. The commit
+       chords set allowInTextInput so they work from here, and the stash message
+       input lives in this same pane — without a marker, ⌘↵ there would commit
+       staged changes instead of submitting the stash form. -->
   <textarea
     class="wd-msg"
+    data-wd-commit-box
     rows="3"
     bind:this={msgEl}
     placeholder={workdirCtrl.amend ? t("workdir.msg_placeholder_amend") : t("workdir.msg_placeholder")}
@@ -247,7 +262,7 @@
   {#if !workdirCtrl.status?.staged.length}
     <div class="mut" style="font-size:12px">{t("workdir.nothing_staged")}</div>
   {:else}
-    <div class="wd-files tree">
+    <div class="wd-files tree" data-vimnav-list>
       {@render stagedDirNode(workdirCtrl.stagedTree)}
     </div>
   {/if}
@@ -278,7 +293,7 @@
   {#if !workdirCtrl.status?.unstaged.length}
     <div class="mut" style="font-size:12px">{t("workdir.no_unstaged")}</div>
   {:else}
-    <div class="wd-files tree">
+    <div class="wd-files tree" data-vimnav-list>
       {@render unstagedDirNode(workdirCtrl.unstagedTree)}
     </div>
   {/if}
@@ -304,7 +319,13 @@
         <Maximize2 class="ico" size={13} aria-hidden="true" />
       </button>
     </div>
-    <div class="diffview" bind:this={diffviewEl}>
+    <!-- A scrollable region takes tabindex="0" ON PURPOSE: WAI-ARIA APG says a
+         region the user must scroll has to be keyboard-reachable, and on macOS
+         WebKit a bare overflow:auto div is not focusable at all — which left a
+         long diff unreadable without a pointer. The linter rule does not know
+         about that exception. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div class="diffview" bind:this={diffviewEl} tabindex="0" role="region" aria-label={t("detail.diff_region")}>
       {@render workdirDiffBody(file)}
     </div>
   </section>
@@ -388,7 +409,17 @@
      the commit modal (index.html's `.detail.collapsed>*:not(.scrim)` exempts
      it from the Focus-mode panel collapse). -->
 <div class="scrim" class:on={workdirCtrl.diffExpanded}>
-  <div class="modal diffx">
+  <!-- The pane marker goes on the MODAL, not on the .scrim around it. The scrim
+       is position:fixed with a backdrop-filter, and [data-pane] carries a
+       position:relative rule for the focus ring — putting the marker on the
+       scrim silently overrode its positioning and turned a full-screen blurred
+       overlay into an in-flow element, which cost the drag-heavy placement
+       tests 25x their runtime before anything looked wrong.
+       The marker is still needed here at all because this modal is a SIBLING of
+       .d-view: without it closest("[data-pane]") resolves to #detail and every
+       focused-row chord goes dead while the expanded diff is open, even though
+       vimnav's j/k still walk the same rows. -->
+  <div class="modal diffx" data-pane="workdir">
     <div class="modal-head">
       <div class="diffx-head-main">
         <h3>{t("workdir.uncommitted_changes")}</h3>
@@ -441,7 +472,13 @@
         label={t("workdir.resize_file_list")}
         storageKey={DIFFX_SPLIT.storageKey}
       />
-      <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
+      <!-- A scrollable region takes tabindex="0" ON PURPOSE: WAI-ARIA APG says a
+           region the user must scroll has to be keyboard-reachable, and on macOS
+           WebKit a bare overflow:auto div is not focusable at all — which left a
+           long diff unreadable without a pointer. The linter rule does not know
+           about that exception. -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div class="diffview diffx-diff" bind:this={diffviewExpandedEl} tabindex="0" role="region" aria-label={t("detail.diff_region")}>
         {#if workdirCtrl.selectedDiffFile}
           {@const file = workdirCtrl.selectedDiffFile}
           {@render workdirLinesBar(file)}
@@ -633,6 +670,9 @@
       class:active={workdirCtrl.selectedDiffFile === f.path && workdirCtrl.selectedDiffStaged}
       role="button"
       tabindex="0"
+      data-wd-path={f.path}
+      data-wd-staged={true}
+      data-wd-untracked={f.status === "?"}
       onclick={() => workdirCtrl.selectDiffFile(f.path, true)}
       oncontextmenu={(e) => {
         e.preventDefault();
@@ -735,6 +775,9 @@
       class:active={workdirCtrl.selectedDiffFile === f.path && !workdirCtrl.selectedDiffStaged}
       role="button"
       tabindex="0"
+      data-wd-path={f.path}
+      data-wd-staged={false}
+      data-wd-untracked={f.status === "?"}
       onclick={() => workdirCtrl.selectDiffFile(f.path, false)}
       onkeydown={(e) => (e.key === "Enter" || e.key === " ") && workdirCtrl.selectDiffFile(f.path, false)}
       oncontextmenu={(e) => {
