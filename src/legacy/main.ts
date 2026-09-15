@@ -37,6 +37,7 @@ import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
 // reactive, so t() is called imperatively (applyStaticI18n below + the busy
 // labels in doFetch/doPull/doPush) and re-run on i18nEvents "change".
 import { t, be, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
+import { fitEllipsis } from "./fitellipsis.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -307,6 +308,10 @@ const state={scrollTop:0,scrollTarget:0,maxScroll:0,panX:0,panTarget:0,maxPanX:0
 const REDUCE_MOTION=matchMedia("(prefers-reduced-motion:reduce)").matches;
 const view={cssW:0,cssH:0,dpr:1,renderDpr:1};
 const perf={last:performance.now(),frames:0,accum:0,fps:0,lastDrawMs:0};
+// One measurer for every truncation site, closing over the module-level `ctx`
+// so it always measures with whatever canvas/font is current. Defined once
+// rather than per call: these run per visible row, per frame.
+const measureCtx=(t)=>ctx.measureText(t).width;
 let dirty=true, lastInteracting=false, lowRes=false, fastScroll=false, pendingClear=false;
 let prevScrollTop=0, prevPanX=0, prevZoom=1;   // last frame's scroll/pan/zoom, to detect real motion (see tick's lowRes gate)
 // Scroll-blit state (see the `oc` offscreen buffer above and tick()/blitScroll()).
@@ -638,7 +643,7 @@ function renderContent(st, rowLo, rowHi, strip){
       // long commit message visually collide with it.
       ctx.font=Math.round(12.5*Math.min(1.25,layout.zoom))+"px "+FONT_UI; ctx.fillStyle=theme.text; ctx.textAlign="left";
       let s=msgOf(r); if(s.length>LABEL_MAX) s=s.slice(0,LABEL_MAX); const maxw=W-cx-AUTHOR_GUTTER;
-      if(ctx.measureText(s).width>maxw){while(s.length>4&&ctx.measureText(s+"…").width>maxw)s=s.slice(0,-1);s+="…";}
+      if(ctx.measureText(s).width>maxw) s=fitEllipsis(s,maxw,4,measureCtx)+"…"; // #88: bisect, not strip-one-and-remeasure
       ctx.fillText(s,cx,y);
       ctx.fillStyle=theme.muted; ctx.textAlign="right"; ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px "+FONT_MONO;
       const sha=hhex(r), shaW=ctx.measureText(sha).width;
@@ -648,7 +653,7 @@ function renderContent(st, rowLo, rowHi, strip){
       // hash itself; truncated the same way the message above is.
       ctx.font=Math.round(11*Math.min(1.2,layout.zoom))+"px "+FONT_UI;
       let a=authorOf(r); if(a.length>LABEL_MAX) a=a.slice(0,LABEL_MAX); const maxAuthorW=AUTHOR_GUTTER-96-8;
-      if(ctx.measureText(a).width>maxAuthorW){while(a.length>1&&ctx.measureText(a+"…").width>maxAuthorW)a=a.slice(0,-1);a+="…";}
+      if(ctx.measureText(a).width>maxAuthorW) a=fitEllipsis(a,maxAuthorW,1,measureCtx)+"…"; // #88
       ctx.fillText(a,W-14-shaW-8,y);
       // Back to mono. Not a duplicate of the line above the author preview —
       // that preview clobbered ctx.font with FONT_UI, and without restoring it
@@ -830,10 +835,10 @@ function measureChip(entry, maxWidth) {
   let text = entry.label.length > LABEL_MAX ? entry.label.slice(0, LABEL_MAX) : entry.label;
   if (maxWidth != null) {
     const textMax = maxWidth - CHIP_PAD * 2 - iconsW;
-    if (ctx.measureText(text).width > textMax) {
-      while (text.length > 1 && ctx.measureText(text + "…").width > textMax) text = text.slice(0, -1);
-      text += "…";
-    }
+    // #88: the same bisection as the row subject/author above. A ref chip is
+    // measured for EVERY visible row's every label, so the linear scan cost
+    // here scaled with label length times rows times chips.
+    if (ctx.measureText(text).width > textMax) text = fitEllipsis(text, textMax, 1, measureCtx) + "…";
   }
   return { text, w: ctx.measureText(text).width + CHIP_PAD * 2 + iconsW };
 }
