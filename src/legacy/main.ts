@@ -560,6 +560,23 @@ function renderContent(st, rowLo, rowHi, strip){
     const l=(G.allRefs&&G.allRefs[r])||(G.refs&&G.refs[r]?[G.refs[r]]:[]);
     if(l.some&&l.some(x=>x&&x.kind==="head")){ headRow=r; break; }
   }
+  // Frame-constant text metrics, hoisted out of the per-row loop below (#87).
+  //
+  // All three font strings depend only on layout.zoom, so the loop was rebuilding
+  // the same three strings — a Math.round and two concatenations each — once per
+  // visible row, and handing each to the ctx.font SETTER, which re-parses it.
+  //
+  // shaW was a measureText PER ROW for a string whose width cannot vary: a sha is
+  // exactly 7 characters (commands.rs:393 truncates it; design mode's hhex pads
+  // to 7), and FONT_MONO is a monospace stack (the CSS --mono custom property,
+  // falling back to ui-monospace,monospace), so every row's sha has the same
+  // advance width. One measurement covers the frame.
+  const zc=Math.min(1.25,layout.zoom), zm=Math.min(1.2,layout.zoom);
+  const FONT_MSG=Math.round(12.5*zc)+"px "+FONT_UI;
+  const FONT_SHA=Math.round(10.5*zm)+"px "+FONT_MONO;
+  const FONT_AUTHOR=Math.round(11*zm)+"px "+FONT_UI;
+  ctx.font=FONT_SHA;
+  const shaW=ctx.measureText("0000000").width;
   ctx.textBaseline="middle"; ctx.font=layout.chipFont;
   // Inline ref-chip bounds are frame-constant (lastTx + window width), so compute
   // once here and reuse across rows instead of allocating per row in the loop;
@@ -641,26 +658,27 @@ function renderContent(st, rowLo, rowHi, strip){
       // below) — previously only the sha itself (96px) was reserved, so
       // adding the author name here without widening this would have let a
       // long commit message visually collide with it.
-      ctx.font=Math.round(12.5*Math.min(1.25,layout.zoom))+"px "+FONT_UI; ctx.fillStyle=theme.text; ctx.textAlign="left";
+      ctx.font=FONT_MSG; ctx.fillStyle=theme.text; ctx.textAlign="left";
       let s=msgOf(r); if(s.length>LABEL_MAX) s=s.slice(0,LABEL_MAX); const maxw=W-cx-AUTHOR_GUTTER;
       if(ctx.measureText(s).width>maxw) s=fitEllipsis(s,maxw,4,measureCtx)+"…"; // #88: bisect, not strip-one-and-remeasure
       ctx.fillText(s,cx,y);
-      ctx.fillStyle=theme.muted; ctx.textAlign="right"; ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px "+FONT_MONO;
-      const sha=hhex(r), shaW=ctx.measureText(sha).width;
+      // Sha FIRST, then the author. The other order needed a third font
+      // assignment to put the mono face back after the author's UI face
+      // clobbered it — the old comment there said as much. Drawing in font
+      // order costs two assignments instead of three and reads the same on
+      // screen: both are theme.muted, both right-aligned, neither overlaps.
+      ctx.fillStyle=theme.muted; ctx.textAlign="right"; ctx.font=FONT_SHA;
+      ctx.fillText(hhex(r),W-14,y);
       // Author preview — right next to the sha, so who wrote a commit is
       // visible at a glance without opening its detail panel. Own (slightly
       // larger, UI-font-not-mono) style so it doesn't read as part of the
-      // hash itself; truncated the same way the message above is.
-      ctx.font=Math.round(11*Math.min(1.2,layout.zoom))+"px "+FONT_UI;
+      // hash itself; truncated the same way the message above is. Positioned
+      // off the hoisted shaW.
+      ctx.font=FONT_AUTHOR;
       let a=authorOf(r); if(a.length>LABEL_MAX) a=a.slice(0,LABEL_MAX); const maxAuthorW=AUTHOR_GUTTER-96-8;
       if(ctx.measureText(a).width>maxAuthorW) a=fitEllipsis(a,maxAuthorW,1,measureCtx)+"…"; // #88
       ctx.fillText(a,W-14-shaW-8,y);
-      // Back to mono. Not a duplicate of the line above the author preview —
-      // that preview clobbered ctx.font with FONT_UI, and without restoring it
-      // the sha draws in the UI face. Silently: a canvas never complains about
-      // the font it was handed.
-      ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px "+FONT_MONO;
-      ctx.fillText(sha,W-14,y); ctx.textAlign="left";
+      ctx.textAlign="left";
     }
     ctx.globalAlpha=1;
   }
