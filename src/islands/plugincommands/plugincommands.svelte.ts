@@ -189,6 +189,13 @@ class PluginCommandsState {
   // Keep ENABLED plugins (enabled defaults to true when a manifest omits it),
   // and only their commands whose placement reaches the palette ("palette" or
   // "both"; placement defaults to "palette" when omitted).
+  //
+  // This filter is presentation, NOT the gate — don't offer what won't run.
+  // The gate is find_enabled_command in plugin_registry.rs, and it has to be
+  // there rather than here: this list is a per-window cache, and every GitCat
+  // window is a separate OS process, so disabling a plugin in one window can
+  // never invalidate another's. Before #59 there was no backend check at all,
+  // and a second window's stale palette really did still run the commands.
   private build(plugins: Plugin[]): ActionItem[] {
     const out: ActionItem[] = [];
     for (const p of plugins) {

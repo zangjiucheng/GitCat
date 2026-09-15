@@ -3095,10 +3095,22 @@ async loadPluginSkin(pluginId: string) : Promise<Result<TamaSkin, string>> {
 }
 },
 /**
- * Run a plugin's command by id. Loads it from the registry (written in
- * parallel — [`crate::plugin_registry::find_command`], which returns `None`
- * for a command that is missing OR disabled), resolves the working directory
- * from `ctx.repo`, and shells out via [`run_template`].
+ * Run a plugin's command by id. Loads it from the registry
+ * ([`crate::plugin_registry::find_enabled_command`] — `Ok(None)` for a command
+ * that is missing, `Err` for one belonging to a DISABLED plugin), resolves the
+ * working directory from `ctx.repo`, and shells out via [`run_template`].
+ * 
+ * That gate is the whole point of the lookup being this one and not a plain
+ * by-id find. The old `find_command` did not filter on `Plugin::enabled` and
+ * said so in its own doc; this comment used to claim the opposite, and nothing
+ * checked. So disabling a plugin stopped its hooks and left its commands
+ * runnable — including a `mutates: true` one, which takes a safety snapshot
+ * and writes to the repository (#59).
+ * 
+ * The frontend filters disabled plugins out of the palette, but that is a
+ * display convention over a cached list, not a gate: every GitCat window is a
+ * separate OS process, so disabling a plugin in one leaves a second window's
+ * palette still listing — and, before this, still running — its commands.
  * 
  * `async fn` + `run_blocking` keeps the (potentially long, up to
  * [`PLUGIN_CMD_TIMEOUT`]) subprocess wait off Tauri's main thread, exactly

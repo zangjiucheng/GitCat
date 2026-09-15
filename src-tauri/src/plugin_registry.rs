@@ -3,7 +3,7 @@
 //! `commands` (surfaced in the ⌘K palette and/or context menus) and `hooks`
 //! (external commands GitCat runs on lifecycle events). This module owns ONLY
 //! the on-disk registry + install/enable/remove CRUD; a later executor module
-//! consumes [`load_plugins`]/[`find_command`] to actually run a command's
+//! consumes [`load_plugins`]/[`find_enabled_command`] to actually run a command's
 //! external process.
 //!
 //! ## AI-agnostic / trust boundary
@@ -780,16 +780,71 @@ pub fn load_plugins(app: &AppHandle<Wry>) -> Result<Vec<Plugin>, String> {
     load_from(&plugins_path(app)?)
 }
 
-/// Look up a single command by its `(pluginId, commandId)` address, the way the
-/// executor resolves a palette/menu invocation back to its `run` template.
-/// `Ok(None)` when either the plugin or the command doesn't exist. Does NOT
-/// filter on `Plugin::enabled` — the caller checks that if it cares.
-pub fn find_command(app: &AppHandle<Wry>, plugin_id: &str, command_id: &str) -> Result<Option<PluginCommand>, String> {
-    let plugins = load_plugins(app)?;
-    Ok(plugins
-        .into_iter()
+/// Look up a single command by its `(pluginId, commandId)` address, refusing a
+/// plugin the user has DISABLED. Pure over a plugin list — see
+/// [`find_enabled_command`] for the `AppHandle` wrapper the executor calls.
+///
+/// Pure, like [`set_enabled_in`] and [`remove_from`], because that is the only
+/// way this gate is testable: the loading version needs an `AppHandle<Wry>`,
+/// which is why the test for the old unfiltered lookup re-implemented its body
+/// inline rather than calling it — and why the identical `enabled` gate inside
+/// [`load_plugin_skin`] has never had a test at all.
+///
+/// The three outcomes are deliberately NOT collapsed:
+///
+/// * plugin missing, or command missing -> `Ok(None)`; the caller reports
+///   "command not found", which is what happened.
+/// * plugin present but disabled -> `Err(err_plugins.plugin_disabled)`.
+///
+/// Reporting a disabled plugin's command as "not found" would be a lie about a
+/// command the user can see in their own plugin list and turn back on — and it
+/// would make the one case this gate exists for (a second window's palette still
+/// listing a plugin disabled in the first) report as corruption rather than as
+/// what it is.
+pub fn find_enabled_command_in(
+    plugins: &[Plugin],
+    plugin_id: &str,
+    command_id: &str,
+) -> Result<Option<PluginCommand>, String> {
+    let Some(plugin) = plugins.iter().find(|p| p.id == plugin_id) else {
+        return Ok(None);
+    };
+    if !plugin.enabled {
+        return Err(ierrp("err_plugins.plugin_disabled", &[("id", &format!("{plugin_id:?}"))]));
+    }
+    Ok(plugin.commands.iter().find(|c| c.id == command_id).cloned())
+}
+
+/// Resolve a plugin by id, refusing one the user has DISABLED. Pure over a
+/// plugin list for the same testability reason as [`find_enabled_command_in`].
+pub fn find_enabled_plugin_in<'a>(plugins: &'a [Plugin], plugin_id: &str) -> Result<&'a Plugin, String> {
+    let plugin = plugins
+        .iter()
         .find(|p| p.id == plugin_id)
-        .and_then(|p| p.commands.into_iter().find(|c| c.id == command_id)))
+        .ok_or_else(|| ierrp("err_plugins.no_plugin_with_id", &[("id", &format!("{plugin_id:?}"))]))?;
+    if !plugin.enabled {
+        return Err(ierrp("err_plugins.plugin_disabled", &[("id", &format!("{plugin_id:?}"))]));
+    }
+    Ok(plugin)
+}
+
+/// Load the registry and resolve `(pluginId, commandId)` through
+/// [`find_enabled_command_in`], the way the executor resolves a palette/menu
+/// invocation back to its `run` template.
+///
+/// There is deliberately no unfiltered variant left. This used to be
+/// `find_command`, whose doc said it "does NOT filter on `Plugin::enabled` —
+/// the caller checks that if it cares", and its only caller did not: disabling
+/// a plugin stopped its hooks but not its commands, including `mutates: true`
+/// ones that take a safety snapshot and write to the repository (#59). An
+/// unfiltered lookup sitting next to a filtered one is the shape of that bug,
+/// so the unfiltered one is gone rather than merely documented.
+pub fn find_enabled_command(
+    app: &AppHandle<Wry>,
+    plugin_id: &str,
+    command_id: &str,
+) -> Result<Option<PluginCommand>, String> {
+    find_enabled_command_in(&load_plugins(app)?, plugin_id, command_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -895,11 +950,13 @@ pub fn load_plugin_lua_source(plugin: &Plugin) -> Result<String, String> {
 /// the executor's command path uses this to fetch the source for a `handler`
 /// command. Errors if the plugin is missing or its script can't be safely read.
 pub fn plugin_lua_source(app: &AppHandle<Wry>, plugin_id: &str) -> Result<String, String> {
-    let plugin = load_plugins(app)?
-        .into_iter()
-        .find(|p| p.id == plugin_id)
-        .ok_or_else(|| ierrp("err_plugins.no_plugin_with_id", &[("id", &format!("{plugin_id:?}"))]))?;
-    load_plugin_lua_source(&plugin)
+    // Gated on `enabled` too, even though its one caller already resolved the
+    // command through find_enabled_command: this is a `pub fn` that hands back
+    // executable plugin source by id, and it previously did so for a disabled
+    // plugin with no check at all (#59). A second gate costs one comparison;
+    // a second caller written without one costs another bug of this shape.
+    let plugins = load_plugins(app)?;
+    load_plugin_lua_source(find_enabled_plugin_in(&plugins, plugin_id)?)
 }
 
 // ---------------------------------------------------------------------------
@@ -1545,19 +1602,75 @@ mod tests {
 
     #[test]
     fn find_command_addresses_by_plugin_and_command_id() {
-        // Pure lookup logic, exercised directly against a plugin list (find_command
-        // itself needs an AppHandle; this mirrors its into_iter().find(...) body).
+        // Now calls the real function. It used to re-implement the lookup inline
+        // — "find_command itself needs an AppHandle" — which is exactly why the
+        // missing `enabled` gate had nothing to fail against.
         let plugins = vec![sample_plugin("alpha")];
-        let found = plugins
-            .iter()
-            .find(|p| p.id == "alpha")
-            .and_then(|p| p.commands.iter().find(|c| c.id == "greet"));
-        assert!(found.is_some());
-        let missing = plugins
-            .iter()
-            .find(|p| p.id == "alpha")
-            .and_then(|p| p.commands.iter().find(|c| c.id == "nope"));
-        assert!(missing.is_none());
+        assert!(find_enabled_command_in(&plugins, "alpha", "greet").unwrap().is_some());
+        assert!(find_enabled_command_in(&plugins, "alpha", "nope").unwrap().is_none());
+        assert!(find_enabled_command_in(&plugins, "ghost", "greet").unwrap().is_none());
+    }
+
+    #[test]
+    fn a_disabled_plugin_s_command_will_not_resolve() {
+        // #59. docs/plugins.md promises "a disabled plugin's commands and hooks
+        // stop running immediately". Hooks honoured it; commands did not — the
+        // executor's only lookup did not filter on `enabled` and said so in its
+        // own doc, while the executor's doc claimed the opposite. So an IPC call
+        // to runPluginCommand for a disabled plugin ran its shell template or
+        // Luau handler normally, including a `mutates: true` one, which takes a
+        // safety snapshot and writes to the repository.
+        let mut plugins = vec![sample_plugin("alpha")];
+        set_enabled_in(&mut plugins, "alpha", false).unwrap();
+
+        let err = find_enabled_command_in(&plugins, "alpha", "greet")
+            .expect_err("a disabled plugin's command must not resolve");
+        assert!(err.contains("err_plugins.plugin_disabled"), "got: {err}");
+    }
+
+    #[test]
+    fn a_disabled_plugin_reports_as_disabled_rather_than_missing() {
+        // Not collapsed into "command not found": the user can see this plugin
+        // in their own list and turn it back on. Reporting it as missing would
+        // describe the one case this gate exists for — a second window's palette
+        // still listing a plugin disabled in the first — as corruption.
+        let mut plugins = vec![sample_plugin("alpha")];
+        set_enabled_in(&mut plugins, "alpha", false).unwrap();
+
+        let disabled = find_enabled_command_in(&plugins, "alpha", "greet").unwrap_err();
+        assert!(disabled.contains("err_plugins.plugin_disabled"), "got: {disabled}");
+        // …while a genuinely absent plugin still reads as absent, not disabled.
+        assert!(find_enabled_command_in(&plugins, "ghost", "greet").unwrap().is_none());
+    }
+
+    #[test]
+    fn find_enabled_plugin_gates_the_luau_source_lookup() {
+        // plugin_lua_source resolved a plugin by id with no check at all, and it
+        // hands back executable source. Gated through this helper now.
+        let mut plugins = vec![sample_plugin("alpha")];
+        assert!(find_enabled_plugin_in(&plugins, "alpha").is_ok());
+
+        let missing = find_enabled_plugin_in(&plugins, "ghost").unwrap_err();
+        assert!(missing.contains("err_plugins.no_plugin_with_id"), "got: {missing}");
+
+        set_enabled_in(&mut plugins, "alpha", false).unwrap();
+        let disabled = find_enabled_plugin_in(&plugins, "alpha").unwrap_err();
+        assert!(disabled.contains("err_plugins.plugin_disabled"), "got: {disabled}");
+    }
+
+    #[test]
+    fn an_enabled_plugin_still_resolves_normally() {
+        // The gate must not become "nothing runs" — every command of an enabled
+        // plugin resolves exactly as before, including after a disable/enable
+        // round trip through the same toggle the UI uses.
+        let mut plugins = vec![sample_plugin("alpha"), sample_plugin("beta")];
+        set_enabled_in(&mut plugins, "alpha", false).unwrap();
+        set_enabled_in(&mut plugins, "alpha", true).unwrap();
+
+        assert!(find_enabled_command_in(&plugins, "alpha", "greet").unwrap().is_some());
+        // …and disabling one plugin does not gate its neighbour.
+        set_enabled_in(&mut plugins, "alpha", false).unwrap();
+        assert!(find_enabled_command_in(&plugins, "beta", "greet").unwrap().is_some());
     }
 
     // -- Tama skin (PER-47) --------------------------------------------------

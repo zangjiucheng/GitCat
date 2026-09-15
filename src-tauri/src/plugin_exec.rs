@@ -110,7 +110,7 @@ use crate::procutil::NoConsoleWindowExt;
 // ---------------------------------------------------------------------------
 // INTEGRATION (lib.rs) — apply these TWO edits once `plugin_registry` lands.
 // They are intentionally NOT applied here because `run_plugin_command`
-// depends on `crate::plugin_registry::find_command`, which is written in
+// depends on `crate::plugin_registry::find_enabled_command`, which is written in
 // parallel; wiring it before that module exists would break the build.
 //
 //   1. In the module list near the top of lib.rs, add:
@@ -434,10 +434,22 @@ pub fn run_template_with_timeout(
     })
 }
 
-/// Run a plugin's command by id. Loads it from the registry (written in
-/// parallel — [`crate::plugin_registry::find_command`], which returns `None`
-/// for a command that is missing OR disabled), resolves the working directory
-/// from `ctx.repo`, and shells out via [`run_template`].
+/// Run a plugin's command by id. Loads it from the registry
+/// ([`crate::plugin_registry::find_enabled_command`] — `Ok(None)` for a command
+/// that is missing, `Err` for one belonging to a DISABLED plugin), resolves the
+/// working directory from `ctx.repo`, and shells out via [`run_template`].
+///
+/// That gate is the whole point of the lookup being this one and not a plain
+/// by-id find. The old `find_command` did not filter on `Plugin::enabled` and
+/// said so in its own doc; this comment used to claim the opposite, and nothing
+/// checked. So disabling a plugin stopped its hooks and left its commands
+/// runnable — including a `mutates: true` one, which takes a safety snapshot
+/// and writes to the repository (#59).
+///
+/// The frontend filters disabled plugins out of the palette, but that is a
+/// display convention over a cached list, not a gate: every GitCat window is a
+/// separate OS process, so disabling a plugin in one leaves a second window's
+/// palette still listing — and, before this, still running — its commands.
 ///
 /// `async fn` + `run_blocking` keeps the (potentially long, up to
 /// [`PLUGIN_CMD_TIMEOUT`]) subprocess wait off Tauri's main thread, exactly
@@ -454,7 +466,7 @@ pub async fn run_plugin_command(
     command_id: String,
     ctx: PlaceholderCtx,
 ) -> Result<CommandOutput, String> {
-    let command = crate::plugin_registry::find_command(&app, &plugin_id, &command_id)?.ok_or_else(|| {
+    let command = crate::plugin_registry::find_enabled_command(&app, &plugin_id, &command_id)?.ok_or_else(|| {
         ierrp(
             "err_plugins.command_not_found",
             &[("plugin_id", plugin_id.as_str()), ("command_id", command_id.as_str())],
@@ -470,7 +482,7 @@ pub async fn run_plugin_command(
     // A command runs EITHER an embedded Luau `handler` (PER-56) or a shell `run`
     // template — EXACTLY ONE, enforced at install by validate_manifest. Decide
     // which here; for a handler, load the plugin's Luau source up front (a cheap
-    // registry + guarded file read, same inline-lookup shape as find_command
+    // registry + guarded file read, same inline-lookup shape as find_enabled_command
     // above) so the blocking body just runs it.
     let handler = command.handler.filter(|h| !h.trim().is_empty());
     let run = command.run;
