@@ -16,6 +16,20 @@ async function skipWizard(page: Page) {
 }
 
 const overlay = (page: Page) => page.locator("#vimNavHelpScrim");
+
+/**
+ * Assert a heading, and that it is a TRANSLATED string rather than a raw key.
+ *
+ * /sidebar/i and /graph/i both match the untranslated key "vimnav.scope_sidebar"
+ * — so when the scope labels went missing from every locale, two of these
+ * assertions passed anyway and only /working tree/i caught it. Every heading
+ * check goes through here now.
+ */
+async function expectHeading(page: Page, re: RegExp) {
+  const h = headings(page).first();
+  await expect(h).toHaveText(re);
+  await expect(h, "heading is an unresolved i18n key").not.toHaveText(/^vimnav\./);
+}
 const headings = (page: Page) => page.locator("#vimNavHelpScrim .d-lab");
 const rows = (page: Page) => page.locator("#vimNavHelpScrim .pl-kv div");
 
@@ -27,6 +41,21 @@ async function openHelp(page: Page) {
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
   await skipWizard(page);
+});
+
+test("every heading and row is translated, not a raw key", async ({ page }) => {
+  // The generated overlay pulls labelKeys straight out of the table, so a key
+  // that exists in no locale renders as itself. That is invisible unless
+  // something checks — and it silently cost three scope headings their text.
+  await page.keyboard.press("Control+Digit1");
+  await openHelp(page);
+
+  for (const t of await headings(page).allTextContents()) {
+    expect(t, `untranslated heading: ${t}`).not.toMatch(/^(vimnav|menu|legacy)\./);
+  }
+  for (const t of await rows(page).allTextContents()) {
+    expect(t, `untranslated row: ${t}`).not.toMatch(/(vimnav|menu|legacy)\.[a-z_]+/);
+  }
 });
 
 test("? opens the overlay and Escape closes it", async ({ page }) => {
@@ -42,12 +71,12 @@ test("the active pane's keys come first", async ({ page }) => {
   // to open the overlay from a text field.
   await page.locator('[data-pane="sidebar"] [tabindex="0"]').first().focus();
   await openHelp(page);
-  await expect(headings(page).first()).toHaveText(/sidebar/i);
+  await expectHeading(page, /sidebar/i);
 
   await page.keyboard.press("Escape");
   await page.keyboard.press("Control+Digit1"); // graph
   await openHelp(page);
-  await expect(headings(page).first()).toHaveText(/graph/i);
+  await expectHeading(page, /graph/i);
 });
 
 test("the working tree's own keys lead when it has focus", async ({ page }) => {
@@ -56,7 +85,7 @@ test("the working tree's own keys lead when it has focus", async ({ page }) => {
   await page.locator("[data-pane='workdir']").first().focus();
 
   await openHelp(page);
-  await expect(headings(page).first()).toHaveText(/working tree/i);
+  await expectHeading(page, /working tree/i);
   // And the keys under it are the ones that actually work there.
   const lead = page.locator("#vimNavHelpScrim section").first();
   await expect(lead).toContainText("s");

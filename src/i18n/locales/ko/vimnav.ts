@@ -1,6 +1,10 @@
 // 키보드 단축키 도움말 오버레이(vim 스타일 내비게이션). 설명만 번역하고, 키 글리프
 // (⌘K, j, k, …)는 그대로 둬요. 키는 `vimnav.<key>`가 돼요.
 export default {
+  scope_graph: "커밋 그래프에서",
+  scope_sidebar: "사이드바에서",
+  scope_detail: "상세 패널에서",
+  scope_workdir: "작업 트리에서",
   cycle_tab: "패널의 다음 탭",
   focus_diff: "diff로 포커스 이동(방향키로 스크롤)",
   filter_refs_key: "ref 필터로 포커스 이동",

@@ -13,6 +13,7 @@ import { focusInto, restoreFocus, saveFocus, trapTab } from "./focus.ts";
 import { activePaneScope } from "./panes.ts";
 import type { Binding, GuardTable, Tables } from "./types.ts";
 import { claim } from "./claim.ts";
+import { platform as detectPlatform } from "./platform.ts";
 
 const EMPTY: Tables = {
   byCode: new Map(), byKey: new Map(), always: [],
@@ -28,14 +29,6 @@ export interface KeymapDump {
    *  press must show 1 here AND the legacy effect before a binding may flip. */
   readonly shadow: Readonly<Record<string, number>>;
   readonly snapshot: string;
-}
-
-function detectPlatform(): Platform {
-  const p = navigator.platform || "";
-  const ua = navigator.userAgent || "";
-  if (/Mac|iP(hone|ad|od)/.test(p) || /Mac OS X/.test(ua)) return "macos";
-  if (/Win/.test(p) || /Windows/.test(ua)) return "win";
-  return "linux";
 }
 
 class Keymap {

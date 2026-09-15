@@ -1,6 +1,10 @@
 // Keyboard-shortcuts help overlay (vim-style nav). Only the descriptions are
 // translated; the key glyphs (⌘K, j, k, …) stay literal. Keys become `vimnav.<key>`.
 export default {
+  scope_graph: "In the commit graph",
+  scope_sidebar: "In the sidebar",
+  scope_detail: "In the detail panel",
+  scope_workdir: "In the working tree",
   cycle_tab: "next tab in the panel",
   focus_diff: "focus the diff, so arrow keys scroll it",
   filter_refs_key: "focus the ref filter",

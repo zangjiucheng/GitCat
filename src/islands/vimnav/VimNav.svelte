@@ -8,6 +8,18 @@
   // whole dispatch decision lives in the controller rather than here.
   import { vimnavCtrl, handleGlobalKeydown } from "./vimnav.svelte.ts";
   import { t } from "@/i18n/i18n.svelte.ts";
+  import { helpGroups } from "@/keymap/help.ts";
+  import { BINDINGS } from "@/keymap/bindings.ts";
+  import { activePaneScope } from "@/keymap/panes.ts";
+  import { platform } from "@/keymap/platform.ts";
+
+  // Rebuilt every time the overlay opens rather than once: which scope leads
+  // depends on where focus was when "?" was pressed, and t() has to run under
+  // the CURRENT locale (the same reason cmdk.svelte.ts rebuilds its action
+  // list per open rather than holding a module-level array).
+  const groups = $derived(
+    vimnavCtrl.helpOpen ? helpGroups(BINDINGS, activePaneScope(), platform()) : [],
+  );
 </script>
 
 <svelte:window on:keydown={handleGlobalKeydown} />
@@ -22,43 +34,16 @@
     </div>
     <div class="modal-body">
       <div class="kbd-cols">
-        <section>
-          <h4 class="d-lab">{t("vimnav.sec_search")}</h4>
-          <div class="pl-kv">
-            <div><span class="mono">/</span> or <span class="mono">⌘K</span> &#8212; {t("vimnav.palette")}</div>
-            <div><span class="mono">⌘F</span> &#8212; {t("vimnav.search_code")}</div>
-            <div><span class="mono">⌘⇧F</span> &#8212; {t("vimnav.pickaxe")}</div>
-          </div>
-          <h4 class="d-lab" style="margin-top:14px">{t("vimnav.sec_sync")}</h4>
-          <div class="pl-kv">
-            <div><span class="mono">⌘⇧D</span> &#8212; {t("vimnav.fetch")}</div>
-            <div><span class="mono">⌘⇧L</span> &#8212; {t("vimnav.pull")}</div>
-            <div><span class="mono">⌘⇧P</span> &#8212; {t("vimnav.push")}</div>
-          </div>
-          <h4 class="d-lab" style="margin-top:14px">{t("vimnav.sec_view")}</h4>
-          <div class="pl-kv">
-            <div><span class="mono">⌘⇧U</span> &#8212; {t("vimnav.jump_uncommitted")}</div>
-            <div><span class="mono">⌘⇧H</span> &#8212; {t("vimnav.jump_head")}</div>
-            <div><span class="mono">⌘\</span> &#8212; {t("vimnav.focus_mode")}</div>
-            <div><span class="mono">⌘</span>+scroll, or <span class="mono">+</span> / <span class="mono">-</span> &#8212; {t("vimnav.zoom")}</div>
-          </div>
-        </section>
-        <section>
-          <h4 class="d-lab">{t("vimnav.sec_navigate")}</h4>
-          <div class="pl-kv">
-            <div><span class="mono">j</span> / <span class="mono">k</span> &#8212; {t("vimnav.down_up")}</div>
-            <div><span class="mono">gg</span> / <span class="mono">G</span> &#8212; {t("vimnav.first_last")}</div>
-            <div><span class="mono">⌘D</span> / <span class="mono">⌘U</span> &#8212; {t("vimnav.half_page")}</div>
-            <div><span class="mono">↑↓ PgUp PgDn Home End</span> &#8212; {t("vimnav.scroll")}</div>
-            <div><span class="mono">Enter</span> &#8212; {t("vimnav.enter")}</div>
-          </div>
-          <h4 class="d-lab" style="margin-top:14px">{t("vimnav.sec_actions")}</h4>
-          <div class="pl-kv">
-            <div><span class="mono">⌘Z</span> &#8212; {t("vimnav.undo")}</div>
-            <div><span class="mono">Esc</span> &#8212; {t("vimnav.esc")}</div>
-            <div><span class="mono">?</span> &#8212; {t("vimnav.toggle_help")}</div>
-          </div>
-        </section>
+        {#each groups as g (g.titleKey)}
+          <section>
+            <h4 class="d-lab">{t(g.titleKey)}</h4>
+            <div class="pl-kv">
+              {#each g.rows as r (g.titleKey + r.chord + r.labelKey)}
+                <div><span class="mono">{r.chord}</span> &#8212; {t(r.labelKey)}</div>
+              {/each}
+            </div>
+          </section>
+        {/each}
       </div>
     </div>
     <div class="modal-foot">
