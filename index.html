@@ -1278,12 +1278,25 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .pl-kv{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:4px;margin:10px 0}
 .pl-kv .mono{color:var(--text)}
 /* Keyboard-shortcuts reference (the ? overlay): a wider, two-column modal so
-   the whole cheat sheet fits at a glance; collapses to one column when narrow. */
-.modal.kbd-help{width:min(680px,94vw)}
-.kbd-cols{display:grid;grid-template-columns:1fr 1fr;gap:2px 28px}
+   the whole cheat sheet fits at a glance; collapses to one column when narrow.
+
+   The list is GENERATED from the binding table now, so its length is not ours
+   to predict: it grows with every binding added, and the leading group depends
+   on which pane has focus. So the modal is capped at the scrim's own padded box
+   and the body scrolls — without that cap it rendered 829px tall no matter the
+   window, and below a 900px-tall screen the footer and the last rows were cut
+   off with no way to reach them (.modal is overflow:hidden).
+
+   Balanced columns, not a 2-track grid: a grid row is as tall as its tallest
+   cell, so six groups of very different heights left large gaps and made the
+   overlay much taller than its content. */
+.modal.kbd-help{width:min(680px,94vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column}
+.modal.kbd-help .modal-body{overflow:auto;min-height:0}
+.kbd-cols{columns:2;column-gap:28px}
+.kbd-cols>section{break-inside:avoid;margin:0 0 12px}
 .kbd-cols .pl-kv{margin:8px 0 0}
 .kbd-cols .d-lab:first-child{margin-top:0}
-@media (max-width:560px){.kbd-cols{grid-template-columns:1fr}}
+@media (max-width:560px){.kbd-cols{columns:1}}
 .pl-parent{margin-right:8px;display:inline-block}
 .pl-msg{font-family:var(--mono);font-size:12px;line-height:1.55;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-panel);padding:10px 12px;white-space:pre-wrap;word-break:break-word;margin-top:4px;max-height:280px;overflow:auto}
 .pl-tree{max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:var(--r-panel);background:var(--bg);padding:4px}

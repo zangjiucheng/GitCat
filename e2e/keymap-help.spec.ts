@@ -65,6 +65,54 @@ test("? opens the overlay and Escape closes it", async ({ page }) => {
   await expect(overlay(page)).not.toHaveClass(/\bon\b/);
 });
 
+test("the overlay fits the window, and what it cannot fit is reachable by keyboard", async ({
+  page,
+}) => {
+  // Generating the list changed its length: the hand-written overlay was two
+  // <section>s that happened to fill a 2x1 grid, the generated one is six. The
+  // modal had a width but no max-height, and .modal is overflow:hidden — so it
+  // rendered 829px tall at EVERY window size, and on anything shorter than
+  // ~900px the last rows and the whole footer were cut off with no scrollbar
+  // and no key that could reach them. Nothing in this file looked at geometry,
+  // so it went out in PR 8 unnoticed.
+  await page.setViewportSize({ width: 1280, height: 700 });
+  await page.locator('[data-pane="sidebar"] [tabindex="0"]').first().focus();
+  await openHelp(page);
+
+  const vh = page.viewportSize()!.height;
+  const box = (await page.locator("#vimNavHelpScrim .modal.kbd-help").boundingBox())!;
+  expect(box.y, "the overlay is cut off at the top").toBeGreaterThanOrEqual(0);
+  expect(box.y + box.height, "the overlay is cut off at the bottom").toBeLessThanOrEqual(vh);
+  await expect(page.locator("#vimNavHelpScrim .modal-foot")).toBeInViewport();
+
+  // Overflow is fine — unreachable overflow is not. This is the one surface
+  // that teaches keyboard use, and on macOS WebKit a bare overflow:auto div is
+  // not tab-focusable, so the body has to be handed focus for arrows to work.
+  const body = page.locator("#vimNavHelpScrim .modal-body");
+  const over = await body.evaluate((el) => el.scrollHeight - el.clientHeight);
+  expect(over, "nothing overflows at this size — shorten the window").toBeGreaterThan(0);
+
+  await page.keyboard.press("End");
+  await expect
+    .poll(() => body.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop))
+    .toBeLessThanOrEqual(1);
+  await expect(rows(page).last()).toBeInViewport();
+});
+
+test("closing the overlay gives focus back to the pane it was opened from", async ({ page }) => {
+  // It takes focus to be scrollable, and the scrim hides with visibility —
+  // not display — so without handing focus back it would sit on a node the
+  // user can no longer see, and j/k would have nothing to move.
+  const row = page.locator('[data-pane="sidebar"] [tabindex="0"]').first();
+  await row.focus();
+  await openHelp(page);
+  await expect(page.locator("#vimNavHelpScrim .modal-body")).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(overlay(page)).not.toHaveClass(/\bon\b/);
+  await expect(row).toBeFocused();
+});
+
 test("the active pane's keys come first", async ({ page }) => {
   // A ref ROW, not ⌘2: that focuses the sidebar's first control, which is the
   // ref filter input — and "?" is a typed character, so vimnav rightly refuses
