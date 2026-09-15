@@ -1,5 +1,6 @@
 // 커밋 행 컨텍스트 메뉴 문자열. 키는 `commitmenu.<key>`가 돼요.
 export default {
+  compare_with: "{sha}와(과) 비교…",
   cherry_pick: "HEAD로 체리픽",
   merge: "HEAD로 병합",
   revert: "커밋 되돌리기",

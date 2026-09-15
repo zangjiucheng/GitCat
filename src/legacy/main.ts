@@ -1089,7 +1089,10 @@ function openCommitMenuForSelectedRow(){
   const cx=Math.min(Math.max(x,r.left+8),r.right-8);
   const cy=Math.min(Math.max(y,r.top+8),r.bottom-8);
   const sha=(BACKEND&&BACKEND.oids&&BACKEND.oids[row])?BACKEND.oids[row]:hhex(row);
-  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), cx, cy);
+  // No compare anchor on this path: the keyboard opens the menu FOR the
+  // selected row, so the selection and the target are the same commit and
+  // "Compare with …" would mean comparing it with itself (#49).
+  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), cx, cy, null);
   return true;
 }
 
@@ -1398,7 +1401,14 @@ cv.addEventListener("contextmenu",(e)=>{
   // "Copy full SHA" really copies the full hash and git ops get an unambiguous
   // ref (#43). openAt derives shortSha from it via slice(0,7).
   const sha=(BACKEND&&BACKEND.oids&&BACKEND.oids[row])?BACKEND.oids[row]:((BACKEND&&BACKEND.rows[row])?BACKEND.rows[row].sha:hhex(row));
-  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), e.clientX, e.clientY);
+  // The currently SELECTED commit is the compare anchor (#49) — right-clicking
+  // a second row offers "Compare with <selected>…". Resolved the same way as
+  // `sha` above (full oid), and left null when nothing is selected, when the
+  // pinned Uncommitted band (-2) is, or when the selection is this same row —
+  // openAt drops an anchor equal to the target on its own as a second guard.
+  const anchorRow=state.selectedRow;
+  const anchor=(anchorRow>=0&&anchorRow!==row&&BACKEND&&BACKEND.oids&&BACKEND.oids[anchorRow])?BACKEND.oids[anchorRow]:null;
+  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), e.clientX, e.clientY, anchor);
 });
 cv.addEventListener("keydown",(e)=>{
   const rowH=layout.rowH;

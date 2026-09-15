@@ -68,6 +68,14 @@
           <span class="spinner"></span><span class="mut">{commitMenuCtrl.pendingLabel}</span>
         </div>
       {:else}
+        {#if commitMenuCtrl.compareWith}
+          <!-- Only when a DIFFERENT commit is selected (#49) — the controller
+               blanks compareWith when the selection is this same row, so this
+               item can never read "Compare with myself". -->
+          <button onclick={() => commitMenuCtrl.compare()}
+            >{t("commitmenu.compare_with", { sha: commitMenuCtrl.compareShort })}</button
+          >
+        {/if}
         <button onclick={() => commitMenuCtrl.cherryPick()}>{t("commitmenu.cherry_pick")}</button>
         <button onclick={() => commitMenuCtrl.merge()}>{t("commitmenu.merge")}</button>
         <button
