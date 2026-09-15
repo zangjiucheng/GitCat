@@ -368,7 +368,7 @@ Plugins are installed from a local file — there's no registry or marketplace.
 
 From the same tab you can:
 
-- **Enable / disable** a plugin with its toggle (a disabled plugin's commands and hooks stop running immediately).
+- **Enable / disable** a plugin with its toggle. A disabled plugin's commands and hooks stop running immediately — the check is in the backend, so it holds even for a second GitCat window whose command palette was listed before you flipped the toggle (each window is a separate process and keeps its own cached list). That window may still *show* the commands until it reloads its registry; running one reports that the plugin is disabled rather than executing it.
 - **Remove** a plugin. This only drops it from GitCat's registry — your original `plugin.json` file on disk is untouched, so you can reinstall it later.
 
 ### Where the registry lives

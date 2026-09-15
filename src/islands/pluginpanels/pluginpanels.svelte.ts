@@ -141,7 +141,10 @@ class PluginPanelsState {
   }
 
   // Keep ENABLED plugins (enabled defaults to true when a manifest omits it),
-  // and turn EACH declared panel into one palette entry. `panels` is
+  // and turn EACH declared panel into one palette entry. Presentation, not the
+  // gate — a panel's widgets run through runPluginCommand, which refuses a
+  // disabled plugin in the backend (#59). See plugincommands.svelte.ts's own
+  // note on why a per-window cache cannot be the gate. `panels` is
   // `#[serde(default)]` on the backend, so a manifest with none contributes
   // nothing (the `?? []` also tolerates a pre-panels registry pre-regen).
   private build(plugins: Plugin[]): ActionItem[] {
