@@ -41,6 +41,27 @@ export const GUARDS: GuardTable = {
    *  and belongs in its own PR. */
   noScrimOpen: () => !document.querySelector(".scrim.on"),
 
+  /**
+   * No cursor-anchored popover is open — the commit menu, or any of the
+   * sidebar's ref menus.
+   *
+   * A SEPARATE guard from noScrimOpen because these are not scrims and never
+   * were: `.ref-pop` is a bare positioned div with no backdrop, so
+   * `.scrim.on` does not see it. The graph is the pane scope's fallback, so
+   * every canvas binding is live whenever focus is "anywhere unremarkable" —
+   * and right-clicking the canvas leaves focus ON the canvas. The result was
+   * that Escape never reached the commit menu at all (canvas.deselect claimed
+   * it first and stopImmediatePropagation'd it upstream of the island's own
+   * <svelte:window> handler), and the arrows moved the selection behind the
+   * open menu.
+   *
+   * Selector, not a controller import: nine popovers across two islands share
+   * this class, and each is inside an `{#if}` so the node exists only while it
+   * is open. A guard that had to know all nine controllers would be wrong the
+   * day a tenth is added.
+   */
+  noPopoverOpen: () => !document.querySelector(".ref-pop"),
+
   /** Cmdk.svelte:26-29: "The terminal gets first claim on its own keys. xterm's
    *  helper textarea lets keydown bubble to window and Terminal.svelte
    *  registers no attachCustomKeyEventHandler." */

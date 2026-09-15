@@ -6,6 +6,7 @@ export type GuardName =
   | "notTextInput"        // input,textarea,[contenteditable=true] — the LEGACY form
   | "notTextInputOrSelect" // + select — vimnav.svelte.ts:36's stricter form
   | "noScrimOpen"          // document.querySelector(".scrim.on")
+  | "noPopoverOpen"        // document.querySelector(".ref-pop") — NOT a scrim; see guards.ts
   | "notInTerminal"        // e.target.closest(".term-drawer")
   | "graphHasRows"
   | "inTauri";

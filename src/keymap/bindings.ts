@@ -354,12 +354,18 @@ export const BINDINGS: readonly Binding[] = [
   // synthesised event has none. `x` is #144's rule 3 — one key that opens the
   // actions menu for whatever the cursor is on, in every scope — which is what
   // keeps ~25 low-frequency operations off dedicated letters.
-  // Every one of these carries noScrimOpen, for the reason canvas.deselect
-  // already spells out: the graph is the pane scope's FALLBACK, so these
-  // bindings are live whenever focus is anywhere unremarkable — including while
-  // the expanded diff or a dialog is up. A live binding claims at
-  // window-capture, so without the guard the arrows, Home/End and `x` would
+  // Every one of these carries noScrimOpen AND noPopoverOpen, for the reason
+  // canvas.deselect already spells out: the graph is the pane scope's FALLBACK,
+  // so these bindings are live whenever focus is anywhere unremarkable —
+  // including while the expanded diff or a dialog is up. A live binding claims
+  // at window-capture, so without the guards the arrows, Home/End and `x` would
   // steal keys from an open overlay. vimnav's j/k already refuse there.
+  //
+  // noPopoverOpen is the one that was MISSING. Right-clicking the canvas leaves
+  // focus on the canvas, so with the commit menu open this scope was still
+  // active and Escape never reached the menu's own handler — it was claimed
+  // here and stopped upstream of it. Found while wiring #49's compare popover,
+  // which is the same kind of surface and had the same problem.
   {
     id: "canvas.menu",
     chords: ["x", "Shift+F10"],
@@ -368,7 +374,7 @@ export const BINDINGS: readonly Binding[] = [
     // this mirrors opens the menu in design mode too (it passes CUR_REPO
     // through as-is), and a keyboard twin that refused where the mouse works
     // would be a worse kind of inconsistency than a menu over a demo graph.
-    when: ["graphHasRows", "noScrimOpen"],
+    when: ["graphHasRows", "noScrimOpen", "noPopoverOpen"],
     dispatch: "js",
     labelKey: "vimnav.row_menu",
     help: { section: "actions", order: 12 },
@@ -381,7 +387,7 @@ export const BINDINGS: readonly Binding[] = [
     id: "canvas.down",
     chords: ["ArrowDown"],
     scope: "graph",
-    when: ["graphHasRows", "noScrimOpen"],
+    when: ["graphHasRows", "noScrimOpen", "noPopoverOpen"],
     dispatch: "js",
     labelKey: "vimnav.select_next",
     help: { section: "navigate", order: 10 },
@@ -391,7 +397,7 @@ export const BINDINGS: readonly Binding[] = [
     id: "canvas.up",
     chords: ["ArrowUp"],
     scope: "graph",
-    when: ["graphHasRows", "noScrimOpen"],
+    when: ["graphHasRows", "noScrimOpen", "noPopoverOpen"],
     dispatch: "js",
     labelKey: "vimnav.select_prev",
     help: { section: "navigate", order: 11 },
@@ -404,7 +410,7 @@ export const BINDINGS: readonly Binding[] = [
     id: "canvas.first",
     chords: ["Home"],
     scope: "graph",
-    when: ["graphHasRows", "noScrimOpen"],
+    when: ["graphHasRows", "noScrimOpen", "noPopoverOpen"],
     dispatch: "js",
     labelKey: "vimnav.select_first",
     help: { section: "navigate", order: 12 },
@@ -416,7 +422,7 @@ export const BINDINGS: readonly Binding[] = [
     id: "canvas.last",
     chords: ["End"],
     scope: "graph",
-    when: ["graphHasRows", "noScrimOpen"],
+    when: ["graphHasRows", "noScrimOpen", "noPopoverOpen"],
     dispatch: "js",
     labelKey: "vimnav.select_last",
     help: { section: "navigate", order: 13 },
@@ -426,12 +432,22 @@ export const BINDINGS: readonly Binding[] = [
     id: "canvas.deselect",
     chords: ["Escape"],
     scope: "graph",
-    // noScrimOpen is load-bearing, not defensive. The graph is the pane scope's
-    // fallback, so it is active whenever focus is anywhere unremarkable — which
-    // includes while the expanded-diff overlay is up. Without this guard the
-    // FIRST Escape after closing a dialog would deselect and CLAIM the key,
-    // suppressing the legacy handler that closes the overlay underneath.
-    when: ["noScrimOpen"],
+    // Both guards are load-bearing, not defensive. The graph is the pane
+    // scope's fallback, so it is active whenever focus is anywhere
+    // unremarkable — which includes while the expanded-diff overlay is up.
+    // Without noScrimOpen the FIRST Escape after closing a dialog would
+    // deselect and CLAIM the key, suppressing the legacy handler that closes
+    // the overlay underneath.
+    //
+    // noPopoverOpen covers the case that was MISSING, and it is not the same
+    // case: a `.ref-pop` is a bare positioned div with no backdrop, so
+    // `.scrim.on` never saw it. Right-clicking the canvas opens the commit
+    // menu and leaves focus ON the canvas, so this binding stayed live,
+    // claimed Escape at window-capture and stopped it upstream of the menu's
+    // own <svelte:window> handler — Escape simply did not close the commit
+    // menu. Found while wiring #49's compare popover, which is the same kind
+    // of surface and had the same problem.
+    when: ["noScrimOpen", "noPopoverOpen"],
     dispatch: "js",
     labelKey: "vimnav.deselect",
     help: { section: "navigate", order: 14, hidden: true },

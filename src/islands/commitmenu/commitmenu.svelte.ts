@@ -49,6 +49,7 @@ import { IN_TAURI } from "../../ipc/env";
 import { save } from "@tauri-apps/plugin-dialog";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
 import { be, t } from "@/i18n/i18n.svelte.ts";
+import { rangeSummaryCtrl } from "../rangesummary/rangesummary.svelte.ts";
 
 type MenuView = "menu" | "branch" | "tag";
 
@@ -108,6 +109,14 @@ class CommitMenuState {
   // once the operation actually resolves.
   pendingLabel = $state("");
 
+  /**
+   * The selected commit to compare this row against (#49), or "" when there is
+   * no selection, or the selection IS this row. The menu item only appears when
+   * this is set, so "Compare with …" can never mean "compare with myself".
+   */
+  compareWith = $state("");
+  compareShort = $state(""); // derived from compareWith by openAt()
+
   // Opens the menu for one right-clicked commit — the canvas's contextmenu
   // handler (legacy/main.ts) is the only real caller. `sha` is always resolved
   // there the SAME way cherryPick()/mergeCommit() resolve theirs
@@ -129,10 +138,23 @@ class CommitMenuState {
   // skip it. The in-flight request itself isn't misdirected either way (it
   // already captured repo/sha into locals before this call), but a second
   // right-click could otherwise arm a second concurrent request.
-  openAt(repo: string, sha: string, subject: string, isMerge: boolean, x: number, y: number) {
+  openAt(
+    repo: string,
+    sha: string,
+    subject: string,
+    isMerge: boolean,
+    x: number,
+    y: number,
+    // Full oid of the currently SELECTED commit, when there is one and it is
+    // not this row — the anchor for "Compare with …" (#49). Resolved by the
+    // caller for the same reason `sha` is: openAt does no BACKEND/G lookups.
+    compareWith: string | null = null,
+  ) {
     if (this.busy) return;
     this.repo = repo || "";
     this.sha = sha || "";
+    this.compareWith = compareWith && compareWith !== sha ? compareWith : "";
+    this.compareShort = this.compareWith.slice(0, 7);
     this.shortSha = this.sha.slice(0, 7);
     this.subject = subject || "";
     this.isMerge = !!isMerge;
@@ -152,6 +174,8 @@ class CommitMenuState {
     this.view = "menu";
     this.repo = "";
     this.sha = "";
+    this.compareWith = "";
+    this.compareShort = "";
     this.shortSha = "";
     this.subject = "";
     this.isMerge = false;
@@ -160,6 +184,18 @@ class CommitMenuState {
     this.tagMessage = "";
     this.busy = false;
     this.pendingLabel = "";
+  }
+
+  /**
+   * Open the compare popover for (selected commit, this row) at the menu's own
+   * position, and close the menu. Read-only — no `busy` guard, nothing to
+   * serialize, nothing to undo.
+   */
+  compare() {
+    if (!this.compareWith) return;
+    const repo = this.repo, a = this.compareWith, b = this.sha, x = this.x, y = this.y;
+    this.close();
+    void rangeSummaryCtrl.openAt(repo, a, b, x, y);
   }
 
   // ── mutating actions (menu view) ────────────────────────────────────────

@@ -1,5 +1,6 @@
 // 提交右键菜单文案。键会变成 `commitmenu.<key>`。
 export default {
+  compare_with: "与 {sha} 对比…",
   cherry_pick: "Cherry-pick 到 HEAD",
   merge: "合并到 HEAD",
   revert: "回退 commit",

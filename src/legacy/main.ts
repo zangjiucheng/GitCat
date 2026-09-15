@@ -1089,7 +1089,10 @@ function openCommitMenuForSelectedRow(){
   const cx=Math.min(Math.max(x,r.left+8),r.right-8);
   const cy=Math.min(Math.max(y,r.top+8),r.bottom-8);
   const sha=(BACKEND&&BACKEND.oids&&BACKEND.oids[row])?BACKEND.oids[row]:hhex(row);
-  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), cx, cy);
+  // No compare anchor on this path: the keyboard opens the menu FOR the
+  // selected row, so the selection and the target are the same commit and
+  // "Compare with …" would mean comparing it with itself (#49).
+  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), cx, cy, null);
   return true;
 }
 
@@ -1353,6 +1356,11 @@ cv.addEventListener("contextmenu",(e)=>{
   const p=rel(e), hit=hitTest(p.x,p.y);
   if(!hit||hit.row<0) return;
   const row=hit.row;
+  // BEFORE select(row) below retargets it. Right-clicking a row SELECTS it, so
+  // by the time the commit menu is opened `state.selectedRow` is already this
+  // row — reading the compare anchor (#49) down there compared a commit with
+  // itself and the menu item never appeared at all.
+  const prevSelectedRow=state.selectedRow;
   select(row);
   showLabelTip(null);
   // Right-click a ref label — the gutter cell in column mode, the clicked chip
@@ -1397,8 +1405,19 @@ cv.addEventListener("contextmenu",(e)=>{
   // Full oid (BACKEND.oids[row]), not the short display sha, so the menu's
   // "Copy full SHA" really copies the full hash and git ops get an unambiguous
   // ref (#43). openAt derives shortSha from it via slice(0,7).
-  const sha=(BACKEND&&BACKEND.oids&&BACKEND.oids[row])?BACKEND.oids[row]:((BACKEND&&BACKEND.rows[row])?BACKEND.rows[row].sha:hhex(row));
-  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), e.clientX, e.clientY);
+  // One resolver for BOTH endpoints. They used to be spelled separately and
+  // drifted immediately: the anchor's copy lacked the design-mode hhex(row)
+  // fallback, so "Compare with …" could never appear without a real backend.
+  const shaOfRow=(r)=>(BACKEND&&BACKEND.oids&&BACKEND.oids[r])?BACKEND.oids[r]:((BACKEND&&BACKEND.rows[r])?BACKEND.rows[r].sha:hhex(r));
+  const sha=shaOfRow(row);
+  // The commit that was selected BEFORE this right-click is the compare anchor
+  // (#49) — right-clicking a second row offers "Compare with <that one>…".
+  // Resolved the same way as `sha` above (full oid), and left null when nothing
+  // was selected, when the pinned Uncommitted band (-2) was, or when it was
+  // this same row — openAt drops an anchor equal to the target on its own as a
+  // second guard.
+  const anchor=(prevSelectedRow>=0&&prevSelectedRow!==row)?shaOfRow(prevSelectedRow):null;
+  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), e.clientX, e.clientY, anchor);
 });
 cv.addEventListener("keydown",(e)=>{
   const rowH=layout.rowH;

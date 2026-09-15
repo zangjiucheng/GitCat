@@ -45,6 +45,41 @@ async loadGraph(path: string, requestId: number) : Promise<Result<null, string>>
 }
 },
 /**
+ * Summarize the range between two commits. Read-only.
+ * 
+ * JS: `commands.commitRangeSummary(path, a, b)` -> `Result<RangeSummary, string>`.
+ * 
+ * `async fn` + `run_blocking` for the same reason as every other repo-touching
+ * command here: `graph_ahead_behind` walks the commit graph and the tree diff
+ * walks two trees, and neither belongs on the thread driving the window.
+ */
+async commitRangeSummary(path: string, a: string, b: string) : Promise<Result<RangeSummary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("commit_range_summary", { path, a, b }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The full diff between two commits. Read-only.
+ * 
+ * Split from [`commit_range_summary`] rather than folded into it: the summary
+ * opens a popover on every compare and wants to be cheap (one `Diff::stats`,
+ * no per-file patches), while this builds a `Patch` per file and is only
+ * asked for when the user actually opens the diff.
+ * 
+ * JS: `commands.commitRangeDiff(path, a, b)` -> `Result<RangeDiff, string>`.
+ */
+async commitRangeDiff(path: string, a: string, b: string) : Promise<Result<RangeDiff, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("commit_range_diff", { path, a, b }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.graphFastRefresh(path)`. The cheap snapshot the frontend's
  * `reloadGraph` uses to decide whether a change can skip the full history
  * re-walk — seed tips + HEAD (full oids, for collision-free "already loaded?"
@@ -4303,6 +4338,70 @@ export type PlumbingObject = ({ kind: "commit" } & CommitObject) | ({ kind: "tre
 export type PlumbingPerson = { name: string; email: string; time: number }
 export type ProblemAreas = { files: ProblemFile[]; revertOrHotfixCommits: number; totalCommits: number }
 export type ProblemFile = { path: string; bugfixTouches: number; totalTouches: number }
+/**
+ * One row of the linear subgraph: short sha + subject, nothing else. The popup
+ * draws a plain vertical list, so lane/colour data would be unused weight.
+ */
+export type RangeCommit = { sha: string; subject: string }
+/**
+ * The actual diff between the two endpoints, not just its totals.
+ * 
+ * Same `FileChange` rows a commit's own detail panel renders — produced by the
+ * SAME [`crate::commands::diff_trees`], which was extracted from
+ * `commit_detail_inner` for this. A second copy of that loop (rename/copy
+ * detection, binary handling, the per-file and whole-diff caps) would have
+ * drifted from the original one fix at a time.
+ */
+export type RangeDiff = { 
+/**
+ * Short shas, ORDERED the same way [`RangeSummary`] orders them, so the
+ * diff reads forwards in time regardless of which endpoint was clicked.
+ */
+from: string; to: string; filesChanged: number; additions: number; deletions: number; 
+/**
+ * Capped like a commit's own detail is; the frontend says so when set.
+ */
+truncated: boolean; fileTree: FileChange[] }
+/**
+ * The answer to "what happened between these two commits".
+ */
+export type RangeSummary = { 
+/**
+ * Short shas of the two endpoints, ORDERED: when one is an ancestor of the
+ * other, `from` is the ancestor, so the diff reads forwards in time no
+ * matter which one the user right-clicked. When they diverge the caller's
+ * own order is kept.
+ */
+from: string; to: string; 
+/**
+ * Short sha of the merge base, or `None` when the two share no ancestor at
+ * all (separate root commits — `git checkout --orphan`, a grafted import).
+ * The delta below is still computed and still meaningful in that case.
+ */
+mergeBase: string | null; 
+/**
+ * One endpoint is an ancestor of the other, so the range is a single
+ * chain. Only then is `commits` populated — see the module doc.
+ */
+linear: boolean; 
+/**
+ * Commits reachable from `to` but not `from`, and vice versa. Together
+ * they describe the fork when the two diverge; one of them is 0 when
+ * linear.
+ */
+ahead: number; behind: number; 
+/**
+ * Net delta between the two endpoint trees.
+ */
+filesChanged: number; additions: number; deletions: number; 
+/**
+ * The chain, newest first (the graph's own order). Empty when diverged.
+ */
+commits: RangeCommit[]; 
+/**
+ * The chain was longer than [`MAX_RANGE_COMMITS`] and has been trimmed.
+ */
+truncated: boolean }
 /**
  * One raw `key = value` line from `git config --list`, used by the
  * Settings "Advanced" section to show what's already set at a scope rather

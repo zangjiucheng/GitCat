@@ -18,6 +18,7 @@ const GUARDS: GuardTable = {
   notTextInput: () => true,
   notTextInputOrSelect: () => true,
   noScrimOpen: () => true,
+  noPopoverOpen: () => true,
   notInTerminal: () => true,
   graphHasRows: () => false,
   inTauri: () => true,

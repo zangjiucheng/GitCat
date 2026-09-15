@@ -10,6 +10,7 @@ import "./legacy/main.ts";
 import { mount } from "svelte";
 import Resolver from "./islands/resolver/Resolver.svelte";
 import CommitMenu from "./islands/commitmenu/CommitMenu.svelte";
+import RangeSummary from "./islands/rangesummary/RangeSummary.svelte";
 import Bisect from "./islands/bisect/Bisect.svelte";
 import Reflog from "./islands/reflog/Reflog.svelte";
 import { reflogCtrl } from "./islands/reflog/reflog.svelte.ts";
@@ -100,6 +101,7 @@ defineScopes();
 mount(ContextMenu, { target: document.body });
 mount(Resolver, { target: document.body });
 mount(CommitMenu, { target: document.body });
+mount(RangeSummary, { target: document.body }); // #49: compare two commits — opened from CommitMenu
 mount(Bisect, { target: document.body });
 mount(FilterRepo, { target: document.body });
 mount(RebasePlan, { target: document.body });

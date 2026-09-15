@@ -44,7 +44,7 @@ pub struct CommitMeta {
 /// on each side; the added side has `old_no == None`, the deleted side
 /// `new_no == None`, context lines carry both. `text` is the raw line content
 /// with any trailing CR/LF stripped — the frontend HTML-escapes it.
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, specta::Type, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffLineRow {
     pub kind: String,        // " " context | "+" add | "-" del
@@ -54,7 +54,7 @@ pub struct DiffLineRow {
 }
 
 /// One hunk within a file patch. `header` is the `@@ -a,b +c,d @@ ...` line.
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, specta::Type, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffHunkRow {
     pub header: String,
@@ -64,7 +64,7 @@ pub struct DiffHunkRow {
 /// One changed file: its status, per-file stats, and hunks. `hunks` is empty
 /// for a binary file (`binary == true`) or when the file was capped
 /// (`truncated == true`). `old_path` is set only for renames/copies.
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, specta::Type, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FileChange {
     pub path: String,             // new path (old path for a delete)

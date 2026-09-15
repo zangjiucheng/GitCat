@@ -3,6 +3,7 @@ pub mod blame; // read-only line-annotation (git blame) view
 pub mod blocking; // run a repo-touching command's body off the main thread — see its own doc comment
 pub mod code_search; // Search Code: git-grep-based full-text search of the current checkout (or a chosen historical commit)
 pub mod commands;
+pub mod compare; // #49: compare two commits — net delta + the chain between them
 pub mod conflict;
 pub mod dashboard; // backlog #11: minimal per-repo status read for the multi-repo dashboard
 pub mod event_util; // safe cross-thread event emit (marshal to main thread) — avoids the off-thread emit()/get_webview deadlock
@@ -64,6 +65,8 @@ use tauri_specta::{collect_commands, Builder};
 fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::load_graph,
+        compare::commit_range_summary, // #49: two-commit compare (merge-base + ahead/behind + net delta + capped chain)
+        compare::commit_range_diff,    // #49: the same range's actual per-file diff, on demand
         // Incremental graph refresh — the cheap snapshot + ancestor recompute
         // that let `reloadGraph` skip a full history re-walk when the commit
         // DAG is unchanged (checkout, branch/tag CRUD, staging).
