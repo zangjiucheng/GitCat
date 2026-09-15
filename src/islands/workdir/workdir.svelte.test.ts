@@ -306,6 +306,80 @@ describe("selectDiffFile", () => {
   });
 });
 
+describe("re-selecting the same repo (the reload flicker)", () => {
+  // selectWorkdir() -> select(CUR_REPO) runs again after every git operation:
+  // reloadGraph() hands the pinned working-tree row back through
+  // pendingReselect, exactly as it hands a commit back by sha. select() then
+  // wiped the open diff unconditionally, so staging one file blanked the diff
+  // of the file you were actually reading — and collapsed it if it was
+  // expanded.
+  //
+  // That wipe was never the thing keeping the view honest: refreshStatus()
+  // already calls dropStaleSelectedDiff(), which clears the diff only when
+  // the file genuinely no longer has that kind of change. select()'s version
+  // fired whether or not anything had changed.
+  const STATUS_WITH_B: WorkdirStatus = {
+    ...STATUS_CLEAN,
+    unstaged: [{ path: "b.ts", oldPath: null, status: "M" }],
+  };
+
+  async function openDiffOn(repo: string) {
+    mockInTauri = true;
+    vi.mocked(commands.workdirStatus).mockResolvedValue(ok(STATUS_WITH_B));
+    vi.mocked(commands.stashList).mockResolvedValue(ok([]));
+    workdirCtrl.select(repo);
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.mocked(commands.workdirFileDiff).mockResolvedValue(ok(FC_MULTI_LINE));
+    await workdirCtrl.selectDiffFile("b.ts", false);
+  }
+
+  it("keeps the open diff when the same repo is re-selected", async () => {
+    await openDiffOn("/repo");
+    expect(workdirCtrl.diffHunks.length).toBeGreaterThan(0);
+
+    workdirCtrl.select("/repo"); // reloadGraph -> pendingReselect.workdir
+
+    expect(workdirCtrl.selectedDiffFile, "the open diff was dropped").toBe("b.ts");
+    expect(workdirCtrl.diffHunks.length, "the diff pane was emptied").toBeGreaterThan(0);
+    expect(workdirCtrl.diffHeader).not.toBe("");
+  });
+
+  it("keeps the diff expanded across a refresh", async () => {
+    await openDiffOn("/repo");
+    workdirCtrl.diffExpanded = true;
+
+    workdirCtrl.select("/repo");
+
+    expect(workdirCtrl.diffExpanded, "the expanded diff collapsed itself").toBe(true);
+  });
+
+  it("still clears the diff when switching to a different repo", async () => {
+    // A different repo's file list has nothing to do with this one's — the
+    // guard is the repo path, not "select() was called".
+    await openDiffOn("/repo");
+    vi.mocked(commands.workdirStatus).mockResolvedValue(ok(STATUS_CLEAN));
+
+    workdirCtrl.select("/other-repo");
+
+    expect(workdirCtrl.selectedDiffFile).toBeNull();
+    expect(workdirCtrl.diffHunks).toEqual([]);
+    expect(workdirCtrl.diffHeader).toBe("");
+  });
+
+  it("still drops the diff when the file it showed stopped being changed", async () => {
+    // The honest clear, the one that was doing the real work all along:
+    // stage b.ts and its unstaged diff is genuinely gone.
+    await openDiffOn("/repo");
+    vi.mocked(commands.workdirStatus).mockResolvedValue(ok(STATUS_CLEAN));
+
+    await workdirCtrl.refreshStatus("/repo");
+
+    expect(workdirCtrl.selectedDiffFile).toBeNull();
+    expect(workdirCtrl.diffHunks).toEqual([]);
+  });
+});
+
 describe("hunk/line selection", () => {
   beforeEach(async () => {
     mockInTauri = true;

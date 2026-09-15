@@ -399,6 +399,8 @@ class WorkdirState {
     // debounce means the last few keystrokes may not be written yet, and a repo
     // switch is exactly when someone is most likely to move away mid-sentence.
     saveCommitDraft(this.repo, this.message);
+    const was = this.repo; // captured before the reassignment below
+    const wasOpen = this.selected;
     this.selected = true;
     this.repo = repo || "";
     // Restoring here rather than clearing is the whole point: select() runs on
@@ -406,13 +408,29 @@ class WorkdirState {
     // every one of those used to discard an in-progress message.
     this.message = loadCommitDraft(this.repo);
     this.amend = false;
-    this.selectedDiffFile = null;
-    this.diffHeader = "";
-    this.diffFile = null;
-    this.diffHunks = [];
-    this.diffError = null;
-    this.diffExpanded = false;
-    this.clearLineSelection();
+    // Same repo, panel already open: leave the open diff exactly where it is.
+    //
+    // select() is not only the "open the working tree" path — selectWorkdir()
+    // calls it again after every git operation, because reloadGraph() hands
+    // the pinned row back through pendingReselect the same way it hands a
+    // commit back by sha (loadGraph() resets state.selectedRow but never
+    // deselects this panel, so `selected` is still true here). Clearing
+    // unconditionally meant staging one file blanked the diff of whatever
+    // file you were reading, and collapsed it if you had expanded it.
+    //
+    // Nothing is lost by keeping it: refreshStatus() below calls
+    // dropStaleSelectedDiff(), which clears the diff when the file genuinely
+    // stopped having that kind of change — the honest check that was doing
+    // the real work all along. This one only ever fired on "select() ran".
+    if (!(wasOpen && this.repo === was)) {
+      this.selectedDiffFile = null;
+      this.diffHeader = "";
+      this.diffFile = null;
+      this.diffHunks = [];
+      this.diffError = null;
+      this.diffExpanded = false;
+      this.clearLineSelection();
+    }
     this.refreshStatus(this.repo);
     this.refreshStashes(this.repo);
   }
