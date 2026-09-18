@@ -105,11 +105,12 @@ GitCat's environment.
 
 ## Supported versions
 
-GitCat is pre-1.0; security fixes land in the latest release only. Please make sure you're on the newest version before reporting.
+Security fixes land in the latest release only. Please make sure you're on the
+newest version before reporting — Help → About shows the version you are running.
 
 | Version | Supported |
 | ------- | --------- |
-| latest `0.9.x` | ✅ |
+| latest `1.3.x` | ✅ |
 | older | ❌ |
 
 > Tip: enable **Private vulnerability reporting** under *Settings → Code security and analysis* so the "Report a vulnerability" button above is available to everyone.
