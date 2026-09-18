@@ -163,15 +163,27 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape") onClose();
-    else if (e.key === "+" || e.key === "=") zoomBy(1.2);
+    // Every branch below took "at least no modifier", so ⌘- and Ctrl+- zoomed
+    // the preview AND the webview's own page zoom, and ⌥- zoomed a preview
+    // nobody asked to zoom. Escape stays outside the mask: it should close the
+    // lightbox whatever is held down.
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onClose();
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "+" || e.key === "=") zoomBy(1.2);
     else if (e.key === "-" || e.key === "_") zoomBy(1 / 1.2);
     else if (e.key === "0") resetView();
     else if (kind === "pdf" && (e.key === "PageDown" || e.key === "]")) nextPage();
     else if (kind === "pdf" && (e.key === "PageUp" || e.key === "[")) prevPage();
-    else if ((hasBefore && hasAfter) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    else if (hasBefore && hasAfter && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       setSide(curSide === "before" ? "after" : "before");
-    }
+    } else return;
+    // Nothing above should also reach the graph canvas underneath, which binds
+    // the same +/-/0 and arrow keys.
+    e.preventDefault();
   }
 </script>
 

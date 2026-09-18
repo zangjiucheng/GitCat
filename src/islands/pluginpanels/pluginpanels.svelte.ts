@@ -141,7 +141,10 @@ class PluginPanelsState {
   }
 
   // Keep ENABLED plugins (enabled defaults to true when a manifest omits it),
-  // and turn EACH declared panel into one palette entry. `panels` is
+  // and turn EACH declared panel into one palette entry. Presentation, not the
+  // gate — a panel's widgets run through runPluginCommand, which refuses a
+  // disabled plugin in the backend (#59). See plugincommands.svelte.ts's own
+  // note on why a per-window cache cannot be the gate. `panels` is
   // `#[serde(default)]` on the backend, so a manifest with none contributes
   // nothing (the `?? []` also tolerates a pre-panels registry pre-regen).
   private build(plugins: Plugin[]): ActionItem[] {
@@ -181,10 +184,13 @@ class PluginPanelsState {
     this.runningButtons = {};
     this.tamaImg = bridge.TAMA_IMG.curious;
     this.open = true;
-    // Run each command-output widget on open. forEach index is the stable key
-    // the view reads back via outputs[i] and re-run passes to runCommandOutput.
+    // Do NOT auto-run command-output widgets on open — a command may mutate the
+    // repo (snapshot_before_mutation). Require an explicit user re-run click.
+    // Seed idle placeholders so the view still has a stable outputs[i] key.
     panel.items.forEach((item, i) => {
-      if (item.type === "command-output") void this.runCommandOutput(i);
+      if (item.type === "command-output") {
+        this.setOutput(i, { running: false, text: "", error: null });
+      }
     });
   }
 

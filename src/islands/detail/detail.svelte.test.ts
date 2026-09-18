@@ -207,6 +207,127 @@ describe("select (design mode / demo data)", () => {
   });
 });
 
+describe("re-selecting the same commit (the reload flicker)", () => {
+  // Every git operation — commit, pull, push, a bisect step, or just the file
+  // watcher noticing something — runs reloadGraph(), which empties BACKEND,
+  // re-streams it, and then restores the selection by sha via pendingReselect.
+  // That lands in select() with the SAME commit, and select() unconditionally
+  // tore the whole panel down: body -> "loading…", file tree -> [], diff -> [],
+  // spinners on, then a round trip to rebuild byte-identical content.
+  //
+  // A commit is immutable. Nothing about aaa1111's message, file tree or diff
+  // can change while aaa1111 is still aaa1111, so the teardown buys nothing
+  // and costs a full-panel flash plus three pieces of the user's own state.
+  const DETAIL = {
+    sha: "aaa1111", shortSha: "aaa1111", subject: "Fix bug",
+    body: "Full message body.", message: "Fix bug\n\nFull message body.",
+    additions: 5, deletions: 2, filesChanged: 2, truncated: false,
+    fileTree: [
+      { path: "a.ts", oldPath: null, status: "M", additions: 5, deletions: 2, binary: false, truncated: false, lang: "ts",
+        hunks: [{ header: "@@ -1,2 +1,2 @@", lines: [{ kind: "+", oldNo: null, newNo: 1, text: "hi" }] }] },
+      { path: "b.ts", oldPath: null, status: "M", additions: 1, deletions: 0, binary: false, truncated: false, lang: "ts",
+        hunks: [{ header: "@@ -1,1 +1,1 @@", lines: [{ kind: "+", oldNo: null, newNo: 1, text: "yo" }] }] },
+    ],
+  };
+  const ROW = (sha: string, subject: string) => ({
+    sha, subject, an: { n: "Dev", e: "d@x.dev", t: 100 }, cm: { n: "Dev", e: "d@x.dev", t: 100 }, refs: [],
+  });
+
+  async function settle() {
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  it("does not tear the panel down, and does not refetch", async () => {
+    setBackendGraph([ROW("aaa1111", "Fix bug")]);
+    vi.mocked(commands.commitDetail).mockResolvedValue(ok(DETAIL) as any);
+    detailCtrl.select(0);
+    await settle();
+    expect(detailCtrl.tree.files.length).toBe(2);
+    const callsAfterFirstLoad = vi.mocked(commands.commitDetail).mock.calls.length;
+
+    detailCtrl.select(0); // reloadGraph -> pendingReselect, same sha
+
+    expect(detailCtrl.bodyText, "the body flashed back to loading").toBe("Full message body.");
+    expect(detailCtrl.treeLoading, "the file tree flashed a spinner").toBe(false);
+    expect(detailCtrl.diffLoading, "the diff flashed a spinner").toBe(false);
+    // `tree` is the getter the view actually renders from, so this is the
+    // same question the screen asks.
+    expect(detailCtrl.tree.files.length, "the file tree was emptied").toBe(2);
+    expect(detailCtrl.diffRows.length, "the diff was emptied").toBeGreaterThan(0);
+    expect(detailCtrl.diffstat?.add, "the stats were blanked").toBe(5);
+    expect(
+      vi.mocked(commands.commitDetail).mock.calls.length,
+      "an immutable commit was fetched again",
+    ).toBe(callsAfterFirstLoad);
+  });
+
+  it("keeps the file you were reading, and the state you put the panel in", async () => {
+    // The flash is the visible half. The other half is that a reload threw
+    // away which file was open, whether the long message was expanded, and
+    // which folders were collapsed — so a commit in the background would
+    // reset your place every time the watcher fired.
+    setBackendGraph([ROW("aaa1111", "Fix bug")]);
+    vi.mocked(commands.commitDetail).mockResolvedValue(ok(DETAIL) as any);
+    detailCtrl.select(0);
+    await settle();
+
+    detailCtrl.selectFile("b.ts");
+    detailCtrl.toggleBody();
+    detailCtrl.collapsedDirs = new Set(["src"]);
+    await settle();
+    expect(detailCtrl.selectedFile).toBe("b.ts");
+    expect(detailCtrl.bodyExpanded).toBe(true);
+
+    detailCtrl.select(0);
+
+    expect(detailCtrl.selectedFile, "jumped back to the first file").toBe("b.ts");
+    expect(detailCtrl.bodyExpanded, "the expanded message collapsed").toBe(true);
+    expect([...detailCtrl.collapsedDirs], "collapsed folders re-expanded").toEqual(["src"]);
+  });
+
+  it("still reloads fully when the row now holds a DIFFERENT commit", async () => {
+    // reloadGraph rebuilds the rows, so row 0 after a reload is not
+    // necessarily row 0 before it — matching on the row index would show one
+    // commit's message over another's diff. The guard has to be the sha.
+    setBackendGraph([ROW("aaa1111", "Fix bug")]);
+    vi.mocked(commands.commitDetail).mockResolvedValue(ok(DETAIL) as any);
+    detailCtrl.select(0);
+    await settle();
+
+    setBackendGraph([ROW("bbb2222", "Something else")]);
+    vi.mocked(commands.commitDetail).mockResolvedValue(
+      ok({ ...DETAIL, sha: "bbb2222", body: "Other body.", fileTree: [DETAIL.fileTree[0]] }) as any,
+    );
+    detailCtrl.select(0);
+
+    expect(detailCtrl.bodyText).toBe("loading…");
+    expect(detailCtrl.treeLoading).toBe(true);
+    await settle();
+    expect(detailCtrl.bodyText).toBe("Other body.");
+    expect(detailCtrl.tree.files.length).toBe(1);
+  });
+
+  it("picks up refs that moved onto the commit while it stayed selected", async () => {
+    // A commit is immutable, but what POINTS at it is not: committing on top,
+    // or a branch being moved, changes the ref chips on the row. Those come
+    // from commitMeta, which is cheap and has to stay live even though the
+    // body and diff are left alone.
+    setBackendGraph([ROW("aaa1111", "Fix bug")]);
+    vi.mocked(commands.commitDetail).mockResolvedValue(ok(DETAIL) as any);
+    detailCtrl.select(0);
+    await settle();
+    expect(detailCtrl.commit?.refs).toEqual([]);
+
+    setBackendGraph([{ ...ROW("aaa1111", "Fix bug"), refs: [{ n: "main", t: "head" }] }]);
+    detailCtrl.select(0);
+
+    expect(detailCtrl.commit?.refs?.length, "ref chips went stale").toBe(1);
+    expect(detailCtrl.bodyText, "refreshing the chips should not touch the body").toBe("Full message body.");
+  });
+});
+
 describe("select (live / real repo)", () => {
   it("shows a loading state, then loads the real diff via commands.commitDetail", async () => {
     setBackendGraph([{ sha: "aaa1111", subject: "Fix bug", an: { n: "Dev", e: "d@x.dev", t: 100 }, cm: { n: "Dev", e: "d@x.dev", t: 100 }, refs: [] }]);

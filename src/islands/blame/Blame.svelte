@@ -39,7 +39,7 @@
       {:else if blameCtrl.data && blameCtrl.data.totalLines === 0}
         <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{t("blame.empty")}</code></div>
       {:else if blameCtrl.data}
-        <div class="blame-grid">
+        <div class="blame-grid" data-vimnav-list>
           {#each blameCtrl.rows as row, i (i)}
             <div class="blame-row tint-{row.tint}">
               <div class="blame-gutter">

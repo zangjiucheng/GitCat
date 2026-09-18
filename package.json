@@ -1,7 +1,7 @@
 {
   "name": "gitcat",
   "private": true,
-  "version": "1.3.0",
+  "version": "1.3.1",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "packageManager": "pnpm@10.34.5",
@@ -17,6 +17,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "keymap:gen": "node --experimental-strip-types scripts/keymap-gen.ts",
+    "keymap:check": "pnpm keymap:gen && git diff --exit-code -- src-tauri/src/keymap_generated.rs",
     "demo": "bash scripts/make-demo-repo.sh",
     "flamegraph": "node scripts/profile.mjs",
     "docs:dev": "vitepress dev docs",
@@ -48,6 +50,6 @@
     "typescript": "~5.6.2",
     "vite": "^6.4.3",
     "vitepress": "^1.6.4",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   }
 }

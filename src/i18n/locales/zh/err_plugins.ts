@@ -49,6 +49,8 @@ export default {
   manifest_too_large: "插件清单 {path} 过大（{bytes} 字节；上限为 {limit} 字节）。",
   manifest_too_large_limit: "插件清单 {path} 过大（上限 {limit} 字节）。",
   manifest_invalid: "{path} 不是有效的插件清单：{detail}",
+  manifest_unknown_keys:
+    "插件清单 {path} 中有 GitCat 无法识别的键：{keys}。请检查拼写；如果这个插件是为更新版本的 GitCat 编写的，请先升级 GitCat 再重新安装。",
 
   // plugin_registry.rs —— 安装 / 启用 / 移除 / 皮肤查找
   already_installed: "已安装了 id 为 {id} 的插件。",

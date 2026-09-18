@@ -45,6 +45,41 @@ async loadGraph(path: string, requestId: number) : Promise<Result<null, string>>
 }
 },
 /**
+ * Summarize the range between two commits. Read-only.
+ * 
+ * JS: `commands.commitRangeSummary(path, a, b)` -> `Result<RangeSummary, string>`.
+ * 
+ * `async fn` + `run_blocking` for the same reason as every other repo-touching
+ * command here: `graph_ahead_behind` walks the commit graph and the tree diff
+ * walks two trees, and neither belongs on the thread driving the window.
+ */
+async commitRangeSummary(path: string, a: string, b: string) : Promise<Result<RangeSummary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("commit_range_summary", { path, a, b }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The full diff between two commits. Read-only.
+ * 
+ * Split from [`commit_range_summary`] rather than folded into it: the summary
+ * opens a popover on every compare and wants to be cheap (one `Diff::stats`,
+ * no per-file patches), while this builds a `Patch` per file and is only
+ * asked for when the user actually opens the diff.
+ * 
+ * JS: `commands.commitRangeDiff(path, a, b)` -> `Result<RangeDiff, string>`.
+ */
+async commitRangeDiff(path: string, a: string, b: string) : Promise<Result<RangeDiff, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("commit_range_diff", { path, a, b }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.graphFastRefresh(path)`. The cheap snapshot the frontend's
  * `reloadGraph` uses to decide whether a change can skip the full history
  * re-walk — seed tips + HEAD (full oids, for collision-free "already loaded?"
@@ -3054,6 +3089,37 @@ async setPluginEnabled(id: string, enabled: boolean) : Promise<Result<null, stri
 }
 },
 /**
+ * Read and validate a manifest WITHOUT installing it (#68), so the app can
+ * show a user what a plugin does before they agree to run it.
+ * 
+ * This exists because of what `docs/plugins.md` asks of the user: there is no
+ * sandbox for a shell `run`, so "a plugin can do anything the command you
+ * wrote can do". Install was a single file-picker confirmation, and no island
+ * reads `run`, `mutates` or `handler` off a Plugin — the app asked for a
+ * security judgement using information it declined to show.
+ * 
+ * Deliberately the SAME [`read_and_validate_manifest`] the install path uses,
+ * not a looser parse: a preview that accepts a manifest install would reject
+ * teaches the user the wrong thing about their own manifest. The one check it
+ * does NOT make is the duplicate-id one, which belongs to [`install_from`] —
+ * the registry it would check against is already in the frontend's hands.
+ * 
+ * `async fn` + `run_blocking` because this reads and parses a file (capped at
+ * [`MAX_MANIFEST_BYTES`]) and nothing that touches the disk belongs on the
+ * thread driving the window. It takes no `AppHandle`: the registry is never
+ * opened, which is the whole point.
+ * 
+ * JS: `commands.previewPluginManifest(path)` -> `Result<Plugin, string>`.
+ */
+async previewPluginManifest(path: string) : Promise<Result<Plugin, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_plugin_manifest", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Install a plugin from a local `plugin.json` file OR a directory containing
  * one: read + parse + validate, reject a duplicate id, then append + save.
  * Returns the installed plugin. JS: `commands.installPluginFromPath(path)`.
@@ -3095,10 +3161,22 @@ async loadPluginSkin(pluginId: string) : Promise<Result<TamaSkin, string>> {
 }
 },
 /**
- * Run a plugin's command by id. Loads it from the registry (written in
- * parallel — [`crate::plugin_registry::find_command`], which returns `None`
- * for a command that is missing OR disabled), resolves the working directory
- * from `ctx.repo`, and shells out via [`run_template`].
+ * Run a plugin's command by id. Loads it from the registry
+ * ([`crate::plugin_registry::find_enabled_command`] — `Ok(None)` for a command
+ * that is missing, `Err` for one belonging to a DISABLED plugin), resolves the
+ * working directory from `ctx.repo`, and shells out via [`run_template`].
+ * 
+ * That gate is the whole point of the lookup being this one and not a plain
+ * by-id find. The old `find_command` did not filter on `Plugin::enabled` and
+ * said so in its own doc; this comment used to claim the opposite, and nothing
+ * checked. So disabling a plugin stopped its hooks and left its commands
+ * runnable — including a `mutates: true` one, which takes a safety snapshot
+ * and writes to the repository (#59).
+ * 
+ * The frontend filters disabled plugins out of the palette, but that is a
+ * display convention over a cached list, not a gate: every GitCat window is a
+ * separate OS process, so disabling a plugin in one leaves a second window's
+ * palette still listing — and, before this, still running — its commands.
  * 
  * `async fn` + `run_blocking` keeps the (potentially long, up to
  * [`PLUGIN_CMD_TIMEOUT`]) subprocess wait off Tauri's main thread, exactly
@@ -4291,6 +4369,70 @@ export type PlumbingObject = ({ kind: "commit" } & CommitObject) | ({ kind: "tre
 export type PlumbingPerson = { name: string; email: string; time: number }
 export type ProblemAreas = { files: ProblemFile[]; revertOrHotfixCommits: number; totalCommits: number }
 export type ProblemFile = { path: string; bugfixTouches: number; totalTouches: number }
+/**
+ * One row of the linear subgraph: short sha + subject, nothing else. The popup
+ * draws a plain vertical list, so lane/colour data would be unused weight.
+ */
+export type RangeCommit = { sha: string; subject: string }
+/**
+ * The actual diff between the two endpoints, not just its totals.
+ * 
+ * Same `FileChange` rows a commit's own detail panel renders — produced by the
+ * SAME [`crate::commands::diff_trees`], which was extracted from
+ * `commit_detail_inner` for this. A second copy of that loop (rename/copy
+ * detection, binary handling, the per-file and whole-diff caps) would have
+ * drifted from the original one fix at a time.
+ */
+export type RangeDiff = { 
+/**
+ * Short shas, ORDERED the same way [`RangeSummary`] orders them, so the
+ * diff reads forwards in time regardless of which endpoint was clicked.
+ */
+from: string; to: string; filesChanged: number; additions: number; deletions: number; 
+/**
+ * Capped like a commit's own detail is; the frontend says so when set.
+ */
+truncated: boolean; fileTree: FileChange[] }
+/**
+ * The answer to "what happened between these two commits".
+ */
+export type RangeSummary = { 
+/**
+ * Short shas of the two endpoints, ORDERED: when one is an ancestor of the
+ * other, `from` is the ancestor, so the diff reads forwards in time no
+ * matter which one the user right-clicked. When they diverge the caller's
+ * own order is kept.
+ */
+from: string; to: string; 
+/**
+ * Short sha of the merge base, or `None` when the two share no ancestor at
+ * all (separate root commits — `git checkout --orphan`, a grafted import).
+ * The delta below is still computed and still meaningful in that case.
+ */
+mergeBase: string | null; 
+/**
+ * One endpoint is an ancestor of the other, so the range is a single
+ * chain. Only then is `commits` populated — see the module doc.
+ */
+linear: boolean; 
+/**
+ * Commits reachable from `to` but not `from`, and vice versa. Together
+ * they describe the fork when the two diverge; one of them is 0 when
+ * linear.
+ */
+ahead: number; behind: number; 
+/**
+ * Net delta between the two endpoint trees.
+ */
+filesChanged: number; additions: number; deletions: number; 
+/**
+ * The chain, newest first (the graph's own order). Empty when diverged.
+ */
+commits: RangeCommit[]; 
+/**
+ * The chain was longer than [`MAX_RANGE_COMMITS`] and has been trimmed.
+ */
+truncated: boolean }
 /**
  * One raw `key = value` line from `git config --list`, used by the
  * Settings "Advanced" section to show what's already set at a scope rather

@@ -38,7 +38,7 @@
       {:else if fileHistoryCtrl.data && fileHistoryCtrl.data.entries.length === 0}
         <div class="diff-line"><span class="ln"></span><span class="mk"></span><code class="mut">{t("filehistory.empty")}</code></div>
       {:else if fileHistoryCtrl.data}
-        <div class="fh-list">
+        <div class="fh-list" data-vimnav-list>
           {#each fileHistoryCtrl.data.entries as e (e.sha)}
             <button class="fh-row" onclick={() => fileHistoryCtrl.jumpToCommit(e.sha)} title={t("filehistory.jump_to", { sha: e.shortSha })}>
               <span class="fh-sha mono">{e.shortSha}</span>

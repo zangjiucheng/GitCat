@@ -1,5 +1,6 @@
 // 提交详情面板文案。键会变成 `detail.<key>`。
 export default {
+  diff_region: "Diff — 方向键滚动",
   // Tama 主视觉 / 空状态。
   hero_alt: "Tama,GitCat 的守护者",
   hero_bubble_loaded:

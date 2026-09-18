@@ -26,6 +26,7 @@ import { copyToClipboard } from "../../legacy/clipboard.ts";
 import { contextMenuCtrl } from "../contextmenu/contextmenu.svelte.ts";
 import { filePathMenuItems } from "../contextmenu/fileitems.ts";
 import { dirPathMenuItems } from "../contextmenu/diritems.ts";
+import { buildDiffRows } from "./diffrows.ts";
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
@@ -307,8 +308,51 @@ class DetailState {
     this.bodyExpanded = !this.bodyExpanded;
   }
 
+  /**
+   * Is the panel already showing this exact commit?
+   *
+   * Matched on SHA, never on the row index: reloadGraph() rebuilds the rows,
+   * so row 0 after a reload is not necessarily row 0 before it, and matching
+   * on the index would put one commit's message over another's diff.
+   *
+   * "Showing" covers a load still in flight as well as a finished one — the
+   * request that is already running will land on its own (detailSeq guards
+   * staleness), so restarting it would only re-blank what it is about to
+   * fill. A load that FAILED is deliberately not included: diffstat stays
+   * null there, so this returns false and the select below retries it.
+   */
+  private alreadyShowing(c: CommitVM | null): boolean {
+    if (!c || !this.commit || c.sha !== this.commit.sha) return false;
+    return this.diffstat !== null || this.treeLoading || this.diffLoading;
+  }
+
   select(row: number) {
     const c = this.commitMeta(row);
+
+    // A commit is immutable. While the sha is unchanged its message, file
+    // tree and diff cannot have changed either — so re-selecting it has
+    // nothing to fetch and nothing to rebuild.
+    //
+    // This is the COMMON path, not a rare one: reloadGraph() runs after every
+    // commit, pull, push and bisect step, and on every file-watcher tick that
+    // notices the repo moved, and it restores the selection by sha through
+    // pendingReselect. Falling through to the teardown below flashed the
+    // whole panel — body to "loading…", file tree and diff to empty, both
+    // spinners on — and then spent a round trip rebuilding byte-identical
+    // content. It also threw away three things the user had chosen: which
+    // file they were reading, whether the long message was expanded, and
+    // which folders they had collapsed.
+    //
+    // What CAN change is what points AT the commit — a branch moved onto it,
+    // or a new tag — so `commit` is still refreshed from commitMeta. That is
+    // a cheap object swap; the ref chips update in place and nothing else
+    // moves.
+    if (this.alreadyShowing(c)) {
+      this.commit = c;
+      this.hero = null;
+      return;
+    }
+
     this.commit = c;
     this.hero = null;
     this.copied = false;
@@ -436,20 +480,9 @@ class DetailState {
         this.diffRows = [{ kind: "note", text: "binary file — not shown" }];
         return;
       }
-      let n1 = 0,
-        n2 = 0;
-      const rows: DiffRow[] = [];
-      d.lines.forEach(([mk, txt]) => {
-        if (mk === "@@") {
-          rows.push({ kind: "hunk", text: txt });
-          return;
-        }
-        const cls = mk === "+" ? "add" : mk === "-" ? "del" : "";
-        const ln = mk === "+" ? n2++ : mk === "-" ? n1++ : (n1++, n2++);
-        rows.push({ kind: "line", ln, mk: mk === "+" || mk === "-" ? mk : "", cls, html: bridge.highlight(txt, d.lang) });
-      });
-      if (d.truncated) rows.push({ kind: "note", text: "… diff truncated (file capped)" });
-      this.diffRows = rows;
+      // Shared with the two-commit compare (#49) — see diffrows.ts for why the
+      // line numbering in particular is not duplicated.
+      this.diffRows = buildDiffRows(d);
     } finally {
       this.diffLoading = false;
     }

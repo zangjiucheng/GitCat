@@ -1,5 +1,21 @@
 // Plugins manager modal strings. Keys become `plugins.<key>`.
 export default {
+  review_trust: "A plugin runs on your machine with your privileges — there is no sandbox. Install it only if you would run these commands yourself.",
+  review_install: "Install",
+  review_duplicate: "A plugin with the id {id} is already installed. Remove it first, or change this one's id.",
+  audit_commands: "Commands",
+  audit_hooks: "Hooks — these run on their own",
+  audit_panels: "Panels",
+  audit_files: "Files",
+  audit_lua: "Luau script",
+  audit_tama: "Includes a Tama skin",
+  audit_dir: "Loaded from",
+  audit_handler: "Luau handler {name}()",
+  audit_on_event: "on {event}",
+  audit_panel_items: "{n} widgets",
+  audit_mutates_badge: "writes to the repo",
+  audit_mutates_one: "1 action writes to this repository.",
+  audit_mutates_other: "{n} actions write to this repository.",
   title: "Plugins",
   subtitle:
     "Enable, disable, or remove installed plugins — or install a new one from a file. GitCat only runs what a plugin declares; it never connects anywhere itself.",

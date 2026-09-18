@@ -37,6 +37,7 @@ import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
 // reactive, so t() is called imperatively (applyStaticI18n below + the busy
 // labels in doFetch/doPull/doPush) and re-run on i18nEvents "change".
 import { t, be, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
+import { fitEllipsis } from "./fitellipsis.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -307,6 +308,10 @@ const state={scrollTop:0,scrollTarget:0,maxScroll:0,panX:0,panTarget:0,maxPanX:0
 const REDUCE_MOTION=matchMedia("(prefers-reduced-motion:reduce)").matches;
 const view={cssW:0,cssH:0,dpr:1,renderDpr:1};
 const perf={last:performance.now(),frames:0,accum:0,fps:0,lastDrawMs:0};
+// One measurer for every truncation site, closing over the module-level `ctx`
+// so it always measures with whatever canvas/font is current. Defined once
+// rather than per call: these run per visible row, per frame.
+const measureCtx=(t)=>ctx.measureText(t).width;
 let dirty=true, lastInteracting=false, lowRes=false, fastScroll=false, pendingClear=false;
 let prevScrollTop=0, prevPanX=0, prevZoom=1;   // last frame's scroll/pan/zoom, to detect real motion (see tick's lowRes gate)
 // Scroll-blit state (see the `oc` offscreen buffer above and tick()/blitScroll()).
@@ -555,6 +560,23 @@ function renderContent(st, rowLo, rowHi, strip){
     const l=(G.allRefs&&G.allRefs[r])||(G.refs&&G.refs[r]?[G.refs[r]]:[]);
     if(l.some&&l.some(x=>x&&x.kind==="head")){ headRow=r; break; }
   }
+  // Frame-constant text metrics, hoisted out of the per-row loop below (#87).
+  //
+  // All three font strings depend only on layout.zoom, so the loop was rebuilding
+  // the same three strings — a Math.round and two concatenations each — once per
+  // visible row, and handing each to the ctx.font SETTER, which re-parses it.
+  //
+  // shaW was a measureText PER ROW for a string whose width cannot vary: a sha is
+  // exactly 7 characters (commands.rs:393 truncates it; design mode's hhex pads
+  // to 7), and FONT_MONO is a monospace stack (the CSS --mono custom property,
+  // falling back to ui-monospace,monospace), so every row's sha has the same
+  // advance width. One measurement covers the frame.
+  const zc=Math.min(1.25,layout.zoom), zm=Math.min(1.2,layout.zoom);
+  const FONT_MSG=Math.round(12.5*zc)+"px "+FONT_UI;
+  const FONT_SHA=Math.round(10.5*zm)+"px "+FONT_MONO;
+  const FONT_AUTHOR=Math.round(11*zm)+"px "+FONT_UI;
+  ctx.font=FONT_SHA;
+  const shaW=ctx.measureText("0000000").width;
   ctx.textBaseline="middle"; ctx.font=layout.chipFont;
   // Inline ref-chip bounds are frame-constant (lastTx + window width), so compute
   // once here and reuse across rows instead of allocating per row in the loop;
@@ -636,26 +658,27 @@ function renderContent(st, rowLo, rowHi, strip){
       // below) — previously only the sha itself (96px) was reserved, so
       // adding the author name here without widening this would have let a
       // long commit message visually collide with it.
-      ctx.font=Math.round(12.5*Math.min(1.25,layout.zoom))+"px "+FONT_UI; ctx.fillStyle=theme.text; ctx.textAlign="left";
+      ctx.font=FONT_MSG; ctx.fillStyle=theme.text; ctx.textAlign="left";
       let s=msgOf(r); if(s.length>LABEL_MAX) s=s.slice(0,LABEL_MAX); const maxw=W-cx-AUTHOR_GUTTER;
-      if(ctx.measureText(s).width>maxw){while(s.length>4&&ctx.measureText(s+"…").width>maxw)s=s.slice(0,-1);s+="…";}
+      if(ctx.measureText(s).width>maxw) s=fitEllipsis(s,maxw,4,measureCtx)+"…"; // #88: bisect, not strip-one-and-remeasure
       ctx.fillText(s,cx,y);
-      ctx.fillStyle=theme.muted; ctx.textAlign="right"; ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px "+FONT_MONO;
-      const sha=hhex(r), shaW=ctx.measureText(sha).width;
+      // Sha FIRST, then the author. The other order needed a third font
+      // assignment to put the mono face back after the author's UI face
+      // clobbered it — the old comment there said as much. Drawing in font
+      // order costs two assignments instead of three and reads the same on
+      // screen: both are theme.muted, both right-aligned, neither overlaps.
+      ctx.fillStyle=theme.muted; ctx.textAlign="right"; ctx.font=FONT_SHA;
+      ctx.fillText(hhex(r),W-14,y);
       // Author preview — right next to the sha, so who wrote a commit is
       // visible at a glance without opening its detail panel. Own (slightly
       // larger, UI-font-not-mono) style so it doesn't read as part of the
-      // hash itself; truncated the same way the message above is.
-      ctx.font=Math.round(11*Math.min(1.2,layout.zoom))+"px "+FONT_UI;
+      // hash itself; truncated the same way the message above is. Positioned
+      // off the hoisted shaW.
+      ctx.font=FONT_AUTHOR;
       let a=authorOf(r); if(a.length>LABEL_MAX) a=a.slice(0,LABEL_MAX); const maxAuthorW=AUTHOR_GUTTER-96-8;
-      if(ctx.measureText(a).width>maxAuthorW){while(a.length>1&&ctx.measureText(a+"…").width>maxAuthorW)a=a.slice(0,-1);a+="…";}
+      if(ctx.measureText(a).width>maxAuthorW) a=fitEllipsis(a,maxAuthorW,1,measureCtx)+"…"; // #88
       ctx.fillText(a,W-14-shaW-8,y);
-      // Back to mono. Not a duplicate of the line above the author preview —
-      // that preview clobbered ctx.font with FONT_UI, and without restoring it
-      // the sha draws in the UI face. Silently: a canvas never complains about
-      // the font it was handed.
-      ctx.font=Math.round(10.5*Math.min(1.2,layout.zoom))+"px "+FONT_MONO;
-      ctx.fillText(sha,W-14,y); ctx.textAlign="left";
+      ctx.textAlign="left";
     }
     ctx.globalAlpha=1;
   }
@@ -830,10 +853,10 @@ function measureChip(entry, maxWidth) {
   let text = entry.label.length > LABEL_MAX ? entry.label.slice(0, LABEL_MAX) : entry.label;
   if (maxWidth != null) {
     const textMax = maxWidth - CHIP_PAD * 2 - iconsW;
-    if (ctx.measureText(text).width > textMax) {
-      while (text.length > 1 && ctx.measureText(text + "…").width > textMax) text = text.slice(0, -1);
-      text += "…";
-    }
+    // #88: the same bisection as the row subject/author above. A ref chip is
+    // measured for EVERY visible row's every label, so the linear scan cost
+    // here scaled with label length times rows times chips.
+    if (ctx.measureText(text).width > textMax) text = fitEllipsis(text, textMax, 1, measureCtx) + "…";
   }
   return { text, w: ctx.measureText(text).width + CHIP_PAD * 2 + iconsW };
 }
@@ -1063,6 +1086,38 @@ function hitTest(mx,my){
   return {row,lane,onDot:(dx*dx+dy*dy)<=hitR*hitR,x,y};
 }
 function rel(e){const r=cv.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top};}
+
+// The keyboard twin of the contextmenu listener above. Ten commit operations —
+// cherry-pick, merge, revert, reset, export patch, branch/tag here, three
+// copies — hang off that menu and had NO keyboard opener at all, because every
+// one of the app's 12 oncontextmenu handlers reads e.clientX/e.clientY and a
+// synthesised event has none.
+//
+// The anchor is computed by INVERTING hitTest's own row math rather than
+// guessing: screen y = bh + row*rowH - scrollTop, plus half a row so the menu
+// hangs off the row's middle the way a click on its dot would. x is the lane
+// the commit's dot sits on, so the menu appears where the eye already is.
+//
+// Returns false when there is nothing to open a menu ON — no selection, or the
+// pinned Uncommitted band (row -2), for which none of those ten operations mean
+// anything. The binding declines on false rather than swallowing the key.
+function openCommitMenuForSelectedRow(){
+  const row=state.selectedRow;
+  if(!(row>=0)||!G||row>=G.N) return false;
+  const r=cv.getBoundingClientRect(), rowH=layout.rowH, bh=bandH();
+  const y=r.top+bh+(row*rowH)-state.scrollTop+rowH*0.5;
+  const x=r.left+laneX(G.commitLane?G.commitLane[row]:0);
+  // Keep the menu on screen even when the selected row has been scrolled to
+  // the very edge of the viewport.
+  const cx=Math.min(Math.max(x,r.left+8),r.right-8);
+  const cy=Math.min(Math.max(y,r.top+8),r.bottom-8);
+  const sha=(BACKEND&&BACKEND.oids&&BACKEND.oids[row])?BACKEND.oids[row]:hhex(row);
+  // No compare anchor on this path: the keyboard opens the menu FOR the
+  // selected row, so the selection and the target are the same commit and
+  // "Compare with …" would mean comparing it with itself (#49).
+  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), cx, cy, null);
+  return true;
+}
 
 cv.addEventListener("wheel",(e)=>{
   if(e.ctrlKey||e.metaKey){e.preventDefault();zoomAt(rel(e).y,-e.deltaY);return;}
@@ -1324,6 +1379,11 @@ cv.addEventListener("contextmenu",(e)=>{
   const p=rel(e), hit=hitTest(p.x,p.y);
   if(!hit||hit.row<0) return;
   const row=hit.row;
+  // BEFORE select(row) below retargets it. Right-clicking a row SELECTS it, so
+  // by the time the commit menu is opened `state.selectedRow` is already this
+  // row — reading the compare anchor (#49) down there compared a commit with
+  // itself and the menu item never appeared at all.
+  const prevSelectedRow=state.selectedRow;
   select(row);
   showLabelTip(null);
   // Right-click a ref label — the gutter cell in column mode, the clicked chip
@@ -1368,8 +1428,19 @@ cv.addEventListener("contextmenu",(e)=>{
   // Full oid (BACKEND.oids[row]), not the short display sha, so the menu's
   // "Copy full SHA" really copies the full hash and git ops get an unambiguous
   // ref (#43). openAt derives shortSha from it via slice(0,7).
-  const sha=(BACKEND&&BACKEND.oids&&BACKEND.oids[row])?BACKEND.oids[row]:((BACKEND&&BACKEND.rows[row])?BACKEND.rows[row].sha:hhex(row));
-  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), e.clientX, e.clientY);
+  // One resolver for BOTH endpoints. They used to be spelled separately and
+  // drifted immediately: the anchor's copy lacked the design-mode hhex(row)
+  // fallback, so "Compare with …" could never appear without a real backend.
+  const shaOfRow=(r)=>(BACKEND&&BACKEND.oids&&BACKEND.oids[r])?BACKEND.oids[r]:((BACKEND&&BACKEND.rows[r])?BACKEND.rows[r].sha:hhex(r));
+  const sha=shaOfRow(row);
+  // The commit that was selected BEFORE this right-click is the compare anchor
+  // (#49) — right-clicking a second row offers "Compare with <that one>…".
+  // Resolved the same way as `sha` above (full oid), and left null when nothing
+  // was selected, when the pinned Uncommitted band (-2) was, or when it was
+  // this same row — openAt drops an anchor equal to the target on its own as a
+  // second guard.
+  const anchor=(prevSelectedRow>=0&&prevSelectedRow!==row)?shaOfRow(prevSelectedRow):null;
+  commitMenuCtrl.openAt(CUR_REPO, sha, msgOf(row), !!(G&&G.isMerge&&G.isMerge[row]), e.clientX, e.clientY, anchor);
 });
 cv.addEventListener("keydown",(e)=>{
   const rowH=layout.rowH;
@@ -1378,7 +1449,14 @@ cv.addEventListener("keydown",(e)=>{
   else if(e.key==="PageDown")state.scrollTarget=clampScroll(state.scrollTarget+view.cssH*0.9);
   else if(e.key==="PageUp")state.scrollTarget=clampScroll(state.scrollTarget-view.cssH*0.9);
   else if(e.key==="Home")state.scrollTarget=0; else if(e.key==="End")state.scrollTarget=state.maxScroll;
-  else if(e.key==="+"||e.key==="=")zoomAt(view.cssH/2,120); else if(e.key==="-")zoomAt(view.cssH/2,-120);
+  // Zoom keys take an EXACT mask: ⌘+ / ⌘- / Ctrl+- are the webview's own page
+  // zoom and must reach it, and ⌥- is nothing at all — all three zoomed the
+  // graph here. Shift is not excluded: "+" IS Shift+= on a US layout.
+  // Deliberately e.key and not e.code: e.code is a physical position, and "+"
+  // sits on BracketRight on QWERTZ, so only the glyph is portable.
+  else if((e.key==="+"||e.key==="="||e.key==="-")&&!e.metaKey&&!e.ctrlKey&&!e.altKey){
+    zoomAt(view.cssH/2, e.key==="-" ? -120 : 120);
+  }
   else return; e.preventDefault(); dirty=true;
 });
 
@@ -2142,11 +2220,13 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
 const sidebarHandle=wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28);
 const detailRightHandle=wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true,28);
 const detailBottomHandle=wireResizeHandle($("#resizeDetailBottom"),"--detail-h",180,720,true,28,"y");
-const panelHandles=[sidebarHandle,detailRightHandle].filter(Boolean);
 // Focus mode collapses the panels flanking the graph. Which detail handle
 // that is depends on the placement, and the placement can change without a
-// reload — so this is resolved per press rather than baked into the array
-// above (which stays sidebar-first for the ⌘⇧F handler that indexes it).
+// reload — so this is resolved per press rather than baked into a static array.
+// Expand the sidebar if it is collapsed. The scoped `f` binding (#148) needs
+// it for the same reason the deleted focusRefFilter did: focusing an input
+// inside a collapsed panel moves focus somewhere the user cannot see.
+function expandSidebar(){ sidebarHandle?.expand?.(); }
 function activePanelHandles(){
   const bottom=document.documentElement.getAttribute("data-detail-placement")==="bottom";
   return [sidebarHandle,bottom?detailBottomHandle:detailRightHandle].filter(Boolean);
@@ -2159,27 +2239,16 @@ function toggleFocusMode(){
   const allCollapsed=hs.length>0 && hs.every(h=>h.isCollapsed());
   hs.forEach(h=> allCollapsed ? h.expand() : h.collapse());
 }
+// @keymap-owns view.focusMode
 document.addEventListener("keydown",e=>{
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.code==="Backslash"&&!e.target.closest("input,textarea,[contenteditable=true]")){
     e.preventDefault(); toggleFocusMode();
   }
 });
-// ⌘⇧F / Ctrl+Shift+F — jump to the sidebar's "Filter refs" search. (Plain ⌘F is
-// Search Code — the codesearch island owns it.) Expands the sidebar first if
-// it's collapsed (panelHandles[0] is the sidebar), then focuses + selects the
-// input on the next frame (so it's visible before focus() runs).
-function focusRefFilter(){
-  panelHandles[0]?.expand?.();
-  requestAnimationFrame(()=>{ const el=$("#refFilter"); if(el){ el.focus(); el.select&&el.select(); } });
-}
-document.addEventListener("keydown",e=>{
-  if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.shiftKey&&e.key.toLowerCase()==="f"&&!e.target.closest("input,textarea,[contenteditable=true]")){
-    e.preventDefault(); focusRefFilter();
-  }
-});
 // ⌘⇧U / Ctrl+Shift+U — jump straight to the working tree (the "Uncommitted
 // changes" row + panel), same as ⌘K ▸ Uncommitted Changes. Plain ⌘U is taken
 // (half-page scroll, see vimnav), hence Shift. Ignored while typing in a field.
+// @keymap-owns nav.uncommitted
 document.addEventListener("keydown",e=>{
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.shiftKey&&e.key.toLowerCase()==="u"&&!e.target.closest("input,textarea,[contenteditable=true]")){
     e.preventDefault(); goToUncommitted();
@@ -2187,6 +2256,7 @@ document.addEventListener("keydown",e=>{
 });
 // ⌘⇧H / Ctrl+Shift+H — jump to the current commit (HEAD), centring it. Also the
 // #gotoHeadBtn topbar button. Ignored while typing in a field.
+// @keymap-owns nav.head
 document.addEventListener("keydown",e=>{
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.shiftKey&&e.key.toLowerCase()==="h"&&!e.target.closest("input,textarea,[contenteditable=true]")){
     e.preventDefault(); goToHead();
@@ -2196,6 +2266,7 @@ $("#gotoHeadBtn")?.addEventListener("click",goToHead);
 // Remote sync: ⌘⇧D fetch (Download), ⌘⇧L pull, ⌘⇧P push — the topbar buttons'
 // keyboard twins. Each op guards on CUR_REPO / busy itself, so these just
 // invoke it. Ignored while typing in a field.
+// @keymap-owns remote.fetch remote.pull remote.push
 document.addEventListener("keydown",e=>{
   if(!(e.metaKey||e.ctrlKey)||e.altKey||!e.shiftKey) return;
   if(e.target.closest("input,textarea,[contenteditable=true]")) return;
@@ -2388,7 +2459,30 @@ async function globalUndo(){
   finally{ undoBusy=false; labelEl.innerHTML=label; Safety.updateBadge(); }
 }
 $("#undoBtn").addEventListener("click",globalUndo);
-document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="z"&&!e.target.closest("input,textarea,[contenteditable=true]")){e.preventDefault();globalUndo();} });
+// ⌘Z / Ctrl+Z — global undo. The modifier test is EXACT, not "at least
+// Cmd/Ctrl": ⌘⇧Z means Redo in every other desktop app and ⌥⌘Z means undo
+// nowhere, so neither may reach globalUndo() — both did until now.
+//
+// Matched on the GLYPH (e.key), not the physical position. e.code "KeyZ" is the
+// bottom-left letter key of a US keyboard, which prints "w" on AZERTY and "y"
+// on QWERTZ — so an e.code match would undo when a French user pressed the key
+// labelled W (stealing their ⌘W / Close Window, which the File menu binds via
+// Tauri's predefined item) and do nothing at all on the key labelled Z. Same
+// reasoning the zoom handler above spells out for "+": only the glyph travels.
+// The ⌘\ handler below stays on e.code deliberately — punctuation is where
+// position IS the portable thing.
+//
+// ⌘⇧Z is claimed here rather than left unbound: an unclaimed chord is how the
+// loose match crept back in, and a user pressing it deserves to be told Redo
+// doesn't exist yet instead of silently undoing a second time.
+// @keymap-owns edit.undo edit.redoUnsupported
+document.addEventListener("keydown",e=>{
+  if(!(e.metaKey||e.ctrlKey)||e.altKey||e.key.toLowerCase()!=="z") return;
+  if(e.target.closest("input,textarea,[contenteditable=true]")) return;
+  e.preventDefault();
+  if(e.shiftKey){ Tama.say(t("legacy.redo_unsupported"),3200); return; }
+  globalUndo();
+});
 
 // remote sync: fetch / pull (ff-only) / push — one shared busy flag so an
 // in-flight network op can't overlap with another (see src-tauri/src/git_remote.rs
@@ -2482,17 +2576,23 @@ function armDanger(ctx){
   // the reset"). The name goes in via textContent (never innerHTML) so a
   // ref/sha can't inject markup, and #dangerTypeName is recreated every time so
   // it's always present.
+  // `ctx.phrase` is what the user must actually type, defaulting to ctx.name so
+  // every existing caller is unchanged. It exists because delete-branch,
+  // reset-to-upstream and force-push all arm this same gate with the branch
+  // name — three different verbs behind one passphrase, so typing it proves
+  // nothing about WHICH one you meant. Callers can now demand "<verb> <name>".
+  const phrase=ctx.phrase||ctx.name;
   const typeLabel=$("#dangerTypeLabel");
   typeLabel.textContent="Type the "+(ctx.typeNoun||"branch name")+" ";
-  const tn=document.createElement("b"); tn.className="mono"; tn.id="dangerTypeName"; tn.textContent=ctx.name;
+  const tn=document.createElement("b"); tn.className="mono"; tn.id="dangerTypeName"; tn.textContent=phrase;
   typeLabel.appendChild(tn);
   typeLabel.appendChild(document.createTextNode(" to "+(ctx.typeVerb||"arm the rewrite")+":"));
-  const inp=$("#confirmInput"); inp.placeholder=ctx.name; inp.value="";
+  const inp=$("#confirmInput"); inp.placeholder=phrase; inp.value="";
   $("#dangerGo").textContent=ctx.confirmLabel||"Confirm"; $("#dangerGo").disabled=true;
   openScrim("#dangerScrim"); setTimeout(()=>inp.focus(),30);
 }
 function disarmDanger(){ closeScrim("#dangerScrim"); const ci=$("#confirmInput"); if(ci) ci.value=""; const gg=$("#dangerGo"); if(gg) gg.disabled=true; dangerCtx=null; }
-$("#confirmInput").addEventListener("input",e=>{ const want=dangerCtx?dangerCtx.name:"main"; $("#dangerGo").disabled=e.target.value.trim()!==want; });
+$("#confirmInput").addEventListener("input",e=>{ const want=dangerCtx?(dangerCtx.phrase||dangerCtx.name):"main"; $("#dangerGo").disabled=e.target.value.trim()!==want; });
 $("#dangerCancel").addEventListener("click",()=>{ disarmDanger(); Tama.event("mutation.cancel"); });
 let dangerBusy=false;
 $("#dangerGo").addEventListener("click",async ()=>{
@@ -3714,7 +3814,7 @@ i18nEvents.addEventListener("change",()=>{
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
-  G, BACKEND, state, layout, view, cv, clampScroll, select, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, deselect, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, applyDetailPlacement, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section
@@ -3723,4 +3823,6 @@ export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
   // select/openRepo above). NAV_STACK itself is already exported directly at
   // its declaration above (`export let NAV_STACK`), same as CUR_REPO — not
   // re-listed here, that would be a duplicate export.
-  enterSubmodule, navigateToRepo };
+  enterSubmodule, navigateToRepo,
+  // Keyboard openers for surfaces that were pointer-only (see #144).
+  openCommitMenuForSelectedRow, expandSidebar };

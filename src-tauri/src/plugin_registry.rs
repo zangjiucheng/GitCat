@@ -3,7 +3,7 @@
 //! `commands` (surfaced in the ⌘K palette and/or context menus) and `hooks`
 //! (external commands GitCat runs on lifecycle events). This module owns ONLY
 //! the on-disk registry + install/enable/remove CRUD; a later executor module
-//! consumes [`load_plugins`]/[`find_command`] to actually run a command's
+//! consumes [`load_plugins`]/[`find_enabled_command`] to actually run a command's
 //! external process.
 //!
 //! ## AI-agnostic / trust boundary
@@ -625,6 +625,51 @@ pub fn validate_manifest(plugin: &Plugin) -> Result<(), String> {
     Ok(())
 }
 
+/// Collect every key `declared` carries that `understood` does not, as dotted
+/// paths (`commands[0].mutatez`).
+///
+/// The known-key set is DERIVED, never listed: the manifest is parsed into
+/// [`Plugin`] exactly as permissively as it always was, that `Plugin` is
+/// serialized back, and anything in the author's JSON missing from the round
+/// trip is precisely what serde dropped on the floor. So the set cannot drift
+/// from the structs — which is the whole reason this is not
+/// `#[serde(deny_unknown_fields)]` on a parallel `PluginManifest` type tree:
+/// `PluginCommand`, `PluginHook`, `PluginPanel`, `PanelItem` and `TamaSkin`
+/// would all need twins, and a field added to one but not its twin would be
+/// REJECTED at install rather than merely ignored — a worse bug than the one
+/// being fixed, and a silent one.
+///
+/// And emphatically not `deny_unknown_fields` on [`Plugin`] itself: `Plugin` is
+/// also the persisted registry element inside `PluginsFile`, so one unknown key
+/// — a hand edit, or downgrading GitCat after installing a newer plugin — would
+/// send [`load_from`] down its rename-aside path and wipe every installed
+/// plugin. See that function, and `Plugin`'s own doc.
+///
+/// Only keys are compared, never values: a value serde re-serializes
+/// differently (a number's formatting, a default filled in) is not a finding.
+fn collect_unknown_keys(declared: &serde_json::Value, understood: &serde_json::Value, path: &str, out: &mut Vec<String>) {
+    use serde_json::Value;
+    match (declared, understood) {
+        (Value::Object(d), Value::Object(u)) => {
+            for (key, value) in d {
+                let child = if path.is_empty() { key.clone() } else { format!("{path}.{key}") };
+                match u.get(key) {
+                    Some(known) => collect_unknown_keys(value, known, &child, out),
+                    None => out.push(child),
+                }
+            }
+        }
+        // Index-wise: a successful parse round-trips each element in order, so
+        // `commands[2]` in the round trip is `commands[2]` in the source.
+        (Value::Array(d), Value::Array(u)) => {
+            for (i, (dv, uv)) in d.iter().zip(u.iter()).enumerate() {
+                collect_unknown_keys(dv, uv, &format!("{path}[{i}]"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Resolve `source` (a `plugin.json` file OR a directory containing one) to the
 /// manifest file, enforce the [`MAX_MANIFEST_BYTES`] size cap, then read,
 /// parse, and [`validate_manifest`] it. Returns the parsed [`Plugin`] WITHOUT
@@ -714,6 +759,32 @@ pub fn read_and_validate_manifest(source: &Path) -> Result<Plugin, String> {
     let mut plugin: Plugin = serde_json::from_str(&text).map_err(|e| {
         ierrp("err_plugins.manifest_invalid", &[("path", &manifest.display().to_string()), ("detail", &e.to_string())])
     })?;
+    // A key GitCat does not know used to be ignored in silence, so a misspelled
+    // `mutates` meant a command that quietly took no safety snapshot, and an
+    // author got no signal that half their manifest did nothing (#64).
+    //
+    // Checked here rather than through serde: see [`collect_unknown_keys`] for
+    // why `deny_unknown_fields` is wrong on `Plugin` (it is the persisted
+    // registry element — one unknown key would wipe the registry) and why a
+    // parallel strict type tree is worse than it looks.
+    //
+    // AFTER the version gate above, deliberately. A manifest written for a newer
+    // GitCat will be full of keys this host has never heard of; the useful
+    // message is "needs GitCat 1.4 or newer", not a list of them.
+    let declared: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        ierrp("err_plugins.manifest_invalid", &[("path", &manifest.display().to_string()), ("detail", &e.to_string())])
+    })?;
+    let understood = serde_json::to_value(&plugin).map_err(|e| {
+        ierrp("err_plugins.manifest_invalid", &[("path", &manifest.display().to_string()), ("detail", &e.to_string())])
+    })?;
+    let mut unknown = Vec::new();
+    collect_unknown_keys(&declared, &understood, "", &mut unknown);
+    if !unknown.is_empty() {
+        return Err(ierrp(
+            "err_plugins.manifest_unknown_keys",
+            &[("path", &manifest.display().to_string()), ("keys", &unknown.join(", "))],
+        ));
+    }
     validate_manifest(&plugin)?;
     // Capture the plugin's SOURCE directory (PER-47): the CANONICALIZED parent
     // of its manifest file, so a later skin load resolves relative asset paths
@@ -780,16 +851,71 @@ pub fn load_plugins(app: &AppHandle<Wry>) -> Result<Vec<Plugin>, String> {
     load_from(&plugins_path(app)?)
 }
 
-/// Look up a single command by its `(pluginId, commandId)` address, the way the
-/// executor resolves a palette/menu invocation back to its `run` template.
-/// `Ok(None)` when either the plugin or the command doesn't exist. Does NOT
-/// filter on `Plugin::enabled` — the caller checks that if it cares.
-pub fn find_command(app: &AppHandle<Wry>, plugin_id: &str, command_id: &str) -> Result<Option<PluginCommand>, String> {
-    let plugins = load_plugins(app)?;
-    Ok(plugins
-        .into_iter()
+/// Look up a single command by its `(pluginId, commandId)` address, refusing a
+/// plugin the user has DISABLED. Pure over a plugin list — see
+/// [`find_enabled_command`] for the `AppHandle` wrapper the executor calls.
+///
+/// Pure, like [`set_enabled_in`] and [`remove_from`], because that is the only
+/// way this gate is testable: the loading version needs an `AppHandle<Wry>`,
+/// which is why the test for the old unfiltered lookup re-implemented its body
+/// inline rather than calling it — and why the identical `enabled` gate inside
+/// [`load_plugin_skin`] has never had a test at all.
+///
+/// The three outcomes are deliberately NOT collapsed:
+///
+/// * plugin missing, or command missing -> `Ok(None)`; the caller reports
+///   "command not found", which is what happened.
+/// * plugin present but disabled -> `Err(err_plugins.plugin_disabled)`.
+///
+/// Reporting a disabled plugin's command as "not found" would be a lie about a
+/// command the user can see in their own plugin list and turn back on — and it
+/// would make the one case this gate exists for (a second window's palette still
+/// listing a plugin disabled in the first) report as corruption rather than as
+/// what it is.
+pub fn find_enabled_command_in(
+    plugins: &[Plugin],
+    plugin_id: &str,
+    command_id: &str,
+) -> Result<Option<PluginCommand>, String> {
+    let Some(plugin) = plugins.iter().find(|p| p.id == plugin_id) else {
+        return Ok(None);
+    };
+    if !plugin.enabled {
+        return Err(ierrp("err_plugins.plugin_disabled", &[("id", &format!("{plugin_id:?}"))]));
+    }
+    Ok(plugin.commands.iter().find(|c| c.id == command_id).cloned())
+}
+
+/// Resolve a plugin by id, refusing one the user has DISABLED. Pure over a
+/// plugin list for the same testability reason as [`find_enabled_command_in`].
+pub fn find_enabled_plugin_in<'a>(plugins: &'a [Plugin], plugin_id: &str) -> Result<&'a Plugin, String> {
+    let plugin = plugins
+        .iter()
         .find(|p| p.id == plugin_id)
-        .and_then(|p| p.commands.into_iter().find(|c| c.id == command_id)))
+        .ok_or_else(|| ierrp("err_plugins.no_plugin_with_id", &[("id", &format!("{plugin_id:?}"))]))?;
+    if !plugin.enabled {
+        return Err(ierrp("err_plugins.plugin_disabled", &[("id", &format!("{plugin_id:?}"))]));
+    }
+    Ok(plugin)
+}
+
+/// Load the registry and resolve `(pluginId, commandId)` through
+/// [`find_enabled_command_in`], the way the executor resolves a palette/menu
+/// invocation back to its `run` template.
+///
+/// There is deliberately no unfiltered variant left. This used to be
+/// `find_command`, whose doc said it "does NOT filter on `Plugin::enabled` —
+/// the caller checks that if it cares", and its only caller did not: disabling
+/// a plugin stopped its hooks but not its commands, including `mutates: true`
+/// ones that take a safety snapshot and write to the repository (#59). An
+/// unfiltered lookup sitting next to a filtered one is the shape of that bug,
+/// so the unfiltered one is gone rather than merely documented.
+pub fn find_enabled_command(
+    app: &AppHandle<Wry>,
+    plugin_id: &str,
+    command_id: &str,
+) -> Result<Option<PluginCommand>, String> {
+    find_enabled_command_in(&load_plugins(app)?, plugin_id, command_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -895,11 +1021,13 @@ pub fn load_plugin_lua_source(plugin: &Plugin) -> Result<String, String> {
 /// the executor's command path uses this to fetch the source for a `handler`
 /// command. Errors if the plugin is missing or its script can't be safely read.
 pub fn plugin_lua_source(app: &AppHandle<Wry>, plugin_id: &str) -> Result<String, String> {
-    let plugin = load_plugins(app)?
-        .into_iter()
-        .find(|p| p.id == plugin_id)
-        .ok_or_else(|| ierrp("err_plugins.no_plugin_with_id", &[("id", &format!("{plugin_id:?}"))]))?;
-    load_plugin_lua_source(&plugin)
+    // Gated on `enabled` too, even though its one caller already resolved the
+    // command through find_enabled_command: this is a `pub fn` that hands back
+    // executable plugin source by id, and it previously did so for a disabled
+    // plugin with no check at all (#59). A second gate costs one comparison;
+    // a second caller written without one costs another bug of this shape.
+    let plugins = load_plugins(app)?;
+    load_plugin_lua_source(find_enabled_plugin_in(&plugins, plugin_id)?)
 }
 
 // ---------------------------------------------------------------------------
@@ -1069,6 +1197,33 @@ pub fn set_plugin_enabled(app: AppHandle<Wry>, id: String, enabled: bool) -> Res
     save_to(&store, &plugins)
 }
 
+/// Read and validate a manifest WITHOUT installing it (#68), so the app can
+/// show a user what a plugin does before they agree to run it.
+///
+/// This exists because of what `docs/plugins.md` asks of the user: there is no
+/// sandbox for a shell `run`, so "a plugin can do anything the command you
+/// wrote can do". Install was a single file-picker confirmation, and no island
+/// reads `run`, `mutates` or `handler` off a Plugin — the app asked for a
+/// security judgement using information it declined to show.
+///
+/// Deliberately the SAME [`read_and_validate_manifest`] the install path uses,
+/// not a looser parse: a preview that accepts a manifest install would reject
+/// teaches the user the wrong thing about their own manifest. The one check it
+/// does NOT make is the duplicate-id one, which belongs to [`install_from`] —
+/// the registry it would check against is already in the frontend's hands.
+///
+/// `async fn` + `run_blocking` because this reads and parses a file (capped at
+/// [`MAX_MANIFEST_BYTES`]) and nothing that touches the disk belongs on the
+/// thread driving the window. It takes no `AppHandle`: the registry is never
+/// opened, which is the whole point.
+///
+/// JS: `commands.previewPluginManifest(path)` -> `Result<Plugin, string>`.
+#[tauri::command]
+#[specta::specta]
+pub async fn preview_plugin_manifest(path: String) -> Result<Plugin, String> {
+    crate::blocking::run_blocking(move || read_and_validate_manifest(Path::new(&path))).await
+}
+
 /// Install a plugin from a local `plugin.json` file OR a directory containing
 /// one: read + parse + validate, reject a duplicate id, then append + save.
 /// Returns the installed plugin. JS: `commands.installPluginFromPath(path)`.
@@ -1122,6 +1277,184 @@ pub async fn load_plugin_skin(app: AppHandle<Wry>, plugin_id: String) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -- unknown manifest keys (#64) -----------------------------------------
+
+    #[test]
+    fn an_unknown_manifest_key_is_rejected_rather_than_ignored() {
+        // Silently ignoring it meant a misspelled `mutates` produced a command
+        // that quietly took no safety snapshot, and an author got no signal that
+        // half their manifest did nothing.
+        let dir = temp_dir("unknown-key");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("plugin.json");
+        std::fs::write(&manifest, r#"{"id":"alpha","name":"Alpha","version":"1.0.0","descriptoin":"typo"}"#).unwrap();
+
+        let err = read_and_validate_manifest(&manifest).expect_err("an unknown key must be refused");
+        assert!(err.contains("err_plugins.manifest_unknown_keys"), "got: {err}");
+        assert!(err.contains("descriptoin"), "the message must name the key; got: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unknown_key_inside_a_command_is_reported_with_its_path() {
+        // The nested case is the one that matters most: `mutates` misspelled on
+        // one command of five is invisible in a flat "unknown key" message, and
+        // it is exactly the key whose absence is dangerous.
+        let dir = temp_dir("unknown-nested");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("plugin.json");
+        std::fs::write(
+            &manifest,
+            r#"{"id":"alpha","name":"Alpha","version":"1.0.0","commands":[
+                 {"id":"safe","label":"Safe","run":"echo hi"},
+                 {"id":"risky","label":"Risky","run":"git reset --hard","mutatez":true}]}"#,
+        )
+        .unwrap();
+
+        let err = read_and_validate_manifest(&manifest).expect_err("an unknown nested key must be refused");
+        assert!(err.contains("commands[1].mutatez"), "the message must locate the key; got: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_key_the_struct_itself_produces_is_accepted() {
+        // The over-rejection guard, and it cannot drift: a real Plugin is
+        // serialized and fed back in as a manifest, so any field added to the
+        // struct is exercised here the day it is added. A hand-written "valid
+        // manifest" fixture would have to be remembered instead.
+        let dir = temp_dir("unknown-roundtrip");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("plugin.json");
+        let plugin = sample_plugin("alpha");
+        std::fs::write(&manifest, serde_json::to_string(&plugin).unwrap()).unwrap();
+
+        read_and_validate_manifest(&manifest).expect("a manifest made of the struct's own keys must be accepted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_registry_tolerates_unknown_keys_and_is_never_wiped_by_one() {
+        // THE trap this issue is named after. `Plugin` is also the persisted
+        // registry element, so `deny_unknown_fields` on it would send load_from
+        // down its rename-aside path on a single unknown key — from a hand edit,
+        // or from downgrading GitCat after installing a newer plugin — and
+        // silently drop EVERY installed plugin.
+        //
+        // Strictness belongs to the manifest read, never to the registry type.
+        let dir = temp_dir("registry-tolerant");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(FILE_NAME);
+        std::fs::write(
+            &path,
+            r#"{"version":1,"plugins":[
+                 {"id":"alpha","name":"Alpha","version":"1.0.0","fieldFromANewerGitcat":{"nested":true}}]}"#,
+        )
+        .unwrap();
+
+        let plugins = load_from(&path).expect("the registry must still load");
+        assert_eq!(plugins.len(), 1, "an unknown key wiped the registry");
+        assert_eq!(plugins[0].id, "alpha");
+        assert!(path.exists(), "the registry file was renamed aside");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn collect_unknown_keys_only_reports_keys_the_author_wrote() {
+        // A key the struct emits but the manifest omits (`dir`, every
+        // `#[serde(default)]` Option) is not a finding — the walk is over the
+        // DECLARED side, not the round trip.
+        let declared = serde_json::json!({"id": "a", "commands": [{"id": "c"}]});
+        let understood = serde_json::json!({"id": "a", "dir": null, "commands": [{"id": "c", "mutates": false}]});
+        let mut out = Vec::new();
+        collect_unknown_keys(&declared, &understood, "", &mut out);
+        assert!(out.is_empty(), "reported keys the author never wrote: {out:?}");
+
+        let declared = serde_json::json!({"id": "a", "commands": [{"id": "c", "nope": 1}], "alsoNope": 2});
+        let mut out = Vec::new();
+        collect_unknown_keys(&declared, &understood, "", &mut out);
+        out.sort();
+        assert_eq!(out, vec!["alsoNope".to_string(), "commands[0].nope".to_string()]);
+    }
+
+    // -- install-time preview (#68) ------------------------------------------
+
+    #[test]
+    fn a_preview_parses_the_manifest_without_touching_the_registry() {
+        // The property the whole feature rests on: looking at a plugin must not
+        // be indistinguishable from installing it. read_and_validate_manifest
+        // is the shared path, and preview_plugin_manifest takes no AppHandle at
+        // all — there is no registry in reach — but a future refactor could
+        // quietly change that, so it is pinned here against a real registry.
+        let dir = temp_dir("preview-noop");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join(FILE_NAME);
+        save_to(&store, &[sample_plugin("already-here")]).unwrap();
+
+        let manifest = dir.join("plugin.json");
+        std::fs::write(&manifest, r#"{"id":"newcomer","name":"Newcomer","version":"1.0.0"}"#).unwrap();
+
+        let previewed = read_and_validate_manifest(&manifest).expect("a valid manifest must preview");
+        assert_eq!(previewed.id, "newcomer");
+
+        let after = load_from(&store).expect("the registry must still load");
+        assert_eq!(after.len(), 1, "previewing installed something");
+        assert_eq!(after[0].id, "already-here");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_preview_surfaces_what_the_user_is_being_asked_to_trust() {
+        // Counts are what the Plugins panel already showed, and counts are not
+        // what the trust model asks about: the preview has to carry the actual
+        // `run` template, the `mutates` flag, and the resolved source dir.
+        let dir = temp_dir("preview-content");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("plugin.json");
+        std::fs::write(
+            &manifest,
+            r#"{"id":"risky","name":"Risky","version":"1.0.0","commands":[
+                 {"id":"clean","label":"Clean","run":"git clean -fd","mutates":true},
+                 {"id":"look","label":"Look","run":"git status"}],
+               "hooks":[{"event":"post-mutation","run":"echo done"}]}"#,
+        )
+        .unwrap();
+
+        let p = read_and_validate_manifest(&manifest).expect("must preview");
+        let clean = p.commands.iter().find(|c| c.id == "clean").unwrap();
+        assert_eq!(clean.run.as_deref(), Some("git clean -fd"), "the command line itself must be visible");
+        assert!(clean.mutates, "the mutating flag must survive to the UI");
+        assert!(!p.commands.iter().find(|c| c.id == "look").unwrap().mutates);
+        assert_eq!(p.hooks.len(), 1, "hooks run without being invoked — they matter most of all");
+        assert!(p.dir.is_some(), "the source dir is part of what is being trusted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_preview_refuses_exactly_what_install_refuses() {
+        // A preview that accepted a manifest install would reject teaches the
+        // user the wrong thing about their own file. Both go through
+        // read_and_validate_manifest, and these are the two gates most likely
+        // to be loosened "just for the preview" by a later change.
+        let dir = temp_dir("preview-refuse");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let unknown = dir.join("unknown.json");
+        std::fs::write(&unknown, r#"{"id":"a","name":"A","version":"1.0.0","descriptoin":"typo"}"#).unwrap();
+        let err = read_and_validate_manifest(&unknown).expect_err("an unknown key must be refused (#64)");
+        assert!(err.contains("err_plugins.manifest_unknown_keys"), "got: {err}");
+
+        let (major, _, _) = crate::version::parse(crate::version::HOST_VERSION).unwrap();
+        let newer = dir.join("newer.json");
+        std::fs::write(
+            &newer,
+            format!(r#"{{"id":"a","name":"A","version":"1.0.0","minGitcatVersion":"{}.0.0"}}"#, major + 1),
+        )
+        .unwrap();
+        let err = read_and_validate_manifest(&newer).expect_err("a newer-host manifest must be refused (#63)");
+        assert!(err.contains("err_plugins.needs_newer_gitcat"), "got: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -1416,11 +1749,15 @@ mod tests {
     #[test]
     fn the_version_gate_reports_before_any_other_manifest_complaint() {
         // The ordering this whole design turns on. This manifest is ALSO invalid
-        // for an unrelated reason (an id with a space), and the version message
-        // still wins — because the probe runs before the full parse and before
-        // validate_manifest. When strict parsing lands (#64) it is this ordering
-        // that keeps a 1.4-authored manifest from reporting `unknown field` on a
-        // 1.3 host instead of "you need a newer GitCat".
+        // for two unrelated reasons — an id with a space, and a key this host
+        // has never heard of — and the version message still wins, because the
+        // probe runs before the full parse, before the unknown-key check, and
+        // before validate_manifest.
+        //
+        // The unknown key is the point now that strict parsing has landed (#64):
+        // a manifest written for a newer GitCat is FULL of keys this host does
+        // not know, and listing them would bury the one message that says what
+        // to do about it.
         let (major, _, _) = crate::version::parse(crate::version::HOST_VERSION).unwrap();
         let dir = temp_dir("min-order");
         std::fs::create_dir_all(&dir).unwrap();
@@ -1428,7 +1765,7 @@ mod tests {
         std::fs::write(
             &manifest,
             format!(
-                r#"{{"id":"NOT A VALID ID","name":"","version":"","minGitcatVersion":"{}.0.0"}}"#,
+                r#"{{"id":"NOT A VALID ID","name":"","version":"","minGitcatVersion":"{}.0.0","somethingFromTheFuture":true}}"#,
                 major + 1
             ),
         )
@@ -1545,19 +1882,75 @@ mod tests {
 
     #[test]
     fn find_command_addresses_by_plugin_and_command_id() {
-        // Pure lookup logic, exercised directly against a plugin list (find_command
-        // itself needs an AppHandle; this mirrors its into_iter().find(...) body).
+        // Now calls the real function. It used to re-implement the lookup inline
+        // — "find_command itself needs an AppHandle" — which is exactly why the
+        // missing `enabled` gate had nothing to fail against.
         let plugins = vec![sample_plugin("alpha")];
-        let found = plugins
-            .iter()
-            .find(|p| p.id == "alpha")
-            .and_then(|p| p.commands.iter().find(|c| c.id == "greet"));
-        assert!(found.is_some());
-        let missing = plugins
-            .iter()
-            .find(|p| p.id == "alpha")
-            .and_then(|p| p.commands.iter().find(|c| c.id == "nope"));
-        assert!(missing.is_none());
+        assert!(find_enabled_command_in(&plugins, "alpha", "greet").unwrap().is_some());
+        assert!(find_enabled_command_in(&plugins, "alpha", "nope").unwrap().is_none());
+        assert!(find_enabled_command_in(&plugins, "ghost", "greet").unwrap().is_none());
+    }
+
+    #[test]
+    fn a_disabled_plugin_s_command_will_not_resolve() {
+        // #59. docs/plugins.md promises "a disabled plugin's commands and hooks
+        // stop running immediately". Hooks honoured it; commands did not — the
+        // executor's only lookup did not filter on `enabled` and said so in its
+        // own doc, while the executor's doc claimed the opposite. So an IPC call
+        // to runPluginCommand for a disabled plugin ran its shell template or
+        // Luau handler normally, including a `mutates: true` one, which takes a
+        // safety snapshot and writes to the repository.
+        let mut plugins = vec![sample_plugin("alpha")];
+        set_enabled_in(&mut plugins, "alpha", false).unwrap();
+
+        let err = find_enabled_command_in(&plugins, "alpha", "greet")
+            .expect_err("a disabled plugin's command must not resolve");
+        assert!(err.contains("err_plugins.plugin_disabled"), "got: {err}");
+    }
+
+    #[test]
+    fn a_disabled_plugin_reports_as_disabled_rather_than_missing() {
+        // Not collapsed into "command not found": the user can see this plugin
+        // in their own list and turn it back on. Reporting it as missing would
+        // describe the one case this gate exists for — a second window's palette
+        // still listing a plugin disabled in the first — as corruption.
+        let mut plugins = vec![sample_plugin("alpha")];
+        set_enabled_in(&mut plugins, "alpha", false).unwrap();
+
+        let disabled = find_enabled_command_in(&plugins, "alpha", "greet").unwrap_err();
+        assert!(disabled.contains("err_plugins.plugin_disabled"), "got: {disabled}");
+        // …while a genuinely absent plugin still reads as absent, not disabled.
+        assert!(find_enabled_command_in(&plugins, "ghost", "greet").unwrap().is_none());
+    }
+
+    #[test]
+    fn find_enabled_plugin_gates_the_luau_source_lookup() {
+        // plugin_lua_source resolved a plugin by id with no check at all, and it
+        // hands back executable source. Gated through this helper now.
+        let mut plugins = vec![sample_plugin("alpha")];
+        assert!(find_enabled_plugin_in(&plugins, "alpha").is_ok());
+
+        let missing = find_enabled_plugin_in(&plugins, "ghost").unwrap_err();
+        assert!(missing.contains("err_plugins.no_plugin_with_id"), "got: {missing}");
+
+        set_enabled_in(&mut plugins, "alpha", false).unwrap();
+        let disabled = find_enabled_plugin_in(&plugins, "alpha").unwrap_err();
+        assert!(disabled.contains("err_plugins.plugin_disabled"), "got: {disabled}");
+    }
+
+    #[test]
+    fn an_enabled_plugin_still_resolves_normally() {
+        // The gate must not become "nothing runs" — every command of an enabled
+        // plugin resolves exactly as before, including after a disable/enable
+        // round trip through the same toggle the UI uses.
+        let mut plugins = vec![sample_plugin("alpha"), sample_plugin("beta")];
+        set_enabled_in(&mut plugins, "alpha", false).unwrap();
+        set_enabled_in(&mut plugins, "alpha", true).unwrap();
+
+        assert!(find_enabled_command_in(&plugins, "alpha", "greet").unwrap().is_some());
+        // …and disabling one plugin does not gate its neighbour.
+        set_enabled_in(&mut plugins, "alpha", false).unwrap();
+        assert!(find_enabled_command_in(&plugins, "beta", "greet").unwrap().is_some());
     }
 
     // -- Tama skin (PER-47) --------------------------------------------------

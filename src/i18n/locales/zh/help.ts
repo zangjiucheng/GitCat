@@ -8,7 +8,7 @@ export default {
     "每一行是一个 commit,最新的排在最上面。左侧的 <b>BRANCH / TAG</b> 列显示指向该 commit 的分支或标签;泳道颜色对应各个分支。你当前所在的 commit(<b>HEAD</b>)带有一圈明亮的光环,左边缘还有一道竖条 —— 也就是「你在这里」。已经在当前分支里的 commit 会<b>变暗</b>,这样你还没合并的工作就会更醒目。",
   navigate_h: "导航",
   navigate_p:
-    "滚动或拖拽即可移动;<kbd>⌘</kbd>+滚动(或 <kbd>+</kbd>/<kbd>-</kbd>)可缩放。<kbd>⌘K</kbd> 打开命令面板。<kbd>⌘F</kbd> 搜索 commit 内容,<kbd>⌘⇧F</kbd> 过滤 ref。<kbd>⌘⇧H</kbd> 跳到 HEAD,<kbd>⌘⇧U</kbd> 跳到未提交的更改。<kbd>⌘\\</kbd> 切换专注模式。按 <kbd>?</kbd> 查看全部快捷键。",
+    "滚动或拖拽即可移动;<kbd>⌘</kbd>+滚动(或 <kbd>+</kbd>/<kbd>-</kbd>)可缩放。<kbd>⌘K</kbd> 打开命令面板。<kbd>⌘F</kbd> 搜索代码,<kbd>⌘⇧F</kbd> 搜索 commit 内容。<kbd>⌘⇧H</kbd> 跳到 HEAD,<kbd>⌘⇧U</kbd> 跳到未提交的更改。<kbd>⌘\\</kbd> 切换专注模式。按 <kbd>?</kbd> 查看全部快捷键。",
   commits_h: "Commit",
   commits_p:
     "点击某个 commit,右侧会显示它的文件和 diff。把一个 commit <b>拖</b>到另一个上,即可把它 cherry-pick 过去 —— 拖拽时按住 <kbd>⇧</kbd> 则改为合并。<b>右键点击</b>某个 commit,可进行 cherry-pick / 合并 / revert / reset / 创建分支或标签 / 复制。",

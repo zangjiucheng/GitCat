@@ -52,6 +52,18 @@ choose to run. GitCat contacts **no AI service and no network** on a plugin's
 behalf; whatever a plugin does lives entirely inside its own `run` string and
 runs with your user's privileges. Only install plugins you trust and have read.
 
+**GitCat shows you what a plugin runs, before and after install.** Choosing a
+`plugin.json` no longer installs it: GitCat parses and validates the manifest
+first and shows you a review — every command's `run` template verbatim, every
+hook and the event it fires on, anything declaring `mutates`, and the directory
+the plugin loads from — and installs nothing until you agree. The same view is
+in the Plugins panel for anything already installed, so what you agreed to and
+what is on your machine can be compared. Reading a manifest never touches the
+registry; previewing is not a step towards installing.
+
+This is a review surface, not a safety check. GitCat cannot tell you what a
+shell command will do — it can only make sure you have seen it.
+
 Values GitCat substitutes into a `run` template — a branch/tag/ref name, a file
 path, a repo path, diff content — come from the repository you have open, which a
 malicious project can craft freely. GitCat single-quotes every substituted value
@@ -93,11 +105,12 @@ GitCat's environment.
 
 ## Supported versions
 
-GitCat is pre-1.0; security fixes land in the latest release only. Please make sure you're on the newest version before reporting.
+Security fixes land in the latest release only. Please make sure you're on the
+newest version before reporting — Help → About shows the version you are running.
 
 | Version | Supported |
 | ------- | --------- |
-| latest `0.9.x` | ✅ |
+| latest `1.3.x` | ✅ |
 | older | ❌ |
 
 > Tip: enable **Private vulnerability reporting** under *Settings → Code security and analysis* so the "Report a vulnerability" button above is available to everyone.

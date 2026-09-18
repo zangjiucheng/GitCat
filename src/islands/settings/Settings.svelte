@@ -26,6 +26,8 @@
   import { aboutCtrl } from "../about/about.svelte.ts";
   import { t, locale, setLocale, LOCALES } from "@/i18n/i18n.svelte.ts";
   import type { Locale } from "@/i18n/i18n.svelte.ts";
+  import { keymap } from "@/keymap/registry.ts";
+  import type { ScopeHandle } from "@/keymap/scopes.ts";
   import { IN_TAURI } from "../../ipc/env";
 
   // Switching update channel: persist the choice, then immediately surface what's
@@ -39,9 +41,34 @@
     void updaterCtrl.check(false);
   }
 
-  function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape" && settingsCtrl.open) settingsCtrl.close();
-  }
+  // Settings is the first island on the scope stack. Opening it pushes a modal
+  // scope, which brings three things this island used to have to do (or, mostly,
+  // not do) for itself:
+  //   * Escape closes THIS and stops — legacy/main.ts's unguarded
+  //     `if (e.key === "Escape") disarmDanger()` no longer also fires, so one
+  //     Escape stops dismissing two layers at once (#129);
+  //   * Tab is confined to the dialog instead of walking the topbar, sidebar and
+  //     #detail behind the scrim — islands mount onto document.body, so they are
+  //     LAST in tab order, not first;
+  //   * focus returns to whatever opened it.
+  // The <svelte:window on:keydown> handler this replaces did none of that.
+  let root = $state<HTMLElement | undefined>(undefined);
+  let scope: ScopeHandle | null = null;
+  $effect(() => {
+    if (settingsCtrl.open && root && !scope) {
+      scope = keymap.pushScope("modal", { el: root, onEscape: () => settingsCtrl.close() });
+    } else if (!settingsCtrl.open && scope) {
+      scope.release();
+      scope = null;
+    }
+  });
+  // Belt and braces: an island can be unmounted with its controller state still
+  // true (DetailPanel swaps components out from under Detail/Workdir), and a
+  // leaked scope would keep the stack modal forever.
+  $effect(() => () => {
+    scope?.release();
+    scope = null;
+  });
 
   function onThemeChange(e: Event) {
     settingsCtrl.setThemeMode((e.target as HTMLSelectElement).value as ThemeMode);
@@ -64,10 +91,8 @@
   }
 </script>
 
-<svelte:window on:keydown={onKeydown} />
-
 <div class="scrim" class:on={settingsCtrl.open}>
-  <div class="modal settings">
+  <div class="modal settings" bind:this={root} tabindex="-1">
     <div class="modal-head">
       <div>
         <h3>{t("settings.title")}</h3>

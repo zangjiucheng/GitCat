@@ -51,6 +51,14 @@ A manifest is a small JSON document. Here's a complete, annotated example:
 
 ### Top-level fields
 
+> **Unknown keys are rejected.** Install refuses a manifest carrying a key GitCat
+> does not recognize, anywhere in it — including inside a command, hook or panel
+> — and names the key (`commands[1].mutatez`). A typo used to be ignored in
+> silence, so a misspelled `mutates` produced a command that quietly took no
+> safety snapshot. If the key belongs to a newer GitCat, declare
+> [`minGitcatVersion`](#requiring-a-gitcat-version): that check runs first, so
+> your users get "needs GitCat 1.4 or newer" instead of a list of keys.
+
 | Field | Required | Type | Notes |
 | --- | --- | --- | --- |
 | `id` | ✅ | string | Stable, unique identifier. Must match `^[a-z0-9][a-z0-9-]*$` — start with a lowercase letter or digit, then lowercase letters, digits, and `-` only. No uppercase, spaces, underscores, or dots. Used as the enable/remove key. Installing a second plugin with the same `id` is rejected. |
@@ -364,11 +372,14 @@ Plugins are installed from a local file — there's no registry or marketplace.
 
 1. Open **Settings → Plugins**.
 2. Click **Install plugin…** and pick the plugin's `plugin.json` file (open the plugin's folder and select its `plugin.json`).
-3. The plugin appears in the list, enabled by default. Its commands are immediately available in ⌘K.
+3. GitCat parses and validates the manifest and shows you **what it runs** — every command's `run` template, every hook and its event, anything marked `mutates`, and the folder it loads from. Nothing is installed until you confirm.
+4. The plugin appears in the list, enabled by default. Its commands are immediately available in ⌘K.
+
+Selecting an installed plugin in the same panel shows that identical view, so you can check later what you agreed to at install time.
 
 From the same tab you can:
 
-- **Enable / disable** a plugin with its toggle (a disabled plugin's commands and hooks stop running immediately).
+- **Enable / disable** a plugin with its toggle. A disabled plugin's commands and hooks stop running immediately — the check is in the backend, so it holds even for a second GitCat window whose command palette was listed before you flipped the toggle (each window is a separate process and keeps its own cached list). That window may still *show* the commands until it reloads its registry; running one reports that the plugin is disabled rather than executing it.
 - **Remove** a plugin. This only drops it from GitCat's registry — your original `plugin.json` file on disk is untouched, so you can reinstall it later.
 
 ### Where the registry lives

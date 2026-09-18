@@ -3,7 +3,7 @@
 // The registry MANAGEMENT (list / enable / disable / remove / install) moved
 // here out of the Settings modal's old Plugins tab, so these are that tab's
 // tests, retargeted to pluginsCtrl — plus the two-pane view's own selection and
-// filter logic and the pure pluginContribution() helper. Same isolation shape
+// filter logic. Same isolation shape
 // as settings.svelte.test.ts: legacy/bridge is mocked so legacy/main.ts never
 // boots, IN_TAURI is a toggleable getter, and the two ⌘K/panel reload seams and
 // the file-picker dialog are mocked so nothing real is touched.
@@ -19,6 +19,7 @@ vi.mock("../../ipc/bindings", () => ({
     setPluginEnabled: vi.fn(),
     removePlugin: vi.fn(),
     installPluginFromPath: vi.fn(),
+    previewPluginManifest: vi.fn(),
   },
 }));
 
@@ -48,7 +49,7 @@ import * as bridge from "../../legacy/bridge";
 import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";
 import type { Plugin } from "../../ipc/bindings";
-import { pluginsCtrl, pluginContribution } from "./plugins.svelte.ts";
+import { pluginsCtrl } from "./plugins.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
   return { status: "ok", data };
@@ -79,23 +80,6 @@ beforeEach(() => {
   resetCtrl();
 });
 
-describe("pluginContribution (pure helper)", () => {
-  it("counts commands/hooks/panels and flags lua/tama", () => {
-    const p = {
-      ...plugin(),
-      commands: [{ id: "a" }, { id: "b" }],
-      hooks: [{ event: "commit-created" }],
-      panels: [{ id: "p" }],
-      lua: "main.lua",
-      tama: {},
-    } as unknown as Plugin;
-    expect(pluginContribution(p)).toEqual({ commands: 2, hooks: 1, panels: 1, lua: true, tama: true });
-  });
-
-  it("an empty manifest contributes nothing", () => {
-    expect(pluginContribution(plugin())).toEqual({ commands: 0, hooks: 0, panels: 0, lua: false, tama: false });
-  });
-});
 
 describe("refreshPlugins", () => {
   it("populates the list from list_plugins on success", async () => {
@@ -320,22 +304,94 @@ describe("remove (inline confirm)", () => {
   });
 });
 
-describe("installPlugin", () => {
-  it("picks a path, installs it, re-lists, selects the new plugin, reloads, and toasts on success", async () => {
+describe("installPlugin — review, then install (#69)", () => {
+  // Install used to be a single file-picker confirmation: pick, and it was on
+  // your machine. docs/plugins.md asks the user to install only a plugin they
+  // would run themselves in a terminal, and the app never showed them the
+  // commands. Picking now only PREVIEWS; nothing is installed until the user
+  // has seen what it runs and said yes.
+
+  it("picking a file previews it and installs NOTHING", async () => {
     openMock.mockResolvedValueOnce("/plugins/foo/plugin.json");
-    vi.mocked(commands.installPluginFromPath).mockResolvedValueOnce(ok(plugin({ id: "foo", name: "Foo" })));
-    vi.mocked(commands.listPlugins).mockResolvedValueOnce(ok([plugin({ id: "foo", name: "Foo" })]));
+    vi.mocked(commands.previewPluginManifest).mockResolvedValueOnce(ok(plugin({ id: "foo", name: "Foo" })));
 
     await pluginsCtrl.installPlugin();
 
+    expect(commands.previewPluginManifest).toHaveBeenCalledWith("/plugins/foo/plugin.json");
+    expect(commands.installPluginFromPath, "picking a file installed it").not.toHaveBeenCalled();
+    expect(pluginsCtrl.pendingInstall?.plugin.id).toBe("foo");
+    expect(pluginsCtrl.pendingInstall?.path).toBe("/plugins/foo/plugin.json");
+    expect(pluginsCtrl.pluginInstalling).toBe(false);
+  });
+
+  it("confirming installs by PATH, re-lists, selects it, reloads and toasts", async () => {
+    openMock.mockResolvedValueOnce("/plugins/foo/plugin.json");
+    vi.mocked(commands.previewPluginManifest).mockResolvedValueOnce(ok(plugin({ id: "foo", name: "Foo" })));
+    await pluginsCtrl.installPlugin();
+
+    vi.mocked(commands.installPluginFromPath).mockResolvedValueOnce(ok(plugin({ id: "foo", name: "Foo" })));
+    vi.mocked(commands.listPlugins).mockResolvedValueOnce(ok([plugin({ id: "foo", name: "Foo" })]));
+
+    await pluginsCtrl.confirmInstall();
+
+    // By path, not by the previewed object: install_from re-reads and
+    // re-validates, and the preview must not be a shortcut past that.
     expect(commands.installPluginFromPath).toHaveBeenCalledWith("/plugins/foo/plugin.json");
-    expect(commands.listPlugins).toHaveBeenCalled();
     expect(pluginsCtrl.plugins.map((p) => p.id)).toEqual(["foo"]);
     expect(pluginsCtrl.selectedId).toBe("foo"); // freshly installed one is focused
     expect(pluginCommandsCtrl.reload).toHaveBeenCalled();
     expect(pluginPanelsCtrl.reload).toHaveBeenCalled();
     expect(bridge.tama.say).toHaveBeenCalled();
+    expect(pluginsCtrl.pendingInstall, "the review stayed on screen after installing").toBeNull();
     expect(pluginsCtrl.pluginInstalling).toBe(false);
+  });
+
+  it("cancelling drops the review and installs nothing", async () => {
+    openMock.mockResolvedValueOnce("/plugins/foo/plugin.json");
+    vi.mocked(commands.previewPluginManifest).mockResolvedValueOnce(ok(plugin({ id: "foo" })));
+    await pluginsCtrl.installPlugin();
+
+    pluginsCtrl.cancelInstall();
+
+    expect(pluginsCtrl.pendingInstall).toBeNull();
+    expect(commands.installPluginFromPath).not.toHaveBeenCalled();
+  });
+
+  it("a manifest the backend refuses never reaches the review", async () => {
+    // The preview runs the SAME read+validate install runs, so a manifest that
+    // cannot be parsed fails here rather than after the user has agreed to it.
+    openMock.mockResolvedValueOnce("/plugins/bad/plugin.json");
+    vi.mocked(commands.previewPluginManifest).mockResolvedValueOnce(err("unknown field"));
+
+    await pluginsCtrl.installPlugin();
+
+    expect(pluginsCtrl.pluginsError).toContain("unknown field");
+    expect(pluginsCtrl.pendingInstall).toBeNull();
+    expect(commands.installPluginFromPath).not.toHaveBeenCalled();
+  });
+
+  it("flags an id that is already installed, before the user agrees", async () => {
+    // The backend rejects this at install; saying so up front is the point of
+    // having the registry already in hand.
+    vi.mocked(commands.listPlugins).mockResolvedValueOnce(ok([plugin({ id: "foo", name: "Foo" })]));
+    await pluginsCtrl.refreshPlugins();
+
+    openMock.mockResolvedValueOnce("/elsewhere/foo/plugin.json");
+    vi.mocked(commands.previewPluginManifest).mockResolvedValueOnce(ok(plugin({ id: "foo", name: "Foo (copy)" })));
+    await pluginsCtrl.installPlugin();
+
+    expect(pluginsCtrl.pendingInstallDuplicate).toBe(true);
+  });
+
+  it("does not flag a genuinely new id", async () => {
+    vi.mocked(commands.listPlugins).mockResolvedValueOnce(ok([plugin({ id: "foo" })]));
+    await pluginsCtrl.refreshPlugins();
+
+    openMock.mockResolvedValueOnce("/plugins/bar/plugin.json");
+    vi.mocked(commands.previewPluginManifest).mockResolvedValueOnce(ok(plugin({ id: "bar" })));
+    await pluginsCtrl.installPlugin();
+
+    expect(pluginsCtrl.pendingInstallDuplicate).toBe(false);
   });
 
   it("does nothing when the picker is cancelled (null)", async () => {
@@ -343,18 +399,23 @@ describe("installPlugin", () => {
 
     await pluginsCtrl.installPlugin();
 
+    expect(commands.previewPluginManifest).not.toHaveBeenCalled();
     expect(commands.installPluginFromPath).not.toHaveBeenCalled();
     expect(pluginCommandsCtrl.reload).not.toHaveBeenCalled();
   });
 
-  it("surfaces a backend install failure and does NOT reload", async () => {
+  it("surfaces a backend install failure at confirm time and does NOT reload", async () => {
     openMock.mockResolvedValueOnce("/plugins/bad/plugin.json");
-    vi.mocked(commands.installPluginFromPath).mockResolvedValueOnce(err("duplicate id"));
-
+    vi.mocked(commands.previewPluginManifest).mockResolvedValueOnce(ok(plugin({ id: "bad" })));
     await pluginsCtrl.installPlugin();
+
+    vi.mocked(commands.installPluginFromPath).mockResolvedValueOnce(err("duplicate id"));
+    await pluginsCtrl.confirmInstall();
 
     expect(pluginsCtrl.pluginsError).toContain("duplicate id");
     expect(pluginCommandsCtrl.reload).not.toHaveBeenCalled();
+    // The review stays up, so the failure is attached to what it is about.
+    expect(pluginsCtrl.pendingInstall).not.toBeNull();
   });
 
   it("surfaces a dialog failure without calling the backend", async () => {
@@ -363,6 +424,7 @@ describe("installPlugin", () => {
     await pluginsCtrl.installPlugin();
 
     expect(pluginsCtrl.pluginsError).toContain("no dialog");
+    expect(commands.previewPluginManifest).not.toHaveBeenCalled();
     expect(commands.installPluginFromPath).not.toHaveBeenCalled();
   });
 
@@ -372,6 +434,7 @@ describe("installPlugin", () => {
     await pluginsCtrl.installPlugin();
 
     expect(openMock).not.toHaveBeenCalled();
+    expect(commands.previewPluginManifest).not.toHaveBeenCalled();
     expect(commands.installPluginFromPath).not.toHaveBeenCalled();
     expect(bridge.tama.say).toHaveBeenCalled();
   });

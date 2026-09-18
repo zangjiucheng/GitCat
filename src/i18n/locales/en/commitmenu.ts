@@ -1,5 +1,6 @@
 // Commit-row context menu strings. Keys become `commitmenu.<key>`.
 export default {
+  compare_with: "Compare with {sha}…",
   cherry_pick: "Cherry-pick onto HEAD",
   merge: "Merge into HEAD",
   revert: "Revert commit",

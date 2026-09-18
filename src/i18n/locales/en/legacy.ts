@@ -7,6 +7,7 @@ export default {
   undo_no_snapshots: "Nothing to undo yet — no snapshots have been taken.",
   undo_stash_failed: "Undo (with stash) failed.",
   undo_cancelled: "Undo cancelled — your uncommitted changes are untouched.",
+  redo_unsupported: "There's no Redo yet — ⌘Z steps back through snapshots one at a time.",
   undo_nothing: "Nothing to undo — no snapshots yet.",
   undo_failed: "Undo failed — {error}",
   fetched_demo: "Fetched (demo). にゃ〜",

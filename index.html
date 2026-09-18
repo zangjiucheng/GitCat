@@ -61,6 +61,22 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--ui);font-
   -webkit-font-smoothing:antialiased;overflow:hidden}
 button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:4px}
+/* Active-pane ring. Scoped single-letter bindings (PRs 4-8) act on whichever
+   pane has focus, so the user needs to see which one that is BEFORE pressing a
+   key that mutates a branch. inset box-shadow, not outline: the rule above is
+   universal and a second outline would double up on every focused control
+   inside the pane. Nothing is painted when focus is outside every pane — the
+   dispatcher falls back to the graph there, which is where those keys live
+   today, and a ring on a pane the user has not focused would be a lie. */
+[data-pane]{position:relative}
+/* Painted by a pseudo-element on TOP of the pane's content, not by an inset
+   box-shadow on the pane itself. An inset shadow paints beneath descendants,
+   and #cv is position:absolute;inset:0 over the whole graph pane — so the ring
+   was completely invisible there, on the one pane that is also the dispatcher's
+   fallback when focus is anywhere unremarkable. pointer-events:none so it never
+   intercepts a click on the canvas underneath. */
+[data-pane]:focus-within::after{content:"";position:absolute;inset:0;z-index:5;pointer-events:none;
+  box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent)}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:8px;border:2px solid transparent;background-clip:content-box}
 ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
@@ -537,6 +553,22 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cm-head{padding:4px 10px 7px;margin-bottom:2px;border-bottom:1px solid var(--border);font-size:11px;line-height:1.35}
 .cm-head .sha{color:var(--text)}
 .cm-head .subject{display:block;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Compare two commits (#49). Same .ref-pop chrome as the commit menu; wider,
+   because this one carries prose and a commit list rather than one-line
+   actions. The list is capped in the BACKEND (500 rows), so the max-height
+   here is about the popover staying usable near a screen edge, not about
+   bounding unbounded content. */
+.ref-pop.rs-pop{min-width:300px;max-width:min(420px,92vw);padding:4px 4px 6px}
+.rs-row{display:flex;align-items:center;gap:8px;padding:4px 10px;font-size:12px}
+.rs-note{padding:4px 10px;font-size:11.5px;line-height:1.45}
+.rs-stat{gap:10px}
+.rs-add{color:var(--ok,#3fb950)}
+.rs-del{color:var(--danger)}
+.rs-list{max-height:220px;overflow:auto;margin-top:2px;border-top:1px solid var(--border);padding-top:4px}
+.rs-commit{display:flex;align-items:center;gap:8px;padding:2px 10px;font-size:11.5px}
+.rs-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.rs-commit .sha{flex:none;color:var(--muted)}
+.rs-subject{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* cherryPick/merge/revert's loading row — .nb-row's own flex/gap styling is
    scoped to `.nb-form .nb-row` (it always sits under an input in the New
    Branch/Tag forms); this one sits directly in the popover with no input
@@ -862,6 +894,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    stacked sections overflows and scrolls HERE instead, which is what the
    panel itself used to do. */
 .d-view{flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto}
+/* One cell, both .d-view siblings stacked in it. See Detail.svelte's own
+   comment: `transition:` is bidirectional, so the outgoing view still takes
+   up space while it fades, and in a flex column the incoming one was laid
+   out below it — half height each, then a snap back to the top. minmax(0,1fr)
+   rather than auto so the row is the height the tab strip leaves and .d-view
+   can still scroll inside it. */
+.d-viewport{flex:1;min-height:0;display:grid;grid-template-rows:minmax(0,1fr)}
+.d-viewport>.d-view{grid-area:1/1;min-height:0}
 .detail section{padding:12px 14px;border-bottom:1px solid var(--border)}
 .detail .empty{color:var(--muted);text-align:center;padding:48px 20px;font-size:12.5px;line-height:1.7}
 .d-subject{font-size:17px;font-weight:700;font-family:var(--display);line-height:1.35;color:var(--text);letter-spacing:.1px}
@@ -887,6 +927,18 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .who .dt{font-size:11px;color:var(--muted);margin-top:3px}
 .who .dt-abs{font-size:10px;color:var(--muted);opacity:.7;margin-top:1px}
 .who.differ{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--warning) 45%,transparent)}
+/* The children carry the container's OUTER corners themselves, rather than
+   relying on its overflow:hidden to cut them.
+   .who.differ's ring is an INSET box-shadow, which follows its own element's
+   border-box — square, while the container is rounded. Clipping then removed
+   exactly the four outer corners of that ring, so the "author ≠ committer"
+   highlight read as a box with its corners missing. Rounding the children to
+   match makes the ring follow the same shape it is drawn inside.
+   first/last rather than nth-child: `.who-split.single` (Plumbing's tag view)
+   holds ONE .who, where both rules apply and round all four corners, which is
+   what that one wants. */
+.who-split>.who:first-child{border-top-left-radius:var(--r-panel);border-bottom-left-radius:var(--r-panel)}
+.who-split>.who:last-child{border-top-right-radius:var(--r-panel);border-bottom-right-radius:var(--r-panel)}
 .refs-here{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
 .d-lab{margin:0 0 6px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
 /* Section-label row with right-aligned tree controls (Collapse/Expand-all) —
@@ -1262,12 +1314,25 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .pl-kv{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:4px;margin:10px 0}
 .pl-kv .mono{color:var(--text)}
 /* Keyboard-shortcuts reference (the ? overlay): a wider, two-column modal so
-   the whole cheat sheet fits at a glance; collapses to one column when narrow. */
-.modal.kbd-help{width:min(680px,94vw)}
-.kbd-cols{display:grid;grid-template-columns:1fr 1fr;gap:2px 28px}
+   the whole cheat sheet fits at a glance; collapses to one column when narrow.
+
+   The list is GENERATED from the binding table now, so its length is not ours
+   to predict: it grows with every binding added, and the leading group depends
+   on which pane has focus. So the modal is capped at the scrim's own padded box
+   and the body scrolls — without that cap it rendered 829px tall no matter the
+   window, and below a 900px-tall screen the footer and the last rows were cut
+   off with no way to reach them (.modal is overflow:hidden).
+
+   Balanced columns, not a 2-track grid: a grid row is as tall as its tallest
+   cell, so six groups of very different heights left large gaps and made the
+   overlay much taller than its content. */
+.modal.kbd-help{width:min(680px,94vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column}
+.modal.kbd-help .modal-body{overflow:auto;min-height:0}
+.kbd-cols{columns:2;column-gap:28px}
+.kbd-cols>section{break-inside:avoid;margin:0 0 12px}
 .kbd-cols .pl-kv{margin:8px 0 0}
 .kbd-cols .d-lab:first-child{margin-top:0}
-@media (max-width:560px){.kbd-cols{grid-template-columns:1fr}}
+@media (max-width:560px){.kbd-cols{columns:1}}
 .pl-parent{margin-right:8px;display:inline-block}
 .pl-msg{font-family:var(--mono);font-size:12px;line-height:1.55;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-panel);padding:10px 12px;white-space:pre-wrap;word-break:break-word;margin-top:4px;max-height:280px;overflow:auto}
 .pl-tree{max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:var(--r-panel);background:var(--bg);padding:4px}
@@ -1482,8 +1547,36 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   display:flex;align-items:center;justify-content:center;padding:24px;
   opacity:0;visibility:hidden;transition:opacity .16s ease,visibility 0s linear .16s}
 .scrim.on{opacity:1;visibility:visible;transition:opacity .16s ease}
+/* max-height + flex column is a SAFETY NET, not decoration. .modal is
+   overflow:hidden and had no height of its own, so a modal that outgrew the
+   window was not scrolled off — it was CUT OFF, with no scrollbar and no key
+   that could reach what was missing. .modal.repofiles at a 400px-tall window
+   was 545px of modal with its header AND its footer off-screen, and nothing
+   scrolled; the "?" shortcut overlay hits the same wall once its list grows.
+
+   On the base rule rather than on a list of the modals that need it. Two
+   thirds of them already cap themselves one way or another, and an opt-in
+   list is a second source of truth that nothing checks — the same shape of
+   bug as a hand-written shortcut list that drifts from the real bindings. A
+   variant that wants different behaviour still overrides this: .modal.diffx
+   keeps its 88vh and its overflow:hidden body, and every
+   `.modal.X .modal-body{max-height:NNvh}` outranks the body rule below on
+   specificity. */
 .modal{width:min(560px,96vw);background:var(--panel);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow);overflow:hidden;
+  max-height:calc(100vh - 48px);
   transform:translateY(10px) scale(.98);transition:transform .2s cubic-bezier(.2,.8,.2,1)}
+/* The flex column is what lets the body absorb the leftover height while the
+   header and footer stay pinned — but it also blockifies every direct child,
+   so it is applied ONLY to modals built from the head/body/foot chrome. The
+   About dialog is not: it centers an inline-block mascot and an inline-block
+   version chip with text-align, and as a flex column both stretched to the
+   full width (84px centred -> 506px flush left). A modal with no .modal-body
+   has nothing to pin anyway, so it simply scrolls as a whole.
+   (:has() is safe here — this stylesheet already uses color-mix() in 123
+   places, which landed later in every engine this app ships on.) */
+.modal:has(>.modal-body){display:flex;flex-direction:column}
+.modal>.modal-body{overflow:auto;min-height:0}
+.modal:not(:has(>.modal-body)){overflow:auto}
 .scrim.on .modal{transform:none}
 .modal.danger{border-color:color-mix(in srgb,var(--danger) 55%,var(--border));box-shadow:0 0 0 1px color-mix(in srgb,var(--danger) 30%,transparent),var(--shadow)}
 .modal-head{display:flex;align-items:center;gap:12px;padding:16px 18px;background:color-mix(in srgb,var(--danger) 10%,var(--panel));border-bottom:1px solid var(--border)}
@@ -2174,7 +2267,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   <nav class="subnav" id="submoduleNavMount"></nav>
 
   <!-- ============================ SIDEBAR ============================ -->
-  <aside class="sidebar">
+  <aside class="sidebar" data-pane="sidebar" tabindex="-1">
     <div id="sidebarRefs"><!-- filled by the Sidebar Svelte island (src/islands/sidebar) --></div>
 
     <!-- Tama's lamp-nook -->
@@ -2193,7 +2286,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   </aside>
 
   <!-- ============================ GRAPH ============================ -->
-  <main class="graph">
+  <main class="graph" data-pane="graph" tabindex="-1">
     <div class="ribbon" id="ribbon"><span class="rlabel">snapshots</span></div>
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="cv" tabindex="0"></canvas>
@@ -2240,7 +2333,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   </main>
 
   <!-- ============================ DETAIL PANEL ============================ -->
-  <section class="detail" id="detail"><div class="resize-handle detail-handle" id="resizeDetail" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><div class="resize-handle detail-handle-bottom" id="resizeDetailBottom" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><!-- filled by the Detail Svelte island (src/islands/detail) --></section>
+  <section class="detail" id="detail" data-pane="detail" tabindex="-1" aria-label="Commit detail"><div class="resize-handle detail-handle" id="resizeDetail" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><div class="resize-handle detail-handle-bottom" id="resizeDetailBottom" role="button" tabindex="0" aria-label="Resize detail panel" title="Drag to resize — drag past the edge to collapse"></div><!-- filled by the Detail Svelte island (src/islands/detail) --></section>
 
 </div>
 
@@ -2256,7 +2349,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
       </section>
       <section>
         <h4 data-i18n="help.navigate_h">Navigate</h4>
-        <p data-i18n-html="help.navigate_p">Scroll or drag to move; <kbd>&#8984;</kbd>+scroll (or <kbd>+</kbd>/<kbd>-</kbd>) to zoom. <kbd>&#8984;K</kbd> opens the command palette. <kbd>&#8984;F</kbd> searches commit content, <kbd>&#8984;&#8679;F</kbd> filters refs. <kbd>&#8984;&#8679;H</kbd> jumps to HEAD, <kbd>&#8984;&#8679;U</kbd> to Uncommitted changes. <kbd>&#8984;\</kbd> toggles focus mode. Press <kbd>?</kbd> for every shortcut.</p>
+        <p data-i18n-html="help.navigate_p">Scroll or drag to move; <kbd>&#8984;</kbd>+scroll (or <kbd>+</kbd>/<kbd>-</kbd>) to zoom. <kbd>&#8984;K</kbd> opens the command palette. <kbd>&#8984;F</kbd> searches code, <kbd>&#8984;&#8679;F</kbd> searches commit content. <kbd>&#8984;&#8679;H</kbd> jumps to HEAD, <kbd>&#8984;&#8679;U</kbd> to Uncommitted changes. <kbd>&#8984;\</kbd> toggles focus mode. Press <kbd>?</kbd> for every shortcut.</p>
       </section>
       <section>
         <h4 data-i18n="help.commits_h">Commits</h4>
@@ -2287,7 +2380,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 <div class="rname-tip" id="graphLabelTip" style="display:none" aria-hidden="true"></div>
 
 <!-- ============================ DANGER MODAL (filter-repo) ============================ -->
-<div class="scrim" id="dangerScrim">
+<div class="scrim" id="dangerScrim" data-modal-blocking>
   <div class="modal danger">
     <div class="modal-head">
       <div class="modal-tama"><img class="tama-pic" id="dangerTamaImg" alt="Tama, alarmed"></div>

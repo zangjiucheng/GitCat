@@ -136,9 +136,19 @@
        outer wrapper only (not per-diff-line): this island can render a
        large file tree/diff, so re-triggering a transition per-line would
        be wasteful, not just unnecessary. -->
+  <!-- .d-viewport is a single-cell grid, and it is what makes the fade a
+       CROSSFADE instead of a shuffle. `transition:` is bidirectional: while
+       the outgoing .d-view fades out it still occupies space, so in the flex
+       column this used to be, the incoming one was laid out BELOW it. Both
+       were squeezed to half height for 120ms and then the new one snapped to
+       the top — measured at a 642px panel: old at y=78, new rendered at
+       y=399, then jumping back to y=78. That read as the panel flashing on
+       every commit switch. Overlapping them in one grid cell means neither
+       moves; only their opacity changes. -->
+  <div class="d-viewport">
   {#key c.sha}
-  <!-- .d-view (index.html): the panel is a flex column, and this is the item
-       that takes whatever height the tab strip leaves. Without a class here
+  <!-- .d-view (index.html): takes whatever height the tab strip leaves —
+       .d-viewport's single row is sized to exactly that. Without a class here
        the panel's height would stop at this wrapper — it sits between .detail
        and .d-split, so a taller panel would never reach the diff. -->
   <div class="d-view" transition:fade={{ duration: REDUCE_MOTION ? 0 : 120 }}>
@@ -265,7 +275,13 @@
     <div class="d-split-diff">
       <section>
         <h4 class="d-lab">{t("detail.diff")}</h4>
-        <div class="diffview" id="diffview" bind:this={diffviewEl}>
+        <!-- A scrollable region takes tabindex="0" ON PURPOSE: WAI-ARIA APG says a
+             region the user must scroll has to be keyboard-reachable, and on macOS
+             WebKit a bare overflow:auto div is not focusable at all — which left a
+             long diff unreadable without a pointer. The linter rule does not know
+             about that exception. -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div class="diffview" id="diffview" bind:this={diffviewEl} tabindex="0" role="region" aria-label={t("detail.diff_region")}>
           {#if detailCtrl.diffLoading}
             <div class="diff-file-h mut"><span class="spinner"></span> {t("detail.loading_diff")}</div>
           {:else}
@@ -285,6 +301,7 @@
   {/if}
   </div>
   {/key}
+  </div>
 
   <!-- Full-page diff popup — same detailCtrl.diffHeader/diffRows/tree the
        embedded .diffview above renders, just laid out at near-fullscreen
@@ -323,7 +340,13 @@
           label={t("detail.resize_file_list")}
           storageKey={DIFFX_SPLIT.storageKey}
         />
-        <div class="diffview diffx-diff" bind:this={diffviewExpandedEl}>
+        <!-- A scrollable region takes tabindex="0" ON PURPOSE: WAI-ARIA APG says a
+             region the user must scroll has to be keyboard-reachable, and on macOS
+             WebKit a bare overflow:auto div is not focusable at all — which left a
+             long diff unreadable without a pointer. The linter rule does not know
+             about that exception. -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div class="diffview diffx-diff" bind:this={diffviewExpandedEl} tabindex="0" role="region" aria-label={t("detail.diff_region")}>
           {#if detailCtrl.diffLoading}
             <div class="diff-file-h mut"><span class="spinner"></span> {t("detail.loading_diff")}</div>
           {:else}

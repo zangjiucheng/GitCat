@@ -44,6 +44,44 @@ class TerminalState {
 
   onData: ((bytes: Uint8Array) => void) | null = null;
 
+  // Output that arrived before the view existed to receive it.
+  //
+  // `onData` is set by Terminal.svelte's onMount, and since #82 that mount is
+  // deferred to the first open — so there is now a real window between "the
+  // shell is spawned and talking" and "there is an xterm to talk to". Without
+  // this the `?.` in the output listener would swallow the shell's own prompt
+  // on the very first open, silently, which is the exact class of gap
+  // armListeners() was written to avoid from the other direction.
+  //
+  // Capped: a process that floods before the chunk lands must not grow this
+  // without bound. The realistic window is one chunk read off local disk, so
+  // the cap is generous and dropping the OLDEST is the right trade — the tail
+  // is what the user is about to look at.
+  private pendingOutput: Uint8Array[] = [];
+  private static readonly MAX_PENDING_CHUNKS = 256;
+
+  /**
+   * Attach the view's writer, flushing anything that arrived before it existed.
+   * Called by Terminal.svelte once it mounts; nothing else should assign
+   * `onData` directly, or the buffered bytes are stranded.
+   */
+  attachOutput(sink: (bytes: Uint8Array) => void): void {
+    this.onData = sink;
+    const queued = this.pendingOutput;
+    this.pendingOutput = [];
+    for (const bytes of queued) sink(bytes);
+  }
+
+  /** Route one chunk of PTY output to the view, or hold it until there is one. */
+  private emitOutput(bytes: Uint8Array): void {
+    if (this.onData) {
+      this.onData(bytes);
+      return;
+    }
+    if (this.pendingOutput.length >= TerminalState.MAX_PENDING_CHUNKS) this.pendingOutput.shift();
+    this.pendingOutput.push(bytes);
+  }
+
   private unlistenOutput: (() => void) | null = null;
   private unlistenExit: (() => void) | null = null;
 
@@ -148,7 +186,7 @@ class TerminalState {
     if (!w.__TAURI__) return;
     w.__TAURI__.event.listen("terminal-output", (e: { payload: { id: string; data: string } }) => {
       if (e.payload.id !== id) return;
-      this.onData?.(base64ToBytes(e.payload.data));
+      this.emitOutput(base64ToBytes(e.payload.data));
     }).then((un) => {
       if (this.sessionId === id) this.unlistenOutput = un;
       else un();
