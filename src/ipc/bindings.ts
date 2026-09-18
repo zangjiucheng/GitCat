@@ -3089,6 +3089,37 @@ async setPluginEnabled(id: string, enabled: boolean) : Promise<Result<null, stri
 }
 },
 /**
+ * Read and validate a manifest WITHOUT installing it (#68), so the app can
+ * show a user what a plugin does before they agree to run it.
+ * 
+ * This exists because of what `docs/plugins.md` asks of the user: there is no
+ * sandbox for a shell `run`, so "a plugin can do anything the command you
+ * wrote can do". Install was a single file-picker confirmation, and no island
+ * reads `run`, `mutates` or `handler` off a Plugin — the app asked for a
+ * security judgement using information it declined to show.
+ * 
+ * Deliberately the SAME [`read_and_validate_manifest`] the install path uses,
+ * not a looser parse: a preview that accepts a manifest install would reject
+ * teaches the user the wrong thing about their own manifest. The one check it
+ * does NOT make is the duplicate-id one, which belongs to [`install_from`] —
+ * the registry it would check against is already in the frontend's hands.
+ * 
+ * `async fn` + `run_blocking` because this reads and parses a file (capped at
+ * [`MAX_MANIFEST_BYTES`]) and nothing that touches the disk belongs on the
+ * thread driving the window. It takes no `AppHandle`: the registry is never
+ * opened, which is the whole point.
+ * 
+ * JS: `commands.previewPluginManifest(path)` -> `Result<Plugin, string>`.
+ */
+async previewPluginManifest(path: string) : Promise<Result<Plugin, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_plugin_manifest", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Install a plugin from a local `plugin.json` file OR a directory containing
  * one: read + parse + validate, reject a duplicate id, then append + save.
  * Returns the installed plugin. JS: `commands.installPluginFromPath(path)`.

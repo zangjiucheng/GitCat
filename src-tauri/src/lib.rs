@@ -337,6 +337,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // hardened external-process command executor (placeholder grammar).
         plugin_registry::list_plugins,
         plugin_registry::set_plugin_enabled,
+        plugin_registry::preview_plugin_manifest, // #68: read+validate a manifest WITHOUT installing, for install-time review
         plugin_registry::install_plugin_from_path,
         plugin_registry::remove_plugin,
         plugin_registry::load_plugin_skin, // PER-47: load a plugin's Tama skin (pose assets → data URIs)

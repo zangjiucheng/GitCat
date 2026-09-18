@@ -1197,6 +1197,33 @@ pub fn set_plugin_enabled(app: AppHandle<Wry>, id: String, enabled: bool) -> Res
     save_to(&store, &plugins)
 }
 
+/// Read and validate a manifest WITHOUT installing it (#68), so the app can
+/// show a user what a plugin does before they agree to run it.
+///
+/// This exists because of what `docs/plugins.md` asks of the user: there is no
+/// sandbox for a shell `run`, so "a plugin can do anything the command you
+/// wrote can do". Install was a single file-picker confirmation, and no island
+/// reads `run`, `mutates` or `handler` off a Plugin — the app asked for a
+/// security judgement using information it declined to show.
+///
+/// Deliberately the SAME [`read_and_validate_manifest`] the install path uses,
+/// not a looser parse: a preview that accepts a manifest install would reject
+/// teaches the user the wrong thing about their own manifest. The one check it
+/// does NOT make is the duplicate-id one, which belongs to [`install_from`] —
+/// the registry it would check against is already in the frontend's hands.
+///
+/// `async fn` + `run_blocking` because this reads and parses a file (capped at
+/// [`MAX_MANIFEST_BYTES`]) and nothing that touches the disk belongs on the
+/// thread driving the window. It takes no `AppHandle`: the registry is never
+/// opened, which is the whole point.
+///
+/// JS: `commands.previewPluginManifest(path)` -> `Result<Plugin, string>`.
+#[tauri::command]
+#[specta::specta]
+pub async fn preview_plugin_manifest(path: String) -> Result<Plugin, String> {
+    crate::blocking::run_blocking(move || read_and_validate_manifest(Path::new(&path))).await
+}
+
 /// Install a plugin from a local `plugin.json` file OR a directory containing
 /// one: read + parse + validate, reject a duplicate id, then append + save.
 /// Returns the installed plugin. JS: `commands.installPluginFromPath(path)`.
@@ -1348,6 +1375,85 @@ mod tests {
         collect_unknown_keys(&declared, &understood, "", &mut out);
         out.sort();
         assert_eq!(out, vec!["alsoNope".to_string(), "commands[0].nope".to_string()]);
+    }
+
+    // -- install-time preview (#68) ------------------------------------------
+
+    #[test]
+    fn a_preview_parses_the_manifest_without_touching_the_registry() {
+        // The property the whole feature rests on: looking at a plugin must not
+        // be indistinguishable from installing it. read_and_validate_manifest
+        // is the shared path, and preview_plugin_manifest takes no AppHandle at
+        // all — there is no registry in reach — but a future refactor could
+        // quietly change that, so it is pinned here against a real registry.
+        let dir = temp_dir("preview-noop");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join(FILE_NAME);
+        save_to(&store, &[sample_plugin("already-here")]).unwrap();
+
+        let manifest = dir.join("plugin.json");
+        std::fs::write(&manifest, r#"{"id":"newcomer","name":"Newcomer","version":"1.0.0"}"#).unwrap();
+
+        let previewed = read_and_validate_manifest(&manifest).expect("a valid manifest must preview");
+        assert_eq!(previewed.id, "newcomer");
+
+        let after = load_from(&store).expect("the registry must still load");
+        assert_eq!(after.len(), 1, "previewing installed something");
+        assert_eq!(after[0].id, "already-here");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_preview_surfaces_what_the_user_is_being_asked_to_trust() {
+        // Counts are what the Plugins panel already showed, and counts are not
+        // what the trust model asks about: the preview has to carry the actual
+        // `run` template, the `mutates` flag, and the resolved source dir.
+        let dir = temp_dir("preview-content");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("plugin.json");
+        std::fs::write(
+            &manifest,
+            r#"{"id":"risky","name":"Risky","version":"1.0.0","commands":[
+                 {"id":"clean","label":"Clean","run":"git clean -fd","mutates":true},
+                 {"id":"look","label":"Look","run":"git status"}],
+               "hooks":[{"event":"post-mutation","run":"echo done"}]}"#,
+        )
+        .unwrap();
+
+        let p = read_and_validate_manifest(&manifest).expect("must preview");
+        let clean = p.commands.iter().find(|c| c.id == "clean").unwrap();
+        assert_eq!(clean.run.as_deref(), Some("git clean -fd"), "the command line itself must be visible");
+        assert!(clean.mutates, "the mutating flag must survive to the UI");
+        assert!(!p.commands.iter().find(|c| c.id == "look").unwrap().mutates);
+        assert_eq!(p.hooks.len(), 1, "hooks run without being invoked — they matter most of all");
+        assert!(p.dir.is_some(), "the source dir is part of what is being trusted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_preview_refuses_exactly_what_install_refuses() {
+        // A preview that accepted a manifest install would reject teaches the
+        // user the wrong thing about their own file. Both go through
+        // read_and_validate_manifest, and these are the two gates most likely
+        // to be loosened "just for the preview" by a later change.
+        let dir = temp_dir("preview-refuse");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let unknown = dir.join("unknown.json");
+        std::fs::write(&unknown, r#"{"id":"a","name":"A","version":"1.0.0","descriptoin":"typo"}"#).unwrap();
+        let err = read_and_validate_manifest(&unknown).expect_err("an unknown key must be refused (#64)");
+        assert!(err.contains("err_plugins.manifest_unknown_keys"), "got: {err}");
+
+        let (major, _, _) = crate::version::parse(crate::version::HOST_VERSION).unwrap();
+        let newer = dir.join("newer.json");
+        std::fs::write(
+            &newer,
+            format!(r#"{{"id":"a","name":"A","version":"1.0.0","minGitcatVersion":"{}.0.0"}}"#, major + 1),
+        )
+        .unwrap();
+        let err = read_and_validate_manifest(&newer).expect_err("a newer-host manifest must be refused (#63)");
+        assert!(err.contains("err_plugins.needs_newer_gitcat"), "got: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn temp_dir(tag: &str) -> PathBuf {
