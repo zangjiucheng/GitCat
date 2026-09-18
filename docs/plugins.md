@@ -372,7 +372,10 @@ Plugins are installed from a local file — there's no registry or marketplace.
 
 1. Open **Settings → Plugins**.
 2. Click **Install plugin…** and pick the plugin's `plugin.json` file (open the plugin's folder and select its `plugin.json`).
-3. The plugin appears in the list, enabled by default. Its commands are immediately available in ⌘K.
+3. GitCat parses and validates the manifest and shows you **what it runs** — every command's `run` template, every hook and its event, anything marked `mutates`, and the folder it loads from. Nothing is installed until you confirm.
+4. The plugin appears in the list, enabled by default. Its commands are immediately available in ⌘K.
+
+Selecting an installed plugin in the same panel shows that identical view, so you can check later what you agreed to at install time.
 
 From the same tab you can:
 

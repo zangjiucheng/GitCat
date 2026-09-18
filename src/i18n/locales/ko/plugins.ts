@@ -1,5 +1,21 @@
 // 플러그인 매니저 모달 문자열이에요. 키는 `plugins.<key>`가 돼요.
 export default {
+  review_trust: "플러그인은 샌드박스 없이 당신의 권한으로 기기에서 실행돼요. 이 명령들을 직접 실행할 의향이 있을 때만 설치해 주세요.",
+  review_install: "설치",
+  review_duplicate: "id가 {id}인 플러그인이 이미 설치돼 있어요. 먼저 제거하거나 이 플러그인의 id를 바꿔 주세요.",
+  audit_commands: "명령",
+  audit_hooks: "훅 — 스스로 실행돼요",
+  audit_panels: "패널",
+  audit_files: "파일",
+  audit_lua: "Luau 스크립트",
+  audit_tama: "Tama 스킨 포함",
+  audit_dir: "불러온 위치",
+  audit_handler: "Luau 핸들러 {name}()",
+  audit_on_event: "{event} 시점에",
+  audit_panel_items: "위젯 {n}개",
+  audit_mutates_badge: "저장소에 씀",
+  audit_mutates_one: "1개 동작이 이 저장소에 써요.",
+  audit_mutates_other: "{n}개 동작이 이 저장소에 써요.",
   title: "플러그인",
   subtitle:
     "설치된 플러그인을 활성화, 비활성화, 제거하거나 — 파일에서 새로 설치할 수 있어요. GitCat은 플러그인이 선언한 것만 실행해요 — 스스로는 어디에도 연결하지 않아요.",

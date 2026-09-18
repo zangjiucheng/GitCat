@@ -30,7 +30,7 @@
 import { test as base, expect, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { TempRepo } from "./tempRepo";
 
 // One recorded invoke — command name plus its raw args — pushed by the
@@ -351,6 +351,10 @@ function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[]) {
   // the picker like a user does, rather than finding its repo pre-tracked.
   const tracked: { path: string; lastOpenedAt: number | null }[] = [];
   const trackedList = () => tracked.map((t) => ({ ...t }));
+  // Plugins installed during THIS test, so list_plugins reflects an install the
+  // test just performed. Empty until then, when list_plugins falls back to the
+  // canned fixture below — a test that only audits does not have to install.
+  const installedPlugins: Record<string, unknown>[] = [];
   // A blank, always-successful WorkdirResult — every staging mutation below
   // returns a copy of this (with its own `message`), since none of them
   // replay the mutation against the fixture repo (see RecordedCall's doc
@@ -369,8 +373,65 @@ function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[]) {
       // @tauri-apps/plugin-dialog's open() — the islands' folder picker. Goes
       // over invoke, unlike legacy/main.ts's raw window.__TAURI__.dialog.open
       // (stubbed separately in installTauriMock below); both have to answer.
-      case "plugin:dialog|open":
-        return repo.dir;
+      case "plugin:dialog|open": {
+        // Two callers, two answers. The repo picker wants a DIRECTORY; the
+        // plugin installer wants a plugin.json, and it is the only caller that
+        // filters on the json extension — so the filter is what tells them
+        // apart rather than a flag the app would have to pass just for tests.
+        const filters = (args as { options?: { filters?: { extensions?: string[] }[] } })?.options?.filters ?? [];
+        const wantsJson = filters.some((f) => (f.extensions ?? []).includes("json"));
+        return wantsJson ? join(repo.dir, "plugin.json") : repo.dir;
+      }
+      // The Plugins panel renders what a plugin RUNS (#69/#70), so the fixture
+      // has to carry real `run` strings and a mutating action — counts would
+      // exercise none of what those issues are about. Canned rather than
+      // written to disk: nothing here installs anything, and the registry the
+      // real command reads lives in the app config dir, not the temp repo.
+      // The install-review flow (#69). These read the REAL plugin.json the
+      // picker above hands back, rather than returning canned data: the thing
+      // under test is that what the review shows is what the file says.
+      //
+      // Validation is the backend's, not reproduced here — a second copy would
+      // drift from read_and_validate_manifest, which is the whole reason the
+      // preview command shares it. One check is kept because a test needs it:
+      // an unknown key, the rejection #64 added.
+      case "preview_plugin_manifest":
+      case "install_plugin_from_path": {
+        const p = (args as { path: string }).path;
+        const text = readFileSync(p, "utf8");
+        const manifest = JSON.parse(text) as Record<string, unknown> & { id: string };
+        const KNOWN = new Set([
+          "id", "name", "version", "minGitcatVersion", "description",
+          "enabled", "commands", "hooks", "panels", "tama", "lua", "dir",
+        ]);
+        const unknown = Object.keys(manifest).filter((k) => !KNOWN.has(k));
+        if (unknown.length) throw new Error(`err_plugins.manifest_unknown_keys\u001f${unknown.join(", ")}`);
+        // `dir` is GitCat-authoritative — the backend always overwrites
+        // whatever the manifest claimed with the manifest's own parent.
+        manifest.dir = dirname(p);
+        if (cmd === "install_plugin_from_path") installedPlugins.push(manifest);
+        return manifest;
+      }
+      case "list_plugins":
+        if (installedPlugins.length) return installedPlugins;
+        return [
+          {
+            id: "tidy",
+            name: "Tidy",
+            version: "1.2.0",
+            description: "Housekeeping helpers",
+            enabled: true,
+            commands: [
+              { id: "status", label: "Show status", run: "git status --short", context: "repo", placement: "palette", mutates: false },
+              { id: "clean", label: "Clean untracked", run: "git clean -fd -- {repo}", context: "repo", placement: "both", mutates: true },
+            ],
+            hooks: [{ event: "post-mutation", run: "echo tidied", mutates: false }],
+            panels: [],
+            lua: null,
+            tama: null,
+            dir: "/tmp/plugins/tidy",
+          },
+        ];
       case "list_tracked_repos":
         return trackedList();
       case "add_tracked_repo":
