@@ -1,11 +1,12 @@
 <script lang="ts">
+  import PluginManifest from "./PluginManifest.svelte";
   // Plugins manager — view. A VS Code Extensions-style two-pane modal: the
   // installed plugins list on the left, the selected one's detail on the right.
   // Reuses the shared .scrim/.modal/.modal-head/.modal-body/.modal-foot/.btn/
   // .mut/.spinner/.pl-err/.set-toggle/.d-lab/.log-row chrome (same as Settings/
   // ExternalTools); the two-pane split + list rows are the only bespoke styling
   // (the scoped style block below). All state + management is in plugins.svelte.ts.
-  import { pluginsCtrl, pluginContribution } from "./plugins.svelte.ts";
+  import { pluginsCtrl } from "./plugins.svelte.ts";
   import { t } from "@/i18n/i18n.svelte.ts";
   import Trash2 from "@lucide/svelte/icons/trash-2";
 
@@ -43,7 +44,40 @@
     {/if}
 
     <div class="modal-body pl-body">
-      {#if pluginsCtrl.pluginsLoading && pluginsCtrl.plugins.length === 0}
+      {#if pluginsCtrl.pendingInstall}
+        <!-- #69: what you are about to run, before you agree to run it.
+             Inline rather than a modal over this modal — the panel's own
+             remove-confirm is inline too, and a nested scrim would put two
+             Escape owners on screen at once. -->
+        {@const pi = pluginsCtrl.pendingInstall}
+        <div class="pl-review">
+          <div class="pl-review-head">
+            <h4 class="pl-detail-name">{pi.plugin.name} <span class="mut" style="font-weight:400;font-size:13px">v{pi.plugin.version}</span></h4>
+            <span class="pl-detail-id mut">{pi.plugin.id}</span>
+          </div>
+          {#if pi.plugin.description}<p class="pl-detail-desc">{pi.plugin.description}</p>{/if}
+
+          <div class="pm-trust">{t("plugins.review_trust")}</div>
+          {#if pluginsCtrl.pendingInstallDuplicate}
+            <div class="pm-warn">{t("plugins.review_duplicate", { id: pi.plugin.id })}</div>
+          {/if}
+
+          <PluginManifest plugin={pi.plugin} />
+
+          <div class="pl-review-act">
+            <button class="btn ghost" disabled={pluginsCtrl.pluginInstalling} onclick={() => pluginsCtrl.cancelInstall()}
+              >{t("common.cancel")}</button
+            >
+            <button
+              class="btn"
+              disabled={pluginsCtrl.pluginInstalling || pluginsCtrl.pendingInstallDuplicate}
+              onclick={() => pluginsCtrl.confirmInstall()}
+            >
+              {#if pluginsCtrl.pluginInstalling}<span class="spinner"></span> {/if}{t("plugins.review_install")}
+            </button>
+          </div>
+        </div>
+      {:else if pluginsCtrl.pluginsLoading && pluginsCtrl.plugins.length === 0}
         <div class="log-row" style="padding:24px"><span class="spinner"></span><span class="msg mut">{t("plugins.loading")}</span></div>
       {:else if pluginsCtrl.plugins.length === 0}
         <div class="pl-empty">
@@ -79,24 +113,19 @@
           <div class="pl-detail">
             {#if pluginsCtrl.selected}
               {@const p = pluginsCtrl.selected}
-              {@const c = pluginContribution(p)}
               <div class="pl-detail-head">
                 <h4 class="pl-detail-name">{p.name} <span class="mut" style="font-weight:400;font-size:13px">v{p.version}</span></h4>
                 <span class="pl-detail-id mut">{p.id}</span>
               </div>
               {#if p.description}<p class="pl-detail-desc">{p.description}</p>{/if}
 
+              <!-- #70: the SAME rendering the install review uses, so what you
+                   agreed to and what is on your machine can actually be
+                   compared. The counts that used to be here (“3 commands”) are
+                   a summary of exactly this, and a summary is not what the
+                   trust model asks you to judge. -->
               <div class="d-lab" style="margin-top:16px">{t("plugins.contributes")}</div>
-              <ul class="pl-contrib">
-                {#if c.commands > 0}<li>{c.commands === 1 ? t("plugins.contrib_commands_one", { n: c.commands }) : t("plugins.contrib_commands_other", { n: c.commands })} <span class="mut">{t("plugins.contrib_commands_palette")}</span></li>{/if}
-                {#if c.hooks > 0}<li>{c.hooks === 1 ? t("plugins.contrib_hooks_one", { n: c.hooks }) : t("plugins.contrib_hooks_other", { n: c.hooks })}</li>{/if}
-                {#if c.panels > 0}<li>{c.panels === 1 ? t("plugins.contrib_panels_one", { n: c.panels }) : t("plugins.contrib_panels_other", { n: c.panels })}</li>{/if}
-                {#if c.lua}<li>{t("plugins.contrib_lua")}</li>{/if}
-                {#if c.tama}<li>{t("plugins.contrib_tama")}</li>{/if}
-                {#if c.commands === 0 && c.hooks === 0 && c.panels === 0 && !c.lua && !c.tama}
-                  <li class="mut">{t("plugins.contrib_nothing")}</li>
-                {/if}
-              </ul>
+              <PluginManifest plugin={p} />
 
               <div class="pl-detail-actions">
                 {#if pluginsCtrl.removingPluginId === p.id}
@@ -268,6 +297,25 @@
   .pl-detail-id {
     font-family: var(--mono);
     font-size: 11px;
+  }
+  /* The install review (#69) — inline in the panel body, so it reuses the
+     detail pane's own type scale rather than inventing a second one. */
+  .pl-review {
+    padding: 2px 2px 6px;
+  }
+  .pl-review-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .pl-review-act {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
   }
   .pl-detail-desc {
     margin: 10px 0 0;

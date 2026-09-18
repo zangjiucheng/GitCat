@@ -371,6 +371,30 @@ function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[]) {
       // (stubbed separately in installTauriMock below); both have to answer.
       case "plugin:dialog|open":
         return repo.dir;
+      // The Plugins panel renders what a plugin RUNS (#69/#70), so the fixture
+      // has to carry real `run` strings and a mutating action — counts would
+      // exercise none of what those issues are about. Canned rather than
+      // written to disk: nothing here installs anything, and the registry the
+      // real command reads lives in the app config dir, not the temp repo.
+      case "list_plugins":
+        return [
+          {
+            id: "tidy",
+            name: "Tidy",
+            version: "1.2.0",
+            description: "Housekeeping helpers",
+            enabled: true,
+            commands: [
+              { id: "status", label: "Show status", run: "git status --short", context: "repo", placement: "palette", mutates: false },
+              { id: "clean", label: "Clean untracked", run: "git clean -fd -- {repo}", context: "repo", placement: "both", mutates: true },
+            ],
+            hooks: [{ event: "post-mutation", run: "echo tidied", mutates: false }],
+            panels: [],
+            lua: null,
+            tama: null,
+            dir: "/tmp/plugins/tidy",
+          },
+        ];
       case "list_tracked_repos":
         return trackedList();
       case "add_tracked_repo":

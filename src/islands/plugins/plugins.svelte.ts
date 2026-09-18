@@ -22,22 +22,6 @@ import type { Plugin } from "../../ipc/bindings";
 // A one-line summary of what a plugin contributes, for the detail pane. Pure +
 // exported for unit testing. Reads only the manifest fields the backend fills
 // (commands/hooks/panels/lua/tama); an all-empty plugin yields "Nothing".
-export interface PluginContribution {
-  commands: number;
-  hooks: number;
-  panels: number;
-  lua: boolean;
-  tama: boolean;
-}
-export function pluginContribution(p: Plugin): PluginContribution {
-  return {
-    commands: p.commands?.length ?? 0,
-    hooks: p.hooks?.length ?? 0,
-    panels: p.panels?.length ?? 0,
-    lua: !!(p as { lua?: unknown }).lua,
-    tama: !!(p as { tama?: unknown }).tama,
-  };
-}
 
 class PluginsState {
   open = $state(false);
@@ -230,10 +214,66 @@ class PluginsState {
       return;
     }
     if (!picked || Array.isArray(picked)) return; // cancelled (Array.isArray is defensive-only — multiple:false never returns one)
+
+    // REVIEW before installing (#69). docs/plugins.md asks the user to install
+    // only a plugin they would run in a terminal themselves, and until now the
+    // app never showed them the commands — install was this one file picker.
+    // preview_plugin_manifest runs the same read+validate the install path
+    // runs, so what is shown is exactly what would be installed, and a manifest
+    // that fails validation fails HERE rather than after the user has already
+    // agreed to something the app could not parse.
     this.pluginInstalling = true;
     try {
-      const res = await commands.installPluginFromPath(picked);
+      const pre = await commands.previewPluginManifest(picked);
+      if (pre.status === "ok") this.pendingInstall = { path: picked, plugin: pre.data };
+      else this.pluginsError = be(pre.error) || t("plugins.err_install");
+    } catch (e) {
+      this.pluginsError = t("plugins.err_install_detail", { err: String(e) });
+    } finally {
+      this.pluginInstalling = false;
+    }
+  }
+
+  /**
+   * The manifest awaiting the user's decision, and the path it came from.
+   * Null whenever no install is pending.
+   *
+   * Holds the PREVIEWED plugin, not just the path, so the review and the
+   * install agree on what was shown — and so the duplicate-id check below can
+   * run against the list already in hand rather than a second backend call.
+   */
+  pendingInstall = $state<{ path: string; plugin: Plugin } | null>(null);
+
+  /**
+   * The previewed plugin's id is already installed.
+   *
+   * The backend rejects this at install (install_from's uniqueness check), so
+   * this exists to say so BEFORE the user agrees rather than after — the
+   * preview command deliberately does not check it, because the registry it
+   * would check against is right here.
+   */
+  get pendingInstallDuplicate(): boolean {
+    const id = this.pendingInstall?.plugin.id;
+    return !!id && this.plugins.some((p) => p.id === id);
+  }
+
+  cancelInstall(): void {
+    this.pendingInstall = null;
+  }
+
+  /** Install the plugin the user has just reviewed. */
+  async confirmInstall(): Promise<void> {
+    const pending = this.pendingInstall;
+    if (!pending || this.pluginInstalling) return;
+    this.pluginsError = "";
+    this.pluginInstalling = true;
+    try {
+      // By PATH, not by the previewed object: install_from is what writes the
+      // registry and it re-reads and re-validates on the way in. The preview is
+      // what the user was shown, never a shortcut past that.
+      const res = await commands.installPluginFromPath(pending.path);
       if (res.status === "ok") {
+        this.pendingInstall = null;
         // Re-list rather than append res.data — keeps the exact ordering the
         // backend returns and reflects anything else that changed on disk.
         await this.refreshPlugins();
