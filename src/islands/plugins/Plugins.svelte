@@ -301,7 +301,16 @@
   /* The install review (#69) — inline in the panel body, so it reuses the
      detail pane's own type scale rather than inventing a second one. */
   .pl-review {
-    padding: 2px 2px 6px;
+    /* .pl-body is padding:0 — the split view's two panes bring their own, so a
+       child that does not sits hard against the modal's edges while the toolbar
+       above it is inset. Matches .pl-detail's padding for that reason, and
+       carries .pl-split's height so the modal does not resize when the review
+       replaces the list. */
+    flex: 1;
+    min-height: 0;
+    height: 52vh;
+    overflow: auto;
+    padding: 18px 20px;
   }
   .pl-review-head {
     display: flex;
