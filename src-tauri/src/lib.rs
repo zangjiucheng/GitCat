@@ -339,6 +339,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         plugin_registry::set_plugin_enabled,
         plugin_registry::preview_plugin_manifest, // #68: read+validate a manifest WITHOUT installing, for install-time review
         plugin_registry::install_plugin_from_path,
+        plugin_registry::update_plugin, // #66: re-read an installed plugin's manifest from disk
         plugin_registry::remove_plugin,
         plugin_registry::load_plugin_skin, // PER-47: load a plugin's Tama skin (pose assets → data URIs)
         plugin_exec::run_plugin_command,

@@ -3133,6 +3133,18 @@ async installPluginFromPath(path: string) : Promise<Result<Plugin, string>> {
 }
 },
 /**
+ * Re-read an installed plugin's manifest from disk and replace its entry (#66).
+ * Preserves `enabled`. JS: `commands.updatePlugin(id)`.
+ */
+async updatePlugin(id: string) : Promise<Result<Plugin, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_plugin", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Uninstall a plugin (removes it from the registry only; never touches the
  * original manifest file on disk). JS: `commands.removePlugin(id)`.
  */
