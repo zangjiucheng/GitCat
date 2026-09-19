@@ -183,3 +183,52 @@ test("a manifest the backend refuses never reaches the review", async ({ page, r
   await expect(panel(page).locator(".pl-review")).toHaveCount(0);
   await expect(panel(page).locator(".pl-err, .mut").filter({ hasText: /mutatez/ }).first()).toBeVisible();
 });
+
+// -- re-reading an edited manifest (#66 / #67) --------------------------------
+
+test("Update re-reads the manifest from disk, without an uninstall", async ({ page, repo }) => {
+  // The asymmetry this closes: a plugin's Luau source is re-read on every
+  // command invocation, so editing a handler was already live — while the
+  // manifest was snapshotted at install and re-installing the same id is
+  // refused, so editing a command's label meant uninstalling first.
+  writeManifest(repo, REVIEW_DEMO);
+  await openPlugins(page);
+  await pickPlugin(page);
+  await panel(page).getByRole("button", { name: /^Install$/ }).click();
+  await panel(page).locator(".pl-row").filter({ hasText: "Review Demo" }).click();
+  await expect(panel(page).locator(".pm-run").filter({ hasText: "git -C {repo} clean -fdx" })).toBeVisible();
+
+  // Edit the manifest on disk, the way an author would.
+  writeManifest(repo, {
+    ...REVIEW_DEMO,
+    name: "Review Demo (edited)",
+    commands: [{ id: "status", label: "Renamed command", run: "git -C {repo} status --porcelain", context: "repo", placement: "palette" }],
+    hooks: [],
+  });
+
+  await panel(page).getByRole("button", { name: /^Update$/ }).click();
+
+  await expect(panel(page).locator(".pm-run").filter({ hasText: "git -C {repo} status --porcelain" })).toBeVisible();
+  await expect(panel(page).locator(".pm-run").filter({ hasText: "clean -fdx" })).toHaveCount(0);
+  await expect(panel(page).locator(".pl-row").filter({ hasText: "Review Demo (edited)" })).toBeVisible();
+  // The command that no longer declares mutates must stop being badged.
+  await expect(panel(page).locator(".pm-badge")).toHaveCount(0);
+});
+
+test("Update does not re-enable a plugin you disabled", async ({ page, repo }) => {
+  // `enabled` defaults to TRUE when a manifest omits it — and REVIEW_DEMO
+  // omits it — so an update that trusted the file would switch a disabled
+  // plugin back on behind the user's back.
+  writeManifest(repo, REVIEW_DEMO);
+  await openPlugins(page);
+  await pickPlugin(page);
+  await panel(page).getByRole("button", { name: /^Install$/ }).click();
+  await panel(page).locator(".pl-row").filter({ hasText: "Review Demo" }).click();
+
+  await panel(page).getByRole("switch").click();
+  await expect(panel(page).locator(".pl-enable-label")).toHaveText(/disabled/i);
+
+  await panel(page).getByRole("button", { name: /^Update$/ }).click();
+
+  await expect(panel(page).locator(".pl-enable-label"), "Update switched it back on").toHaveText(/disabled/i);
+});

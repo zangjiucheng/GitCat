@@ -1,5 +1,7 @@
 // Plugins manager modal strings. Keys become `plugins.<key>`.
 export default {
+  update: "Update",
+  updated: "{name} reloaded from disk.",
   review_trust: "A plugin runs on your machine with your privileges — there is no sandbox. Install it only if you would run these commands yourself.",
   review_install: "Install",
   review_duplicate: "A plugin with the id {id} is already installed. Remove it first, or change this one's id.",

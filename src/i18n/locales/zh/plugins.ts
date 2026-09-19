@@ -1,5 +1,7 @@
 // 插件管理弹窗文案。键会变成 `plugins.<key>`。
 export default {
+  update: "更新",
+  updated: "已从磁盘重新读取 {name}。",
   review_trust: "插件以你的权限在你的机器上运行 —— 没有沙箱。只有当你愿意自己敲下这些命令时,才安装它。",
   review_install: "安装",
   review_duplicate: "已经安装了 id 为 {id} 的插件。请先移除它,或修改这个插件的 id。",

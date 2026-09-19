@@ -57,6 +57,8 @@ export default {
 
   // plugin_registry.rs — 설치 / 활성화 / 제거 / 스킨 조회
   already_installed: "id가 {id}인 플러그인이 이미 설치되어 있어요.",
+  no_source_dir: "플러그인 {id}에는 기록된 원본 폴더가 없어서 다시 읽을 수 없어요. 제거한 뒤 다시 설치해 주세요.",
+  id_changed: "매니페스트의 id가 이제 {id}이(가) 아니라 {found}예요. id를 바꾸면 다른 플러그인이에요 — 따로 설치하고 예전 것을 제거해 주세요.",
   no_plugin_with_id: "id가 {id}인 플러그인이 설치되어 있지 않아요.",
   plugin_disabled: "플러그인 {id}이(가) 비활성화되어 있어요.",
 

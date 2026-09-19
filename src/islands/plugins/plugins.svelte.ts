@@ -162,6 +162,46 @@ class PluginsState {
     this.removingPluginId = null;
   }
 
+  /**
+   * Re-read an installed plugin's manifest from the directory it came from
+   * (#66/#67).
+   *
+   * Exists because the authoring loop was lopsided: a plugin's Luau source is
+   * re-read on every invocation, so editing a handler is already live, while
+   * the manifest is snapshotted at install and re-installing the same id is
+   * refused — editing a command's label meant uninstalling first.
+   *
+   * The backend preserves `enabled`, refuses a manifest that renamed itself,
+   * and validates exactly as install does, so a broken edit leaves the working
+   * entry alone. Re-lists rather than patching the one entry, same reason
+   * installPlugin does: the backend's ordering is the one to keep.
+   */
+  async updatePlugin(id: string): Promise<void> {
+    if (this.pluginBusyId) return;
+    this.pluginsError = "";
+    if (!IN_TAURI) {
+      bridge.tama.say(t("plugins.demo_install"));
+      return;
+    }
+    this.pluginBusyId = id;
+    try {
+      const res = await commands.updatePlugin(id);
+      if (res.status === "ok") {
+        await this.refreshPlugins();
+        this.selectedId = id;
+        // A changed manifest can add, rename or drop commands and panels.
+        await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload()]);
+        bridge.tama.say(t("plugins.updated", { name: res.data.name }));
+      } else {
+        this.pluginsError = be(res.error) || t("plugins.err_update");
+      }
+    } catch (e) {
+      this.pluginsError = t("plugins.err_update_detail", { err: String(e) });
+    } finally {
+      this.pluginBusyId = null;
+    }
+  }
+
   async confirmRemovePlugin(id: string): Promise<void> {
     this.pluginsError = "";
     if (!IN_TAURI) {

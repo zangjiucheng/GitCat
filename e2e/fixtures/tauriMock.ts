@@ -395,6 +395,34 @@ function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[]) {
       // drift from read_and_validate_manifest, which is the whole reason the
       // preview command shares it. One check is kept because a test needs it:
       // an unknown key, the rejection #64 added.
+      // Toggling and removing an installed entry, so a test can put the panel
+      // into a state (disabled) that a later action must not silently undo.
+      case "set_plugin_enabled": {
+        const { id, enabled } = args as { id: string; enabled: boolean };
+        const p = installedPlugins.find((x) => x.id === id);
+        if (!p) throw new Error(`err_plugins.no_plugin_with_id\u001f${id}`);
+        p.enabled = enabled;
+        return null;
+      }
+      case "remove_plugin": {
+        const { id } = args as { id: string };
+        const i = installedPlugins.findIndex((x) => x.id === id);
+        if (i >= 0) installedPlugins.splice(i, 1);
+        return null;
+      }
+      // #66: re-read an installed entry's manifest from the dir it came from.
+      case "update_plugin": {
+        const id = (args as { id: string }).id;
+        const i = installedPlugins.findIndex((p) => p.id === id);
+        if (i < 0) throw new Error(`err_plugins.no_plugin_with_id\u001f${id}`);
+        const dir = installedPlugins[i].dir as string;
+        const fresh = JSON.parse(readFileSync(join(dir, "plugin.json"), "utf8")) as Record<string, unknown>;
+        fresh.dir = dir;
+        // The property the backend guarantees and the UI must not undo.
+        fresh.enabled = installedPlugins[i].enabled;
+        installedPlugins[i] = fresh;
+        return fresh;
+      }
       case "preview_plugin_manifest":
       case "install_plugin_from_path": {
         const p = (args as { path: string }).path;
