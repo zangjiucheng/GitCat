@@ -282,15 +282,50 @@ fn stream_graph(app: &AppHandle<Wry>, gen: u64, path: &str) {
         || !state.is_current(gen),
         |batch| {
             let done = batch.done;
-            // emit_on_main, NOT a bare app.emit and NOT an ipc::Channel. A bare
-            // off-thread emit deadlocks (holds the webviews mutex while blocking
-            // on the main thread — see event_util). An ipc::Channel avoided that
-            // but did NOT deliver in a second app INSTANCE (multi-window opens a
-            // whole separate process; the new window's graph stayed blank). A
-            // plain global "graph-batch" event broadcast to that process's own
-            // one window works there like it always did; emit_on_main marshals it
-            // to the main thread so it stays deadlock-free too.
-            crate::event_util::emit_on_main(app, "graph-batch", batch);
+            // A marshalled emit, NOT a bare app.emit and NOT an ipc::Channel. A
+            // bare off-thread emit deadlocks (holds the webviews mutex while
+            // blocking on the main thread — see event_util). An ipc::Channel
+            // avoided that but did NOT deliver in a second app INSTANCE
+            // (multi-window opens a whole separate process; the new window's
+            // graph stayed blank). A plain global "graph-batch" event broadcast
+            // to that process's own one window works there like it always did;
+            // marshalling it to the main thread keeps it deadlock-free too.
+            //
+            // The `str` half: this thread does the serde_json work, rather than
+            // handing the batch over and letting Tauri serialize it inside
+            // EmitArgs::new — which, because the emit is already marshalled by
+            // then, would run on the MAIN thread. Same bytes either way (both
+            // end at serde_json::to_string; see event_util::emit_str_on_main),
+            // only a different thread pays.
+            //
+            // Measured per batch, release build, against a repo with 400 live
+            // lanes — tests/perf_graph_wide.rs's own fixture, which is the shape
+            // MAX_GAP_SEGMENTS_PER_BATCH exists for:
+            //
+            //     walk + layout   ~2.4 ms
+            //     serialize       ~2.8 ms   (2 MB of JSON, 200k gap segments)
+            //     -------------------------
+            //     total           ~5.2 ms   of MIN_BATCH_INTERVAL's 8 ms
+            //
+            // Three things that reading says and guessing does not. Serializing
+            // costs MORE than producing the batch, so this is the largest single
+            // per-batch cost, not a rounding error. It is the steady state for
+            // such a repo, not a peak: the segment cap binds on nearly every
+            // batch (9 of 11 in that fixture), so the main thread was paying
+            // ~2.8 ms of a 16 ms frame back to back for the whole load. And it
+            // genuinely is free here — 5.2 ms still fits inside the 8 ms
+            // interval this thread then sleeps out, so moving the work does not
+            // slow the stream down. On an ordinary repo the whole thing is
+            // ~0.2 ms and none of it matters.
+            //
+            // A failed serialize is dropped, which is exactly what happened
+            // before: EmitArgs::new's own error surfaced as an Err from emit(),
+            // which emit_on_main discards. GraphBatch is plain data and serde
+            // writes non-finite f64 as null rather than failing, so there is no
+            // known way to reach this arm.
+            if let Ok(json) = serde_json::to_string(&batch) {
+                crate::event_util::emit_str_on_main(app, "graph-batch", json);
+            }
             if !done {
                 let elapsed = last_emit.elapsed();
                 if elapsed < MIN_BATCH_INTERVAL {

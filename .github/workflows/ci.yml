@@ -117,21 +117,30 @@ jobs:
       - name: Test
         run: cargo test
 
-      # tests/perf_graph.rs already ran once as part of the plain `cargo
-      # test` above (Cargo auto-discovers every tests/*.rs file) — this
-      # SEPARATE, redundant re-run exists purely for VISIBILITY: its own
-      # named step in the Actions UI, and --nocapture so the actual timing
-      # numbers land in the log even on success (skimmable over time to
-      # notice a repo creeping slower well before it trips the — deliberately
-      # generous — failure threshold). See perf_graph.rs's own doc comment
-      # for why this exists at all: a WSL-specific version of this exact bug
-      # class (a working-tree status scan stalling 185+ SECONDS on a repo
-      # with a Linux symlink, reached over the \\wsl.localhost\ bridge —
+      # tests/perf_graph.rs and tests/perf_graph_wide.rs already ran once as
+      # part of the plain `cargo test` above (Cargo auto-discovers every
+      # tests/*.rs file) — this SEPARATE, redundant re-run exists purely for
+      # VISIBILITY: its own named step in the Actions UI, and --nocapture so
+      # the actual timing numbers land in the log even on success (skimmable
+      # over time to notice a repo creeping slower well before it trips the —
+      # deliberately generous — failure threshold). See perf_graph.rs's own
+      # doc comment for why this exists at all: a WSL-specific version of this
+      # exact bug class (a working-tree status scan stalling 185+ SECONDS on a
+      # repo with a Linux symlink, reached over the \\wsl.localhost\ bridge —
       # see src/wsl.rs) shipped and went unnoticed until a real large repo
       # surfaced it manually; this is the general, CI-reliable, non-WSL
       # layer of protection against that whole bug CLASS recurring.
-      # --test-threads=1 so the three tests' own eprintln! timing lines
-      # print in a stable, non-interleaved order.
+      #
+      # Both perf files are named explicitly rather than matched by a prefix:
+      # `--test` takes an exact target name, not a glob, so a third perf file
+      # added later has to be added here too or it silently stays out of the
+      # table (it would still RUN, under `cargo test` above — it just would
+      # not be visible). perf_graph_wide.rs covers what perf_graph.rs
+      # structurally cannot: its fixture is linear, so the swimlane allocator
+      # only ever runs at lane count 1, where it costs 1.9ms against the 182ms
+      # the same commit count costs at 400 concurrent lanes.
+      # --test-threads=1 so the tests' own eprintln! timing lines print in a
+      # stable, non-interleaved order.
       #
       # The numbers themselves used to only be visible by opening this
       # step's raw log — easy to forget to check on a green run. Each test's
@@ -158,7 +167,7 @@ jobs:
       - name: Performance regression tests
         run: |
           set +e
-          cargo test --test perf_graph -- --nocapture --test-threads=1 2>&1 | tee perf-output.log
+          cargo test --test perf_graph --test perf_graph_wide -- --nocapture --test-threads=1 2>&1 | tee perf-output.log
           status=${PIPESTATUS[0]}
           set -e
           {

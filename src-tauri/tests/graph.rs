@@ -325,7 +325,10 @@ fn hidden_branch_chip_is_dropped_even_though_its_commit_remains_reachable_via_a_
 // ---------------------------------------------------------------------------
 // Streaming (stream_graph_core) — commands.rs's testable core, no AppHandle
 // needed. `load_graph` itself just wires this to the real GraphLoadState and
-// streams each batch over an ipc::Channel (see stream_graph).
+// emits each batch as a global "graph-batch" event (see stream_graph). NOT an
+// ipc::Channel, which this comment used to say: that was tried and reverted,
+// because a Channel is bound to the webview that created it and delivered
+// nothing in a second app instance.
 // ---------------------------------------------------------------------------
 
 /// Concatenate every batch's rows/lane/color/merge, and reconstruct a CSR
@@ -501,4 +504,51 @@ fn stream_graph_core_a_complete_walk_under_max_commits_is_never_flagged_truncate
     assert!(b.done);
     assert!(!b.truncated, "reaching max_commits EXACTLY as the walk naturally ends is a complete finish, not a cap");
     assert_eq!(b.rows.len(), 5);
+}
+
+/// The wire shape, asserted against the exact bytes the webview receives.
+///
+/// `stream_graph` serializes each batch on the walker thread and hands the
+/// String to `Emitter::emit_str`, instead of handing the batch over and letting
+/// Tauri's `EmitArgs::new` serialize it on the main thread. Both paths end in
+/// `serde_json::to_string(&batch)` — so the line below is not a stand-in for
+/// what ships, it is the same call — but there is one way to get this wrong
+/// that still compiles: emitting the String through the ordinary `emit`, which
+/// would serialize the JSON *as a JSON string* and deliver a quoted blob where
+/// `onGraphBatch` expects an object. Nothing in Rust would notice; the graph
+/// would simply stop drawing.
+///
+/// So this asserts the two things that would break: that the payload is an
+/// object, and that it carries every key `legacy/main.ts`'s `onGraphBatch`
+/// actually reads, in the camelCase `GraphBatch`'s `serde(rename_all)` produces.
+#[test]
+fn a_streamed_batch_serializes_to_the_object_shape_the_frontend_reads() {
+    let (repo, _) = build_repo();
+    let mut batches: Vec<GraphBatch> = Vec::new();
+    stream_graph_core(&repo.path(), None, None, 7, 100, 50_000, || false, |b| batches.push(b));
+    let batch = batches.first().expect("at least one batch");
+
+    let json = serde_json::to_string(batch).expect("a GraphBatch must serialize");
+    let value: serde_json::Value = serde_json::from_str(&json).expect("what we emit must be valid JSON");
+
+    let obj = value.as_object().unwrap_or_else(|| {
+        panic!("the graph-batch payload must be an OBJECT, got {value:?} — a JSON string here means the \
+                already-serialized payload went through emit() instead of emit_str()")
+    });
+
+    // Exactly the keys legacy/main.ts's onGraphBatch reads off `payload`.
+    for key in [
+        "generation", "rows", "oids", "lane", "color", "merge", "gapCounts", "gapTop", "gapBot", "gapColor", "ncol",
+        "laneCount", "totalSoFar", "done", "truncated", "elapsedMs", "error",
+    ] {
+        assert!(obj.contains_key(key), "the frontend reads payload.{key}, which is missing from {:?}", obj.keys().collect::<Vec<_>>());
+    }
+
+    assert_eq!(obj["generation"].as_u64(), Some(7), "the generation gate is what drops a superseded stream");
+    assert_eq!(obj["rows"].as_array().map(Vec::len), Some(batch.rows.len()));
+    assert_eq!(obj["oids"].as_array().map(Vec::len), Some(batch.oids.len()));
+    assert_eq!(obj["gapCounts"].as_array().map(Vec::len), Some(batch.gap_counts.len()));
+    assert_eq!(obj["laneCount"].as_u64(), Some(batch.lane_count as u64));
+    assert_eq!(obj["done"].as_bool(), Some(batch.done));
+    assert!(obj["error"].is_null(), "a clean walk reports no error");
 }
