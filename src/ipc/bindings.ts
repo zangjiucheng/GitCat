@@ -3079,6 +3079,11 @@ async listPlugins() : Promise<Result<Plugin[], string>> {
 },
 /**
  * Enable/disable an installed plugin. JS: `commands.setPluginEnabled(id, enabled)`.
+ * 
+ * `async fn` + `run_blocking` for the same reason every other write command
+ * here is: it now takes a lock that another PROCESS can be holding, and a
+ * command that can wait must not be waiting on the thread that draws the
+ * window (see `blocking.rs`).
  */
 async setPluginEnabled(id: string, enabled: boolean) : Promise<Result<null, string>> {
     try {

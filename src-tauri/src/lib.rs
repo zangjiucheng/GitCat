@@ -36,6 +36,7 @@ pub mod procutil; // suppresses the console window Windows flashes open per subp
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod repo_files; // backlog #14 (final item): .gitignore/.mailmap in-app editors — allow-listed repo-root file read/write
 pub mod file_manager; // row/repo context menus: hand a path to the desktop file browser, trust-gated (see its module doc)
+pub mod registry_lock; // #60: cross-PROCESS lock around each registry's load->mutate->save (every window is its own process)
 pub mod repo_registry; // backlog #11: app-level tracked-repos JSON persistence
 pub mod repo_summary; // Repository Summary: git-log-derived churn/contributor/activity/problem-area diagnostics
 pub mod rerere; // M5a: git-rerere status/toggle panel

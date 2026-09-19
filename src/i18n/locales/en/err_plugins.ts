@@ -11,6 +11,7 @@ export default {
   could_not_serialize: "Could not serialize: {detail}",
   could_not_write: "Could not write {path}: {detail}",
   could_not_finalize: "Could not finalize {path}: {detail}",
+  could_not_lock: "Could not lock the plugin registry ({path}): {detail}",
 
   // plugin_registry.rs — manifest validation
   plugin_id_invalid:

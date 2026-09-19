@@ -11,6 +11,7 @@ export default {
   could_not_serialize: "직렬화하지 못했어요: {detail}",
   could_not_write: "{path} 파일을 쓰지 못했어요: {detail}",
   could_not_finalize: "{path} 파일의 저장을 마무리하지 못했어요: {detail}",
+  could_not_lock: "플러그인 레지스트리를 잠그지 못했어요({path}): {detail}",
 
   // plugin_registry.rs — 매니페스트 검증
   plugin_id_invalid:
