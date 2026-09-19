@@ -25,6 +25,7 @@ export default {
   could_not_serialize: "직렬화하지 못했어요: {detail}",
   could_not_write: "{path} 파일을 쓰지 못했어요: {detail}",
   could_not_finalize: "{path} 파일의 저장을 마무리하지 못했어요: {detail}",
+  could_not_lock: "저장소 목록을 잠그지 못했어요({path}): {detail}",
 
   // repo_files.rs — .gitignore/.mailmap 편집기
   not_editable_repo_file: "편집 가능한 저장소 파일이 아니에요: {name}(.gitignore와 .mailmap만 지원해요).",

@@ -229,18 +229,29 @@ fn coalesce_duplicate(a: TrackedRepo, b: TrackedRepo) -> TrackedRepo {
     }
 }
 
-/// Process-wide lock serializing every registry read-modify-write sequence
-/// (list/add/remove/track-opened all take it for their FULL body) — an
-/// adversarial review reproduced real data loss without it: two concurrent
-/// writers (e.g. `openRepo()`'s fire-and-forget `track_repo_opened` racing a
-/// dashboard Add/Remove click) each do an unlocked load -> mutate -> save,
-/// and "last write wins" silently drops the loser's change. A poisoned lock
-/// (a prior panic mid-critical-section) is recovered from rather than
-/// propagated — a stuck-forever registry would be a worse failure mode than
-/// proceeding with whatever the poisoned guard still protects.
-fn registry_lock() -> &'static std::sync::Mutex<()> {
-    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+/// Every registry read-modify-write in this file runs inside this
+/// (add/remove/track-opened/claim/set-visible all take it for their FULL body).
+///
+/// It replaced a `OnceLock<Mutex<()>>`, and the reasoning that Mutex carried
+/// was right: an adversarial review reproduced real data loss without any lock
+/// at all — two concurrent writers (e.g. `openRepo()`'s fire-and-forget
+/// `track_repo_opened` racing a dashboard Add/Remove click) each do an
+/// unlocked load -> mutate -> save, and "last write wins" silently drops the
+/// loser's change.
+///
+/// What was wrong was the SCOPE. A Mutex is process-wide, and every GitCat
+/// window is a separate OS process (`windows.rs`'s own module doc), so it
+/// never covered the case its own example describes: two WINDOWS. See
+/// `registry_lock`'s module doc for what replaced it, and why the lock lives
+/// in a sidecar file rather than on the registry itself. The poisoned-lock
+/// recovery that used to be here went with it — an OS advisory lock has no
+/// poisoned state, because the kernel releases it when its holder dies,
+/// however it dies.
+///
+/// `pub` so `tests/registry_lock.rs` can drive the real thing from separate
+/// child processes, which is the only place this bug was ever visible.
+pub fn with_registry_lock<T>(registry: &Path, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    crate::registry_lock::with_registry_lock(registry, "err_repo.could_not_lock", f)
 }
 
 /// `pub` for the same integration-testability reason as [`load_from`].
@@ -318,36 +329,47 @@ pub fn list_tracked_repos(app: AppHandle<Wry>) -> Result<Vec<TrackedRepo>, Strin
 /// already tracked. JS: `commands.addTrackedRepo(path)`.
 #[tauri::command]
 #[specta::specta]
-pub fn add_tracked_repo(app: AppHandle<Wry>, path: String) -> Result<Vec<TrackedRepo>, String> {
-    let _guard = registry_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let registry = registry_path(&app)?;
-    let norm = normalize(&path);
-    let mut repos = load_from(&registry)?;
-    if !repos.iter().any(|r| r.path == norm) {
-        repos.push(TrackedRepo {
-            path: norm,
-            last_opened_at: None,
-            repo_summary_shown: false,
-            visible_local_branches: None,
-            visible_remote_branches: None, auto_branch_visibility: false,
-        });
-        save_to(&registry, &repos)?;
-    }
-    Ok(sort_by_recency(repos))
+pub async fn add_tracked_repo(app: AppHandle<Wry>, path: String) -> Result<Vec<TrackedRepo>, String> {
+    crate::blocking::run_blocking(move || {
+        let registry = registry_path(&app)?;
+        let repos = with_registry_lock(&registry, || {
+            let norm = normalize(&path);
+            let mut repos = load_from(&registry)?;
+            if !repos.iter().any(|r| r.path == norm) {
+                repos.push(TrackedRepo {
+                    path: norm,
+                    last_opened_at: None,
+                    repo_summary_shown: false,
+                    visible_local_branches: None,
+                    visible_remote_branches: None,
+                    auto_branch_visibility: false,
+                });
+                save_to(&registry, &repos)?;
+            }
+            Ok(repos)
+        })?;
+        Ok(sort_by_recency(repos))
+    })
+    .await
 }
 
 /// Dashboard row's "Remove from list" — removes from the TRACKED LIST only,
 /// never touches anything on disk. JS: `commands.removeTrackedRepo(path)`.
 #[tauri::command]
 #[specta::specta]
-pub fn remove_tracked_repo(app: AppHandle<Wry>, path: String) -> Result<Vec<TrackedRepo>, String> {
-    let _guard = registry_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let registry = registry_path(&app)?;
-    let norm = normalize(&path);
-    let mut repos = load_from(&registry)?;
-    repos.retain(|r| r.path != norm);
-    save_to(&registry, &repos)?;
-    Ok(sort_by_recency(repos))
+pub async fn remove_tracked_repo(app: AppHandle<Wry>, path: String) -> Result<Vec<TrackedRepo>, String> {
+    crate::blocking::run_blocking(move || {
+        let registry = registry_path(&app)?;
+        let repos = with_registry_lock(&registry, || {
+            let norm = normalize(&path);
+            let mut repos = load_from(&registry)?;
+            repos.retain(|r| r.path != norm);
+            save_to(&registry, &repos)?;
+            Ok(repos)
+        })?;
+        Ok(sort_by_recency(repos))
+    })
+    .await
 }
 
 /// Fire-and-forget hook called from `openRepo()`'s success path
@@ -356,27 +378,33 @@ pub fn remove_tracked_repo(app: AppHandle<Wry>, path: String) -> Result<Vec<Trac
 /// `last_opened_at` in place. JS: `commands.trackRepoOpened(path)`.
 #[tauri::command]
 #[specta::specta]
-pub fn track_repo_opened(app: AppHandle<Wry>, path: String) -> Result<Vec<TrackedRepo>, String> {
-    let _guard = registry_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let registry = registry_path(&app)?;
-    let norm = normalize(&path);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let mut repos = load_from(&registry)?;
-    match repos.iter_mut().find(|r| r.path == norm) {
-        Some(r) => r.last_opened_at = Some(now),
-        None => repos.push(TrackedRepo {
-            path: norm,
-            last_opened_at: Some(now),
-            repo_summary_shown: false,
-            visible_local_branches: None,
-            visible_remote_branches: None, auto_branch_visibility: false,
-        }),
-    }
-    save_to(&registry, &repos)?;
-    Ok(sort_by_recency(repos))
+pub async fn track_repo_opened(app: AppHandle<Wry>, path: String) -> Result<Vec<TrackedRepo>, String> {
+    crate::blocking::run_blocking(move || {
+        let registry = registry_path(&app)?;
+        let repos = with_registry_lock(&registry, || {
+            let norm = normalize(&path);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let mut repos = load_from(&registry)?;
+            match repos.iter_mut().find(|r| r.path == norm) {
+                Some(r) => r.last_opened_at = Some(now),
+                None => repos.push(TrackedRepo {
+                    path: norm,
+                    last_opened_at: Some(now),
+                    repo_summary_shown: false,
+                    visible_local_branches: None,
+                    visible_remote_branches: None,
+                    auto_branch_visibility: false,
+                }),
+            }
+            save_to(&registry, &repos)?;
+            Ok(repos)
+        })?;
+        Ok(sort_by_recency(repos))
+    })
+    .await
 }
 
 /// Atomically checks-and-marks whether `path`'s one-time auto-shown
@@ -405,26 +433,31 @@ pub fn track_repo_opened(app: AppHandle<Wry>, path: String) -> Result<Vec<Tracke
 /// JS: `commands.claimRepoSummaryFirstOpen(path)`.
 #[tauri::command]
 #[specta::specta]
-pub fn claim_repo_summary_first_open(app: AppHandle<Wry>, path: String) -> Result<bool, String> {
-    let _guard = registry_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let registry = registry_path(&app)?;
-    let norm = normalize(&path);
-    let mut repos = load_from(&registry)?;
-    if repos.iter().any(|r| r.path == norm && r.repo_summary_shown) {
-        return Ok(false);
-    }
-    match repos.iter_mut().find(|r| r.path == norm) {
-        Some(r) => r.repo_summary_shown = true,
-        None => repos.push(TrackedRepo {
-            path: norm,
-            last_opened_at: None,
-            repo_summary_shown: true,
-            visible_local_branches: None,
-            visible_remote_branches: None, auto_branch_visibility: false,
-        }),
-    }
-    save_to(&registry, &repos)?;
-    Ok(true)
+pub async fn claim_repo_summary_first_open(app: AppHandle<Wry>, path: String) -> Result<bool, String> {
+    crate::blocking::run_blocking(move || {
+        let registry = registry_path(&app)?;
+        with_registry_lock(&registry, || {
+            let norm = normalize(&path);
+            let mut repos = load_from(&registry)?;
+            if repos.iter().any(|r| r.path == norm && r.repo_summary_shown) {
+                return Ok(false);
+            }
+            match repos.iter_mut().find(|r| r.path == norm) {
+                Some(r) => r.repo_summary_shown = true,
+                None => repos.push(TrackedRepo {
+                    path: norm,
+                    last_opened_at: None,
+                    repo_summary_shown: true,
+                    visible_local_branches: None,
+                    visible_remote_branches: None,
+                    auto_branch_visibility: false,
+                }),
+            }
+            save_to(&registry, &repos)?;
+            Ok(true)
+        })
+    })
+    .await
 }
 
 /// JS: `commands.getVisibleBranches(path)`.
@@ -439,33 +472,37 @@ pub fn get_visible_branches(app: AppHandle<Wry>, path: String) -> Result<Visible
 /// this path). JS: `commands.setVisibleBranches(path, local, remote)`.
 #[tauri::command]
 #[specta::specta]
-pub fn set_visible_branches(
+pub async fn set_visible_branches(
     app: AppHandle<Wry>,
     path: String,
     auto: bool,
     local: Option<Vec<String>>,
     remote: Option<Vec<String>>,
 ) -> Result<(), String> {
-    let _guard = registry_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let registry = registry_path(&app)?;
-    let norm = normalize(&path);
-    let mut repos = load_from(&registry)?;
-    match repos.iter_mut().find(|r| r.path == norm) {
-        Some(r) => {
-            r.visible_local_branches = local;
-            r.visible_remote_branches = remote;
-            r.auto_branch_visibility = auto;
-        }
-        None => repos.push(TrackedRepo {
-            path: norm,
-            last_opened_at: None,
-            repo_summary_shown: false,
-            visible_local_branches: local,
-            visible_remote_branches: remote,
-            auto_branch_visibility: auto,
-        }),
-    }
-    save_to(&registry, &repos)
+    crate::blocking::run_blocking(move || {
+        let registry = registry_path(&app)?;
+        with_registry_lock(&registry, || {
+            let norm = normalize(&path);
+            let mut repos = load_from(&registry)?;
+            match repos.iter_mut().find(|r| r.path == norm) {
+                Some(r) => {
+                    r.visible_local_branches = local;
+                    r.visible_remote_branches = remote;
+                    r.auto_branch_visibility = auto;
+                }
+                None => repos.push(TrackedRepo {
+                    path: norm,
+                    last_opened_at: None,
+                    repo_summary_shown: false,
+                    visible_local_branches: local,
+                    visible_remote_branches: remote,
+                    auto_branch_visibility: auto,
+                }),
+            }
+            save_to(&registry, &repos)
+        })
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -507,9 +544,10 @@ mod tests {
         // reproduced: unlocked load -> mutate -> save from multiple threads
         // let "last write wins" silently drop the loser's change. Spawns
         // several threads each adding its OWN distinct entry to the SAME
-        // registry file, serialized through registry_lock() exactly like
+        // registry file, serialized through with_registry_lock exactly like
         // add_tracked_repo/remove_tracked_repo/track_repo_opened now do —
-        // every single entry must survive.
+        // every single entry must survive. The cross-PROCESS version of this
+        // — #60, the case threads cannot reach — is tests/registry_lock.rs.
         let dir = std::env::temp_dir().join(format!(
             "gitcat-registry-test-concurrent-{}-{}",
             std::process::id(),
@@ -523,10 +561,12 @@ mod tests {
             for i in 0..WRITERS {
                 let path = &path;
                 scope.spawn(move || {
-                    let _guard = registry_lock().lock().unwrap_or_else(|e| e.into_inner());
-                    let mut repos = load_from(path).expect("load under lock should succeed");
-                    repos.push(TrackedRepo { path: format!("/repo/{i}"), last_opened_at: None, repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None , auto_branch_visibility: false });
-                    save_to(path, &repos).expect("save under lock should succeed");
+                    with_registry_lock(path, || {
+                        let mut repos = load_from(path)?;
+                        repos.push(TrackedRepo { path: format!("/repo/{i}"), last_opened_at: None, repo_summary_shown: false, visible_local_branches: None, visible_remote_branches: None , auto_branch_visibility: false });
+                        save_to(path, &repos)
+                    })
+                    .expect("the locked read-modify-write should succeed");
                 });
             }
         });

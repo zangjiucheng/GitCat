@@ -11,6 +11,7 @@ export default {
   could_not_serialize: "无法序列化：{detail}",
   could_not_write: "无法写入 {path}：{detail}",
   could_not_finalize: "无法完成写入 {path}：{detail}",
+  could_not_lock: "无法锁定插件注册表（{path}）：{detail}",
 
   // plugin_registry.rs —— 清单校验
   plugin_id_invalid:

@@ -416,14 +416,18 @@ pub fn load_from(path: &Path) -> Result<Vec<Plugin>, String> {
     }
 }
 
-/// Process-wide lock serializing every registry read-modify-write sequence —
-/// identical rationale/shape to `repo_registry::registry_lock`: without it two
-/// concurrent writers each doing an unlocked load -> mutate -> save could let
-/// "last write wins" silently drop the loser's change. A poisoned lock (a
-/// prior panic mid-critical-section) is recovered from rather than propagated.
-fn plugins_lock() -> &'static std::sync::Mutex<()> {
-    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+/// Every registry read-modify-write here runs inside this.
+///
+/// It replaced a `OnceLock<Mutex<()>>` whose comment had the right reasoning —
+/// two unlocked writers each doing load -> mutate -> save let "last write
+/// wins" silently drop the loser's change — and the wrong scope: a Mutex is
+/// process-wide, and every GitCat window is a separate OS process (#60), so it
+/// protected nothing across windows. See `registry_lock`'s own module doc.
+///
+/// `pub` so `tests/registry_lock.rs` can drive the real thing from separate
+/// child processes, which is the only place this bug was ever visible.
+pub fn with_plugins_lock<T>(store: &Path, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    crate::registry_lock::with_registry_lock(store, "err_plugins.could_not_lock", f)
 }
 
 /// `pub` for the same integration-testability reason as [`load_from`]. Writes
@@ -1240,14 +1244,23 @@ pub fn list_plugins(app: AppHandle<Wry>) -> Result<Vec<Plugin>, String> {
 }
 
 /// Enable/disable an installed plugin. JS: `commands.setPluginEnabled(id, enabled)`.
+///
+/// `async fn` + `run_blocking` for the same reason every other write command
+/// here is: it now takes a lock that another PROCESS can be holding, and a
+/// command that can wait must not be waiting on the thread that draws the
+/// window (see `blocking.rs`).
 #[tauri::command]
 #[specta::specta]
-pub fn set_plugin_enabled(app: AppHandle<Wry>, id: String, enabled: bool) -> Result<(), String> {
-    let _guard = plugins_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let store = plugins_path(&app)?;
-    let mut plugins = load_from(&store)?;
-    set_enabled_in(&mut plugins, &id, enabled)?;
-    save_to(&store, &plugins)
+pub async fn set_plugin_enabled(app: AppHandle<Wry>, id: String, enabled: bool) -> Result<(), String> {
+    crate::blocking::run_blocking(move || {
+        let store = plugins_path(&app)?;
+        with_plugins_lock(&store, || {
+            let mut plugins = load_from(&store)?;
+            set_enabled_in(&mut plugins, &id, enabled)?;
+            save_to(&store, &plugins)
+        })
+    })
+    .await
 }
 
 /// Read and validate a manifest WITHOUT installing it (#68), so the app can
@@ -1282,32 +1295,40 @@ pub async fn preview_plugin_manifest(path: String) -> Result<Plugin, String> {
 /// Returns the installed plugin. JS: `commands.installPluginFromPath(path)`.
 #[tauri::command]
 #[specta::specta]
-pub fn install_plugin_from_path(app: AppHandle<Wry>, path: String) -> Result<Plugin, String> {
-    let _guard = plugins_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let store = plugins_path(&app)?;
-    install_from(&store, Path::new(&path))
+pub async fn install_plugin_from_path(app: AppHandle<Wry>, path: String) -> Result<Plugin, String> {
+    crate::blocking::run_blocking(move || {
+        let store = plugins_path(&app)?;
+        with_plugins_lock(&store, || install_from(&store, Path::new(&path)))
+    })
+    .await
 }
 
 /// Re-read an installed plugin's manifest from disk and replace its entry (#66).
 /// Preserves `enabled`. JS: `commands.updatePlugin(id)`.
 #[tauri::command]
 #[specta::specta]
-pub fn update_plugin(app: AppHandle<Wry>, id: String) -> Result<Plugin, String> {
-    let _guard = plugins_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let store = plugins_path(&app)?;
-    update_from(&store, &id)
+pub async fn update_plugin(app: AppHandle<Wry>, id: String) -> Result<Plugin, String> {
+    crate::blocking::run_blocking(move || {
+        let store = plugins_path(&app)?;
+        with_plugins_lock(&store, || update_from(&store, &id))
+    })
+    .await
 }
 
 /// Uninstall a plugin (removes it from the registry only; never touches the
 /// original manifest file on disk). JS: `commands.removePlugin(id)`.
 #[tauri::command]
 #[specta::specta]
-pub fn remove_plugin(app: AppHandle<Wry>, id: String) -> Result<(), String> {
-    let _guard = plugins_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let store = plugins_path(&app)?;
-    let mut plugins = load_from(&store)?;
-    remove_from(&mut plugins, &id)?;
-    save_to(&store, &plugins)
+pub async fn remove_plugin(app: AppHandle<Wry>, id: String) -> Result<(), String> {
+    crate::blocking::run_blocking(move || {
+        let store = plugins_path(&app)?;
+        with_plugins_lock(&store, || {
+            let mut plugins = load_from(&store)?;
+            remove_from(&mut plugins, &id)?;
+            save_to(&store, &plugins)
+        })
+    })
+    .await
 }
 
 /// Load an ENABLED plugin's Tama skin (PER-47). Resolves the plugin by id,
@@ -2029,7 +2050,9 @@ mod tests {
     fn concurrent_writers_never_lose_a_write() {
         // Mirrors repo_registry.rs's own concurrency regression test: several
         // threads each append a distinct plugin under the shared lock; every
-        // entry must survive (no unlocked "last write wins" drop).
+        // entry must survive (no unlocked "last write wins" drop). The
+        // cross-PROCESS version of this — the case #60 was actually about, and
+        // the one threads cannot reach — is tests/registry_lock.rs.
         let dir = temp_dir("concurrent");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(FILE_NAME);
@@ -2039,10 +2062,12 @@ mod tests {
             for i in 0..WRITERS {
                 let path = &path;
                 scope.spawn(move || {
-                    let _guard = plugins_lock().lock().unwrap_or_else(|e| e.into_inner());
-                    let mut plugins = load_from(path).expect("load under lock should succeed");
-                    plugins.push(sample_plugin(&format!("plugin{i}")));
-                    save_to(path, &plugins).expect("save under lock should succeed");
+                    with_plugins_lock(path, || {
+                        let mut plugins = load_from(path)?;
+                        plugins.push(sample_plugin(&format!("plugin{i}")));
+                        save_to(path, &plugins)
+                    })
+                    .expect("the locked read-modify-write should succeed");
                 });
             }
         });

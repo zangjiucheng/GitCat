@@ -23,6 +23,7 @@ export default {
   could_not_serialize: "无法序列化：{detail}",
   could_not_write: "无法写入 {path}：{detail}",
   could_not_finalize: "无法完成写入 {path}：{detail}",
+  could_not_lock: "无法锁定仓库列表（{path}）：{detail}",
 
   // repo_files.rs —— .gitignore/.mailmap 编辑器
   not_editable_repo_file: "{name} 不是可编辑的仓库文件（仅支持 .gitignore 和 .mailmap）。",
