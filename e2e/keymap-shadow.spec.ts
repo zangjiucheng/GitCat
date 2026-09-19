@@ -64,7 +64,7 @@ test("the registry is loaded, populated and entirely in shadow mode", async ({ p
   // deliberately flipped. Keeping this an explicit list rather than a predicate
   // means flipping one more shows up as a diff here, which is the whole point.
   const ACCELERATOR_ONLY = ["branch.new", "window.new", "terminal.toggle"];
-  const LIVE = ["modal.close", "pane.graph", "pane.sidebar", "pane.detail", "workdir.commit", "workdir.amend", "workdir.stage", "workdir.unstage", "workdir.stageAll", "workdir.unstageAll", "workdir.discard", "canvas.menu", "canvas.down", "canvas.up", "canvas.first", "canvas.last", "canvas.deselect", "sidebar.filter", "sidebar.menu", "sidebar.checkout", "detail.tab", "workdir.tab"];
+  const LIVE = ["modal.close", "pane.graph", "pane.sidebar", "pane.detail", "workdir.commit", "workdir.amend", "workdir.stage", "workdir.unstage", "workdir.stageAll", "workdir.unstageAll", "workdir.discard", "canvas.menu", "canvas.down", "canvas.up", "canvas.first", "canvas.last", "canvas.deselect", "sidebar.filter", "sidebar.menu", "sidebar.checkout", "detail.tab", "workdir.tab", "terminal.focusOut"];
   const notShadow = dump!.bindings.filter((b) => b.mode !== "shadow").map((b) => b.id).sort();
   expect(notShadow).toEqual([...ACCELERATOR_ONLY, ...LIVE].sort());
 });

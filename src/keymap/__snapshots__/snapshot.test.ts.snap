@@ -29,6 +29,7 @@ search.pickaxe  global  MS|code:KeyF  both  shadow  -  -  -  -  repoOpen,notText
 sidebar.checkout  sidebar  |key:c  js  live  -  -  -  -  -  -  vimnav.checkout
 sidebar.filter  sidebar  |key:f  js  live  -  -  -  -  -  -  vimnav.filter_refs_key
 sidebar.menu  sidebar  |key:x S|key:F10  js  live  -  -  -  -  -  -  vimnav.row_menu
+terminal.focusOut  terminal  S|key:Escape  js  live  -  -  -  allowInTextInput  -  -  terminal.focus_out
 terminal.toggle  global  M|code:Backquote  accelerator  live  -  toggle  -  -  -  open-terminal  menu.open_terminal
 view.focusMode  global  M|code:Backslash MS|code:Backslash  js  shadow  -  toggle  -  -  notTextInput  -  vimnav.focus_mode
 window.new  global  M|code:KeyN  accelerator  live  -  -  -  -  -  new-window  menu.new_window
