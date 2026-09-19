@@ -6,11 +6,14 @@
   import { Terminal as XTerm } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
+  import { keymap } from "@/keymap/registry.ts";
+  import type { ScopeHandle } from "@/keymap/scopes.ts";
 
   let containerEl: HTMLDivElement;
   let xterm: XTerm | undefined;
   let fitAddon: FitAddon | undefined;
   let resizeObserver: ResizeObserver | undefined;
+  let scope: ScopeHandle | null = null;
 
   // Reads the app's own CSS custom properties (same `getComputedStyle`
   // technique legacy/main.ts's readTheme() uses for the canvas) so the
@@ -50,6 +53,30 @@
     xterm.loadAddon(fitAddon);
     xterm.open(containerEl);
     xterm.onData((data) => terminalCtrl.write(data));
+
+    // #142. Two different listener PHASES shadow the shell, so this is half the
+    // fix and the `terminal` scope (scopedefs.ts) is the other half.
+    //
+    // The keymap dispatcher listens at window CAPTURE (host.ts:50), upstream of
+    // this entirely — nothing done here can stop it, which is what the modal
+    // scope is for. Everything else in the app listens on the BUBBLE phase
+    // (`svelte:window on:keydown` in the islands, `document.addEventListener`
+    // in legacy/main.ts — verified: there is not one capture listener among
+    // them). xterm attaches its own handler to the helper textarea and does not
+    // stop those, so `Ctrl+K` in the shell reached the app. stopPropagation
+    // here is upstream of every one of them, at once, instead of a `.term-drawer`
+    // bail per handler.
+    //
+    // Returning true means "xterm, go ahead and process this" — the shell still
+    // gets the key. The exception is the one key that has to leave: returning
+    // false makes xterm ignore it and lets it propagate, so the app can act on
+    // it (see actions/terminal.ts).
+    xterm.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown") return true;
+      if (e.key === "Escape" && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) return false;
+      e.stopPropagation();
+      return true;
+    });
     // attachOutput, not a bare assignment: anything the shell said before this
     // component existed is still queued, and this is what flushes it.
     terminalCtrl.attachOutput((bytes) => xterm?.write(bytes));
@@ -71,10 +98,40 @@
     });
     resizeObserver.observe(containerEl);
 
-    return () => themeObserver.disconnect();
+    // Scope activation follows FOCUS, not the drawer's open state: with the
+    // drawer open but the graph focused, app chords must still work. focusin /
+    // focusout bubble, so one pair on the container covers xterm's helper
+    // textarea without reaching into its internals.
+    //
+    // No autoFocus (focus is already here, that is what just fired), no
+    // restoreFocus (focusout means something else has already taken it, and
+    // putting it back would fight the user), no trapTab (ScopeOpts' own doc:
+    // "the terminal must hand it to the shell").
+    const onFocusIn = () => {
+      scope ??= keymap.pushScope("terminal", { el: containerEl, autoFocus: false, restoreFocus: false, trapTab: false });
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      // relatedTarget still inside the drawer means focus moved WITHIN the
+      // terminal (the close button, the resize handle), not out of it.
+      if (containerEl.contains(e.relatedTarget as Node | null)) return;
+      scope?.release();
+      scope = null;
+    };
+    containerEl.addEventListener("focusin", onFocusIn);
+    containerEl.addEventListener("focusout", onFocusOut);
+
+    return () => {
+      themeObserver.disconnect();
+      containerEl.removeEventListener("focusin", onFocusIn);
+      containerEl.removeEventListener("focusout", onFocusOut);
+    };
   });
 
   onDestroy(() => {
+    // Before the xterm is disposed: a scope left on the stack would keep the
+    // walk terminating at a terminal that no longer exists.
+    scope?.release();
+    scope = null;
     resizeObserver?.disconnect();
     terminalCtrl.onData = null;
     xterm?.dispose();
@@ -134,6 +191,12 @@
   <div class="term-drag" role="separator" aria-orientation="horizontal" onpointerdown={onDragStart}></div>
   <div class="term-head">
     <span class="term-title"><span class="term-ic" aria-hidden="true">&gt;_</span> {t("terminal.title")}</span>
+    <!-- #142 asked for a way out that is "documented, discoverable". The help
+         sheet covers documented (terminal.focusOut carries a help entry);
+         this is discoverable — it is in front of the one person who needs it,
+         at the moment they need it. Escape is not offered because the shell
+         owns it. -->
+    <span class="term-hint mut">{t("terminal.focus_out_hint")} <kbd>⇧esc</kbd></span>
     {#if terminalCtrl.exited}
       <span class="term-exited">{t("terminal.exited")}</span>
       <button class="term-btn" onclick={() => terminalCtrl.restart()}>&#8635; {t("terminal.restart_btn")}</button>

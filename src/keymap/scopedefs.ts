@@ -47,7 +47,17 @@ export function defineScopes(): void {
   keymap.defineScope({ id: "danger", rank: 300, modal: true, escape: "own", owner: "#dangerScrim / TamaConfirm" });
 
   // The terminal takes Escape NATIVELY: it is a real character readline and vim
-  // both want, and Terminal.svelte registers no attachCustomKeyEventHandler, so
-  // anything the registry swallows here never reaches the shell.
-  keymap.defineScope({ id: "terminal", rank: 40, escape: "native", owner: "Terminal.svelte" });
+  // both want, so anything the registry swallowed here would never reach the
+  // shell. `terminal.focusOut` (Shift+Escape) is the way back out instead.
+  //
+  // `modal` is what makes the rest of that true. Without it the walk continues
+  // past this scope into the pane scopes and `global`, so every app chord still
+  // competed with the shell — #142's third item, which the issue proposed
+  // fixing by adding a `.term-drawer` bail to each global binding one at a
+  // time. One was added (palette.toggle's `notInTerminal`); nineteen were not,
+  // and every binding written afterwards would have had to remember. Declaring
+  // the scope modal is the same fix once, in the place that already exists to
+  // express it. Rank 40 keeps it above the pane scopes and below every dialog,
+  // so a modal opened OVER the terminal still wins.
+  keymap.defineScope({ id: "terminal", rank: 40, modal: true, escape: "native", owner: "Terminal.svelte" });
 }
