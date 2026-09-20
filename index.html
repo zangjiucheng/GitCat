@@ -920,10 +920,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .gpg.none{color:var(--muted);background:var(--bg)}
 .gpg.bad{color:var(--danger);background:color-mix(in srgb,var(--danger) 15%,transparent)}
 .who-split{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border-radius:var(--r-panel);overflow:hidden;margin-top:4px}
-.who{background:var(--panel);padding:9px 11px}
+.who{background:var(--panel);padding:9px 11px;min-width:0}
 .who h4{margin:0 0 5px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
-.who .nm{font-weight:700;font-size:12.5px}
-.who .em{font-family:var(--mono);font-size:10.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.who .nm{font-weight:700;font-size:12.5px;overflow-wrap:anywhere}
+.who .em{font-family:var(--mono);font-size:10.5px;color:var(--muted);overflow-wrap:anywhere}
 .who .dt{font-size:11px;color:var(--muted);margin-top:3px}
 .who .dt-abs{font-size:10px;color:var(--muted);opacity:.7;margin-top:1px}
 .who.differ{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--warning) 45%,transparent)}
@@ -939,6 +939,22 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    what that one wants. */
 .who-split>.who:first-child{border-top-left-radius:var(--r-panel);border-bottom-left-radius:var(--r-panel)}
 .who-split>.who:last-child{border-top-right-radius:var(--r-panel);border-bottom-right-radius:var(--r-panel)}
+/* Author and Committer stack once the panel is too narrow to hold two readable
+   columns. Sized against the CONTAINER and not the viewport: this panel has its
+   own splitter, so a user drags it narrow at any window size, and a viewport
+   media query would miss exactly the case they created. `:has()` puts the
+   containment on whatever directly holds the pair — a <section> in the detail
+   panel, .pl-result in Plumbing's object inspector — so both get it without
+   either component's markup changing, and so does any third call site.
+   The corner rules flip with the axis — first-child owns the outer corners at
+   the TOP now, not the left. With one child (`.single`) both still apply and
+   round all four, same as the horizontal case. */
+:has(>.who-split){container-type:inline-size}
+@container (max-width:280px){
+  .who-split{grid-template-columns:1fr}
+  .who-split>.who:first-child{border-radius:var(--r-panel) var(--r-panel) 0 0}
+  .who-split>.who:last-child{border-radius:0 0 var(--r-panel) var(--r-panel)}
+}
 .refs-here{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
 .d-lab{margin:0 0 6px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
 /* Section-label row with right-aligned tree controls (Collapse/Expand-all) —
