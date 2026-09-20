@@ -195,8 +195,24 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    negotiates the actual leftover space, not this. min-width keeps it usable
    if the window is narrow enough that .tb-left/.tb-right can't both fit
    their content at full size. */
-.cmd-hint{display:flex;align-items:center;gap:8px;width:320px;min-width:200px;
+.cmd-hint{display:flex;align-items:center;gap:8px;width:320px;min-width:148px;
   padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--muted);cursor:text}
+/* The hint is ONE line, always. Without these the label wrapped as soon as the
+   bar squeezed it (from a ~1000px window down), and a two-line hint is 52px
+   tall inside a 46px bar — it did not just look cramped, it outgrew the bar it
+   sits in. Truncating is the right trade here because the text is a HINT: the
+   affordance is the box and the ⌘K next to it, and "Search commits, ref…" says
+   as much as the full sentence does.
+   min-width:0 is what lets it truncate at all — a flex item will not shrink
+   below its own min-content width without it, which for this label is the
+   longest word, and that is the same defaulting that hid the Committer column
+   in the detail panel (see .who's own min-width:0).
+   The ⌘K keeps its size: it is the part that tells you what the box DOES, so
+   the label gives up its space first. That is also why .cmd-hint's own
+   min-width drops to 148px — the topbar comment above says search yields
+   before either side does, and 200px was yielding less than it could. */
+.cmd-hint>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cmd-hint kbd{flex:none}
 .cmd-hint kbd{margin-left:auto;font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:5px;
   background:var(--elevated);border:1px solid var(--border);color:var(--muted)}
 /* Fetch/Pull/Push as ONE segmented control (shared frame, internal
