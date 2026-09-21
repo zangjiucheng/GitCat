@@ -49,7 +49,29 @@
     }
   }
 
+  // How many rows carry a number. Nine because ⌥0 would have to mean "the
+  // tenth", and a shortcut you have to think about is not one.
+  const QUICK_MAX = 9;
+
   function onInputKeydown(e: KeyboardEvent) {
+    // ⌥1-9 jumps straight to a row. `e.code`, NOT `e.key`: on macOS ⌥1 is a
+    // dead-key combination that reports `key: "¡"` (⌥2 "™", ⌥3 "£" …), so a
+    // key-based test matches nothing on the one platform where the modifier
+    // is most natural. preventDefault is what stops those characters being
+    // typed into the field.
+    //
+    // ⌥ and not ⌘ because ⌘1/2/3 are live pane-focus chords claimed at window
+    // CAPTURE (keymap/host.ts), upstream of this handler — taking them back
+    // would mean pushing the `palette` scope, which is defined in
+    // scopedefs.ts and, like the terminal's was, never activated. That is a
+    // real gap and a bigger change than this.
+    if (e.altKey && !e.metaKey && !e.ctrlKey && /^Digit[1-9]$/.test(e.code)) {
+      const n = Number(e.code.slice(5));
+      const it = cmdkCtrl.results[n - 1];
+      e.preventDefault();
+      if (it) cmdkCtrl.jump(it);
+      return;
+    }
     if (e.key === "ArrowDown") {
       e.preventDefault();
       cmdkCtrl.setSel(cmdkCtrl.sel + 1);
@@ -137,6 +159,13 @@
       {:else}
         {#each cmdkCtrl.results as it, i (it.type + ":" + (it.type === "ref" ? it.name : it.type === "action" ? it.id : it.row))}
           <div class="cmdk-row" class:on={i === cmdkCtrl.sel} data-i={i} role="option" aria-selected={i === cmdkCtrl.sel}>
+            <!-- The shortcut has to be visible to be a shortcut. aria-hidden
+                 because a screen reader already announces position in the
+                 listbox, and "1" read before every row would be noise.
+                 Always rendered, EMPTY past the ninth: the span is what holds
+                 the gutter open, and a list whose chips slide left at row ten
+                 reads as a rendering bug rather than as "no shortcut here". -->
+            <span class="cmdk-num" aria-hidden="true">{i < QUICK_MAX ? i + 1 : ""}</span>
             {#if it.type === "ref"}
               <span class="kind {it.kind}">{it.kind === "head" ? "branch" : it.kind}</span>
               <div class="main"><div class="ttl">{@html cmdkCtrl.hl(it.name)}</div></div>
