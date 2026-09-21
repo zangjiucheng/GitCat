@@ -1881,6 +1881,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cmdk-list{flex:1;min-height:0;overflow:auto;padding:6px}
 .cmdk-row{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:var(--r-control);cursor:pointer;scroll-margin:6px;transition:background-color .1s}
 .cmdk-row.on{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+/* ⌥1-9 quick-jump. A fixed 14px gutter so the kind chips below still line up
+   whether or not a row has a number — the tenth row onward has none, and a
+   list that shifts sideways at row ten would read as a rendering bug. Dim
+   until its row is current, so nine digits do not compete with the result
+   text; see Cmdk.svelte's own comment on why ⌥ and not ⌘. */
+.cmdk-num{flex:none;width:14px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--muted);opacity:.55}
+.cmdk-row.on .cmdk-num{opacity:1;color:var(--accent)}
 .cmdk-row .kind{flex:none;width:54px;text-align:center;font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.4px;
   color:var(--muted);border:1px solid var(--border);border-radius:var(--r-chip);padding:2px 0}
 .cmdk-row .kind.head{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 50%,var(--border))}
