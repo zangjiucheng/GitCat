@@ -66,6 +66,34 @@ pub struct GitOut {
 /// reached); a non-zero git exit is still a successful call yielding
 /// `Ok(GitOut{ok:false})` so callers can surface git's own stderr instead of
 /// turning it into a panic.
+/// Run `git <args…>` with NO `-C` and no repository.
+///
+/// For the operations that are about the USER rather than a repo —
+/// `config --global` above all. [`run_git`] always passes `-C <repo>`, which
+/// makes git chdir before doing anything, and that is a dependency a
+/// `--global` write should not have: on Windows a process cannot hold a UNC
+/// path as its working directory, so `git -C //wsl.localhost/... config
+/// --global …` can fail for a reason that has nothing to do with what it was
+/// asked to write (#186). Dropping `-C` removes the failure mode rather than
+/// working around it.
+pub fn run_git_anywhere(args: &[&str]) -> Result<GitOut, String> {
+    let mut cmd = Command::new("git");
+    cmd.no_console_window().args(args);
+    let out = output_with_timeout(cmd, SUBPROCESS_TIMEOUT).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::TimedOut {
+            format!("git timed out after {SUBPROCESS_TIMEOUT:?}")
+        } else {
+            format!("failed to run git: {e}")
+        }
+    })?;
+    Ok(GitOut {
+        ok: out.status.success(),
+        stdout: String::from_utf8_lossy(&out.stdout).trim_end().to_string(),
+        stderr: String::from_utf8_lossy(&out.stderr).trim_end().to_string(),
+        code: out.status.code().unwrap_or(-1),
+    })
+}
+
 pub fn run_git(repo: &str, args: &[&str]) -> Result<GitOut, String> {
     let mut cmd = Command::new("git");
     cmd.no_console_window().arg("-C").arg(repo).args(args);
@@ -764,4 +792,46 @@ fn oplog_refs(repo: &Repository, backup_ref: &str) -> BTreeMap<String, String> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod anywhere_tests {
+    use super::*;
+
+    /// The distinction #186 turned on, demonstrated without needing WSL.
+    ///
+    /// `run_git` always prefixes `-C <repo>`, so it cannot run anything if
+    /// that directory is not somewhere git can chdir to. A `--global`
+    /// operation has no business caring: it reads and writes the USER's
+    /// config. On Windows a process cannot hold a UNC path as its working
+    /// directory, which is how `git -C //wsl.localhost/... config --global`
+    /// could fail for a reason unrelated to what it was asked to do — and a
+    /// missing directory reproduces the same shape on any platform.
+    #[test]
+    fn a_global_config_read_works_without_a_repo_and_fails_with_an_unusable_one() {
+        let nowhere = std::env::temp_dir().join("gitcat-no-such-dir-for-run-git");
+        let _ = std::fs::remove_dir_all(&nowhere); // must NOT exist
+        let args = ["config", "--global", "--get-all", "safe.directory"];
+
+        let with_c = run_git(&nowhere.to_string_lossy(), &args);
+        let cwd_failed = match &with_c {
+            Err(_) => true,                 // git could not be spawned into it
+            Ok(o) => !o.stderr.is_empty(),  // or spawned and refused to chdir
+        };
+        let shown = match &with_c {
+            Err(e) => format!("Err({e})"),
+            Ok(o) => format!("ok={} code={} stderr={:?}", o.ok, o.code, o.stderr),
+        };
+        assert!(cwd_failed, "run_git should not have been able to work from a directory that is not there: {shown}");
+
+        // The same request, with no -C, is answerable. A non-zero exit is
+        // fine and expected when the key is simply unset — what matters is
+        // that git RAN and said so itself, rather than dying on the cwd.
+        let anywhere = run_git_anywhere(&args).expect("git must be runnable without a repository");
+        assert!(
+            anywhere.stderr.is_empty(),
+            "a --global read should not complain about anything; got {:?}",
+            anywhere.stderr
+        );
+    }
 }
