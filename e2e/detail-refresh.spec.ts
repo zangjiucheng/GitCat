@@ -123,6 +123,11 @@ test("the working tree keeps the diff you were reading across a refresh", async 
   await page.goto("/");
   await page.locator(".repo-pick").click();
   await page.locator(".db-add").click();
+  // Without this, ⌘⇧U can fire before openRepo()'s async chain has set
+  // CUR_REPO, which makes selectWorkdir() a no-op — invisible at low CI load
+  // (the chain wins the race anyway) but the exact shape of the flake seen
+  // under load in #178: the tabs never appear because nothing ever opened.
+  await expect(page.locator("#cntLocal")).toHaveText("1");
 
   await page.keyboard.press("Control+Shift+U");
   const tabs = page.locator("#detail .d-tabs .d-tab");
