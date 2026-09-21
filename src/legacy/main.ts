@@ -3330,7 +3330,7 @@ async function openRepo(path){
     // Fire-and-forget observers — never blocks the open (own async + try/catch).
     pluginHooksCtrl.onRepoOpened(path);
     return true;
-  }catch(e){ setGraphLoadingPill(false); Tama.warn(t("legacy.open_repo_failed",{error:e}),5000); console.error(e); return false; }
+  }catch(e){ setGraphLoadingPill(false); Tama.warn(t("legacy.open_repo_failed",{error:be(e)}),5000); console.error(e); return false; }
   finally{ openRepoBusy=false; if(pickBtn){ pickBtn.disabled=false; if(pickSpinner) pickSpinner.remove(); } if(graphLoading) graphLoading.style.display="none"; }
 }
 /* ------------------------------------------------------------
