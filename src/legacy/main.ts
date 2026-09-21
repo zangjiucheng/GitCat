@@ -319,7 +319,7 @@ const perf={last:performance.now(),frames:0,accum:0,fps:0,lastDrawMs:0};
 // so it always measures with whatever canvas/font is current. Defined once
 // rather than per call: these run per visible row, per frame.
 const measureCtx=(t)=>ctx.measureText(t).width;
-let dirty=true, lastInteracting=false, lowRes=false, fastScroll=false, pendingClear=false;
+let dirty=true, lastInteracting=false, lowRes=false, pendingClear=false;
 let prevScrollTop=0, prevPanX=0, prevZoom=1;   // last frame's scroll/pan/zoom, to detect real motion (see tick's lowRes gate)
 // Scroll-blit state (see the `oc` offscreen buffer above and tick()/blitScroll()).
 // canvasSt = the scrollTop the buffer currently holds (state.scrollTop runs a
@@ -654,13 +654,7 @@ function renderContent(st, rowLo, rowHi, strip){
       cx=drawGutterChips(r,cx,chipBounds.xLimit,y,col,chipBounds.gap);
       if(cx>cx0) cx+=MSG_TEXT_PAD;
     }
-    // Skip the per-row message/author/sha text while scrolling FAST (fastScroll):
-    // glyph rasterisation is the single biggest per-frame cost on a software-
-    // rendered canvas, and at this speed the text is an unreadable blur anyway
-    // (motion blur + reduced resolution). It snaps back in the instant scrolling
-    // slows/settles. The lane graph, dots and branch labels still draw so the
-    // structure stays legible while moving.
-    if(rowH>=15 && !fastScroll){
+    if(rowH>=15){
       // Reserve room for BOTH the author preview and the sha (AUTHOR_GUTTER
       // below) — previously only the sha itself (96px) was reserved, so
       // adding the author name here without widening this would have let a
@@ -2728,10 +2722,14 @@ function tick(now){
   // resolution and is kept smooth by blitScroll() instead, so its text stays
   // readable (the whole point of this change). Blit is gated on full DPR, so
   // forcing half-DPR during vertical scroll would silently disable it.
+  // Text is never dropped to keep up, either. A `fastScroll` flag used to skip
+  // the per-row message/author/sha glyphs during a fast scroll; it was switched
+  // off when blit landed, because blit keeps full detail and pan/zoom FULL
+  // frames use lowRes instead. It then sat at `false` on every path, so the
+  // skip never ran again and the branch was deleted (#89).
   if(panning||zooming) lowRes=true;
   else if(state.stress||pendScroll>0.4||dScroll>0.15) lowRes=false;   // vertical scroll → full res for the blit path
   else if(pend<3) lowRes=false;                                        // settled
-  fastScroll=false;   // blit keeps full detail; pan/zoom FULL frames use lowRes instead of dropping text
   setRenderDpr(lowRes?Math.max(0.5,view.dpr*INTERACT_RES):view.dpr);
   if(dirty){
     // Scroll-blit only when the frame differs from the buffer by a pure vertical
