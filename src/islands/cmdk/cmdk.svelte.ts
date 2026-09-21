@@ -38,6 +38,8 @@ import { settingsCtrl } from "../settings/settings.svelte.ts";
 import { danglingRecoveryCtrl } from "../danglingrecovery/danglingrecovery.svelte.ts";
 import { repoFilesCtrl } from "../repofiles/repofiles.svelte.ts";
 import { filterRepoCtrl } from "../filterrepo/filterrepo.svelte.ts";
+import { keymap } from "@/keymap/registry.ts";
+import type { ScopeHandle } from "@/keymap/scopes.ts";
 import { multimergeCtrl } from "../multimerge/multimerge.svelte.ts";
 import { aboutCtrl } from "../about/about.svelte.ts";
 import { updaterCtrl } from "../updater/updater.svelte.ts";
@@ -612,6 +614,19 @@ class CmdkState {
     }
   }
 
+  // The palette's keyboard scope while it is open (#184).
+  //
+  // scopedefs.ts has declared this scope — rank 200, modal — since the keymap
+  // landed, and nothing ever pushed it, so the contract was inert: with only
+  // `global` on the stack there was nothing above the pane chords to stop
+  // them, and ⌘1 moved focus to the canvas BEHIND an open palette, leaving a
+  // modal on screen that could no longer be typed into.
+  //
+  // Pushed from the controller rather than the view, per pushScope's own doc:
+  // a view-side push lands after the dynamic import resolves, which for a
+  // lazily mounted island is a whole chunk fetch of open-but-unscoped.
+  private scope: ScopeHandle | null = null;
+
   show() {
     if (this.cacheG !== bridge.G) {
       this.items = this.buildCmdIndex();
@@ -619,6 +634,13 @@ class CmdkState {
       this.cacheG = bridge.G;
     }
     this.open = true;
+    // No `el`: the panel is the view's, and this scope does not need to trap
+    // Tab or focus into anything — the input is already focused by the time
+    // this runs. No restoreFocus either, and that one is not a nicety:
+    // `jump()` calls close() BEFORE running the action or selecting the row,
+    // so restoring focus on release would land it in the middle of whatever
+    // the palette was used to do.
+    this.scope ??= keymap.pushScope("palette", { restoreFocus: false });
     this.filter("");
     // Lazily pull in plugin-contributed palette commands AND panels, then
     // re-run the current filter so they appear (both cached after the first
@@ -633,6 +655,8 @@ class CmdkState {
 
   close() {
     this.open = false;
+    this.scope?.release();
+    this.scope = null;
   }
 
   toggle() {

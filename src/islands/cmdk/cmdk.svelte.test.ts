@@ -27,6 +27,7 @@ vi.mock("../../legacy/bridge", () => ({
 }));
 
 import * as bridge from "../../legacy/bridge";
+import { defineScopes } from "../../keymap/scopedefs.ts";
 import { cmdkCtrl } from "./cmdk.svelte.ts";
 import { plumbing } from "../plumbing/plumbing.svelte.ts";
 
@@ -35,7 +36,17 @@ function setBackendGraph(rows: any[]) {
   (bridge as any).BACKEND = { rows };
 }
 
+// show() pushes the `palette` keyboard scope (#184), and pushScope throws on a
+// scope nothing has defineScope()d. The real app does that at boot; a unit
+// test has no boot, so it happens here — ONCE, at module scope, because
+// defineScope rejects a duplicate id rather than ignoring it.
+defineScopes();
+
 function resetCmdk() {
+  // close(), not `open = false`: the flag is the view's business, the SCOPE is
+  // the registry's, and leaving one pushed per test would stack activations
+  // that outlive the case that made them.
+  cmdkCtrl.close();
   cmdkCtrl.open = false;
   cmdkCtrl.query = "";
   cmdkCtrl.results = [];
