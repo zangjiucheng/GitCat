@@ -36,7 +36,7 @@ import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
 // i18n for the vanilla top-bar/loading chrome. This module isn't Svelte-
 // reactive, so t() is called imperatively (applyStaticI18n below + the busy
 // labels in doFetch/doPull/doPush) and re-run on i18nEvents "change".
-import { t, be, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
+import { t, be, beReject, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
 import { fitEllipsis } from "./fitellipsis.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -175,7 +175,14 @@ let graphGeneration=0;
 let pendingReselect=null;
 export let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it — exported (live binding) for the Svelte islands via bridge.ts
 const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
-const tinvoke = (cmd, args={}) => window.__TAURI__.core.invoke(cmd, args);
+// Rejections are RESOLVED here, at the one seam every raw command call in
+// this file passes through. A command declared `Result<_, String>` rejects
+// with that string, so a keyed backend error reaches `.catch` as
+// "i18n:<key>\x1f..." and every handler that prints it prints the plumbing
+// -- which is what #186 looked like. Doing it here rather than at each of
+// the 15 call sites means a new one cannot forget. beReject only touches
+// strings, so an Error rejection keeps its stack for console.error.
+const tinvoke = (cmd, args={}) => window.__TAURI__.core.invoke(cmd, args).catch(e => { throw beReject(e); });
 let undoBusy=false;
 function relTime(t){ let s=Math.max(0,Math.floor(Date.now()/1000-t));
   if(s<60)return s+"s ago"; let m=(s/60)|0; if(m<60)return m+"m ago"; let h=(m/60)|0; if(h<24)return h+"h ago";
