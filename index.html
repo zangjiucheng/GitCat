@@ -195,8 +195,24 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    negotiates the actual leftover space, not this. min-width keeps it usable
    if the window is narrow enough that .tb-left/.tb-right can't both fit
    their content at full size. */
-.cmd-hint{display:flex;align-items:center;gap:8px;width:320px;min-width:200px;
+.cmd-hint{display:flex;align-items:center;gap:8px;width:320px;min-width:148px;
   padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--muted);cursor:text}
+/* The hint is ONE line, always. Without these the label wrapped as soon as the
+   bar squeezed it (from a ~1000px window down), and a two-line hint is 52px
+   tall inside a 46px bar — it did not just look cramped, it outgrew the bar it
+   sits in. Truncating is the right trade here because the text is a HINT: the
+   affordance is the box and the ⌘K next to it, and "Search commits, ref…" says
+   as much as the full sentence does.
+   min-width:0 is what lets it truncate at all — a flex item will not shrink
+   below its own min-content width without it, which for this label is the
+   longest word, and that is the same defaulting that hid the Committer column
+   in the detail panel (see .who's own min-width:0).
+   The ⌘K keeps its size: it is the part that tells you what the box DOES, so
+   the label gives up its space first. That is also why .cmd-hint's own
+   min-width drops to 148px — the topbar comment above says search yields
+   before either side does, and 200px was yielding less than it could. */
+.cmd-hint>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cmd-hint kbd{flex:none}
 .cmd-hint kbd{margin-left:auto;font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:5px;
   background:var(--elevated);border:1px solid var(--border);color:var(--muted)}
 /* Fetch/Pull/Push as ONE segmented control (shared frame, internal
@@ -920,10 +936,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .gpg.none{color:var(--muted);background:var(--bg)}
 .gpg.bad{color:var(--danger);background:color-mix(in srgb,var(--danger) 15%,transparent)}
 .who-split{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border-radius:var(--r-panel);overflow:hidden;margin-top:4px}
-.who{background:var(--panel);padding:9px 11px}
+.who{background:var(--panel);padding:9px 11px;min-width:0}
 .who h4{margin:0 0 5px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
-.who .nm{font-weight:700;font-size:12.5px}
-.who .em{font-family:var(--mono);font-size:10.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.who .nm{font-weight:700;font-size:12.5px;overflow-wrap:anywhere}
+.who .em{font-family:var(--mono);font-size:10.5px;color:var(--muted);overflow-wrap:anywhere}
 .who .dt{font-size:11px;color:var(--muted);margin-top:3px}
 .who .dt-abs{font-size:10px;color:var(--muted);opacity:.7;margin-top:1px}
 .who.differ{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--warning) 45%,transparent)}
@@ -939,6 +955,22 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    what that one wants. */
 .who-split>.who:first-child{border-top-left-radius:var(--r-panel);border-bottom-left-radius:var(--r-panel)}
 .who-split>.who:last-child{border-top-right-radius:var(--r-panel);border-bottom-right-radius:var(--r-panel)}
+/* Author and Committer stack once the panel is too narrow to hold two readable
+   columns. Sized against the CONTAINER and not the viewport: this panel has its
+   own splitter, so a user drags it narrow at any window size, and a viewport
+   media query would miss exactly the case they created. `:has()` puts the
+   containment on whatever directly holds the pair — a <section> in the detail
+   panel, .pl-result in Plumbing's object inspector — so both get it without
+   either component's markup changing, and so does any third call site.
+   The corner rules flip with the axis — first-child owns the outer corners at
+   the TOP now, not the left. With one child (`.single`) both still apply and
+   round all four, same as the horizontal case. */
+:has(>.who-split){container-type:inline-size}
+@container (max-width:280px){
+  .who-split{grid-template-columns:1fr}
+  .who-split>.who:first-child{border-radius:var(--r-panel) var(--r-panel) 0 0}
+  .who-split>.who:last-child{border-radius:0 0 var(--r-panel) var(--r-panel)}
+}
 .refs-here{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
 .d-lab{margin:0 0 6px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
 /* Section-label row with right-aligned tree controls (Collapse/Expand-all) —
@@ -1515,6 +1547,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .term-title{font-weight:600}
 .term-ic{font-family:var(--mono);font-weight:700;color:var(--accent)}
 .term-exited{color:var(--muted)}
+/* #142's discoverability half: the way OUT of the shell, shown where the
+   person who needs it is looking. Muted and after the title rather than
+   right-aligned, so it never competes with the exit/restart state that
+   appears in the same row. */
+.term-hint{display:inline-flex;align-items:center;gap:5px;font-size:11px}
+.term-hint kbd{font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:4px;
+  border:1px solid var(--border);background:var(--elevated);color:var(--muted)}
 .term-btn{font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;border:1px solid var(--border);
   background:var(--elevated);color:var(--text)}
 .term-btn:hover{border-color:var(--muted)}
@@ -1842,6 +1881,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .cmdk-list{flex:1;min-height:0;overflow:auto;padding:6px}
 .cmdk-row{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:var(--r-control);cursor:pointer;scroll-margin:6px;transition:background-color .1s}
 .cmdk-row.on{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+/* ⌥1-9 quick-jump. A fixed 14px gutter so the kind chips below still line up
+   whether or not a row has a number — the tenth row onward has none, and a
+   list that shifts sideways at row ten would read as a rendering bug. Dim
+   until its row is current, so nine digits do not compete with the result
+   text; see Cmdk.svelte's own comment on why ⌥ and not ⌘. */
+.cmdk-num{flex:none;width:14px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--muted);opacity:.55}
+.cmdk-row.on .cmdk-num{opacity:1;color:var(--accent)}
 .cmdk-row .kind{flex:none;width:54px;text-align:center;font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.4px;
   color:var(--muted);border:1px solid var(--border);border-radius:var(--r-chip);padding:2px 0}
 .cmdk-row .kind.head{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 50%,var(--border))}

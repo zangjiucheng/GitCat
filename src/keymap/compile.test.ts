@@ -50,7 +50,7 @@ describe("the real table compiles", () => {
   // The LIVE set, enumerated. Every other JS row must still be shadow, so
   // flipping one live is a visible decision in this list rather than a quiet
   // property change in a 300-line table. PR 1 shipped this list empty.
-  const LIVE = ["modal.close", "pane.graph", "pane.sidebar", "pane.detail", "workdir.commit", "workdir.amend", "workdir.stage", "workdir.unstage", "workdir.stageAll", "workdir.unstageAll", "workdir.discard", "canvas.menu", "canvas.down", "canvas.up", "canvas.first", "canvas.last", "canvas.deselect", "sidebar.filter", "sidebar.menu", "sidebar.checkout", "detail.tab", "workdir.tab"];
+  const LIVE = ["modal.close", "pane.graph", "pane.sidebar", "pane.detail", "workdir.commit", "workdir.amend", "workdir.stage", "workdir.unstage", "workdir.stageAll", "workdir.unstageAll", "workdir.discard", "canvas.menu", "canvas.down", "canvas.up", "canvas.first", "canvas.last", "canvas.deselect", "sidebar.filter", "sidebar.menu", "sidebar.checkout", "detail.tab", "workdir.tab", "terminal.focusOut"];
 
   it("keeps every JS binding in shadow mode except the enumerated live ones", () => {
     for (const x of BINDINGS) {
@@ -78,7 +78,10 @@ describe("the real table compiles", () => {
     // binding has to name a scope some controller actually pushes.
     // "modal" is pushed by an island; "workdir" is derived from focus by
     // panes.ts. Either way the scope is reachable, which is what matters.
-    const PUSHED = ["modal", "workdir", "graph", "sidebar", "detail"]; // grows as islands migrate
+    // "terminal" joined when Terminal.svelte started pushing it on focusin
+    // (#142) — until then the scope was DEFINED but never activated, which is
+    // exactly the dead weight this rule exists to catch.
+    const PUSHED = ["modal", "workdir", "graph", "sidebar", "detail", "terminal"]; // grows as islands migrate
     for (const id of LIVE) {
       const x = BINDINGS.find((y) => y.id === id)!;
       expect(x, id).toBeTruthy();
@@ -208,5 +211,34 @@ describe("dumpKeymap", () => {
     expect(lines).toHaveLength(BINDINGS.length);
     expect([...lines].sort()).toEqual(lines);
     expect(dumpKeymap(BINDINGS)).toBe(out);
+  });
+});
+
+// ── bare vs modified Escape (#142) ────────────────────────────────────────
+describe("Escape routing", () => {
+  // dispatch.ts's Escape branch fires escapeByScope on the KEY alone, without
+  // matchChord. That is fine for the dismiss gesture and wrong for a chord that
+  // merely contains Escape: routing Shift+Escape there made it unreachable,
+  // because the terminal scope's `escape: "native"` returns before the stack
+  // walk. The two files have to agree on "bare only" or a binding lands in a
+  // table nothing reads — which is what these pin.
+  const esc = (id: string, chord: string): Binding =>
+    ({ id, chords: [chord], scope: "terminal", dispatch: "js", run: () => undefined }) as unknown as Binding;
+
+  it("puts a bare Escape in the per-scope escape table", () => {
+    const t = compile([esc("a", "Escape")], GUARDS);
+    expect(t.escapeByScope.get("terminal")?.b.id).toBe("a");
+    expect(t.byKey.get("Escape")).toBeUndefined();
+  });
+
+  it("puts a MODIFIED Escape in the ordinary buckets, where the stack walk can reach it", () => {
+    const t = compile([esc("b", "Shift+Escape")], GUARDS);
+    expect(t.escapeByScope.get("terminal"), "a modified Escape is not the dismiss gesture").toBeUndefined();
+    expect(t.byKey.get("Escape")?.[0]?.b.id).toBe("b");
+  });
+
+  it("still rejects two BARE Escape bindings in one scope, and no longer miscounts a modified one as one of them", () => {
+    expect(() => compile([esc("a", "Escape"), esc("b", "Escape")], GUARDS)).toThrow(/Escape is bound twice/);
+    expect(() => compile([esc("a", "Escape"), esc("b", "Shift+Escape")], GUARDS)).not.toThrow();
   });
 });

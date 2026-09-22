@@ -248,3 +248,47 @@ describe("fast paths", () => {
     expect(r.ran).toBeNull();
   });
 });
+
+// ── the terminal scope (#142) ──────────────────────────────────────────────
+//
+// The shell competed with every app chord because the scope that exists to
+// stop that was defined and never pushed, and was not modal even if it had
+// been. These assert the two halves of the contract the registry side now
+// carries; the other half — the legacy bubble-phase handlers — is
+// Terminal.svelte's stopPropagation, which no unit test can reach.
+describe("the terminal scope", () => {
+  const TERMINAL: [ScopeId, ScopeSpec] = ["terminal", { id: "terminal", rank: 40, modal: true, escape: "native" }];
+  const GLOBAL: [ScopeId, ScopeSpec] = ["global", { id: "global", rank: 0, escape: "transparent" }];
+  const specs = [GLOBAL, TERMINAL];
+
+  const appChord: Binding = {
+    id: "app.thing", chords: ["Mod+KeyK"], scope: "global", dispatch: "js",
+    allowInTextInput: true, labelKey: "vimnav.esc", run: () => undefined,
+  } as unknown as Binding;
+  const wayOut: Binding = {
+    id: "terminal.focusOut", chords: ["Shift+Escape"], scope: "terminal", dispatch: "js",
+    allowInTextInput: true, labelKey: "vimnav.esc", run: () => undefined,
+  } as unknown as Binding;
+
+  it("stops the walk, so a global chord cannot steal a key from the shell", () => {
+    const inApp = run([appChord], ev({ key: "k", code: "KeyK", ctrlKey: true }), ["global"], specs);
+    expect(inApp.ran?.b.id, "the same chord must still work outside the terminal").toBe("app.thing");
+
+    const inShell = run([appChord], ev({ key: "k", code: "KeyK", ctrlKey: true }), ["global", "terminal"], specs);
+    expect(inShell.ran, "Ctrl+K belongs to readline while the terminal has focus").toBeNull();
+  });
+
+  it("lets Escape through to the shell untouched", () => {
+    // escape: "native" — dispatch stops AND does not preventDefault, because
+    // Escape is a real character vim and readline both want.
+    const r = run([wayOut], ev({ key: "Escape", code: "Escape" }), ["global", "terminal"], specs);
+    expect(r.ran).toBeNull();
+    expect(r.claim, "claiming it would eat the key the shell is waiting for").toBe(false);
+    expect(r.preventDefault).toBe(false);
+  });
+
+  it("still fires the one binding that is the way out", () => {
+    const r = run([wayOut], ev({ key: "Escape", code: "Escape", shiftKey: true }), ["global", "terminal"], specs);
+    expect(r.ran?.b.id, "Shift+Escape is the only key the shell does not get").toBe("terminal.focusOut");
+  });
+});

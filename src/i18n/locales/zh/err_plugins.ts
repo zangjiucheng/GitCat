@@ -11,6 +11,7 @@ export default {
   could_not_serialize: "无法序列化：{detail}",
   could_not_write: "无法写入 {path}：{detail}",
   could_not_finalize: "无法完成写入 {path}：{detail}",
+  could_not_lock: "无法锁定插件注册表（{path}）：{detail}",
 
   // plugin_registry.rs —— 清单校验
   plugin_id_invalid:
@@ -54,6 +55,8 @@ export default {
 
   // plugin_registry.rs —— 安装 / 启用 / 移除 / 皮肤查找
   already_installed: "已安装了 id 为 {id} 的插件。",
+  no_source_dir: "插件 {id} 没有记录源目录，无法重新读取。请移除后重新安装。",
+  id_changed: "清单里的 id 现在是 {found}，不是 {id}。改了 id 就是另一个插件 —— 请单独安装它，再移除旧的。",
   no_plugin_with_id: "未安装 id 为 {id} 的插件。",
   plugin_disabled: "插件 {id} 已被禁用。",
 

@@ -36,6 +36,7 @@ pub mod procutil; // suppresses the console window Windows flashes open per subp
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod repo_files; // backlog #14 (final item): .gitignore/.mailmap in-app editors — allow-listed repo-root file read/write
 pub mod file_manager; // row/repo context menus: hand a path to the desktop file browser, trust-gated (see its module doc)
+pub mod registry_lock; // #60: cross-PROCESS lock around each registry's load->mutate->save (every window is its own process)
 pub mod repo_registry; // backlog #11: app-level tracked-repos JSON persistence
 pub mod repo_summary; // Repository Summary: git-log-derived churn/contributor/activity/problem-area diagnostics
 pub mod rerere; // M5a: git-rerere status/toggle panel
@@ -339,6 +340,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         plugin_registry::set_plugin_enabled,
         plugin_registry::preview_plugin_manifest, // #68: read+validate a manifest WITHOUT installing, for install-time review
         plugin_registry::install_plugin_from_path,
+        plugin_registry::update_plugin, // #66: re-read an installed plugin's manifest from disk
         plugin_registry::remove_plugin,
         plugin_registry::load_plugin_skin, // PER-47: load a plugin's Tama skin (pose assets → data URIs)
         plugin_exec::run_plugin_command,

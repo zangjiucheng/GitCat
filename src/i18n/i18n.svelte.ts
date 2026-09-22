@@ -123,6 +123,24 @@ const BE_SEP = "\u001f";
  * an English-only contributor is never blocked — a backend message with no key
  * still shows, just untranslated.
  */
+/**
+ * Resolve a REJECTED invoke value for display, and leave anything else alone.
+ *
+ * A Tauri command declared `Result<_, String>` rejects with that string, so a
+ * keyed backend error arrives at `.catch` as `"i18n:<key>\x1f…"` — and printed
+ * as-is that is what a user sees. #186 was exactly that: `Couldn't open that
+ * repo — i18n:err_repo.cannot_open_repo^_detail^_repository path '...'`.
+ *
+ * Only STRINGS are touched. A rejection that is an `Error` keeps its identity
+ * and its stack, which is what `console.error` wants; running it through
+ * [`be`] would flatten it to `"Error: …"` and lose that. Narrowing to the one
+ * type a keyed error can arrive as is what makes this safe to put at a seam
+ * every command call passes through.
+ */
+export function beReject(err: unknown): unknown {
+  return typeof err === "string" ? be(err) : err;
+}
+
 export function be(err: unknown): string {
   if (err == null) return "";
   const s = String(err);

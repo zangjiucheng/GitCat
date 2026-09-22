@@ -33,10 +33,29 @@ pub fn open_repo(path: &str) -> Result<Repository, git2::Error> {
         Err(e) if is_dubious_ownership(&e) => {
             let forward = path.replace('\\', "/");
             let prefixed = format!("%(prefix)/{forward}");
-            // Best-effort: if git can't be spawned, the retry below simply
-            // fails with the same original error — an honest fallback.
-            let _ = safety::run_git(path, &["config", "--global", "--add", "safe.directory", &forward]);
-            let _ = safety::run_git(path, &["config", "--global", "--add", "safe.directory", &prefixed]);
+            // run_git_anywhere, NOT run_git: this is a `--global` write, so it
+            // is about the user and not the repository, and run_git would put
+            // `-C <path>` in front of it. That mattered — on Windows a process
+            // cannot hold a UNC path as its working directory, so for the very
+            // paths this retry exists to rescue (`//wsl.localhost/...`) git
+            // could fail to chdir and never reach the config write at all.
+            // The symptom was the ORIGINAL ownership error surviving a retry
+            // that looked like it had run (#186).
+            let a = safety::run_git_anywhere(&["config", "--global", "--add", "safe.directory", &forward]);
+            let b = safety::run_git_anywhere(&["config", "--global", "--add", "safe.directory", &prefixed]);
+            // Still best-effort — if git cannot be spawned at all the retry
+            // below fails with the same original error, which is honest. But
+            // the outcome is no longer thrown away silently: when this retry
+            // does not work, the log is the only place that says whether the
+            // write was even attempted, and its absence is what made #186
+            // hard to read from the outside.
+            for (what, r) in [("safe.directory", &a), ("%(prefix)/ safe.directory", &b)] {
+                match r {
+                    Ok(o) if o.ok => {}
+                    Ok(o) => log::warn!("auto-trust: git refused the {what} write for {path}: {}", o.stderr),
+                    Err(e) => log::warn!("auto-trust: could not run git for the {what} write for {path}: {e}"),
+                }
+            }
             Repository::open(path)
         }
         Err(e) => Err(e),

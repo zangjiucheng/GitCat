@@ -9,6 +9,7 @@
   import { pluginsCtrl } from "./plugins.svelte.ts";
   import { t } from "@/i18n/i18n.svelte.ts";
   import Trash2 from "@lucide/svelte/icons/trash-2";
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && pluginsCtrl.open) pluginsCtrl.close();
@@ -156,6 +157,17 @@
                     {#if pluginsCtrl.pluginBusyId === p.id}<span class="spinner"></span>{/if}
                   </div>
                   <span style="flex:1"></span>
+                  <!-- #66/#67: re-read this plugin's manifest from the folder
+                       shown under "Loaded from" above. Luau edits were already
+                       live; manifest edits needed an uninstall. -->
+                  <button
+                    class="pl-remove"
+                    disabled={pluginsCtrl.pluginBusyId === p.id}
+                    title={p.dir ?? undefined}
+                    onclick={() => pluginsCtrl.updatePlugin(p.id)}
+                  >
+                    <RefreshCw size={14} aria-hidden="true" /> {t("plugins.update")}
+                  </button>
                   <button class="pl-remove" disabled={pluginsCtrl.pluginBusyId === p.id} onclick={() => pluginsCtrl.startRemovePlugin(p.id)}>
                     <Trash2 size={14} aria-hidden="true" /> {t("common.remove")}
                   </button>

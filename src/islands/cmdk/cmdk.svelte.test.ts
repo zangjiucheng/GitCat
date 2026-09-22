@@ -27,6 +27,7 @@ vi.mock("../../legacy/bridge", () => ({
 }));
 
 import * as bridge from "../../legacy/bridge";
+import { defineScopes } from "../../keymap/scopedefs.ts";
 import { cmdkCtrl } from "./cmdk.svelte.ts";
 import { plumbing } from "../plumbing/plumbing.svelte.ts";
 
@@ -35,7 +36,17 @@ function setBackendGraph(rows: any[]) {
   (bridge as any).BACKEND = { rows };
 }
 
+// show() pushes the `palette` keyboard scope (#184), and pushScope throws on a
+// scope nothing has defineScope()d. The real app does that at boot; a unit
+// test has no boot, so it happens here — ONCE, at module scope, because
+// defineScope rejects a duplicate id rather than ignoring it.
+defineScopes();
+
 function resetCmdk() {
+  // close(), not `open = false`: the flag is the view's business, the SCOPE is
+  // the registry's, and leaving one pushed per test would stack activations
+  // that outlive the case that made them.
+  cmdkCtrl.close();
   cmdkCtrl.open = false;
   cmdkCtrl.query = "";
   cmdkCtrl.results = [];
@@ -260,5 +271,50 @@ describe("hl", () => {
   it("wraps the matched token in <mark>", () => {
     cmdkCtrl.toks = ["rate"];
     expect(cmdkCtrl.hl("Add rate limiting")).toBe("Add <mark>rate</mark> limiting");
+  });
+});
+
+// ── action ranking ────────────────────────────────────────────────────────
+//
+// Actions used to be pushed in declaration order with no scoring at all —
+// only commits were scored (cmdScore). So an action that matched in its HINT
+// outranked one that matched in its LABEL purely by sitting earlier in the
+// table. The reported case: "check update" put Settings first, because
+// settings_h reads "Theme, cherry-pick defaults, update checks, and this
+// repo's git identity" and contains both tokens.
+describe("action ranking", () => {
+  beforeEach(() => resetCmdk());
+
+  const labels = () =>
+    cmdkCtrl.results.filter((r) => r.type === "action").map((r) => (r as { label: string }).label);
+
+  it("puts a label match above an action that only matches in its hint", () => {
+    cmdkCtrl.filter("check update");
+    const out = labels();
+    expect(out.length, "both actions should still MATCH — this is about order, not filtering").toBeGreaterThan(1);
+    expect(out[0]).toBe("Check for Updates…");
+    expect(out, "Settings still matches, via its hint — it just should not be first").toContain("Settings");
+    expect(out.indexOf("Check for Updates…")).toBeLessThan(out.indexOf("Settings"));
+  });
+
+  it("puts an exact label above every partial match of it", () => {
+    cmdkCtrl.filter("settings");
+    expect(labels()[0]).toBe("Settings");
+  });
+
+  it("ranks a single token found in a label over the same token in a hint", () => {
+    cmdkCtrl.filter("update");
+    const out = labels();
+    expect(out.indexOf("Check for Updates…")).toBeLessThan(out.indexOf("Settings"));
+  });
+
+  it("leaves the curated order alone when there is no query", () => {
+    // The empty-query list is a hand-ordered menu, not a search result. Sorting
+    // it would be a different feature and a worse one.
+    cmdkCtrl.filter("");
+    const first = labels();
+    cmdkCtrl.filter("");
+    expect(labels()).toEqual(first);
+    expect(first[0], "the table's own first entry should stay first").not.toBe("Check for Updates…");
   });
 });

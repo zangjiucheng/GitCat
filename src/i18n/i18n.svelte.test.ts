@@ -3,7 +3,7 @@
 // the pickers (they render straight off this array), and that an untranslated
 // key falls back to English rather than rendering the raw key at a user.
 import { describe, expect, it } from "vitest";
-import { LOCALES, setLocale, t, locale } from "./i18n.svelte.ts";
+import { LOCALES, setLocale, t, locale, beReject } from "./i18n.svelte.ts";
 
 describe("locale registry", () => {
   it("offers Korean", () => {
@@ -40,5 +40,42 @@ describe("locale registry", () => {
     } finally {
       setLocale("en");
     }
+  });
+});
+
+// -- beReject -------------------------------------------------------------
+//
+// The seam legacy/main.ts's `tinvoke` uses, so a keyed backend error cannot
+// reach a handler still wearing its wire format. #186 was what that looks
+// like in the UI: the key and the 0x1f separators, printed at the user.
+describe("beReject", () => {
+  const SEP = "\u001f";
+
+  it("resolves the keyed string a Result<_, String> command rejects with", () => {
+    const wire = `i18n:err_repo.cannot_open_repo${SEP}detail${SEP}repository path '//wsl.localhost/x' is not owned by current user`;
+    const out = beReject(wire);
+    expect(typeof out).toBe("string");
+    expect(out).not.toContain("i18n:");
+    expect(out).not.toContain(SEP);
+    expect(out).toContain("//wsl.localhost/x");
+  });
+
+  it("passes a plain string through, because not every backend error is keyed", () => {
+    // watch.rs's start_watching returns a bare format!() string, and git's own
+    // stderr arrives the same way. Both must survive unchanged.
+    expect(beReject("cannot open repository: no such file")).toBe("cannot open repository: no such file");
+  });
+
+  it("leaves a non-string rejection alone, identity included", () => {
+    // The reason this is not just `be`: console.error wants the Error, with
+    // its stack. Flattening it to "Error: ..." would be a worse trade than the
+    // bug this function exists for.
+    const err = new Error("boom");
+    expect(beReject(err)).toBe(err);
+
+    const weird = { code: 7 };
+    expect(beReject(weird)).toBe(weird);
+    expect(beReject(undefined)).toBe(undefined);
+    expect(beReject(null)).toBe(null);
   });
 });

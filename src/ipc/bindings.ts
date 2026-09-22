@@ -3079,6 +3079,11 @@ async listPlugins() : Promise<Result<Plugin[], string>> {
 },
 /**
  * Enable/disable an installed plugin. JS: `commands.setPluginEnabled(id, enabled)`.
+ * 
+ * `async fn` + `run_blocking` for the same reason every other write command
+ * here is: it now takes a lock that another PROCESS can be holding, and a
+ * command that can wait must not be waiting on the thread that draws the
+ * window (see `blocking.rs`).
  */
 async setPluginEnabled(id: string, enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -3127,6 +3132,18 @@ async previewPluginManifest(path: string) : Promise<Result<Plugin, string>> {
 async installPluginFromPath(path: string) : Promise<Result<Plugin, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("install_plugin_from_path", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Re-read an installed plugin's manifest from disk and replace its entry (#66).
+ * Preserves `enabled`. JS: `commands.updatePlugin(id)`.
+ */
+async updatePlugin(id: string) : Promise<Result<Plugin, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_plugin", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

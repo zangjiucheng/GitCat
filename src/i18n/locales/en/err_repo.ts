@@ -25,6 +25,7 @@ export default {
   could_not_serialize: "Could not serialize: {detail}",
   could_not_write: "Could not write {path}: {detail}",
   could_not_finalize: "Could not finalize {path}: {detail}",
+  could_not_lock: "Could not lock the repository list ({path}): {detail}",
 
   // repo_files.rs — .gitignore/.mailmap editors
   not_editable_repo_file: "Not an editable repo file: {name} (only .gitignore and .mailmap are supported).",

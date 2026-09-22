@@ -11,6 +11,7 @@ export default {
   could_not_serialize: "Could not serialize: {detail}",
   could_not_write: "Could not write {path}: {detail}",
   could_not_finalize: "Could not finalize {path}: {detail}",
+  could_not_lock: "Could not lock the plugin registry ({path}): {detail}",
 
   // plugin_registry.rs — manifest validation
   plugin_id_invalid:
@@ -60,6 +61,8 @@ export default {
 
   // plugin_registry.rs — install / enable / remove / skin lookup
   already_installed: "A plugin with id {id} is already installed.",
+  no_source_dir: "Plugin {id} has no recorded source directory, so there is nothing to re-read. Remove it and install it again.",
+  id_changed: "The manifest now declares the id {found}, not {id}. A renamed plugin is a new plugin — install it separately and remove the old one.",
   no_plugin_with_id: "No plugin with id {id} is installed.",
   plugin_disabled: "Plugin {id} is disabled.",
 

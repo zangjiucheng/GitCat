@@ -1,5 +1,7 @@
 // 플러그인 매니저 모달 문자열이에요. 키는 `plugins.<key>`가 돼요.
 export default {
+  update: "업데이트",
+  updated: "{name}을(를) 디스크에서 다시 읽었어요.",
   review_trust: "플러그인은 샌드박스 없이 당신의 권한으로 기기에서 실행돼요. 이 명령들을 직접 실행할 의향이 있을 때만 설치해 주세요.",
   review_install: "설치",
   review_duplicate: "id가 {id}인 플러그인이 이미 설치돼 있어요. 먼저 제거하거나 이 플러그인의 id를 바꿔 주세요.",

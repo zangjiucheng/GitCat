@@ -1,6 +1,8 @@
 // 内置终端文案。键会变成 `terminal.<key>`。
 export default {
   title: "终端",
+  focus_out: "把焦点交还给应用",
+  focus_out_hint: "回到应用",
   exited: "进程已退出",
   restart_btn: "重启",
   aria_close: "关闭终端",

@@ -416,14 +416,18 @@ pub fn load_from(path: &Path) -> Result<Vec<Plugin>, String> {
     }
 }
 
-/// Process-wide lock serializing every registry read-modify-write sequence —
-/// identical rationale/shape to `repo_registry::registry_lock`: without it two
-/// concurrent writers each doing an unlocked load -> mutate -> save could let
-/// "last write wins" silently drop the loser's change. A poisoned lock (a
-/// prior panic mid-critical-section) is recovered from rather than propagated.
-fn plugins_lock() -> &'static std::sync::Mutex<()> {
-    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+/// Every registry read-modify-write here runs inside this.
+///
+/// It replaced a `OnceLock<Mutex<()>>` whose comment had the right reasoning —
+/// two unlocked writers each doing load -> mutate -> save let "last write
+/// wins" silently drop the loser's change — and the wrong scope: a Mutex is
+/// process-wide, and every GitCat window is a separate OS process (#60), so it
+/// protected nothing across windows. See `registry_lock`'s own module doc.
+///
+/// `pub` so `tests/registry_lock.rs` can drive the real thing from separate
+/// child processes, which is the only place this bug was ever visible.
+pub fn with_plugins_lock<T>(store: &Path, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    crate::registry_lock::with_registry_lock(store, "err_plugins.could_not_lock", f)
 }
 
 /// `pub` for the same integration-testability reason as [`load_from`]. Writes
@@ -816,6 +820,59 @@ pub fn install_from(plugins_path: &Path, source: &Path) -> Result<Plugin, String
     Ok(plugin)
 }
 
+/// Re-read an installed plugin's manifest from the directory it was installed
+/// from, and replace its registry entry in place (#66).
+///
+/// THE ASYMMETRY THIS FIXES. A plugin's Luau source is read from disk on every
+/// invocation ([`load_plugin_lua_source`], called per command from
+/// plugin_exec), so editing a handler is already live. The manifest is not: it
+/// is snapshotted into `plugins.json` at install and never re-read, and a
+/// second install of the same id is refused by [`install_from`]. So an author
+/// editing a `run` template or a command label had to uninstall and reinstall,
+/// while an author editing Lua just saved the file.
+///
+/// `enabled` is taken from the REGISTRY, never from the re-read manifest.
+/// `Plugin::enabled` defaults to true when a manifest omits it, so trusting the
+/// file would silently re-enable a plugin the user had turned off — an update
+/// must not be a way to switch something back on behind their back.
+///
+/// A manifest whose `id` no longer matches is REFUSED rather than replacing the
+/// entry: the id is what this was looked up by, and a renamed plugin is a new
+/// plugin — silently rewriting the entry could also collide with another
+/// installed id, which `install_from` would have rejected.
+///
+/// `&Path`-taking, no `AppHandle`, so the tests drive it directly — the same
+/// reason [`install_from`] is.
+pub fn update_from(plugins_path: &Path, id: &str) -> Result<Plugin, String> {
+    let mut plugins = load_from(plugins_path)?;
+    let idx = plugins
+        .iter()
+        .position(|p| p.id == id)
+        .ok_or_else(|| ierrp("err_plugins.no_plugin_with_id", &[("id", &format!("{id:?}"))]))?;
+
+    // The canonicalized directory the manifest was installed from. None only
+    // when it could not be canonicalized at install time, which leaves nothing
+    // to re-read — say so rather than failing somewhere less obvious.
+    let dir = plugins[idx]
+        .dir
+        .clone()
+        .ok_or_else(|| ierrp("err_plugins.no_source_dir", &[("id", &format!("{id:?}"))]))?;
+
+    let fresh = read_and_validate_manifest(Path::new(&dir))?;
+    if fresh.id != id {
+        return Err(ierrp(
+            "err_plugins.id_changed",
+            &[("id", &format!("{id:?}")), ("found", &format!("{:?}", fresh.id))],
+        ));
+    }
+
+    let was_enabled = plugins[idx].enabled;
+    plugins[idx] = fresh;
+    plugins[idx].enabled = was_enabled;
+    save_to(plugins_path, &plugins)?;
+    Ok(plugins[idx].clone())
+}
+
 /// Set `enabled` on the plugin with `id` in place. Errs (rather than silently
 /// no-oping) when no such plugin exists, so a stale UI id surfaces clearly.
 /// `pub` for direct unit testing.
@@ -1187,14 +1244,23 @@ pub fn list_plugins(app: AppHandle<Wry>) -> Result<Vec<Plugin>, String> {
 }
 
 /// Enable/disable an installed plugin. JS: `commands.setPluginEnabled(id, enabled)`.
+///
+/// `async fn` + `run_blocking` for the same reason every other write command
+/// here is: it now takes a lock that another PROCESS can be holding, and a
+/// command that can wait must not be waiting on the thread that draws the
+/// window (see `blocking.rs`).
 #[tauri::command]
 #[specta::specta]
-pub fn set_plugin_enabled(app: AppHandle<Wry>, id: String, enabled: bool) -> Result<(), String> {
-    let _guard = plugins_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let store = plugins_path(&app)?;
-    let mut plugins = load_from(&store)?;
-    set_enabled_in(&mut plugins, &id, enabled)?;
-    save_to(&store, &plugins)
+pub async fn set_plugin_enabled(app: AppHandle<Wry>, id: String, enabled: bool) -> Result<(), String> {
+    crate::blocking::run_blocking(move || {
+        let store = plugins_path(&app)?;
+        with_plugins_lock(&store, || {
+            let mut plugins = load_from(&store)?;
+            set_enabled_in(&mut plugins, &id, enabled)?;
+            save_to(&store, &plugins)
+        })
+    })
+    .await
 }
 
 /// Read and validate a manifest WITHOUT installing it (#68), so the app can
@@ -1229,22 +1295,40 @@ pub async fn preview_plugin_manifest(path: String) -> Result<Plugin, String> {
 /// Returns the installed plugin. JS: `commands.installPluginFromPath(path)`.
 #[tauri::command]
 #[specta::specta]
-pub fn install_plugin_from_path(app: AppHandle<Wry>, path: String) -> Result<Plugin, String> {
-    let _guard = plugins_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let store = plugins_path(&app)?;
-    install_from(&store, Path::new(&path))
+pub async fn install_plugin_from_path(app: AppHandle<Wry>, path: String) -> Result<Plugin, String> {
+    crate::blocking::run_blocking(move || {
+        let store = plugins_path(&app)?;
+        with_plugins_lock(&store, || install_from(&store, Path::new(&path)))
+    })
+    .await
+}
+
+/// Re-read an installed plugin's manifest from disk and replace its entry (#66).
+/// Preserves `enabled`. JS: `commands.updatePlugin(id)`.
+#[tauri::command]
+#[specta::specta]
+pub async fn update_plugin(app: AppHandle<Wry>, id: String) -> Result<Plugin, String> {
+    crate::blocking::run_blocking(move || {
+        let store = plugins_path(&app)?;
+        with_plugins_lock(&store, || update_from(&store, &id))
+    })
+    .await
 }
 
 /// Uninstall a plugin (removes it from the registry only; never touches the
 /// original manifest file on disk). JS: `commands.removePlugin(id)`.
 #[tauri::command]
 #[specta::specta]
-pub fn remove_plugin(app: AppHandle<Wry>, id: String) -> Result<(), String> {
-    let _guard = plugins_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let store = plugins_path(&app)?;
-    let mut plugins = load_from(&store)?;
-    remove_from(&mut plugins, &id)?;
-    save_to(&store, &plugins)
+pub async fn remove_plugin(app: AppHandle<Wry>, id: String) -> Result<(), String> {
+    crate::blocking::run_blocking(move || {
+        let store = plugins_path(&app)?;
+        with_plugins_lock(&store, || {
+            let mut plugins = load_from(&store)?;
+            remove_from(&mut plugins, &id)?;
+            save_to(&store, &plugins)
+        })
+    })
+    .await
 }
 
 /// Load an ENABLED plugin's Tama skin (PER-47). Resolves the plugin by id,
@@ -1454,6 +1538,118 @@ mod tests {
         let err = read_and_validate_manifest(&newer).expect_err("a newer-host manifest must be refused (#63)");
         assert!(err.contains("err_plugins.needs_newer_gitcat"), "got: {err}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // -- update: re-read an installed manifest (#66) --------------------------
+
+    /// Install a manifest from its own directory, the way a user would.
+    fn install_manifest(store: &std::path::Path, dir: &std::path::Path, body: &str) -> Plugin {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("plugin.json"), body).unwrap();
+        install_from(store, dir).expect("the fixture manifest must install")
+    }
+
+    #[test]
+    fn update_re_reads_the_manifest_from_the_directory_it_was_installed_from() {
+        // The asymmetry this closes: Luau source is re-read on every command
+        // invocation, so editing a handler is already live, while the manifest
+        // was snapshotted at install and a second install of the same id is
+        // refused. Editing a label meant uninstall-then-reinstall.
+        let root = temp_dir("update-reread");
+        let store = root.join(FILE_NAME);
+        let dir = root.join("plug");
+        install_manifest(
+            &store,
+            &dir,
+            r#"{"id":"a","name":"Before","version":"1.0.0","commands":[{"id":"c","label":"Old label","run":"echo old"}]}"#,
+        );
+
+        std::fs::write(
+            dir.join("plugin.json"),
+            r#"{"id":"a","name":"After","version":"1.1.0","commands":[{"id":"c","label":"New label","run":"echo new"}]}"#,
+        )
+        .unwrap();
+
+        let updated = update_from(&store, "a").expect("must update");
+        assert_eq!(updated.name, "After");
+        assert_eq!(updated.version, "1.1.0");
+        assert_eq!(updated.commands[0].label, "New label");
+        assert_eq!(updated.commands[0].run.as_deref(), Some("echo new"));
+
+        // …and it is persisted, not just returned.
+        let saved = load_from(&store).unwrap();
+        assert_eq!(saved.len(), 1, "update must replace in place, never append");
+        assert_eq!(saved[0].name, "After");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn update_does_not_re_enable_a_plugin_the_user_disabled() {
+        // The one that would be a genuine betrayal. `enabled` defaults to TRUE
+        // when a manifest omits it, so taking it from the re-read file would
+        // turn a disabled plugin back on — an update must never be a way to
+        // switch something on behind the user's back.
+        let root = temp_dir("update-enabled");
+        let store = root.join(FILE_NAME);
+        let dir = root.join("plug");
+        install_manifest(&store, &dir, r#"{"id":"a","name":"A","version":"1.0.0"}"#);
+
+        let mut plugins = load_from(&store).unwrap();
+        set_enabled_in(&mut plugins, "a", false).unwrap();
+        save_to(&store, &plugins).unwrap();
+
+        let updated = update_from(&store, "a").expect("must update");
+        assert!(!updated.enabled, "update re-enabled a disabled plugin");
+        assert!(!load_from(&store).unwrap()[0].enabled);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn update_refuses_a_manifest_that_renamed_itself() {
+        // The id is what this was looked up by. Rewriting the entry under a new
+        // id could also collide with another installed plugin — which
+        // install_from would have rejected outright.
+        let root = temp_dir("update-renamed");
+        let store = root.join(FILE_NAME);
+        let dir = root.join("plug");
+        install_manifest(&store, &dir, r#"{"id":"a","name":"A","version":"1.0.0"}"#);
+
+        std::fs::write(dir.join("plugin.json"), r#"{"id":"b","name":"B","version":"1.0.0"}"#).unwrap();
+
+        let err = update_from(&store, "a").expect_err("a renamed manifest must be refused");
+        assert!(err.contains("err_plugins.id_changed"), "got: {err}");
+        assert_eq!(load_from(&store).unwrap()[0].id, "a", "the entry was rewritten anyway");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn update_refuses_a_manifest_that_has_become_invalid() {
+        // Validation is the same read_and_validate_manifest install uses, so an
+        // edit that breaks the manifest leaves the WORKING entry in place
+        // rather than replacing it with something unusable.
+        let root = temp_dir("update-invalid");
+        let store = root.join(FILE_NAME);
+        let dir = root.join("plug");
+        install_manifest(&store, &dir, r#"{"id":"a","name":"A","version":"1.0.0"}"#);
+
+        std::fs::write(dir.join("plugin.json"), r#"{"id":"a","name":"A","version":"1.0.0","descriptoin":"typo"}"#).unwrap();
+
+        let err = update_from(&store, "a").expect_err("an unknown key must be refused (#64)");
+        assert!(err.contains("err_plugins.manifest_unknown_keys"), "got: {err}");
+        assert_eq!(load_from(&store).unwrap()[0].name, "A", "the good entry was clobbered");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn update_reports_a_plugin_that_is_not_installed() {
+        let root = temp_dir("update-missing");
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join(FILE_NAME);
+        save_to(&store, &[]).unwrap();
+
+        let err = update_from(&store, "ghost").expect_err("an unknown id must be refused");
+        assert!(err.contains("err_plugins.no_plugin_with_id"), "got: {err}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn temp_dir(tag: &str) -> PathBuf {
@@ -1854,7 +2050,9 @@ mod tests {
     fn concurrent_writers_never_lose_a_write() {
         // Mirrors repo_registry.rs's own concurrency regression test: several
         // threads each append a distinct plugin under the shared lock; every
-        // entry must survive (no unlocked "last write wins" drop).
+        // entry must survive (no unlocked "last write wins" drop). The
+        // cross-PROCESS version of this — the case #60 was actually about, and
+        // the one threads cannot reach — is tests/registry_lock.rs.
         let dir = temp_dir("concurrent");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(FILE_NAME);
@@ -1864,10 +2062,12 @@ mod tests {
             for i in 0..WRITERS {
                 let path = &path;
                 scope.spawn(move || {
-                    let _guard = plugins_lock().lock().unwrap_or_else(|e| e.into_inner());
-                    let mut plugins = load_from(path).expect("load under lock should succeed");
-                    plugins.push(sample_plugin(&format!("plugin{i}")));
-                    save_to(path, &plugins).expect("save under lock should succeed");
+                    with_plugins_lock(path, || {
+                        let mut plugins = load_from(path)?;
+                        plugins.push(sample_plugin(&format!("plugin{i}")));
+                        save_to(path, &plugins)
+                    })
+                    .expect("the locked read-modify-write should succeed");
                 });
             }
         });

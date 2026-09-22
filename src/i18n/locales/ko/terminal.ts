@@ -1,6 +1,8 @@
 // 내장 터미널 문자열. 키는 `terminal.<key>`가 돼요.
 export default {
   title: "터미널",
+  focus_out: "앱으로 포커스 되돌리기",
+  focus_out_hint: "앱으로 돌아가기",
   exited: "프로세스 종료됨",
   restart_btn: "재시작",
   aria_close: "터미널 닫기",

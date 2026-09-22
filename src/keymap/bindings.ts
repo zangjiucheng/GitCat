@@ -5,6 +5,7 @@ import { workdirKeys } from "./actions/workdir.ts";
 import { canvasKeys } from "./actions/canvas.ts";
 import { sidebarKeys } from "./actions/sidebar.ts";
 import { detailKeys } from "./actions/detail.ts";
+import { terminalFocusOut } from "./actions/terminal.ts";
 import type { Binding } from "./types.ts";
 
 // THE TABLE. PR 1 ships it ENTIRELY in mode:"shadow": the dispatcher matches,
@@ -532,6 +533,23 @@ export const BINDINGS: readonly Binding[] = [
   { id: "window.new", chords: [ACCELERATORS["new-window"]], scope: "global",
     dispatch: "accelerator", menu: { id: "new-window" }, labelKey: "menu.new_window",
     help: { section: "actions", order: 50 } },
+  // The only binding in the `terminal` scope, and the only key the shell does
+  // not get. See actions/terminal.ts for why it is Shift+Escape and not
+  // Escape. LIVE rather than shadow: there is no legacy handler to shadow —
+  // this operation did not exist, which is the bug.
+  {
+    id: "terminal.focusOut",
+    chords: ["Shift+Escape"],
+    scope: "terminal",
+    dispatch: "js",
+    // A shell is a text surface by nature; the default deny would make this
+    // binding unreachable from the only place it is ever pressed.
+    allowInTextInput: true,
+    labelKey: "terminal.focus_out",
+    help: { section: "view", order: 41 },
+    run: () => (terminalFocusOut() ? undefined : false),
+  },
+
   { id: "terminal.toggle", chords: [ACCELERATORS["open-terminal"]], scope: "global",
     dispatch: "accelerator", toggle: true, menu: { id: "open-terminal" },
     labelKey: "menu.open_terminal", help: { section: "view", order: 40 } },

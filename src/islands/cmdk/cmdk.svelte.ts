@@ -38,6 +38,8 @@ import { settingsCtrl } from "../settings/settings.svelte.ts";
 import { danglingRecoveryCtrl } from "../danglingrecovery/danglingrecovery.svelte.ts";
 import { repoFilesCtrl } from "../repofiles/repofiles.svelte.ts";
 import { filterRepoCtrl } from "../filterrepo/filterrepo.svelte.ts";
+import { keymap } from "@/keymap/registry.ts";
+import type { ScopeHandle } from "@/keymap/scopes.ts";
 import { multimergeCtrl } from "../multimerge/multimerge.svelte.ts";
 import { aboutCtrl } from "../about/about.svelte.ts";
 import { updaterCtrl } from "../updater/updater.svelte.ts";
@@ -355,6 +357,42 @@ function matchToks(hay: string, toks: string[]): boolean {
   return true;
 }
 
+/**
+ * Rank one action against the query. LOWER IS BETTER, matching `cmdScore`'s
+ * convention so the two read the same way.
+ *
+ * Actions used to have no score at all: they were pushed in table order and
+ * that was the order you got, so an action matching only in its HINT could
+ * outrank one matching in its LABEL purely by being declared earlier. The
+ * reported case was "check update" — `settings_h` is "Theme, cherry-pick
+ * defaults, update checks, and this repo's git identity", which contains both
+ * tokens, and Settings sits above Check for Updates… in the table.
+ *
+ * The label is what someone types toward, so every rule here is about the
+ * label and the hint only ever breaks a tie — a hint-only match is a penalty,
+ * not a bonus. Beyond that: the whole query as an exact label beats it as a
+ * prefix beats it appearing anywhere, and a token at a word start beats one
+ * buried mid-word ("up" should find "Update", not rank "backup" first).
+ *
+ * Ties keep table order, because Array#sort is stable and the table is
+ * hand-ordered — see `filter`, which sorts ONLY when there is a query.
+ */
+function actionScore(label: string, toks: string[], q: string): number {
+  const lab = label.toLowerCase();
+  let s = 0;
+  if (lab === q) s -= 400;
+  else if (lab.startsWith(q)) s -= 200;
+  else if (lab.includes(q)) s -= 80;
+  for (const t of toks) {
+    const at = lab.indexOf(t);
+    if (at < 0) s += 100; // matched in the hint only
+    else if (at === 0) s -= 40;
+    else if (!/[a-z0-9]/.test(lab[at - 1] ?? "")) s -= 30; // at a word start
+    else s -= 10; // mid-word
+  }
+  return s;
+}
+
 class CmdkState {
   open = $state(false);
   query = $state("");
@@ -481,21 +519,26 @@ class CmdkState {
     const toks = trimmed ? trimmed.split(/\s+/) : [];
     this.toks = toks;
     const res: CmdkResult[] = [];
+    // The static table, plugin-contributed commands (PER-42) and plugin
+    // panels (PER-45) are all matched by label+hint and RANKED TOGETHER: a
+    // plugin command whose label is what you typed should beat a built-in that
+    // only matched in its hint, and the reverse. The two plugin lists are
+    // lazily loaded on palette open (see show()), so they are empty until
+    // listPlugins() resolves.
+    const acts: ActionItem[] = [];
     for (const a of buildActions()) {
-      if (!toks.length || matchToks((a.label + " " + a.hint).toLowerCase(), toks)) res.push(a);
+      if (!toks.length || matchToks((a.label + " " + a.hint).toLowerCase(), toks)) acts.push(a);
     }
-    // Plugin-contributed commands (PER-42) are matched by label+hint exactly
-    // like the static ACTIONS above; they're lazily loaded on palette open
-    // (see show()), so this is empty until listPlugins() resolves.
     for (const a of pluginCommandsCtrl.actions) {
-      if (!toks.length || matchToks((a.label + " " + a.hint).toLowerCase(), toks)) res.push(a);
+      if (!toks.length || matchToks((a.label + " " + a.hint).toLowerCase(), toks)) acts.push(a);
     }
-    // Plugin-contributed PANELS (PER-45) — one entry per declared panel, matched
-    // by label+hint exactly like the commands above and lazily loaded on the
-    // same palette open (see show()).
     for (const a of pluginPanelsCtrl.actions) {
-      if (!toks.length || matchToks((a.label + " " + a.hint).toLowerCase(), toks)) res.push(a);
+      if (!toks.length || matchToks((a.label + " " + a.hint).toLowerCase(), toks)) acts.push(a);
     }
+    // Only with a query. With none, this list is a hand-ordered menu rather
+    // than a search result, and sorting it would be a different feature.
+    if (toks.length) acts.sort((a, b) => actionScore(a.label, toks, trimmed) - actionScore(b.label, toks, trimmed));
+    for (const a of acts) res.push(a);
     if (!toks.length) {
       for (let i = 0; i < this.refs.length && res.length < REF_DEFAULT; i++) res.push(this.refs[i]);
     } else {
@@ -571,6 +614,19 @@ class CmdkState {
     }
   }
 
+  // The palette's keyboard scope while it is open (#184).
+  //
+  // scopedefs.ts has declared this scope — rank 200, modal — since the keymap
+  // landed, and nothing ever pushed it, so the contract was inert: with only
+  // `global` on the stack there was nothing above the pane chords to stop
+  // them, and ⌘1 moved focus to the canvas BEHIND an open palette, leaving a
+  // modal on screen that could no longer be typed into.
+  //
+  // Pushed from the controller rather than the view, per pushScope's own doc:
+  // a view-side push lands after the dynamic import resolves, which for a
+  // lazily mounted island is a whole chunk fetch of open-but-unscoped.
+  private scope: ScopeHandle | null = null;
+
   show() {
     if (this.cacheG !== bridge.G) {
       this.items = this.buildCmdIndex();
@@ -578,6 +634,13 @@ class CmdkState {
       this.cacheG = bridge.G;
     }
     this.open = true;
+    // No `el`: the panel is the view's, and this scope does not need to trap
+    // Tab or focus into anything — the input is already focused by the time
+    // this runs. No restoreFocus either, and that one is not a nicety:
+    // `jump()` calls close() BEFORE running the action or selecting the row,
+    // so restoring focus on release would land it in the middle of whatever
+    // the palette was used to do.
+    this.scope ??= keymap.pushScope("palette", { restoreFocus: false });
     this.filter("");
     // Lazily pull in plugin-contributed palette commands AND panels, then
     // re-run the current filter so they appear (both cached after the first
@@ -592,6 +655,8 @@ class CmdkState {
 
   close() {
     this.open = false;
+    this.scope?.release();
+    this.scope = null;
   }
 
   toggle() {

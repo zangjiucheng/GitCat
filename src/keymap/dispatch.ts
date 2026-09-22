@@ -109,7 +109,19 @@ export function dispatch(
   // 2. Escape — a DEDICATED path, taken before layer:"always" and before the
   //    stack walk. Top scope only, then STOP. The "stop" is what lets the 36
   //    island Escape handlers keep working until each opts in, one at a time.
-  if (e.key === "Escape") {
+  // A BARE Escape only. The dedicated path exists for the dismiss GESTURE, and
+  // it deliberately does not run matchChord — `escapeByScope` holds one entry
+  // per scope and fires it on the key alone. That was fine while Escape was
+  // never part of a larger chord, and stopped being fine the moment one was
+  // needed: `terminal.focusOut` is Shift+Escape, and without this test the
+  // terminal scope's `escape: "native"` swallowed it here, before the stack
+  // walk could ever see it (found by the test, not by reading).
+  //
+  // The behaviour change is that a MODIFIED Escape no longer closes a dialog.
+  // That was never designed — it fell out of the key-only match — and a
+  // modified Escape is a different chord, which is the thing the rest of this
+  // function already believes.
+  if (e.key === "Escape" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
     for (let i = stack.length - 1; i >= 0; i--) {
       const s = stack[i];
       const spec = specs.get(s);

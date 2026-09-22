@@ -1,6 +1,8 @@
 // Built-in terminal strings. Keys become `terminal.<key>`.
 export default {
   title: "Terminal",
+  focus_out: "Return focus to the app",
+  focus_out_hint: "back to the app",
   exited: "process exited",
   restart_btn: "Restart",
   aria_close: "Close terminal",
