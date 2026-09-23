@@ -45,6 +45,7 @@ export default {
   wsl_status_timed_out: "WSL 状态检查在 {timeout} 后超时 —— 请在终端运行 `wsl --shutdown`，然后重新打开此仓库",
   unexpected_rev_list_output: "`git rev-list --left-right --count` 的输出异常：{output}",
   wsl_ahead_behind_timed_out: "WSL 领先/落后检查在 {timeout} 后超时",
+  wsl_create_ref_timed_out: "通过 WSL 创建备份引用在 {timeout} 后超时 —— 请在终端运行 `wsl --shutdown`，然后重新打开此仓库",
 
   // terminal.rs
   terminal_session_ended: "该终端会话已结束。",

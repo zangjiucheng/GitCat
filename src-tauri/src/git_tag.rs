@@ -208,8 +208,12 @@ fn pin_deleted_tag(repo: &Repository, oid: Oid, name: &str) -> Result<String, St
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     let seq = TAG_SEQ.fetch_add(1, Ordering::SeqCst);
     let ref_name = format!("refs/gitgui/deleted-tag/{}-{}-{}", now.as_secs(), now.subsec_nanos(), seq);
-    repo.reference(&ref_name, oid, false, &format!("gitcat pin deleted tag {name}"))
-        .map_err(|e| format!("could not pin deleted tag: {}", e.message()))?;
+    // Goes through safety::create_backup_ref (not a bare repo.reference call)
+    // so a WSL-path repo doesn't hit the "Access is denied" libgit2-over-the-
+    // `\\wsl.localhost\`-bridge bug that same function's own doc comment
+    // describes — see it for the full story.
+    crate::safety::create_backup_ref(repo, &ref_name, oid, &format!("gitcat pin deleted tag {name}"))
+        .map_err(|e| format!("could not pin deleted tag: {}", e))?;
     Ok(ref_name)
 }
 

@@ -48,6 +48,7 @@ export default {
   wsl_status_timed_out: "WSL 상태 확인이 {timeout} 후 시간 초과됐어요 — 터미널에서 `wsl --shutdown`을 실행한 뒤 이 저장소를 다시 열어보세요",
   unexpected_rev_list_output: "`git rev-list --left-right --count`의 출력이 예상과 달라요: {output}",
   wsl_ahead_behind_timed_out: "WSL 앞선/뒤처진 커밋 수 확인이 {timeout} 후 시간 초과됐어요",
+  wsl_create_ref_timed_out: "WSL을 통한 백업 참조 생성이 {timeout} 후 시간 초과됐어요 — 터미널에서 `wsl --shutdown`을 실행한 뒤 이 저장소를 다시 열어보세요",
 
   // terminal.rs
   terminal_session_ended: "이 터미널 세션은 이미 종료됐어요.",

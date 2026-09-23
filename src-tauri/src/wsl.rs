@@ -400,6 +400,55 @@ pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize
     })
 }
 
+/// For a WSL-path repo ONLY, creates a brand-new ref — `oid` must not already
+/// be what `ref_name` points to, and `ref_name` must not already exist — via
+/// `git update-ref -m <reason> <ref_name> <oid> <all-zero-oid>` run through
+/// the distro's own git. `None` for a non-WSL path — every caller keeps using
+/// git2's `Repository::reference(..., force: false, ...)` unchanged there.
+///
+/// Exists because of a real user report: a snapshot on a `\\wsl.localhost\`
+/// repo failed with "could not create backup ref: failed to create locked
+/// file '...\.git\refs\gitgui\backup\....lock': Access is denied" —
+/// `Repository::reference()`'s own write path, which libgit2 implements as
+/// "create a `<ref>.lock` file, write it, rename it over the real ref".
+/// NOT independently reproduced here (200 back-to-back snapshots against a
+/// fresh WSL fixture on this dev box all succeeded via plain git2 — see this
+/// module's test suite), so the exact trigger is unconfirmed; a newly
+/// created file getting a transient "Access is denied" over a
+/// network-redirector path (real-time antivirus/EDR scanning it, most
+/// commonly) is a well-known general Windows phenomenon that a purely local
+/// disk essentially never exposes, which is at least consistent with why it
+/// would show up specifically on a WSL-bridge path and nowhere else. Routing
+/// the write natively inside the distro sidesteps that whole class of
+/// Windows-side interference regardless of the exact cause — the same
+/// "let the distro's own filesystem do it, never cross the bridge for this"
+/// idea `wsl_status` already applies to the read-side symlink stall, applied
+/// here to a write. Every one of this app's own "pin a commit under a
+/// fresh, never-clobbered ref before doing something risky" call sites goes
+/// through here for a WSL repo now (safety snapshots, deleted-branch/tag
+/// pins, the pre-drop stash backup), so a fix in this one place covers all
+/// of them.
+///
+/// The trailing all-zero-oid argument is `update-ref`'s own idiom for "the
+/// ref must not already exist" (a nonexistent ref reads as the all-zero oid
+/// for `update-ref`'s compare-and-swap check) — the same never-clobber
+/// guarantee `Repository::reference()`'s own `force: false` gives on the
+/// git2 path, so a unique ref name still can never clobber a prior one here
+/// either.
+pub fn wsl_create_ref(path: &str, ref_name: &str, oid: &str, reason: &str) -> Option<Result<(), String>> {
+    wsl_target(path)?;
+    const ZERO_OID: &str = "0000000000000000000000000000000000000000";
+    let cmd = git_command(path, &["update-ref", "-m", reason, ref_name, oid, ZERO_OID]);
+    Some(match output_with_timeout(cmd, SUBPROCESS_TIMEOUT) {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+            Err(ierrp("err_misc.wsl_create_ref_timed_out", &[("timeout", &format!("{SUBPROCESS_TIMEOUT:?}"))]))
+        }
+        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())])),
+    })
+}
+
 /// `git rev-list --left-right --count A...B`'s stdout is two whitespace-
 /// separated integers ("<commits only in A>\t<commits only in B>\n") — `A`
 /// being the local branch, `B` its upstream, in `wsl_ahead_behind`'s own
