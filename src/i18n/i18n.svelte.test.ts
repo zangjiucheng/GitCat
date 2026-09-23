@@ -3,7 +3,7 @@
 // the pickers (they render straight off this array), and that an untranslated
 // key falls back to English rather than rendering the raw key at a user.
 import { describe, expect, it } from "vitest";
-import { LOCALES, setLocale, t, locale, beReject } from "./i18n.svelte.ts";
+import { LOCALES, setLocale, t, locale, beReject, decodeBackendError } from "./i18n.svelte.ts";
 
 describe("locale registry", () => {
   it("offers Korean", () => {
@@ -77,5 +77,27 @@ describe("beReject", () => {
     expect(beReject(weird)).toBe(weird);
     expect(beReject(undefined)).toBe(undefined);
     expect(beReject(null)).toBe(null);
+  });
+});
+
+// -- decodeBackendError -----------------------------------------------------
+//
+// be()'s own raw-params half — for the rare caller (wslReffix.ts) that needs
+// a specific param's value, not just the translated display text.
+describe("decodeBackendError", () => {
+  const SEP = "";
+
+  it("splits the key and every name/value pair out of a keyed error", () => {
+    const wire = `i18n:err_misc.wsl_ref_permission_denied${SEP}path${SEP}/home/j/repo${SEP}detail${SEP}permission denied`;
+    expect(decodeBackendError(wire)).toEqual({
+      key: "err_misc.wsl_ref_permission_denied",
+      params: { path: "/home/j/repo", detail: "permission denied" },
+    });
+  });
+
+  it("returns null for anything without the i18n: prefix", () => {
+    expect(decodeBackendError("fatal: not a git repository")).toBeNull();
+    expect(decodeBackendError(null)).toBeNull();
+    expect(decodeBackendError(undefined)).toBeNull();
   });
 });

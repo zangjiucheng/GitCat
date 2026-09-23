@@ -12,4 +12,7 @@ export default {
   open_repo_first: "Open a repository first.",
   err_open: "Could not open a terminal.",
   err_open_e: "Could not open a terminal — {e}",
+  wsl_ref_fix_title: "One-time permission fix needed",
+  wsl_ref_fix_message: "An older version of this app left some files under .git owned by root on this WSL repo. Running `{cmd}` in a terminal fixes it — open the terminal and run it now?",
+  wsl_ref_fix_confirm: "Open Terminal & Run",
 };

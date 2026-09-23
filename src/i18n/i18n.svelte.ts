@@ -141,13 +141,26 @@ export function beReject(err: unknown): unknown {
   return typeof err === "string" ? be(err) : err;
 }
 
-export function be(err: unknown): string {
-  if (err == null) return "";
+/**
+ * Decode a keyed backend error into its raw key + params, WITHOUT translating
+ * it — for the rare caller that needs a specific param's raw value (e.g. a
+ * WSL path to build a shell command from), not just display text. `null` for
+ * anything without the `i18n:` prefix, same passthrough cases [`be`] itself
+ * documents (raw git stderr, a not-yet-keyed message).
+ */
+export function decodeBackendError(err: unknown): { key: string; params: Record<string, string> } | null {
+  if (err == null) return null;
   const s = String(err);
-  if (!s.startsWith("i18n:")) return s; // git stderr / not-yet-keyed passthrough
+  if (!s.startsWith("i18n:")) return null;
   const parts = s.slice(5).split(BE_SEP);
   const key = parts[0];
   const params: Record<string, string> = {};
   for (let i = 1; i + 1 < parts.length; i += 2) params[parts[i]] = parts[i + 1];
-  return t(key, params);
+  return { key, params };
+}
+
+export function be(err: unknown): string {
+  const decoded = decodeBackendError(err);
+  if (!decoded) return err == null ? "" : String(err); // git stderr / not-yet-keyed passthrough
+  return t(decoded.key, decoded.params);
 }

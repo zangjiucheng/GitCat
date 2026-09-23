@@ -38,6 +38,7 @@ import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
 // labels in doFetch/doPull/doPush) and re-run on i18nEvents "change".
 import { t, be, beReject, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
 import { fitEllipsis } from "./fitellipsis.ts";
+import { maybeOfferWslRefFix } from "./wslReffix.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -182,7 +183,13 @@ const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
 // -- which is what #186 looked like. Doing it here rather than at each of
 // the 15 call sites means a new one cannot forget. beReject only touches
 // strings, so an Error rejection keeps its stack for console.error.
-const tinvoke = (cmd, args={}) => window.__TAURI__.core.invoke(cmd, args).catch(e => { throw beReject(e); });
+//
+// Same seam is also where maybeOfferWslRefFix hooks in (side effect only —
+// never changes what's thrown): a snapshot failing on a WSL repo whose
+// `refs/gitgui` an older version of this app left root-owned surfaces here
+// exactly like any other mutating command's failure would, for the same
+// reason splitting beReject's own check across 15 call sites would be worse.
+const tinvoke = (cmd, args={}) => window.__TAURI__.core.invoke(cmd, args).catch(e => { maybeOfferWslRefFix(e, CUR_REPO); throw beReject(e); });
 let undoBusy=false;
 function relTime(t){ let s=Math.max(0,Math.floor(Date.now()/1000-t));
   if(s<60)return s+"s ago"; let m=(s/60)|0; if(m<60)return m+"m ago"; let h=(m/60)|0; if(h<24)return h+"h ago";

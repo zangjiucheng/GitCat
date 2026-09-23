@@ -12,4 +12,7 @@ export default {
   open_repo_first: "请先打开一个仓库。",
   err_open: "无法打开终端。",
   err_open_e: "无法打开终端 —— {e}",
+  wsl_ref_fix_title: "需要修复一次权限问题",
+  wsl_ref_fix_message: "旧版本的应用在这个 WSL 仓库的 .git 目录下留下了一些 root 所有的文件。在终端里运行 `{cmd}` 即可修复 —— 现在打开终端并运行吗？",
+  wsl_ref_fix_confirm: "打开终端并运行",
 };
