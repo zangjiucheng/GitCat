@@ -10,4 +10,6 @@ export default {
   open_repo_first: "Open a repository first.",
   err_open: "Could not open a terminal.",
   err_open_e: "Could not open a terminal — {e}",
+  shell_picker_label: "Shell",
+  shell_default: "Default",
 };

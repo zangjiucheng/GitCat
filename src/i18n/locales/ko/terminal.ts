@@ -10,4 +10,6 @@ export default {
   open_repo_first: "먼저 저장소를 열어주세요.",
   err_open: "터미널을 열지 못했어요.",
   err_open_e: "터미널을 열지 못했어요 — {e}",
+  shell_picker_label: "셸",
+  shell_default: "기본",
 };

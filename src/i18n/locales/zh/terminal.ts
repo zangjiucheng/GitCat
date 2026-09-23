@@ -10,4 +10,6 @@ export default {
   open_repo_first: "请先打开一个仓库。",
   err_open: "无法打开终端。",
   err_open_e: "无法打开终端 —— {e}",
+  shell_picker_label: "Shell",
+  shell_default: "默认",
 };

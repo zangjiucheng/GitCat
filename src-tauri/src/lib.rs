@@ -356,6 +356,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         terminal::terminal_write,
         terminal::terminal_resize,
         terminal::terminal_kill,
+        terminal::list_wsl_distros,
         // Right-click menus: reveal a file, or open the repo, in the
         // desktop file browser. Rust-side so neither needs a blanket
         // opener scope in the webview — see file_manager.rs's module doc.

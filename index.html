@@ -1552,6 +1552,13 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .term-hint{display:inline-flex;align-items:center;gap:5px;font-size:11px}
 .term-hint kbd{font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:4px;
   border:1px solid var(--border);background:var(--elevated);color:var(--muted)}
+/* margin-left:auto here (not on .term-x) so the hint stays pinned left and
+   the picker + close button group together at the right — .term-x keeps
+   its OWN auto margin too, as the fallback right-alignment when there's no
+   WSL distro installed at all and this never renders. */
+.term-shell{margin-left:auto;font-size:11px;padding:2px 6px;border-radius:6px;max-width:140px;
+  border:1px solid var(--border);background:var(--elevated);color:var(--text)}
+.term-shell:hover{border-color:var(--muted)}
 .term-x{margin-left:auto;width:22px;height:22px;padding:0;flex:none;display:grid;place-items:center;border-radius:6px;
   border:1px solid var(--border);background:var(--elevated);color:var(--muted)}
 .term-x:hover{border-color:var(--muted);color:var(--text)}

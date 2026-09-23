@@ -17,6 +17,7 @@ vi.mock("../../ipc/bindings", () => ({
     terminalWrite: vi.fn(),
     terminalResize: vi.fn(),
     terminalKill: vi.fn(),
+    listWslDistros: vi.fn(),
   },
 }));
 
@@ -49,8 +50,11 @@ function resetTerminal() {
   terminalCtrl.repo = "";
   terminalCtrl.sessionId = null;
   terminalCtrl.busy = false;
+  terminalCtrl.shell = null;
+  terminalCtrl.distros = [];
   terminalCtrl.onData = null;
   (terminalCtrl as unknown as { pendingOutput: Uint8Array[] }).pendingOutput = [];
+  (terminalCtrl as unknown as { distrosRequested: boolean }).distrosRequested = false;
   mockInTauri = false;
   vi.clearAllMocks();
   handlers = {};
@@ -97,7 +101,7 @@ describe("toggle", () => {
 
     await terminalCtrl.toggle("/repo");
 
-    expect(commands.terminalSpawn).toHaveBeenCalledWith("/repo");
+    expect(commands.terminalSpawn).toHaveBeenCalledWith("/repo", null);
     expect(terminalCtrl.sessionId).toBe("term-1");
     expect(terminalCtrl.open).toBe(true);
     expect(terminalCtrl.busy).toBe(false);
@@ -172,7 +176,7 @@ describe("toggle", () => {
     await terminalCtrl.toggle("/repo-b");
 
     expect(commands.terminalKill).toHaveBeenCalledWith("term-1");
-    expect(commands.terminalSpawn).toHaveBeenCalledWith("/repo-b");
+    expect(commands.terminalSpawn).toHaveBeenCalledWith("/repo-b", null);
     expect(terminalCtrl.sessionId).toBe("term-2");
     expect(terminalCtrl.repo).toBe("/repo-b");
   });
@@ -204,6 +208,48 @@ describe("hide / closeSession", () => {
     expect(terminalCtrl.open).toBe(false);
     expect(unlistenMocks["terminal-output"]).toHaveBeenCalledTimes(1);
     expect(unlistenMocks["terminal-exit"]).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("loadDistros / setShell (WSL distro picker)", () => {
+  it("loadDistros populates the list once, and is a no-op on a later call", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.listWslDistros).mockResolvedValueOnce(["Ubuntu", "Debian"]);
+
+    await terminalCtrl.loadDistros();
+    expect(terminalCtrl.distros).toEqual(["Ubuntu", "Debian"]);
+
+    await terminalCtrl.loadDistros();
+    expect(commands.listWslDistros).toHaveBeenCalledTimes(1);
+  });
+
+  it("loadDistros is a no-op in design mode (not IN_TAURI)", async () => {
+    mockInTauri = false;
+    await terminalCtrl.loadDistros();
+    expect(commands.listWslDistros).not.toHaveBeenCalled();
+    expect(terminalCtrl.distros).toEqual([]);
+  });
+
+  it("setShell with no live session just records the choice — nothing to restart", async () => {
+    await terminalCtrl.setShell("Ubuntu");
+    expect(terminalCtrl.shell).toBe("Ubuntu");
+    expect(commands.terminalSpawn).not.toHaveBeenCalled();
+  });
+
+  it("setShell with a live session kills it and respawns the SAME repo under the new choice", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.terminalSpawn).mockResolvedValueOnce(ok("term-1"));
+    vi.mocked(commands.terminalKill).mockResolvedValueOnce(ok(null));
+    vi.mocked(commands.terminalSpawn).mockResolvedValueOnce(ok("term-2"));
+    await terminalCtrl.toggle("/repo");
+
+    await terminalCtrl.setShell("Debian");
+
+    expect(commands.terminalKill).toHaveBeenCalledWith("term-1");
+    expect(commands.terminalSpawn).toHaveBeenLastCalledWith("/repo", "Debian");
+    expect(terminalCtrl.sessionId).toBe("term-2");
+    expect(terminalCtrl.repo).toBe("/repo");
+    expect(terminalCtrl.open).toBe(true);
   });
 });
 

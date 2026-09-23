@@ -117,9 +117,46 @@ struct TerminalExitEvent {
 /// `repo_registry::normalize` no longer stores that shape, but a path arriving
 /// with it would silently reopen the same bug, and one `strip_prefix` is a lot
 /// cheaper than trusting every caller upstream to have done it.
-fn pty_command_for(path: &str) -> CommandBuilder {
+///
+/// `shell` is the drawer's own explicit override (see `wsl::list_distros`'s
+/// own doc comment for why it exists — a user with more than one WSL distro
+/// installed can otherwise never get a shell in anything but whichever one a
+/// repo's own path happens to resolve to):
+///  - `None` — auto, exactly the behavior described above: a WSL-hosted repo
+///    gets its own distro cd'd into the repo, anything else gets the native
+///    shell.
+///  - `Some("")` — force the native default shell EVEN for a WSL-hosted
+///    repo (the picker's own "Default" entry).
+///  - `Some(distro)` — force that WSL distro's shell. Only `--cd`s into the
+///    repo's own path INSIDE the distro when `distro` is the SAME one the
+///    repo is actually hosted in (case-insensitive, matching `wsl_target`'s
+///    own host-matching) — a repo hosted in one distro has no meaningful
+///    path inside a DIFFERENT one, so picking any other installed distro
+///    (or picking a distro for a non-WSL repo) lands in that distro's own
+///    home directory instead of guessing at a translation.
+fn pty_command_for(path: &str, shell: Option<&str>) -> CommandBuilder {
     let path = crate::windows::strip_windows_verbatim_prefix(path.to_string());
-    if let Some((distro, linux_path)) = crate::wsl::wsl_target(&path) {
+    let wsl = crate::wsl::wsl_target(&path);
+
+    if let Some(distro) = shell {
+        if distro.is_empty() {
+            let mut cmd = CommandBuilder::new_default_prog();
+            cmd.cwd(&path);
+            return cmd;
+        }
+        let mut cmd = CommandBuilder::new("wsl.exe");
+        cmd.arg("-d");
+        cmd.arg(distro);
+        if let Some((repo_distro, linux_path)) = &wsl {
+            if repo_distro.eq_ignore_ascii_case(distro) {
+                cmd.arg("--cd");
+                cmd.arg(linux_path);
+            }
+        }
+        return cmd;
+    }
+
+    if let Some((distro, linux_path)) = wsl {
         let mut cmd = CommandBuilder::new("wsl.exe");
         cmd.arg("-d");
         cmd.arg(&distro);
@@ -138,7 +175,9 @@ fn pty_command_for(path: &str) -> CommandBuilder {
 /// `trust::open_repo` gates this exactly like every other command that
 /// touches a repo path — a terminal is a much more powerful escape hatch
 /// than any git operation this app performs, so it gets no exemption.
-fn open_pty_shell(path: &str) -> Result<TerminalSession, String> {
+///
+/// `shell` — see [`pty_command_for`]'s own doc comment.
+fn open_pty_shell(path: &str, shell: Option<&str>) -> Result<TerminalSession, String> {
     if let Err(e) = crate::trust::open_repo(path) {
         return Err(ierrp("err_misc.cannot_open_repo_cap", &[("detail", e.message())]));
     }
@@ -147,7 +186,7 @@ fn open_pty_shell(path: &str) -> Result<TerminalSession, String> {
         .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
 
-    let cmd = pty_command_for(path);
+    let cmd = pty_command_for(path, shell);
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     // Dropping our own copy of the slave side is required on unix: as long
     // as ANY fd for the slave stays open in this process — even one nobody
@@ -161,8 +200,10 @@ fn open_pty_shell(path: &str) -> Result<TerminalSession, String> {
     Ok(TerminalSession { master: pair.master, writer, child })
 }
 
-/// JS: `commands.terminalSpawn(path)`. Returns the new session's id, which
-/// every other command below takes to address it.
+/// JS: `commands.terminalSpawn(path, shell)`. Returns the new session's id,
+/// which every other command below takes to address it. `shell` is the
+/// drawer's own shell-picker choice — see [`pty_command_for`]'s own doc
+/// comment for what `None`/`Some("")`/`Some(distro)` each mean.
 ///
 /// BUG FIX: was a plain (non-async) `fn` — `open_pty_shell` calls
 /// `trust::open_repo` before ever touching a PTY, the same git2 `Repository::
@@ -175,8 +216,13 @@ fn open_pty_shell(path: &str) -> Result<TerminalSession, String> {
 /// blocking part completes.
 #[tauri::command]
 #[specta::specta]
-pub async fn terminal_spawn(app: AppHandle<Wry>, registry: State<'_, TerminalRegistry>, path: String) -> Result<String, String> {
-    let session = crate::blocking::run_blocking(move || open_pty_shell(&path)).await?;
+pub async fn terminal_spawn(
+    app: AppHandle<Wry>,
+    registry: State<'_, TerminalRegistry>,
+    path: String,
+    shell: Option<String>,
+) -> Result<String, String> {
+    let session = crate::blocking::run_blocking(move || open_pty_shell(&path, shell.as_deref())).await?;
     let mut reader = session.master.try_clone_reader().map_err(|e| e.to_string())?;
     let id = format!("term-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
 
@@ -255,6 +301,16 @@ pub fn terminal_kill(registry: State<TerminalRegistry>, id: String) -> Result<()
     Ok(())
 }
 
+/// JS: `commands.listWslDistros()` — every registered WSL distro's name, for
+/// the terminal drawer's own shell picker. See [`crate::wsl::list_distros`]'s
+/// own doc comment for why an empty list is the normal, non-error answer on
+/// a machine with no WSL install at all.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_wsl_distros() -> Vec<String> {
+    crate::blocking::run_blocking(crate::wsl::list_distros).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,7 +356,7 @@ mod tests {
     #[test]
     fn open_pty_shell_spawns_a_real_shell_and_round_trips_a_command() {
         let repo = TempGitDir::init();
-        let mut session = open_pty_shell(&repo.path()).expect("should spawn a real shell");
+        let mut session = open_pty_shell(&repo.path(), None).expect("should spawn a real shell");
         let mut reader = session.master.try_clone_reader().expect("should clone a reader");
 
         // Play enough of a terminal for the shell to start talking.
@@ -357,7 +413,7 @@ mod tests {
         // `Box<dyn MasterPty>` in particular) don't implement `Debug`, which
         // `unwrap_err()` requires of the `Ok` type regardless of which
         // variant is actually present.
-        match open_pty_shell("/no/such/path/at/all") {
+        match open_pty_shell("/no/such/path/at/all", None) {
             Err(e) => assert!(e.contains("err_misc.cannot_open_repo_cap")),
             Ok(_) => panic!("expected a nonexistent path to be refused before spawning anything"),
         }
@@ -372,7 +428,7 @@ mod tests {
 
     #[test]
     fn an_ordinary_repo_gets_the_default_shell_cwd_to_the_repo() {
-        let cmd = pty_command_for("/home/me/proj");
+        let cmd = pty_command_for("/home/me/proj", None);
         assert!(cmd.is_default_prog(), "an ordinary path must use the user's own shell");
         assert_eq!(cmd.get_cwd().map(|c| c.to_string_lossy().into_owned()), Some("/home/me/proj".to_string()));
     }
@@ -382,7 +438,7 @@ mod tests {
     // this must not depend on that.
     #[test]
     fn a_verbatim_windows_path_is_reduced_before_it_becomes_a_cwd() {
-        let cmd = pty_command_for(r"\\?\C:\Users\me\proj");
+        let cmd = pty_command_for(r"\\?\C:\Users\me\proj", None);
         assert!(cmd.is_default_prog());
         assert_eq!(
             cmd.get_cwd().map(|c| c.to_string_lossy().into_owned()),
@@ -395,7 +451,7 @@ mod tests {
     // Windows shell would be the wrong shell for it anyway.
     #[test]
     fn a_wsl_repo_gets_the_distros_own_shell_at_the_repo() {
-        let cmd = pty_command_for(r"\\wsl.localhost\Ubuntu\home\me\proj");
+        let cmd = pty_command_for(r"\\wsl.localhost\Ubuntu\home\me\proj", None);
         assert!(!cmd.is_default_prog(), "a WSL repo must not fall through to the Windows default shell");
         assert_eq!(argv(&cmd), vec!["wsl.exe", "-d", "Ubuntu", "--cd", "/home/me/proj"]);
         assert!(cmd.get_cwd().is_none(), "--cd sets the directory inside the distro; the outer process needs no cwd");
@@ -404,7 +460,7 @@ mod tests {
     // The same repo as stored by a build that predates the repo_registry fix.
     #[test]
     fn a_wsl_repo_in_verbatim_unc_form_routes_the_same_way() {
-        let cmd = pty_command_for(r"\\?\UNC\wsl.localhost\Debian\srv\app");
+        let cmd = pty_command_for(r"\\?\UNC\wsl.localhost\Debian\srv\app", None);
         assert_eq!(argv(&cmd), vec!["wsl.exe", "-d", "Debian", "--cd", "/srv/app"]);
     }
 
@@ -413,15 +469,53 @@ mod tests {
     // UNC cwd there — that is a separate gap, deliberately not papered over here.
     #[test]
     fn a_plain_network_share_is_not_treated_as_wsl() {
-        let cmd = pty_command_for(r"\\server\share\repo");
+        let cmd = pty_command_for(r"\\server\share\repo", None);
         assert!(cmd.is_default_prog());
+    }
+
+    // -- explicit shell picker (`shell: Some(...)`) --------------------------
+
+    #[test]
+    fn an_empty_shell_override_forces_native_even_on_a_wsl_repo() {
+        let cmd = pty_command_for(r"\\wsl.localhost\Ubuntu\home\me\proj", Some(""));
+        assert!(cmd.is_default_prog(), "Some(\"\") is the picker's own \"Default\" choice");
+        assert_eq!(cmd.get_cwd().map(|c| c.to_string_lossy().into_owned()), Some(r"\\wsl.localhost\Ubuntu\home\me\proj".to_string()));
+    }
+
+    #[test]
+    fn a_shell_override_matching_the_repos_own_distro_still_cds_into_it() {
+        let cmd = pty_command_for(r"\\wsl.localhost\Ubuntu\home\me\proj", Some("Ubuntu"));
+        assert_eq!(argv(&cmd), vec!["wsl.exe", "-d", "Ubuntu", "--cd", "/home/me/proj"]);
+    }
+
+    // Case-insensitive to match wsl_target's own UNC host matching (Windows
+    // paths, and the picker's own values, both trace back to the same
+    // `wsl -l -q` listing either way).
+    #[test]
+    fn a_shell_override_matches_the_repos_distro_case_insensitively() {
+        let cmd = pty_command_for(r"\\wsl.localhost\Ubuntu\home\me\proj", Some("UBUNTU"));
+        assert_eq!(argv(&cmd), vec!["wsl.exe", "-d", "UBUNTU", "--cd", "/home/me/proj"]);
+    }
+
+    #[test]
+    fn a_shell_override_for_a_different_distro_than_the_repos_own_lands_in_its_home_dir() {
+        // The repo lives in Ubuntu; picking Debian instead has no meaningful
+        // path to cd into there, so this must NOT guess at a translation.
+        let cmd = pty_command_for(r"\\wsl.localhost\Ubuntu\home\me\proj", Some("Debian"));
+        assert_eq!(argv(&cmd), vec!["wsl.exe", "-d", "Debian"]);
+    }
+
+    #[test]
+    fn a_shell_override_for_a_non_wsl_repo_lands_in_the_distros_home_dir() {
+        let cmd = pty_command_for(r"C:\Users\me\proj", Some("Ubuntu"));
+        assert_eq!(argv(&cmd), vec!["wsl.exe", "-d", "Ubuntu"]);
     }
 
     #[test]
     fn kill_all_empties_the_registry_and_terminates_every_session() {
         let registry = TerminalRegistry::default();
         let repo = TempGitDir::init();
-        let session = open_pty_shell(&repo.path()).expect("should spawn a real shell");
+        let session = open_pty_shell(&repo.path(), None).expect("should spawn a real shell");
         registry.0.lock().unwrap().insert("term-1".to_string(), session);
 
         registry.kill_all();

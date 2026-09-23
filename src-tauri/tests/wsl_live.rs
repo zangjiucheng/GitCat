@@ -65,31 +65,16 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gitcat_lib::{code_search, dashboard, git_remote, safety, trust, workdir};
+use gitcat_lib::{code_search, dashboard, git_remote, safety, trust, wsl, workdir};
 
 /// The first registered WSL distro's name, or `None` if WSL isn't installed
-/// / no distro is registered at all. `wsl.exe -l -q` (quiet: names only, one
-/// per line) — EMPIRICALLY CONFIRMED its stdout is UTF-16LE even when piped
-/// (not a real console): decoding it as UTF-8 (lossy or otherwise)
-/// interleaves a NUL byte after every character instead of the real text, so
-/// this decodes as UTF-16LE explicitly rather than
-/// `String::from_utf8_lossy`. WSL always lists the default distro first —
-/// EMPIRICALLY CONFIRMED against this dev box's own `wsl -l -v` (`*`-marked
-/// default matches the first `-l -q` line) — so the first line is used
-/// as-is rather than re-parsing `-l -v`'s fixed-width, also-UTF-16LE table.
+/// / no distro is registered at all — `wsl::list_distros()` (EMPIRICALLY
+/// CONFIRMED against this dev box's own `wsl -l -v`: the `*`-marked default
+/// distro matches the first `-l -q` line, which is what that function
+/// returns first) is the real, non-test-only version of what this used to
+/// hand-roll here.
 fn first_wsl_distro() -> Option<String> {
-    let out = Command::new("wsl.exe").arg("-l").arg("-q").output().ok()?;
-    if !out.status.success() || out.stdout.len() % 2 != 0 {
-        return None;
-    }
-    let units: Vec<u16> = out.stdout.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-    let text = String::from_utf16_lossy(&units);
-    let name = text.lines().next()?.trim();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name.to_string())
-    }
+    wsl::list_distros().into_iter().next()
 }
 
 /// Prints why, for a test that's about to skip itself.
@@ -417,4 +402,17 @@ fn safety_snapshot_creates_a_backup_ref_on_a_wsl_repo() {
     assert_ne!(ref_name, second, "two snapshots must get distinct ref names");
 
     untrust(&path);
+}
+
+#[test]
+#[ignore]
+fn list_distros_finds_the_real_registered_distro() {
+    let distro = skip_without_wsl!();
+    // `first_wsl_distro()` above is itself `wsl::list_distros().into_iter().
+    // next()` — this asserts the real function directly, and that the
+    // distro every other test in this file discovers is actually IN the
+    // full list, not just coincidentally equal to its first element.
+    let all = wsl::list_distros();
+    assert!(!all.is_empty(), "a machine with a registered distro must not report an empty list");
+    assert!(all.iter().any(|d| d == &distro), "expected {distro:?} among {all:?}");
 }

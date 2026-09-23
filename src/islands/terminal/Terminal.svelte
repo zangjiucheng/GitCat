@@ -48,6 +48,13 @@
   }
 
   onMount(() => {
+    // Fire-and-forget: the picker just renders empty (no distros beyond
+    // Default) until this resolves, same as any other cached-on-first-use
+    // list in this codebase. Cheap and idempotent — see loadDistros' own doc
+    // comment — so calling it every mount is fine even though the drawer
+    // itself is only ever mounted once (#82).
+    void terminalCtrl.loadDistros();
+
     xterm = new XTerm({ fontFamily: "var(--mono)", fontSize: 12.5, cursorBlink: true, theme: xtermTheme() });
     fitAddon = new FitAddon();
     xterm.loadAddon(fitAddon);
@@ -197,6 +204,22 @@
          at the moment they need it. Escape is not offered because the shell
          owns it. -->
     <span class="term-hint mut">{t("terminal.focus_out_hint")} <kbd>⇧esc</kbd></span>
+    {#if terminalCtrl.distros.length > 0}
+      <!-- Only worth showing when there's an actual choice beyond the single
+           (native) default — a machine with no WSL at all has nothing else
+           to offer here. -->
+      <select
+        class="term-shell"
+        aria-label={t("terminal.shell_picker_label")}
+        value={terminalCtrl.shell ?? ""}
+        onchange={(e) => terminalCtrl.setShell(e.currentTarget.value || null)}
+      >
+        <option value="">{t("terminal.shell_default")}</option>
+        {#each terminalCtrl.distros as distro (distro)}
+          <option value={distro}>{distro}</option>
+        {/each}
+      </select>
+    {/if}
     <button class="term-x" title={t("common.close")} aria-label={t("terminal.aria_close")} onclick={() => terminalCtrl.closeSession()}>&#10005;</button>
   </div>
   <div class="term-body">
