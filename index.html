@@ -1546,17 +1546,12 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   background:var(--panel);border-bottom:1px solid var(--border);font-size:12px}
 .term-title{font-weight:600}
 .term-ic{font-family:var(--mono);font-weight:700;color:var(--accent)}
-.term-exited{color:var(--muted)}
 /* #142's discoverability half: the way OUT of the shell, shown where the
    person who needs it is looking. Muted and after the title rather than
-   right-aligned, so it never competes with the exit/restart state that
-   appears in the same row. */
+   right-aligned, so it never competes with the close button in the same row. */
 .term-hint{display:inline-flex;align-items:center;gap:5px;font-size:11px}
 .term-hint kbd{font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:4px;
   border:1px solid var(--border);background:var(--elevated);color:var(--muted)}
-.term-btn{font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;border:1px solid var(--border);
-  background:var(--elevated);color:var(--text)}
-.term-btn:hover{border-color:var(--muted)}
 .term-x{margin-left:auto;width:22px;height:22px;padding:0;flex:none;display:grid;place-items:center;border-radius:6px;
   border:1px solid var(--border);background:var(--elevated);color:var(--muted)}
 .term-x:hover{border-color:var(--muted);color:var(--text)}

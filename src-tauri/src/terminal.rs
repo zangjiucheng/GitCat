@@ -43,7 +43,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use tauri::{AppHandle, State, Wry};
+use tauri::{AppHandle, Manager, State, Wry};
 
 use crate::i18n_err::{ierr, ierrp};
 
@@ -195,6 +195,17 @@ pub async fn terminal_spawn(app: AppHandle<Wry>, registry: State<'_, TerminalReg
                 }
                 Err(_) => break,
             }
+        }
+        // The shell exited on its own (never via terminal_kill, the ONLY
+        // other place that removes an entry) — without this, every session
+        // that ends this way would sit in the registry forever: a dead
+        // `Child`/`MasterPty` pair nothing else will ever clean up, for the
+        // rest of the app's lifetime. Removing it here, right where EOF was
+        // actually observed, means terminal_write/terminal_resize against
+        // this id correctly start reporting "session ended" immediately
+        // afterward too, instead of finding a stale entry that looks alive.
+        if let Some(registry) = app_for_thread.try_state::<TerminalRegistry>() {
+            registry.0.lock().unwrap().remove(&id_for_thread);
         }
         crate::event_util::emit_on_main(&app_for_thread, "terminal-exit", TerminalExitEvent { id: id_for_thread.clone() });
     });

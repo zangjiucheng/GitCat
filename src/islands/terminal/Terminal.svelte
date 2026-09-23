@@ -197,10 +197,6 @@
          at the moment they need it. Escape is not offered because the shell
          owns it. -->
     <span class="term-hint mut">{t("terminal.focus_out_hint")} <kbd>⇧esc</kbd></span>
-    {#if terminalCtrl.exited}
-      <span class="term-exited">{t("terminal.exited")}</span>
-      <button class="term-btn" onclick={() => terminalCtrl.restart()}>&#8635; {t("terminal.restart_btn")}</button>
-    {/if}
     <button class="term-x" title={t("common.close")} aria-label={t("terminal.aria_close")} onclick={() => terminalCtrl.closeSession()}>&#10005;</button>
   </div>
   <div class="term-body">

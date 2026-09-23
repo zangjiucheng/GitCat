@@ -49,7 +49,6 @@ function resetTerminal() {
   terminalCtrl.repo = "";
   terminalCtrl.sessionId = null;
   terminalCtrl.busy = false;
-  terminalCtrl.exited = false;
   terminalCtrl.onData = null;
   (terminalCtrl as unknown as { pendingOutput: Uint8Array[] }).pendingOutput = [];
   mockInTauri = false;
@@ -179,7 +178,7 @@ describe("toggle", () => {
   });
 });
 
-describe("hide / closeSession / restart", () => {
+describe("hide / closeSession", () => {
   it("hide() only tucks the drawer away — the session survives", async () => {
     mockInTauri = true;
     vi.mocked(commands.terminalSpawn).mockResolvedValueOnce(ok("term-1"));
@@ -205,23 +204,6 @@ describe("hide / closeSession / restart", () => {
     expect(terminalCtrl.open).toBe(false);
     expect(unlistenMocks["terminal-output"]).toHaveBeenCalledTimes(1);
     expect(unlistenMocks["terminal-exit"]).toHaveBeenCalledTimes(1);
-  });
-
-  it("restart() ends the old session and spawns a fresh one for the same repo", async () => {
-    mockInTauri = true;
-    vi.mocked(commands.terminalSpawn).mockResolvedValueOnce(ok("term-1"));
-    vi.mocked(commands.terminalKill).mockResolvedValueOnce(ok(null));
-    vi.mocked(commands.terminalSpawn).mockResolvedValueOnce(ok("term-2"));
-    await terminalCtrl.toggle("/repo");
-    terminalCtrl.exited = true;
-
-    await terminalCtrl.restart();
-
-    expect(commands.terminalKill).toHaveBeenCalledWith("term-1");
-    expect(terminalCtrl.sessionId).toBe("term-2");
-    expect(terminalCtrl.exited).toBe(false);
-    expect(terminalCtrl.open).toBe(true);
-    expect(terminalCtrl.repo).toBe("/repo");
   });
 });
 
@@ -348,15 +330,20 @@ describe("terminal-output / terminal-exit events", () => {
     expect(received).toHaveLength(1);
   });
 
-  it("terminal-exit for the live session's id sets exited; a mismatched id is ignored", async () => {
+  it("terminal-exit for the live session's id closes the drawer and clears the session; a mismatched id is ignored", async () => {
     mockInTauri = true;
     vi.mocked(commands.terminalSpawn).mockResolvedValueOnce(ok("term-1"));
     await terminalCtrl.toggle("/repo");
 
     handlers["terminal-exit"]({ payload: { id: "term-0-stale" } });
-    expect(terminalCtrl.exited).toBe(false);
+    expect(terminalCtrl.open).toBe(true);
+    expect(terminalCtrl.sessionId).toBe("term-1");
 
     handlers["terminal-exit"]({ payload: { id: "term-1" } });
-    expect(terminalCtrl.exited).toBe(true);
+    expect(terminalCtrl.open).toBe(false);
+    expect(terminalCtrl.sessionId).toBeNull();
+    // The process is already dead — terminal.rs's own reader thread already
+    // removed it from the registry, so there is nothing left to kill here.
+    expect(commands.terminalKill).not.toHaveBeenCalled();
   });
 });

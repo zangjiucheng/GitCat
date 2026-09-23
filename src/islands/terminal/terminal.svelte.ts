@@ -40,7 +40,6 @@ class TerminalState {
   repo = $state("");
   sessionId = $state<string | null>(null);
   busy = $state(false);
-  exited = $state(false);
 
   onData: ((bytes: Uint8Array) => void) | null = null;
 
@@ -99,13 +98,6 @@ class TerminalState {
     await this.spawnFor(repo);
   }
 
-  // The exited-banner's own action — a fresh session for the SAME repo.
-  async restart(): Promise<void> {
-    const repo = this.repo;
-    await this.endSession();
-    await this.spawnFor(repo);
-  }
-
   // Tucks the drawer away without ending the shell — see this file's own
   // header doc for why hide and close are deliberately different actions.
   hide(): void {
@@ -140,7 +132,6 @@ class TerminalState {
   private async spawnFor(repo: string): Promise<void> {
     this.repo = repo;
     this.open = true;
-    this.exited = false;
     if (!IN_TAURI) return; // demo mode: drawer shows a static preview, no real shell
     this.busy = true;
     try {
@@ -164,7 +155,6 @@ class TerminalState {
     this.stopListening();
     const id = this.sessionId;
     this.sessionId = null;
-    this.exited = false;
     if (id && IN_TAURI) {
       try {
         const res = await commands.terminalKill(id);
@@ -193,11 +183,23 @@ class TerminalState {
     });
     w.__TAURI__.event.listen("terminal-exit", (e: { payload: { id: string } }) => {
       if (e.payload.id !== id) return;
-      this.exited = true;
+      this.handleExit();
     }).then((un) => {
       if (this.sessionId === id) this.unlistenExit = un;
       else un();
     });
+  }
+
+  // The shell process ended on its own (not via closeSession()'s deliberate
+  // kill) — the drawer closes right along with it rather than sticking
+  // around showing a dead, unresponsive prompt. terminal.rs's own reader
+  // thread already removed the (now-dead) session from its registry once it
+  // saw EOF, so there is nothing left here to tell the backend to clean up —
+  // just this side's own listeners and state.
+  private handleExit(): void {
+    this.stopListening();
+    this.sessionId = null;
+    this.open = false;
   }
 
   private stopListening(): void {
