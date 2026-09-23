@@ -49,6 +49,7 @@ export default {
   unexpected_rev_list_output: "`git rev-list --left-right --count`의 출력이 예상과 달라요: {output}",
   wsl_ahead_behind_timed_out: "WSL 앞선/뒤처진 커밋 수 확인이 {timeout} 후 시간 초과됐어요",
   wsl_create_ref_timed_out: "WSL을 통한 백업 참조 생성이 {timeout} 후 시간 초과됐어요 — 터미널에서 `wsl --shutdown`을 실행한 뒤 이 저장소를 다시 열어보세요",
+  wsl_ref_permission_denied: "WSL 안에서 백업 참조를 만들지 못했어요 — {path}/.git/refs/gitgui 권한이 부족해요. 보통 이전 버전의 앱이 Windows에서 이 저장소에 접근하면서 해당 파일들을 root 소유로 만들었기 때문이에요. WSL 셸에서 `sudo chown -R $(whoami) {path}/.git/refs/gitgui`를 한 번 실행하면 해결돼요 — 그래도 문제가 남아 있으면 `sudo chown -R $(whoami) {path}/.git`로 같은 문제가 건드린 다른 파일도 정리하세요. ({detail})",
 
   // terminal.rs
   terminal_session_ended: "이 터미널 세션은 이미 종료됐어요.",

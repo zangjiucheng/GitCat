@@ -50,6 +50,7 @@ export default {
   unexpected_rev_list_output: "unexpected `git rev-list --left-right --count` output: {output}",
   wsl_ahead_behind_timed_out: "WSL ahead/behind check timed out after {timeout}",
   wsl_create_ref_timed_out: "Creating a backup ref over WSL timed out after {timeout} — try `wsl --shutdown` in a terminal, then reopen this repo",
+  wsl_ref_permission_denied: "Couldn't create a backup ref inside WSL — permission denied under {path}/.git/refs/gitgui. This usually means an older version of this app created those files as root while reaching in from Windows. Fix it once from a WSL shell: `sudo chown -R $(whoami) {path}/.git/refs/gitgui` — if it still complains afterward, `sudo chown -R $(whoami) {path}/.git` catches anything else the same bug touched. ({detail})",
 
   // terminal.rs
   terminal_session_ended: "This terminal session has already ended.",

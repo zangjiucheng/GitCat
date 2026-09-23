@@ -46,6 +46,7 @@ export default {
   unexpected_rev_list_output: "`git rev-list --left-right --count` 的输出异常：{output}",
   wsl_ahead_behind_timed_out: "WSL 领先/落后检查在 {timeout} 后超时",
   wsl_create_ref_timed_out: "通过 WSL 创建备份引用在 {timeout} 后超时 —— 请在终端运行 `wsl --shutdown`，然后重新打开此仓库",
+  wsl_ref_permission_denied: "无法在 WSL 内创建备份引用 —— {path}/.git/refs/gitgui 权限不足。这通常是因为旧版本的应用从 Windows 访问该仓库时，以 root 身份创建了这些文件。可以在 WSL 终端里执行一次 `sudo chown -R $(whoami) {path}/.git/refs/gitgui` 来修复；如果之后仍有问题，再执行 `sudo chown -R $(whoami) {path}/.git` 修复同一个问题可能影响到的其他文件。（{detail}）",
 
   // terminal.rs
   terminal_session_ended: "该终端会话已结束。",

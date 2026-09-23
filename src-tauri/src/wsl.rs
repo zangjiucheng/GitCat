@@ -411,23 +411,33 @@ pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize
 /// file '...\.git\refs\gitgui\backup\....lock': Access is denied" —
 /// `Repository::reference()`'s own write path, which libgit2 implements as
 /// "create a `<ref>.lock` file, write it, rename it over the real ref".
-/// NOT independently reproduced here (200 back-to-back snapshots against a
+/// NOT reproducible in the abstract (200 back-to-back snapshots against a
 /// fresh WSL fixture on this dev box all succeeded via plain git2 — see this
-/// module's test suite), so the exact trigger is unconfirmed; a newly
-/// created file getting a transient "Access is denied" over a
-/// network-redirector path (real-time antivirus/EDR scanning it, most
-/// commonly) is a well-known general Windows phenomenon that a purely local
-/// disk essentially never exposes, which is at least consistent with why it
-/// would show up specifically on a WSL-bridge path and nowhere else. Routing
-/// the write natively inside the distro sidesteps that whole class of
-/// Windows-side interference regardless of the exact cause — the same
-/// "let the distro's own filesystem do it, never cross the bridge for this"
-/// idea `wsl_status` already applies to the read-side symlink stall, applied
-/// here to a write. Every one of this app's own "pin a commit under a
-/// fresh, never-clobbered ref before doing something risky" call sites goes
-/// through here for a WSL repo now (safety snapshots, deleted-branch/tag
-/// pins, the pre-drop stash backup), so a fix in this one place covers all
-/// of them.
+/// module's test suite) — the actual root cause, tracked down live against
+/// the REPORTING user's own repo (`ls -la` on its `.git/refs/gitgui/`), was
+/// simpler and specific to THAT repo: every entry under `refs/gitgui/` was
+/// owned by `root:root` while everything else in `.git/` was owned by the
+/// real WSL user. That's WSL's OWN `\\wsl.localhost\` 9P redirector's
+/// well-documented behavior — a file/directory CREATED from a Windows
+/// process reaching in over that bridge lands root-owned on the Linux side,
+/// no matter which Windows user ran it — and every file already inside that
+/// directory was timestamped from before this fix shipped, i.e. created by
+/// this app's OWN prior (libgit2-over-the-bridge) snapshot code. Once a
+/// `refs/gitgui/*` directory is root-owned mode 755, "Access is denied" from
+/// Windows and "Permission denied" from the distro's own git (`other` gets
+/// read+execute, never write) are really the SAME underlying problem: this
+/// app itself corrupted that one directory's ownership before this fix
+/// existed. Routing every future ref-write here natively inside the distro
+/// (as the real user, never crossing the bridge) stops the ownership
+/// problem from recurring — it cannot retroactively fix a directory an
+/// older version already left root-owned, so a repo that already hit this
+/// needs a one-time manual `chown` (see the `Permission denied` branch just
+/// below, which spells out that exact command back to the user). Every one
+/// of this app's own "pin a commit under a fresh, never-clobbered ref before
+/// doing something risky" call sites goes through here for a WSL repo now
+/// (safety snapshots, deleted-branch/tag pins, the pre-drop stash backup),
+/// so the fix — and the one-time-repair guidance — lives in exactly one
+/// place.
 ///
 /// The trailing all-zero-oid argument is `update-ref`'s own idiom for "the
 /// ref must not already exist" (a nonexistent ref reads as the all-zero oid
@@ -436,11 +446,41 @@ pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize
 /// git2 path, so a unique ref name still can never clobber a prior one here
 /// either.
 pub fn wsl_create_ref(path: &str, ref_name: &str, oid: &str, reason: &str) -> Option<Result<(), String>> {
-    wsl_target(path)?;
+    let (_, linux_path) = wsl_target(path)?;
     const ZERO_OID: &str = "0000000000000000000000000000000000000000";
     let cmd = git_command(path, &["update-ref", "-m", reason, ref_name, oid, ZERO_OID]);
     Some(match output_with_timeout(cmd, SUBPROCESS_TIMEOUT) {
         Ok(o) if o.status.success() => Ok(()),
+        // EMPIRICALLY CONFIRMED root cause of the ORIGINAL "Access is denied"
+        // report this whole function exists to fix, tracked down live against
+        // the reporting user's own repo once this WSL-native routing surfaced
+        // a far more useful error than libgit2's ever did: `.git/refs/gitgui/`
+        // (and everything under it) was owned by `root:root`, mode 755,
+        // while every other `.git/*` entry in the same repo was owned by the
+        // real WSL user — `ls -la` on that exact directory tree showed it.
+        // That's WSL's OWN `\\wsl.localhost\` 9P redirector's well-documented
+        // behavior: a file/directory CREATED from a Windows process reaching
+        // in over that bridge lands owned by root on the Linux side,
+        // regardless of which Windows user ran it. `refs/gitgui/backup/`'s
+        // own contents in that repo were all timestamped from BEFORE this
+        // fix shipped — i.e. every backup ref this app itself had created
+        // through the OLD libgit2-over-the-bridge path. Once that directory
+        // existed root-owned, EVERY later attempt (including this fixed,
+        // WSL-native one, now correctly running AS the real user) can list
+        // it but can never write into it: `drwxr-xr-x root:root` grants
+        // "other" read+execute, never write. This app's fix stops the
+        // ROOT-OWNERSHIP problem from recurring going forward (every future
+        // ref-write here runs natively as the real user, never crossing the
+        // bridge) — it cannot retroactively fix a directory an OLDER version
+        // already left root-owned, so that one repo needs a one-time manual
+        // `chown`, which this message spells out.
+        Ok(o) if String::from_utf8_lossy(&o.stderr).contains("Permission denied") => {
+            let detail = String::from_utf8_lossy(&o.stderr).trim().to_string();
+            Err(ierrp(
+                "err_misc.wsl_ref_permission_denied",
+                &[("path", &linux_path), ("detail", &detail)],
+            ))
+        }
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
             Err(ierrp("err_misc.wsl_create_ref_timed_out", &[("timeout", &format!("{SUBPROCESS_TIMEOUT:?}"))]))
