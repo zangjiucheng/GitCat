@@ -3,10 +3,10 @@
 // Tools-menu/⌘K/CmdOrCtrl+` "Open Terminal", now a real PTY-backed shell
 // embedded in GitCat's own UI (a bottom drawer, see Terminal.svelte) —
 // fronts terminal.rs's terminal_spawn/terminal_write/terminal_resize/
-// terminal_kill, replacing the old openterminal.svelte.ts, which just
-// shelled out to the OS's own Terminal app (no controller state needed
-// there beyond a `busy` re-entrancy guard; this one owns a real session's
-// whole lifecycle instead).
+// terminal_kill/list_wsl_distros, replacing the old openterminal.svelte.ts,
+// which just shelled out to the OS's own Terminal app (no controller state
+// needed there beyond a `busy` re-entrancy guard; this one owns a real
+// session's whole lifecycle instead).
 //
 // `onData` is a plain (non-reactive) callback field, not `$state` — it's an
 // imperative hook Terminal.svelte's own onMount registers so decoded PTY
@@ -19,9 +19,12 @@
 // touching the underlying shell — closing it is a deliberate act via the ×
 // button (`closeSession`), not a side effect of hiding the drawer, so a
 // long-running command left in the terminal survives being tucked away.
-// Switching to a DIFFERENT repo (or an explicit restart) tears the old
-// session down first — a stale shell still `cd`'d into a repo that's no
-// longer current would just be confusing to land back on.
+// Switching to a DIFFERENT repo (or picking a different shell via
+// `setShell`) tears the old session down first — a stale shell still `cd`'d
+// into whatever the terminal used to be pointed at would just be confusing
+// to land back on. The shell exiting on its own closes the drawer outright
+// instead (`handleExit`) — see its own doc comment for why that is not the
+// same code path as an explicit repo/shell switch.
 
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
@@ -40,7 +43,22 @@ class TerminalState {
   repo = $state("");
   sessionId = $state<string | null>(null);
   busy = $state(false);
-  exited = $state(false);
+
+  // The shell picker's current choice: `null` is "Default" — auto-detect
+  // exactly like before this existed (a WSL-hosted repo gets its own
+  // distro's shell, cd'd into the repo; anything else gets the native
+  // shell). Any other value is a specific WSL distro name, forced
+  // regardless of which distro (if any) the repo itself lives in — see
+  // terminal.rs's `pty_command_for` own doc comment for exactly what
+  // happens when that doesn't match the repo's own distro. One global
+  // choice, not per-repo: the drawer itself is a single global feature, the
+  // same way `open`/`busy` already are.
+  shell = $state<string | null>(null);
+  // Every registered WSL distro, fetched once and cached — empty (not an
+  // error) on a machine with no WSL install at all, in which case the
+  // picker has nothing to offer beyond Default and Terminal.svelte hides it.
+  distros = $state<string[]>([]);
+  private distrosRequested = false;
 
   onData: ((bytes: Uint8Array) => void) | null = null;
 
@@ -99,8 +117,23 @@ class TerminalState {
     await this.spawnFor(repo);
   }
 
-  // The exited-banner's own action — a fresh session for the SAME repo.
-  async restart(): Promise<void> {
+  /** Fetch the WSL distro list once (idempotent) — Terminal.svelte's onMount calls this. */
+  async loadDistros(): Promise<void> {
+    if (this.distrosRequested || !IN_TAURI) return;
+    this.distrosRequested = true;
+    try {
+      this.distros = await commands.listWslDistros();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  // The shell picker's own action: change the choice and, if a session is
+  // already live, restart it under the new choice for the SAME repo — same
+  // end-then-respawn shape `toggle()`'s own repo-switch branch uses.
+  async setShell(shell: string | null): Promise<void> {
+    this.shell = shell;
+    if (!this.sessionId) return;
     const repo = this.repo;
     await this.endSession();
     await this.spawnFor(repo);
@@ -140,11 +173,10 @@ class TerminalState {
   private async spawnFor(repo: string): Promise<void> {
     this.repo = repo;
     this.open = true;
-    this.exited = false;
     if (!IN_TAURI) return; // demo mode: drawer shows a static preview, no real shell
     this.busy = true;
     try {
-      const res = await commands.terminalSpawn(repo);
+      const res = await commands.terminalSpawn(repo, this.shell);
       if (res.status === "error") {
         bridge.tama.warn(be(res.error) || t("terminal.err_open"));
         this.open = false;
@@ -164,7 +196,6 @@ class TerminalState {
     this.stopListening();
     const id = this.sessionId;
     this.sessionId = null;
-    this.exited = false;
     if (id && IN_TAURI) {
       try {
         const res = await commands.terminalKill(id);
@@ -193,11 +224,23 @@ class TerminalState {
     });
     w.__TAURI__.event.listen("terminal-exit", (e: { payload: { id: string } }) => {
       if (e.payload.id !== id) return;
-      this.exited = true;
+      this.handleExit();
     }).then((un) => {
       if (this.sessionId === id) this.unlistenExit = un;
       else un();
     });
+  }
+
+  // The shell process ended on its own (not via closeSession()'s deliberate
+  // kill) — the drawer closes right along with it rather than sticking
+  // around showing a dead, unresponsive prompt. terminal.rs's own reader
+  // thread already removed the (now-dead) session from its registry once it
+  // saw EOF, so there is nothing left here to tell the backend to clean up —
+  // just this side's own listeners and state.
+  private handleExit(): void {
+    this.stopListening();
+    this.sessionId = null;
+    this.open = false;
   }
 
   private stopListening(): void {

@@ -17,6 +17,7 @@ vi.mock("../../ipc/bindings", () => ({
     terminalWrite: vi.fn(),
     terminalResize: vi.fn(),
     terminalKill: vi.fn(),
+    listWslDistros: vi.fn(),
   },
 }));
 
@@ -49,9 +50,11 @@ function resetTerminal() {
   terminalCtrl.repo = "";
   terminalCtrl.sessionId = null;
   terminalCtrl.busy = false;
-  terminalCtrl.exited = false;
+  terminalCtrl.shell = null;
+  terminalCtrl.distros = [];
   terminalCtrl.onData = null;
   (terminalCtrl as unknown as { pendingOutput: Uint8Array[] }).pendingOutput = [];
+  (terminalCtrl as unknown as { distrosRequested: boolean }).distrosRequested = false;
   mockInTauri = false;
   vi.clearAllMocks();
   handlers = {};
@@ -98,7 +101,7 @@ describe("toggle", () => {
 
     await terminalCtrl.toggle("/repo");
 
-    expect(commands.terminalSpawn).toHaveBeenCalledWith("/repo");
+    expect(commands.terminalSpawn).toHaveBeenCalledWith("/repo", null);
     expect(terminalCtrl.sessionId).toBe("term-1");
     expect(terminalCtrl.open).toBe(true);
     expect(terminalCtrl.busy).toBe(false);
@@ -173,13 +176,13 @@ describe("toggle", () => {
     await terminalCtrl.toggle("/repo-b");
 
     expect(commands.terminalKill).toHaveBeenCalledWith("term-1");
-    expect(commands.terminalSpawn).toHaveBeenCalledWith("/repo-b");
+    expect(commands.terminalSpawn).toHaveBeenCalledWith("/repo-b", null);
     expect(terminalCtrl.sessionId).toBe("term-2");
     expect(terminalCtrl.repo).toBe("/repo-b");
   });
 });
 
-describe("hide / closeSession / restart", () => {
+describe("hide / closeSession", () => {
   it("hide() only tucks the drawer away — the session survives", async () => {
     mockInTauri = true;
     vi.mocked(commands.terminalSpawn).mockResolvedValueOnce(ok("term-1"));
@@ -206,22 +209,47 @@ describe("hide / closeSession / restart", () => {
     expect(unlistenMocks["terminal-output"]).toHaveBeenCalledTimes(1);
     expect(unlistenMocks["terminal-exit"]).toHaveBeenCalledTimes(1);
   });
+});
 
-  it("restart() ends the old session and spawns a fresh one for the same repo", async () => {
+describe("loadDistros / setShell (WSL distro picker)", () => {
+  it("loadDistros populates the list once, and is a no-op on a later call", async () => {
+    mockInTauri = true;
+    vi.mocked(commands.listWslDistros).mockResolvedValueOnce(["Ubuntu", "Debian"]);
+
+    await terminalCtrl.loadDistros();
+    expect(terminalCtrl.distros).toEqual(["Ubuntu", "Debian"]);
+
+    await terminalCtrl.loadDistros();
+    expect(commands.listWslDistros).toHaveBeenCalledTimes(1);
+  });
+
+  it("loadDistros is a no-op in design mode (not IN_TAURI)", async () => {
+    mockInTauri = false;
+    await terminalCtrl.loadDistros();
+    expect(commands.listWslDistros).not.toHaveBeenCalled();
+    expect(terminalCtrl.distros).toEqual([]);
+  });
+
+  it("setShell with no live session just records the choice — nothing to restart", async () => {
+    await terminalCtrl.setShell("Ubuntu");
+    expect(terminalCtrl.shell).toBe("Ubuntu");
+    expect(commands.terminalSpawn).not.toHaveBeenCalled();
+  });
+
+  it("setShell with a live session kills it and respawns the SAME repo under the new choice", async () => {
     mockInTauri = true;
     vi.mocked(commands.terminalSpawn).mockResolvedValueOnce(ok("term-1"));
     vi.mocked(commands.terminalKill).mockResolvedValueOnce(ok(null));
     vi.mocked(commands.terminalSpawn).mockResolvedValueOnce(ok("term-2"));
     await terminalCtrl.toggle("/repo");
-    terminalCtrl.exited = true;
 
-    await terminalCtrl.restart();
+    await terminalCtrl.setShell("Debian");
 
     expect(commands.terminalKill).toHaveBeenCalledWith("term-1");
+    expect(commands.terminalSpawn).toHaveBeenLastCalledWith("/repo", "Debian");
     expect(terminalCtrl.sessionId).toBe("term-2");
-    expect(terminalCtrl.exited).toBe(false);
-    expect(terminalCtrl.open).toBe(true);
     expect(terminalCtrl.repo).toBe("/repo");
+    expect(terminalCtrl.open).toBe(true);
   });
 });
 
@@ -348,15 +376,20 @@ describe("terminal-output / terminal-exit events", () => {
     expect(received).toHaveLength(1);
   });
 
-  it("terminal-exit for the live session's id sets exited; a mismatched id is ignored", async () => {
+  it("terminal-exit for the live session's id closes the drawer and clears the session; a mismatched id is ignored", async () => {
     mockInTauri = true;
     vi.mocked(commands.terminalSpawn).mockResolvedValueOnce(ok("term-1"));
     await terminalCtrl.toggle("/repo");
 
     handlers["terminal-exit"]({ payload: { id: "term-0-stale" } });
-    expect(terminalCtrl.exited).toBe(false);
+    expect(terminalCtrl.open).toBe(true);
+    expect(terminalCtrl.sessionId).toBe("term-1");
 
     handlers["terminal-exit"]({ payload: { id: "term-1" } });
-    expect(terminalCtrl.exited).toBe(true);
+    expect(terminalCtrl.open).toBe(false);
+    expect(terminalCtrl.sessionId).toBeNull();
+    // The process is already dead — terminal.rs's own reader thread already
+    // removed it from the registry, so there is nothing left to kill here.
+    expect(commands.terminalKill).not.toHaveBeenCalled();
   });
 });

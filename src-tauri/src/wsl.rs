@@ -106,6 +106,44 @@ pub fn unc_from_linux(distro: &str, linux: &str) -> String {
     format!("\\\\wsl.localhost\\{distro}\\{rel}")
 }
 
+/// Every registered WSL distro's name, in the order `wsl.exe -l -q` lists
+/// them (which always puts the DEFAULT distro first) — feeds the built-in
+/// terminal's own shell picker (`terminal.rs`'s `pty_command_for`), so a
+/// user with more than one distro installed can choose which one a WSL-
+/// flavored terminal session actually runs in, instead of always getting
+/// whichever one a repo's own path happens to resolve to.
+///
+/// Empty — NOT an error — on a machine with no WSL install / no registered
+/// distro at all, or if `wsl.exe` itself can't be run or times out: every
+/// one of those means the same thing to the one caller here, "there is no
+/// choice to offer beyond the default shell", so there is nothing for a
+/// caller to branch on that an empty list doesn't already say.
+///
+/// `-l -q`: quiet, names only, one per line. EMPIRICALLY CONFIRMED its
+/// stdout is UTF-16LE even when piped (not a real console) — decoding it as
+/// UTF-8 (lossy or otherwise) interleaves a NUL byte after every character
+/// instead of the real text, so this decodes as UTF-16LE explicitly rather
+/// than `String::from_utf8_lossy` (same fix `tests/wsl_live.rs`'s own
+/// `first_wsl_distro` needed, generalized here from "just the first one,
+/// for a test fixture" to the full list, for a real feature).
+pub fn list_distros() -> Vec<String> {
+    let mut cmd = Command::new("wsl.exe");
+    cmd.arg("-l").arg("-q").no_console_window();
+    let Ok(out) = output_with_timeout(cmd, SUBPROCESS_TIMEOUT) else {
+        return Vec::new();
+    };
+    if !out.status.success() || out.stdout.len() % 2 != 0 {
+        return Vec::new();
+    }
+    let units: Vec<u16> = out.stdout.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    String::from_utf16_lossy(&units)
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 /// Build a `git -C <path> <args>` invocation, transparently routed through
 /// `wsl.exe -d <distro> -e git -C <linux-path> <args>` when `path` is a WSL
 /// UNC path — see module doc comment.

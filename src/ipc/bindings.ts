@@ -3277,8 +3277,10 @@ async writeRepoFile(path: string, fileName: string, content: string) : Promise<R
     return await TAURI_INVOKE("write_repo_file", { path, fileName, content });
 },
 /**
- * JS: `commands.terminalSpawn(path)`. Returns the new session's id, which
- * every other command below takes to address it.
+ * JS: `commands.terminalSpawn(path, shell)`. Returns the new session's id,
+ * which every other command below takes to address it. `shell` is the
+ * drawer's own shell-picker choice — see [`pty_command_for`]'s own doc
+ * comment for what `None`/`Some("")`/`Some(distro)` each mean.
  * 
  * BUG FIX: was a plain (non-async) `fn` — `open_pty_shell` calls
  * `trust::open_repo` before ever touching a PTY, the same git2 `Repository::
@@ -3290,9 +3292,9 @@ async writeRepoFile(path: string, fileName: string, content: string) : Promise<R
  * own established shape for a command that also needs `State` after the
  * blocking part completes.
  */
-async terminalSpawn(path: string) : Promise<Result<string, string>> {
+async terminalSpawn(path: string, shell: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("terminal_spawn", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("terminal_spawn", { path, shell }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3344,6 +3346,15 @@ async terminalKill(id: string) : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * JS: `commands.listWslDistros()` — every registered WSL distro's name, for
+ * the terminal drawer's own shell picker. See [`crate::wsl::list_distros`]'s
+ * own doc comment for why an empty list is the normal, non-error answer on
+ * a machine with no WSL install at all.
+ */
+async listWslDistros() : Promise<string[]> {
+    return await TAURI_INVOKE("list_wsl_distros");
 },
 /**
  * JS: `commands.revealPathInFileManager(repo, relative)` — a file row's

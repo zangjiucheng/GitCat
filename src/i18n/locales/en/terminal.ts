@@ -3,8 +3,6 @@ export default {
   title: "Terminal",
   focus_out: "Return focus to the app",
   focus_out_hint: "back to the app",
-  exited: "process exited",
-  restart_btn: "Restart",
   aria_close: "Close terminal",
   demo_pre: "This is where a real shell would run, at ",
   demo_post: " (demo).",
@@ -12,4 +10,6 @@ export default {
   open_repo_first: "Open a repository first.",
   err_open: "Could not open a terminal.",
   err_open_e: "Could not open a terminal — {e}",
+  shell_picker_label: "Shell",
+  shell_default: "Default",
 };
