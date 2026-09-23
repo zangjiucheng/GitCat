@@ -51,12 +51,21 @@
 //!   ~1000-commit repo (a fresh CPython clone) with 4 symlinks. See
 //!   `src/wsl.rs`'s own `wsl_status` doc comment for the full writeup and
 //!   the `git status --porcelain=v2` route around it.
+//! - `safety_snapshot_creates_a_backup_ref_on_a_wsl_repo` — regression test
+//!   for a real user report: `safety::snapshot` (which runs before EVERY
+//!   mutating command) failed outright with "could not create backup ref:
+//!   failed to create locked file '...\.git\refs\gitgui\backup\....lock':
+//!   Access is denied" on a `\\wsl.localhost\` repo — `Repository::
+//!   reference()`'s lock-file-then-rename over that bridge, not merely slow
+//!   the way the symlink-status bug above is. See `src/wsl.rs`'s own
+//!   `wsl_create_ref` doc comment for the fix (routes ref creation through
+//!   the distro's own `git update-ref` instead).
 
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gitcat_lib::{code_search, dashboard, git_remote, trust, workdir};
+use gitcat_lib::{code_search, dashboard, git_remote, safety, trust, workdir};
 
 /// The first registered WSL distro's name, or `None` if WSL isn't installed
 /// / no distro is registered at all. `wsl.exe -l -q` (quiet: names only, one
@@ -373,6 +382,39 @@ fn workdir_status_and_dashboard_status_stay_fast_on_a_repo_with_a_symlink() {
     assert!(t1.elapsed() < MAX, "dashboard_repo_status took {:?} (>= {MAX:?}) on a repo with one symlink -- the bug this test guards against", t1.elapsed());
     assert!(!dash.dirty, "freshly committed, working tree should be clean");
     assert_eq!(dash.conflicted, 0);
+
+    untrust(&path);
+}
+
+#[test]
+#[ignore]
+fn safety_snapshot_creates_a_backup_ref_on_a_wsl_repo() {
+    let distro = skip_without_wsl!();
+    let repo = WslTempRepo::init(&distro, "snapshot");
+    let path = repo.unc_path();
+
+    let opened = trust::open_repo(&path).expect("trust::open_repo should succeed on a fresh wsl repo");
+
+    // Before the fix, this failed with "could not create backup ref: failed
+    // to create locked file '...\.git\refs\gitgui\backup\....lock': Access
+    // is denied" — libgit2's own ref-write path over the `\\wsl.localhost\`
+    // bridge, not this app's own git-CLI plumbing.
+    let ref_name =
+        safety::snapshot(&opened).expect("safety::snapshot must create a backup ref over the WSL bridge, not fail");
+    assert!(ref_name.starts_with("refs/gitgui/backup/"), "unexpected ref name: {ref_name}");
+
+    // Not just a git2-side illusion: the distro's OWN git must see it too,
+    // proving the ref genuinely landed on disk rather than only in whatever
+    // libgit2 happens to have cached.
+    let (ok, out, err) = repo.wsl_git(&["for-each-ref", &ref_name]);
+    assert!(ok, "for-each-ref failed: {err}");
+    assert!(!out.is_empty(), "backup ref should be visible to the distro's own git, got: {out:?}");
+
+    // A second snapshot must ALSO succeed and land under its own distinct
+    // name — the never-clobber guarantee (`update-ref`'s zero-oid old-value
+    // check on the WSL path) must not just be a one-shot fluke.
+    let second = safety::snapshot(&opened).expect("a second snapshot must also succeed");
+    assert_ne!(ref_name, second, "two snapshots must get distinct ref names");
 
     untrust(&path);
 }
