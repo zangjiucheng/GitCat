@@ -17,6 +17,7 @@ import { t, be } from "@/i18n/i18n.svelte.ts";
 import { open } from "@tauri-apps/plugin-dialog";
 import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";
+import { pluginLanguagesCtrl } from "../pluginlanguages/pluginlanguages.svelte.ts";
 import type { Plugin } from "../../ipc/bindings";
 
 // A one-line summary of what a plugin contributes, for the detail pane. Pure +
@@ -141,7 +142,7 @@ class PluginsState {
       const res = await commands.setPluginEnabled(id, enabled);
       if (res.status === "ok") {
         // ⌘K plugin commands AND panels both follow enable/disable live.
-        await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload()]);
+        await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload(), pluginLanguagesCtrl.reload()]);
       } else {
         this.plugins = prev; // backend rejected — undo the optimistic flip
         this.pluginsError = be(res.error) || t("plugins.err_update");
@@ -190,7 +191,7 @@ class PluginsState {
         await this.refreshPlugins();
         this.selectedId = id;
         // A changed manifest can add, rename or drop commands and panels.
-        await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload()]);
+        await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload(), pluginLanguagesCtrl.reload()]);
         bridge.tama.say(t("plugins.updated", { name: res.data.name }));
       } else {
         this.pluginsError = be(res.error) || t("plugins.err_update");
@@ -219,7 +220,7 @@ class PluginsState {
         this.removingPluginId = null;
         this.reconcileSelection();
         // Drop both its ⌘K commands AND panels immediately.
-        await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload()]);
+        await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload(), pluginLanguagesCtrl.reload()]);
       } else {
         this.pluginsError = be(res.error) || t("plugins.err_remove");
       }
@@ -320,7 +321,7 @@ class PluginsState {
         // Focus the newly installed plugin so its detail pane is what you see.
         this.selectedId = res.data.id;
         // Surface the new plugin's ⌘K commands AND panels.
-        await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload()]);
+        await Promise.all([pluginCommandsCtrl.reload(), pluginPanelsCtrl.reload(), pluginLanguagesCtrl.reload()]);
         bridge.tama.say(t("plugins.installed", { name: res.data.name }));
       } else {
         this.pluginsError = be(res.error) || t("plugins.err_install");

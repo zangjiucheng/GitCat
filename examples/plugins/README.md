@@ -30,6 +30,7 @@ way, install only plugins you trust.
 | [`open-in-editor`](./open-in-editor/) | External-tool commands (shell `run`) using the **placeholder grammar** (`{repo}`, `{sha}`) and the `--` flag-injection guard — the case where a shell `run` is the right tool (launching a program). |
 | [`lua-hello`](./lua-hello/) | The smallest **Luau-scripted** command: the `lua` manifest field + a command with a `handler` (not a shell `run`), using the sandboxed host API (`ctx`, `git`, `tama.react`, `print`). |
 | [`commit-subject-lint`](./commit-subject-lint/) | A **Luau** `commit-created` **hook** + on-demand command that share one lint function, reading the subject via `git()` and reacting via Tama — logic that a shell one-liner handled awkwardly (and only on POSIX). |
+| [`language-pack`](./language-pack/) | The **`languages`** manifest field: purely declarative diff syntax highlighting (keywords + comment syntax) for Python, Rust, Go, Java, C, C++ and Shell — no commands, no code. |
 
 ## Installing
 
@@ -58,6 +59,15 @@ persisted in `plugins.json` under the app config dir.
   ],
   "hooks": [
     { "event": "commit-created", "run": "…" } // event is kebab-case
+  ],
+  "languages": [
+    {
+      "id": "python",                  // becomes the diff highlighter's grammar id
+      "extensions": ["py", "pyw"],     // required, no leading dot, matched case-insensitively
+      "keywords": ["def", "class"],    // optional; no keyword highlighting if omitted/empty
+      "lineComment": "#",              // optional
+      "blockComment": { "start": "/*", "end": "*/" } // optional
+    }
   ]
 }
 ```

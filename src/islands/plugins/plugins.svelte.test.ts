@@ -25,7 +25,7 @@ vi.mock("../../ipc/bindings", () => ({
 
 // The file picker (@tauri-apps/plugin-dialog's open) goes through an `openMock`
 // indirection to sidestep its overloaded type signature (same shape as the
-// settings/applypatch tests). Both plugin-registry reload seams are mocked.
+// settings/applypatch tests). All three plugin-registry reload seams are mocked.
 const openMock = vi.fn();
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
@@ -35,6 +35,9 @@ vi.mock("../plugincommands/plugincommands.svelte.ts", () => ({
 }));
 vi.mock("../pluginpanels/pluginpanels.svelte.ts", () => ({
   pluginPanelsCtrl: { reload: vi.fn() },
+}));
+vi.mock("../pluginlanguages/pluginlanguages.svelte.ts", () => ({
+  pluginLanguagesCtrl: { reload: vi.fn() },
 }));
 
 let mockInTauri = true;

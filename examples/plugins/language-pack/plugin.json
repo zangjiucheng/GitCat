@@ -1,0 +1,95 @@
+{
+  "id": "language-pack",
+  "name": "Language Pack",
+  "version": "1.0.0",
+  "description": "Adds keyword-aware diff syntax highlighting for Python, Rust, Go, Java, C, C++ and Shell — languages GitCat's built-in highlighter otherwise treats as plain (generic) text.",
+  "languages": [
+    {
+      "id": "python",
+      "extensions": ["py", "pyw"],
+      "lineComment": "#",
+      "keywords": [
+        "def", "class", "return", "import", "from", "as", "if", "elif", "else",
+        "for", "while", "try", "except", "finally", "with", "lambda", "yield",
+        "raise", "pass", "break", "continue", "global", "nonlocal", "in", "is",
+        "not", "and", "or", "None", "True", "False", "self", "async", "await",
+        "del", "assert"
+      ]
+    },
+    {
+      "id": "rust",
+      "extensions": ["rs"],
+      "lineComment": "//",
+      "blockComment": { "start": "/*", "end": "*/" },
+      "keywords": [
+        "fn", "let", "mut", "const", "static", "struct", "enum", "impl",
+        "trait", "pub", "use", "mod", "match", "if", "else", "for", "while",
+        "loop", "return", "break", "continue", "self", "Self", "as", "in",
+        "where", "dyn", "move", "ref", "unsafe", "async", "await", "true",
+        "false"
+      ]
+    },
+    {
+      "id": "go",
+      "extensions": ["go"],
+      "lineComment": "//",
+      "blockComment": { "start": "/*", "end": "*/" },
+      "keywords": [
+        "func", "package", "import", "var", "const", "type", "struct",
+        "interface", "map", "chan", "go", "defer", "select", "switch", "case",
+        "default", "if", "else", "for", "range", "return", "break", "continue",
+        "fallthrough", "nil", "true", "false"
+      ]
+    },
+    {
+      "id": "java",
+      "extensions": ["java"],
+      "lineComment": "//",
+      "blockComment": { "start": "/*", "end": "*/" },
+      "keywords": [
+        "class", "interface", "extends", "implements", "public", "private",
+        "protected", "static", "final", "void", "new", "return", "if", "else",
+        "for", "while", "do", "switch", "case", "default", "break",
+        "continue", "try", "catch", "finally", "throw", "throws", "import",
+        "package", "this", "super", "null", "true", "false", "enum",
+        "abstract", "synchronized"
+      ]
+    },
+    {
+      "id": "c",
+      "extensions": ["c", "h"],
+      "lineComment": "//",
+      "blockComment": { "start": "/*", "end": "*/" },
+      "keywords": [
+        "int", "char", "float", "double", "void", "long", "short", "signed",
+        "unsigned", "if", "else", "for", "while", "do", "switch", "case",
+        "default", "break", "continue", "return", "struct", "typedef",
+        "enum", "union", "static", "const", "extern", "sizeof", "goto"
+      ]
+    },
+    {
+      "id": "cpp",
+      "extensions": ["cpp", "cc", "cxx", "hpp", "hh"],
+      "lineComment": "//",
+      "blockComment": { "start": "/*", "end": "*/" },
+      "keywords": [
+        "int", "char", "float", "double", "void", "bool", "auto", "if",
+        "else", "for", "while", "do", "switch", "case", "default", "break",
+        "continue", "return", "struct", "class", "enum", "union", "public",
+        "private", "protected", "static", "const", "namespace", "using",
+        "template", "typename", "new", "delete", "this", "true", "false",
+        "nullptr", "virtual", "override", "sizeof"
+      ]
+    },
+    {
+      "id": "shell",
+      "extensions": ["sh", "bash"],
+      "lineComment": "#",
+      "keywords": [
+        "if", "then", "else", "elif", "fi", "for", "while", "until", "do",
+        "done", "case", "esac", "function", "return", "break", "continue",
+        "local", "export", "readonly", "in", "select", "time", "exit"
+      ]
+    }
+  ]
+}
