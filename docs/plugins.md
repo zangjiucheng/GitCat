@@ -69,6 +69,8 @@ A manifest is a small JSON document. Here's a complete, annotated example:
 | `enabled` | — | boolean | Defaults to `true` when omitted — a freshly installed plugin is active until you disable it. |
 | `commands` | — | array | Zero or more [commands](#commands). Defaults to `[]`. |
 | `hooks` | — | array | Zero or more [hooks](#hooks). Defaults to `[]`. |
+| `panels` | — | array | Zero or more declarative UI panels — titled surfaces of text/heading/button/command-output widgets GitCat renders itself, opened from ⌘K. Defaults to `[]`. |
+| `languages` | — | array | Zero or more [syntax-highlighting grammars](#languages) for the diff viewer. Defaults to `[]`. |
 | `tama` | — | object | Optional [Tama skin](#tama-skins) — an alternate look and voice for the mascot (poses, a greeting, a voice pitch). |
 | `lua` | — | string | Optional path (relative to the plugin folder) to a main Luau script — required only if any command/hook uses a `handler`. See [Scripting with Luau](#scripting-with-luau). |
 
@@ -365,6 +367,59 @@ Apply a skin from **Settings → Tama → Skin**: the picker lists **Default (bu
 | `poses` | ✅ | object | Maps a built-in pose **key** to a **relative** image path inside the plugin folder. The eight keys are `hero`, `curious`, `confident`, `thinking`, `happy`, `alarm`, `shocked`, `sleep`. A skin may override **some or all** of them — any key it omits falls back to Tama's default painted portrait. Any other key is rejected at install time. Paths may not be absolute or contain `..`. |
 | `voicePitch` | — | number | A multiplier applied to Tama's synthesized sound effects, so the character speaks higher (`> 1`) or lower (`< 1`). Omitted means **no change** (`1.0`). Must be finite; a finite out-of-range value is **clamped** to `[0.5, 2.0]` when the skin loads. |
 | `copy` | — | object | Optional greeting/voice lines. GitCat surfaces one (preferring `applied` > `greeting` > `hero`, else the first) as a courtesy toast when the skin is applied, capped at ~160 chars. It can never reach a safety-critical pose — the same trust boundary as a `::gitcat.tama` reaction. |
+
+## Languages {#languages}
+
+GitCat's diff viewer highlights JS/TS with real keyword awareness; every other
+file gets a "generic" grammar with comments, strings and numbers but **no
+keywords at all**. A plugin can declare `languages` to add keyword-aware
+highlighting for any language, by file extension — purely declarative, like a
+panel: a keyword list and comment syntax, never code. There is no way for a
+plugin to inject a custom tokenizer or run against a diff's text.
+
+```jsonc
+{
+  "id": "my-languages",
+  "name": "My Languages",
+  "version": "1.0.0",
+  "languages": [
+    {
+      "id": "python",
+      "extensions": ["py", "pyw"],
+      "keywords": ["def", "class", "return", "import", "if", "else", "for"],
+      "lineComment": "#"
+    },
+    {
+      "id": "rust",
+      "extensions": ["rs"],
+      "keywords": ["fn", "let", "mut", "struct", "impl", "match", "return"],
+      "lineComment": "//",
+      "blockComment": { "start": "/*", "end": "*/" }
+    }
+  ]
+}
+```
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `id` | ✅ | string | Same `^[a-z0-9][a-z0-9-]*$` charset as a plugin/panel id. Becomes the highlighter's internal grammar id. |
+| `extensions` | ✅ | array of strings | At least one file extension this grammar applies to, **without** a leading dot (`"py"`, not `".py"`), matched case-insensitively. |
+| `keywords` | — | array of strings | Reserved words highlighted as keywords. Defaults to `[]` — a language with only comment/string/number/punctuation highlighting is still strictly better than the generic fallback's total lack of keyword awareness. |
+| `lineComment` | — | string | A single-line comment marker, e.g. `"#"` or `"//"`. Omit it and this language has no line comments recognized. |
+| `blockComment` | — | object | `{ "start": "…", "end": "…" }` — a block-comment delimiter pair. Omit it and this language has no block comments recognized. |
+
+String, number and punctuation highlighting are **not** configurable — every
+language reuses GitCat's own built-in rules for those, so a manifest only
+ever supplies the parts that are genuinely language-specific.
+
+**Extension collisions**: if more than one *enabled* plugin claims the same
+file extension (or the same language `id`), the plugin that was installed or
+enabled **most recently** wins for that extension — GitCat cannot know at
+install time what else is or will be installed, so this is a simple,
+deterministic tie-break rather than a rejection.
+
+See [`language-pack`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins/language-pack)
+for a real example covering Python, Rust, Go, Java, C, C++ and Shell.
 
 ## Installing & managing plugins
 

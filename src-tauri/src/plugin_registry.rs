@@ -277,6 +277,67 @@ pub struct PluginPanel {
     pub items: Vec<PanelItem>,
 }
 
+/// A block-comment delimiter pair for a [`PluginLanguage`] — e.g. the
+/// C-style pair this comment deliberately does NOT spell out literally
+/// (that exact two-character sequence would prematurely close the
+/// GENERATED TypeScript doc comment this Rust doc comment turns into — see
+/// `language-pack`'s own example manifest under examples/plugins/ for a
+/// real one in actual JSON). A plain 2-element array would say the same
+/// thing more tersely, but a named struct is unambiguous in hand-authored
+/// JSON (which delimiter is which) and needs no positional convention a
+/// manifest author has to remember.
+#[derive(Serialize, Deserialize, Clone, Debug, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockComment {
+    pub start: String,
+    pub end: String,
+}
+
+/// A syntax-highlighting grammar a plugin contributes — purely
+/// DECLARATIVE, same spirit as [`PanelItem`]'s fixed widget vocabulary: a
+/// keyword list plus simple comment syntax, consumed by the frontend's
+/// data-driven tokenizer (`src/legacy/main.ts`'s `pluginRules`/
+/// `registerPluginLanguages`) to extend `GRAMMARS` past the two built-ins
+/// (`ts` and `generic`, the latter with no keyword awareness at all). There
+/// is no way for a plugin to inject a custom tokenizer or run code against a
+/// diff's text — a language grammar is words and delimiter strings, nothing
+/// more, exactly like a panel is widgets and not markup.
+///
+/// String/number/punctuation tokenization is NOT configurable here — every
+/// plugin language reuses the exact same rules the built-in `generic`
+/// grammar already applies (see the frontend's own doc comment for why:
+/// keeping that one shared instead of letting each language redeclare it
+/// avoids a subtly-different regex per plugin for something that is not
+/// actually language-specific in this tokenizer's own scope).
+#[derive(Serialize, Deserialize, Clone, Debug, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginLanguage {
+    /// Stable id (same `^[a-z0-9][a-z0-9-]*$` charset as a plugin/panel id —
+    /// see [`is_valid_id`]) — becomes the frontend `GRAMMARS` key.
+    pub id: String,
+    /// File extensions this grammar applies to, WITHOUT a leading dot (e.g.
+    /// `"py"`, not `".py"`), matched case-insensitively. When more than one
+    /// enabled plugin claims the same extension, the LAST one registered
+    /// wins — see `registerPluginLanguages`'s own doc comment; this is a
+    /// deliberate, simple tie-break, not a bug to fix at validation time
+    /// (a plugin cannot know at install time what else is installed).
+    pub extensions: Vec<String>,
+    /// Reserved words highlighted as keywords. Empty is allowed (a language
+    /// with only comment/string/number/punctuation highlighting is still
+    /// strictly better than `generic`'s complete lack of keyword awareness).
+    #[serde(default)]
+    pub keywords: Vec<String>,
+    /// Line-comment marker, e.g. `"#"` or `"//"`. Absent => this language
+    /// has no line comments recognized at all.
+    #[serde(default)]
+    pub line_comment: Option<String>,
+    /// Block-comment delimiters (see [`BlockComment`]'s own doc comment for
+    /// why an example is not spelled out literally here too). Absent => no
+    /// block comments recognized.
+    #[serde(default)]
+    pub block_comment: Option<BlockComment>,
+}
+
 /// A plugin manifest (`plugin.json`).
 #[derive(Serialize, Deserialize, Clone, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -322,6 +383,11 @@ pub struct Plugin {
     /// button/command-output must reference one of THIS plugin's commands.
     #[serde(default)]
     pub panels: Vec<PluginPanel>,
+    /// Declarative syntax-highlighting grammars this plugin contributes —
+    /// see [`PluginLanguage`]'s own doc comment. `#[serde(default)]` so
+    /// every pre-languages manifest still loads (absent => no languages).
+    #[serde(default)]
+    pub languages: Vec<PluginLanguage>,
     /// Optional Tama SKIN (PER-47) — pose sprites + copy this plugin
     /// contributes. `#[serde(default)]` + `Option` so every pre-skin manifest
     /// still loads (absent => no skin). See [`PluginTama`].
@@ -623,6 +689,35 @@ pub fn validate_manifest(plugin: &Plugin) -> Result<(), String> {
                         ));
                     }
                 }
+            }
+        }
+    }
+    // Languages: a valid, plugin-unique id; at least one extension, each a
+    // bare lowercase-alnum token (no leading dot, no path separator — the
+    // frontend matches a file's own extension verbatim, so `".py"` or
+    // `"py/x"` would just never match anything, silently). Global (cross-
+    // plugin) id/extension collisions are NOT rejected here — see
+    // `PluginLanguage::extensions`'s own doc comment for why that is a
+    // deliberate frontend-side tie-break, not something install-time
+    // validation of ONE manifest could even detect.
+    let mut seen_lang_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for lang in &plugin.languages {
+        if !is_valid_id(&lang.id) {
+            return Err(ierrp("err_plugins.language_id_invalid", &[("id", &format!("{:?}", lang.id))]));
+        }
+        if !seen_lang_ids.insert(lang.id.as_str()) {
+            return Err(ierrp("err_plugins.language_id_duplicate", &[("id", &format!("{:?}", lang.id))]));
+        }
+        if lang.extensions.is_empty() {
+            return Err(ierrp("err_plugins.language_no_extensions", &[("id", &format!("{:?}", lang.id))]));
+        }
+        for ext in &lang.extensions {
+            let valid = !ext.is_empty() && ext.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+            if !valid {
+                return Err(ierrp(
+                    "err_plugins.language_extension_invalid",
+                    &[("id", &format!("{:?}", lang.id)), ("extension", &format!("{ext:?}"))],
+                ));
             }
         }
     }
@@ -1684,6 +1779,7 @@ mod tests {
                 mutates: false,
             }],
             panels: vec![],
+            languages: vec![],
             tama: None,
             lua: None,
             dir: None,
@@ -2623,6 +2719,147 @@ mod tests {
         }];
         let err = validate_manifest(&p).unwrap_err();
         assert!(err.contains("err_plugins.panel_button_empty_label"), "got: {err}");
+    }
+
+    // -- Declarative syntax-highlighting languages ---------------------------
+
+    #[test]
+    fn manifest_with_a_valid_language_parses_validates_and_round_trips() {
+        let dir = temp_dir("languages-valid");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(FILE_NAME);
+        std::fs::write(
+            &path,
+            r##"{"version":1,"plugins":[{"id":"langy","name":"Langy","version":"1.0.0",
+                "languages":[{"id":"python","extensions":["py","pyw"],
+                    "keywords":["def","return","import","class"],
+                    "lineComment":"#"}]}]}"##,
+        )
+        .unwrap();
+
+        let loaded = load_from(&path).expect("a manifest with languages must deserialize");
+        assert_eq!(loaded[0].languages.len(), 1);
+        let lang = &loaded[0].languages[0];
+        assert_eq!(lang.id, "python");
+        assert_eq!(lang.extensions, vec!["py", "pyw"]);
+        assert_eq!(lang.keywords, vec!["def", "return", "import", "class"]);
+        assert_eq!(lang.line_comment.as_deref(), Some("#"));
+        assert!(lang.block_comment.is_none());
+        validate_manifest(&loaded[0]).expect("a valid language must pass validation");
+
+        save_to(&path, &loaded).unwrap();
+        let again = load_from(&path).expect("round-trip load");
+        assert_eq!(again[0].languages[0].id, "python");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_language_with_no_keywords_or_comments_still_validates() {
+        // Empty keywords/absent comment fields are allowed — see
+        // PluginLanguage's own doc comment (still strictly better than
+        // `generic`'s complete lack of keyword awareness).
+        let mut p = sample_plugin("langy");
+        p.languages = vec![PluginLanguage {
+            id: "bare".into(),
+            extensions: vec!["xyz".into()],
+            keywords: vec![],
+            line_comment: None,
+            block_comment: None,
+        }];
+        validate_manifest(&p).expect("a minimal language (extensions only) must validate");
+    }
+
+    #[test]
+    fn a_language_with_block_comment_delimiters_round_trips() {
+        let mut p = sample_plugin("langy");
+        p.languages = vec![PluginLanguage {
+            id: "c".into(),
+            extensions: vec!["c".into(), "h".into()],
+            keywords: vec!["if".into(), "else".into(), "return".into()],
+            line_comment: Some("//".into()),
+            block_comment: Some(BlockComment { start: "/*".into(), end: "*/".into() }),
+        }];
+        validate_manifest(&p).expect("valid block comment delimiters must pass");
+        let bc = p.languages[0].block_comment.as_ref().unwrap();
+        assert_eq!((bc.start.as_str(), bc.end.as_str()), ("/*", "*/"));
+    }
+
+    #[test]
+    fn duplicate_or_invalid_language_id_is_rejected() {
+        let mut p = sample_plugin("langy");
+        p.languages = vec![
+            PluginLanguage { id: "dup".into(), extensions: vec!["a".into()], keywords: vec![], line_comment: None, block_comment: None },
+            PluginLanguage { id: "dup".into(), extensions: vec!["b".into()], keywords: vec![], line_comment: None, block_comment: None },
+        ];
+        let err = validate_manifest(&p).unwrap_err();
+        assert!(err.contains("err_plugins.language_id_duplicate"), "got: {err}");
+
+        let mut p = sample_plugin("langy");
+        p.languages = vec![PluginLanguage {
+            id: "Bad Id".into(),
+            extensions: vec!["a".into()],
+            keywords: vec![],
+            line_comment: None,
+            block_comment: None,
+        }];
+        let err = validate_manifest(&p).unwrap_err();
+        assert!(err.contains("err_plugins.language_id_invalid"), "got: {err}");
+    }
+
+    #[test]
+    fn every_language_field_including_block_comment_is_accepted_as_a_known_key() {
+        // Same "over-rejection guard" as every_key_the_struct_itself_produces_is_accepted,
+        // but specifically through a manifest that populates blockComment (a
+        // nested struct) — that field would silently never be caught by that
+        // other test as long as sample_plugin's own `languages` stays empty.
+        let dir = temp_dir("languages-known-keys");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("plugin.json");
+        std::fs::write(
+            &manifest,
+            r#"{"id":"beta","name":"Beta","version":"1.0.0",
+                "languages":[{"id":"c","extensions":["c","h"],"keywords":["if","else"],
+                    "lineComment":"//","blockComment":{"start":"/*","end":"*/"}}]}"#,
+        )
+        .unwrap();
+
+        read_and_validate_manifest(&manifest)
+            .expect("every field this test's JSON sets, including blockComment, must be a known key");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_language_with_no_extensions_is_rejected() {
+        let mut p = sample_plugin("langy");
+        p.languages = vec![PluginLanguage {
+            id: "useless".into(),
+            extensions: vec![],
+            keywords: vec![],
+            line_comment: None,
+            block_comment: None,
+        }];
+        let err = validate_manifest(&p).unwrap_err();
+        assert!(err.contains("err_plugins.language_no_extensions"), "got: {err}");
+    }
+
+    #[test]
+    fn an_extension_with_a_leading_dot_or_uppercase_or_separator_is_rejected() {
+        for bad_ext in [".py", "Py", "py/x", "py.old", ""] {
+            let mut p = sample_plugin("langy");
+            p.languages = vec![PluginLanguage {
+                id: "x".into(),
+                extensions: vec![bad_ext.into()],
+                keywords: vec![],
+                line_comment: None,
+                block_comment: None,
+            }];
+            let err = validate_manifest(&p).unwrap_err();
+            assert!(
+                err.contains("err_plugins.language_extension_invalid"),
+                "extension {bad_ext:?} should have been rejected, got: {err}"
+            );
+        }
     }
 
     // -- Luau scripting (PER-56) ---------------------------------------------

@@ -38,6 +38,7 @@ import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
 // labels in doFetch/doPull/doPush) and re-run on i18nEvents "change".
 import { t, be, beReject, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
 import { fitEllipsis } from "./fitellipsis.ts";
+import { registerPluginLanguages as mergePluginLanguages, resolveLangFromMap } from "./pluginGrammars.ts";
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const TAU=Math.PI*2;
@@ -2028,6 +2029,36 @@ const GRAMMARS={
      ["fn",/[A-Za-z_$][\w$]*(?=\s*\()/y],["num",/\b0x[\da-fA-F]+|\b\d+(?:\.\d+)?\b/y],["punc",/[{}()\[\];,.:?=<>+\-*/%&|!~]+/y]],
   generic:[["com",/#[^\n]*|\/\/[^\n]*/y],["str",/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/y],["num",/\b\d+(?:\.\d+)?\b/y],["punc",/[{}()\[\];,.:=<>+\-*/%]+/y]],
 };
+// Built-in extension -> GRAMMARS key. Plugin-declared extensions (merged in
+// by registerPluginLanguages below) extend this, never replace it — a
+// plugin cannot un-claim ts/tsx/js/etc.
+const EXT_TO_LANG={ts:"ts",tsx:"ts",js:"ts",jsx:"ts",mjs:"ts",cjs:"ts"};
+const BUILTIN_GRAMMAR_KEYS=new Set(["ts","generic"]);
+// Rebuilt wholesale by registerPluginLanguages() below; starts as a copy of
+// the built-ins so resolveLang() works correctly even before the plugin
+// registry's first (async) read completes.
+let pluginExtToLang={...EXT_TO_LANG};
+
+// (Re)builds GRAMMARS/pluginExtToLang from the CURRENT list of enabled
+// plugins' declared `languages` — called by pluginlanguages.svelte.ts's own
+// load() after every commands.listPlugins() read (including on install/
+// enable/disable/remove, via its reload()). The actual merge logic lives in
+// pluginGrammars.ts, split out specifically so it has a real unit test —
+// this file has none of its own (a whole vanilla app boots on import; see
+// sound.ts's own header for the same "extract the leaf so it's testable"
+// reasoning applied to a different piece of this file).
+function registerPluginLanguages(languages){
+  pluginExtToLang=mergePluginLanguages(GRAMMARS,BUILTIN_GRAMMAR_KEYS,EXT_TO_LANG,languages);
+}
+
+// The highlighter's language for `path`'s own extension — see
+// resolveLangFromMap's own doc comment (pluginGrammars.ts) for why this
+// ignores the backend's own FileChange.lang entirely. Every call site that
+// used to pass `f.lang || "generic"` to highlight() now calls this on
+// `f.path` instead.
+function resolveLang(path){
+  return resolveLangFromMap(path,pluginExtToLang);
+}
 function highlight(src,lang){
   // Cap the line length before tokenising (O(len)) and injecting via {@html}:
   // line COUNT is capped upstream but length is not, so a minified/generated
@@ -3818,7 +3849,7 @@ i18nEvents.addEventListener("change",()=>{
 });
 
 function requestRedraw(){ dirty=true; }
-export { reloadGraph, cheer, highlight, Tama, TAMA_IMG, requestRedraw,
+export { reloadGraph, cheer, highlight, resolveLang, registerPluginLanguages, Tama, TAMA_IMG, requestRedraw,
   G, BACKEND, state, layout, view, cv, clampScroll, select, deselect, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, applyDetailPlacement, setTamaEnabled, onGraphBatch,

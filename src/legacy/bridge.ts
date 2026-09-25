@@ -11,6 +11,14 @@ export {
   reloadGraph,
   cheer,
   highlight,
+  // The path->grammar resolver (uses `resolveLang(path)`, not `f.lang`) and
+  // the registry-rebuild entry point plugin-contributed `languages` feed
+  // into — see main.ts's own doc comments on both. `pluginlanguages.svelte.ts`
+  // is the only caller of `registerPluginLanguages`; every diff-rendering
+  // call site (detail/rangesummary/blame/Resolver) calls `resolveLang`
+  // instead of reading `FileChange.lang` directly.
+  resolveLang,
+  registerPluginLanguages,
   Tama as tama,
   // Additive, subscribable Tama event bus (legacy/main.ts) — islands call
   // `bridge.tamaBus.subscribe(fn)` to observe the SAME event stream the mascot

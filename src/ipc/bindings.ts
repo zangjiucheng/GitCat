@@ -3536,6 +3536,18 @@ size: number;
  */
 data: string | null }
 /**
+ * A block-comment delimiter pair for a [`PluginLanguage`] — e.g. the
+ * C-style pair this comment deliberately does NOT spell out literally
+ * (that exact two-character sequence would prematurely close the
+ * GENERATED TypeScript doc comment this Rust doc comment turns into — see
+ * `language-pack`'s own example manifest under examples/plugins/ for a
+ * real one in actual JSON). A plain 2-element array would say the same
+ * thing more tersely, but a named struct is unambiguous in hand-authored
+ * JSON (which delimiter is which) and needs no positional convention a
+ * manifest author has to remember.
+ */
+export type BlockComment = { start: string; end: string }
+/**
  * Which local branches are already fully merged into the repo's own
  * default branch, plus the resolved default branch's own name.
  * 
@@ -4207,6 +4219,12 @@ enabled?: boolean; commands?: PluginCommand[]; hooks?: PluginHook[];
  */
 panels?: PluginPanel[]; 
 /**
+ * Declarative syntax-highlighting grammars this plugin contributes —
+ * see [`PluginLanguage`]'s own doc comment. `#[serde(default)]` so
+ * every pre-languages manifest still loads (absent => no languages).
+ */
+languages?: PluginLanguage[]; 
+/**
  * Optional Tama SKIN (PER-47) — pose sprites + copy this plugin
  * contributes. `#[serde(default)]` + `Option` so every pre-skin manifest
  * still loads (absent => no skin). See [`PluginTama`].
@@ -4331,6 +4349,56 @@ handler?: string | null;
  * change is covered by global Undo; see `plugin_exec::run_hooks`.
  */
 mutates?: boolean }
+/**
+ * A syntax-highlighting grammar a plugin contributes — purely
+ * DECLARATIVE, same spirit as [`PanelItem`]'s fixed widget vocabulary: a
+ * keyword list plus simple comment syntax, consumed by the frontend's
+ * data-driven tokenizer (`src/legacy/main.ts`'s `pluginRules`/
+ * `registerPluginLanguages`) to extend `GRAMMARS` past the two built-ins
+ * (`ts` and `generic`, the latter with no keyword awareness at all). There
+ * is no way for a plugin to inject a custom tokenizer or run code against a
+ * diff's text — a language grammar is words and delimiter strings, nothing
+ * more, exactly like a panel is widgets and not markup.
+ * 
+ * String/number/punctuation tokenization is NOT configurable here — every
+ * plugin language reuses the exact same rules the built-in `generic`
+ * grammar already applies (see the frontend's own doc comment for why:
+ * keeping that one shared instead of letting each language redeclare it
+ * avoids a subtly-different regex per plugin for something that is not
+ * actually language-specific in this tokenizer's own scope).
+ */
+export type PluginLanguage = { 
+/**
+ * Stable id (same `^[a-z0-9][a-z0-9-]*$` charset as a plugin/panel id —
+ * see [`is_valid_id`]) — becomes the frontend `GRAMMARS` key.
+ */
+id: string; 
+/**
+ * File extensions this grammar applies to, WITHOUT a leading dot (e.g.
+ * `"py"`, not `".py"`), matched case-insensitively. When more than one
+ * enabled plugin claims the same extension, the LAST one registered
+ * wins — see `registerPluginLanguages`'s own doc comment; this is a
+ * deliberate, simple tie-break, not a bug to fix at validation time
+ * (a plugin cannot know at install time what else is installed).
+ */
+extensions: string[]; 
+/**
+ * Reserved words highlighted as keywords. Empty is allowed (a language
+ * with only comment/string/number/punctuation highlighting is still
+ * strictly better than `generic`'s complete lack of keyword awareness).
+ */
+keywords?: string[]; 
+/**
+ * Line-comment marker, e.g. `"#"` or `"//"`. Absent => this language
+ * has no line comments recognized at all.
+ */
+lineComment?: string | null; 
+/**
+ * Block-comment delimiters (see [`BlockComment`]'s own doc comment for
+ * why an example is not spelled out literally here too). Absent => no
+ * block comments recognized.
+ */
+blockComment?: BlockComment | null }
 /**
  * A declarative UI PANEL a plugin contributes (PER-45): a titled surface of
  * [`PanelItem`] widgets GitCat renders itself. `id` is a stable, plugin-unique

@@ -17,6 +17,7 @@ vi.mock("../../legacy/bridge", () => ({
   relTime: (t: number) => t + "s ago",
   absTime: (t: number) => t + "-abs",
   highlight: (src: string) => src,
+  resolveLang: () => "generic",
   TAMA_IMG: { hero: "hero.png" },
   pickRepo: vi.fn(),
   tama: { warn: vi.fn() },
@@ -24,6 +25,10 @@ vi.mock("../../legacy/bridge", () => ({
 
 vi.mock("../blame/blame.svelte.ts", () => ({
   blameCtrl: { openFor: vi.fn(async () => {}) },
+}));
+
+vi.mock("../pluginlanguages/pluginlanguages.svelte.ts", () => ({
+  pluginLanguagesCtrl: { ensureLoaded: vi.fn(async () => {}) },
 }));
 
 vi.mock("../filehistory/filehistory.svelte.ts", () => ({
