@@ -13,7 +13,8 @@ The full walkthrough is on its way. Here's the outline of what it covers.
 ## What this page will cover
 
 - **The Plugins manager** — open it from **Tools ▸ Plugins…** or `⌘K`. It's a two-pane view: the installed plugins on the left, the selected one's details on the right (what it contributes, plus its enable and remove controls).
-- **Install from a file** — GitCat plugins are local files (there's no online store); install one by picking its `plugin.json`.
+- **Finding one** — GitCat has no in-app store, but the community [**gitcat-plugins**](https://github.com/zangjiucheng/gitcat-plugins) index is a browsable catalog of ready-made plugins, official and community-contributed.
+- **Install from a file** — plugins are local files; install one by picking its `plugin.json` (downloaded from the index above, or your own).
 - **Enable / disable** a plugin with its toggle, or **remove** it (which unregisters it — the `plugin.json` on disk is left untouched).
 - **What a plugin can contribute** — `⌘K` commands, lifecycle hooks, declarative panels, a Tama skin, and Luau-scripted handlers.
 - **The trust boundary** — GitCat never connects to anything itself; a plugin only runs the external commands (or sandboxed Luau) it declares. Install only plugins you trust.
