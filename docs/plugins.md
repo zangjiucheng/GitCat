@@ -9,8 +9,7 @@ A GitCat plugin is a small, **declarative** manifest — a single `plugin.json` 
 - **Commands** — actions that show up in the ⌘K command palette and run an external command you specify.
 - **Hooks** — external commands GitCat runs automatically when something happens (a repo opens, a commit is created, an undo runs, …).
 
-There is no plugin API, no sandbox, and no in-process JavaScript or Rust. A plugin's only moving part is a shell `run` string — a command line GitCat expands and executes on your machine, exactly like the external diff/merge tools you configure under **External Tools**. That's the whole trust model: **a plugin can do anything the command you wrote can do** (see [Security & trust](#security-trust) at the end).
-
+GitCat provides a plugin system with declarative manifests, an external-process executor, and a sandboxed Luau runtime.
 Like the rest of GitCat, plugins are AI-agnostic: GitCat itself contacts no AI service and no network. If you want a plugin that calls an AI, *you* write the `run` line that shells out to your own tool — GitCat only runs it.
 
 ## The manifest: `plugin.json`
@@ -249,7 +248,7 @@ A `run` string is a single shell command. When you need real logic — branch on
 run a **handler function written in [Luau](https://luau.org)** (a fast, safe Lua
 dialect) inside a locked-down sandbox. This is still AI-agnostic and offline:
 the script's only reach outward is a `git()` function.
-
+Tools ▶ **Plugins...** tab →
 ### The two manifest fields
 
 - **`lua`** (top-level) — a path, relative to the plugin folder, to your main
@@ -425,7 +424,7 @@ for a real example covering Python, Rust, Go, Java, C, C++ and Shell.
 
 Plugins are installed from a local file — there's no registry or marketplace.
 
-1. Open **Settings → Plugins**.
+1. Open **Tools ▶ Plugins...**.
 2. Click **Install plugin…** and pick the plugin's `plugin.json` file (open the plugin's folder and select its `plugin.json`).
 3. GitCat parses and validates the manifest and shows you **what it runs** — every command's `run` template, every hook and its event, anything marked `mutates`, and the folder it loads from. Nothing is installed until you confirm.
 4. The plugin appears in the list, enabled by default. Its commands are immediately available in ⌘K.
@@ -461,4 +460,4 @@ A few limits worth knowing while the plugin security model is still being built 
 
 ## Example plugins
 
-Ready-to-read manifests live in [`examples/plugins/`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins) in the repository — copy one, edit its `id`/`run` lines, and install it from **Settings → Plugins** to get started.
+Ready-to-read manifests live in [`examples/plugins/`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins) in the repository — copy one, edit its `id`/`run` lines, and install it from **Tools → Plugins** to get started.
