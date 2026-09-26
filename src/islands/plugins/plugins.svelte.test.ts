@@ -82,6 +82,7 @@ function resetCtrl() {
   pluginsCtrl.marketGeneratedAt = "";
   pluginsCtrl.marketLoading = false;
   pluginsCtrl.marketError = "";
+  pluginsCtrl.marketNotice = "";
   pluginsCtrl.marketFilter = "";
   pluginsCtrl.marketFetchingId = null;
   mockInTauri = true;
@@ -495,7 +496,10 @@ describe("loadIndex", () => {
     mockInTauri = false;
     await pluginsCtrl.loadIndex();
     expect(commands.fetchPluginIndex).not.toHaveBeenCalled();
-    expect(pluginsCtrl.marketError).not.toBe("");
+    // A notice, NOT an error — pnpm screenshots drives this same mode, and the
+    // error channel renders red.
+    expect(pluginsCtrl.marketNotice).not.toBe("");
+    expect(pluginsCtrl.marketError).toBe("");
   });
 
   it("showBrowse fetches once, not on every visit to the pane", async () => {

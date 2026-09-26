@@ -126,12 +126,14 @@
           <div class="mk-trust">{t("plugins.market_trust")}</div>
           {#if pluginsCtrl.marketError}
             <div class="pl-err">{pluginsCtrl.marketError}</div>
+          {:else if pluginsCtrl.marketNotice}
+            <div class="mk-note">{pluginsCtrl.marketNotice}</div>
           {/if}
           {#if pluginsCtrl.marketLoading}
             <div class="log-row" style="padding:24px">
               <span class="spinner"></span><span class="msg mut">{t("plugins.market_loading")}</span>
             </div>
-          {:else if pluginsCtrl.market.length === 0 && !pluginsCtrl.marketError}
+          {:else if pluginsCtrl.market.length === 0 && !pluginsCtrl.marketError && !pluginsCtrl.marketNotice}
             <div class="pl-empty"><p class="mut">{t("plugins.market_empty")}</p></div>
           {:else if pluginsCtrl.market.length && pluginsCtrl.filteredMarket.length === 0}
             <div class="pl-empty"><p class="mut">{t("plugins.market_none_match", { query: pluginsCtrl.marketFilter })}</p></div>
@@ -344,6 +346,12 @@
     border-radius: var(--r-control);
     padding: 8px 10px;
     margin-bottom: 12px;
+  }
+  .mk-note {
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--mut);
+    padding: 10px 2px;
   }
   .mk-list {
     display: flex;

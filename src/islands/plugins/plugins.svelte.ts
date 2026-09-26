@@ -289,6 +289,13 @@ class PluginsState {
   marketGeneratedAt = $state("");
   marketLoading = $state(false);
   marketError = $state("");
+  /**
+   * A neutral thing to say where the catalogue would be — currently only
+   * "there is no backend in this preview". Separate from `marketError` because
+   * it is not a failure, and because `pnpm screenshots` drives exactly this
+   * mode: routing it through the error channel put a red box in the docs.
+   */
+  marketNotice = $state("");
   marketFilter = $state("");
   /** The entry whose download is in flight — one at a time, like pluginBusyId. */
   marketFetchingId = $state<string | null>(null);
@@ -347,10 +354,11 @@ class PluginsState {
   async loadIndex(): Promise<void> {
     if (this.marketLoading) return;
     this.marketError = "";
+    this.marketNotice = "";
     if (!IN_TAURI) {
       // Design mode has no backend to fetch through; say so rather than
       // showing an empty catalogue that looks like "nothing published yet".
-      this.marketError = t("plugins.market_demo");
+      this.marketNotice = t("plugins.market_demo");
       return;
     }
     this.marketLoading = true;
