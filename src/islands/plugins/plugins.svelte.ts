@@ -18,7 +18,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";
 import { pluginLanguagesCtrl } from "../pluginlanguages/pluginlanguages.svelte.ts";
-import type { Plugin } from "../../ipc/bindings";
+import type { MarketEntry, Plugin } from "../../ipc/bindings";
 
 // A one-line summary of what a plugin contributes, for the detail pane. Pure +
 // exported for unit testing. Reads only the manifest fields the backend fills
@@ -272,6 +272,143 @@ class PluginsState {
       this.pluginsError = t("plugins.err_install_detail", { err: String(e) });
     } finally {
       this.pluginInstalling = false;
+    }
+  }
+
+  // ── the catalogue (browse) ────────────────────────────────────────────────
+  //
+  // A second pane over the SAME modal, not a second modal: browsing and
+  // managing are one task ("which plugins do I have"), and the install a browse
+  // ends in lands in the very same review gate the file picker's does.
+  //
+  // The index is fetched ONCE per session, on first open of the pane — it is a
+  // catalogue, not live data, and a refresh button is there for when that is
+  // not good enough.
+  pane = $state<"installed" | "browse">("installed");
+  market = $state<MarketEntry[]>([]);
+  marketGeneratedAt = $state("");
+  marketLoading = $state(false);
+  marketError = $state("");
+  /**
+   * A neutral thing to say where the catalogue would be — currently only
+   * "there is no backend in this preview". Separate from `marketError` because
+   * it is not a failure, and because `pnpm screenshots` drives exactly this
+   * mode: routing it through the error channel put a red box in the docs.
+   */
+  marketNotice = $state("");
+  marketFilter = $state("");
+  /** The entry whose download is in flight — one at a time, like pluginBusyId. */
+  marketFetchingId = $state<string | null>(null);
+
+  /** Client-side filter over name/id/description/tags, same idiom as `filter`. */
+  get filteredMarket(): MarketEntry[] {
+    const q = this.marketFilter.trim().toLowerCase();
+    if (!q) return this.market;
+    return this.market.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.id.toLowerCase().includes(q) ||
+        e.description.toLowerCase().includes(q) ||
+        (e.tags ?? []).some((tag) => tag.toLowerCase().includes(q)),
+    );
+  }
+
+  /**
+   * Where to send someone who wants to read a listed plugin before trusting
+   * it. An official entry lives in the index repo; a community one names its
+   * own, and may prefer a homepage. Null when the row carries neither, which
+   * the view reads as "no link to offer" rather than rendering a dead button.
+   */
+  marketRepoUrl(entry: MarketEntry): string | null {
+    if (entry.homepage) return entry.homepage;
+    if (entry.kind === "official" && entry.repoPath) {
+      return `https://github.com/zangjiucheng/gitcat-plugins/tree/main/${entry.repoPath}`;
+    }
+    return entry.repo ?? null;
+  }
+
+  /** Open a listed plugin's page in the real browser, never in the webview. */
+  openMarketRepo(entry: MarketEntry): void {
+    const url = this.marketRepoUrl(entry);
+    if (!url) return;
+    const w = window as unknown as { __TAURI__?: { opener?: { openUrl?: (u: string) => void } } };
+    if (w.__TAURI__?.opener?.openUrl) w.__TAURI__.opener.openUrl(url);
+    else window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  /** Ids already in the registry, so the catalogue can say so per row. */
+  get installedIds(): Set<string> {
+    return new Set(this.plugins.map((p) => p.id));
+  }
+
+  showBrowse(): void {
+    this.pane = "browse";
+    // First open only: see the pane comment on why this is not live data.
+    if (!this.market.length && !this.marketLoading) void this.loadIndex();
+  }
+
+  showInstalled(): void {
+    this.pane = "installed";
+  }
+
+  async loadIndex(): Promise<void> {
+    if (this.marketLoading) return;
+    this.marketError = "";
+    this.marketNotice = "";
+    if (!IN_TAURI) {
+      // Design mode has no backend to fetch through; say so rather than
+      // showing an empty catalogue that looks like "nothing published yet".
+      this.marketNotice = t("plugins.market_demo");
+      return;
+    }
+    this.marketLoading = true;
+    try {
+      const res = await commands.fetchPluginIndex();
+      if (res.status === "ok") {
+        this.market = res.data.plugins;
+        this.marketGeneratedAt = res.data.generatedAt;
+      } else {
+        this.marketError = be(res.error) || t("plugins.market_err_index");
+      }
+    } catch (e) {
+      this.marketError = t("plugins.market_err_index_detail", { err: String(e) });
+    } finally {
+      this.marketLoading = false;
+    }
+  }
+
+  /**
+   * Fetch a catalogue entry's files, then hand the result to the SAME review
+   * gate the file picker uses.
+   *
+   * Deliberately not a one-step install. `downloadMarketPlugin` writes bytes
+   * and installs nothing; what the user then approves is
+   * `previewPluginManifest`'s reading of the manifest that actually landed —
+   * so "install from the catalogue" shows the commands a plugin runs before it
+   * can run them, exactly like picking a file does. `confirmInstall()` below
+   * needs no knowledge that the bytes came from the network at all.
+   */
+  async installFromMarket(entry: MarketEntry): Promise<void> {
+    if (this.marketFetchingId || this.pluginInstalling) return;
+    this.marketError = "";
+    if (!IN_TAURI) {
+      bridge.tama.say(t("plugins.demo_install"));
+      return;
+    }
+    this.marketFetchingId = entry.id;
+    try {
+      const dl = await commands.downloadMarketPlugin(entry);
+      if (dl.status !== "ok") {
+        this.marketError = be(dl.error) || t("plugins.market_err_download");
+        return;
+      }
+      const pre = await commands.previewPluginManifest(dl.data);
+      if (pre.status === "ok") this.pendingInstall = { path: dl.data, plugin: pre.data };
+      else this.marketError = be(pre.error) || t("plugins.err_install");
+    } catch (e) {
+      this.marketError = t("plugins.market_err_download_detail", { err: String(e) });
+    } finally {
+      this.marketFetchingId = null;
     }
   }
 

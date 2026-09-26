@@ -20,6 +20,8 @@ vi.mock("../../ipc/bindings", () => ({
     removePlugin: vi.fn(),
     installPluginFromPath: vi.fn(),
     previewPluginManifest: vi.fn(),
+    fetchPluginIndex: vi.fn(),
+    downloadMarketPlugin: vi.fn(),
   },
 }));
 
@@ -51,7 +53,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { pluginCommandsCtrl } from "../plugincommands/plugincommands.svelte.ts";
 import { pluginPanelsCtrl } from "../pluginpanels/pluginpanels.svelte.ts";
-import type { Plugin } from "../../ipc/bindings";
+import type { MarketEntry, Plugin } from "../../ipc/bindings";
 import { pluginsCtrl } from "./plugins.svelte.ts";
 
 function ok<T>(data: T): { status: "ok"; data: T } {
@@ -74,6 +76,15 @@ function resetCtrl() {
   pluginsCtrl.pluginBusyId = null;
   pluginsCtrl.pluginInstalling = false;
   pluginsCtrl.removingPluginId = null;
+  pluginsCtrl.pendingInstall = null;
+  pluginsCtrl.pane = "installed";
+  pluginsCtrl.market = [];
+  pluginsCtrl.marketGeneratedAt = "";
+  pluginsCtrl.marketLoading = false;
+  pluginsCtrl.marketError = "";
+  pluginsCtrl.marketNotice = "";
+  pluginsCtrl.marketFilter = "";
+  pluginsCtrl.marketFetchingId = null;
   mockInTauri = true;
   vi.clearAllMocks();
   vi.mocked(commands.listPlugins).mockResolvedValue(ok([]));
@@ -440,5 +451,143 @@ describe("installPlugin — review, then install (#69)", () => {
     expect(commands.previewPluginManifest).not.toHaveBeenCalled();
     expect(commands.installPluginFromPath).not.toHaveBeenCalled();
     expect(bridge.tama.say).toHaveBeenCalled();
+  });
+});
+
+// ── the catalogue pane ───────────────────────────────────────────────────────
+
+function entry(partial: Partial<MarketEntry> = {}): MarketEntry {
+  return {
+    kind: "official",
+    id: "demo",
+    name: "Demo",
+    description: "a listed plugin",
+    author: "GitCat",
+    minGitcatVersion: null,
+    tags: [],
+    manifestUrl: null,
+    repoPath: "official/demo",
+    repo: null,
+    manifestPath: null,
+    homepage: null,
+    ...partial,
+  };
+}
+
+describe("loadIndex", () => {
+  it("populates the catalogue and remembers when it was built", async () => {
+    vi.mocked(commands.fetchPluginIndex).mockResolvedValueOnce(
+      ok({ schemaVersion: 1, generatedAt: "2026-09-25T18:40:29.366Z", count: 1, plugins: [entry()] }),
+    );
+    await pluginsCtrl.loadIndex();
+    expect(pluginsCtrl.market).toHaveLength(1);
+    expect(pluginsCtrl.marketGeneratedAt).toBe("2026-09-25T18:40:29.366Z");
+    expect(pluginsCtrl.marketError).toBe("");
+  });
+
+  it("surfaces a backend refusal instead of an empty catalogue", async () => {
+    vi.mocked(commands.fetchPluginIndex).mockResolvedValueOnce(err("i18n:err_market.host_not_allowed"));
+    await pluginsCtrl.loadIndex();
+    expect(pluginsCtrl.market).toEqual([]);
+    expect(pluginsCtrl.marketError).not.toBe("");
+  });
+
+  it("says so in design mode rather than showing an empty catalogue", async () => {
+    mockInTauri = false;
+    await pluginsCtrl.loadIndex();
+    expect(commands.fetchPluginIndex).not.toHaveBeenCalled();
+    // A notice, NOT an error — pnpm screenshots drives this same mode, and the
+    // error channel renders red.
+    expect(pluginsCtrl.marketNotice).not.toBe("");
+    expect(pluginsCtrl.marketError).toBe("");
+  });
+
+  it("showBrowse fetches once, not on every visit to the pane", async () => {
+    vi.mocked(commands.fetchPluginIndex).mockResolvedValue(
+      ok({ schemaVersion: 1, generatedAt: "t", count: 1, plugins: [entry()] }),
+    );
+    pluginsCtrl.showBrowse();
+    await Promise.resolve();
+    await Promise.resolve();
+    pluginsCtrl.showInstalled();
+    pluginsCtrl.showBrowse();
+    expect(commands.fetchPluginIndex).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("installFromMarket", () => {
+  it("downloads, then goes through the SAME review gate — installing nothing yet", async () => {
+    // The property that matters: a catalogue install is not one click. The
+    // download only puts bytes on disk; what the user then approves is the
+    // preview of the manifest that actually landed.
+    vi.mocked(commands.downloadMarketPlugin).mockResolvedValueOnce(ok("/cfg/market/demo"));
+    vi.mocked(commands.previewPluginManifest).mockResolvedValueOnce(ok(plugin({ id: "demo", name: "Demo" })));
+
+    await pluginsCtrl.installFromMarket(entry());
+
+    expect(commands.previewPluginManifest).toHaveBeenCalledWith("/cfg/market/demo");
+    expect(pluginsCtrl.pendingInstall).toEqual({ path: "/cfg/market/demo", plugin: expect.objectContaining({ id: "demo" }) });
+    expect(commands.installPluginFromPath).not.toHaveBeenCalled();
+  });
+
+  it("does not reach the review gate when the download was refused", async () => {
+    vi.mocked(commands.downloadMarketPlugin).mockResolvedValueOnce(err("i18n:err_market.too_large"));
+    await pluginsCtrl.installFromMarket(entry());
+    expect(commands.previewPluginManifest).not.toHaveBeenCalled();
+    expect(pluginsCtrl.pendingInstall).toBeNull();
+    expect(pluginsCtrl.marketError).not.toBe("");
+  });
+
+  it("refuses a second download while one is in flight", async () => {
+    let release: (v: unknown) => void = () => {};
+    vi.mocked(commands.downloadMarketPlugin).mockReturnValueOnce(new Promise((r) => (release = r)) as never);
+    const first = pluginsCtrl.installFromMarket(entry({ id: "a" }));
+    await pluginsCtrl.installFromMarket(entry({ id: "b" }));
+    expect(commands.downloadMarketPlugin).toHaveBeenCalledTimes(1);
+    release(ok("/cfg/market/a"));
+    await first;
+  });
+
+  it("installs nothing in design mode", async () => {
+    mockInTauri = false;
+    await pluginsCtrl.installFromMarket(entry());
+    expect(commands.downloadMarketPlugin).not.toHaveBeenCalled();
+    expect(pluginsCtrl.pendingInstall).toBeNull();
+  });
+});
+
+describe("catalogue filtering and links", () => {
+  it("filters on name, id, description and tags", () => {
+    pluginsCtrl.market = [
+      entry({ id: "lang-pack", name: "Language Pack", description: "syntax colours", tags: ["highlighting"] }),
+      entry({ id: "linter", name: "Linter", description: "checks staged files", tags: ["hooks"] }),
+    ];
+    for (const [q, id] of [["Language", "lang-pack"], ["linter", "linter"], ["staged", "linter"], ["highlighting", "lang-pack"]]) {
+      pluginsCtrl.marketFilter = q;
+      expect(pluginsCtrl.filteredMarket.map((e) => e.id)).toEqual([id]);
+    }
+    pluginsCtrl.marketFilter = "nothing-matches-this";
+    expect(pluginsCtrl.filteredMarket).toEqual([]);
+  });
+
+  it("marks what is already installed", () => {
+    pluginsCtrl.plugins = [plugin({ id: "lang-pack" })];
+    expect(pluginsCtrl.installedIds.has("lang-pack")).toBe(true);
+    expect(pluginsCtrl.installedIds.has("linter")).toBe(false);
+  });
+
+  it("links an official entry into the index repo and a community one into its own", () => {
+    expect(pluginsCtrl.marketRepoUrl(entry({ repoPath: "official/demo" }))).toBe(
+      "https://github.com/zangjiucheng/gitcat-plugins/tree/main/official/demo",
+    );
+    expect(
+      pluginsCtrl.marketRepoUrl(entry({ kind: "community", repoPath: null, repo: "https://github.com/someone/theirs" })),
+    ).toBe("https://github.com/someone/theirs");
+    // A homepage, when given, is the better destination than the bare repo.
+    expect(
+      pluginsCtrl.marketRepoUrl(entry({ kind: "community", repoPath: null, repo: "https://github.com/a/b", homepage: "https://example.test/docs" })),
+    ).toBe("https://example.test/docs");
+    // Neither -> no link, so the view renders no dead button.
+    expect(pluginsCtrl.marketRepoUrl(entry({ kind: "community", repoPath: null }))).toBeNull();
   });
 });

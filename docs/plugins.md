@@ -427,10 +427,11 @@ for a real example covering Python, Rust, Go, Java, C, C++ and Shell.
 
 ## Finding plugins
 
-GitCat itself has no in-app store — installing still means picking a local
-`plugin.json` file (see [below](#installing-managing-plugins)) — but
-[**gitcat-plugins**](https://github.com/zangjiucheng/gitcat-plugins) is a
-community index you can browse for ready-made ones. Two kinds of listing:
+Open **Tools ▸ Plugins…** and switch to the **Browse** tab. That pane reads
+[**gitcat-plugins**](https://github.com/zangjiucheng/gitcat-plugins), a
+community index, and can fetch a listed plugin for you — you can also browse
+that repository directly if you would rather read it on GitHub first. Two kinds
+of listing:
 
 - **Official** — small reference plugins maintained directly in that repo
   (this doc's own [example plugins](#example-plugins) live there too, under
@@ -442,8 +443,33 @@ community index you can browse for ready-made ones. Two kinds of listing:
 
 The whole catalog is also aggregated into one machine-readable
 [`index.json`](https://github.com/zangjiucheng/gitcat-plugins/blob/main/index.json)
-at that repo's root, for anything scripting against it (a future in-app
-"browse plugins" view would read this).
+at that repo's root. That file is what the in-app Browse tab reads, and what
+anything else scripting against the catalogue should read too.
+
+### What "install from the catalogue" actually does
+
+Installing from Browse is **not** one click that runs something. It is the
+ordinary install with the file-picking step done for you:
+
+1. GitCat downloads that plugin's own files — its `plugin.json` and whatever
+   sits beside it, such as a `main.lua` — into a folder GitCat owns.
+2. Nothing is installed yet. You get the **same review** a file-picked install
+   gets: every command the manifest runs, every hook and its event, anything
+   marked `mutates`.
+3. Only when you confirm does it enter the registry.
+
+So a listed plugin gets no more trust than one you downloaded yourself. GitCat
+vouches for where the catalogue *is*, never for what is in it — entries are
+pointers people submit, not code anyone audited.
+
+Two limits worth knowing, both deliberate:
+
+- **Only GitHub.** The catalogue and every plugin file are fetched from
+  `raw.githubusercontent.com` / `api.github.com` and nowhere else, including
+  after redirects. The index URL is fixed in the app rather than configurable.
+- **Plugins get no network of their own.** This fetching lives in GitCat's Rust
+  side, not in the webview a plugin's own code can reach. A plugin still
+  cannot open a socket; see [Sandbox](#scripting-with-luau).
 
 Wrote a plugin worth sharing? See that repo's own `CONTRIBUTING.md` — adding
 a community entry is a small PR against your own repo's URL, not a copy of
@@ -451,8 +477,9 @@ your code.
 
 ## Installing & managing plugins
 
-Plugins are installed from a local file — GitCat has no in-app store, though
-see [Finding plugins](#finding-plugins) above for a community index to browse.
+Plugins install from a local file, or from the **Browse** tab that fetches one
+for you — see [Finding plugins](#finding-plugins) above. Either way the review
+step below is the same.
 
 1. Open **Settings → Plugins**.
 2. Click **Install plugin…** and pick the plugin's `plugin.json` file (open the plugin's folder and select its `plugin.json`).
