@@ -425,9 +425,34 @@ deterministic tie-break rather than a rejection.
 See [`language-pack`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins/language-pack)
 for a real example covering Python, Rust, Go, Java, C, C++ and Shell.
 
+## Finding plugins
+
+GitCat itself has no in-app store — installing still means picking a local
+`plugin.json` file (see [below](#installing-managing-plugins)) — but
+[**gitcat-plugins**](https://github.com/zangjiucheng/gitcat-plugins) is a
+community index you can browse for ready-made ones. Two kinds of listing:
+
+- **Official** — small reference plugins maintained directly in that repo
+  (this doc's own [example plugins](#example-plugins) live there too, under
+  `official/`).
+- **Community** — a pointer entry (id, the plugin's own repo, and the path to
+  its `plugin.json` inside it) for a plugin someone else maintains in their
+  own repository. The index never hosts community plugin code — download the
+  linked `plugin.json`, then install it the normal way.
+
+The whole catalog is also aggregated into one machine-readable
+[`index.json`](https://github.com/zangjiucheng/gitcat-plugins/blob/main/index.json)
+at that repo's root, for anything scripting against it (a future in-app
+"browse plugins" view would read this).
+
+Wrote a plugin worth sharing? See that repo's own `CONTRIBUTING.md` — adding
+a community entry is a small PR against your own repo's URL, not a copy of
+your code.
+
 ## Installing & managing plugins
 
-Plugins are installed from a local file — there's no registry or marketplace.
+Plugins are installed from a local file — GitCat has no in-app store, though
+see [Finding plugins](#finding-plugins) above for a community index to browse.
 
 1. Open **Settings → Plugins**.
 2. Click **Install plugin…** and pick the plugin's `plugin.json` file (open the plugin's folder and select its `plugin.json`).
@@ -463,6 +488,6 @@ A few limits worth knowing while the plugin security model is still being built 
 - **Argument injection is your responsibility.** Quoting stops shell injection but not flag injection — use `--` before untrusted placeholders (see [above](#placeholders)).
 - **The subprocess inherits GitCat's environment.** A plugin command can read GitCat's environment variables.
 
-## Example plugins
+## Example plugins {#example-plugins}
 
-Ready-to-read manifests live in [`examples/plugins/`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins) in the repository — copy one, edit its `id`/`run` lines, and install it from **Settings → Plugins** to get started.
+Ready-to-read manifests live in [`examples/plugins/`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins) in the repository — copy one, edit its `id`/`run` lines, and install it from **Settings → Plugins** to get started. The same ones (plus anything else contributed since) are also mirrored under `official/` in the [community index](#finding-plugins), alongside third-party plugins.

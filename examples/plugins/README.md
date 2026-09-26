@@ -93,3 +93,8 @@ Honest caveats worth knowing:
 ## More
 
 See the full plugin documentation at [`docs/plugins.md`](../../docs/plugins.md).
+
+Looking for more than these, or want to publish your own? See the
+community index at [**gitcat-plugins**](https://github.com/zangjiucheng/gitcat-plugins) —
+these examples are mirrored there under `official/`, alongside third-party
+plugins.

@@ -28,7 +28,7 @@ Every Git GUI makes it easy to run a dangerous command. GitCat is built so you c
 - **Diffs that aren't just text** — syntax highlighting, plus side-by-side before/after previews for images and PDFs, rendered natively and zoomable.
 - **The deep cuts** — submodules, patch export/apply, `git bisect`, `git blame` with rename-following, per-file history, author and pickaxe search, a `git-filter-repo` wizard, external diff/merge tools, reflog rescue and dangling-object recovery.
 - **⌘K everything** — fuzzy search across commits, refs and actions, vim-style keys, and a real native menu.
-- **Plugins** *(1.1)* — ⌘K commands, hooks, side panels, named tools, and Tama skins and reactions.
+- **Plugins** *(1.1)* — ⌘K commands, hooks, side panels, named tools, and Tama skins and reactions. Browse ready-made ones in the community [**plugin index**](https://github.com/zangjiucheng/gitcat-plugins).
 - **English, 中文 & 한국어** — the whole interface, switchable live with no reload.
 - **`gitcat .`** — open a repo from your terminal the way `code .` does. WSL-aware.
 
