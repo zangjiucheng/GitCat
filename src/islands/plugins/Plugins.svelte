@@ -27,18 +27,59 @@
       </div>
     </div>
 
-    <div class="pl-toolbar">
-      <input
-        class="pl-search"
-        placeholder={t("plugins.filter_ph")}
-        autocomplete="off"
-        spellcheck="false"
-        aria-label={t("plugins.filter_aria")}
-        bind:value={pluginsCtrl.filter}
-      />
-      <button class="btn" disabled={pluginsCtrl.pluginInstalling} onclick={() => pluginsCtrl.installPlugin()}>
-        {#if pluginsCtrl.pluginInstalling}<span class="spinner"></span> {t("plugins.installing")}{:else}&#65291; {t("plugins.install_from_file")}{/if}
+    <!-- Two panes over ONE modal, not two modals: "what do I have" and "what
+         could I have" are the same task, and the install a browse ends in
+         lands in the very same review gate below that the file picker's does. -->
+    <div class="mk-tabs" role="tablist" aria-label={t("plugins.title")}>
+      <button
+        type="button"
+        role="tab"
+        class="mk-tab"
+        class:on={pluginsCtrl.pane === "installed"}
+        aria-selected={pluginsCtrl.pane === "installed"}
+        onclick={() => pluginsCtrl.showInstalled()}
+      >
+        {t("plugins.pane_installed")}
+        {#if pluginsCtrl.plugins.length}<span class="mk-count">{pluginsCtrl.plugins.length}</span>{/if}
       </button>
+      <button
+        type="button"
+        role="tab"
+        class="mk-tab"
+        class:on={pluginsCtrl.pane === "browse"}
+        aria-selected={pluginsCtrl.pane === "browse"}
+        onclick={() => pluginsCtrl.showBrowse()}
+      >
+        {t("plugins.pane_browse")}
+      </button>
+    </div>
+
+    <div class="pl-toolbar">
+      {#if pluginsCtrl.pane === "installed"}
+        <input
+          class="pl-search"
+          placeholder={t("plugins.filter_ph")}
+          autocomplete="off"
+          spellcheck="false"
+          aria-label={t("plugins.filter_aria")}
+          bind:value={pluginsCtrl.filter}
+        />
+        <button class="btn" disabled={pluginsCtrl.pluginInstalling} onclick={() => pluginsCtrl.installPlugin()}>
+          {#if pluginsCtrl.pluginInstalling}<span class="spinner"></span> {t("plugins.installing")}{:else}&#65291; {t("plugins.install_from_file")}{/if}
+        </button>
+      {:else}
+        <input
+          class="pl-search"
+          placeholder={t("plugins.market_search_ph")}
+          autocomplete="off"
+          spellcheck="false"
+          aria-label={t("plugins.market_search_aria")}
+          bind:value={pluginsCtrl.marketFilter}
+        />
+        <button class="btn" disabled={pluginsCtrl.marketLoading} onclick={() => pluginsCtrl.loadIndex()}>
+          {#if pluginsCtrl.marketLoading}<span class="spinner"></span> {/if}{t("plugins.market_refresh")}
+        </button>
+      {/if}
     </div>
     {#if pluginsCtrl.pluginsError}
       <div class="pl-err" style="margin:0 20px 8px">{pluginsCtrl.pluginsError}</div>
@@ -77,6 +118,67 @@
               {#if pluginsCtrl.pluginInstalling}<span class="spinner"></span> {/if}{t("plugins.review_install")}
             </button>
           </div>
+        </div>
+      {:else if pluginsCtrl.pane === "browse"}
+        <div class="mk-pane">
+          <!-- Said before the list, not after an install goes wrong: GitCat
+               vouches for the catalogue's LOCATION, not its contents. -->
+          <div class="mk-trust">{t("plugins.market_trust")}</div>
+          {#if pluginsCtrl.marketError}
+            <div class="pl-err">{pluginsCtrl.marketError}</div>
+          {/if}
+          {#if pluginsCtrl.marketLoading}
+            <div class="log-row" style="padding:24px">
+              <span class="spinner"></span><span class="msg mut">{t("plugins.market_loading")}</span>
+            </div>
+          {:else if pluginsCtrl.market.length === 0 && !pluginsCtrl.marketError}
+            <div class="pl-empty"><p class="mut">{t("plugins.market_empty")}</p></div>
+          {:else if pluginsCtrl.market.length && pluginsCtrl.filteredMarket.length === 0}
+            <div class="pl-empty"><p class="mut">{t("plugins.market_none_match", { query: pluginsCtrl.marketFilter })}</p></div>
+          {:else}
+            <div class="mk-list">
+              {#each pluginsCtrl.filteredMarket as e (e.id)}
+                {@const have = pluginsCtrl.installedIds.has(e.id)}
+                {@const busy = pluginsCtrl.marketFetchingId === e.id}
+                <div class="mk-card">
+                  <div class="mk-card-top">
+                    <span class="mk-name">{e.name}</span>
+                    <span class="mk-kind" class:official={e.kind === "official"}>
+                      {e.kind === "official" ? t("plugins.market_official") : t("plugins.market_community")}
+                    </span>
+                    {#if have}<span class="mk-have">{t("plugins.market_already")}</span>{/if}
+                  </div>
+                  <p class="mk-desc">{e.description}</p>
+                  <div class="mk-meta">
+                    <span class="mut">{t("plugins.market_by", { author: e.author })}</span>
+                    {#if e.minGitcatVersion}
+                      <span class="mk-need">{t("plugins.market_needs", { version: e.minGitcatVersion })}</span>
+                    {/if}
+                    {#each e.tags ?? [] as tag}<span class="mk-tag">{tag}</span>{/each}
+                  </div>
+                  <div class="mk-act">
+                    {#if pluginsCtrl.marketRepoUrl(e)}
+                      <button class="btn" onclick={() => pluginsCtrl.openMarketRepo(e)}>
+                        {t("plugins.market_open_repo")}
+                      </button>
+                    {/if}
+                    <button
+                      class="btn primary"
+                      disabled={have || busy || !!pluginsCtrl.marketFetchingId}
+                      onclick={() => pluginsCtrl.installFromMarket(e)}
+                    >
+                      {#if busy}<span class="spinner"></span> {t("plugins.market_downloading")}
+                      {:else if have}{t("plugins.market_already")}
+                      {:else}{t("plugins.market_install")}{/if}
+                    </button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+            {#if pluginsCtrl.marketGeneratedAt}
+              <p class="mut mk-stamp">{t("plugins.market_generated", { when: pluginsCtrl.marketGeneratedAt })}</p>
+            {/if}
+          {/if}
         </div>
       {:else if pluginsCtrl.pluginsLoading && pluginsCtrl.plugins.length === 0}
         <div class="log-row" style="padding:24px"><span class="spinner"></span><span class="msg mut">{t("plugins.loading")}</span></div>
@@ -188,6 +290,129 @@
 </div>
 
 <style>
+  /* ── the catalogue pane (mk-*) ───────────────────────────────────────────
+     `mk-` rather than `pm-`: `pm-` is PluginManifest.svelte's namespace, and
+     two of its names (pm-name, pm-meta) would otherwise mean one thing in the
+     manifest audit and another here. */
+  .mk-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .mk-tab {
+    appearance: none;
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    color: var(--mut);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 8px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .mk-tab:hover {
+    color: var(--fg);
+  }
+  .mk-tab.on {
+    color: var(--fg);
+    border-bottom-color: var(--accent);
+  }
+  .mk-count {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 0 6px;
+    line-height: 15px;
+  }
+  .mk-pane {
+    padding: 12px 20px 16px;
+    overflow: auto;
+  }
+  .mk-trust {
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--mut);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-control);
+    padding: 8px 10px;
+    margin-bottom: 12px;
+  }
+  .mk-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .mk-card {
+    border: 1px solid var(--border);
+    border-radius: var(--r-control);
+    padding: 12px 14px;
+    background: var(--panel);
+  }
+  .mk-card-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .mk-name {
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .mk-kind,
+  .mk-have,
+  .mk-need,
+  .mk-tag {
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 1px 7px;
+    border: 1px solid var(--border);
+    color: var(--mut);
+  }
+  .mk-kind.official {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .mk-have {
+    border-color: var(--ok, var(--accent2));
+    color: var(--ok, var(--accent2));
+  }
+  .mk-need {
+    border-color: var(--warning);
+    color: var(--warning);
+  }
+  .mk-desc {
+    margin: 6px 0 0;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .mk-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    font-size: 11px;
+  }
+  .mk-act {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 10px;
+  }
+  .mk-stamp {
+    font-size: 10.5px;
+    text-align: right;
+    margin: 12px 0 0;
+  }
   /* Wider than the default modal — a two-pane view needs room. */
   .plugins-modal {
     width: min(860px, 92vw);

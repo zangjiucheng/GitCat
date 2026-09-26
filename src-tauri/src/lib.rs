@@ -45,6 +45,7 @@ pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 
 pub mod terminal; // "Open Terminal": a real PTY-backed shell embedded in GitCat's own UI
 pub mod plugin_exec; // PER-40: plugin command executor + placeholder grammar (declarative, external-process plugins)
 pub mod plugin_lua; // PER-56: embedded Luau plugin scripting runtime (sandboxed, curated host API)
+pub mod plugin_market; // in-app plugin catalogue: reads the community index and fetches a plugin's files so the ORDINARY install path can take over
 pub mod plugin_registry; // PER-39: app-level plugin registry (plugins.json under app_config_dir) + install/enable/remove CRUD
 pub mod tool_settings; // backlog #12: external diff/merge tool settings + delegate entirely to `git difftool`/`git mergetool`
 pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious ownership"
@@ -343,6 +344,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
         plugin_registry::update_plugin, // #66: re-read an installed plugin's manifest from disk
         plugin_registry::remove_plugin,
         plugin_registry::load_plugin_skin, // PER-47: load a plugin's Tama skin (pose assets → data URIs)
+        plugin_market::fetch_plugin_index, // the community catalogue
+        plugin_market::download_market_plugin, // fetch a catalogue entry onto disk; installs NOTHING
         plugin_exec::run_plugin_command,
         plugin_exec::run_hooks, // PER-43: run enabled plugins' hooks for a lifecycle event
         // Repo-root file editors (backlog #14, final item): view/edit .gitignore

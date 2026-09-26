@@ -65,6 +65,22 @@ mlua = { version = "0.12", features = ["luau"] }
 # see Cargo.lock), so this promotes an already-locked version to a direct
 # dependency rather than adding a new one to the tree.
 percent-encoding = "2"
+# In-app plugin catalogue (plugin_market.rs): reads the community index and a
+# plugin's own files over HTTPS. Already resolved transitively — tauri-plugin-
+# updater depends on reqwest, and on the SAME rustls stack (rustls +
+# rustls-native-certs are in Cargo.lock; there is no openssl/native-tls in the
+# tree) — so this promotes a locked version to a direct dependency rather than
+# adding one, the same way percent-encoding above does. `blocking` because the
+# fetch runs inside run_blocking, off the window thread, like every other IO
+# command here.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls-no-provider"] }
+# ...and the provider, explicitly. reqwest's own `rustls` feature would pick
+# aws-lc-rs, which drags in a cmake-built C crypto library (measured: 11 new
+# crates) on a release matrix that cross-compiles for Windows and Linux arm64.
+# The tree's rustls already runs on `ring`, so naming it here costs nothing and
+# keeps ONE crypto provider in the binary. `rustls-no-provider` PANICS on the
+# first client build without this — see plugin_market's `client_builds` test.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 # SSH askpass helper (see askpass.rs's own module doc): a synchronous,
 # no-event-loop-needed native message box, shown from a throwaway re-exec of
 # this SAME binary (see windows.rs's own current_exe() precedent) when ssh

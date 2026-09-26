@@ -3178,6 +3178,40 @@ async loadPluginSkin(pluginId: string) : Promise<Result<TamaSkin, string>> {
 }
 },
 /**
+ * Read the community index.
+ * 
+ * `async fn` + `run_blocking` for the same reason every other IO command
+ * here is: a network round trip has no business on the thread driving the
+ * window. JS: `commands.fetchPluginIndex()` -> `Result<PluginIndex, string>`.
+ */
+async fetchPluginIndex() : Promise<Result<PluginIndex, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("fetch_plugin_index") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Download one catalogue entry's files into a GitCat-owned folder and return
+ * that folder's path.
+ * 
+ * This INSTALLS NOTHING. The caller hands the returned path to
+ * `preview_plugin_manifest` and then, once the user has seen what the plugin
+ * runs and confirmed, to `install_plugin_from_path` — the same two steps a
+ * file-picker install takes, with the same gates.
+ * 
+ * JS: `commands.downloadMarketPlugin(entry)` -> `Result<string, string>`.
+ */
+async downloadMarketPlugin(entry: MarketEntry) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_market_plugin", { entry }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Run a plugin's command by id. Loads it from the registry
  * ([`crate::plugin_registry::find_enabled_command`] — `Ok(None)` for a command
  * that is missing, `Err` for one belonging to a DISABLED plugin), resolves the
@@ -3910,6 +3944,24 @@ export type LocalBranch = { name: string; sha: string; ahead: number | null; beh
  */
 lastCommitTime: number }
 /**
+ * One row of the community index. Mirrors `index.json`'s entry shape, which
+ * is NOT uniform: an `official` entry carries `manifestUrl`/`repoPath` inside
+ * the index repo, a `community` entry carries `repo`/`manifestPath` pointing
+ * at somebody else's repository. Both forms are optional here and resolved by
+ * [`locate`], so a malformed row fails with a message instead of failing to
+ * deserialize the whole catalogue.
+ */
+export type MarketEntry = { 
+/**
+ * `"official"` or `"community"`.
+ */
+kind: string; id: string; name: string; description: string; author: string; 
+/**
+ * Mirrors the plugin's own manifest field, shown as a heads-up BEFORE the
+ * download; the real gate is still `read_and_validate_manifest`'s.
+ */
+minGitcatVersion?: string | null; tags?: string[]; manifestUrl?: string | null; repoPath?: string | null; repo?: string | null; manifestPath?: string | null; homepage?: string | null }
+/**
  * One parent of a merge commit, for the mainline chooser the UI shows before
  * cherry-picking a merge (git refuses a merge without `-m <n>`). `number` is
  * 1-based, matching git's own `-m` numbering; parent 1 is the branch the merge
@@ -4349,6 +4401,10 @@ handler?: string | null;
  * change is covered by global Undo; see `plugin_exec::run_hooks`.
  */
 mutates?: boolean }
+/**
+ * The whole catalogue, as `index.json` serves it.
+ */
+export type PluginIndex = { schemaVersion: number; generatedAt: string; count: number; plugins: MarketEntry[] }
 /**
  * A syntax-highlighting grammar a plugin contributes — purely
  * DECLARATIVE, same spirit as [`PanelItem`]'s fixed widget vocabulary: a
