@@ -321,8 +321,18 @@ jobs:
       # Runs AFTER the build on purpose. It cannot stop a broken AppImage being
       # built, but it turns the leg red, and the release is a draft nobody has
       # published yet — which is the window this is meant to catch.
+      # NOT fatal for x86_64: the fix-linux-appimage job below repacks and
+      # re-signs that one, and it `needs: build` — so failing here would skip
+      # the very job that repairs what was just detected. That is exactly what
+      # happened on the first v1.4.0 run: the guard caught AppRun.wrapped at
+      # 0770, reddened this leg, and took the repack and finalize jobs down
+      # with it.
+      #
+      # aarch64 keeps failing hard, because nothing downstream repacks it — the
+      # guard is the only thing that would ever notice.
       - name: Check the AppImage is world-executable
         if: runner.os == 'Linux'
+        continue-on-error: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
         run: |
           shopt -s nullglob
           imgs=(src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage)
