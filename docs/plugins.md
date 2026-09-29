@@ -69,6 +69,8 @@ A manifest is a small JSON document. Here's a complete, annotated example:
 | `enabled` | — | boolean | Defaults to `true` when omitted — a freshly installed plugin is active until you disable it. |
 | `commands` | — | array | Zero or more [commands](#commands). Defaults to `[]`. |
 | `hooks` | — | array | Zero or more [hooks](#hooks). Defaults to `[]`. |
+| `panels` | — | array | Zero or more declarative UI panels — titled surfaces of text/heading/button/command-output widgets GitCat renders itself, opened from ⌘K. Defaults to `[]`. |
+| `languages` | — | array | Zero or more [syntax-highlighting grammars](#languages) for the diff viewer. Defaults to `[]`. |
 | `tama` | — | object | Optional [Tama skin](#tama-skins) — an alternate look and voice for the mascot (poses, a greeting, a voice pitch). |
 | `lua` | — | string | Optional path (relative to the plugin folder) to a main Luau script — required only if any command/hook uses a `handler`. See [Scripting with Luau](#scripting-with-luau). |
 
@@ -312,10 +314,14 @@ The command's output is everything `print`ed, plus any `tama.react` lines, plus
 Handlers run in a fresh, isolated Luau VM built for **untrusted code**:
 
 - **Only safe libraries** are loaded — `string`, `math`, `table`, and Luau's
-  base library (`print`, `pairs`, `pcall`, `tostring`, …). There is **no `os`,
+  base library (`print`, `pairs`, `ipairs`, `tostring`, …). There is **no `os`,
   no `io`, no network**, and **no `require` / `load` / `loadstring` / `dofile`**
   — a script cannot touch the filesystem, spawn processes (except through
-  `git()`), open sockets, or load more code.
+  `git()`), open sockets, or load more code. Luau's base library also has a few
+  globals removed for safety: `pcall` and `xpcall` (so a handler cannot catch
+  and swallow the memory or time limit), plus `getfenv`, `setfenv`, and
+  `newproxy`. The `STRIPPED_GLOBALS` list in `plugin_lua.rs` is the source of
+  truth for what the sandbox deletes.
 - **Hard limits**: a ~64 MB memory ceiling (an allocation past it aborts the
   script) and a wall-clock time budget of a few seconds (a runaway loop is
   killed). Either limit, any Lua compile/runtime error, or a missing/ill-typed
@@ -366,9 +372,114 @@ Apply a skin from **Settings → Tama → Skin**: the picker lists **Default (bu
 | `voicePitch` | — | number | A multiplier applied to Tama's synthesized sound effects, so the character speaks higher (`> 1`) or lower (`< 1`). Omitted means **no change** (`1.0`). Must be finite; a finite out-of-range value is **clamped** to `[0.5, 2.0]` when the skin loads. |
 | `copy` | — | object | Optional greeting/voice lines. GitCat surfaces one (preferring `applied` > `greeting` > `hero`, else the first) as a courtesy toast when the skin is applied, capped at ~160 chars. It can never reach a safety-critical pose — the same trust boundary as a `::gitcat.tama` reaction. |
 
+## Languages {#languages}
+
+GitCat's diff viewer highlights JS/TS with real keyword awareness; every other
+file gets a "generic" grammar with comments, strings and numbers but **no
+keywords at all**. A plugin can declare `languages` to add keyword-aware
+highlighting for any language, by file extension — purely declarative, like a
+panel: a keyword list and comment syntax, never code. There is no way for a
+plugin to inject a custom tokenizer or run against a diff's text.
+
+```jsonc
+{
+  "id": "my-languages",
+  "name": "My Languages",
+  "version": "1.0.0",
+  "languages": [
+    {
+      "id": "python",
+      "extensions": ["py", "pyw"],
+      "keywords": ["def", "class", "return", "import", "if", "else", "for"],
+      "lineComment": "#"
+    },
+    {
+      "id": "rust",
+      "extensions": ["rs"],
+      "keywords": ["fn", "let", "mut", "struct", "impl", "match", "return"],
+      "lineComment": "//",
+      "blockComment": { "start": "/*", "end": "*/" }
+    }
+  ]
+}
+```
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `id` | ✅ | string | Same `^[a-z0-9][a-z0-9-]*$` charset as a plugin/panel id. Becomes the highlighter's internal grammar id. |
+| `extensions` | ✅ | array of strings | At least one file extension this grammar applies to, **without** a leading dot (`"py"`, not `".py"`), matched case-insensitively. |
+| `keywords` | — | array of strings | Reserved words highlighted as keywords. Defaults to `[]` — a language with only comment/string/number/punctuation highlighting is still strictly better than the generic fallback's total lack of keyword awareness. |
+| `lineComment` | — | string | A single-line comment marker, e.g. `"#"` or `"//"`. Omit it and this language has no line comments recognized. |
+| `blockComment` | — | object | `{ "start": "…", "end": "…" }` — a block-comment delimiter pair. Omit it and this language has no block comments recognized. |
+
+String, number and punctuation highlighting are **not** configurable — every
+language reuses GitCat's own built-in rules for those, so a manifest only
+ever supplies the parts that are genuinely language-specific.
+
+**Extension collisions**: if more than one *enabled* plugin claims the same
+file extension (or the same language `id`), the plugin that was installed or
+enabled **most recently** wins for that extension — GitCat cannot know at
+install time what else is or will be installed, so this is a simple,
+deterministic tie-break rather than a rejection.
+
+See [`language-pack`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins/language-pack)
+for a real example covering Python, Rust, Go, Java, C, C++ and Shell.
+
+## Finding plugins
+
+Open **Tools ▸ Plugins…** and switch to the **Browse** tab. That pane reads
+[**gitcat-plugins**](https://github.com/zangjiucheng/gitcat-plugins), a
+community index, and can fetch a listed plugin for you — you can also browse
+that repository directly if you would rather read it on GitHub first. Two kinds
+of listing:
+
+- **Official** — small reference plugins maintained directly in that repo
+  (this doc's own [example plugins](#example-plugins) live there too, under
+  `official/`).
+- **Community** — a pointer entry (id, the plugin's own repo, and the path to
+  its `plugin.json` inside it) for a plugin someone else maintains in their
+  own repository. The index never hosts community plugin code — download the
+  linked `plugin.json`, then install it the normal way.
+
+The whole catalog is also aggregated into one machine-readable
+[`index.json`](https://github.com/zangjiucheng/gitcat-plugins/blob/main/index.json)
+at that repo's root. That file is what the in-app Browse tab reads, and what
+anything else scripting against the catalogue should read too.
+
+### What "install from the catalogue" actually does
+
+Installing from Browse is **not** one click that runs something. It is the
+ordinary install with the file-picking step done for you:
+
+1. GitCat downloads that plugin's own files — its `plugin.json` and whatever
+   sits beside it, such as a `main.lua` — into a folder GitCat owns.
+2. Nothing is installed yet. You get the **same review** a file-picked install
+   gets: every command the manifest runs, every hook and its event, anything
+   marked `mutates`.
+3. Only when you confirm does it enter the registry.
+
+So a listed plugin gets no more trust than one you downloaded yourself. GitCat
+vouches for where the catalogue *is*, never for what is in it — entries are
+pointers people submit, not code anyone audited.
+
+Two limits worth knowing, both deliberate:
+
+- **Only GitHub.** The catalogue and every plugin file are fetched from
+  `raw.githubusercontent.com` / `api.github.com` and nowhere else, including
+  after redirects. The index URL is fixed in the app rather than configurable.
+- **Plugins get no network of their own.** This fetching lives in GitCat's Rust
+  side, not in the webview a plugin's own code can reach. A plugin still
+  cannot open a socket; see [Sandbox](#scripting-with-luau).
+
+Wrote a plugin worth sharing? See that repo's own `CONTRIBUTING.md` — adding
+a community entry is a small PR against your own repo's URL, not a copy of
+your code.
+
 ## Installing & managing plugins
 
-Plugins are installed from a local file — there's no registry or marketplace.
+Plugins install from a local file, or from the **Browse** tab that fetches one
+for you — see [Finding plugins](#finding-plugins) above. Either way the review
+step below is the same.
 
 1. Open **Settings → Plugins**.
 2. Click **Install plugin…** and pick the plugin's `plugin.json` file (open the plugin's folder and select its `plugin.json`).
@@ -404,6 +515,6 @@ A few limits worth knowing while the plugin security model is still being built 
 - **Argument injection is your responsibility.** Quoting stops shell injection but not flag injection — use `--` before untrusted placeholders (see [above](#placeholders)).
 - **The subprocess inherits GitCat's environment.** A plugin command can read GitCat's environment variables.
 
-## Example plugins
+## Example plugins {#example-plugins}
 
-Ready-to-read manifests live in [`examples/plugins/`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins) in the repository — copy one, edit its `id`/`run` lines, and install it from **Settings → Plugins** to get started.
+Ready-to-read manifests live in [`examples/plugins/`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins) in the repository — copy one, edit its `id`/`run` lines, and install it from **Settings → Plugins** to get started. The same ones (plus anything else contributed since) are also mirrored under `official/` in the [community index](#finding-plugins), alongside third-party plugins.

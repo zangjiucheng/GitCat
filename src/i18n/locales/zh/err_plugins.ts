@@ -44,6 +44,12 @@ export default {
   panel_command_output_empty_label: "插件面板 {id} 有一个 command-output 项的标签为空。",
   panel_command_output_missing_command:
     "插件面板 {id} 有一个 command-output 引用了命令 {command}，而该命令不属于此插件。",
+  language_id_invalid:
+    "插件语言 id {id} 无效 —— 它必须以小写字母或数字开头，且随后只能包含小写字母、数字和 '-'。",
+  language_id_duplicate: "插件存在重复的语言 id {id} —— 语言 id 在同一插件内必须唯一。",
+  language_no_extensions: "插件语言 {id} 没有声明任何适用的文件扩展名。",
+  language_extension_invalid:
+    "插件语言 {id} 的扩展名 {extension} 无效 —— 只能是小写字母/数字，且不能带前导点号。",
 
   // plugin_registry.rs —— 清单读取（大小上限、解析）
   manifest_not_regular_file: "插件清单 {path} 不是常规文件。",

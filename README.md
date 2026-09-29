@@ -28,7 +28,7 @@ Every Git GUI makes it easy to run a dangerous command. GitCat is built so you c
 - **Diffs that aren't just text** — syntax highlighting, plus side-by-side before/after previews for images and PDFs, rendered natively and zoomable.
 - **The deep cuts** — submodules, patch export/apply, `git bisect`, `git blame` with rename-following, per-file history, author and pickaxe search, a `git-filter-repo` wizard, external diff/merge tools, reflog rescue and dangling-object recovery.
 - **⌘K everything** — fuzzy search across commits, refs and actions, vim-style keys, and a real native menu.
-- **Plugins** *(1.1)* — ⌘K commands, hooks, side panels, named tools, and Tama skins and reactions.
+- **Plugins** *(1.1)* — ⌘K commands, hooks, side panels, named tools, and Tama skins and reactions. Browse ready-made ones in the community [**plugin index**](https://github.com/zangjiucheng/gitcat-plugins).
 - **English, 中文 & 한국어** — the whole interface, switchable live with no reload.
 - **`gitcat .`** — open a repo from your terminal the way `code .` does. WSL-aware.
 
@@ -103,4 +103,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
 
 ## License
 
-Free software under the [GNU General Public License v3.0 or later](LICENSE). Copyright © 2026 Jiucheng Zang.
+GitCat is free software: you can redistribute it and/or modify it under the
+terms of the [GNU General Public License](LICENSE) as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+PURPOSE. See the [GNU General Public License](LICENSE) for more details, or
+<https://www.gnu.org/licenses/>.
+
+Copyright © 2026 Jiucheng Zang <git.jiucheng@gmail.com>

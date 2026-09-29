@@ -2332,8 +2332,12 @@ fn pin_dropped_stash(repo: &Repository, path: &str, stash_ref: &str) -> Result<S
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     let seq = STASH_SEQ.fetch_add(1, Ordering::SeqCst);
     let ref_name = format!("refs/gitgui/dropped-stash/{}-{}-{}", now.as_secs(), now.subsec_nanos(), seq);
-    repo.reference(&ref_name, oid, false, "gitcat pre-drop stash backup")
-        .map_err(|e| format!("Could not pin dropped stash: {}", e.message()))?;
+    // Goes through safety::create_backup_ref (not a bare repo.reference call)
+    // so a WSL-path repo doesn't hit the "Access is denied" libgit2-over-the-
+    // `\\wsl.localhost\`-bridge bug that same function's own doc comment
+    // describes — see it for the full story.
+    crate::safety::create_backup_ref(repo, &ref_name, oid, "gitcat pre-drop stash backup")
+        .map_err(|e| format!("Could not pin dropped stash: {}", e))?;
     Ok(ref_name)
 }
 

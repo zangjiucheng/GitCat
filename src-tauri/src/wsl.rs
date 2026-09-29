@@ -106,6 +106,44 @@ pub fn unc_from_linux(distro: &str, linux: &str) -> String {
     format!("\\\\wsl.localhost\\{distro}\\{rel}")
 }
 
+/// Every registered WSL distro's name, in the order `wsl.exe -l -q` lists
+/// them (which always puts the DEFAULT distro first) — feeds the built-in
+/// terminal's own shell picker (`terminal.rs`'s `pty_command_for`), so a
+/// user with more than one distro installed can choose which one a WSL-
+/// flavored terminal session actually runs in, instead of always getting
+/// whichever one a repo's own path happens to resolve to.
+///
+/// Empty — NOT an error — on a machine with no WSL install / no registered
+/// distro at all, or if `wsl.exe` itself can't be run or times out: every
+/// one of those means the same thing to the one caller here, "there is no
+/// choice to offer beyond the default shell", so there is nothing for a
+/// caller to branch on that an empty list doesn't already say.
+///
+/// `-l -q`: quiet, names only, one per line. EMPIRICALLY CONFIRMED its
+/// stdout is UTF-16LE even when piped (not a real console) — decoding it as
+/// UTF-8 (lossy or otherwise) interleaves a NUL byte after every character
+/// instead of the real text, so this decodes as UTF-16LE explicitly rather
+/// than `String::from_utf8_lossy` (same fix `tests/wsl_live.rs`'s own
+/// `first_wsl_distro` needed, generalized here from "just the first one,
+/// for a test fixture" to the full list, for a real feature).
+pub fn list_distros() -> Vec<String> {
+    let mut cmd = Command::new("wsl.exe");
+    cmd.arg("-l").arg("-q").no_console_window();
+    let Ok(out) = output_with_timeout(cmd, SUBPROCESS_TIMEOUT) else {
+        return Vec::new();
+    };
+    if !out.status.success() || out.stdout.len() % 2 != 0 {
+        return Vec::new();
+    }
+    let units: Vec<u16> = out.stdout.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    String::from_utf16_lossy(&units)
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 /// Build a `git -C <path> <args>` invocation, transparently routed through
 /// `wsl.exe -d <distro> -e git -C <linux-path> <args>` when `path` is a WSL
 /// UNC path — see module doc comment.
@@ -395,6 +433,55 @@ pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
             Err(ierrp("err_misc.wsl_ahead_behind_timed_out", &[("timeout", &format!("{SUBPROCESS_TIMEOUT:?}"))]))
+        }
+        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())])),
+    })
+}
+
+/// For a WSL-path repo ONLY, creates a brand-new ref — `oid` must not already
+/// be what `ref_name` points to, and `ref_name` must not already exist — via
+/// `git update-ref -m <reason> <ref_name> <oid> <all-zero-oid>` run through
+/// the distro's own git. `None` for a non-WSL path — every caller keeps using
+/// git2's `Repository::reference(..., force: false, ...)` unchanged there.
+///
+/// Exists because of a real user report: a snapshot on a `\\wsl.localhost\`
+/// repo failed with "could not create backup ref: failed to create locked
+/// file '...\.git\refs\gitgui\backup\....lock': Access is denied" —
+/// `Repository::reference()`'s own write path, which libgit2 implements as
+/// "create a `<ref>.lock` file, write it, rename it over the real ref".
+/// NOT independently reproduced here (200 back-to-back snapshots against a
+/// fresh WSL fixture on this dev box all succeeded via plain git2 — see this
+/// module's test suite), so the exact trigger is unconfirmed; a newly
+/// created file getting a transient "Access is denied" over a
+/// network-redirector path (real-time antivirus/EDR scanning it, most
+/// commonly) is a well-known general Windows phenomenon that a purely local
+/// disk essentially never exposes, which is at least consistent with why it
+/// would show up specifically on a WSL-bridge path and nowhere else. Routing
+/// the write natively inside the distro sidesteps that whole class of
+/// Windows-side interference regardless of the exact cause — the same
+/// "let the distro's own filesystem do it, never cross the bridge for this"
+/// idea `wsl_status` already applies to the read-side symlink stall, applied
+/// here to a write. Every one of this app's own "pin a commit under a
+/// fresh, never-clobbered ref before doing something risky" call sites goes
+/// through here for a WSL repo now (safety snapshots, deleted-branch/tag
+/// pins, the pre-drop stash backup), so a fix in this one place covers all
+/// of them.
+///
+/// The trailing all-zero-oid argument is `update-ref`'s own idiom for "the
+/// ref must not already exist" (a nonexistent ref reads as the all-zero oid
+/// for `update-ref`'s compare-and-swap check) — the same never-clobber
+/// guarantee `Repository::reference()`'s own `force: false` gives on the
+/// git2 path, so a unique ref name still can never clobber a prior one here
+/// either.
+pub fn wsl_create_ref(path: &str, ref_name: &str, oid: &str, reason: &str) -> Option<Result<(), String>> {
+    wsl_target(path)?;
+    const ZERO_OID: &str = "0000000000000000000000000000000000000000";
+    let cmd = git_command(path, &["update-ref", "-m", reason, ref_name, oid, ZERO_OID]);
+    Some(match output_with_timeout(cmd, SUBPROCESS_TIMEOUT) {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+            Err(ierrp("err_misc.wsl_create_ref_timed_out", &[("timeout", &format!("{SUBPROCESS_TIMEOUT:?}"))]))
         }
         Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())])),
     })

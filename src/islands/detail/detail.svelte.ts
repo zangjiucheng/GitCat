@@ -20,6 +20,7 @@ import { resolver } from "../resolver/resolver.svelte.ts";
 import { blameCtrl } from "../blame/blame.svelte.ts";
 import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
 import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
+import { pluginLanguagesCtrl } from "../pluginlanguages/pluginlanguages.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { previewKind } from "../diffpreview/preview-kind";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
@@ -327,6 +328,13 @@ class DetailState {
   }
 
   select(row: number) {
+    // Fire-and-forget, lazy + cached (see its own doc comment): warms up
+    // plugin-contributed diff syntax grammars as early as the FIRST commit
+    // selection of the session, well before any diff row actually calls
+    // bridge.resolveLang/highlight — rather than only on first ⌘K open,
+    // which a diff view can easily precede.
+    void pluginLanguagesCtrl.ensureLoaded();
+
     const c = this.commitMeta(row);
 
     // A commit is immutable. While the sha is unchanged its message, file
@@ -403,7 +411,7 @@ class DetailState {
           lines.push(["@@", h.header]);
           (h.lines || []).forEach((l) => lines.push([l.kind, l.text]));
         });
-        this.curDiffs[f.path] = { lang: f.lang || "generic", lines, truncated: !!f.truncated, binary: !!f.binary };
+        this.curDiffs[f.path] = { lang: bridge.resolveLang(f.path), lines, truncated: !!f.truncated, binary: !!f.binary };
       });
       this.bodyText = d.body && d.body.trim() ? d.body : "(no message body)";
       this.diffstat = {

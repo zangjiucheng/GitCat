@@ -26,6 +26,7 @@ import * as bridge from "../../legacy/bridge";
 import { IN_TAURI } from "../../ipc/env";
 import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { BlameHunkRow, FileBlame } from "../../ipc/bindings";
+import { pluginLanguagesCtrl } from "../pluginlanguages/pluginlanguages.svelte.ts";
 
 // One flattened display row per line of `data.lines` — built fresh from
 // `data`/`ignoreWhitespace` every time `rows` is read (cheap: at most
@@ -110,6 +111,7 @@ class BlameState {
   // for a different file/commit never shows stale data from whatever was
   // open before.
   async openFor(repo: string, atCommit: string | null, file: string, oldPath: string | null = null): Promise<void> {
+    void pluginLanguagesCtrl.ensureLoaded(); // Workdir's own trigger can reach here before Detail's select() ever has
     this.repo = repo || "";
     this.atCommit = atCommit;
     this.file = file;
@@ -170,13 +172,14 @@ class BlameState {
   get rows(): BlameDisplayRow[] {
     const d = this.data;
     if (!d) return [];
+    const lang = bridge.resolveLang(d.path);
     const out: BlameDisplayRow[] = [];
     d.hunks.forEach((h, hi) => {
       const tint: "a" | "b" = hi % 2 === 0 ? "a" : "b";
       for (let i = 0; i < h.linesInHunk; i++) {
         const lineIdx = h.startLine - 1 + i;
         const text = d.lines[lineIdx] ?? "";
-        out.push({ text, html: bridge.highlight(text, d.lang), isFirst: i === 0, hunk: h, tint });
+        out.push({ text, html: bridge.highlight(text, lang), isFirst: i === 0, hunk: h, tint });
       }
     });
     return out;

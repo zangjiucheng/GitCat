@@ -5,11 +5,6 @@
   import { t } from "@/i18n/i18n.svelte.ts";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
 
-  // ext -> highlight grammar key (was langForConflict)
-  function langFor(path: string): string {
-    const ext = (path || "").split(".").pop()!.toLowerCase();
-    return ["ts", "tsx", "js", "jsx", "mjs", "cjs"].includes(ext) ? "ts" : "generic";
-  }
   const lines = (txt: string) => (txt || "").split("\n");
 
   // Abort button copy — op-flavored ("Abort merge"/"Abort pick"/"Abort rebase"/"Abort revert"/"Abort stash"/"Abort squash"/"Abort patch apply").
@@ -97,7 +92,7 @@
                   >
                 </span>
               </div>
-              {@const lang = langFor(resolver.current.path)}
+              {@const lang = bridge.resolveLang(resolver.current.path)}
               <div class="cf-content" id="cfThree">
                 <div class="cf-compare">
                   {@render col("ours", t("resolver.col_ours"), resolver.current.ours, lang)}

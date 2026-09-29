@@ -16,6 +16,7 @@ import type { DiffRow } from "../detail/detail.svelte.ts";
 import * as bridge from "@/legacy/bridge";
 import { be } from "@/i18n/i18n.svelte.ts";
 import { IN_TAURI } from "@/ipc/env";
+import { pluginLanguagesCtrl } from "../pluginlanguages/pluginlanguages.svelte.ts";
 
 /** Demo-mode stand-in, same convention as the other islands' DEMO_* data. */
 const DEMO: RangeSummary = {
@@ -100,6 +101,7 @@ class RangeSummaryState {
   #bFull = "";
 
   async openAt(repo: string, a: string, b: string, x: number, y: number) {
+    void pluginLanguagesCtrl.ensureLoaded(); // see detail.svelte.ts's select() for why this fires here too
     const mine = ++this.#seq;
     this.#repo = repo;
     this.#aFull = a;
@@ -221,7 +223,7 @@ class RangeSummaryState {
       lines.push(["@@", h.header]);
       for (const l of h.lines ?? []) lines.push([l.kind, l.text]);
     }
-    this.rows = buildDiffRows({ lang: f.lang || "generic", lines, truncated: !!f.truncated });
+    this.rows = buildDiffRows({ lang: bridge.resolveLang(f.path), lines, truncated: !!f.truncated });
   }
 
   closeDiff() {

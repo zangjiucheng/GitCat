@@ -49,6 +49,7 @@ export default {
   wsl_status_timed_out: "WSL status check timed out after {timeout} — try `wsl --shutdown` in a terminal, then reopen this repo",
   unexpected_rev_list_output: "unexpected `git rev-list --left-right --count` output: {output}",
   wsl_ahead_behind_timed_out: "WSL ahead/behind check timed out after {timeout}",
+  wsl_create_ref_timed_out: "Creating a backup ref over WSL timed out after {timeout} — try `wsl --shutdown` in a terminal, then reopen this repo",
 
   // terminal.rs
   terminal_session_ended: "This terminal session has already ended.",

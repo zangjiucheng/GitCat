@@ -3178,6 +3178,40 @@ async loadPluginSkin(pluginId: string) : Promise<Result<TamaSkin, string>> {
 }
 },
 /**
+ * Read the community index.
+ * 
+ * `async fn` + `run_blocking` for the same reason every other IO command
+ * here is: a network round trip has no business on the thread driving the
+ * window. JS: `commands.fetchPluginIndex()` -> `Result<PluginIndex, string>`.
+ */
+async fetchPluginIndex() : Promise<Result<PluginIndex, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("fetch_plugin_index") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Download one catalogue entry's files into a GitCat-owned folder and return
+ * that folder's path.
+ * 
+ * This INSTALLS NOTHING. The caller hands the returned path to
+ * `preview_plugin_manifest` and then, once the user has seen what the plugin
+ * runs and confirmed, to `install_plugin_from_path` — the same two steps a
+ * file-picker install takes, with the same gates.
+ * 
+ * JS: `commands.downloadMarketPlugin(entry)` -> `Result<string, string>`.
+ */
+async downloadMarketPlugin(entry: MarketEntry) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_market_plugin", { entry }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Run a plugin's command by id. Loads it from the registry
  * ([`crate::plugin_registry::find_enabled_command`] — `Ok(None)` for a command
  * that is missing, `Err` for one belonging to a DISABLED plugin), resolves the
@@ -3277,8 +3311,10 @@ async writeRepoFile(path: string, fileName: string, content: string) : Promise<R
     return await TAURI_INVOKE("write_repo_file", { path, fileName, content });
 },
 /**
- * JS: `commands.terminalSpawn(path)`. Returns the new session's id, which
- * every other command below takes to address it.
+ * JS: `commands.terminalSpawn(path, shell)`. Returns the new session's id,
+ * which every other command below takes to address it. `shell` is the
+ * drawer's own shell-picker choice — see [`pty_command_for`]'s own doc
+ * comment for what `None`/`Some("")`/`Some(distro)` each mean.
  * 
  * BUG FIX: was a plain (non-async) `fn` — `open_pty_shell` calls
  * `trust::open_repo` before ever touching a PTY, the same git2 `Repository::
@@ -3290,9 +3326,9 @@ async writeRepoFile(path: string, fileName: string, content: string) : Promise<R
  * own established shape for a command that also needs `State` after the
  * blocking part completes.
  */
-async terminalSpawn(path: string) : Promise<Result<string, string>> {
+async terminalSpawn(path: string, shell: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("terminal_spawn", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("terminal_spawn", { path, shell }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3344,6 +3380,15 @@ async terminalKill(id: string) : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * JS: `commands.listWslDistros()` — every registered WSL distro's name, for
+ * the terminal drawer's own shell picker. See [`crate::wsl::list_distros`]'s
+ * own doc comment for why an empty list is the normal, non-error answer on
+ * a machine with no WSL install at all.
+ */
+async listWslDistros() : Promise<string[]> {
+    return await TAURI_INVOKE("list_wsl_distros");
 },
 /**
  * JS: `commands.revealPathInFileManager(repo, relative)` — a file row's
@@ -3524,6 +3569,18 @@ size: number;
  * Standard-base64 of the raw bytes, or `None` when `size > MAX_PREVIEW_BYTES`.
  */
 data: string | null }
+/**
+ * A block-comment delimiter pair for a [`PluginLanguage`] — e.g. the
+ * C-style pair this comment deliberately does NOT spell out literally
+ * (that exact two-character sequence would prematurely close the
+ * GENERATED TypeScript doc comment this Rust doc comment turns into — see
+ * `language-pack`'s own example manifest under examples/plugins/ for a
+ * real one in actual JSON). A plain 2-element array would say the same
+ * thing more tersely, but a named struct is unambiguous in hand-authored
+ * JSON (which delimiter is which) and needs no positional convention a
+ * manifest author has to remember.
+ */
+export type BlockComment = { start: string; end: string }
 /**
  * Which local branches are already fully merged into the repo's own
  * default branch, plus the resolved default branch's own name.
@@ -3887,6 +3944,24 @@ export type LocalBranch = { name: string; sha: string; ahead: number | null; beh
  */
 lastCommitTime: number }
 /**
+ * One row of the community index. Mirrors `index.json`'s entry shape, which
+ * is NOT uniform: an `official` entry carries `manifestUrl`/`repoPath` inside
+ * the index repo, a `community` entry carries `repo`/`manifestPath` pointing
+ * at somebody else's repository. Both forms are optional here and resolved by
+ * [`locate`], so a malformed row fails with a message instead of failing to
+ * deserialize the whole catalogue.
+ */
+export type MarketEntry = { 
+/**
+ * `"official"` or `"community"`.
+ */
+kind: string; id: string; name: string; description: string; author: string; 
+/**
+ * Mirrors the plugin's own manifest field, shown as a heads-up BEFORE the
+ * download; the real gate is still `read_and_validate_manifest`'s.
+ */
+minGitcatVersion?: string | null; tags?: string[]; manifestUrl?: string | null; repoPath?: string | null; repo?: string | null; manifestPath?: string | null; homepage?: string | null }
+/**
  * One parent of a merge commit, for the mainline chooser the UI shows before
  * cherry-picking a merge (git refuses a merge without `-m <n>`). `number` is
  * 1-based, matching git's own `-m` numbering; parent 1 is the branch the merge
@@ -4196,6 +4271,12 @@ enabled?: boolean; commands?: PluginCommand[]; hooks?: PluginHook[];
  */
 panels?: PluginPanel[]; 
 /**
+ * Declarative syntax-highlighting grammars this plugin contributes —
+ * see [`PluginLanguage`]'s own doc comment. `#[serde(default)]` so
+ * every pre-languages manifest still loads (absent => no languages).
+ */
+languages?: PluginLanguage[]; 
+/**
  * Optional Tama SKIN (PER-47) — pose sprites + copy this plugin
  * contributes. `#[serde(default)]` + `Option` so every pre-skin manifest
  * still loads (absent => no skin). See [`PluginTama`].
@@ -4320,6 +4401,60 @@ handler?: string | null;
  * change is covered by global Undo; see `plugin_exec::run_hooks`.
  */
 mutates?: boolean }
+/**
+ * The whole catalogue, as `index.json` serves it.
+ */
+export type PluginIndex = { schemaVersion: number; generatedAt: string; count: number; plugins: MarketEntry[] }
+/**
+ * A syntax-highlighting grammar a plugin contributes — purely
+ * DECLARATIVE, same spirit as [`PanelItem`]'s fixed widget vocabulary: a
+ * keyword list plus simple comment syntax, consumed by the frontend's
+ * data-driven tokenizer (`src/legacy/main.ts`'s `pluginRules`/
+ * `registerPluginLanguages`) to extend `GRAMMARS` past the two built-ins
+ * (`ts` and `generic`, the latter with no keyword awareness at all). There
+ * is no way for a plugin to inject a custom tokenizer or run code against a
+ * diff's text — a language grammar is words and delimiter strings, nothing
+ * more, exactly like a panel is widgets and not markup.
+ * 
+ * String/number/punctuation tokenization is NOT configurable here — every
+ * plugin language reuses the exact same rules the built-in `generic`
+ * grammar already applies (see the frontend's own doc comment for why:
+ * keeping that one shared instead of letting each language redeclare it
+ * avoids a subtly-different regex per plugin for something that is not
+ * actually language-specific in this tokenizer's own scope).
+ */
+export type PluginLanguage = { 
+/**
+ * Stable id (same `^[a-z0-9][a-z0-9-]*$` charset as a plugin/panel id —
+ * see [`is_valid_id`]) — becomes the frontend `GRAMMARS` key.
+ */
+id: string; 
+/**
+ * File extensions this grammar applies to, WITHOUT a leading dot (e.g.
+ * `"py"`, not `".py"`), matched case-insensitively. When more than one
+ * enabled plugin claims the same extension, the LAST one registered
+ * wins — see `registerPluginLanguages`'s own doc comment; this is a
+ * deliberate, simple tie-break, not a bug to fix at validation time
+ * (a plugin cannot know at install time what else is installed).
+ */
+extensions: string[]; 
+/**
+ * Reserved words highlighted as keywords. Empty is allowed (a language
+ * with only comment/string/number/punctuation highlighting is still
+ * strictly better than `generic`'s complete lack of keyword awareness).
+ */
+keywords?: string[]; 
+/**
+ * Line-comment marker, e.g. `"#"` or `"//"`. Absent => this language
+ * has no line comments recognized at all.
+ */
+lineComment?: string | null; 
+/**
+ * Block-comment delimiters (see [`BlockComment`]'s own doc comment for
+ * why an example is not spelled out literally here too). Absent => no
+ * block comments recognized.
+ */
+blockComment?: BlockComment | null }
 /**
  * A declarative UI PANEL a plugin contributes (PER-45): a titled surface of
  * [`PanelItem`] widgets GitCat renders itself. `id` is a stable, plugin-unique

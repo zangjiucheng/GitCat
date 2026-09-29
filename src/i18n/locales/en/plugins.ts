@@ -1,6 +1,35 @@
 // Plugins manager modal strings. Keys become `plugins.<key>`.
 export default {
   update: "Update",
+
+  // ── the catalogue pane ────────────────────────────────────────────────────
+  pane_installed: "Installed",
+  pane_browse: "Browse",
+  market_search_ph: "Search the catalogue…",
+  market_search_aria: "Search the plugin catalogue",
+  market_loading: "Loading the catalogue…",
+  market_refresh: "Refresh",
+  market_generated: "Catalogue built {when}",
+  market_empty: "The catalogue has no plugins listed yet.",
+  market_none_match: "No listed plugin matches {query}.",
+  market_official: "Official",
+  market_community: "Community",
+  market_by: "by {author}",
+  market_needs: "Needs GitCat {version} or newer",
+  market_open_repo: "Open repository",
+  market_install: "Install",
+  market_downloading: "Downloading…",
+  market_already: "Installed",
+  // Said where the catalogue would be, because an empty list in design mode
+  // reads as "nothing has been published", which is a different thing.
+  market_demo: "The catalogue is fetched from GitHub, so it is unavailable in this preview.",
+  market_err_index: "Could not load the plugin catalogue.",
+  market_err_index_detail: "Could not load the plugin catalogue — {err}",
+  market_err_download: "Could not download that plugin.",
+  market_err_download_detail: "Could not download that plugin — {err}",
+  // Shown above the catalogue list. The point is that browsing changes nothing
+  // about how installing works: the review gate is the same one either way.
+  market_trust: "Listed plugins are not reviewed by GitCat. Downloading one only puts its files on your disk — you still see every command it runs before anything is installed.",
   updated: "{name} reloaded from disk.",
   review_trust: "A plugin runs on your machine with your privileges — there is no sandbox. Install it only if you would run these commands yourself.",
   review_install: "Install",
@@ -20,7 +49,7 @@ export default {
   audit_mutates_other: "{n} actions write to this repository.",
   title: "Plugins",
   subtitle:
-    "Enable, disable, or remove installed plugins — or install a new one from a file. GitCat only runs what a plugin declares; it never connects anywhere itself.",
+    "Enable, disable, or remove installed plugins, or add one from the catalogue or a file. GitCat only runs what a plugin declares, and a plugin never gets network access of its own — the catalogue is the one thing GitCat fetches, from GitHub.",
   filter_ph: "Filter plugins…",
   filter_aria: "Filter plugins",
   installing: "Installing…",

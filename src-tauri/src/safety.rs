@@ -200,10 +200,11 @@ pub fn snapshot(repo: &Repository) -> Result<String, String> {
     let sha = oid.to_string();
 
     let (ref_name, ts) = new_backup_ref();
-    // force=false => git2 errors if the ref already exists, so a unique name can
-    // never clobber a prior snapshot.
-    repo.reference(&ref_name, oid, false, "gitcat safety snapshot")
-        .map_err(|e| format!("could not create backup ref: {}", e.message()))?;
+    // Never clobbers a prior snapshot (see create_backup_ref's own doc
+    // comment) — and, for a WSL repo, doesn't hit the "Access is denied"
+    // libgit2-over-the-bridge bug plain git2 would.
+    create_backup_ref(repo, &ref_name, oid, "gitcat safety snapshot")
+        .map_err(|e| format!("could not create backup ref: {}", e))?;
 
     // Which branch (if any) is HEAD on? Recorded so undo can restore identity.
     let head_ref = current_symref(repo);
@@ -235,8 +236,8 @@ pub fn pin_deleted_tip(repo: &Repository, oid: git2::Oid, branch: &str) -> Resul
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     let seq = SNAP_SEQ.fetch_add(1, Ordering::SeqCst);
     let ref_name = format!("refs/gitgui/deleted/{}-{}-{}", now.as_secs(), now.subsec_nanos(), seq);
-    repo.reference(&ref_name, oid, false, &format!("gitcat pin deleted {branch}"))
-        .map_err(|e| format!("could not pin deleted tip: {}", e.message()))?;
+    create_backup_ref(repo, &ref_name, oid, &format!("gitcat pin deleted {branch}"))
+        .map_err(|e| format!("could not pin deleted tip: {}", e))?;
     append_oplog(repo, &OpLog {
         ts: now.as_secs() as i64,
         op: "pin-deleted".to_string(),
@@ -674,6 +675,29 @@ pub async fn prune_snapshots(path: String, mode: String, count: u32, days: u32) 
 
 fn open(path: &str) -> Result<Repository, String> {
     crate::trust::open_repo(path).map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))
+}
+
+/// Create `ref_name` pointing at `oid`, refusing if it already exists.
+/// Routes through [`crate::wsl::wsl_create_ref`] (the distro's own git) for a
+/// WSL-path repo — see that function's own doc comment: `Repository::
+/// reference()` can fail outright with "Access is denied" creating its
+/// `<ref>.lock` file over the `\\wsl.localhost\` bridge, which is exactly the
+/// "could not create backup ref" this app's own users have hit. Every "pin a
+/// commit under a fresh, never-clobbered ref" call site in this app —
+/// `snapshot`/`pin_deleted_tip` here, `git_tag::pin_deleted_tag`,
+/// `workdir::pin_dropped_stash` — goes through this one function so the fix
+/// lives in exactly one place. Falls back to plain git2 (unchanged) for a
+/// non-WSL repo, or a bare repo with no workdir to test.
+pub fn create_backup_ref(repo: &Repository, ref_name: &str, oid: git2::Oid, reason: &str) -> Result<(), String> {
+    let wsl_path = repo.workdir().and_then(|p| p.to_str());
+    if let Some(path) = wsl_path {
+        if let Some(result) = crate::wsl::wsl_create_ref(path, ref_name, &oid.to_string(), reason) {
+            return result;
+        }
+    }
+    repo.reference(ref_name, oid, false, reason)
+        .map(|_| ())
+        .map_err(|e| e.message().to_string())
 }
 
 /// Unique backup ref: `refs/gitgui/backup/<secs>-<nanos>-<seq>`. `secs` is the

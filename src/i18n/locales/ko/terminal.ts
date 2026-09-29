@@ -3,8 +3,6 @@ export default {
   title: "터미널",
   focus_out: "앱으로 포커스 되돌리기",
   focus_out_hint: "앱으로 돌아가기",
-  exited: "프로세스 종료됨",
-  restart_btn: "재시작",
   aria_close: "터미널 닫기",
   demo_pre: "여기서 실제 셸이 실행돼요 — 위치: ",
   demo_post: " (demo).",
@@ -12,4 +10,6 @@ export default {
   open_repo_first: "먼저 저장소를 열어주세요.",
   err_open: "터미널을 열지 못했어요.",
   err_open_e: "터미널을 열지 못했어요 — {e}",
+  shell_picker_label: "셸",
+  shell_default: "기본",
 };

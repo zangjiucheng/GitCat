@@ -47,6 +47,12 @@ export default {
   panel_command_output_empty_label: "플러그인 패널 {id}에 레이블이 비어 있는 command-output 항목이 있어요.",
   panel_command_output_missing_command:
     "플러그인 패널 {id}에 명령 {command}을(를) 참조하는 command-output이 있는데, 이 명령은 이 플러그인에 없어요.",
+  language_id_invalid:
+    "플러그인 언어 id {id}이(가) 유효하지 않아요 — 소문자나 숫자로 시작하고, 그 뒤로는 소문자, 숫자, '-'만 포함해야 해요.",
+  language_id_duplicate: "플러그인에 중복된 언어 id {id}이(가) 있어요 — 언어 id는 플러그인 내에서 고유해야 해요.",
+  language_no_extensions: "플러그인 언어 {id}이(가) 적용할 파일 확장자를 하나도 선언하지 않았어요.",
+  language_extension_invalid:
+    "플러그인 언어 {id}의 확장자 {extension}이(가) 유효하지 않아요 — 소문자/숫자만 가능하고 앞에 점(.)이 없어야 해요.",
 
   // plugin_registry.rs — 매니페스트 읽기(용량 제한, 파싱)
   manifest_not_regular_file: "플러그인 매니페스트 {path}이(가) 일반 파일이 아니에요.",

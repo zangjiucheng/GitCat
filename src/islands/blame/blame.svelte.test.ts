@@ -20,6 +20,7 @@ vi.mock("../../legacy/bridge", () => ({
   select: vi.fn(),
   hhex: (r: number) => "hex" + r,
   highlight: (text: string) => text,
+  resolveLang: () => "generic",
   tama: { set: vi.fn(), say: vi.fn(), warn: vi.fn(), event: vi.fn() },
 }));
 
@@ -27,6 +28,10 @@ vi.mock("../../ipc/bindings", () => ({
   commands: {
     blameFile: vi.fn(),
   },
+}));
+
+vi.mock("../pluginlanguages/pluginlanguages.svelte.ts", () => ({
+  pluginLanguagesCtrl: { ensureLoaded: vi.fn(async () => {}) },
 }));
 
 let mockInTauri = true;

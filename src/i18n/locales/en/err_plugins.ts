@@ -50,6 +50,12 @@ export default {
   panel_command_output_empty_label: "Plugin panel {id} has a command-output item with an empty label.",
   panel_command_output_missing_command:
     "Plugin panel {id} has a command-output referencing command {command}, which is not a command in this plugin.",
+  language_id_invalid:
+    "Plugin language id {id} is invalid — it must start with a lowercase letter or digit and then contain only lowercase letters, digits, and '-'.",
+  language_id_duplicate: "Plugin has a duplicate language id {id} — language ids must be unique within a plugin.",
+  language_no_extensions: "Plugin language {id} declares no file extensions to apply to.",
+  language_extension_invalid:
+    "Plugin language {id} has an invalid extension {extension} — it must be lowercase letters/digits only, with no leading dot.",
 
   // plugin_registry.rs — manifest reading (size caps, parse)
   manifest_not_regular_file: "Plugin manifest {path} is not a regular file.",
