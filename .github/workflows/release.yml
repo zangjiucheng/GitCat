@@ -230,6 +230,26 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --target ${{ matrix.target }}
 
+      # v1.3.2's x86_64 AppImage shipped AppRun.wrapped as 0770, so the app
+      # could not start wherever the running user did not own the file — under
+      # firejail, under APPIMAGE_EXTRACT_AND_RUN, under AppImageLauncher. It was
+      # found by the AppImage catalog's own test, not by us, after it had been
+      # released. The aarch64 AppImage of the same tag was 0755, so this is not
+      # something this repo configures: it is whichever AppRun that arch's
+      # linuxdeploy embeds, which is exactly why it needs a standing check
+      # rather than a one-time fix.
+      #
+      # Runs AFTER the build on purpose. It cannot stop a broken AppImage being
+      # built, but it turns the leg red, and the release is a draft nobody has
+      # published yet — which is the window this is meant to catch.
+      - name: Check the AppImage is world-executable
+        if: runner.os == 'Linux'
+        run: |
+          shopt -s nullglob
+          imgs=(src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage)
+          if [ ${#imgs[@]} -eq 0 ]; then echo "no AppImage built for this target"; exit 0; fi
+          scripts/check-appimage-perms.sh "${imgs[@]}"
+
       # Make a manual (workflow_dispatch) build downloadable so the bundles can be
       # SMOKE-INSTALLED per-platform (launch + drive the app, watch for CSP/EGL
       # issues) WITHOUT cutting a release tag. This is the pre-1.0 verification
@@ -288,6 +308,26 @@ jobs:
           # on purpose: those are the create-mode inputs we're avoiding.
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target ${{ matrix.target }}
+
+      # v1.3.2's x86_64 AppImage shipped AppRun.wrapped as 0770, so the app
+      # could not start wherever the running user did not own the file — under
+      # firejail, under APPIMAGE_EXTRACT_AND_RUN, under AppImageLauncher. It was
+      # found by the AppImage catalog's own test, not by us, after it had been
+      # released. The aarch64 AppImage of the same tag was 0755, so this is not
+      # something this repo configures: it is whichever AppRun that arch's
+      # linuxdeploy embeds, which is exactly why it needs a standing check
+      # rather than a one-time fix.
+      #
+      # Runs AFTER the build on purpose. It cannot stop a broken AppImage being
+      # built, but it turns the leg red, and the release is a draft nobody has
+      # published yet — which is the window this is meant to catch.
+      - name: Check the AppImage is world-executable
+        if: runner.os == 'Linux'
+        run: |
+          shopt -s nullglob
+          imgs=(src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage)
+          if [ ${#imgs[@]} -eq 0 ]; then echo "no AppImage built for this target"; exit 0; fi
+          scripts/check-appimage-perms.sh "${imgs[@]}"
 
   # Runs ONCE after every matrix leg has uploaded its assets (not per-leg —
   # all 6 platforms share one release) to finish two things tauri-action
