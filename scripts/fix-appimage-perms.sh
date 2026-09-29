@@ -38,6 +38,19 @@ head -c "$off" "$abs" > "$work/runtime.bin"
 root="$work/squashfs-root"
 
 changed=0
+
+# Directories first, and the root among them. `--appimage-extract` creates the
+# tree 0700, so a repack that only touched files produced an AppImage nothing
+# could be traversed in — which is exactly what v1.4.0 shipped. A directory the
+# world cannot enter makes every file mode inside it moot.
+for d in $(find "$root" -type d); do
+  m="$(stat -c '%a' "$d")"
+  case "${m: -1}" in
+    1|3|5|7) ;;
+    *) chmod go-w,o+rx,g+rx "$d"; echo "  fixed ${d#"$root"}/: $m -> $(stat -c '%a' "$d")"; changed=1 ;;
+  esac
+done
+
 while IFS= read -r f; do
   m="$(stat -c '%a' "$f")"
   case "${m: -1}" in
