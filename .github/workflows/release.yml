@@ -329,6 +329,113 @@ jobs:
           if [ ${#imgs[@]} -eq 0 ]; then echo "no AppImage built for this target"; exit 0; fi
           scripts/check-appimage-perms.sh "${imgs[@]}"
 
+  # ---------------------------------------------------------------------------
+  # Repack the x86_64 AppImage so it is world-executable, then RE-SIGN it.
+  #
+  # v1.3.2 shipped AppRun.wrapped as 0770. AppRun is a shell script linuxdeploy
+  # generates whose last line is `exec "$this_dir"/AppRun.wrapped`, so with no
+  # `other` execute bit the app cannot start wherever the running user does not
+  # own the file — under firejail (which is how the AppImage catalog found it),
+  # under APPIMAGE_EXTRACT_AND_RUN where there is no FUSE, under AppImageLauncher.
+  # Reproduced directly: that binary at 0770 is NOT executable to a process which
+  # is neither its owner nor in its group, and at 0755 it is.
+  #
+  # x86_64 only. The aarch64 AppImage of the same tag was already 0755 — this is
+  # whichever AppRun the arch's linuxdeploy embeds, not anything configured here
+  # — and an arm64 AppImage cannot be extracted on this x86_64 runner anyway.
+  # Both arches are still covered by the per-leg guard, which runs on the native
+  # runner right after each build.
+  #
+  # WHY HERE and not in the build leg: tauri-action builds AND uploads in one
+  # step, so the only seam is after the asset is already in the draft. The draft
+  # is not published until a human does it, which is what makes rewriting an
+  # asset here safe in a way that rewriting a published one would not be.
+  #
+  # Re-signing is the part to be careful with. A repacked AppImage matches
+  # neither the minisign .sig generated over the original bytes nor its
+  # latest.json entry, and that is the Linux updater's chain of trust: an
+  # updater whose download fails its signature check refuses the update. So this
+  # verifies its own new signature against the public key in tauri.conf.json
+  # BEFORE replacing anything, and re-checks what actually landed afterwards.
+  fix-linux-appimage:
+    name: Repack + re-sign the x86_64 AppImage
+    needs: [create-release, build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # mksquashfs to repack; minisign to check our own work the same way a
+      # user's updater will.
+      - name: Install repack + verify tooling
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends squashfs-tools minisign
+
+      - name: Repack, re-sign, verify, replace
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          repo_dir="$GITHUB_WORKSPACE"
+          work="$(mktemp -d)"
+          cd "$work"
+
+          name="$(gh release view "$TAG" --repo "$REPO" --json assets \
+                    --jq '.assets[].name | select(test("_amd64\\.AppImage$"))' | head -1)"
+          if [ -z "$name" ]; then
+            echo "this release has no x86_64 AppImage — nothing to do"
+            exit 0
+          fi
+          echo "asset: $name"
+          gh release download "$TAG" --repo "$REPO" -p "$name" -p "$name.sig" -D .
+
+          # Self-disabling: the day linuxdeploy ships a 0755 AppRun, this job
+          # stops repacking and re-signing for no reason instead of quietly
+          # churning the asset on every release.
+          if "$repo_dir/scripts/check-appimage-perms.sh" "$name"; then
+            echo "already world-executable — no repack needed"
+            exit 0
+          fi
+
+          "$repo_dir/scripts/fix-appimage-perms.sh" "$name"
+          "$repo_dir/scripts/check-appimage-perms.sh" "$name"
+
+          # Sign the NEW bytes. minisign's trusted comment records the file
+          # name, so keeping the name identical keeps that record true.
+          rm -f "$name.sig"
+          npx --yes @tauri-apps/cli@2 signer sign "$name"
+          [ -s "$name.sig" ] || { echo "signer produced no .sig" >&2; exit 1; }
+
+          # Prove the signature before anything downstream depends on it. This
+          # is the same check the updater makes on a user's machine.
+          python3 "$repo_dir/scripts/minisign-materialize.py" \
+            "$name.sig" "$repo_dir/src-tauri/tauri.conf.json" new.minisig tauri.pub
+          minisign -V -p tauri.pub -x new.minisig -m "$name"
+
+          gh release upload "$TAG" "$name" "$name.sig" --repo "$REPO" --clobber
+
+          # latest.json records the signature too, for every entry pointing at
+          # this asset — the bare `linux-x86_64` alias as well as
+          # `linux-x86_64-appimage`, but NOT the deb and rpm entries, which are
+          # different files with their own signatures.
+          gh release download "$TAG" --repo "$REPO" -p latest.json -D . --clobber
+          python3 "$repo_dir/scripts/latest-json-set-linux-sig.py" \
+            latest.json "$name.sig" linux-x86_64-appimage
+          gh release upload "$TAG" latest.json --repo "$REPO" --clobber
+
+          # Re-read what is on the release now, rather than trusting what we
+          # think we uploaded, and check it the way a user's machine would.
+          rm -f "$name" "$name.sig" final.minisig
+          gh release download "$TAG" --repo "$REPO" -p "$name" -p "$name.sig" -D .
+          "$repo_dir/scripts/check-appimage-perms.sh" "$name"
+          python3 "$repo_dir/scripts/minisign-materialize.py" \
+            "$name.sig" "$repo_dir/src-tauri/tauri.conf.json" final.minisig tauri.pub
+          minisign -V -p tauri.pub -x final.minisig -m "$name"
+          echo "published asset is world-executable and its signature verifies"
+
   # Runs ONCE after every matrix leg has uploaded its assets (not per-leg —
   # all 6 platforms share one release) to finish two things tauri-action
   # doesn't reliably handle on its own:
