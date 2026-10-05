@@ -727,7 +727,30 @@ function computeVisibleRange(st){
 // snapshot the buffer identity so the next frame's tick() can tell whether a
 // cheap scroll-blit is safe. The single entry point every non-scroll redraw
 // (data change, selection, theme, resize, …) still calls as `draw()`.
+//
+// No-op while `G` is still null (graph not loaded yet): the FIRST
+// requestAnimationFrame(tick) fires on the very next paint after boot —
+// `dirty` starts true and `bufferValid` starts false (see their own
+// declarations), so tick() always attempts a FULL draw on its very first
+// frame, which on a cold launch is reliably AFTER openRepo's async IPC
+// round-trip has already set G, purely because JIT/module-compile overhead
+// delays that first paint. A warm window (Vite's module cache already hot —
+// reliably true for every window opened after the first, see windows.rs's
+// own module doc) has no such delay: its first frame can fire before the
+// backend has responded, G is still null, and computeVisibleRange's `G.N`
+// threw uncaught — which, since `requestAnimationFrame(tick)` is the LAST
+// line of tick(), killed the redraw loop FOREVER (not just one skipped
+// frame): every later frame never ran, so the canvas stayed permanently
+// blank even though the data layer went on to load and render its own DOM
+// content fine, and even though a later resize/focus/wait could never
+// recover a loop that was simply never rescheduled. Returning here instead
+// leaves `bufferValid` false, so every subsequent frame keeps retrying this
+// same early-out (tick()'s own `needsFull` check short-circuits on
+// `!bufferValid` before it would otherwise reach a `G.N` access of its own)
+// until the real graph arrives and `dirty=true` (openRepo's own load path)
+// schedules the first REAL draw.
 function draw(){
+  if(!G) return;
   const t0=performance.now();
   const [first,last]=computeVisibleRange(state.scrollTop);
   renderContent(state.scrollTop, first, last, false);
