@@ -29,14 +29,18 @@
 //!
 //! Diff pop-out: an optional SECOND argv flag, `--commit=<sha>`, rides
 //! alongside the repo path and becomes a `&commit=<percent-encoded sha>` on
-//! that same URL (see `open_diff_in_new_window`). `legacy/main.ts`'s boot
-//! sequence reads it once `openRepo` resolves, selects that commit and
-//! expands its diff before first paint — see its own `pendingReselect`
-//! handling. A flag rather than a THIRD `InitialArg` variant: which repo to
-//! open and which commit (if any) to land on are independent questions —
-//! `--commit` only ever makes sense alongside a `Repo` argv, but folding it
-//! into `InitialArg` itself would force every `NotRepo`/`None` match arm to
-//! also account for a commit that can't apply to them.
+//! that same URL (see `open_diff_in_new_window`). Unlike every other window
+//! this one is NOT a second full GitCat on the repo — a repo+commit pair
+//! together means "show ONLY this commit's diff", so it gets its own
+//! smaller, differently-titled window (see `create_initial_window`'s own
+//! sizing below), and `legacy/main.ts`'s boot sequence skips the normal
+//! repo-wide graph load entirely in favor of loading exactly that one commit
+//! (see its own `DIFF_ONLY_WINDOW`/`selectBySha`). A flag rather than a
+//! THIRD `InitialArg` variant: which repo to open and which commit (if any)
+//! to show the diff of are independent questions — `--commit` only ever
+//! makes sense alongside a `Repo` argv, but folding it into `InitialArg`
+//! itself would force every `NotRepo`/`None` match arm to also account for a
+//! commit that can't apply to them.
 
 use std::path::Path;
 use std::process::Command;
@@ -50,6 +54,15 @@ const WINDOW_W: f64 = 1440.0;
 const WINDOW_H: f64 = 900.0;
 const WINDOW_MIN_W: f64 = 960.0;
 const WINDOW_MIN_H: f64 = 600.0;
+
+// A diff-only window (repo+commit both present — see this module's own doc
+// comment) never shows the graph/sidebar it'd otherwise need room for, so it
+// defaults smaller than the main window — roughly a diff-reading size, not
+// a repo-browsing one. Still freely resizable past this; MIN stays the same
+// `.diff-rows`/file-tree content needs regardless of window purpose.
+const DIFF_WINDOW_TITLE: &str = "GitCat — Diff";
+const DIFF_WINDOW_W: f64 = 1100.0;
+const DIFF_WINDOW_H: f64 = 760.0;
 
 fn enc(p: &str) -> String {
     percent_encoding::utf8_percent_encode(p, percent_encoding::NON_ALPHANUMERIC).to_string()
@@ -83,6 +96,22 @@ fn window_url(arg: &InitialArg, commit: Option<&str>) -> WebviewUrl {
         }
         InitialArg::NotRepo(p) => WebviewUrl::App(format!("index.html?repoError={}", enc(p)).into()),
         InitialArg::None => WebviewUrl::App("index.html".into()),
+    }
+}
+
+/// The (title, width, height) this process's window should be created with.
+/// Pure over `InitialArg`'s own shape + whether a commit was given, so it's
+/// unit-testable the same way `window_url` is — split out of
+/// `create_initial_window` specifically so this decision doesn't need an
+/// `AppHandle` to exercise. A diff-only window (`has_commit` true, which
+/// only ever happens alongside `InitialArg::Repo` — see `window_url`'s own
+/// doc) never shows the graph/sidebar it'd otherwise need room for, so it
+/// gets the smaller `DIFF_WINDOW_*` size/title instead of the main window's.
+fn window_chrome(arg: &InitialArg, has_commit: bool) -> (&'static str, f64, f64) {
+    if matches!(arg, InitialArg::Repo(_)) && has_commit {
+        (DIFF_WINDOW_TITLE, DIFF_WINDOW_W, DIFF_WINDOW_H)
+    } else {
+        (WINDOW_TITLE, WINDOW_W, WINDOW_H)
     }
 }
 
@@ -214,9 +243,11 @@ pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
     if let InitialArg::Repo(p) = &arg {
         crate::instance_focus::register(app, p);
     }
-    WebviewWindowBuilder::new(app, "main", window_url(&arg, initial_commit_arg().as_deref()))
-        .title(WINDOW_TITLE)
-        .inner_size(WINDOW_W, WINDOW_H)
+    let commit = initial_commit_arg();
+    let (title, w, h) = window_chrome(&arg, commit.is_some());
+    WebviewWindowBuilder::new(app, "main", window_url(&arg, commit.as_deref()))
+        .title(title)
+        .inner_size(w, h)
         .min_inner_size(WINDOW_MIN_W, WINDOW_MIN_H)
         .center()
         .build()?;
@@ -328,10 +359,10 @@ pub fn open_repo_in_new_window(path: String) {
 }
 
 /// JS: `commands.openDiffInNewWindow(repo, sha)` — detaches a commit's diff
-/// out of the current window's own expanded-diff modal into its own GitCat
-/// window, pre-selected on `sha` with its diff already expanded (see
-/// `legacy/main.ts`'s boot-sequence handling of `?commit=`, and
-/// `detail.svelte.ts`'s `popOutDiff`). Same fire-and-forget spawn as
+/// out of the current window's own expanded-diff modal into its own
+/// dedicated, diff-only GitCat window (see this module's own doc comment,
+/// and `legacy/main.ts`'s `DIFF_ONLY_WINDOW` boot path — `detail.svelte.ts`'s
+/// `popOutDiff` is the one caller). Same fire-and-forget spawn as
 /// `open_repo_in_new_window` just above — see `spawn_new_window`'s own doc
 /// for why this never touches the calling window's own state.
 #[tauri::command]
@@ -431,6 +462,19 @@ mod tests {
         assert!(matches!(&err, WebviewUrl::App(p) if !p.to_str().unwrap().contains("commit")));
         let none = window_url(&InitialArg::None, Some("deadbeef"));
         assert!(matches!(&none, WebviewUrl::App(p) if !p.to_str().unwrap().contains("commit")));
+    }
+
+    #[test]
+    fn window_chrome_is_the_diff_size_only_for_a_repo_with_a_commit() {
+        assert_eq!(window_chrome(&InitialArg::Repo("/tmp/x".into()), true), (DIFF_WINDOW_TITLE, DIFF_WINDOW_W, DIFF_WINDOW_H));
+        // No commit: the ordinary main-window size, even for a real repo.
+        assert_eq!(window_chrome(&InitialArg::Repo("/tmp/x".into()), false), (WINDOW_TITLE, WINDOW_W, WINDOW_H));
+        // A commit flag with nothing (or an invalid path) to apply it to is
+        // nonsensical input `spawn_new_window` never actually produces, but
+        // still falls back to the main size rather than a diff-only window
+        // with no repo to show a diff of.
+        assert_eq!(window_chrome(&InitialArg::NotRepo("/tmp/x".into()), true), (WINDOW_TITLE, WINDOW_W, WINDOW_H));
+        assert_eq!(window_chrome(&InitialArg::None, true), (WINDOW_TITLE, WINDOW_W, WINDOW_H));
     }
 
     #[test]

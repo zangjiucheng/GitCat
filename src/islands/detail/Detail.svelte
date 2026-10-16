@@ -1,5 +1,6 @@
 <script lang="ts">
   import { detailCtrl, type TreeDir } from "./detail.svelte.ts";
+  import { DIFF_ONLY_WINDOW } from "../../ipc/env";
   import * as bridge from "../../legacy/bridge";
   import BinaryDiffPreview from "../diffpreview/BinaryDiffPreview.svelte";
   import { resolver } from "../resolver/resolver.svelte.ts";
@@ -315,6 +316,9 @@
           <h3>{c.subject}</h3>
           <p>commit <span class="mono">{c.sha.slice(0, 7)}</span></p>
         </div>
+        <!-- A diff-only window IS already the pop-out target — offering to pop
+             out again would just spawn another copy of itself. -->
+        {#if !DIFF_ONLY_WINDOW}
         <button
           class="wd-act"
           title={t("detail.pop_out_diff")}
@@ -323,6 +327,7 @@
         >
           <AppWindow class="ico" size={14} aria-hidden="true" />
         </button>
+        {/if}
       </div>
       <div class="modal-body diffx-body">
         <div class="diffx-files" style="width:{diffxTreeW}px">

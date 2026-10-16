@@ -40,6 +40,7 @@ vi.mock("../../ipc/env", () => ({
   get IN_TAURI() {
     return mockInTauri;
   },
+  DIFF_ONLY_WINDOW: false,
 }));
 
 vi.mock("../resolver/resolver.svelte.ts", () => ({
@@ -435,6 +436,60 @@ describe("select (live / real repo)", () => {
     await Promise.resolve();
 
     expect(detailCtrl.diffRows).toEqual([{ kind: "note", text: expect.stringContaining("repo not found") }]);
+    expect(detailCtrl.treeLoading).toBe(false);
+    expect(detailCtrl.diffLoading).toBe(false);
+  });
+});
+
+describe("selectBySha (DIFF_ONLY_WINDOW boot path)", () => {
+  it("loads a commit directly off (repo, sha) with no graph row at all", async () => {
+    // No setBackendGraph/setDemoGraph here on purpose — a diff-only window
+    // never streams the graph (see windows.rs's own module doc), so this
+    // must work with BACKEND/G both still null.
+    vi.mocked(commands.commitDetail).mockResolvedValueOnce(
+      ok({
+        sha: "aaa1111deadbeef",
+        shortSha: "aaa1111",
+        subject: "Fix bug",
+        body: "Full message body.",
+        message: "Fix bug\n\nFull message body.",
+        additions: 5,
+        deletions: 2,
+        filesChanged: 1,
+        truncated: false,
+        fileTree: [
+          { path: "a.ts", oldPath: null, status: "M", additions: 5, deletions: 2, binary: false, truncated: false, lang: "ts",
+            hunks: [{ header: "@@ -1,2 +1,2 @@", lines: [{ kind: "+", oldNo: null, newNo: 1, text: "hi" }] }] },
+        ],
+      }),
+    );
+
+    const p = detailCtrl.selectBySha("/repo", "aaa1111");
+    // Synchronous, before the first await — same contract select()/expandDiff()
+    // rely on (main.ts calls expandDiff() right after, with no await between).
+    expect(detailCtrl.commit?.sha).toBe("aaa1111");
+    expect(detailCtrl.treeLoading).toBe(true);
+    expect(detailCtrl.diffLoading).toBe(true);
+    expect(commands.commitDetail).toHaveBeenCalledWith("/repo", "aaa1111");
+
+    await p;
+    await new Promise((resolve) => setTimeout(resolve, 0)); // selectFile's own deferred tick
+
+    expect(detailCtrl.commit?.subject).toBe("Fix bug");
+    expect(detailCtrl.commit?.sha).toBe("aaa1111"); // shortSha, not the full oid
+    expect(detailCtrl.bodyText).toBe("Full message body.");
+    expect(detailCtrl.diffstat).toEqual({ add: 5, del: 2, files: 1, truncated: false });
+    expect(detailCtrl.treeLoading).toBe(false);
+    expect(detailCtrl.diffLoading).toBe(false);
+    expect(detailCtrl.tree.files.length).toBe(1);
+  });
+
+  it("shows an error note when commit_detail fails, same as the row-based path", async () => {
+    vi.mocked(commands.commitDetail).mockResolvedValueOnce(err("not found"));
+
+    await detailCtrl.selectBySha("/repo", "deadbee");
+
+    expect(detailCtrl.diffRows).toEqual([{ kind: "note", text: expect.stringContaining("not found") }]);
     expect(detailCtrl.treeLoading).toBe(false);
     expect(detailCtrl.diffLoading).toBe(false);
   });

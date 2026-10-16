@@ -22,7 +22,8 @@ import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
 import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 import { pluginLanguagesCtrl } from "../pluginlanguages/pluginlanguages.svelte.ts";
 import { settingsCtrl } from "../settings/settings.svelte.ts";
-import { IN_TAURI } from "../../ipc/env";
+import { IN_TAURI, DIFF_ONLY_WINDOW } from "../../ipc/env";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { previewKind } from "../diffpreview/preview-kind";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
 import { contextMenuCtrl } from "../contextmenu/contextmenu.svelte.ts";
@@ -54,6 +55,14 @@ type CommitVM = {
   del: number;
   merge: boolean;
 };
+
+// Placeholder author/committer identity for selectBySha's sha-only CommitVM
+// below — a diff-only window (see DIFF_ONLY_WINDOW) never has a graph row to
+// read real identities from, and the expanded-diff modal it drives is the
+// ONE renderer of `commit` that never shows an/cm at all (just subject + sha
+// — see Detail.svelte's `.diffx-head-main`), so an empty identity is never
+// actually displayed, just structurally required by CommitVM.
+const EMPTY_IDENT = { n: "", e: "", d: "", abs: "" };
 
 type FileEntry = { p: string; st: string; add: number; del: number; oldPath: string | null };
 type TreeFile = FileEntry & { name: string; i: number };
@@ -436,6 +445,68 @@ class DetailState {
     }
   }
 
+  // The DIFF_ONLY_WINDOW boot path's entry point (legacy/main.ts) — loads
+  // ONE commit's diff directly off (repo, sha), with no graph row to read a
+  // CommitVM from (a diff-only window never streams the graph at all; see
+  // env.ts's own doc comment on DIFF_ONLY_WINDOW for why). A parallel copy of
+  // loadCommitDetail's own fetch-and-populate body, not a shared refactor of
+  // it: loadCommitDetail is the proven, exercised-on-every-click path for
+  // every normal window, and this is a genuinely different caller (no row,
+  // no `alreadyShowing` reselect-is-a-no-op short-circuit — a diff-only
+  // window selects exactly once, at boot) — folding them into one shared
+  // helper would only risk the common path for a rare one's sake.
+  async selectBySha(repo: string, sha: string): Promise<void> {
+    this.commit = { row: -1, subject: "", sha, an: EMPTY_IDENT, cm: EMPTY_IDENT, differ: false, gpg: "none", refs: [], add: 0, del: 0, merge: false };
+    this.hero = null;
+    this.bodyText = "loading…";
+    this.treeLoading = true;
+    this.diffLoading = true;
+    this.curChanged = [];
+    this.curDiffs = {};
+    this.diffstat = null;
+    this.selectedFile = null;
+    this.diffHeader = "";
+    this.diffRows = [];
+    const myReq = ++this.detailSeq;
+    try {
+      const r = await commands.commitDetail(repo, sha);
+      if (myReq !== this.detailSeq) return;
+      if (r.status !== "ok") throw new Error(be(r.error));
+      const d: CommitDetail = r.data;
+      this.commit = { ...this.commit!, subject: d.subject, sha: d.shortSha || sha };
+      const files = Array.isArray(d.fileTree) ? d.fileTree : [];
+      this.curChanged = files.map((f) => ({ p: f.path, st: f.status, add: f.additions | 0, del: f.deletions | 0, oldPath: f.oldPath ?? null }));
+      this.curDiffs = {};
+      files.forEach((f) => {
+        const lines: [string, string][] = [];
+        (f.hunks || []).forEach((h) => {
+          lines.push(["@@", h.header]);
+          (h.lines || []).forEach((l) => lines.push([l.kind, l.text]));
+        });
+        this.curDiffs[f.path] = { lang: bridge.resolveLang(f.path), lines, truncated: !!f.truncated, binary: !!f.binary };
+      });
+      this.bodyText = d.body && d.body.trim() ? d.body : "(no message body)";
+      this.diffstat = {
+        add: d.additions | 0,
+        del: d.deletions | 0,
+        files: d.filesChanged != null ? d.filesChanged : this.curChanged.length,
+        truncated: !!d.truncated,
+      };
+      this.treeLoading = false;
+      this.diffLoading = false;
+      this.selectFile();
+    } catch (e) {
+      if (myReq !== this.detailSeq) return;
+      this.diffstat = null;
+      this.bodyText = "";
+      this.treeLoading = false;
+      this.diffLoading = false;
+      this.diffHeader = "";
+      this.diffRows = [{ kind: "note", text: "diff unavailable — " + String(e) }];
+      console.error("commit_detail failed", e);
+    }
+  }
+
   // Render the diff for `path`, or the default (first) file when omitted —
   // mirrors the legacy renderDiff(path)'s explicit-vs-fallback distinction.
   //
@@ -629,7 +700,18 @@ class DetailState {
     this.diffExpanded = true;
   }
 
+  // In a DIFF_ONLY_WINDOW there is no app behind the modal to reveal —
+  // index.html's own `.diff-only` CSS hides the topbar/sidebar/graph
+  // entirely and nothing ever calls openRepo() to populate them (see
+  // legacy/main.ts's boot sequence) — so "Close" has to close the WINDOW
+  // itself rather than just toggling diffExpanded back to an empty app
+  // shell. Every other window (where this modal is reached via the normal
+  // expand icon, never DIFF_ONLY_WINDOW) keeps today's plain collapse.
   collapseDiff() {
+    if (DIFF_ONLY_WINDOW) {
+      void getCurrentWindow().close();
+      return;
+    }
     this.diffExpanded = false;
   }
 

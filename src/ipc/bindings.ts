@@ -3441,10 +3441,10 @@ async openRepoInNewWindow(path: string) : Promise<void> {
 },
 /**
  * JS: `commands.openDiffInNewWindow(repo, sha)` — detaches a commit's diff
- * out of the current window's own expanded-diff modal into its own GitCat
- * window, pre-selected on `sha` with its diff already expanded (see
- * `legacy/main.ts`'s boot-sequence handling of `?commit=`, and
- * `detail.svelte.ts`'s `popOutDiff`). Same fire-and-forget spawn as
+ * out of the current window's own expanded-diff modal into its own
+ * dedicated, diff-only GitCat window (see this module's own doc comment,
+ * and `legacy/main.ts`'s `DIFF_ONLY_WINDOW` boot path — `detail.svelte.ts`'s
+ * `popOutDiff` is the one caller). Same fire-and-forget spawn as
  * `open_repo_in_new_window` just above — see `spawn_new_window`'s own doc
  * for why this never touches the calling window's own state.
  */

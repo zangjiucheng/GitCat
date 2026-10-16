@@ -1117,6 +1117,35 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .diffx-files-head{display:flex;align-items:center;gap:8px;padding:10px 10px 6px;flex:none}
 .diffx-files-scroll{flex:1;min-height:0;overflow:auto;margin-top:0;padding:0 10px 10px}
 .diffx-diff{flex:1;min-width:0;min-height:0;max-height:none;border:0;border-radius:0}
+/* ---- Diff-only window (DIFF_ONLY_WINDOW — env.ts) ----
+   windows.rs's open_diff_in_new_window spawns a window whose ONLY job is
+   showing one commit's diff ("pop this diff out into its own window", not
+   "open a second full GitCat on this repo") — legacy/main.ts's boot sequence
+   stamps this class on <body> instead of ever calling openRepo(), so there is
+   no graph/sidebar/dashboard data to show even if this CSS didn't hide them;
+   it's belt-and-braces against a stray keyboard shortcut or resize reaching
+   that dormant chrome, and against the one-frame flash it'd otherwise paint
+   before expandDiff() flips .scrim.on. The modal itself is stretched to fill
+   the whole window (no centered card, no dimmed backdrop behind it — there's
+   nothing back there to dim) rather than reusing its normal floating-overlay
+   look, so the window reads as a dedicated diff viewer, not a modal stranded
+   in an otherwise-empty app shell. */
+body.diff-only .topbar,
+body.diff-only .subnav,
+body.diff-only .sidebar,
+body.diff-only .graph{display:none}
+body.diff-only .app{grid-template-columns:1fr;grid-template-rows:1fr;grid-template-areas:"detail"}
+body.diff-only .detail{border-left:none}
+/* detailCtrl.diffExpanded is permanently true here (see legacy/main.ts's
+   boot sequence), so .scrim/.modal.diffx IS the whole window — but Detail.
+   svelte's normal (non-modal) content — TabStrip, the tama-hero empty
+   state, the embedded small diffview, author/gpg info — is a SIBLING of
+   .scrim in the same #detail mount, not nested inside it, and was never
+   hidden on its own. Making the scrim transparent (below) would otherwise
+   let all of that show straight through. */
+body.diff-only .detail>:not(.scrim){display:none}
+body.diff-only .scrim{background:transparent;backdrop-filter:none}
+body.diff-only .modal.diffx{width:100vw;height:100vh;border-radius:0;box-shadow:none;border:0}
 /* The shared two-pane divider (src/islands/detailpanel/Splitter.svelte), used
    by the expanded-diff modal in each of Detail.svelte and Workdir.svelte, and
    by both of the detail panel's "changes" tabs. An 8px grab zone with negative
