@@ -1103,6 +1103,16 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    controller or re-fetch) — a file list down the left (reuses .tree/dirNode
    verbatim) so switching files doesn't require closing it first. */
 .modal.diffx{width:min(1200px,96vw);height:88vh;display:flex;flex-direction:column}
+/* Same "don't inherit the danger-red tint by mistake" fix as .resolver/
+   .bisecter/.settings/.setupwizard above (see .setupwizard .modal-head's own
+   comment) — showing a diff is a completely neutral action, never alarming,
+   but with no override this modal was inheriting the base .modal-head's
+   danger-tinted background anyway. Barely noticeable against the rest of a
+   normal window's own UI; the one thing a diff-only window (DIFF_ONLY_WINDOW)
+   shows, where it read as a warning banner sitting directly under the native
+   titlebar — exactly what made the whole window look like a dialog someone
+   popped up, not a dedicated view of its own. */
+.modal.diffx .modal-head{background:var(--panel)}
 /* min-width:0 so the ellipsis below can actually apply, flex:1 so it eats the
    header's free space and pushes the pop-out-to-window button (.modal-head's
    own child, after .diffx-head-main) to the far right — same "title grows,
@@ -1146,6 +1156,12 @@ body.diff-only .detail{border-left:none}
 body.diff-only .detail>:not(.scrim){display:none}
 body.diff-only .scrim{background:transparent;backdrop-filter:none}
 body.diff-only .modal.diffx{width:100vw;height:100vh;border-radius:0;box-shadow:none;border:0}
+/* The native OS titlebar already closes this window (collapseDiff() calls
+   getCurrentWindow().close() here — see detail.svelte.ts's own doc comment);
+   an in-content "Close" footer bar is a dialog's own affordance, redundant
+   with — and visually competing against — chrome the window already has.
+   .modal-body's flex:1 fills the height this frees up on its own. */
+body.diff-only .modal-foot{display:none}
 /* The shared two-pane divider (src/islands/detailpanel/Splitter.svelte), used
    by the expanded-diff modal in each of Detail.svelte and Workdir.svelte, and
    by both of the detail panel's "changes" tabs. An 8px grab zone with negative
