@@ -21,6 +21,7 @@ import { blameCtrl } from "../blame/blame.svelte.ts";
 import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
 import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 import { pluginLanguagesCtrl } from "../pluginlanguages/pluginlanguages.svelte.ts";
+import { settingsCtrl } from "../settings/settings.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { previewKind } from "../diffpreview/preview-kind";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
@@ -630,6 +631,42 @@ class DetailState {
 
   collapseDiff() {
     this.diffExpanded = false;
+  }
+
+  // Detaches this commit's diff into its own GitCat window — a genuinely
+  // separate OS process (src-tauri/src/windows.rs's open_diff_in_new_window
+  // + spawn_new_window), pre-selected on `sha` with its diff already
+  // expanded (see legacy/main.ts's `?commit=` boot-sequence handling). Demo
+  // mode has no second process to spawn, so it's a toast instead — same
+  // idiom as dashboardCtrl.openRepositoryInNewWindow's own demo guard.
+  popOutDiff() {
+    const c = this.commit;
+    if (!c) return;
+    if (!IN_TAURI) {
+      bridge.tama.say(t("detail.demo_pop_out_window"));
+      return;
+    }
+    const repo = bridge.CUR_REPO as unknown as string;
+    void commands.openDiffInNewWindow(repo, c.sha);
+  }
+
+  // The expanded modal's own explicit pop-out button: spawn the new window,
+  // then close THIS window's modal — "detach" reads as moving the diff out,
+  // not duplicating it into a second place still open here too.
+  popOutDiffAndClose() {
+    this.popOutDiff();
+    this.collapseDiff();
+  }
+
+  // The expand-diff icon's actual click handler (Detail.svelte) — defers to
+  // settingsCtrl.diffOpenMode, read fresh on every click (it has no live
+  // wiring of its own; see the setting's doc comment), rather than always
+  // calling expandDiff(): a user who has set the "window" default should get
+  // a new window from the ONE icon they already know, not have to discover
+  // the modal's separate pop-out button first.
+  expandOrPopOutDiff() {
+    if (settingsCtrl.diffOpenMode === "window") this.popOutDiff();
+    else this.expandDiff();
   }
 
   copySha() {

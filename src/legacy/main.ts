@@ -172,7 +172,13 @@ let graphGeneration=0;
 // Set by reloadGraph() when it wants the previously-selected row/pinned
 // workdir row restored once the CURRENT stream finishes (see
 // onGraphBatch()'s own `done` handling) — a fresh openRepo() never sets this,
-// since there's nothing to restore on a brand new open.
+// since there's nothing to restore on a brand new open. The boot sequence's
+// own `?commit=` handling (below) is the one exception: it's the ONE case
+// where a brand-new open DOES have something to restore, straight from the
+// URL rather than a previous selection — `{sha, diff:true}` reuses this same
+// queue/consume path (and its `diff` flag additionally expands the diff once
+// selected) rather than duplicating the "wait for the stream, then find the
+// row" dance that landing on a specific commit always needs.
 let pendingReselect=null;
 export let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it — exported (live binding) for the Svelte islands via bridge.ts
 const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
@@ -3190,7 +3196,13 @@ function onGraphBatch(payload){
         const row=BACKEND.rows.findIndex(r=>r.sha===pendingReselect.sha);
         // Center within the scrollable viewport BELOW the pinned header
         // (view.cssH-bandH()), not the full canvas height — see bandH()'s comment.
-        if(row>=0){ select(row); state.scrollTarget=clampScroll(row*layout.rowH-(view.cssH-bandH())/2); dirty=true; }
+        if(row>=0){
+          select(row); state.scrollTarget=clampScroll(row*layout.rowH-(view.cssH-bandH())/2); dirty=true;
+          // Diff pop-out (windows.rs's `?commit=`): land straight on the
+          // expanded diff, not just the selected row — the whole point of a
+          // detached window is to open directly into the diff being popped out.
+          if(pendingReselect.diff) detailCtrl.expandDiff();
+        }
       } else if(pendingReselect.workdir){ selectWorkdir(); }
       pendingReselect=null;
     }
@@ -3784,11 +3796,20 @@ if(IN_TAURI){
   // Boot the empty hero (so the app is usable — pick a real folder) and name the
   // offending path, VS Code-style.
   const repoError=params.get("repoError");
+  // Diff pop-out (windows.rs's own `?commit=`, set by detail.svelte.ts's
+  // popOutDiff via open_diff_in_new_window): queued through the SAME
+  // pendingReselect path reloadGraph() uses to restore a selection after the
+  // stream finishes (see its own doc comment) — set here, consumed once in
+  // onGraphBatch's `payload.done` handling, same as every other caller.
+  const initialCommit=params.get("commit");
   // openRepo() derives NAV_STACK + refreshes the submodule-nav strip itself, so a
   // repo opened by deep-link that happens to be a submodule shows its context too.
   // On failure (e.g. the repo became inaccessible between the launch-time check
   // and now) fall back to the empty hero rather than a stranded blank frame.
-  if(initialRepo){ openRepo(initialRepo).then(ok=>{ if(!ok) bootEmpty(); }); }
+  if(initialRepo){
+    if(initialCommit) pendingReselect={sha:initialCommit, diff:true};
+    openRepo(initialRepo).then(ok=>{ if(!ok) bootEmpty(); });
+  }
   else { bootEmpty(); if(repoError) Tama.warn(t("legacy.not_a_repo",{repo:repoError}), 6000); }
 }
 else { loadGraph(10000); }          // plain browser (design mode): synthetic demo data

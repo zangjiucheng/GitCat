@@ -3439,6 +3439,18 @@ async openDirInFileManager(repo: string, relative: string) : Promise<Result<null
 async openRepoInNewWindow(path: string) : Promise<void> {
     await TAURI_INVOKE("open_repo_in_new_window", { path });
 },
+/**
+ * JS: `commands.openDiffInNewWindow(repo, sha)` — detaches a commit's diff
+ * out of the current window's own expanded-diff modal into its own GitCat
+ * window, pre-selected on `sha` with its diff already expanded (see
+ * `legacy/main.ts`'s boot-sequence handling of `?commit=`, and
+ * `detail.svelte.ts`'s `popOutDiff`). Same fire-and-forget spawn as
+ * `open_repo_in_new_window` just above — see `spawn_new_window`'s own doc
+ * for why this never touches the calling window's own state.
+ */
+async openDiffInNewWindow(repo: string, sha: string) : Promise<void> {
+    await TAURI_INVOKE("open_diff_in_new_window", { repo, sha });
+},
 async setOpenRepo(path: string) : Promise<void> {
     await TAURI_INVOKE("set_open_repo", { path });
 },

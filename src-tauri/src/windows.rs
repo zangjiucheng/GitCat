@@ -26,6 +26,17 @@
 //! is unchanged from the same-process design's own URL trick, just now
 //! sourced from argv instead of always being present/absent based on which
 //! code path created the window.
+//!
+//! Diff pop-out: an optional SECOND argv flag, `--commit=<sha>`, rides
+//! alongside the repo path and becomes a `&commit=<percent-encoded sha>` on
+//! that same URL (see `open_diff_in_new_window`). `legacy/main.ts`'s boot
+//! sequence reads it once `openRepo` resolves, selects that commit and
+//! expands its diff before first paint — see its own `pendingReselect`
+//! handling. A flag rather than a THIRD `InitialArg` variant: which repo to
+//! open and which commit (if any) to land on are independent questions —
+//! `--commit` only ever makes sense alongside a `Repo` argv, but folding it
+//! into `InitialArg` itself would force every `NotRepo`/`None` match arm to
+//! also account for a commit that can't apply to them.
 
 use std::path::Path;
 use std::process::Command;
@@ -56,12 +67,33 @@ enum InitialArg {
     NotRepo(String),
 }
 
-fn window_url(arg: &InitialArg) -> WebviewUrl {
+/// `commit` is only ever meaningful alongside `InitialArg::Repo` — a
+/// `NotRepo`/`None` window has nothing to select, so it's silently dropped
+/// for those (nothing reads `?commit=` unless `?repo=` is also present; see
+/// `legacy/main.ts`'s boot sequence).
+fn window_url(arg: &InitialArg, commit: Option<&str>) -> WebviewUrl {
     match arg {
-        InitialArg::Repo(p) => WebviewUrl::App(format!("index.html?repo={}", enc(p)).into()),
+        InitialArg::Repo(p) => {
+            let mut url = format!("index.html?repo={}", enc(p));
+            if let Some(sha) = commit {
+                url.push_str("&commit=");
+                url.push_str(&enc(sha));
+            }
+            WebviewUrl::App(url.into())
+        }
         InitialArg::NotRepo(p) => WebviewUrl::App(format!("index.html?repoError={}", enc(p)).into()),
         InitialArg::None => WebviewUrl::App("index.html".into()),
     }
+}
+
+/// This process's `--commit=<sha>` argv flag, if any — see `spawn_new_window`
+/// for how it's set and this module's own doc comment for why it's a flag
+/// rather than a positional arg or an `InitialArg` variant. Scanned directly
+/// off `std::env::args()` (same as the existing `--new-window` check in
+/// `create_initial_window`) rather than threaded through `classify_initial_arg`,
+/// since it never affects repo classification.
+fn initial_commit_arg() -> Option<String> {
+    std::env::args().find_map(|a| a.strip_prefix("--commit=").map(str::to_string))
 }
 
 /// Classify this process's repo argument. Pure over its input so it can be
@@ -182,7 +214,7 @@ pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
     if let InitialArg::Repo(p) = &arg {
         crate::instance_focus::register(app, p);
     }
-    WebviewWindowBuilder::new(app, "main", window_url(&arg))
+    WebviewWindowBuilder::new(app, "main", window_url(&arg, initial_commit_arg().as_deref()))
         .title(WINDOW_TITLE)
         .inner_size(WINDOW_W, WINDOW_H)
         .min_inner_size(WINDOW_MIN_W, WINDOW_MIN_H)
@@ -203,7 +235,11 @@ pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
 /// surfaced back to whichever menu click or IPC call triggered this, same
 /// as every other best-effort fire-and-forget spawn in this codebase
 /// (`watch_repo`'s own callers, `track_repo_opened`).
-pub fn spawn_new_window(repo_path: Option<&str>) {
+///
+/// `commit_sha` is ignored when `repo_path` is `None` — there's nothing to
+/// select a commit within — and otherwise rides along as a second
+/// `--commit=<sha>` argv flag, read back by `initial_commit_arg()`.
+pub fn spawn_new_window(repo_path: Option<&str>, commit_sha: Option<&str>) {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
@@ -236,6 +272,9 @@ pub fn spawn_new_window(repo_path: Option<&str>) {
             // tells it to skip the #39 already-open dedup — this is the explicit
             // "Open in New Window" action, which SHOULD get its own window.
             cmd.arg("--args").arg(p).arg("--new-window");
+            if let Some(sha) = commit_sha {
+                cmd.arg(format!("--commit={sha}"));
+            }
         }
         match cmd.spawn() {
             Ok(_) => return,
@@ -249,6 +288,9 @@ pub fn spawn_new_window(repo_path: Option<&str>) {
     let mut cmd = Command::new(&exe);
     if let Some(p) = repo_path {
         cmd.arg(p).arg("--new-window"); // explicit new window: skip the #39 dedup
+        if let Some(sha) = commit_sha {
+            cmd.arg(format!("--commit={sha}"));
+        }
     }
     cmd.no_console_window();
     if let Err(e) = cmd.spawn() {
@@ -282,7 +324,20 @@ pub(crate) fn macos_app_bundle(exe: &std::path::Path) -> Option<std::path::PathB
 #[tauri::command]
 #[specta::specta]
 pub fn open_repo_in_new_window(path: String) {
-    spawn_new_window(Some(&path));
+    spawn_new_window(Some(&path), None);
+}
+
+/// JS: `commands.openDiffInNewWindow(repo, sha)` — detaches a commit's diff
+/// out of the current window's own expanded-diff modal into its own GitCat
+/// window, pre-selected on `sha` with its diff already expanded (see
+/// `legacy/main.ts`'s boot-sequence handling of `?commit=`, and
+/// `detail.svelte.ts`'s `popOutDiff`). Same fire-and-forget spawn as
+/// `open_repo_in_new_window` just above — see `spawn_new_window`'s own doc
+/// for why this never touches the calling window's own state.
+#[tauri::command]
+#[specta::specta]
+pub fn open_diff_in_new_window(repo: String, sha: String) {
+    spawn_new_window(Some(&repo), Some(&sha));
 }
 
 #[cfg(test)]
@@ -359,10 +414,36 @@ mod tests {
 
     #[test]
     fn window_url_carries_repo_vs_error_vs_none() {
-        assert!(matches!(window_url(&InitialArg::None), WebviewUrl::App(p) if p.to_str() == Some("index.html")));
-        let repo = window_url(&InitialArg::Repo("/tmp/x y".into()));
+        assert!(matches!(window_url(&InitialArg::None, None), WebviewUrl::App(p) if p.to_str() == Some("index.html")));
+        let repo = window_url(&InitialArg::Repo("/tmp/x y".into()), None);
         assert!(matches!(&repo, WebviewUrl::App(p) if p.to_str().unwrap().starts_with("index.html?repo=") && p.to_str().unwrap().contains("%20")));
-        let err = window_url(&InitialArg::NotRepo("/tmp/x y".into()));
+        let err = window_url(&InitialArg::NotRepo("/tmp/x y".into()), None);
         assert!(matches!(&err, WebviewUrl::App(p) if p.to_str().unwrap().starts_with("index.html?repoError=")));
+    }
+
+    #[test]
+    fn window_url_appends_commit_only_for_a_real_repo() {
+        let repo = window_url(&InitialArg::Repo("/tmp/x".into()), Some("deadbeef"));
+        assert!(matches!(&repo, WebviewUrl::App(p) if p.to_str().unwrap() == "index.html?repo=%2Ftmp%2Fx&commit=deadbeef"));
+        // A commit sha is meaningless without a repo to select it in — dropped
+        // silently for NotRepo/None rather than producing a dangling `?commit=`.
+        let err = window_url(&InitialArg::NotRepo("/tmp/x".into()), Some("deadbeef"));
+        assert!(matches!(&err, WebviewUrl::App(p) if !p.to_str().unwrap().contains("commit")));
+        let none = window_url(&InitialArg::None, Some("deadbeef"));
+        assert!(matches!(&none, WebviewUrl::App(p) if !p.to_str().unwrap().contains("commit")));
+    }
+
+    #[test]
+    fn initial_commit_arg_parses_the_flag_regardless_of_position() {
+        // initial_commit_arg() reads real argv (std::env::args()), which a unit
+        // test can't repoint — so this exercises the same find_map logic directly
+        // against a synthetic argv, mirroring how classify_initial_arg's own
+        // tests exercise its logic apart from initial_arg()'s real argv read.
+        fn parse(args: &[&str]) -> Option<String> {
+            args.iter().find_map(|a| a.strip_prefix("--commit=").map(str::to_string))
+        }
+        assert_eq!(parse(&["gitcat", "/tmp/x", "--new-window", "--commit=deadbeef"]), Some("deadbeef".into()));
+        assert_eq!(parse(&["gitcat", "/tmp/x"]), None);
+        assert_eq!(parse(&["gitcat", "--commit=deadbeef", "/tmp/x", "--new-window"]), Some("deadbeef".into()));
     }
 }

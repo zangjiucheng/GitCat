@@ -14,6 +14,7 @@
   import History from "@lucide/svelte/icons/history";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
+  import AppWindow from "@lucide/svelte/icons/app-window";
   import Splitter from "../detailpanel/Splitter.svelte";
   import TabStrip from "../detailpanel/TabStrip.svelte";
   import { detailPanelCtrl, COMMIT_VIEW_TABS, CHANGES_SPLIT, DIFFX_SPLIT } from "../detailpanel/detailpanel.svelte.ts";
@@ -287,7 +288,7 @@
           {:else}
             <div class="diff-file-h">
               <span class="diff-file-h-name">{detailCtrl.diffHeader}</span>
-              <button class="wd-act" title={t("detail.expand_diff")} aria-label={t("detail.expand_diff_aria")} onclick={() => detailCtrl.expandDiff()}>
+              <button class="wd-act" title={t("detail.expand_diff")} aria-label={t("detail.expand_diff_aria")} onclick={() => detailCtrl.expandOrPopOutDiff()}>
                 <Maximize2 class="ico" size={13} aria-hidden="true" />
               </button>
             </div>
@@ -314,6 +315,14 @@
           <h3>{c.subject}</h3>
           <p>commit <span class="mono">{c.sha.slice(0, 7)}</span></p>
         </div>
+        <button
+          class="wd-act"
+          title={t("detail.pop_out_diff")}
+          aria-label={t("detail.pop_out_diff_aria")}
+          onclick={() => detailCtrl.popOutDiffAndClose()}
+        >
+          <AppWindow class="ico" size={14} aria-hidden="true" />
+        </button>
       </div>
       <div class="modal-body diffx-body">
         <div class="diffx-files" style="width:{diffxTreeW}px">

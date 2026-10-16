@@ -42,6 +42,13 @@ export default {
   detail_placement_right: "오른쪽",
   detail_placement_bottom: "아래쪽",
 
+  // 확장 아이콘을 눌렀을 때 기본으로 무엇을 할지 — 이 창 안에서 기존 모달을
+  // 열거나, 바로 새 GitCat 창으로 분리해요.
+  diff_open_mode: "diff 열기 방식",
+  diff_open_mode_desc: "커밋 diff의 확장 아이콘이 기본으로 하는 동작이에요. 어느 쪽이든 확장된 diff에는 항상 분리 버튼이 있어요.",
+  diff_open_mode_modal: "전체 화면 패널",
+  diff_open_mode_window: "새 창",
+
   // 체리픽
   cherrypick: "체리픽",
   cherrypick_origin_hint: "생성되는 커밋 메시지에 '(cherry picked from …)'을 추가해요",

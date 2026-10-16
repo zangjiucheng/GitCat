@@ -369,6 +369,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // generic "New Window" menu item is handled entirely in Rust, see
         // menu.rs's own handle_event — no command round trip for that path).
         windows::open_repo_in_new_window,
+        // Diff pop-out: detaches the expanded-diff modal into its own window,
+        // pre-selected on a specific commit (see detail.svelte.ts's popOutDiff).
+        windows::open_diff_in_new_window,
         // #39: the frontend registers/clears this window's current repo so a
         // later `gitcat <same repo>` focuses it (see instance_focus.rs).
         instance_focus::set_open_repo,

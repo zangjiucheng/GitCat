@@ -1103,6 +1103,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    controller or re-fetch) — a file list down the left (reuses .tree/dirNode
    verbatim) so switching files doesn't require closing it first. */
 .modal.diffx{width:min(1200px,96vw);height:88vh;display:flex;flex-direction:column}
+/* min-width:0 so the ellipsis below can actually apply, flex:1 so it eats the
+   header's free space and pushes the pop-out-to-window button (.modal-head's
+   own child, after .diffx-head-main) to the far right — same "title grows,
+   actions pin to the end" shape as .blame-head-main. */
+.diffx-head-main{min-width:0;flex:1}
 .diffx-head-main h3{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .modal.diffx .modal-body{flex:1;min-height:0;overflow:hidden;padding:0;display:flex}
 /* File panel: a fixed header (Files label + Collapse/Expand-all) over a
