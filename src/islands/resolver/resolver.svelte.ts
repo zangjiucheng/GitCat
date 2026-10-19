@@ -960,7 +960,9 @@ class ResolverState {
         // same modal resolves the file with no tool at all. So nudge toward
         // that (a calm hint, not a red failure), keeping the backend's "add one
         // in Tools ▸ External Tools" pointer for anyone who does want their own.
-        if (/no external merge tool configured/i.test(r.message || "")) {
+        // Matched on the backend's i18n key (tool_settings.rs returns
+        // ierr("err_tools.no_merge_tool")), never on the localized text.
+        if ((r.message || "").startsWith("i18n:err_tools.no_merge_tool")) {
           bridge.tama.set("hint");
           bridge.tama.say(t("resolver.no_tool_hint"), 7000);
         } else {

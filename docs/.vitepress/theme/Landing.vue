@@ -24,7 +24,7 @@ const BEATS = [
     img: "tama_thinking.webp",
     label: "Before",
     title: "A snapshot is pinned",
-    body: "Refs, index, worktree and stash — captured before the command runs, not after it goes wrong.",
+    body: "HEAD and every local branch tip — captured before the command runs, not after it goes wrong. Discarded changes and deleted branches, tags and stashes get their own backups.",
   },
   {
     img: "tama_alarm.webp",
@@ -36,7 +36,7 @@ const BEATS = [
     img: "tama_happy.webp",
     label: "After",
     title: "⌘Z puts it back",
-    body: "One keystroke, any mutation. Undo is itself a snapshot, so you can undo the undo.",
+    body: "One keystroke rewinds your history and branches. Undo is itself a snapshot, so you can undo the undo.",
   },
 ];
 
@@ -122,7 +122,7 @@ const TAMA = [
       <h2 class="gc-h2">Undo is not a feature. It's the point.</h2>
       <p class="gc-lede">
         Every Git GUI makes it easy to run a dangerous command. GitCat is built so you can take it back —
-        every mutation, all the way down, including the ones git itself considers final.
+        commits, merges, rebases, resets and branch moves, including the ones git itself considers final.
       </p>
       <div class="gc-beats">
         <div v-for="b in BEATS" :key="b.label" class="gc-beat">

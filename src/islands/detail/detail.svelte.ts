@@ -15,7 +15,7 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { t, be } from "@/i18n/i18n.svelte.ts";
-import type { CommitDetail } from "../../ipc/bindings";
+import type { CommitDetail, CommitSignature, SigStatus } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { blameCtrl } from "../blame/blame.svelte.ts";
 import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
@@ -33,11 +33,33 @@ function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
 }
 
-const GPG: Record<string, [string, string]> = {
-  good: ["good", "✔ Good signature"],
-  none: ["none", "○ Unsigned"],
-  bad: ["bad", "✘ Bad signature"],
+// Signature badge: [css class, label, tooltip]. "checking" is the transient
+// state while commit_signature is in flight for the selected commit.
+export type SigBadgeState = SigStatus | "checking";
+export type SigBadge = [string, string, string];
+// How long the selection must stay on one commit before its signature is
+// verified (see loadSignature).
+const SIG_DEBOUNCE_MS = 150;
+// Extra tooltip line per verdict — the part a one-word badge can't say.
+const SIG_NOTE: Partial<Record<SigBadgeState, string>> = {
+  untrusted: "detail.sig_untrusted_note",
+  expired: "detail.sig_expired_note",
+  bad: "detail.sig_bad_note",
+  unverified: "detail.sig_unverified_note",
 };
+
+/** Badge for a verdict. `sig` (git's signer/key/reason) feeds the tooltip; `extra` is a caller-supplied reason (e.g. a timeout). */
+export function sigBadge(state: SigBadgeState, sig?: CommitSignature | null, extra?: string): SigBadge {
+  const lines: string[] = [];
+  if (sig?.signer) lines.push(t("detail.sig_signer", { name: sig.signer }));
+  const key = sig?.fingerprint || sig?.key;
+  if (key) lines.push(t("detail.sig_key", { key }));
+  const note = SIG_NOTE[state];
+  if (note) lines.push(t(note));
+  if (sig?.detail) lines.push(sig.detail);
+  if (extra) lines.push(extra);
+  return [state, t("detail.sig_" + state), lines.join("\n")];
+}
 
 type RefChip = { n: string; t: "tag" | "remote" | "head" };
 type CommitVM = {
@@ -47,7 +69,10 @@ type CommitVM = {
   an: { n: string; e: string; d: string; abs: string };
   cm: { n: string; e: string; d: string; abs: string };
   differ: boolean;
-  gpg: "good" | "none" | "bad";
+  // Demo (design-mode) commits only — a deterministic MOCK verdict. Live
+  // commits carry null here: their real verdict is fetched lazily into
+  // DetailState.sig (see loadSignature), never derived from commit metadata.
+  gpg: SigStatus | null;
   refs: RefChip[];
   add: number;
   del: number;
@@ -138,6 +163,12 @@ class DetailState {
   // comment) — lets the row swap those two buttons for a spinner instead of
   // showing nothing while that extra round trip is in flight.
   resolvingDeletedFileFor = $state<string | null>(null);
+  // The selected live commit's signature verdict, fetched lazily and
+  // separately from the diff (see loadSignature). `forSha` is the row sha it
+  // was requested for — the badge only trusts it while that is still the
+  // selected commit.
+  sig = $state<{ forSha: string; badge: SigBadge } | null>(null);
+  private sigSeq = 0;
 
   // $state (not a plain field): `tree` below is a getter over this, and it's
   // now read from TWO template call sites (the embedded file list and the
@@ -173,7 +204,7 @@ class DetailState {
         an: { n: m.an.n, e: m.an.e, d: bridge.relTime(m.an.t), abs: bridge.absTime(m.an.t) },
         cm: { n: m.cm.n, e: m.cm.e, d: bridge.relTime(m.cm.t), abs: bridge.absTime(m.cm.t) },
         differ,
-        gpg: "none",
+        gpg: null, // real verdict arrives via loadSignature()
         refs,
         add: 0,
         del: 0,
@@ -190,7 +221,9 @@ class DetailState {
     const cm = rebased
       ? { n: "GitCat (rebase)", e: "noreply@gitcat.dev", d: bridge.fakeAgo(Math.max(0, r - 2)) + " ago", abs: bridge.absTime(fakeEpoch(Math.max(0, r - 2))) }
       : { n: a.n, e: a.e, d: bridge.fakeAgo(r) + " ago", abs: bridge.absTime(fakeEpoch(r)) };
-    const gpg: "good" | "none" | "bad" = r % 11 === 0 ? "none" : (bridge.hhex(r).charCodeAt(1) & 7) === 0 ? "bad" : "good";
+    // MOCK, design mode only: a stable pseudo-verdict from the row number so the
+    // browser preview shows every badge colour. Never used for a real repo.
+    const gpg: SigStatus = r % 11 === 0 ? "none" : (bridge.hhex(r).charCodeAt(1) & 7) === 0 ? "bad" : "good";
     const refs: RefChip[] = [];
     if (r === 0) refs.push({ n: "HEAD", t: "head" }, { n: "main", t: "head" });
     const gr = G.refs[r];
@@ -227,8 +260,39 @@ class DetailState {
     return cov >= 0 ? { ago: G.snapTs[cov] } : null;
   }
 
-  get gpgBadge(): [string, string] {
-    return this.commit ? GPG[this.commit.gpg] : GPG.none;
+  get gpgBadge(): SigBadge {
+    const c = this.commit;
+    if (!c) return sigBadge("none");
+    // Design mode: the deterministic MOCK verdict, labelled as such.
+    if (c.gpg) return [c.gpg, t("detail.sig_" + c.gpg), t("detail.sig_demo")];
+    return this.sig && this.sig.forSha === c.sha ? this.sig.badge : sigBadge("checking");
+  }
+
+  /**
+   * Ask git for the selected commit's signature verdict. Separate from
+   * loadCommitDetail on purpose: verification runs gpg/ssh-keygen/gpgsm and
+   * can be slow, so the diff never waits on it (and the commit list never
+   * asks at all). Race-guarded like the diff: only the latest selection's
+   * answer lands. A failure (timeout, no git) shows as "not verified", never
+   * as "bad" or "unsigned".
+   */
+  private async loadSignature(sha: string) {
+    const myReq = ++this.sigSeq;
+    // Debounce: holding j/k through the graph selects a commit per keypress,
+    // and each verification spawns gpg/ssh-keygen/gpgsm (through wsl.exe for
+    // a WSL repo). Only ask once the selection has settled.
+    await new Promise((r) => setTimeout(r, SIG_DEBOUNCE_MS));
+    if (myReq !== this.sigSeq) return;
+    let badge: SigBadge;
+    try {
+      const r = await commands.commitSignature(bridge.CUR_REPO as unknown as string, sha);
+      if (r.status !== "ok") throw new Error(be(r.error));
+      badge = sigBadge(r.data.status, r.data);
+    } catch (e) {
+      badge = sigBadge("unverified", null, e instanceof Error ? e.message : String(e));
+    }
+    if (myReq !== this.sigSeq) return; // a newer selection superseded this one
+    this.sig = { forSha: sha, badge };
   }
 
   // Whether the "Revert commit" button should be disabled: the existing
@@ -379,6 +443,7 @@ class DetailState {
       this.diffHeader = "";
       this.diffRows = [];
       this.loadCommitDetail(row);
+      void this.loadSignature(c.sha); // in parallel — never gates the diff
     } else {
       this.bodyText = c.merge
         ? "Merge commit — reconciles two lines of history."

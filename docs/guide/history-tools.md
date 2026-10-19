@@ -26,4 +26,4 @@ The full walkthrough is on its way. Here's the outline of what it covers; the [F
 - **Rerere** — see what git has recorded a conflict resolution for, and toggle `rerere.enabled` without a terminal.
 - **Dangling-object recovery** — `git fsck` finds a commit nothing points to and recovers it as a new branch.
 
-These pair with the [Safety Manager](/guide/undo-safety), which snapshots before every mutation.
+These pair with the [Safety Manager](/guide/undo-safety), which snapshots your branches before everyday history-changing operations.

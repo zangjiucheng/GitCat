@@ -4,8 +4,8 @@ export default {
   // Tama hero / empty state.
   hero_alt: "Tama, GitCat's guardian",
   hero_bubble_loaded:
-    'はじめまして! I\'m <b>Tama</b>, GitCat\'s guardian. I pin a snapshot before every mutation — so your history is always safe with me. <span class="jp">にゃ〜♪</span>',
-  hero_bubble_loaded_plain: "A snapshot is taken before every mutation — your history is always safe.",
+    'はじめまして! I\'m <b>Tama</b>, GitCat\'s guardian. I pin a snapshot before your everyday history changes — so ⌘Z can take you back. <span class="jp">にゃ〜♪</span>',
+  hero_bubble_loaded_plain: "A snapshot is taken before everyday history changes — ⌘Z can take you back.",
   hero_stat: '<span class="n">{n}</span> commits laid out in <b>{ms} ms</b>',
   hero_hint_loaded: "Click a commit to inspect it · drag a dot onto another to cherry-pick · ⌘Z to rewind",
   hero_bubble_empty:
@@ -22,6 +22,21 @@ export default {
   row_of: "row {row} / {total}",
   cant_revert_merge: "Can't revert a merge commit",
   revert_commit: "Revert commit",
+  // Signature badge (git's own verdict — gpg, ssh or x509 — see signature.rs).
+  sig_checking: "… Checking signature",
+  sig_good: "✔ Good signature",
+  sig_untrusted: "✔ Good signature (untrusted key)",
+  sig_expired: "⚠ Expired signature",
+  sig_bad: "✘ Bad signature",
+  sig_unverified: "? Signature not verified",
+  sig_none: "○ Unsigned",
+  sig_signer: "Signer: {name}",
+  sig_key: "Key: {key}",
+  sig_untrusted_note: "The signature matches the key, but the key isn't trusted in your keyring.",
+  sig_expired_note: "The signature or the signing key has expired.",
+  sig_bad_note: "The signature doesn't match, or the key was revoked.",
+  sig_unverified_note: "git couldn't check this signature (no gpg/key/allowed-signers file) — this says nothing about whether it is valid.",
+  sig_demo: "Demo data — not a real signature check.",
   // Tab label. Names the commit you are LOOKING at — deliberately a separate
   // key from workdir.commit, which names the one you are writing.
   tab_commit: "Commit",

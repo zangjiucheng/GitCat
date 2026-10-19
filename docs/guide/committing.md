@@ -16,7 +16,7 @@ Each changed file has a control to move it between unstaged and staged:
 
 - **Stage** a file to include its changes in your next commit.
 - **Unstage** to pull it back out.
-- **Discard** to throw its changes away entirely. Discarding is destructive to that file's uncommitted work, so it's treated as a real action — but committed history is never at risk, and the [Safety Manager](/guide/undo-safety) still has your back for anything that touched history.
+- **Discard** to throw its changes away entirely. Discarding is destructive to that file's uncommitted work, so it's treated as a real action — but committed history is never at risk, and before touching the file GitCat writes a backup of what you're discarding (a patch, or a copy of an untracked file) under `.git/gitgui/discard-backup/`, so you can still get it back by hand. Discards aren't part of ⌘Z Undo, which covers [history-changing operations](/guide/undo-safety).
 
 ## Staging part of a file
 
@@ -32,7 +32,7 @@ This lets you split one messy working file into several clean, focused commits w
 With the changes you want staged, switch to the **Commit** tab to write your message and commit. A few things worth knowing:
 
 - Your commit is authored with the **git identity** for this repo (see [Opening a repository](/guide/opening-a-repository) to check or change it).
-- The commit is a normal, snapshotted operation — it appears immediately on the graph, and it's covered by [Undo](/guide/undo-safety) like everything else.
+- The commit is a normal, snapshotted operation — it appears immediately on the graph, and it's covered by [Undo](/guide/undo-safety) like the other everyday history-changing operations.
 
 ## Stashing
 

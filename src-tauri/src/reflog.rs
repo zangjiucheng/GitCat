@@ -37,7 +37,7 @@ use git2::Repository;
 use serde::Serialize;
 
 use crate::i18n_err::{ierr, ierrp};
-use crate::safety::{self, UndoResult};
+use crate::safety::{self, UndoRefusal, UndoResult};
 
 // ---------------------------------------------------------------------------
 // Payloads
@@ -119,36 +119,36 @@ pub async fn reflog_restore(path: String, index: usize) -> UndoResult {
 fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
     let repo = match open(path) {
         Ok(r) => r,
-        Err(e) => return fail(e),
+        Err(e) => return fail(UndoRefusal::Failed, e),
     };
 
     let workdir = match repo.workdir().and_then(|p| p.to_str()) {
         Some(w) => w.to_string(),
-        None => return fail(ierr("err_misc.restore_needs_worktree")),
+        None => return fail(UndoRefusal::Failed, ierr("err_misc.restore_needs_worktree")),
     };
 
     // (1) Dirty-tree fail-closed guard — same as undo(): never force.
     let dirty = match safety::run_git(&workdir, &["status", "--porcelain"]) {
         Ok(o) => o,
-        Err(e) => return fail(ierrp("err_misc.cannot_verify_clean_refusing_restore", &[("detail", e.as_str())])),
+        Err(e) => return fail(UndoRefusal::CannotVerifyClean, ierrp("err_misc.cannot_verify_clean_refusing_restore", &[("detail", e.as_str())])),
     };
     if !dirty.ok {
-        return fail(ierrp("err_misc.cannot_verify_clean_refusing_restore", &[("detail", dirty.stderr.as_str())]));
+        return fail(UndoRefusal::CannotVerifyClean, ierrp("err_misc.cannot_verify_clean_refusing_restore", &[("detail", dirty.stderr.as_str())]));
     }
     if !dirty.stdout.is_empty() {
-        return fail(ierr("err_misc.worktree_has_uncommitted_restore"));
+        return fail(UndoRefusal::DirtyWorktree, ierr("err_misc.worktree_has_uncommitted_restore"));
     }
 
     // (3) Re-validate against a FRESH reflog read — never trust a stale index.
     let log = match repo.reflog("HEAD") {
         Ok(l) => l,
-        Err(e) => return fail(ierrp("err_misc.cannot_read_head_reflog_cap", &[("detail", e.message())])),
+        Err(e) => return fail(UndoRefusal::Failed, ierrp("err_misc.cannot_read_head_reflog_cap", &[("detail", e.message())])),
     };
     let len = log.len();
     let entry = match log.get(index) {
         Some(e) => e,
         None => {
-            return fail(ierrp(
+            return fail(UndoRefusal::StaleSelection, ierrp(
                 if len == 1 { "err_misc.reflog_stale_selection_one" } else { "err_misc.reflog_stale_selection_many" },
                 &[("ref", &format!("HEAD@{{{index}}}")), ("count", &len.to_string())],
             ))
@@ -164,7 +164,7 @@ fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
     // state.
     let sealed = match safety::snapshot(&repo) {
         Ok(r) => r,
-        Err(e) => return fail(ierrp("err_misc.restore_aborted_snapshot_failed", &[("detail", e.as_str())])),
+        Err(e) => return fail(UndoRefusal::SnapshotFailed, ierrp("err_misc.restore_aborted_snapshot_failed", &[("detail", e.as_str())])),
     };
 
     // The actual mutation: move HEAD/current branch to the historical sha.
@@ -178,6 +178,7 @@ fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
                 message: ierrp("err_misc.restore_failed", &[("detail", e.as_str())]),
                 restored_to: None,
                 sealed: Some(sealed),
+                reason: Some(UndoRefusal::Failed),
             }
         }
     };
@@ -187,6 +188,7 @@ fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
             message: ierrp("err_misc.restore_failed", &[("detail", reset.stderr.as_str())]),
             restored_to: None,
             sealed: Some(sealed),
+            reason: Some(UndoRefusal::Failed),
         };
     }
 
@@ -196,6 +198,7 @@ fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
         message: ierrp("err_misc.restored_to", &[("ref", &format!("HEAD@{{{index}}}")), ("sha", short_target.as_str())]),
         restored_to: Some(short_target),
         sealed: Some(sealed),
+        reason: None,
     }
 }
 
@@ -207,8 +210,8 @@ fn open(path: &str) -> Result<Repository, String> {
     crate::trust::open_repo(path).map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))
 }
 
-fn fail(message: String) -> UndoResult {
-    UndoResult { ok: false, message, restored_to: None, sealed: None }
+fn fail(reason: UndoRefusal, message: String) -> UndoResult {
+    UndoResult { ok: false, message, restored_to: None, sealed: None, reason: Some(reason) }
 }
 
 fn short(sha: &str) -> String {

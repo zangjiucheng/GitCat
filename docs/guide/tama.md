@@ -4,7 +4,7 @@ description: Tama, GitCat's Safety-Manager mascot — what her reactions mean, a
 
 # Tama
 
-Tama is the cat in the corner — GitCat's Safety-Manager mascot and the friendly face of the snapshot-before-everything system.
+Tama is the cat in the corner — GitCat's Safety-Manager mascot and the friendly face of the snapshot-first Safety Manager.
 
 ::: info This page is being expanded
 The full walkthrough is on its way. Here's the outline of what it covers.
@@ -12,7 +12,7 @@ The full walkthrough is on its way. Here's the outline of what it covers.
 
 ## What this page will cover
 
-- **What her reactions mean** — she pins a snapshot before every mutation and reacts to what's happening: working, celebrating a success, warning before something risky.
+- **What her reactions mean** — she pins a snapshot before everyday history-changing operations and reacts to what's happening: working, celebrating a success, warning before something risky.
 - **Customizing her** (in **Settings ▸ Tama**):
   - **Show Tama** — hide her portraits everywhere for a plainer look (status messages still show).
   - **Sound effects** — a few short chimes for her more significant moments, with a volume slider and a Test button.

@@ -302,7 +302,7 @@ A handler sees exactly four things (nothing else — see [the sandbox](#the-luau
 | Name | What it is |
 | --- | --- |
 | `ctx` | A **read-only** table mirroring the [placeholders](#placeholders): `ctx.repo`, `ctx.sha`, `ctx.file`, `ctx.files` (an array), `ctx.diff`, `ctx.branch`, `ctx.ref`. Absent fields are `nil`. (Populated from the UI exactly like the shell tokens — today `ctx.repo` always, plus `ctx.sha` for a `commit`-context command.) Also passed as the handler's argument. |
-| `git(args)` | Run `git` with `args` (an **array of strings**) in the repo — `git({ "log", "-1", "--format=%s" })`. Returns a table `{ stdout, stderr, code, ok }` (`ok` is `true` on a zero exit; `code` is the exit code, or `nil` if signal-killed). **No shell is involved**, so an arg is inert literal data — there is nothing to inject into, unlike the shell `run` path. |
+| `git(args)` | Run `git` with `args` (an **array of strings**) in the repo — `git({ "log", "-1", "--format=%s" })`. Returns a table `{ stdout, stderr, code, ok }` (`ok` is `true` on a zero exit; `code` is the exit code, or `nil` if signal-killed). **No shell is involved**, so an arg is inert literal data — there is nothing to inject into, unlike the shell `run` path. Only an allowlisted set of git subcommands runs, and repository-changing ones need `"mutates": true` — see [what `git()` allows](#what-git-allows). |
 | `tama.react(kind, msg)` | Nudge Tama's mood. `kind` must be one of `info`, `busy`, `ok`, `problem` (the same [safe allowlist](#tama-reactions) as the `::gitcat.tama` stdout protocol) — any other value is ignored. A script can **never** reach a safety-critical pose. |
 | `print(...)` | Append to the command's captured output (there is no console). Arguments are `tostring`'d and tab-joined, like Lua's `print`. |
 
@@ -328,9 +328,93 @@ Handlers run in a fresh, isolated Luau VM built for **untrusted code**:
   handler surfaces as the command **failing** — GitCat reports the error.
 - Each invocation gets a **fresh VM**; no state leaks between runs.
 
-> The sandbox constrains what a script *can reach*, but `git()` can still read
-> **and write** the repo — the same trust boundary as a shell `run`. Install a
-> scripted plugin only if you'd run its code yourself.
+### What `git()` allows {#what-git-allows}
+
+`git()` is the only process a script can start, and git itself can run other
+programs (aliases, hooks configured through `git config`, `--upload-pack`,
+`rebase --exec`, …) or touch paths outside the repository (`--output`,
+`diff --no-index`, `-C`). So `git()` checks every call **before** git starts
+and refuses it with a Lua error unless it fits this policy:
+
+- **Subcommands are allowlisted.**
+  - *Read-only, always allowed:* `log`, `show`, `rev-parse`, `rev-list`,
+    `status`, `diff`, `diff-tree`, `diff-index`, `diff-files`, `range-diff`,
+    `whatchanged`, `ls-files`, `ls-tree`, `cat-file`, `blame`, `shortlog`,
+    `describe`, `name-rev`, `for-each-ref`, `show-ref`, `show-branch`,
+    `merge-base`, `cherry`, `grep`, `count-objects`, `check-ignore`,
+    `check-attr`, `check-ref-format`, `version`, `format-patch --stdout`
+    (`--stdout` must be its first argument), the
+    listing forms of `branch`/`tag`/`stash`/`notes`, `reflog` (reading), and
+    `config` **reads** (`--get`, `--get-all`, `--get-regexp`, `--list`,
+    `config get`, `config list`).
+  - *Changes the repo, needs `"mutates": true`:* `add`, `rm`, `mv`, `restore`,
+    `reset`, `checkout`, `switch`, `commit`, `merge`, `cherry-pick`, `revert`,
+    `rebase`, and the creating/deleting forms of `branch`, `tag`, `stash`,
+    `notes`. Without `mutates` these are refused (so they can never run outside
+    Undo).
+  - *Everything else is refused*, including **every alias**, every network
+    command (`fetch`, `pull`, `push`, `clone`, `ls-remote`, `remote`,
+    `archive`), anything that writes config (`config` writes, `submodule`,
+    `worktree`, `maintenance`), anything that runs another program
+    (`bisect run`, `submodule foreach`, `filter-branch`, `difftool`,
+    `mergetool`, `help` — including `<subcommand> --help`, which git turns
+    into `git help`), and anything that destroys Undo's recovery data
+    (`gc`, `prune`, `update-ref`, `reflog expire`/`delete`, `clean`). Use a
+    shell `run` command for those.
+- **git-level options** (before the subcommand) are limited to `--version`,
+  `--no-pager`/`-P`, `--no-optional-locks`, `--no-replace-objects` and the
+  `--*-pathspecs` switches. `-C`, `-c`, `--git-dir`, `--work-tree`,
+  `--config-env`, `--exec-path`, `--namespace` and the rest are refused.
+- **Escape options are refused** wherever they appear, in every spelling git
+  accepts (`--opt value`, `--opt=value`, a unique abbreviation such as
+  `--upload-p`, or a bundled short flag such as `-ix`): `--output`,
+  `--output-directory`/`format-patch -o`, `--exec`/`rebase -x`, `--ext-diff`,
+  `grep -O`/`--open-files-in-pager`, `--upload-pack`, `--receive-pack`,
+  `--no-index` (and a `git diff` path outside the repo, which implies it),
+  `--file`/`-F`, `--template`/`commit -t`, `--pathspec-from-file`,
+  `blame --contents`/`-S`/`--ignore-revs-file`, `--orderfile`/`-O`,
+  `format-patch --signature-file`/`--description-file`/`--no-stdout`,
+  `grep -f`, `ls-files -X`/`--exclude-from`/`--exclude-per-directory`,
+  `--help`, and a `-s`/`--strategy` that is not one of git's built-in merge
+  strategies. A `git diff` path that is absolute, drive-relative (`C:x`) or
+  climbs out with `..` is refused too.
+  Arguments **after `--` are still checked**, because a `--` can be the value
+  of the option before it; write a path that looks like one of these options
+  as `./--output`.
+- **Every call is hardened**: git runs with `--no-pager`,
+  `-c core.fsmonitor=false`, **hooks turned off** (`core.hooksPath` pointed at
+  a directory that can't exist), `GIT_EDITOR=:` and `GIT_SEQUENCE_EDITOR=:`
+  (so `commit` without `-m` or `rebase -i` never opens an editor), and
+  `GIT_TERMINAL_PROMPT=0`. Inherited `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_INDEX_FILE` (and the other repository-location variables) are removed,
+  as are the variables that inject config or programs: `GIT_CONFIG`,
+  `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_*`/
+  `GIT_CONFIG_VALUE_*`, `GIT_EXTERNAL_DIFF`, `GIT_SSH`, `GIT_SSH_COMMAND` and
+  `GIT_PROXY_COMMAND`. `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
+  `GIT_CONFIG_NOSYSTEM` and `GIT_EXEC_PATH` are kept — they only pick which of
+  your own config files and which git install apply, as in your terminal.
+
+**Hooks never run from `git()`.** A plugin's commits, checkouts and branch
+updates behave as if `--no-verify` were passed, so pre-commit/commit-msg
+checks (husky, Gerrit's Change-Id hook, …) are skipped for them. This is
+deliberate: a `mutates` handler can write a file with any content anywhere in
+the work tree (e.g. `notes add -m <text>` creates the blob, `restore` and `mv`
+place it), so in a repo whose `core.hooksPath` lives inside the work tree
+(`.husky/_`, `.githooks`) it could otherwise overwrite a hook and then trigger
+it with its own `git commit`.
+
+The rest of your **own** git configuration still applies: `filter.*` drivers
+(Git LFS), commit signing and textconv drivers behave exactly as they do in a
+terminal. A script can't change any of it, because config writes are refused.
+
+The `plugin_git_policy.rs` module is the source of truth for this policy.
+
+> Within that policy `git()` can still read **and** (with `mutates`) write the
+> repo — including arbitrary file content in the work tree, which could plant
+> code that *you* later run (a build script, a `package.json` script, an
+> in-tree file your git config `include`s). Undo restores branches and `HEAD`,
+> not working-tree files. Install a scripted plugin only if you'd run its code
+> yourself.
 
 ### Mutating handlers must set `mutates`
 
@@ -338,9 +422,10 @@ Just like a shell command, a Luau handler that **changes the repository** (any
 `git()` call that writes — `commit`, `reset`, `checkout`, `restore`, …) must set
 **`"mutates": true`** on its command/hook. GitCat then takes a safety snapshot
 before running it, so the change is covered by global **Undo** (and a mutating
-command that can't be snapshotted is refused rather than run unprotected). GitCat
-can't infer this from your script, so **always declare it** — a mutating handler
-that omits `mutates` runs **outside** Undo. See
+command that can't be snapshotted is refused rather than run unprotected). For a
+handler this is enforced: without `mutates`, `git()` refuses every
+repository-changing subcommand with a Lua error, so a handler's `git()` writes
+never run outside Undo. See [what `git()` allows](#what-git-allows) and
 [Mutating actions & Undo](#mutating-actions-undo).
 
 ## Tama skins {#tama-skins}
@@ -511,7 +596,7 @@ A plugin's `run` string is a **user-authored external command that runs on your 
 
 A few limits worth knowing while the plugin security model is still being built out:
 
-- <a id="mutating-actions-undo"></a>**Mutating actions & Undo.** GitCat snapshots before its *own* mutations so global Undo can always restore them. A plugin command or hook that changes the repo (`git reset --hard`, `git checkout`, etc.) gets the same protection **when it declares `"mutates": true`**: GitCat takes a snapshot before running it, so the change is covered by Undo. A command declared this way that can't be snapshotted is **refused** rather than run unprotected. A mutating action that does **not** set `mutates` runs **outside** Undo (and takes no snapshot) — so **always set `"mutates": true` on anything that changes the repo.** GitCat can't infer it from your opaque `run` string.
+- <a id="mutating-actions-undo"></a>**Mutating actions & Undo.** GitCat snapshots `HEAD` and every local branch before its own history-changing operations so global Undo can rewind them. A plugin command or hook that changes the repo (`git reset --hard`, `git checkout`, etc.) gets the same protection **when it declares `"mutates": true`**: GitCat takes a snapshot before running it, so the branch and `HEAD` movement is covered by Undo. Like any snapshot, it doesn't capture uncommitted changes — working-tree edits a `git reset --hard` throws away can't be brought back by Undo. A command declared this way that can't be snapshotted is **refused** rather than run unprotected. A mutating action that does **not** set `mutates` runs **outside** Undo (and takes no snapshot) — so **always set `"mutates": true` on anything that changes the repo.** GitCat can't infer it from your opaque `run` string.
 - **Argument injection is your responsibility.** Quoting stops shell injection but not flag injection — use `--` before untrusted placeholders (see [above](#placeholders)).
 - **The subprocess inherits GitCat's environment.** A plugin command can read GitCat's environment variables.
 

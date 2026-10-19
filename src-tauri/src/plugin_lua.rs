@@ -52,14 +52,19 @@
 //!     (NO shell — so, unlike [`crate::plugin_exec`]'s template path, there is
 //!     nothing to inject INTO), bounded by [`crate::procutil::SUBPROCESS_TIMEOUT`]
 //!     with no flashed console window. Returns `{ stdout, stderr, code, ok }`.
-//!     git can read AND write — that is the same trust boundary as a plugin
-//!     shell `run`, but structured and injection-free; the dispatcher snapshots
-//!     first when the command/hook is declared `mutates`. CONFINEMENT: git-LEVEL
-//!     options that could escape `repo_dir` or config-inject a shell (`-C`, `-c`,
-//!     `--git-dir`, `--work-tree`, `--exec-path`, `--config-env`, `--namespace`)
-//!     are REJECTED (see [`is_forbidden_git_level_arg`]), so — unlike a raw shell
-//!     `run` — git() genuinely stays inside the open repo and can't turn a config
-//!     value (`alias.*`/`core.pager`/`core.sshCommand`) into a shell exec.
+//!     CONFINEMENT: every call is checked by
+//!     [`crate::plugin_git_policy::check_git_args`] BEFORE git starts — an
+//!     ALLOWLIST of git-level options and subcommands (no aliases, no network,
+//!     no config writes, no `submodule`/`bisect run`/`filter-branch`/…), plus
+//!     screening of the escape options (`--upload-pack`, `rebase --exec`,
+//!     `grep -O`, `--output`, `--no-index`, …) in all the spellings git accepts.
+//!     A subcommand that writes is refused unless the command/hook declared
+//!     `mutates` (the dispatcher snapshots first in that case, so it's covered
+//!     by Undo). The invocation is then hardened by
+//!     [`crate::plugin_git_policy::harden_command`] (no pager/editor/fsmonitor/hooks,
+//!     inherited `GIT_DIR` and config-injecting env removed). So — unlike a raw shell
+//!     `run` — git() stays inside the open repo and can't turn a config value
+//!     (`alias.*`/`core.pager`/`core.sshCommand`/…) into a program exec.
 //!   * `tama.react(kind, msg)` — if `kind` is one of the SAFE allowlist
 //!     `info|busy|ok|problem`, appends a `::gitcat.tama <kind> <msg>` line to the
 //!     output buffer so the EXISTING frontend pipeline (`parseTamaReaction`)
@@ -158,13 +163,18 @@ const STRIPPED_GLOBALS: &[&str] = &[
 /// See [`run_handler_inner`] for the implementation; this pins the production
 /// [`LUA_MEMORY_LIMIT`] / [`LUA_DEADLINE`] so the tests can drive the same core
 /// with a tiny deadline / memory ceiling.
+///
+/// `mutates` is what the command/hook DECLARED: only then may the script's
+/// `git()` run a repository-changing subcommand (the caller has already taken
+/// the safety snapshot for it). A read-only handler gets read-only git.
 pub fn run_lua_handler(
     script_src: &str,
     handler_name: &str,
     ctx: &PlaceholderCtx,
     repo_dir: &str,
+    mutates: bool,
 ) -> Result<CommandOutput, String> {
-    run_handler_inner(script_src, handler_name, ctx, repo_dir, LUA_MEMORY_LIMIT, LUA_DEADLINE)
+    run_handler_inner(script_src, handler_name, ctx, repo_dir, mutates, LUA_MEMORY_LIMIT, LUA_DEADLINE)
 }
 
 /// The core of [`run_lua_handler`], parameterized on the two hard limits so a
@@ -174,6 +184,7 @@ fn run_handler_inner(
     handler_name: &str,
     ctx: &PlaceholderCtx,
     repo_dir: &str,
+    mutates: bool,
     memory_limit: usize,
     deadline: Duration,
 ) -> Result<CommandOutput, String> {
@@ -202,7 +213,7 @@ fn run_handler_inner(
     let out_buf = Rc::new(RefCell::new(String::new()));
 
     // 5. Inject the entire host API into the (writable) sandbox environment.
-    let ctx_table = install_host_api(&lua, ctx, repo_dir, &out_buf)
+    let ctx_table = install_host_api(&lua, ctx, repo_dir, mutates, &out_buf)
         .map_err(|e| ierrp("err_plugins.lua_install_host_api", &[("detail", &e.to_string())]))?;
 
     // 6. Time budget: Luau fires this on loop back-edges / calls; once we're past
@@ -277,20 +288,13 @@ fn strip_dangerous_globals(lua: &Lua) -> mlua::Result<()> {
 /// return the `ctx` table handle (so the caller can pass the very same table to
 /// the handler). Called AFTER `sandbox(true)`, so these land in the writable
 /// per-thread env and shadow the frozen base `print`.
-/// True if `a` is a git-LEVEL option (used before the subcommand) that would let
-/// a script's `git()` call break out of the open repo or turn a config value into
-/// a shell exec. See the guard in the `git` host function.
-fn is_forbidden_git_level_arg(a: &str) -> bool {
-    a == "-C"
-        || a == "-c"
-        || a.starts_with("--git-dir")
-        || a.starts_with("--work-tree")
-        || a.starts_with("--exec-path")
-        || a.starts_with("--config-env")
-        || a.starts_with("--namespace")
-}
-
-fn install_host_api(lua: &Lua, ctx: &PlaceholderCtx, repo_dir: &str, out_buf: &Rc<RefCell<String>>) -> mlua::Result<Table> {
+fn install_host_api(
+    lua: &Lua,
+    ctx: &PlaceholderCtx,
+    repo_dir: &str,
+    mutates: bool,
+    out_buf: &Rc<RefCell<String>>,
+) -> mlua::Result<Table> {
     let globals = lua.globals();
 
     // ---- ctx: read-only data mirror of PlaceholderCtx -----------------------
@@ -306,25 +310,14 @@ fn install_host_api(lua: &Lua, ctx: &PlaceholderCtx, repo_dir: &str, out_buf: &R
         for v in args.sequence_values::<String>() {
             argv.push(v?);
         }
-        // Confinement: reject git-LEVEL options (those before the subcommand) that
-        // could escape repo_dir or config-inject a shell — `-C`/`--git-dir`/
-        // `--work-tree`/`--exec-path` override the repo, and `-c`/`--config-env` can
-        // set alias.*/core.pager/core.sshCommand to `!sh …` so git execs a shell.
-        // Flags AFTER the subcommand (e.g. `git log -c`) can't rebind the repo, so
-        // they're left alone. This keeps git() genuinely confined to the open repo —
-        // a real step up from a raw shell `run`.
-        for a in &argv {
-            if !a.starts_with('-') {
-                break; // reached the subcommand
-            }
-            if is_forbidden_git_level_arg(a) {
-                return Err(mlua::Error::runtime(format!(
-                    "git(): the git-level option {a:?} is not allowed — it could escape the repository or config-inject a shell"
-                )));
-            }
-        }
+        // Confinement: allowlisted git-level options + subcommands only, escape
+        // options screened, writes only when the plugin declared `mutates`. See
+        // plugin_git_policy's module doc for the vectors this closes (aliases,
+        // config writes, --upload-pack, rebase --exec, --output, …).
+        crate::plugin_git_policy::check_git_args(&argv, mutates).map_err(mlua::Error::runtime)?;
         let mut cmd = Command::new("git");
         cmd.no_console_window();
+        crate::plugin_git_policy::harden_command(&mut cmd);
         cmd.arg("-C").arg(&repo).args(&argv);
         let out = crate::procutil::output_with_timeout(cmd, crate::procutil::SUBPROCESS_TIMEOUT)
             .map_err(|e| mlua::Error::runtime(format!("git could not run (or timed out): {e}")))?;
@@ -461,7 +454,7 @@ mod runtime_tests {
 
     // Convenience: run against the PRODUCTION limits (what plugins really get).
     fn run(src: &str, handler: &str, ctx: &PlaceholderCtx, repo_dir: &str) -> Result<CommandOutput, String> {
-        run_lua_handler(src, handler, ctx, repo_dir)
+        run_lua_handler(src, handler, ctx, repo_dir, false)
     }
 
     // A temp dir for `git`-touching tests (also used as an inert repo_dir when a
@@ -521,6 +514,239 @@ mod runtime_tests {
         // A normal (subcommand) call still works — the guard only blocks git-level flags.
         let ok = "local M={} function M.run() return tostring(git({'--version'}).ok) end return M";
         assert_eq!(run(ok, "run", &ctx, repo).expect("git --version runs").stdout, "true");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- git() escape vectors, end to end (see plugin_git_policy) -------------
+    //
+    // The argument policy itself is unit-tested vector by vector in
+    // plugin_git_policy; these drive the REAL host function against a real repo
+    // and check the side effect never happens, not just that an Err came back.
+
+    /// A temp repo with an identity and one commit, plus a `git` runner for setup.
+    fn init_repo(tag: &str) -> std::path::PathBuf {
+        let dir = tmp_dir(tag);
+        for args in [
+            &["init", "-q"][..],
+            &["config", "user.email", "t@example.com"],
+            &["config", "user.name", "T"],
+            &["config", "commit.gpgsign", "false"],
+        ] {
+            raw_git(&dir, args);
+        }
+        std::fs::write(dir.join("f.txt"), "one").unwrap();
+        raw_git(&dir, &["add", "."]);
+        raw_git(&dir, &["commit", "-q", "-m", "init"]);
+        dir
+    }
+
+    fn raw_git(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+        Command::new("git").arg("-C").arg(dir).args(args).output().expect("spawn git")
+    }
+
+    /// A handler `run` that calls `git(<args>)` and returns `ok:code`. Args are
+    /// written as Lua long strings so any byte (quotes, `!`, `$`) is literal.
+    fn git_call_src(args: &[&str]) -> String {
+        let list = args.iter().map(|a| format!("[==[{a}]==]")).collect::<Vec<_>>().join(", ");
+        format!("local M={{}} function M.run() local r = git({{{list}}}) return tostring(r.ok)..':'..tostring(r.code) end return M")
+    }
+
+    fn call_git(repo: &std::path::Path, args: &[&str], mutates: bool) -> Result<CommandOutput, String> {
+        run_lua_handler(&git_call_src(args), "run", &PlaceholderCtx::default(), repo.to_str().unwrap(), mutates)
+    }
+
+    #[test]
+    fn git_never_runs_an_alias_even_one_the_repo_already_has() {
+        let dir = init_repo("git-alias");
+        let marker = dir.join("pwned.txt");
+        raw_git(&dir, &["config", "alias.pwn", "!echo pwned > pwned.txt"]);
+        // Control: the alias really is a shell escape when git runs it directly.
+        raw_git(&dir, &["pwn"]);
+        assert!(marker.exists(), "control: a shell alias should run under plain git");
+        std::fs::remove_file(&marker).unwrap();
+
+        for mutates in [false, true] {
+            assert!(call_git(&dir, &["pwn"], mutates).is_err(), "an alias must be refused (mutates={mutates})");
+        }
+        assert!(
+            call_git(&dir, &["-c", "alias.pwn2=!echo pwned > pwned.txt", "pwn2"], true).is_err(),
+            "-c alias.* must be refused"
+        );
+        assert!(!marker.exists(), "the alias's shell command must never have run");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_config_writes_are_refused_and_nothing_is_written() {
+        let dir = init_repo("git-config");
+        for args in [
+            &["config", "alias.x", "!echo x"][..],
+            &["config", "core.fsmonitor", "echo x"],
+            &["config", "core.hooksPath", "."],
+            &["config", "core.sshCommand", "echo x"],
+            &["config", "--add", "credential.helper", "!echo x"],
+            &["config", "set", "diff.external", "echo x"],
+        ] {
+            assert!(call_git(&dir, args, true).is_err(), "{args:?} must be refused even with mutates");
+        }
+        for key in ["alias.x", "core.fsmonitor", "core.hooksPath", "core.sshCommand", "credential.helper", "diff.external"] {
+            let out = raw_git(&dir, &["config", "--local", "--get", key]);
+            assert!(!out.status.success(), "{key} must not have been written: {}", String::from_utf8_lossy(&out.stdout));
+        }
+        // Reading config is still fine for a read-only handler.
+        assert_eq!(call_git(&dir, &["config", "--get", "user.name"], false).expect("config read").stdout, "true:0");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_mutation_requires_the_declared_mutates_flag() {
+        let dir = init_repo("git-mutates");
+        let head = || String::from_utf8_lossy(&raw_git(&dir, &["rev-parse", "HEAD"]).stdout).trim().to_string();
+        let before = head();
+        let err = call_git(&dir, &["commit", "--allow-empty", "-m", "sneaky"], false).expect_err("read-only handler");
+        assert!(err.contains("mutates"), "the refusal should tell the author to declare mutates: {err}");
+        assert_eq!(head(), before, "a read-only handler must not have committed");
+        // Declared mutating: the same call works (the dispatcher snapshots first).
+        assert_eq!(call_git(&dir, &["commit", "--allow-empty", "-m", "ok"], true).expect("commit").stdout, "true:0");
+        assert_ne!(head(), before);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_program_running_options_are_refused_end_to_end() {
+        let dir = init_repo("git-exec");
+        raw_git(&dir, &["branch", "side"]);
+        for args in [
+            &["rebase", "--exec", "echo pwned > pwned.txt", "side"][..],
+            &["rebase", "-x", "echo pwned > pwned.txt", "side"],
+            &["grep", "-Oecho pwned > pwned.txt", "one"],
+            &["fetch", "--upload-pack=echo pwned > pwned.txt", "."],
+            &["ls-remote", "--upload-p", "echo pwned > pwned.txt", "."],
+            &["submodule", "foreach", "echo pwned > pwned.txt"],
+            &["bisect", "run", "sh", "-c", "echo pwned > pwned.txt"],
+            &["difftool", "-y", "-x", "echo pwned > pwned.txt", "HEAD"],
+        ] {
+            assert!(call_git(&dir, args, true).is_err(), "{args:?} must be refused");
+        }
+        assert!(!dir.join("pwned.txt").exists(), "no refused call may have run a program");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_cannot_write_or_read_outside_through_output_or_no_index() {
+        let dir = init_repo("git-output");
+        for args in [
+            &["log", "-1", "-p", "--output=out.txt"][..],
+            &["diff", "HEAD", "--outp", "out.txt"],
+            &["format-patch", "-1", "-o", "."],
+        ] {
+            assert!(call_git(&dir, args, true).is_err(), "{args:?} must be refused");
+        }
+        assert!(!dir.join("out.txt").exists());
+        assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".patch")));
+        let outside = dir.parent().unwrap().join("Cargo-outside-probe.txt");
+        let outside = outside.to_str().unwrap();
+        assert!(call_git(&dir, &["diff", "--no-index", outside, "f.txt"], false).is_err());
+        assert!(call_git(&dir, &["diff", outside, "f.txt"], false).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_cannot_read_outside_files_through_format_patch_or_orderfile() {
+        let dir = init_repo("git-sigfile");
+        let outside = dir.parent().unwrap().join(format!("{}-outside.txt", dir.file_name().unwrap().to_string_lossy()));
+        std::fs::write(&outside, "SECRET-OUTSIDE").unwrap();
+        let o = outside.to_str().unwrap();
+        let sig = format!("--signature-file={o}");
+        let desc = format!("--description-file={o}");
+        let order = format!("-O{o}");
+        // Control: plain git really does print the outside file.
+        let ctl = raw_git(&dir, &["format-patch", "--stdout", "-1", "--root", &sig]);
+        assert!(String::from_utf8_lossy(&ctl.stdout).contains("SECRET-OUTSIDE"), "control: --signature-file leaks");
+        for args in [
+            &["format-patch", "--stdout", "-1", "--root", &sig][..],
+            &["format-patch", "--stdout", "-1", "--root", "--cover-letter", &desc],
+            &["diff", &order, "HEAD"],
+            &["grep", "-f", o],
+            &["ls-files", "-X", o],
+        ] {
+            assert!(call_git(&dir, args, false).is_err(), "{args:?} must be refused");
+        }
+        let _ = std::fs::remove_file(&outside);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_format_patch_never_writes_patch_files() {
+        let dir = init_repo("git-fp-stdout");
+        for args in [&["format-patch", "--to", "--stdout", "-1"][..], &["format-patch", "--stdout", "-1", "--no-stdout"]] {
+            assert!(call_git(&dir, args, false).is_err(), "{args:?} must be refused");
+        }
+        assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".patch")));
+        // The legitimate form still works.
+        assert_eq!(call_git(&dir, &["format-patch", "--stdout", "-1"], false).expect("format-patch").stdout, "true:0");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_subcommand_help_never_starts_a_viewer() {
+        let dir = init_repo("git-help");
+        for args in [&["log", "--help"][..], &["status", "--help"], &["log", "--hel"]] {
+            assert!(call_git(&dir, args, false).is_err(), "{args:?} must be refused");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_never_runs_hooks_even_from_an_in_tree_hooks_path() {
+        // husky-style: core.hooksPath inside the work tree, which a mutating
+        // handler can write. Plugin git() calls must never run a hook.
+        const HOOKS: [&str; 4] = ["pre-commit", "commit-msg", "post-commit", "reference-transaction"];
+        let dir = init_repo("git-hooks");
+        std::fs::create_dir_all(dir.join(".githooks")).unwrap();
+        for hook in HOOKS {
+            let path = dir.join(".githooks").join(hook);
+            std::fs::write(&path, format!("#!/bin/sh\necho ran > {hook}-ran.txt\n")).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        raw_git(&dir, &["config", "core.hooksPath", ".githooks"]);
+        let ran = || -> Vec<String> {
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+                .filter(|n| n.ends_with("-ran.txt"))
+                .collect()
+        };
+        // Control: plain git runs the hook.
+        raw_git(&dir, &["commit", "-q", "--allow-empty", "-m", "control"]);
+        assert!(dir.join("pre-commit-ran.txt").exists(), "control: the in-tree hook should run under plain git");
+        for n in ran() {
+            std::fs::remove_file(dir.join(n)).unwrap();
+        }
+        let out = call_git(&dir, &["commit", "--allow-empty", "-m", "from plugin"], true).expect("handler runs");
+        assert_eq!(out.stdout, "true:0", "the commit itself still succeeds");
+        assert_eq!(call_git(&dir, &["branch", "side"], true).expect("branch").stdout, "true:0");
+        assert!(ran().is_empty(), "no hook may run from a plugin's git(): {:?}", ran());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_never_launches_the_configured_editor() {
+        // GIT_EDITOR=: makes git skip the editor entirely, so a commit with no
+        // message aborts cleanly instead of running core.editor (or hanging).
+        let dir = init_repo("git-editor");
+        raw_git(&dir, &["config", "core.editor", "echo ran > editor-ran.txt"]);
+        // Control: plain git DOES run it (the commit then aborts on an empty message).
+        let _ = Command::new("git").arg("-C").arg(&dir).args(["commit", "--allow-empty"]).env_remove("GIT_EDITOR").output();
+        assert!(dir.join("editor-ran.txt").exists(), "control: core.editor should run under plain git");
+        std::fs::remove_file(dir.join("editor-ran.txt")).unwrap();
+        let out = call_git(&dir, &["commit", "--allow-empty"], true).expect("handler runs");
+        assert!(out.stdout.starts_with("false:"), "an empty-message commit should fail, got {:?}", out.stdout);
+        assert!(!dir.join("editor-ran.txt").exists(), "core.editor must never run from a plugin's git()");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -704,6 +930,7 @@ mod runtime_tests {
             "run",
             &PlaceholderCtx::default(),
             ".",
+            false,
             LUA_MEMORY_LIMIT,
             Duration::from_millis(200),
         );
@@ -720,6 +947,7 @@ mod runtime_tests {
             "run",
             &PlaceholderCtx::default(),
             ".",
+            false,
             8 * 1024 * 1024, // 8 MiB
             Duration::from_secs(3),
         );

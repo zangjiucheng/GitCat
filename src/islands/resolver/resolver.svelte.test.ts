@@ -1313,7 +1313,8 @@ describe("resolveWithExternalTool (backlog #12)", () => {
     vi.mocked(commands.resolveConflictWithExternalTool).mockResolvedValueOnce({
       ok: false,
       remaining: 1,
-      message: "No external merge tool configured. Set one via Tools \u{25b8} External Tools\u{2026}.",
+      // The real wire format: tool_settings.rs returns ierr("err_tools.no_merge_tool").
+      message: "i18n:err_tools.no_merge_tool",
     } satisfies ResolveResult);
     vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A])));
 
