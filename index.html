@@ -935,6 +935,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .gpg.good{color:var(--success);background:color-mix(in srgb,var(--success) 15%,transparent)}
 .gpg.none{color:var(--muted);background:var(--bg)}
 .gpg.bad{color:var(--danger);background:color-mix(in srgb,var(--danger) 15%,transparent)}
+.gpg.untrusted{color:var(--success);background:color-mix(in srgb,var(--success) 8%,transparent)}
+.gpg.expired{color:var(--warning);background:color-mix(in srgb,var(--warning) 15%,transparent)}
+.gpg.unverified,.gpg.checking{color:var(--muted);background:var(--bg)}
+.gpg.checking{opacity:.7}
 .who-split{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border-radius:var(--r-panel);overflow:hidden;margin-top:4px}
 .who{background:var(--panel);padding:9px 11px;min-width:0}
 .who h4{margin:0 0 5px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}

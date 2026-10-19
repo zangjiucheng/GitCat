@@ -61,6 +61,7 @@ import { contextMenuCtrl } from "../contextmenu/contextmenu.svelte.ts";
 vi.mock("../../ipc/bindings", () => ({
   commands: {
     commitDetail: vi.fn(),
+    commitSignature: vi.fn(async () => ({ status: "ok", data: { sha: "", status: "none", code: "N", signer: "", key: "", fingerprint: "", detail: "" } })),
     plumbingInspect: vi.fn(),
     revealPathInFileManager: vi.fn(async () => ({ status: "ok", data: null })),
   },
@@ -926,5 +927,81 @@ describe("file row context menu", () => {
     detailCtrl.openFileMenu(deleted, 0, 0);
     expect(item("copy-path").disabled).toBeFalsy();
     expect(item("copy-full-path").disabled).toBeFalsy();
+  });
+});
+
+describe("signature badge", () => {
+  const LIVE_ROW = (sha: string) => ({ sha, subject: "s", an: { n: "Dev", e: "d@x.dev", t: 100 }, cm: { n: "Dev", e: "d@x.dev", t: 100 }, refs: [] });
+  const SIG = (status: string, extra: Record<string, string> = {}) =>
+    ok({ sha: "full", status, code: "?", signer: "", key: "", fingerprint: "", detail: "", ...extra }) as any;
+
+  beforeEach(() => {
+    detailCtrl.sig = null;
+    vi.mocked(commands.commitDetail).mockReturnValue(new Promise(() => {}) as any); // diff never lands — the badge must not need it
+  });
+
+  it("is 'checking' until git answers, then shows the real verdict with signer + key in the tooltip", async () => {
+    setBackendGraph([LIVE_ROW("aaa1111")]);
+    let resolveSig: (v: any) => void;
+    vi.mocked(commands.commitSignature).mockReturnValueOnce(new Promise((r) => (resolveSig = r)) as any);
+    detailCtrl.select(0);
+    expect(detailCtrl.gpgBadge[0]).toBe("checking");
+    await vi.waitFor(() => expect(commands.commitSignature).toHaveBeenCalledWith("/repo", "aaa1111"));
+
+    resolveSig!(SIG("good", { signer: "Jane <j@x.dev>", fingerprint: "SHA256:abc" }));
+    await vi.waitFor(() => expect(detailCtrl.gpgBadge[0]).toBe("good"));
+    expect(detailCtrl.gpgBadge[2]).toContain("Jane <j@x.dev>");
+    expect(detailCtrl.gpgBadge[2]).toContain("SHA256:abc");
+  });
+
+  it("'unverified' (git couldn't check) is its own badge, not bad, and carries git's reason", async () => {
+    setBackendGraph([LIVE_ROW("aaa1111")]);
+    vi.mocked(commands.commitSignature).mockResolvedValueOnce(SIG("unverified", { detail: "error: allowedSignersFile needs to be configured" }));
+    detailCtrl.select(0);
+    await vi.waitFor(() => expect(detailCtrl.gpgBadge[0]).toBe("unverified"));
+    expect(detailCtrl.gpgBadge[2]).toContain("allowedSignersFile");
+  });
+
+  it("a failed check (timeout / no git) shows as unverified, never as unsigned or bad", async () => {
+    setBackendGraph([LIVE_ROW("aaa1111")]);
+    vi.mocked(commands.commitSignature).mockResolvedValueOnce(err("i18n:err_history.signature_timed_out\u001fsecs\u001f8") as any);
+    detailCtrl.select(0);
+    await vi.waitFor(() => expect(detailCtrl.gpgBadge[0]).toBe("unverified"));
+    expect(detailCtrl.gpgBadge[2]).toContain("8");
+  });
+
+  it("a slow answer for a previously selected commit never lands on the current one", async () => {
+    setBackendGraph([LIVE_ROW("aaa1111"), LIVE_ROW("bbb2222")]);
+    let resolveFirst: (v: any) => void;
+    vi.mocked(commands.commitSignature)
+      .mockReturnValueOnce(new Promise((r) => (resolveFirst = r)) as any)
+      .mockResolvedValueOnce(SIG("none"));
+    detailCtrl.select(0);
+    await vi.waitFor(() => expect(commands.commitSignature).toHaveBeenCalledTimes(1)); // first request in flight
+    detailCtrl.select(1);
+    await vi.waitFor(() => expect(detailCtrl.gpgBadge[0]).toBe("none"));
+    resolveFirst!(SIG("bad"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(detailCtrl.gpgBadge[0]).toBe("none");
+  });
+
+  it("debounces: skimming through commits verifies only the one the selection settles on", async () => {
+    setBackendGraph([LIVE_ROW("aaa1111"), LIVE_ROW("bbb2222"), LIVE_ROW("ccc3333")]);
+    vi.mocked(commands.commitSignature).mockClear();
+    vi.mocked(commands.commitSignature).mockResolvedValueOnce(SIG("good"));
+    detailCtrl.select(0);
+    detailCtrl.select(1);
+    detailCtrl.select(2);
+    await vi.waitFor(() => expect(detailCtrl.gpgBadge[0]).toBe("good"));
+    expect(commands.commitSignature).toHaveBeenCalledTimes(1);
+    expect(commands.commitSignature).toHaveBeenCalledWith("/repo", "ccc3333");
+  });
+
+  it("design mode never calls git and labels its verdict as demo data", () => {
+    setDemoGraph();
+    detailCtrl.select(1);
+    expect(commands.commitSignature).not.toHaveBeenCalled();
+    expect(["good", "bad", "none"]).toContain(detailCtrl.gpgBadge[0]);
+    expect(detailCtrl.gpgBadge[2]).toMatch(/demo/i);
   });
 });

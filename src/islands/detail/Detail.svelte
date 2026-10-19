@@ -180,7 +180,7 @@
         onkeydown={(e) => (e.key === "Enter" || e.key === " ") && detailCtrl.copySha()}
         >{detailCtrl.copied ? t("detail.copied") : c.sha}</span
       >
-      <span class="gpg {gpg[0]}">{gpg[1]}</span>
+      <span class="gpg {gpg[0]}" title={gpg[2] || undefined}>{gpg[1]}</span>
       <span class="mut mono" style="font-size:11px">{t("detail.row_of", { row: c.row.toLocaleString(), total: (bridge.G?.N ?? 0).toLocaleString() })}</span>
     </div>
     <button

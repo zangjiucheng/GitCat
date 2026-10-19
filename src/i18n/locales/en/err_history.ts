@@ -22,6 +22,9 @@ export default {
   cannot_resolve_target: "Cannot resolve target: {detail}",
   bad_commit_id: "Bad commit id {sha}: {detail}",
   cannot_find_commit: "Cannot find commit {sha}: {detail}",
+  // Commit signature badge (signature.rs): git took too long to verify.
+  signature_timed_out: "Signature check timed out after {secs}s.",
+  signature_check_failed: "Signature check failed: {detail}",
   could_not_create_todo_dir: "could not create rebase-todo dir: {detail}",
   could_not_write_todo: "could not write precomputed todo: {detail}",
   rebase_in_progress: "A rebase is already in progress — resolve or abort it first.",

@@ -12,6 +12,7 @@ import { snapshotPreviewCtrl } from "../islands/snapshotpreview/snapshotpreview.
 import { submoduleNavCtrl } from "../islands/submodulenav/submodulenav.svelte.ts";
 import { ribbonTickFracs, RIBBON_TOP_FRAC, RIBBON_BOT_FRAC, RIBBON_MIN_TICK_PX } from "./ribbon.ts";
 import { displayChips } from "./reforder.ts";
+import { shouldOfferStashUndo } from "./undoflow.ts";
 import { LruCache } from "./graphcache.ts";
 import { clampResize, dragCeiling } from "./resize.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
@@ -2486,18 +2487,19 @@ async function globalUndo(){
       const to=(res.restoredTo||"").slice(0,7);
       Tama.event("undo.performed",{hash:to||hhex(1)}); pulseTick(0);
       cheer(t("legacy.cheer_rewound"),tamaPose("confident"));
-    } else if(!useStashUndo && /uncommitted changes/i.test((res&&res.message)||"")){
+    } else if(shouldOfferStashUndo(res,useStashUndo)){
       // Undo refused because the working tree is dirty (its reset --hard would
       // DISCARD those changes — see safety.rs's undo()). Offer to keep them:
       // stash → undo → pop (undo_last_stashing).
+      // Decided on res.reason ("dirty_worktree"), never the localized
+      // message text — see undoflow.ts.
       //
       // Uses the app's own Tama-styled confirm (tamaConfirmCtrl.ask), NOT an
       // OS-native dialog. History: this was a synchronous window.confirm() that
       // could silently return false in the release WKWebView (making Undo do
       // nothing); then the native plugin dialog; now the in-app Tama dialog —
       // reliable, on-brand, and always gives feedback on the cancel branch below.
-      const msg="You have uncommitted changes, so Undo can't run — it resets the working tree.\n\nStash your changes, undo, then put them back? Nothing is lost; if re-applying conflicts you'll resolve it, and your changes are also kept in a stash.";
-      const proceed=await tamaConfirmCtrl.ask({title:"Undo with stash?",message:msg,confirmLabel:"Stash & undo",cancelLabel:"Cancel",kind:"warning"});
+      const proceed=await tamaConfirmCtrl.ask({title:t("legacy.undo_stash_title"),message:t("legacy.undo_stash_message"),confirmLabel:t("legacy.undo_stash_confirm"),cancelLabel:t("legacy.undo_stash_cancel"),kind:"warning"});
       if(proceed){
         const r2=await tinvoke("undo_last_stashing",{path:CUR_REPO});
         if(r2&&r2.ok){

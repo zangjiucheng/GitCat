@@ -40,11 +40,13 @@ pub mod registry_lock; // #60: cross-PROCESS lock around each registry's load->m
 pub mod repo_registry; // backlog #11: app-level tracked-repos JSON persistence
 pub mod repo_summary; // Repository Summary: git-log-derived churn/contributor/activity/problem-area diagnostics
 pub mod rerere; // M5a: git-rerere status/toggle panel
+pub mod signature; // commit signature verdict (git's own %G? — gpg/ssh/x509) for the detail panel's badge, fetched lazily per selected commit
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
 pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 deinit/remove
 pub mod terminal; // "Open Terminal": a real PTY-backed shell embedded in GitCat's own UI
 pub mod plugin_exec; // PER-40: plugin command executor + placeholder grammar (declarative, external-process plugins)
 pub mod plugin_lua; // PER-56: embedded Luau plugin scripting runtime (sandboxed, curated host API)
+pub mod plugin_git_policy; // allowlist + argument screening for the Luau sandbox's git() host function
 pub mod plugin_market; // in-app plugin catalogue: reads the community index and fetches a plugin's files so the ORDINARY install path can take over
 pub mod plugin_registry; // PER-39: app-level plugin registry (plugins.json under app_config_dir) + install/enable/remove CRUD
 pub mod tool_settings; // backlog #12: external diff/merge tool settings + delegate entirely to `git difftool`/`git mergetool`
@@ -75,6 +77,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::graph_fast_refresh,
         commands::head_ancestor_flags,
         commands::commit_detail,
+        signature::commit_signature, // the detail badge's signature verdict, lazily, for the selected commit only
         commands::ancestors_of,
         // #37: raw image/PDF blob bytes for a side-by-side visual diff preview
         // (serves both the commit-detail diff and the working-tree diff), plus

@@ -9,7 +9,7 @@ mod common;
 
 use common::{short, TempRepo};
 use gitcat_lib::git_write::{branch_merge_status, checkout, create_branch, delete_branch, list_refs, rename_branch};
-use gitcat_lib::safety::{create_snapshot, list_snapshots, undo_last};
+use gitcat_lib::safety::{create_snapshot, list_snapshots, undo_last, undo_last_stashing, UndoRefusal};
 
 #[test]
 fn list_refs_reports_current_branch_and_tip() {
@@ -157,6 +157,9 @@ fn undo_refuses_on_dirty_tree_and_restores_head_when_clean() {
         "unexpected refusal message: {}",
         refused.message
     );
+    // The frontend's "stash, undo, re-apply" offer keys off this typed reason,
+    // never the (localized) message text.
+    assert_eq!(refused.reason, Some(UndoRefusal::DirtyWorktree));
     assert!(refused.restored_to.is_none());
     // HEAD must not have moved.
     assert_eq!(repo.rev("refs/heads/main").as_deref(), Some(c2.as_str()));
@@ -168,6 +171,7 @@ fn undo_refuses_on_dirty_tree_and_restores_head_when_clean() {
 
     let undone = tauri::async_runtime::block_on(undo_last(path.clone())).expect("undo_last failed");
     assert!(undone.ok, "undo failed: {}", undone.message);
+    assert_eq!(undone.reason, None, "a successful undo carries no refusal reason");
     assert_eq!(undone.restored_to.as_deref(), Some(short(&c1).as_str()));
     assert_eq!(
         repo.rev("refs/heads/main").as_deref(),
@@ -271,4 +275,35 @@ fn no_default_branch_resolvable_returns_none_and_an_empty_merged_list() {
     let info = tauri::async_runtime::block_on(branch_merge_status(repo.path())).expect("branch_merge_status failed");
     assert_eq!(info.default_branch, None, "no origin/HEAD and no main/master branch — nothing to resolve");
     assert!(info.merged.is_empty(), "can't classify anything as merged without a default branch to compare against");
+}
+
+/// UndoResult.reason is the machine-readable contract the frontend branches on
+/// (legacy/undoflow.ts) — `message` is localized text and must never be parsed.
+/// Covers: no snapshot -> NothingToUndo; dirty tree -> DirtyWorktree (the one
+/// that triggers the stash-undo offer); and the stash path then succeeding with
+/// no reason and the user's edit re-applied.
+#[test]
+fn undo_reports_typed_refusal_reasons() {
+    let repo = TempRepo::init("undo_typed_reasons");
+    let c1 = repo.commit("f.txt", "1\n", "c1");
+    let path = repo.path();
+
+    let none = tauri::async_runtime::block_on(undo_last(path.clone())).expect("undo_last failed");
+    assert!(!none.ok);
+    assert_eq!(none.reason, Some(UndoRefusal::NothingToUndo));
+
+    tauri::async_runtime::block_on(create_snapshot(path.clone())).expect("create_snapshot failed");
+    let _c2 = repo.commit("f.txt", "2\n", "c2");
+    std::fs::write(repo.dir.join("g.txt"), "keep me\n").unwrap();
+
+    let dirty = tauri::async_runtime::block_on(undo_last(path.clone())).expect("undo_last failed");
+    assert!(!dirty.ok);
+    assert_eq!(dirty.reason, Some(UndoRefusal::DirtyWorktree));
+
+    let stashed = tauri::async_runtime::block_on(undo_last_stashing(path.clone())).expect("undo_last_stashing failed");
+    assert!(stashed.ok, "stash-undo failed: {}", stashed.message);
+    assert_eq!(stashed.reason, None);
+    assert_eq!(repo.rev("refs/heads/main").as_deref(), Some(c1.as_str()));
+    assert_eq!(std::fs::read_to_string(repo.dir.join("g.txt")).unwrap(), "keep me
+");
 }

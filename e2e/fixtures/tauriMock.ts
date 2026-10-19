@@ -287,6 +287,21 @@ function stashList(repo: TempRepo) {
   });
 }
 
+// Mirrors signature.rs's commit_signature: git's own %G? verdict. The e2e temp
+// repos are unsigned, so in practice this is always { status: "none" }.
+function commitSignature(repo: TempRepo, sha: string) {
+  const code = repo.git("log", "-1", "--no-show-signature", "--format=%G?", sha).trim();
+  // Mirrors signature.rs's map_sig_code.
+  const status =
+    code === "N" || code === "" ? "none"
+    : code === "G" ? "good"
+    : code === "U" ? "untrusted"
+    : code === "X" || code === "Y" ? "expired"
+    : code === "B" || code === "R" ? "bad"
+    : "unverified";
+  return { sha, status, code, signer: "", key: "", fingerprint: "", detail: "" };
+}
+
 function commitDetail(repo: TempRepo, sha: string) {
   const subject = repo.git("log", "-1", "--format=%s", sha);
   const body = repo.git("log", "-1", "--format=%b", sha);
@@ -563,6 +578,8 @@ function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[]) {
         return stashList(repo);
       case "commit_detail":
         return commitDetail(repo, args.sha);
+      case "commit_signature":
+        return commitSignature(repo, args.sha);
       case "watch_repo":
       case "unwatch_repo":
         return null;

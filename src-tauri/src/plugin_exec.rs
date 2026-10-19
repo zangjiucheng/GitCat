@@ -81,7 +81,9 @@
 //!     invocation is TRUSTED read-only and takes no snapshot (no Undo clutter) —
 //!     so a mutating action that does NOT declare `mutates` runs OUTSIDE Undo.
 //!     Plugin authors MUST set `mutates` on anything that changes the repo (see
-//!     SECURITY.md); GitCat cannot infer it from an opaque `run` string.
+//!     SECURITY.md); GitCat cannot infer it from an opaque `run` string. A Luau
+//!     handler IS checked: its `git()` refuses a mutating subcommand unless the
+//!     command/hook declared `mutates` (see `crate::plugin_git_policy`).
 //!   * **Flag/argument injection.** [`shell_quote`] stops shell-metacharacter
 //!     injection but does NOT change argument boundaries: an untrusted value
 //!     beginning with `-` (a branch named `--upload-pack=…`, a ref `-n`) is
@@ -496,8 +498,9 @@ pub async fn run_plugin_command(
         // snapshot can't be taken, the command does not run (never mutate what we
         // couldn't back up). A `mutates: false` command is trusted read-only and
         // takes no snapshot. See [`snapshot_before_mutation`]. This applies
-        // equally to a Luau handler and a shell `run` (a handler that calls
-        // `git`-mutating operations must declare `mutates`, same as a shell one).
+        // equally to a Luau handler and a shell `run`. For a Luau handler `mutates`
+        // is also ENFORCED: its git() refuses a repository-changing subcommand
+        // unless it was declared (see plugin_git_policy).
         if mutates {
             snapshot_before_mutation(&cwd)?;
         }
@@ -507,7 +510,7 @@ pub async fn run_plugin_command(
             // Err (compile/runtime/timeout) surfaces as the command failing.
             Some(h) => {
                 let src = lua_src.expect("a handler command loads its Luau source above");
-                crate::plugin_lua::run_lua_handler(&src, &h, &ctx, &cwd)
+                crate::plugin_lua::run_lua_handler(&src, &h, &ctx, &cwd, mutates)
             }
             // Shell path (unchanged): expand + run the `run` template.
             None => run_template(run.as_deref().unwrap_or_default(), &cwd, &ctx),
@@ -617,7 +620,7 @@ pub async fn run_hooks(
                 HookAction::Shell(run) => run_template_with_timeout(&run, &cwd, &ctx, HOOK_TIMEOUT),
                 HookAction::Lua { handler, dir, lua } => {
                     match crate::plugin_registry::read_plugin_lua(dir.as_deref(), lua.as_deref()) {
-                        Ok(src) => crate::plugin_lua::run_lua_handler(&src, &handler, &ctx, &cwd),
+                        Ok(src) => crate::plugin_lua::run_lua_handler(&src, &handler, &ctx, &cwd, mutates),
                         Err(e) => Err(e),
                     }
                 }

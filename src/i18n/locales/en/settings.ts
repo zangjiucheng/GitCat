@@ -92,7 +92,7 @@ export default {
   // Snapshots
   snapshots: "Snapshots",
   snapshots_desc:
-    "Every history-changing action pins a recoverable backup — this is what powers ⌘Z Undo and the Snapshots ribbon. Without cleanup they build up over time. Auto-cleanup prunes old ones each time a repo opens; the single most recent snapshot is always kept.",
+    "Everyday history-changing actions pin a recoverable backup — this is what powers ⌘Z Undo and the Snapshots ribbon. Without cleanup they build up over time. Auto-cleanup prunes old ones each time a repo opens; the single most recent snapshot is always kept.",
   snapshot_keep_all: "Keep everything (no cleanup)",
   snapshot_keep_count: "Keep the newest N",
   snapshot_keep_age: "Keep the last N days",

@@ -23,7 +23,7 @@ The full walkthrough is on its way. Here's the outline of what it covers.
 | `⌘O` | Open / switch repository |
 | `⌘,` | Settings |
 | `⌘⇧H` | Recentre the graph on `HEAD` |
-| `⌘Z` | Undo the last mutation |
+| `⌘Z` | Undo the last history-changing operation (see [Undo & the Safety Manager](/guide/undo-safety)) |
 | `⌘⇧N` | New branch |
 | `⌘N` | New window |
 | `⌘F` | Search Code |

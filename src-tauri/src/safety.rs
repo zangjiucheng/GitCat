@@ -154,6 +154,30 @@ pub struct Snapshot {
     pub subject: String,   // that commit's subject line
 }
 
+/// Machine-readable reason an undo/restore did NOT run (or failed part-way).
+/// The frontend branches on THIS, never on `message` — `message` is localized
+/// display text (an i18n key resolved by `be()`), so matching it with an
+/// English regex silently breaks (it did: the "stash, undo, re-apply" offer for
+/// a dirty tree could never appear). Serialized snake_case:
+/// `"dirty_worktree"`, `"nothing_to_undo"`, ...
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum UndoRefusal {
+    /// No backup snapshot exists to rewind to.
+    NothingToUndo,
+    /// The working tree has uncommitted changes; a `reset --hard` would
+    /// discard them. The UI offers stash → undo → re-apply for this one.
+    DirtyWorktree,
+    /// `git status` itself failed, so cleanliness can't be verified.
+    CannotVerifyClean,
+    /// Sealing the current state (undo-is-undoable) failed; nothing moved.
+    SnapshotFailed,
+    /// The target selection no longer exists (e.g. a stale reflog index).
+    StaleSelection,
+    /// Any other failure (git command failed, stash failed, ...).
+    Failed,
+}
+
 /// Result of a global undo.
 #[derive(Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -162,6 +186,8 @@ pub struct UndoResult {
     pub message: String,
     pub restored_to: Option<String>, // short sha HEAD was moved to
     pub sealed: Option<String>,      // backup ref of the pre-undo state
+    /// Why `ok` is false (`None` on success). Branch on this, not `message`.
+    pub reason: Option<UndoRefusal>,
 }
 
 /// One op-log entry (JSON line). camelCase keys: `backupRef`, `headBefore`,
@@ -356,6 +382,7 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
                 message: ierr("err_misc.nothing_to_undo"),
                 restored_to: None,
                 sealed: None,
+                reason: Some(UndoRefusal::NothingToUndo),
             })
         }
     };
@@ -374,6 +401,7 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
             message: ierrp("err_misc.cannot_verify_clean_refusing_undo", &[("detail", dirty.stderr.as_str())]),
             restored_to: None,
             sealed: None,
+            reason: Some(UndoRefusal::CannotVerifyClean),
         });
     }
     if !dirty.stdout.is_empty() {
@@ -382,6 +410,7 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
             message: ierr("err_misc.worktree_has_uncommitted_undo"),
             restored_to: None,
             sealed: None,
+            reason: Some(UndoRefusal::DirtyWorktree),
         });
     }
 
@@ -395,6 +424,7 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
                 message: ierrp("err_misc.undo_aborted_snapshot_failed", &[("detail", e.as_str())]),
                 restored_to: None,
                 sealed: None,
+                reason: Some(UndoRefusal::SnapshotFailed),
             })
         }
     };
@@ -453,20 +483,20 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
             if !sr.ok {
                 return Ok(UndoResult { ok: false,
                     message: ierrp("err_misc.undo_failed_restoring_head", &[("detail", sr.stderr.as_str())]),
-                    restored_to: None, sealed });
+                    restored_to: None, sealed, reason: Some(UndoRefusal::Failed) });
             }
             let reset = run_git_worktree(workdir, &["reset", "--hard", target_sha.as_str()])?;
             if !reset.ok {
                 return Ok(UndoResult { ok: false,
                     message: ierrp("err_misc.undo_failed", &[("detail", reset.stderr.as_str())]),
-                    restored_to: None, sealed });
+                    restored_to: None, sealed, reason: Some(UndoRefusal::Failed) });
             }
         } else {
             let co = run_git_worktree(workdir, &["checkout", "-q", "--detach", target_sha.as_str()])?;
             if !co.ok {
                 return Ok(UndoResult { ok: false,
                     message: ierrp("err_misc.undo_failed_detaching_head", &[("detail", co.stderr.as_str())]),
-                    restored_to: None, sealed });
+                    restored_to: None, sealed, reason: Some(UndoRefusal::Failed) });
             }
         }
 
@@ -492,14 +522,14 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
             if !sr.ok {
                 return Ok(UndoResult { ok: false,
                     message: ierrp("err_misc.undo_failed_restoring_head", &[("detail", sr.stderr.as_str())]),
-                    restored_to: None, sealed });
+                    restored_to: None, sealed, reason: Some(UndoRefusal::Failed) });
             }
         }
         let reset = run_git_worktree(workdir, &["reset", "--hard", target_sha.as_str()])?;
         if !reset.ok {
             return Ok(UndoResult { ok: false,
                 message: ierrp("err_misc.undo_failed", &[("detail", reset.stderr.as_str())]),
-                restored_to: None, sealed });
+                restored_to: None, sealed, reason: Some(UndoRefusal::Failed) });
         }
     }
 
@@ -522,6 +552,7 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
         message: format!("Rewound to {}{}.", short(&target_sha), branch_note),
         restored_to: Some(short(&target_sha)),
         sealed,
+        reason: None,
     })
 }
 
@@ -612,7 +643,7 @@ pub fn undo_stashing(repo: &Repository) -> Result<UndoResult, String> {
         .to_string();
     let workdir = workdir.as_str();
 
-    let err = |message: String| UndoResult { ok: false, message, restored_to: None, sealed: None };
+    let err = |message: String| UndoResult { ok: false, message, restored_to: None, sealed: None, reason: Some(UndoRefusal::Failed) };
 
     // Stash everything (tracked + untracked) so undo's `reset --hard` runs on a
     // clean tree instead of refusing.
