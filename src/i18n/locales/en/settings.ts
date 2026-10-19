@@ -43,6 +43,13 @@ export default {
   detail_placement_right: "Right side",
   detail_placement_bottom: "Bottom",
 
+  // What the expand-diff icon does by default — open the existing modal in
+  // this window, or detach straight into a new GitCat window.
+  diff_open_mode: "Open diffs in",
+  diff_open_mode_desc: "What the expand icon on a commit's diff does by default. Either way, an expanded diff always has its own pop-out button.",
+  diff_open_mode_modal: "Full-screen panel",
+  diff_open_mode_window: "New window",
+
   // Cherry-pick
   cherrypick: "Cherry-pick",
   cherrypick_origin_hint: "Append '(cherry picked from …)' to the resulting commit message",

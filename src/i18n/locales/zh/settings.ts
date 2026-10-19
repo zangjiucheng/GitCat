@@ -40,6 +40,12 @@ export default {
   detail_placement_right: "右侧",
   detail_placement_bottom: "底部",
 
+  // 展开图标默认的行为——在当前窗口打开原有的弹窗,还是直接弹出一个新的 GitCat 窗口。
+  diff_open_mode: "差异默认打开方式",
+  diff_open_mode_desc: "提交差异的展开图标默认执行的操作。无论选哪种,展开后的差异视图里都始终有一个独立的弹出按钮。",
+  diff_open_mode_modal: "全屏面板",
+  diff_open_mode_window: "新窗口",
+
   // Cherry-pick
   cherrypick: "Cherry-pick",
   cherrypick_origin_hint: "在生成的 commit 信息中追加 '(cherry picked from …)'",

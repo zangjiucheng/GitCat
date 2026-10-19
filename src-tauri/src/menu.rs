@@ -392,7 +392,7 @@ pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
         // windows.rs's own module doc) — handled directly here, not
         // forwarded to the frontend, since there's nothing for JS to do.
         "new-window" => {
-            crate::windows::spawn_new_window(None);
+            crate::windows::spawn_new_window(None, None);
         }
         // Everything else is a frontend (Svelte controller / legacy chrome)
         // action — forward the id as a JS event rather than duplicating that

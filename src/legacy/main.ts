@@ -3784,11 +3784,29 @@ if(IN_TAURI){
   // Boot the empty hero (so the app is usable — pick a real folder) and name the
   // offending path, VS Code-style.
   const repoError=params.get("repoError");
+  // Diff pop-out (windows.rs's own `?commit=`, set by detail.svelte.ts's
+  // popOutDiff via open_diff_in_new_window) — DIFF_ONLY_WINDOW (env.ts) is
+  // this SAME repo+commit pair; a window booted this way shows nothing BUT
+  // that one commit's diff (index.html's own `.diff-only` CSS hides the
+  // topbar/sidebar/graph entirely — see its own comment), so it skips
+  // openRepo()'s whole repo-wide graph stream/sidebar-refresh/NAV_STACK
+  // dance in favor of loading exactly the one commit it exists to show.
+  // expandDiff() runs synchronously right after — selectBySha sets
+  // `detailCtrl.commit` before its first await, so it's already truthy by
+  // the time expandDiff's own `if (!this.commit) return` guard runs.
+  const initialCommit=params.get("commit");
   // openRepo() derives NAV_STACK + refreshes the submodule-nav strip itself, so a
   // repo opened by deep-link that happens to be a submodule shows its context too.
   // On failure (e.g. the repo became inaccessible between the launch-time check
   // and now) fall back to the empty hero rather than a stranded blank frame.
-  if(initialRepo){ openRepo(initialRepo).then(ok=>{ if(!ok) bootEmpty(); }); }
+  if(initialRepo && initialCommit){
+    document.body.classList.add("diff-only");
+    void detailCtrl.selectBySha(initialRepo, initialCommit);
+    detailCtrl.expandDiff();
+  }
+  else if(initialRepo){
+    openRepo(initialRepo).then(ok=>{ if(!ok) bootEmpty(); });
+  }
   else { bootEmpty(); if(repoError) Tama.warn(t("legacy.not_a_repo",{repo:repoError}), 6000); }
 }
 else { loadGraph(10000); }          // plain browser (design mode): synthetic demo data
