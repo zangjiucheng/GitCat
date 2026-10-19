@@ -13,9 +13,9 @@
    brighter text, stronger borders, and vivid saturated lane colours. */
 :root{
   /* light — higher contrast on warm cream */
-  --bg:#FFFFFF; --panel:#F6F7F9; --elevated:#FFFFFF; --border:#E3E6EB;
-  --text:#191C22; --muted:#667085; --accent:#5B57D6; --accent2:#2E8B72;
-  --danger:#D14343; --warning:#B9781C; --success:#3C9A5A;
+  --bg:#FFFFFF; --panel:#F7F5F1; --elevated:#FFFFFF; --border:#E5DFD6;
+  --text:#1E1A16; --muted:#6B635A; --accent:#B4531C; --on-accent:#FFFFFF; --accent2:#2E8B72;
+  --danger:#C8383C; --warning:#946800; --success:#2F7D45;
   --l0:#0E9C86; --l1:#D6497A; --l2:#4E5FE0; --l3:#C07E12; --l4:#8B45C4; --l5:#1488BE; --l6:#579A1C;
   --fur:#E0A75C; --fur-shade:#C88A3E; --fur-line:#6A4E2D; --ear-in:#ED96A4;
   --skin:#F9E2CA; --skin-line:#BE8C63; --eye:#B0680E; --eye-dark:#7E4A0E; --eye-lite:#E7A63E;
@@ -25,31 +25,31 @@
   --display:"SF Pro Rounded",ui-rounded,"Nunito","Segoe UI Variable",system-ui,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
   --r-card:12px; --r-panel:10px; --r-control:8px; --r-pill:999px; --r-chip:4px;
   --topbar-h:46px; --sidebar-w:264px; --detail-w:344px; --detail-h:320px; --ribbon-w:46px; --nook-h:132px; --row-h:26px; --term-h:280px;
-  --shadow:0 6px 20px rgba(16,18,27,.10), 0 1px 3px rgba(16,18,27,.08);
+  --shadow:0 6px 20px rgba(32,22,12,.10), 0 1px 3px rgba(32,22,12,.08);
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#0F1116; --panel:#171A21; --elevated:#20242D; --border:#2D323C;
-  --text:#ECEEF3; --muted:#98A1AE; --accent:#8E88F2; --accent2:#5FD0B4;
-  --danger:#F06A5B; --warning:#F0973E; --success:#5FC98A;
+  --bg:#12100E; --panel:#1A1714; --elevated:#24201C; --border:#363029;
+  --text:#EFE9E2; --muted:#A69C91; --accent:#F2A15E; --on-accent:#1A1209; --accent2:#5FD0B4;
+  --danger:#F06A5B; --warning:#E6C04F; --success:#5FC98A;
   --l0:#3FD3B6; --l1:#F98CAD; --l2:#8AA0FF; --l3:#F6BA50; --l4:#C79BF0; --l5:#5ED0EA; --l6:#A9DC5F;
   --fur:#E1A85C; --fur-shade:#C6883C; --fur-line:#3B2C1B; --ear-in:#DC8B99;
   --skin:#F2D4B4; --skin-line:#8C6C4C; --eye:#F5B843; --eye-dark:#A96C14; --eye-lite:#FFD888;
   --sweater:#EADCC0; --sweater-line:#B49D74; --mouth:#CB6F65; color-scheme:dark;
 }}
 :root[data-theme="light"]{
-  --bg:#FFFFFF; --panel:#F6F7F9; --elevated:#FFFFFF; --border:#E3E6EB;
-  --text:#191C22; --muted:#667085; --accent:#5B57D6; --accent2:#2E8B72;
-  --danger:#D14343; --warning:#B9781C; --success:#3C9A5A;
+  --bg:#FFFFFF; --panel:#F7F5F1; --elevated:#FFFFFF; --border:#E5DFD6;
+  --text:#1E1A16; --muted:#6B635A; --accent:#B4531C; --on-accent:#FFFFFF; --accent2:#2E8B72;
+  --danger:#C8383C; --warning:#946800; --success:#2F7D45;
   --l0:#0E9C86; --l1:#D6497A; --l2:#4E5FE0; --l3:#C07E12; --l4:#8B45C4; --l5:#1488BE; --l6:#579A1C;
   --fur:#E0A75C; --fur-shade:#C88A3E; --fur-line:#6A4E2D; --ear-in:#ED96A4;
   --skin:#F9E2CA; --skin-line:#BE8C63; --eye:#B0680E; --eye-dark:#7E4A0E; --eye-lite:#E7A63E;
   --sweater:#F3E6D0; --sweater-line:#C6B088; --mouth:#B85F58; color-scheme:light;
 }
 :root[data-theme="dark"]{
-  --bg:#0F1116; --panel:#171A21; --elevated:#20242D; --border:#2D323C;
-  --text:#ECEEF3; --muted:#98A1AE; --accent:#8E88F2; --accent2:#5FD0B4;
-  --danger:#F06A5B; --warning:#F0973E; --success:#5FC98A;
+  --bg:#12100E; --panel:#1A1714; --elevated:#24201C; --border:#363029;
+  --text:#EFE9E2; --muted:#A69C91; --accent:#F2A15E; --on-accent:#1A1209; --accent2:#5FD0B4;
+  --danger:#F06A5B; --warning:#E6C04F; --success:#5FC98A;
   --l0:#3FD3B6; --l1:#F98CAD; --l2:#8AA0FF; --l3:#F6BA50; --l4:#C79BF0; --l5:#5ED0EA; --l6:#A9DC5F;
   --fur:#E1A85C; --fur-shade:#C6883C; --fur-line:#3B2C1B; --ear-in:#DC8B99;
   --skin:#F2D4B4; --skin-line:#8C6C4C; --eye:#F5B843; --eye-dark:#A96C14; --eye-lite:#FFD888;
@@ -230,7 +230,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   transition:border-color .12s,background-color .12s}
 .tb-btn:hover{border-color:var(--muted)}
 .tb-btn:disabled{opacity:.45;cursor:default;pointer-events:none}
-.tb-btn .badge{font-family:var(--mono);font-size:11px;background:var(--accent);color:#fff;
+.tb-btn .badge{font-family:var(--mono);font-size:11px;background:var(--accent);color:var(--on-accent);
   border-radius:var(--r-pill);padding:0 6px;font-weight:700}
 .tb-btn.undo{border-color:color-mix(in srgb,var(--accent2) 40%,var(--border))}
 .tb-btn.undo span{display:flex;align-items:center;gap:6px}

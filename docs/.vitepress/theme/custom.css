@@ -2,40 +2,37 @@
  * project's own precedent for reaching for an off-the-shelf tool over
  * hand-rolling everything) rather than replacing it outright.
  *
- * This used to carry the app's ORIGINAL "Lamplight / Cozy Terminal" palette
- * — all-warm cream/amber, including amber as the general brand/interactive
- * color. That direction was superseded in the app itself on 2026-07-06: the
- * shipped app is a clean neutral canvas (white / charcoal-dark) with color
- * "reserved for meaning" — an indigo/teal UI accent, and warm amber kept
- * ONLY for Tama herself (her fur, her necklace charm, the app icon). This
- * file had never been updated for that pivot, so the docs site's buttons
- * and links were still amber everywhere, a design that GitCat itself no
- * longer has. Tokens below are pulled directly from the app's own
- * `:root`/`.dark` variables in index.html.
+ * History: this first carried the app's original all-amber "Lamplight /
+ * Cozy Terminal" palette; on 2026-07-06 the app pivoted to a neutral canvas
+ * with an indigo/teal accent, and this file followed. On 2026-10-19 the app
+ * went back to warm: an amber accent that matches Tama, on warm-grey
+ * neutrals, with teal kept as the second accent. Tokens below are pulled
+ * directly from the app's own `:root`/`[data-theme]` variables in index.html.
  */
 :root {
   /* Backgrounds */
   --vp-c-bg: #ffffff;
-  --vp-c-bg-alt: #f6f7f9;
-  --vp-c-bg-soft: #f6f7f9;
+  --vp-c-bg-alt: #f7f5f1;
+  --vp-c-bg-soft: #f7f5f1;
   --vp-c-bg-elv: #ffffff;
 
   /* Borders */
-  --vp-c-border: #e3e6eb;
-  --vp-c-divider: #e3e6eb;
-  --vp-c-gutter: #e3e6eb;
+  --vp-c-border: #e5dfd6;
+  --vp-c-divider: #e5dfd6;
+  --vp-c-gutter: #e5dfd6;
 
   /* Text */
-  --vp-c-text-1: #191c22;
-  --vp-c-text-2: #667085;
-  --vp-c-text-3: #98a1ae;
+  --vp-c-text-1: #1e1a16;
+  --vp-c-text-2: #6b635a;
+  --vp-c-text-3: #9a9087;
 
-  /* Brand — the app's actual interactive accent (indigo), not the mascot's
-     amber. Contrast-checked: #5b57d6 on white is ~5.6:1, comfortably AA. */
-  --vp-c-indigo-1: #5b57d6;
-  --vp-c-indigo-2: #4a45c4;
-  --vp-c-indigo-3: #5b57d6;
-  --vp-c-indigo-soft: rgba(91, 87, 214, 0.12);
+  /* Brand — the app's interactive accent (amber, the same family as Tama's
+     fur). Contrast-checked: #b4531c on white is ~5.0:1, AA. */
+  --gc-amber-1: #b4531c;
+  --gc-amber-2: #9a4515;
+  --gc-amber-3: #b4531c;
+  --gc-amber-soft: rgba(180, 83, 28, 0.12);
+  --gc-on-amber: #ffffff;
 
   /* Teal — the app's second accent, used here for a bit of two-tone variety
      (feature icons, the hero glow) exactly where the app itself uses it. */
@@ -43,20 +40,23 @@
   --vp-c-teal-2: #24705c;
   --vp-c-teal-soft: rgba(46, 139, 114, 0.12);
 
-  --vp-c-brand-1: var(--vp-c-indigo-1);
-  --vp-c-brand-2: var(--vp-c-indigo-2);
-  --vp-c-brand-3: var(--vp-c-indigo-3);
-  --vp-c-brand-soft: var(--vp-c-indigo-soft);
+  --vp-c-brand-1: var(--gc-amber-1);
+  --vp-c-brand-2: var(--gc-amber-2);
+  --vp-c-brand-3: var(--gc-amber-3);
+  --vp-c-brand-soft: var(--gc-amber-soft);
+  --vp-button-brand-text: var(--gc-on-amber);
+  --vp-button-brand-hover-text: var(--gc-on-amber);
+  --vp-button-brand-active-text: var(--gc-on-amber);
 
-  --vp-c-warning-1: #b9781c;
-  --vp-c-danger-1: #d14343;
-  --vp-c-success-1: #3c9a5a;
+  --vp-c-warning-1: #946800;
+  --vp-c-danger-1: #c8383c;
+  --vp-c-success-1: #2f7d45;
 
-  --vp-home-hero-name-color: var(--vp-c-indigo-1);
+  --vp-home-hero-name-color: var(--gc-amber-1);
   --vp-home-hero-name-background: transparent;
   --vp-home-hero-image-background-image: radial-gradient(
     circle,
-    var(--vp-c-indigo-soft) 0%,
+    var(--gc-amber-soft) 0%,
     var(--vp-c-teal-soft) 70%,
     transparent 100%
   );
@@ -69,29 +69,31 @@
 }
 
 .dark {
-  --vp-c-bg: #0f1116;
-  --vp-c-bg-alt: #171a21;
-  --vp-c-bg-soft: #171a21;
-  --vp-c-bg-elv: #20242d;
+  --vp-c-bg: #12100e;
+  --vp-c-bg-alt: #1a1714;
+  --vp-c-bg-soft: #1a1714;
+  --vp-c-bg-elv: #24201c;
 
-  --vp-c-border: #2d323c;
-  --vp-c-divider: #2d323c;
-  --vp-c-gutter: #2d323c;
+  --vp-c-border: #363029;
+  --vp-c-divider: #363029;
+  --vp-c-gutter: #363029;
 
-  --vp-c-text-1: #eceef3;
-  --vp-c-text-2: #98a1ae;
-  --vp-c-text-3: #6b7280;
+  --vp-c-text-1: #efe9e2;
+  --vp-c-text-2: #a69c91;
+  --vp-c-text-3: #7a7168;
 
-  --vp-c-indigo-1: #8e88f2;
-  --vp-c-indigo-2: #a5a0f6;
-  --vp-c-indigo-3: #8e88f2;
-  --vp-c-indigo-soft: rgba(142, 136, 242, 0.16);
+  /* Light amber needs dark text on top: white on #f2a15e is only ~2.1:1. */
+  --gc-amber-1: #f2a15e;
+  --gc-amber-2: #f5b47a;
+  --gc-amber-3: #f2a15e;
+  --gc-amber-soft: rgba(242, 161, 94, 0.16);
+  --gc-on-amber: #1a1209;
 
   --vp-c-teal-1: #5fd0b4;
   --vp-c-teal-2: #7ad9c2;
   --vp-c-teal-soft: rgba(95, 208, 180, 0.16);
 
-  --vp-c-warning-1: #f0973e;
+  --vp-c-warning-1: #e6c04f;
   --vp-c-danger-1: #f06a5b;
   --vp-c-success-1: #5fc98a;
 }
@@ -208,7 +210,7 @@
    flush with the two plain VPButton links right next to it. `.dl-main`/
    `.dl-chevron` reuse the SAME --vp-button-brand-* vars every other brand
    button on the site already resolves through (custom.css's own :root
-   block above points those at the indigo palette) rather than hardcoding
+   block above points those at the amber palette) rather than hardcoding
    the color again a third time. */
 .dl-actions {
   display: flex;
@@ -348,7 +350,7 @@
 
    The stock `.alt` VPButton's border resolves to a near-invisible tint on
    the hero background, so give these an explicit, defined outline: a soft
-   surface fill, a real 1px border, and an indigo-tinted hover that echoes
+   surface fill, a real 1px border, and an amber-tinted hover that echoes
    the primary button's own accent. */
 .dl-actions .dl-linkbtn {
   display: inline-flex;
@@ -394,7 +396,7 @@
   border-radius: 12px;
   border: 1px solid var(--vp-c-divider);
   background: var(--vp-c-bg-elv);
-  box-shadow: 0 16px 32px -12px rgba(20, 20, 30, 0.28);
+  box-shadow: 0 16px 32px -12px rgba(32, 22, 12, 0.28);
   animation: gc-menu-in 0.16s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .dark .dl-menu {
@@ -419,7 +421,7 @@
   width: 14px;
   height: 14px;
   flex: none;
-  color: var(--vp-c-indigo-1);
+  color: var(--gc-amber-1);
 }
 .dl-menu-check svg {
   width: 100%;
