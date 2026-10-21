@@ -1738,6 +1738,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-specta",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

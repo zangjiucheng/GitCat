@@ -36,6 +36,12 @@
 //!     WSL being absent, or a single distro failing, is not an error — the
 //!     Windows `.cmd` is the primary result and is what the reported path names.
 //!
+//! Every launcher backgrounds the app only for a LAUNCH. When the first argument
+//! is an option (`--version`, `--help`, a typo), it runs the binary in the
+//! foreground instead, so the output (see `cli.rs`) and the exit status reach
+//! the terminal; macOS can't use `open` for that, since `open` relays nothing.
+//! A bare `--` is passed through, so `gitcat -- -weird` opens `./-weird`.
+//!
 //! The script-building is kept in pure functions (compiled and unit-tested on
 //! every platform via `cfg(any(target_os = …, test))`), so the fiddly launcher
 //! text is verified even where that platform's `install()` glue can't compile.
@@ -92,17 +98,25 @@ fn macos_launcher(bundle: &str) -> String {
 # Opens GitCat through LaunchServices so the terminal returns right away and the
 # new window takes keyboard focus. A relative path is resolved against the
 # current directory first, because `open` starts the app from a different one.
+#
+# Options (--version, --help, ...) run the app binary directly instead: `open`
+# doesn't relay output, and these print to this terminal and exit.
 BUNDLE={bundle}
 if [ $# -eq 0 ]; then
   exec open -n -a "$BUNDLE"
 fi
+case "$1" in
+  --) shift; [ $# -eq 0 ] && exec open -n -a "$BUNDLE" ;;
+  -*)
+    exe=$(/usr/bin/defaults read "$BUNDLE/Contents/Info" CFBundleExecutable 2>/dev/null) || exe=gitcat
+    exec "$BUNDLE/Contents/MacOS/$exe" "$@" ;;
+esac
 target="$1"
 case "$target" in
-  -*) exec open -n -a "$BUNDLE" ;;
   /*) ;;
-  *) resolved=$(cd "$target" 2>/dev/null && pwd); [ -n "$resolved" ] && target="$resolved" ;;
+  *) resolved=$(cd -- "$target" 2>/dev/null && pwd); [ -n "$resolved" ] && target="$resolved" ;;
 esac
-exec open -n -a "$BUNDLE" --args "$target"
+exec open -n -a "$BUNDLE" --args -- "$target"
 "#
     )
 }
@@ -122,6 +136,13 @@ fn unix_launcher(bin: &str) -> String {
 # Runs GitCat in the background so this terminal returns right away. The app
 # inherits this shell's working directory, so a relative path (gitcat .)
 # resolves against where you ran it.
+#
+# Options (--version, --help, ...) run in the foreground instead, so their
+# output and exit status reach this terminal.
+case "$1" in
+  --) ;;
+  -*) exec {bin} "$@" ;;
+esac
 nohup {bin} "$@" >/dev/null 2>&1 &
 "#
     )
@@ -142,6 +163,16 @@ rem updating the app.\r\n\
 rem\r\n\
 rem `start` returns immediately so this terminal isn't blocked; /D pins the new\r\n\
 rem process to the current directory so a relative path (gitcat .) resolves here.\r\n\
+rem Options (--version, --help, ...) run in the foreground instead: a batch file\r\n\
+rem waits even for a GUI program, so the output and exit code reach this terminal.\r\n\
+setlocal\r\n\
+set \"GITCAT_ARG1=%~1\"\r\n\
+if not defined GITCAT_ARG1 goto launch\r\n\
+if \"%GITCAT_ARG1%\"==\"--\" goto launch\r\n\
+if not \"%GITCAT_ARG1:~0,1%\"==\"-\" goto launch\r\n\
+\"{exe}\" %*\r\n\
+exit /b %errorlevel%\r\n\
+:launch\r\n\
 start \"\" /D \"%CD%\" \"{exe}\" %*\r\n"
     )
 }
@@ -172,20 +203,21 @@ fn wsl_launcher(win_exe: &str) -> String {
 #
 # Launches the Windows GitCat via interop, converting the repo path to the
 # Windows-side form the app understands. nohup + & so this terminal returns
-# right away.
+# right away. Options (--version, --help, ...) run in the foreground instead, so
+# their output (relayed by interop) and exit status reach this terminal.
 exe=$(wslpath -u {win_exe})
+case "$1" in
+  --) shift ;;
+  -*) exec "$exe" "$@" ;;
+esac
 if [ $# -eq 0 ]; then
   nohup "$exe" >/dev/null 2>&1 &
   exit 0
 fi
 target="$1"
-case "$target" in
-  -*) nohup "$exe" "$target" >/dev/null 2>&1 &
-      exit 0 ;;
-  *) resolved=$(cd "$target" 2>/dev/null && pwd); [ -n "$resolved" ] && target="$resolved" ;;
-esac
+resolved=$(cd -- "$target" 2>/dev/null && pwd); [ -n "$resolved" ] && target="$resolved"
 win=$(wslpath -w "$target" 2>/dev/null) || win="$target"
-nohup "$exe" "$win" >/dev/null 2>&1 &
+nohup "$exe" -- "$win" >/dev/null 2>&1 &
 "#
     )
 }
@@ -450,9 +482,32 @@ mod tests {
         // LaunchServices launch = non-blocking + correct keyboard focus.
         assert!(s.contains("open -n -a"));
         // A relative path is anchored to the caller's CWD before hand-off.
-        assert!(s.contains(r#"cd "$target""#));
+        assert!(s.contains(r#"cd -- "$target""#));
         // The repo path reaches the app as its argv.
         assert!(s.contains("--args"));
+    }
+
+    #[test]
+    fn launchers_run_options_in_the_foreground() {
+        // macOS: `open` relays no stdout, so options exec the bundle's binary.
+        let m = macos_launcher("/Applications/GitCat.app");
+        assert!(m.contains(r#"exec "$BUNDLE/Contents/MacOS/$exe" "$@""#));
+        assert!(m.contains("--) shift"));
+        assert!(m.contains(r#"--args -- "$target""#));
+        // Linux: exec in the foreground for an option, nohup for a launch.
+        let l = unix_launcher("/usr/bin/gitcat");
+        assert!(l.contains(r#"-*) exec '/usr/bin/gitcat' "$@" ;;"#));
+        assert!(l.contains("--) ;;"));
+        // WSL: same, and the converted path goes after `--`.
+        let w = wsl_launcher(r"C:\GitCat\gitcat.exe");
+        assert!(w.contains(r#"-*) exec "$exe" "$@" ;;"#));
+        assert!(w.contains(r#"nohup "$exe" -- "$win""#));
+        // Windows: a foreground run (batch waits even for a GUI exe) that
+        // propagates the exit code, and `start` only for a launch.
+        let c = windows_cmd_shim(r"C:\GitCat\gitcat.exe");
+        assert!(c.contains("if not \"%GITCAT_ARG1:~0,1%\"==\"-\" goto launch\r\n\"C:\\GitCat\\gitcat.exe\" %*\r\nexit /b %errorlevel%\r\n"));
+        assert!(c.contains("if \"%GITCAT_ARG1%\"==\"--\" goto launch"));
+        assert!(c.contains(":launch\r\nstart "));
     }
 
     #[test]
