@@ -102,14 +102,15 @@ const TAMA = [
         playsinline
         preload="metadata"
         :poster="withBase('/demo-poster.jpg')"
-        aria-label="A silent demo of GitCat: scrolling the commit graph, inspecting a signed commit, fuzzy-searching with the command palette, and rewinding with a one-keystroke Undo."
+        aria-label="A narrated demo of GitCat on CPython: scrolling the commit graph, inspecting a verified signed commit, popping a diff out into its own window, fuzzy-searching with the command palette, a guarded hard reset, and rewinding it with a one-keystroke Undo."
       >
         <source :src="withBase('/demo.webm')" type="video/webm" />
         <source :src="withBase('/demo.mp4')" type="video/mp4" />
+        <track kind="captions" srclang="en" label="English" :src="withBase('/demo.vtt')" />
         <img :src="withBase('/demo-poster.jpg')" alt="GitCat: commit graph, detail panel, and Tama the mascot" />
       </video>
       <p class="gc-caption">
-        A real session on CPython — no narration, no edits.
+        A real, unedited session on CPython, with narration and captions.
         <a :href="withBase('/guide/screenshots')">Prefer stills? →</a>
       </p>
     </div>
