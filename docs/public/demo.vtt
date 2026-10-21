@@ -1,0 +1,47 @@
+WEBVTT
+
+00:00:00.900 --> 00:00:08.124
+This is GitCat: a cozy, open-source Git client, built so that anything you do can be taken back.
+
+00:00:10.340 --> 00:00:14.669
+Here's CPython, with over a hundred and thirty thousand commits.
+
+00:00:14.669 --> 00:00:21.500
+The graph is laid out in Rust and drawn on a virtualized canvas, so it stays smooth all the way down.
+
+00:00:24.910 --> 00:00:33.382
+Select any commit for the full story: author and committer side by side, and a signature that Git itself has verified.
+
+00:00:34.558 --> 00:00:41.182
+Diffs are syntax-highlighted, and you can pop one out into its own window, to read it next to your work.
+
+00:00:48.826 --> 00:00:54.778
+Everything is one Control-K away: commits, branches, and every action.
+
+00:00:55.680 --> 00:01:01.185
+Now, something dangerous: a hard reset that throws away the last few commits.
+
+00:01:01.185 --> 00:01:05.760
+Tama warns you first, and pins a snapshot before anything moves.
+
+00:01:11.150 --> 00:01:12.742
+Changed your mind?
+
+00:01:12.742 --> 00:01:14.157
+Press Control-Z.
+
+00:01:14.157 --> 00:01:18.579
+Every change is snapshotted, so Undo always works.
+
+00:01:18.579 --> 00:01:20.702
+Even Undo can be undone.
+
+00:01:22.058 --> 00:01:22.741
+GitCat.
+
+00:01:22.741 --> 00:01:24.886
+Git you can take back.
+
+00:01:24.886 --> 00:01:28.298
+Free for macOS, Windows, and Linux.
+
