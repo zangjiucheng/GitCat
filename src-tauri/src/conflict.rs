@@ -218,6 +218,19 @@ fn read_conflicts(repo: &Repository) -> Result<Vec<ConflictFile>, git2::Error> {
     // `repo.index()` returns an owned Index handle (no borrow of `repo`), so we
     // can hold the conflict iterator and still call `repo.find_blob` below.
     let index = repo.index()?;
+    // Partial clone: fetch every stage's blob in one go before reading them
+    // one by one below. Best-effort — the merge that produced these stages
+    // already needed their content, so they are normally present.
+    if crate::promisor::is_partial_clone(repo) {
+        let ids: Vec<git2::Oid> = index
+            .conflicts()?
+            .flatten()
+            .flat_map(|c| [c.ancestor, c.our, c.their])
+            .flatten()
+            .map(|e| e.id)
+            .collect();
+        let _ = crate::promisor::ensure_blobs(repo, ids);
+    }
     let mut out: Vec<ConflictFile> = Vec::new();
     for entry in index.conflicts()? {
         let c = entry?;
@@ -572,6 +585,7 @@ fn conflict_file_hunks_inner(path: String, file: String) -> Result<ConflictFileH
 /// passes over the same blob.
 fn stage_full_text(repo: &Repository, entry: Option<&IndexEntry>) -> (String, bool) {
     let Some(entry) = entry else { return (String::new(), false) };
+    let _ = crate::promisor::ensure_blobs(repo, [entry.id]); // partial clone: best-effort fetch
     let Ok(blob) = repo.find_blob(entry.id) else { return (String::new(), false) };
     if blob.is_binary() {
         (String::new(), true)

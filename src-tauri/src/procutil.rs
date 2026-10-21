@@ -114,8 +114,32 @@ impl NoConsoleWindowExt for Command {
 /// than one OS pipe buffer holds, and a child blocked writing to a full pipe
 /// nobody's draining would itself look identical to "hung" and get killed
 /// spuriously by the very timeout meant to catch a REAL hang.
-pub fn output_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<Output> {
-    let mut child: Child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+pub fn output_with_timeout(cmd: Command, timeout: Duration) -> std::io::Result<Output> {
+    run_with_timeout(cmd, None, timeout)
+}
+
+/// [`output_with_timeout`], but feeds `input` to the child's stdin (then
+/// closes it) instead of giving it a null stdin. Used for `git fetch --stdin`
+/// (see `promisor.rs`), where the object list can be far longer than a
+/// Windows command line allows. The write happens on its own thread so a
+/// child that stops reading stdin early can never deadlock the poll loop; the
+/// timeout still applies to the whole run.
+pub fn output_with_timeout_stdin(cmd: Command, input: Vec<u8>, timeout: Duration) -> std::io::Result<Output> {
+    run_with_timeout(cmd, Some(input), timeout)
+}
+
+fn run_with_timeout(mut cmd: Command, input: Option<Vec<u8>>, timeout: Duration) -> std::io::Result<Output> {
+    let stdin = if input.is_some() { Stdio::piped() } else { Stdio::null() };
+    let mut child: Child = cmd.stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    if let (Some(input), Some(mut pipe)) = (input, child.stdin.take()) {
+        std::thread::spawn(move || {
+            use std::io::Write;
+            // A write error (the child exited / closed stdin early) is not ours
+            // to report: the child's own exit status and stderr say what went wrong.
+            let _ = pipe.write_all(&input);
+            // `pipe` drops here, closing stdin so the child sees EOF.
+        });
+    }
     let mut stdout_pipe = child.stdout.take().expect("stdout was piped above");
     let mut stderr_pipe = child.stderr.take().expect("stderr was piped above");
     let stdout_thread = std::thread::spawn(move || {

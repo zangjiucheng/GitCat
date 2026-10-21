@@ -48,4 +48,9 @@ export default {
   couldnt_install_with_admin: "관리자 권한으로 설치하지 못했어요: {detail}",
   couldnt_find_home: "홈 디렉터리($HOME)를 찾을 수 없어요.",
   couldnt_find_localappdata: "%LOCALAPPDATA%를 찾을 수 없어요.",
+
+  // promisor.rs — 부분 클론(`--filter=blob:none`)에서 필요한 내용을 그때그때 가져오기
+  partial_clone_fetch_failed:
+    "이 내용은 아직 내려받지 않았어요(부분 클론이에요). '{remote}'에서 가져오지도 못했어요. 네트워크 연결을 확인하고 다시 시도해 주세요. 자세한 내용: {detail}",
+  partial_clone_no_remote: "이 내용은 아직 내려받지 않았어요(부분 클론이에요). 가져올 promisor 원격 저장소도 설정되어 있지 않아요.",
 };
