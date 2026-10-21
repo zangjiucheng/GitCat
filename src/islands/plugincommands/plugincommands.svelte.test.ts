@@ -19,6 +19,8 @@ vi.mock("../../ipc/bindings", () => ({
   commands: {
     listPlugins: vi.fn(),
     runPluginCommand: vi.fn(),
+    pluginCommitFiles: vi.fn(),
+    pluginStagedFiles: vi.fn(),
   },
 }));
 
@@ -77,6 +79,9 @@ function resetCtrl() {
 beforeEach(() => {
   vi.clearAllMocks();
   resetCtrl();
+  // `{files}` sources (#77) — empty unless a test says otherwise.
+  vi.mocked(commands.pluginCommitFiles).mockResolvedValue(ok([]));
+  vi.mocked(commands.pluginStagedFiles).mockResolvedValue(ok([]));
 });
 
 describe("isolation", () => {
@@ -568,5 +573,137 @@ describe("{file} follows the view the user is actually looking at", () => {
       "lint",
       expect.objectContaining({ file: "src/from-a-commit.ts" }),
     );
+  });
+});
+
+describe("{files} (#77) — the command's declared context picks the file set", () => {
+  function selectRow(sha: string) {
+    (bridge.state as unknown as { selectedRow: number }).selectedRow = 0;
+    (bridge.BACKEND as unknown as { rows: Array<{ sha: string }> }).rows = [{ sha }];
+  }
+
+  it("a `commit` command gets the selected commit's changed paths, read for THAT sha", async () => {
+    selectRow("deadbeef");
+    vi.mocked(commands.pluginCommitFiles).mockResolvedValueOnce(ok(["src/a.ts", "README.md"]));
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({})));
+
+    await pluginCommandsCtrl.invoke("acme", "lint-commit", "commit");
+
+    expect(commands.pluginCommitFiles).toHaveBeenCalledWith("/repo", "deadbeef");
+    expect(commands.runPluginCommand).toHaveBeenCalledWith(
+      "acme",
+      "lint-commit",
+      expect.objectContaining({ sha: "deadbeef", files: ["src/a.ts", "README.md"] }),
+    );
+    expect(commands.pluginStagedFiles).not.toHaveBeenCalled();
+  });
+
+  it("a `commit` command with no commit selected still runs, {files} empty like {sha}", async () => {
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({})));
+
+    await pluginCommandsCtrl.invoke("acme", "lint-commit", "commit");
+
+    expect(commands.pluginCommitFiles).not.toHaveBeenCalled();
+    expect(commands.runPluginCommand).toHaveBeenCalledWith("acme", "lint-commit", expect.objectContaining({ sha: null, files: [] }));
+  });
+
+  it("a `staged` command gets the staged paths, with NOTHING selected", async () => {
+    // No commit row, no working-tree file, no detail file: the pre-commit case.
+    (detailCtrl as { commit: unknown }).commit = null;
+    vi.mocked(commands.pluginStagedFiles).mockResolvedValueOnce(ok(["src/new.ts", "docs/guide.md"]));
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({})));
+
+    await pluginCommandsCtrl.invoke("acme", "lint-staged", "staged");
+
+    expect(commands.pluginStagedFiles).toHaveBeenCalledWith("/repo");
+    expect(commands.runPluginCommand).toHaveBeenCalledWith(
+      "acme",
+      "lint-staged",
+      expect.objectContaining({ files: ["src/new.ts", "docs/guide.md"], file: null, sha: null }),
+    );
+  });
+
+  it("reads the staged set FRESH on every invocation", async () => {
+    vi.mocked(commands.pluginStagedFiles).mockResolvedValueOnce(ok(["one.ts"])).mockResolvedValueOnce(ok(["one.ts", "two.ts"]));
+    vi.mocked(commands.runPluginCommand).mockResolvedValue(ok(output({})));
+
+    await pluginCommandsCtrl.invoke("acme", "lint-staged", "staged");
+    await pluginCommandsCtrl.invoke("acme", "lint-staged", "staged");
+
+    expect(commands.pluginStagedFiles).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(commands.runPluginCommand).mock.calls[1][2].files).toEqual(["one.ts", "two.ts"]);
+  });
+
+  it("does NOT fill {file} for a `staged` command, even with a file selected", async () => {
+    workdirCtrl.selected = true;
+    workdirCtrl.selectedDiffFile = "picked.ts";
+    vi.mocked(commands.pluginStagedFiles).mockResolvedValueOnce(ok(["staged.ts"]));
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({})));
+
+    await pluginCommandsCtrl.invoke("acme", "lint-staged", "staged");
+
+    expect(commands.runPluginCommand).toHaveBeenCalledWith("acme", "lint-staged", expect.objectContaining({ file: null, files: ["staged.ts"] }));
+  });
+
+  it("passes paths with spaces through as ONE element each (the backend quotes per element)", async () => {
+    // Splitting or pre-joining here would hand the Rust quoter `dir`, `with`,
+    // `space/x.ts` — three arguments for one file.
+    vi.mocked(commands.pluginStagedFiles).mockResolvedValueOnce(ok(["dir with space/x.ts", "it's.md"]));
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({})));
+
+    await pluginCommandsCtrl.invoke("acme", "lint-staged", "staged");
+
+    expect(vi.mocked(commands.runPluginCommand).mock.calls[0][2].files).toEqual(["dir with space/x.ts", "it's.md"]);
+  });
+
+  it("REFUSES a `staged` command when nothing is staged, rather than expanding {files} to nothing", async () => {
+    vi.mocked(commands.pluginStagedFiles).mockResolvedValueOnce(ok([]));
+
+    await pluginCommandsCtrl.invoke("acme", "lint-staged", "staged");
+
+    expect(commands.runPluginCommand).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("Nothing is staged"));
+  });
+
+  it("refuses (and says why) when the file list can't be read", async () => {
+    vi.mocked(commands.pluginStagedFiles).mockResolvedValueOnce(err("index locked"));
+
+    await pluginCommandsCtrl.invoke("acme", "lint-staged", "staged");
+
+    expect(commands.runPluginCommand).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("index locked"));
+  });
+
+  it("leaves {files} empty for every other context", async () => {
+    detailCtrl.selectedFile = "x.ts";
+    vi.mocked(commands.runPluginCommand).mockResolvedValue(ok(output({})));
+
+    for (const ctx of ["none", "repo", "file"] as const) {
+      await pluginCommandsCtrl.invoke("acme", "cmd", ctx);
+    }
+
+    expect(commands.runPluginCommand).toHaveBeenCalledTimes(3);
+    for (const call of vi.mocked(commands.runPluginCommand).mock.calls) expect(call[2].files).toEqual([]);
+    expect(commands.pluginCommitFiles).not.toHaveBeenCalled();
+    expect(commands.pluginStagedFiles).not.toHaveBeenCalled();
+  });
+
+  it("resolves a `staged` context from the manifest for a caller with only ids (panel buttons)", async () => {
+    vi.mocked(commands.listPlugins).mockResolvedValueOnce(
+      ok([
+        plugin({
+          id: "acme",
+          name: "Acme",
+          commands: [{ id: "fmt", label: "Format staged", run: "fmt {files}", handler: null, context: "staged", placement: "menu", mutates: false }],
+        }),
+      ]),
+    );
+    await pluginCommandsCtrl.ensureLoaded();
+    vi.mocked(commands.pluginStagedFiles).mockResolvedValueOnce(ok(["a.ts"]));
+    vi.mocked(commands.runPluginCommand).mockResolvedValueOnce(ok(output({})));
+
+    await pluginCommandsCtrl.invoke("acme", "fmt");
+
+    expect(commands.runPluginCommand).toHaveBeenCalledWith("acme", "fmt", expect.objectContaining({ files: ["a.ts"] }));
   });
 });

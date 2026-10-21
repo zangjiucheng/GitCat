@@ -125,11 +125,14 @@ Each entry in `commands[]` contributes one invocable action.
 | Value | Meaning |
 | --- | --- |
 | `none` *(default)* | Always applicable; needs no selection. |
-| `commit` | Needs a selected commit (fills `{sha}`). |
+| `commit` | Needs a selected commit (fills `{sha}`, and `{files}` with that commit's changed paths). |
 | `file` | Needs a selected file (fills `{file}`). With nothing selected the command is **not run** — GitCat says so rather than expanding `{file}` to nothing. |
 | `repo` | Repo-scoped — needs only the open repository. |
+| `staged` | Works on the **staged** files: fills `{files}` with the paths currently in the index, read fresh when you run it. Needs **no selection**, so it's the one to use for a pre-commit lint/format command. With nothing staged the command is **not run** — GitCat says "Nothing is staged" rather than expanding `{files}` to nothing. `{file}` and `{sha}` are **not** filled for a `staged` command. |
 
-> **What's populated today.** The built-in ⌘K invocation always fills `{repo}`, and fills `{sha}` for a `commit`-context command. The other tokens are recognized by the expander and reserved for richer selection contexts, but are not yet populated from the palette, so they currently expand to an empty string. Write your templates against the full grammar; just know that `file`/`files`/`diff`/`branch`/`ref` come from the UI later.
+> **Availability.** Every command appears in ⌘K regardless of its `context`; the context is checked when you run it. A `file` command with no file selected, or a `staged` command with nothing staged, is refused with a message from Tama rather than run with an empty token.
+
+> **What's populated today.** The built-in ⌘K invocation always fills `{repo}`; `{sha}` and `{files}` for a `commit` command; `{file}` for a `file` command; `{files}` for a `staged` command. `{diff}`, `{branch}` and `{ref}` are recognized by the expander but not yet populated, so they currently expand to an empty string.
 
 ### `placement`
 
@@ -152,17 +155,18 @@ A `run` string is a template. Before running it, GitCat substitutes `{...}` toke
 | `{repo}` | The repository's path. **Also the working directory** the command runs in. |
 | `{sha}` | The selected commit's id. |
 | `{file}` | The selected file, relative to the repository root. Filled for a `file`-context command, from whichever view is open — the working tree's selection when Uncommitted changes is showing, the commit's otherwise. |
-| `{files}` | Several selected file paths, each quoted, space-joined. |
+| `{files}` | A list of file paths, relative to the repository root, **each quoted as its own argument** and space-joined (a path with spaces stays one argument). For a `commit` command: the paths that commit changed against its first parent (every file, for a root commit). For a `staged` command: the paths currently staged, read when the command runs. **Deleted paths are left out** in both cases — there is no file left to hand a tool. Empty for every other context. See [Linting staged files](#linting-staged-files). |
 | `{diff}` | Diff text. |
 | `{branch}` | A branch name. |
 | `{ref}` | A full ref / tag / symbolic ref. |
 
 **Which tokens are filled today.** `{repo}` always; `{sha}` for a `commit`
-command; `{file}` for a `file` command. `{files}`, `{diff}`, `{branch}` and
-`{ref}` are recognized by the expander but nothing fills them yet, so they
-currently expand to nothing — write your `run` against the three above, and get
-the rest from git itself (your command runs with the repository as its working
-directory, so `git branch --show-current` and friends are right there).
+command; `{file}` for a `file` command; `{files}` for a `commit` or `staged`
+command. `{diff}`, `{branch}` and `{ref}` are recognized by the expander but
+nothing fills them yet, so they currently expand to nothing — write your `run`
+against the four above, and get the rest from git itself (your command runs
+with the repository as its working directory, so `git branch --show-current`
+and friends are right there).
 
 Rules the expander follows:
 
@@ -170,6 +174,30 @@ Rules the expander follows:
 - **The grammar is narrow**: a token is `{` + one-or-more **lowercase ASCII letters** + `}`. Anything else is left verbatim, so your own shell syntax survives untouched — `${HOME}` (uppercase), `${1}` (digit), `awk '{print $1}'` (space), and `{}` are all copied through, not treated as tokens.
 - **Unknown tokens expand to nothing.** An unrecognized `{name}`, or a token whose value is absent, becomes an empty string.
 - **Single pass, no re-expansion.** A value that itself contains `{repo}` or `{sha}` text (e.g. inside a diff) is never re-scanned, so untrusted content can't smuggle in a second placeholder.
+
+### Linting staged files
+
+`{files}` exists because a file list is the one thing a `run` string can't
+build without shell-specific syntax: `eslint $(git diff --cached --name-only)`
+relies on `sh` command substitution, which `cmd /C` on Windows doesn't have. A
+`staged` command gets the list from GitCat instead, with no command
+substitution:
+
+```json
+{
+  "id": "lint-staged",
+  "label": "Lint staged files",
+  "context": "staged",
+  "run": "npx eslint -- {files}"
+}
+```
+
+Each path arrives as its own quoted argument, so a file named `my file.ts` is
+one argument, not two. Put `--` before `{files}` so a file whose name starts
+with `-` is never read as an option (see below). The
+[Windows caveat](#windows-caveat) applies to `{files}` like every other token:
+the quoting is POSIX single-quoting, and a path containing a `cmd.exe`
+metacharacter makes GitCat refuse the run rather than risk it.
 
 ### Values are untrusted — guard against flag injection
 
@@ -301,7 +329,7 @@ A handler sees exactly four things (nothing else — see [the sandbox](#the-luau
 
 | Name | What it is |
 | --- | --- |
-| `ctx` | A **read-only** table mirroring the [placeholders](#placeholders): `ctx.repo`, `ctx.sha`, `ctx.file`, `ctx.files` (an array), `ctx.diff`, `ctx.branch`, `ctx.ref`. Absent fields are `nil`. (Populated from the UI exactly like the shell tokens — today `ctx.repo` always, plus `ctx.sha` for a `commit`-context command.) Also passed as the handler's argument. |
+| `ctx` | A **read-only** table mirroring the [placeholders](#placeholders): `ctx.repo`, `ctx.sha`, `ctx.file`, `ctx.files` (an array), `ctx.diff`, `ctx.branch`, `ctx.ref`. Absent fields are `nil`. (Populated from the UI exactly like the shell tokens — today `ctx.repo` always, `ctx.sha` and `ctx.files` for a `commit`-context command, `ctx.file` for a `file` command, and `ctx.files` for a `staged` command; `ctx.files` is an empty array otherwise.) Also passed as the handler's argument. |
 | `git(args)` | Run `git` with `args` (an **array of strings**) in the repo — `git({ "log", "-1", "--format=%s" })`. Returns a table `{ stdout, stderr, code, ok }` (`ok` is `true` on a zero exit; `code` is the exit code, or `nil` if signal-killed). **No shell is involved**, so an arg is inert literal data — there is nothing to inject into, unlike the shell `run` path. Only an allowlisted set of git subcommands runs, and repository-changing ones need `"mutates": true` — see [what `git()` allows](#what-git-allows). |
 | `tama.react(kind, msg)` | Nudge Tama's mood. `kind` must be one of `info`, `busy`, `ok`, `problem` (the same [safe allowlist](#tama-reactions) as the `::gitcat.tama` stdout protocol) — any other value is ignored. A script can **never** reach a safety-critical pose. |
 | `print(...)` | Append to the command's captured output (there is no console). Arguments are `tostring`'d and tab-joined, like Lua's `print`. |

@@ -96,6 +96,12 @@ pub enum PluginContext {
     File,
     /// Repo-scoped (needs only the open repository).
     Repo,
+    /// Works on the currently STAGED files (#77): `{files}` is the index's
+    /// changed paths, read fresh when the command is invoked — no selection
+    /// needed, so a pre-commit lint/format command can run from ⌘K at any
+    /// time. `{file}`/`{sha}` are not filled. With nothing staged the command
+    /// is refused rather than run with an empty `{files}`.
+    Staged,
 }
 
 /// Where a command surfaces. Serialized lowercase (`"palette"`/`"menu"`/
@@ -2704,6 +2710,23 @@ mod tests {
             placement: PluginPlacement::Palette,
             mutates: false,
         }
+    }
+
+    #[test]
+    fn staged_context_parses_validates_and_round_trips() {
+        // #77: `"context": "staged"` is a real context value, lowercase on the
+        // wire like the others, and survives a manifest → registry round trip.
+        let json = r#"{"id":"stagey","name":"Stagey","version":"1.0.0","commands":[
+            {"id":"lint-staged","label":"Lint staged","run":"eslint -- {files}","context":"staged"}]}"#;
+        let p: Plugin = serde_json::from_str(json).expect("staged context must parse");
+        assert_eq!(p.commands[0].context, PluginContext::Staged);
+        validate_manifest(&p).expect("a staged command must validate");
+        let back = serde_json::to_value(&p).unwrap();
+        assert_eq!(back["commands"][0]["context"], "staged");
+
+        // Case-sensitive like every other context value — `Staged` is not one.
+        let bad = json.replace("\"staged\"", "\"Staged\"");
+        assert!(serde_json::from_str::<Plugin>(&bad).is_err(), "context values are lowercase only");
     }
 
     #[test]

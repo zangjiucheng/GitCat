@@ -143,7 +143,8 @@ pub struct PlaceholderCtx {
     /// `{file}` — a single file path (File context).
     pub file: Option<String>,
     /// `{files}` — several file paths; expands to each path shell-quoted,
-    /// space-joined (File context, multi-select).
+    /// space-joined. Filled for a Commit command (that commit's changed paths)
+    /// and a Staged command (the staged paths); empty otherwise (#77).
     pub files: Vec<String>,
     /// `{diff}` — diff text. UNTRUSTED repo content; quoted like everything else.
     pub diff: Option<String>,
@@ -683,6 +684,86 @@ fn strip_ansi(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// `{files}` sources (#77)
+// ---------------------------------------------------------------------------
+//
+// `{files}` is filled by the FRONTEND (like every other token — see
+// `plugincommands.svelte.ts`'s `ctxFor`), but the two lists it is filled from
+// need the repository, not UI state:
+//
+//   * a `commit` command: the selected commit's changed paths. The detail
+//     pane's own file tree is NOT reused — `commit_detail` caps it at a few
+//     dozen files for rendering, and a silently truncated `{files}` would make
+//     a linter pass a commit it never looked at.
+//   * a `staged` command: the index's changed paths, read FRESH at invocation
+//     (the working-tree pane's status can be a refresh behind, and a staged
+//     command must work with nothing selected and that pane never opened).
+//
+// Both are name-only tree diffs: no blob content is read (so a partial clone
+// never needs a fetch), no rename detection runs (a rename is its delete plus
+// its add — and the add is the path that exists), and DELETED paths are left
+// out, because the one thing every consumer of a file list does is open the
+// files. Conflicted index entries are not "staged" and are left out too.
+
+/// Collect the post-change path of every delta that still exists afterwards.
+fn existing_paths(diff: &git2::Diff<'_>) -> Vec<String> {
+    let mut out = Vec::new();
+    for delta in diff.deltas() {
+        if matches!(delta.status(), git2::Delta::Deleted | git2::Delta::Conflicted) {
+            continue;
+        }
+        if let Some(p) = delta.new_file().path().and_then(|p| p.to_str()) {
+            out.push(p.replace('\\', "/"));
+        }
+    }
+    out
+}
+
+/// The paths commit `sha` changed relative to its first parent (everything,
+/// for a root commit), deletions excluded. See the section comment above.
+pub fn commit_changed_paths(path: &str, sha: &str) -> Result<Vec<String>, git2::Error> {
+    let repo = crate::trust::open_repo(path)?;
+    let commit = repo.find_commit_by_prefix(sha)?;
+    let new_tree = commit.tree()?;
+    let old_tree = if commit.parent_count() > 0 { Some(commit.parent(0)?.tree()?) } else { None };
+    let diff = repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None)?;
+    Ok(existing_paths(&diff))
+}
+
+/// The currently STAGED paths — `HEAD`'s tree vs the index (an unborn `HEAD`
+/// counts as the empty tree, so a first commit's staged files are all listed),
+/// deletions and conflicts excluded. See the section comment above.
+pub fn staged_paths(path: &str) -> Result<Vec<String>, git2::Error> {
+    let repo = crate::trust::open_repo(path)?;
+    let head_tree = match repo.head() {
+        Ok(h) => Some(h.peel_to_tree()?),
+        Err(e) if e.code() == git2::ErrorCode::UnbornBranch || e.code() == git2::ErrorCode::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    let index = repo.index()?;
+    let diff = repo.diff_tree_to_index(head_tree.as_ref(), Some(&index), None)?;
+    Ok(existing_paths(&diff))
+}
+
+/// `{files}` for a `commit` command — see [`commit_changed_paths`].
+///
+/// JS: `commands.pluginCommitFiles(path, sha)`.
+#[tauri::command]
+#[specta::specta]
+pub async fn plugin_commit_files(path: String, sha: String) -> Result<Vec<String>, String> {
+    crate::blocking::run_blocking(move || commit_changed_paths(&path, &sha).map_err(|e| e.message().to_string())).await
+}
+
+/// `{files}` for a `staged` command — see [`staged_paths`].
+///
+/// JS: `commands.pluginStagedFiles(path)`.
+#[tauri::command]
+#[specta::specta]
+pub async fn plugin_staged_files(path: String) -> Result<Vec<String>, String> {
+    crate::blocking::run_blocking(move || staged_paths(&path).map_err(|e| e.message().to_string())).await
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -906,7 +987,7 @@ mod tests {
     // Unix-only (POSIX shell syntax); the Rust CI job runs on Linux. The
     // Windows `cmd /C` path has a documented quoting caveat (see module doc).
 
-    #[cfg(unix)]
+    // Not unix-gated: the `{files}` source tests (#77) use it on every platform.
     fn tmp_cwd(tag: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!(
             "gitcat-plugin-exec-{tag}-{}-{}",
@@ -1059,5 +1140,103 @@ mod tests {
         assert_eq!(count, 1, "exactly one backup ref must have been pinned before the mutation");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- {files} sources (#77) ----------------------------------------------
+
+    /// Write `content` to `rel` under the repo's workdir and stage it.
+    fn stage(repo: &git2::Repository, rel: &str, content: &str) {
+        let full = repo.workdir().unwrap().join(rel);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&full, content).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new(rel)).unwrap();
+        index.write().unwrap();
+    }
+
+    /// Commit whatever is staged on top of HEAD (or as the root commit).
+    fn commit_index(repo: &git2::Repository, msg: &str) -> String {
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        let mut index = repo.index().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+        let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parents).unwrap().to_string()
+    }
+
+    #[test]
+    fn staged_paths_lists_the_index_changes_fresh_and_skips_deletions() {
+        let dir = tmp_cwd("staged-paths");
+        let repo = git2::Repository::init(&dir).unwrap();
+        let p = dir.to_str().unwrap();
+
+        // Unborn HEAD: an empty index is an empty staged set, not an error...
+        assert_eq!(staged_paths(p).unwrap(), Vec::<String>::new());
+        // ...and a first commit's staged files are all listed.
+        stage(&repo, "a.txt", "a");
+        stage(&repo, "dir with space/b c.txt", "b");
+        assert_eq!(staged_paths(p).unwrap(), vec!["a.txt", "dir with space/b c.txt"]);
+        commit_index(&repo, "init");
+        assert!(staged_paths(p).unwrap().is_empty(), "nothing staged right after a commit");
+
+        // An unstaged edit is not staged; a staged edit and a staged add are.
+        std::fs::write(dir.join("a.txt"), "edited but not staged").unwrap();
+        stage(&repo, "new.txt", "n");
+        assert_eq!(staged_paths(p).unwrap(), vec!["new.txt"]);
+
+        // A staged deletion is left out — there is no file to hand a tool.
+        let mut index = repo.index().unwrap();
+        index.remove_path(std::path::Path::new("dir with space/b c.txt")).unwrap();
+        index.write().unwrap();
+        assert_eq!(staged_paths(p).unwrap(), vec!["new.txt"]);
+
+        drop(repo);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn commit_changed_paths_is_the_first_parent_diff_without_deletions() {
+        let dir = tmp_cwd("commit-paths");
+        let repo = git2::Repository::init(&dir).unwrap();
+        let p = dir.to_str().unwrap();
+
+        stage(&repo, "keep.txt", "k");
+        stage(&repo, "gone.txt", "g");
+        let root = commit_index(&repo, "root");
+        // A root commit: everything it adds.
+        assert_eq!(commit_changed_paths(p, &root).unwrap(), vec!["gone.txt", "keep.txt"]);
+
+        stage(&repo, "keep.txt", "k2");
+        stage(&repo, "src/added file.rs", "fn main() {}");
+        let mut index = repo.index().unwrap();
+        index.remove_path(std::path::Path::new("gone.txt")).unwrap();
+        index.write().unwrap();
+        let second = commit_index(&repo, "second");
+        // Modified + added, not the deleted one; a short sha prefix resolves too.
+        assert_eq!(commit_changed_paths(p, &second[..7]).unwrap(), vec!["keep.txt", "src/added file.rs"]);
+
+        // More than the detail pane's 40-file render cap: never truncated.
+        for i in 0..45 {
+            stage(&repo, &format!("many/f{i:02}.txt"), "x");
+        }
+        let big = commit_index(&repo, "big");
+        assert_eq!(commit_changed_paths(p, &big).unwrap().len(), 45);
+
+        drop(repo);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn files_expand_quoted_with_spaces_and_empty_to_nothing() {
+        // The executor half (#77 relies on it as-is): each path its own quoted
+        // argument, a space inside a path kept inside its argument.
+        let ctx = PlaceholderCtx {
+            files: vec!["a.txt".into(), "dir with space/b c.txt".into()],
+            ..Default::default()
+        };
+        assert_eq!(expand_placeholders("lint -- {files}", &ctx), "lint -- 'a.txt' 'dir with space/b c.txt'");
+        assert_eq!(expand_placeholders("lint -- {files}", &PlaceholderCtx::default()), "lint -- ");
     }
 }
