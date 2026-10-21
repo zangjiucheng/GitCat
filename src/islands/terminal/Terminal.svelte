@@ -7,6 +7,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
   import { keymap } from "@/keymap/registry.ts";
+  import { shortcutLabel } from "@/keymap/label.ts";
   import type { ScopeHandle } from "@/keymap/scopes.ts";
 
   let containerEl: HTMLDivElement;
@@ -203,7 +204,7 @@
          this is discoverable — it is in front of the one person who needs it,
          at the moment they need it. Escape is not offered because the shell
          owns it. -->
-    <span class="term-hint mut">{t("terminal.focus_out_hint")} <kbd>⇧esc</kbd></span>
+    <span class="term-hint mut">{t("terminal.focus_out_hint")} <kbd>{shortcutLabel("terminalFocusOut")}</kbd></span>
     {#if terminalCtrl.distros.length > 0}
       <!-- Only worth showing when there's an actual choice beyond the single
            (native) default — a machine with no WSL at all has nothing else

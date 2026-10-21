@@ -40,6 +40,12 @@ export default {
   detail_placement_right: "右侧",
   detail_placement_bottom: "底部",
 
+  // 展开图标默认的行为——在当前窗口打开原有的弹窗,还是直接弹出一个新的 GitCat 窗口。
+  diff_open_mode: "差异默认打开方式",
+  diff_open_mode_desc: "提交差异的展开图标默认执行的操作。无论选哪种,展开后的差异视图里都始终有一个独立的弹出按钮。",
+  diff_open_mode_modal: "全屏面板",
+  diff_open_mode_window: "新窗口",
+
   // Cherry-pick
   cherrypick: "Cherry-pick",
   cherrypick_origin_hint: "在生成的 commit 信息中追加 '(cherry picked from …)'",
@@ -82,7 +88,7 @@ export default {
   // 快照
   snapshots: "快照",
   snapshots_desc:
-    "每一次改变历史的操作都会固定一个可恢复的备份 — 这正是 ⌘Z 撤销和快照条的基础。若不清理,它们会随时间不断累积。自动清理会在每次打开仓库时删除旧快照;最近的一个快照始终会保留。",
+    "日常改变历史的操作都会固定一个可恢复的备份 — 这正是 {undoKey} 撤销和快照条的基础。若不清理,它们会随时间不断累积。自动清理会在每次打开仓库时删除旧快照;最近的一个快照始终会保留。",
   snapshot_keep_all: "全部保留(不清理)",
   snapshot_keep_count: "保留最新的 N 个",
   snapshot_keep_age: "保留最近 N 天",

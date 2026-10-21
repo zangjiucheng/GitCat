@@ -7,7 +7,7 @@ const SITE = "https://zangjiucheng.github.io/GitCat";
 // screenshot — the screenshot is unreadable at share-thumbnail size.
 const OG_IMAGE = `${SITE}/social-card.png`;
 const DESCRIPTION =
-  "A cozy, safety-first desktop Git client: a fast commit graph, line-level staging, drag-and-drop cherry-pick and merge, rebase, bisect, and a Safety Manager that snapshots before every mutation so Undo is always one keystroke away.";
+  "A cozy, safety-first desktop Git client: a fast commit graph, line-level staging, drag-and-drop cherry-pick and merge, rebase, bisect, and a Safety Manager that snapshots your branches before everyday history-changing operations so Undo is one keystroke away.";
 // GA4 (chosen over Plausible because a measurement ID isolates GitCat despite the
 // shared zangjiucheng.github.io domain). The measurement id is NOT a secret — it's
 // exposed in the served page source regardless — so it's hardcoded here, with a

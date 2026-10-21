@@ -9,6 +9,11 @@ A GitCat plugin is a `plugin.json` describing:
 
 - **`commands`** — user-invokable actions surfaced in the ⌘K command palette.
 - **`hooks`** — external commands GitCat runs when a lifecycle event fires.
+- **`panels`** — small declarative surfaces opened from ⌘K, built from a fixed
+  set of widgets GitCat renders itself; a widget can only run one of the
+  plugin's own commands (see [`staged-review`](./staged-review/)).
+- **`languages`** — keyword and comment syntax for diff highlighting (see
+  [`language-pack`](./language-pack/)).
 - **`tama`** — an optional alternate look (and voice) for Tama: pose art, a
   greeting line, and a `voicePitch` (a skin ships its own character art; see
   [Tama skins](../../docs/plugins.md#tama-skins)).
@@ -31,11 +36,13 @@ way, install only plugins you trust.
 | [`lua-hello`](./lua-hello/) | The smallest **Luau-scripted** command: the `lua` manifest field + a command with a `handler` (not a shell `run`), using the sandboxed host API (`ctx`, `git`, `tama.react`, `print`). |
 | [`commit-subject-lint`](./commit-subject-lint/) | A **Luau** `commit-created` **hook** + on-demand command that share one lint function, reading the subject via `git()` and reacting via Tama — logic that a shell one-liner handled awkwardly (and only on POSIX). |
 | [`language-pack`](./language-pack/) | The **`languages`** manifest field: purely declarative diff syntax highlighting (keywords + comment syntax) for Python, Rust, Go, Java, C, C++ and Shell — no commands, no code. |
+| [`staged-review`](./staged-review/) | The **`panels`** field (all four widget types: `heading`, `text`, `command-output`, `button`), a **`tama`** skin that changes only voice and copy, and **`"context": "staged"`** commands that get the staged paths through **`{files}`**. |
 
 ## Installing
 
-Settings → **Plugins** tab → **Install plugin…** → pick a plugin's `plugin.json`
-(or its folder). Toggle a plugin enabled/disabled or **Remove** it there.
+**Tools ▸ Plugins…** (or ⌘K → "Plugins") → **Install from file…** → pick a plugin's
+`plugin.json` file (not its folder). GitCat shows what the plugin runs before
+anything is installed. Toggle a plugin enabled/disabled or **Remove** it there.
 Installed commands appear live in ⌘K; hooks fire automatically. The registry is
 persisted in `plugins.json` under the app config dir.
 
@@ -53,7 +60,7 @@ persisted in `plugins.json` under the app config dir.
       "id": "do-thing",
       "label": "Do the thing",
       "run": "mytool --repo {repo}", // external command TEMPLATE (non-empty)
-      "context": "repo",   // none | commit | file | repo   (default: none)
+      "context": "repo",   // none | commit | file | repo | staged   (default: none)
       "placement": "palette" // palette | menu | both        (default: palette)
     }
   ],
@@ -85,10 +92,13 @@ Honest caveats worth knowing:
 - A plugin/hook command that changes the repo should declare **`"mutates": true`**:
   GitCat then snapshots before running it, so the change is covered by global
   **Undo** (a mutating action that omits `mutates` runs outside Undo).
-- **Windows**: `run` lines are POSIX-shell one-liners; the Windows executor uses
-  `cmd.exe`, and a value containing a `cmd` metacharacter (`& | < > ^ % ! "`,
-  CR/LF) is refused fail-closed (so `{diff}` is usually refused on Windows).
-  Assume a POSIX shell (Git-Bash / WSL) on PATH.
+- **Windows**: the executor uses `cmd.exe`, and placeholder values are
+  double-quoted for it. A value containing a `cmd` metacharacter (`& | < > ^ % ! "`,
+  CR/LF) is still refused fail-closed, so `{diff}` is usually refused on
+  Windows. The `run` text itself is `cmd` syntax there: single quotes, `$VAR`
+  and `$(...)` are `sh`-only. `staged-review`'s lines work in both shells; the
+  shell `run` lines in the other examples assume a POSIX shell (Git-Bash / WSL)
+  on `PATH` (the Luau examples need no shell at all).
 
 ## More
 

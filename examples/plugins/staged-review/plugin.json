@@ -1,0 +1,53 @@
+{
+  "id": "staged-review",
+  "name": "Staged Review",
+  "version": "1.0.0",
+  "description": "A pre-commit review panel for what you have staged: a summary, a whitespace check, and a TODO/FIXME scan over the staged files — plus a voice-and-copy Tama skin for the reviewer.",
+  "commands": [
+    {
+      "id": "staged-summary",
+      "label": "Staged Review: Summarize what's staged",
+      "run": "git diff --cached --stat",
+      "context": "staged",
+      "placement": "palette"
+    },
+    {
+      "id": "whitespace-check",
+      "label": "Staged Review: Check staged changes for whitespace problems",
+      "run": "git diff --cached --check && echo ::gitcat.tama ok No whitespace problems in the staged changes.",
+      "context": "staged",
+      "placement": "palette"
+    },
+    {
+      "id": "todo-scan",
+      "label": "Staged Review: Find TODO/FIXME in staged files",
+      "run": "git grep --cached -n -E \"TODO|FIXME\" -- {files} || echo ::gitcat.tama ok No TODO or FIXME in the staged files.",
+      "context": "staged",
+      "placement": "palette"
+    }
+  ],
+  "panels": [
+    {
+      "id": "review",
+      "title": "Staged review",
+      "items": [
+        { "type": "heading", "text": "Before you commit" },
+        {
+          "type": "text",
+          "text": "Each check below looks only at what is staged right now. Press Re-run on an output to run that check; nothing runs until you do."
+        },
+        { "type": "command-output", "command": "staged-summary", "label": "What's staged" },
+        { "type": "command-output", "command": "whitespace-check", "label": "Whitespace (git diff --cached --check)" },
+        { "type": "heading", "text": "Leftovers" },
+        { "type": "button", "label": "Find TODO / FIXME in staged files", "command": "todo-scan" }
+      ]
+    }
+  ],
+  "tama": {
+    "poses": {},
+    "voicePitch": 0.9,
+    "copy": {
+      "applied": "Staged Review on duty. I'll look over what you're about to commit."
+    }
+  }
+}

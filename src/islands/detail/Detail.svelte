@@ -1,5 +1,6 @@
 <script lang="ts">
   import { detailCtrl, type TreeDir } from "./detail.svelte.ts";
+  import { DIFF_ONLY_WINDOW } from "../../ipc/env";
   import * as bridge from "../../legacy/bridge";
   import BinaryDiffPreview from "../diffpreview/BinaryDiffPreview.svelte";
   import { resolver } from "../resolver/resolver.svelte.ts";
@@ -14,6 +15,7 @@
   import History from "@lucide/svelte/icons/history";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
+  import AppWindow from "@lucide/svelte/icons/app-window";
   import Splitter from "../detailpanel/Splitter.svelte";
   import TabStrip from "../detailpanel/TabStrip.svelte";
   import { detailPanelCtrl, COMMIT_VIEW_TABS, CHANGES_SPLIT, DIFFX_SPLIT } from "../detailpanel/detailpanel.svelte.ts";
@@ -178,7 +180,7 @@
         onkeydown={(e) => (e.key === "Enter" || e.key === " ") && detailCtrl.copySha()}
         >{detailCtrl.copied ? t("detail.copied") : c.sha}</span
       >
-      <span class="gpg {gpg[0]}">{gpg[1]}</span>
+      <span class="gpg {gpg[0]}" title={gpg[2] || undefined}>{gpg[1]}</span>
       <span class="mut mono" style="font-size:11px">{t("detail.row_of", { row: c.row.toLocaleString(), total: (bridge.G?.N ?? 0).toLocaleString() })}</span>
     </div>
     <button
@@ -287,7 +289,7 @@
           {:else}
             <div class="diff-file-h">
               <span class="diff-file-h-name">{detailCtrl.diffHeader}</span>
-              <button class="wd-act" title={t("detail.expand_diff")} aria-label={t("detail.expand_diff_aria")} onclick={() => detailCtrl.expandDiff()}>
+              <button class="wd-act" title={t("detail.expand_diff")} aria-label={t("detail.expand_diff_aria")} onclick={() => detailCtrl.expandOrPopOutDiff()}>
                 <Maximize2 class="ico" size={13} aria-hidden="true" />
               </button>
             </div>
@@ -314,6 +316,18 @@
           <h3>{c.subject}</h3>
           <p>commit <span class="mono">{c.sha.slice(0, 7)}</span></p>
         </div>
+        <!-- A diff-only window IS already the pop-out target — offering to pop
+             out again would just spawn another copy of itself. -->
+        {#if !DIFF_ONLY_WINDOW}
+        <button
+          class="wd-act"
+          title={t("detail.pop_out_diff")}
+          aria-label={t("detail.pop_out_diff_aria")}
+          onclick={() => detailCtrl.popOutDiffAndClose()}
+        >
+          <AppWindow class="ico" size={14} aria-hidden="true" />
+        </button>
+        {/if}
       </div>
       <div class="modal-body diffx-body">
         <div class="diffx-files" style="width:{diffxTreeW}px">

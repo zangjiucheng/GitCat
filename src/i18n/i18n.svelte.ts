@@ -18,6 +18,8 @@
 // and there is deliberately no CI gate requiring cross-locale key parity. Same
 // for the backend: see `be()` below and `src-tauri/src/i18n_err.rs`.
 
+import { shortcutParams } from "@/keymap/label.ts";
+
 export type Locale = "en" | "zh" | "ko";
 
 export const LOCALES: { id: Locale; label: string }[] = [
@@ -101,6 +103,13 @@ export function t(key: string, params?: Record<string, string | number | null | 
     for (const [k, v] of Object.entries(params)) {
       s = s.split(`{${k}}`).join(v == null ? "" : String(v));
     }
+  }
+  // Keyboard shortcuts are never spelled into a string: copy writes
+  // `{undoKey}` / `{modKey}` and gets "⌘Z" on macOS, "Ctrl+Z" on Windows/Linux,
+  // formatted from the keymap's own spec (keymap/shortcuts.ts). Filled AFTER
+  // the caller's params, so an explicit param of the same name still wins.
+  if (s.includes("Key}")) {
+    for (const [k, v] of Object.entries(shortcutParams())) s = s.split(`{${k}}`).join(v);
   }
   return s;
 }

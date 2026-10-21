@@ -18,6 +18,10 @@ export default {
     "插件 id {id} 无效 —— 它必须以小写字母或数字开头，且随后只能包含小写字母、数字和 '-'。",
   missing_name: "插件清单缺少非空的 name。",
   missing_version: "插件清单缺少非空的 version。",
+  cmd_id_invalid:
+    "插件命令 id {id} 无效 —— 它必须以小写字母或数字开头，且随后只能包含小写字母、数字和 '-'。",
+  cmd_id_duplicate: "插件存在重复的命令 id {id} —— 命令 id 在同一插件内必须唯一。",
+  cmd_missing_label: "插件命令 {id} 缺少非空的标签（label）。",
   cmd_exactly_one_both:
     "插件命令 {id} 必须只声明非空的 `run`（shell）或非空的 `handler`（Luau）之一 —— 但它两者都声明了。",
   cmd_exactly_one_neither:

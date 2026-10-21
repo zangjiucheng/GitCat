@@ -128,6 +128,21 @@ async commitDetail(path: string, sha: string) : Promise<Result<CommitDetail, str
 }
 },
 /**
+ * Tauri command: verify ONE commit's signature with git itself. Read-only.
+ * 
+ * `sha` is resolved through libgit2 first (it may be the 7-char abbreviation
+ * the graph rows carry), so what reaches the git command line is always a
+ * full hex oid — never a user-shaped string git could read as an option.
+ */
+async commitSignature(path: string, sha: string) : Promise<Result<CommitSignature, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("commit_signature", { path, sha }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Every commit reachable from `sha` by walking parent edges (`sha` itself
  * included) as short (7-char) hashes — matching `CommitMeta.sha`'s own
  * truncation, so the frontend can test membership directly against
@@ -3277,6 +3292,32 @@ async runHooks(event: PluginEvent, ctx: PlaceholderCtx) : Promise<Result<HookRun
 }
 },
 /**
+ * `{files}` for a `commit` command — see [`commit_changed_paths`].
+ * 
+ * JS: `commands.pluginCommitFiles(path, sha)`.
+ */
+async pluginCommitFiles(path: string, sha: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_commit_files", { path, sha }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `{files}` for a `staged` command — see [`staged_paths`].
+ * 
+ * JS: `commands.pluginStagedFiles(path)`.
+ */
+async pluginStagedFiles(path: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_staged_files", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Read `file_name`'s current content (repo-root only). Missing file => `Ok("")`,
  * never an error — see module doc comment.
  * JS: `commands.readRepoFile(path, fileName)` -> `Result<string, string>`.
@@ -3438,6 +3479,18 @@ async openDirInFileManager(repo: string, relative: string) : Promise<Result<null
  */
 async openRepoInNewWindow(path: string) : Promise<void> {
     await TAURI_INVOKE("open_repo_in_new_window", { path });
+},
+/**
+ * JS: `commands.openDiffInNewWindow(repo, sha)` — detaches a commit's diff
+ * out of the current window's own expanded-diff modal into its own
+ * dedicated, diff-only GitCat window (see this module's own doc comment,
+ * and `legacy/main.ts`'s `DIFF_ONLY_WINDOW` boot path — `detail.svelte.ts`'s
+ * `popOutDiff` is the one caller). Same fire-and-forget spawn as
+ * `open_repo_in_new_window` just above — see `spawn_new_window`'s own doc
+ * for why this never touches the calling window's own state.
+ */
+async openDiffInNewWindow(repo: string, sha: string) : Promise<void> {
+    await TAURI_INVOKE("open_diff_in_new_window", { repo, sha });
 },
 async setOpenRepo(path: string) : Promise<void> {
     await TAURI_INVOKE("set_open_repo", { path });
@@ -3642,6 +3695,7 @@ export type CommitInfo = { sha: string; subject: string }
  */
 export type CommitMeta = { sha: string; subject: string; an: Person; cm: Person; refs: RefChip[]; merge: boolean; ancestor: boolean }
 export type CommitObject = { sha: string; shortSha: string; author: PlumbingPerson; committer: PlumbingPerson; parents: string[]; tree: string; message: string }
+export type CommitSignature = { sha: string; status: SigStatus; code: string; signer: string; key: string; fingerprint: string; detail: string }
 /**
  * One config key's value at each scope, plus the effective (local-wins)
  * result — same shape/naming spirit as `identity::GitIdentity`, generalized
@@ -4195,7 +4249,8 @@ sha: string | null;
 file: string | null; 
 /**
  * `{files}` — several file paths; expands to each path shell-quoted,
- * space-joined (File context, multi-select).
+ * space-joined. Filled for a Commit command (that commit's changed paths)
+ * and a Staged command (the staged paths); empty otherwise (#77).
  */
 files: string[]; 
 /**
@@ -4368,7 +4423,15 @@ export type PluginContext =
 /**
  * Repo-scoped (needs only the open repository).
  */
-"repo"
+"repo" | 
+/**
+ * Works on the currently STAGED files (#77): `{files}` is the index's
+ * changed paths, read fresh when the command is invoked — no selection
+ * needed, so a pre-commit lint/format command can run from ⌘K at any
+ * time. `{file}`/`{sha}` are not filled. With nothing staged the command
+ * is refused rather than run with an empty `{files}`.
+ */
+"staged"
 /**
  * A lifecycle event a hook can fire on. Serialized kebab-case
  * (`"repo-opened"`, `"pre-mutation"`, …).
@@ -4763,6 +4826,40 @@ blockedByLocalChanges: boolean }
  */
 export type SelectedLine = { kind: string; oldNo: number | null; newNo: number | null }
 /**
+ * Signature verdict, collapsed from git's `%G?` letter to what the badge
+ * actually distinguishes.
+ */
+export type SigStatus = 
+/**
+ * `N` — the commit carries no signature at all.
+ */
+"none" | 
+/**
+ * `G` — good signature from a key the verifier trusts.
+ */
+"good" | 
+/**
+ * `U` — the signature is cryptographically good, but the key's validity
+ * is unknown (not certified in the web of trust). Not a failure; it just
+ * doesn't say WHO, only that the key matches.
+ */
+"untrusted" | 
+/**
+ * `X` / `Y` — good signature, but the signature or the key has expired.
+ */
+"expired" | 
+/**
+ * `B` / `R` — a bad signature, or one made by a revoked key.
+ */
+"bad" | 
+/**
+ * `E` (or anything git adds later) — git could not check it at all: no
+ * gpg installed, the public key isn't in the keyring, no
+ * `gpg.ssh.allowedSignersFile`. Says nothing about whether the
+ * signature is valid, so it must never be shown as "bad".
+ */
+"unverified"
+/**
  * A remote-tracking branch or a tag: just a name and the commit it resolves to.
  */
 export type SimpleRef = { name: string; sha: string }
@@ -5003,9 +5100,47 @@ mode: string;
 kind: string; oid: string }
 export type TreeObject = { sha: string; entries: TreeEntryRow[] }
 /**
+ * Machine-readable reason an undo/restore did NOT run (or failed part-way).
+ * The frontend branches on THIS, never on `message` — `message` is localized
+ * display text (an i18n key resolved by `be()`), so matching it with an
+ * English regex silently breaks (it did: the "stash, undo, re-apply" offer for
+ * a dirty tree could never appear). Serialized snake_case:
+ * `"dirty_worktree"`, `"nothing_to_undo"`, ...
+ */
+export type UndoRefusal = 
+/**
+ * No backup snapshot exists to rewind to.
+ */
+"nothing_to_undo" | 
+/**
+ * The working tree has uncommitted changes; a `reset --hard` would
+ * discard them. The UI offers stash → undo → re-apply for this one.
+ */
+"dirty_worktree" | 
+/**
+ * `git status` itself failed, so cleanliness can't be verified.
+ */
+"cannot_verify_clean" | 
+/**
+ * Sealing the current state (undo-is-undoable) failed; nothing moved.
+ */
+"snapshot_failed" | 
+/**
+ * The target selection no longer exists (e.g. a stale reflog index).
+ */
+"stale_selection" | 
+/**
+ * Any other failure (git command failed, stash failed, ...).
+ */
+"failed"
+/**
  * Result of a global undo.
  */
-export type UndoResult = { ok: boolean; message: string; restoredTo: string | null; sealed: string | null }
+export type UndoResult = { ok: boolean; message: string; restoredTo: string | null; sealed: string | null; 
+/**
+ * Why `ok` is false (`None` on success). Branch on this, not `message`.
+ */
+reason: UndoRefusal | null }
 /**
  * Update metadata for the frontend — the exact fields the plugin's JS `Update`
  * class needs, minus `rawJson` (informational, unused by download/install; the

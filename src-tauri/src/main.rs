@@ -11,5 +11,9 @@ fn main() {
     if gitcat_lib::askpass::is_askpass_invocation() {
         gitcat_lib::askpass::run_and_exit();
     }
+    // `gitcat --version` / `--help` / an unknown flag: print and exit here,
+    // before Tauri starts and before instance_focus could forward the launch
+    // to an already-open window (see cli.rs).
+    gitcat_lib::cli::handle_non_launch_args();
     gitcat_lib::run()
 }

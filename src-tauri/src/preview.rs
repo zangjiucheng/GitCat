@@ -124,6 +124,7 @@ fn read_side_bytes(repo_path: &str, rev: &str, file: &str) -> Result<Option<Vec<
             let index = repo.index().map_err(|e| e.message().to_string())?;
             match index.get_path(std::path::Path::new(file), 0) {
                 Some(entry) => {
+                    crate::promisor::ensure_blobs(&repo, [entry.id])?;
                     let blob = repo.find_blob(entry.id).map_err(|e| e.message().to_string())?;
                     Ok(Some(blob.content().to_vec()))
                 }
@@ -146,6 +147,11 @@ fn read_side_bytes(repo_path: &str, rev: &str, file: &str) -> Result<Option<Vec<
                 Ok(e) => e,
                 Err(_) => return Ok(None), // path not present on this side
             };
+            if entry.kind() != Some(git2::ObjectType::Blob) {
+                return Ok(None); // a tree/submodule at that path, not a blob
+            }
+            // A partial clone may not have this blob yet; fetch it first.
+            crate::promisor::ensure_blobs(&repo, [entry.id()])?;
             let object = entry.to_object(&repo).map_err(|e| e.message().to_string())?;
             match object.as_blob() {
                 Some(blob) => Ok(Some(blob.content().to_vec())),

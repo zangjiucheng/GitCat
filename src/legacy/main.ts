@@ -12,6 +12,7 @@ import { snapshotPreviewCtrl } from "../islands/snapshotpreview/snapshotpreview.
 import { submoduleNavCtrl } from "../islands/submodulenav/submodulenav.svelte.ts";
 import { ribbonTickFracs, RIBBON_TOP_FRAC, RIBBON_BOT_FRAC, RIBBON_MIN_TICK_PX } from "./ribbon.ts";
 import { displayChips } from "./reforder.ts";
+import { shouldOfferStashUndo } from "./undoflow.ts";
 import { LruCache } from "./graphcache.ts";
 import { clampResize, dragCeiling } from "./resize.ts";
 import { dashboardCtrl } from "../islands/dashboard/dashboard.svelte.ts";
@@ -37,6 +38,7 @@ import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
 // reactive, so t() is called imperatively (applyStaticI18n below + the busy
 // labels in doFetch/doPull/doPush) and re-run on i18nEvents "change".
 import { t, be, beReject, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
+import { shortcutParams } from "@/keymap/label.ts";
 import { fitEllipsis } from "./fitellipsis.ts";
 import { registerPluginLanguages as mergePluginLanguages, resolveLangFromMap } from "./pluginGrammars.ts";
 "use strict";
@@ -174,6 +176,29 @@ let graphGeneration=0;
 // onGraphBatch()'s own `done` handling) — a fresh openRepo() never sets this,
 // since there's nothing to restore on a brand new open.
 let pendingReselect=null;
+// Keep-old-rows-until-first-batch (see startGraphStream's keepRows / reloadGraph).
+// A same-repo full reload (Undo, reset HEAD, pull, …) used to empty BACKEND/G
+// the instant it started, so a big repo (CPython: ~2s to its first batch) showed
+// a BLANK canvas — only the pinned header — until rows streamed back in. Now the
+// fresh, empty BACKEND waits here as {gen, backend} while the OLD rows stay on
+// screen (dimmed, and #cv ignores the pointer — see .graph-stale in index.html —
+// so a click can't select a commit the reload is about to drop); onGraphBatch()
+// swaps it in on this generation's FIRST batch, in the same task that appends
+// that batch, so no empty frame is ever painted. null when nothing is held.
+let heldRows=null;
+function setGraphStale(on){
+  cv.classList.toggle("graph-stale", on);
+  if(on){ state.hoverRow=-1; showLabelTip(null); dirty=true; }
+}
+// Forget a held swap without applying it — openRepo()/bootEmpty() replace the
+// graph wholesale themselves, so a pending same-repo swap must not outlive them.
+function dropHeldRows(){ if(heldRows){ heldRows=null; setGraphStale(false); } }
+// Apply the held swap now: the fresh BACKEND goes live and loadGraph(0) resets
+// G/selection/scroll exactly as reloadGraph() used to do up front.
+function swapInHeldRows(){
+  BACKEND=heldRows.backend; heldRows=null; setGraphStale(false);
+  loadGraph(0);
+}
 export let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it — exported (live binding) for the Svelte islands via bridge.ts
 const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
 // Rejections are RESOLVED here, at the one seam every raw command call in
@@ -727,7 +752,30 @@ function computeVisibleRange(st){
 // snapshot the buffer identity so the next frame's tick() can tell whether a
 // cheap scroll-blit is safe. The single entry point every non-scroll redraw
 // (data change, selection, theme, resize, …) still calls as `draw()`.
+//
+// No-op while `G` is still null (graph not loaded yet): the FIRST
+// requestAnimationFrame(tick) fires on the very next paint after boot —
+// `dirty` starts true and `bufferValid` starts false (see their own
+// declarations), so tick() always attempts a FULL draw on its very first
+// frame, which on a cold launch is reliably AFTER openRepo's async IPC
+// round-trip has already set G, purely because JIT/module-compile overhead
+// delays that first paint. A warm window (Vite's module cache already hot —
+// reliably true for every window opened after the first, see windows.rs's
+// own module doc) has no such delay: its first frame can fire before the
+// backend has responded, G is still null, and computeVisibleRange's `G.N`
+// threw uncaught — which, since `requestAnimationFrame(tick)` is the LAST
+// line of tick(), killed the redraw loop FOREVER (not just one skipped
+// frame): every later frame never ran, so the canvas stayed permanently
+// blank even though the data layer went on to load and render its own DOM
+// content fine, and even though a later resize/focus/wait could never
+// recover a loop that was simply never rescheduled. Returning here instead
+// leaves `bufferValid` false, so every subsequent frame keeps retrying this
+// same early-out (tick()'s own `needsFull` check short-circuits on
+// `!bufferValid` before it would otherwise reach a `G.N` access of its own)
+// until the real graph arrives and `dirty=true` (openRepo's own load path)
+// schedules the first REAL draw.
 function draw(){
+  if(!G) return;
   const t0=performance.now();
   const [first,last]=computeVisibleRange(state.scrollTop);
   renderContent(state.scrollTop, first, last, false);
@@ -2463,18 +2511,19 @@ async function globalUndo(){
       const to=(res.restoredTo||"").slice(0,7);
       Tama.event("undo.performed",{hash:to||hhex(1)}); pulseTick(0);
       cheer(t("legacy.cheer_rewound"),tamaPose("confident"));
-    } else if(!useStashUndo && /uncommitted changes/i.test((res&&res.message)||"")){
+    } else if(shouldOfferStashUndo(res,useStashUndo)){
       // Undo refused because the working tree is dirty (its reset --hard would
       // DISCARD those changes — see safety.rs's undo()). Offer to keep them:
       // stash → undo → pop (undo_last_stashing).
+      // Decided on res.reason ("dirty_worktree"), never the localized
+      // message text — see undoflow.ts.
       //
       // Uses the app's own Tama-styled confirm (tamaConfirmCtrl.ask), NOT an
       // OS-native dialog. History: this was a synchronous window.confirm() that
       // could silently return false in the release WKWebView (making Undo do
       // nothing); then the native plugin dialog; now the in-app Tama dialog —
       // reliable, on-brand, and always gives feedback on the cancel branch below.
-      const msg="You have uncommitted changes, so Undo can't run — it resets the working tree.\n\nStash your changes, undo, then put them back? Nothing is lost; if re-applying conflicts you'll resolve it, and your changes are also kept in a stash.";
-      const proceed=await tamaConfirmCtrl.ask({title:"Undo with stash?",message:msg,confirmLabel:"Stash & undo",cancelLabel:"Cancel",kind:"warning"});
+      const proceed=await tamaConfirmCtrl.ask({title:t("legacy.undo_stash_title"),message:t("legacy.undo_stash_message"),confirmLabel:t("legacy.undo_stash_confirm"),cancelLabel:t("legacy.undo_stash_cancel"),kind:"warning"});
       if(proceed){
         const r2=await tinvoke("undo_last_stashing",{path:CUR_REPO});
         if(r2&&r2.ok){
@@ -2992,11 +3041,16 @@ function setGraphLoadingPill(on,count){
     p.classList.remove("show");
   }
 }
-async function startGraphStream(path){
+// keepRows (reloadGraph only): leave the current BACKEND/G on screen and hold
+// the fresh one in heldRows until this stream's first batch — see heldRows.
+async function startGraphStream(path, keepRows=false){
   const myGen = ++graphRequestSeq;
   dlog("graph", "stream START gen", myGen, "—", path);
   graphGeneration = myGen;
-  BACKEND = { n:0, oids:[], lane:[], color:[], merge:[], gapStart:[0], gapTop:[], gapBot:[], gapColor:[], rows:[], refs:[], allRefs:[], ncol:7, laneCount:0 };
+  const fresh = { n:0, oids:[], lane:[], color:[], merge:[], gapStart:[0], gapTop:[], gapBot:[], gapColor:[], rows:[], refs:[], allRefs:[], ncol:7, laneCount:0 };
+  // Nothing worth keeping (no graph yet, or an empty one) → reset up front as before.
+  if(keepRows && BACKEND && G && G.N>0){ heldRows={gen:myGen, backend:fresh}; setGraphStale(true); }
+  else { dropHeldRows(); BACKEND = fresh; }
   // A fresh graph (repo switch or refresh) invalidates any per-commit label
   // rotation the user had spun up — the ref set itself may have changed.
   refRot.clear(); overflowHit.clear();
@@ -3019,7 +3073,14 @@ async function startGraphStream(path){
   // new window's graph stayed blank). The backend now emits again, but via
   // emit_on_main (main-thread marshaled), so it's still deadlock-free. onGraphBatch
   // self-filters by generation, so a superseded stream's late batches are ignored.
-  await tinvoke("load_graph", { path, requestId: myGen });
+  try{ await tinvoke("load_graph", { path, requestId: myGen }); }
+  catch(e){
+    // load_graph rejected (e.g. the repo can't be opened) — no batch will ever
+    // arrive to swap the held rows out, so fall back to the old reset-up-front
+    // behaviour now instead of leaving stale, non-interactive rows up forever.
+    if(heldRows && heldRows.gen===myGen) swapInHeldRows();
+    throw e;
+  }
   return myGen;
 }
 // Registered ONCE, here in legacy/main.ts (not main.ts) and BEFORE the boot-time
@@ -3046,6 +3107,10 @@ if(IN_TAURI) window.__TAURI__.event.listen("graph-batch", (e)=>onGraphBatch(e.pa
 // needing new bounds checks sprinkled through draw() itself.
 function onGraphBatch(payload){
   if(!payload || payload.generation!==graphGeneration || !BACKEND) return; // stale/superseded — ignore
+  // First batch of a keepRows reload: swap the held (empty) BACKEND in and reset
+  // G/selection/scroll NOW, in the same task that appends this batch below, so
+  // the old rows go straight to the new ones without an empty frame between.
+  if(heldRows && heldRows.gen===payload.generation) swapInHeldRows();
 
   // ADVERSARIALLY-FOUND FIX: the "Loading repository…" overlay used to only
   // hide in openRepo()'s own `finally`, which doesn't run until its ENTIRE
@@ -3231,6 +3296,9 @@ async function openRepo(path){
   // doesn't have a backlog to churn through. startGraphStream() bumps again for
   // the new stream, which is what the backend's request_id will actually match.
   graphGeneration = ++graphRequestSeq;
+  // A held same-repo reload swap (and its reselect) is moot — this open replaces
+  // the graph itself, and the old repo's selection means nothing in the new one.
+  dropHeldRows(); pendingReselect=null;
   // An automated bisect run (bisect_run_start) is a real, long-lived blocking
   // Tauri call actually executing the user's command against THIS repo's
   // working tree. Switching repos out from under it would leave it running
@@ -3576,15 +3644,21 @@ async function reloadGraph(preserveRow, forceFull=false){
           // instead of trying (and failing) to find it in BACKEND.rows below.
           const keepWorkdir = nextPreserveRow && state.selectedRow===-2;
           // Same streaming load openRepo() itself now uses (see
-          // startGraphStream()'s own doc comment) — loadGraph(0) here resets to
-          // the now-empty BACKEND/selection exactly like a fresh open would;
-          // re-selecting keepSha/keepWorkdir has to wait until the stream
+          // startGraphStream()'s own doc comment), but with keepRows: the old
+          // rows stay up until the first batch, which is where the reset to the
+          // empty BACKEND/selection (loadGraph(0)) now happens — see heldRows.
+          // It used to run right here, blanking the canvas for the whole wait.
+          // Re-selecting keepSha/keepWorkdir has to wait until the stream
           // actually finishes (the previously-selected commit might be deep in
           // history, not necessarily in the very first batch), so it's handed
           // to onGraphBatch() via pendingReselect instead of done inline here.
-          await startGraphStream(CUR_REPO);
-          loadGraph(0);
-          pendingReselect = keepSha ? {sha:keepSha} : (keepWorkdir ? {workdir:true} : null);
+          // Set BEFORE the stream starts: its `done` can land before
+          // startGraphStream()'s await returns. A coalesced second pass (Undo +
+          // the file watcher both reloading) that finds the selection already
+          // reset by the first pass's swap keeps that pass's pending reselect.
+          if(keepSha||keepWorkdir) pendingReselect = keepSha ? {sha:keepSha} : {workdir:true};
+          else if(!nextPreserveRow) pendingReselect = null;
+          await startGraphStream(CUR_REPO, true);
           await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
         }
       }catch(e){ Tama.warn(t("legacy.reload_failed",{error:e})); console.error(e); }
@@ -3666,6 +3740,7 @@ function bootEmpty(){
   // at 1 and only ever increases).
   graphGeneration=-1;
   pendingReselect=null;
+  dropHeldRows();
   Safety.snaps=[]; Safety.updateBadge();
   if(IN_TAURI) tinvoke("unwatch_repo").catch(e=>console.error("unwatch_repo",e));
   sidebarCtrl.reset();
@@ -3761,11 +3836,29 @@ if(IN_TAURI){
   // Boot the empty hero (so the app is usable — pick a real folder) and name the
   // offending path, VS Code-style.
   const repoError=params.get("repoError");
+  // Diff pop-out (windows.rs's own `?commit=`, set by detail.svelte.ts's
+  // popOutDiff via open_diff_in_new_window) — DIFF_ONLY_WINDOW (env.ts) is
+  // this SAME repo+commit pair; a window booted this way shows nothing BUT
+  // that one commit's diff (index.html's own `.diff-only` CSS hides the
+  // topbar/sidebar/graph entirely — see its own comment), so it skips
+  // openRepo()'s whole repo-wide graph stream/sidebar-refresh/NAV_STACK
+  // dance in favor of loading exactly the one commit it exists to show.
+  // expandDiff() runs synchronously right after — selectBySha sets
+  // `detailCtrl.commit` before its first await, so it's already truthy by
+  // the time expandDiff's own `if (!this.commit) return` guard runs.
+  const initialCommit=params.get("commit");
   // openRepo() derives NAV_STACK + refreshes the submodule-nav strip itself, so a
   // repo opened by deep-link that happens to be a submodule shows its context too.
   // On failure (e.g. the repo became inaccessible between the launch-time check
   // and now) fall back to the empty hero rather than a stranded blank frame.
-  if(initialRepo){ openRepo(initialRepo).then(ok=>{ if(!ok) bootEmpty(); }); }
+  if(initialRepo && initialCommit){
+    document.body.classList.add("diff-only");
+    void detailCtrl.selectBySha(initialRepo, initialCommit);
+    detailCtrl.expandDiff();
+  }
+  else if(initialRepo){
+    openRepo(initialRepo).then(ok=>{ if(!ok) bootEmpty(); });
+  }
   else { bootEmpty(); if(repoError) Tama.warn(t("legacy.not_a_repo",{repo:repoError}), 6000); }
 }
 else { loadGraph(10000); }          // plain browser (design mode): synthetic demo data
@@ -3799,6 +3892,11 @@ function applyStaticI18n(root=document){
   root.querySelectorAll("[data-i18n-title]").forEach(el=>{ const k=key(el,"data-i18n-title"); if(k!==null) el.title=t(k); });
   root.querySelectorAll("[data-i18n-ph]").forEach(el=>{ const k=key(el,"data-i18n-ph"); if(k!==null) el.setAttribute("placeholder",t(k)); });
   root.querySelectorAll("[data-i18n-aria]").forEach(el=>{ const k=key(el,"data-i18n-aria"); if(k!==null) el.setAttribute("aria-label",t(k)); });
+  // A bare shortcut badge (<kbd data-shortcut="palette">) has no copy to
+  // translate, only a key to spell per platform: "⌘K" on macOS, "Ctrl+K"
+  // elsewhere. Same table the i18n `{paletteKey}` placeholders read.
+  const keys=shortcutParams();
+  root.querySelectorAll("[data-shortcut]").forEach(el=>{ const v=keys[`${el.getAttribute("data-shortcut")}Key`]; if(v) el.textContent=v; });
 }
 applyStaticI18n();
 

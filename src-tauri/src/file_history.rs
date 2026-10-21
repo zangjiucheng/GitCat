@@ -173,11 +173,17 @@ fn file_history_inner(path: &str, file: &str, at_commit: Option<&str>) -> Result
     let entry = tree
         .get_path(Path::new(file))
         .map_err(|_| ierrp("err_misc.path_does_not_exist", &[("path", file), ("short", short_sha.as_str())]))?;
-    let obj = entry
-        .to_object(&repo)
-        .map_err(|_| ierrp("err_misc.path_does_not_exist", &[("path", file), ("short", short_sha.as_str())]))?;
-    if obj.as_blob().is_none() {
-        return Err(ierrp("err_misc.file_is_a_directory", &[("path", file), ("short", short_sha.as_str())]));
+    // The tree entry's own kind, not `to_object()`: loading the object would
+    // read the blob itself, which a partial clone (`--filter=blob:none`) may
+    // not have — and history never needs the content anyway.
+    match entry.kind() {
+        Some(git2::ObjectType::Blob) => {}
+        Some(git2::ObjectType::Tree) => {
+            return Err(ierrp("err_misc.file_is_a_directory", &[("path", file), ("short", short_sha.as_str())]));
+        }
+        _ => {
+            return Err(ierrp("err_misc.path_does_not_exist", &[("path", file), ("short", short_sha.as_str())]));
+        }
     }
 
     let max_count_arg = format!("--max-count={}", MAX_HISTORY_COMMITS + 1);
@@ -241,6 +247,11 @@ fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
         .arg("-C")
         .arg(path)
         .args(args)
+        // In a partial clone, `--follow`'s rename detection makes git fetch
+        // missing blobs from the promisor remote on its own. A credential
+        // prompt there must fail rather than wait on a stdin nobody answers.
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
         .output()
         .map_err(|e| ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())]))?;
     Ok(Out {

@@ -18,6 +18,10 @@ export default {
     "플러그인 id {id}이(가) 유효하지 않아요 — 소문자나 숫자로 시작하고, 그 뒤로는 소문자, 숫자, '-'만 포함해야 해요.",
   missing_name: "플러그인 매니페스트에 name이 없거나 비어 있어요.",
   missing_version: "플러그인 매니페스트에 version이 없거나 비어 있어요.",
+  cmd_id_invalid:
+    "플러그인 명령 id {id}이(가) 유효하지 않아요 — 소문자나 숫자로 시작하고, 그 뒤로는 소문자, 숫자, '-'만 포함해야 해요.",
+  cmd_id_duplicate: "플러그인에 중복된 명령 id {id}이(가) 있어요 — 명령 id는 플러그인 내에서 고유해야 해요.",
+  cmd_missing_label: "플러그인 명령 {id}에 비어 있지 않은 레이블이 없어요.",
   cmd_exactly_one_both:
     "플러그인 명령 {id}은(는) 비어 있지 않은 `run`(shell) 또는 비어 있지 않은 `handler`(Luau) 중 정확히 하나만 선언해야 해요 — 그런데 둘 다 선언했어요.",
   cmd_exactly_one_neither:

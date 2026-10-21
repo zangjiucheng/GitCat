@@ -42,6 +42,13 @@ export default {
   detail_placement_right: "오른쪽",
   detail_placement_bottom: "아래쪽",
 
+  // 확장 아이콘을 눌렀을 때 기본으로 무엇을 할지 — 이 창 안에서 기존 모달을
+  // 열거나, 바로 새 GitCat 창으로 분리해요.
+  diff_open_mode: "diff 열기 방식",
+  diff_open_mode_desc: "커밋 diff의 확장 아이콘이 기본으로 하는 동작이에요. 어느 쪽이든 확장된 diff에는 항상 분리 버튼이 있어요.",
+  diff_open_mode_modal: "전체 화면 패널",
+  diff_open_mode_window: "새 창",
+
   // 체리픽
   cherrypick: "체리픽",
   cherrypick_origin_hint: "생성되는 커밋 메시지에 '(cherry picked from …)'을 추가해요",
@@ -84,7 +91,7 @@ export default {
   // 스냅샷
   snapshots: "스냅샷",
   snapshots_desc:
-    "히스토리를 바꾸는 모든 작업은 복구 가능한 백업을 고정해둬요 — 이것이 ⌘Z 실행 취소와 스냅샷 리본을 가능하게 해주는 원리예요. 정리하지 않으면 시간이 지나면서 계속 쌓여요. 자동 정리는 저장소를 열 때마다 오래된 것들을 정리하고, 가장 최근 스냅샷 하나는 항상 유지돼요.",
+    "히스토리를 바꾸는 일상적인 작업은 복구 가능한 백업을 고정해둬요 — 이것이 {undoKey} 실행 취소와 스냅샷 리본을 가능하게 해주는 원리예요. 정리하지 않으면 시간이 지나면서 계속 쌓여요. 자동 정리는 저장소를 열 때마다 오래된 것들을 정리하고, 가장 최근 스냅샷 하나는 항상 유지돼요.",
   snapshot_keep_all: "전부 유지(정리 안 함)",
   snapshot_keep_count: "최신 N개 유지",
   snapshot_keep_age: "최근 N일 유지",

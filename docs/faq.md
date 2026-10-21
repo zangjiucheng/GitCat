@@ -2,7 +2,7 @@
 
 ### What is the "Safety Manager"?
 
-It's the part of GitCat that snapshots your repo before every mutation — a rebase, a reset, a filter-repo run, anything that changes history or the working tree. That snapshot is what the global Undo (⌘Z) restores from, and restoring is itself just another snapshotted mutation, so Undo is always undoable too. There's no single operation in the app that can put you in a state you can't get back out of with one click — the closest exception is `git-filter-repo`, which gets its own dedicated backup/restore wizard on top of the usual snapshot because rewriting an entire history is a fundamentally bigger action.
+It's the part of GitCat that snapshots your repo before everyday history-changing operations — a commit, a merge, a rebase, a reset, a cherry-pick, a revert. A snapshot records where `HEAD` and every local branch point, and that's what the global Undo (⌘Z) restores; restoring is itself just another snapshotted operation, so Undo is always undoable too. Snapshots cover committed history, not uncommitted edits — so Undo needs a clean working tree (if yours isn't, GitCat offers to stash, undo and re-apply for you), and some of the actions that touch uncommitted work get their own nets: discarding changes writes a backup under `.git/gitgui/discard-backup/` first, and deleted branches, deleted tags and dropped stashes are pinned under `refs/gitgui/` so they stay recoverable. The actions that throw uncommitted work away for good — a hard reset (including resetting the current branch to its upstream) and force-switching away from uncommitted changes — sit behind a typed confirmation instead, as does force push. `git-filter-repo` isn't covered by ⌘Z at all: it gets its own dedicated wizard with a full `git bundle` backup and restore, because rewriting an entire history is a fundamentally bigger action.
 
 ### Does GitCat do anything to my repository without asking?
 
@@ -38,7 +38,7 @@ GitCat shells out to your system's `git` binary for every write operation (fetch
 
 ### How is this different from GitHub Desktop / GitKraken / Sourcetree / \[other Git GUI\]?
 
-The main difference is the Safety Manager: GitCat is built around the assumption that a history-rewriting mistake should always be one Undo away, not something you have to know `git reflog` to recover from by hand. It's also free and open source (GPLv3), with a fast virtualized canvas graph designed to stay smooth on large repos.
+The main difference is the Safety Manager: GitCat is built around the assumption that an everyday history-changing mistake should be one Undo away, not something you have to know `git reflog` to recover from by hand. It's also free and open source (GPLv3), with a fast virtualized canvas graph designed to stay smooth on large repos.
 
 ### I found a bug or want a feature. Where do I report it?
 

@@ -83,15 +83,16 @@ closed* — if the pre-mutation snapshot cannot be taken, the command does not r
 for a lifecycle hook (an observer that must not stall the event) a failed
 snapshot causes that one hook to be logged and skipped.
 
-**Windows quoting is fail-closed, not bulletproof.** GitCat's value-quoting is
-POSIX single-quoting, which fully neutralizes untrusted values under the unix
-shell (`sh -c`). Windows runs `cmd /C`, which does not honor that quoting, so on
-Windows GitCat **refuses** to run a command whose substituted values contain a
-`cmd.exe` metacharacter (`& | < > ^ % ! "`, or a newline) rather than risk
-injection. This intentionally rejects some legitimate values (including most
-`{diff}` content) on Windows until a bundled POSIX shell lands.
+**Windows quoting relies on a fail-closed gate.** On the unix shell (`sh -c`)
+GitCat POSIX-single-quotes every value, which fully neutralizes it. Windows runs
+`cmd.exe /S /C`, where values are double-quoted instead. Double quotes cannot
+neutralize every `cmd.exe` metacharacter, so on Windows GitCat first **refuses**
+to run a command whose substituted values contain one (`& | < > ^ % ! "`, or a
+newline) rather than risk injection; every value that gets through is literal
+inside its quotes. This intentionally rejects some legitimate values (including
+most `{diff}` content) on Windows.
 
-**Flag/argument injection is not covered by quoting.** Single-quoting stops
+**Flag/argument injection is not covered by quoting.** Quoting stops
 shell-metacharacter injection but does not change argument boundaries: an
 untrusted value that begins with `-` (a branch named `--upload-pack=…`, a ref
 `-n`) is still delivered to the invoked tool as an **option**. Plugin authors

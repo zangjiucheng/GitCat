@@ -48,4 +48,10 @@ export default {
   couldnt_install_with_admin: "Couldn't install with administrator privileges: {detail}",
   couldnt_find_home: "Couldn't find your home directory ($HOME).",
   couldnt_find_localappdata: "Couldn't find %LOCALAPPDATA%.",
+
+  // promisor.rs — partial clone (`--filter=blob:none`) on-demand blob fetch
+  partial_clone_fetch_failed:
+    "This content isn't downloaded yet (this is a partial clone), and fetching it from '{remote}' failed. Check your network connection and try again. Details: {detail}",
+  partial_clone_no_remote:
+    "This content isn't downloaded yet (this is a partial clone), and no promisor remote is configured to fetch it from.",
 };

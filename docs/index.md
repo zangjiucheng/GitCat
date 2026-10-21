@@ -7,7 +7,7 @@ layout: home
 hero:
   name: GitCat
   text: Git you can take back.
-  tagline: A cozy desktop Git client that pins a snapshot before every mutation — so ⌘Z always works. Free and open source, on macOS, Windows and Linux.
+  tagline: A cozy desktop Git client that pins a snapshot before everyday history-changing operations — so ⌘Z can put your branches back. Free and open source, on macOS, Windows and Linux.
   image:
     src: /tama-hero.webp
     alt: Tama, GitCat's cat mascot, waving hello

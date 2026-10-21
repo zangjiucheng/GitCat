@@ -16,6 +16,8 @@ export default {
   cannot_resolve_target: "无法解析目标：{detail}",
   bad_commit_id: "无效的提交 ID {sha}：{detail}",
   cannot_find_commit: "找不到提交 {sha}：{detail}",
+  signature_timed_out: "签名校验超时（{secs} 秒）。",
+  signature_check_failed: "签名校验失败：{detail}",
   could_not_create_todo_dir: "无法创建 rebase-todo 目录：{detail}",
   could_not_write_todo: "无法写入预计算的 todo：{detail}",
   rebase_in_progress: "已有一个变基正在进行——请先解决或中止它。",

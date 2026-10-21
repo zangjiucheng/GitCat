@@ -13,9 +13,9 @@
    brighter text, stronger borders, and vivid saturated lane colours. */
 :root{
   /* light — higher contrast on warm cream */
-  --bg:#FFFFFF; --panel:#F6F7F9; --elevated:#FFFFFF; --border:#E3E6EB;
-  --text:#191C22; --muted:#667085; --accent:#5B57D6; --accent2:#2E8B72;
-  --danger:#D14343; --warning:#B9781C; --success:#3C9A5A;
+  --bg:#FFFFFF; --panel:#F7F5F1; --elevated:#FFFFFF; --border:#E5DFD6;
+  --text:#1E1A16; --muted:#6B635A; --accent:#B4531C; --on-accent:#FFFFFF; --accent2:#2E8B72;
+  --danger:#C8383C; --warning:#946800; --success:#2F7D45;
   --l0:#0E9C86; --l1:#D6497A; --l2:#4E5FE0; --l3:#C07E12; --l4:#8B45C4; --l5:#1488BE; --l6:#579A1C;
   --fur:#E0A75C; --fur-shade:#C88A3E; --fur-line:#6A4E2D; --ear-in:#ED96A4;
   --skin:#F9E2CA; --skin-line:#BE8C63; --eye:#B0680E; --eye-dark:#7E4A0E; --eye-lite:#E7A63E;
@@ -25,31 +25,31 @@
   --display:"SF Pro Rounded",ui-rounded,"Nunito","Segoe UI Variable",system-ui,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
   --r-card:12px; --r-panel:10px; --r-control:8px; --r-pill:999px; --r-chip:4px;
   --topbar-h:46px; --sidebar-w:264px; --detail-w:344px; --detail-h:320px; --ribbon-w:46px; --nook-h:132px; --row-h:26px; --term-h:280px;
-  --shadow:0 6px 20px rgba(16,18,27,.10), 0 1px 3px rgba(16,18,27,.08);
+  --shadow:0 6px 20px rgba(32,22,12,.10), 0 1px 3px rgba(32,22,12,.08);
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#0F1116; --panel:#171A21; --elevated:#20242D; --border:#2D323C;
-  --text:#ECEEF3; --muted:#98A1AE; --accent:#8E88F2; --accent2:#5FD0B4;
-  --danger:#F06A5B; --warning:#F0973E; --success:#5FC98A;
+  --bg:#12100E; --panel:#1A1714; --elevated:#24201C; --border:#363029;
+  --text:#EFE9E2; --muted:#A69C91; --accent:#F2A15E; --on-accent:#1A1209; --accent2:#5FD0B4;
+  --danger:#F06A5B; --warning:#E6C04F; --success:#5FC98A;
   --l0:#3FD3B6; --l1:#F98CAD; --l2:#8AA0FF; --l3:#F6BA50; --l4:#C79BF0; --l5:#5ED0EA; --l6:#A9DC5F;
   --fur:#E1A85C; --fur-shade:#C6883C; --fur-line:#3B2C1B; --ear-in:#DC8B99;
   --skin:#F2D4B4; --skin-line:#8C6C4C; --eye:#F5B843; --eye-dark:#A96C14; --eye-lite:#FFD888;
   --sweater:#EADCC0; --sweater-line:#B49D74; --mouth:#CB6F65; color-scheme:dark;
 }}
 :root[data-theme="light"]{
-  --bg:#FFFFFF; --panel:#F6F7F9; --elevated:#FFFFFF; --border:#E3E6EB;
-  --text:#191C22; --muted:#667085; --accent:#5B57D6; --accent2:#2E8B72;
-  --danger:#D14343; --warning:#B9781C; --success:#3C9A5A;
+  --bg:#FFFFFF; --panel:#F7F5F1; --elevated:#FFFFFF; --border:#E5DFD6;
+  --text:#1E1A16; --muted:#6B635A; --accent:#B4531C; --on-accent:#FFFFFF; --accent2:#2E8B72;
+  --danger:#C8383C; --warning:#946800; --success:#2F7D45;
   --l0:#0E9C86; --l1:#D6497A; --l2:#4E5FE0; --l3:#C07E12; --l4:#8B45C4; --l5:#1488BE; --l6:#579A1C;
   --fur:#E0A75C; --fur-shade:#C88A3E; --fur-line:#6A4E2D; --ear-in:#ED96A4;
   --skin:#F9E2CA; --skin-line:#BE8C63; --eye:#B0680E; --eye-dark:#7E4A0E; --eye-lite:#E7A63E;
   --sweater:#F3E6D0; --sweater-line:#C6B088; --mouth:#B85F58; color-scheme:light;
 }
 :root[data-theme="dark"]{
-  --bg:#0F1116; --panel:#171A21; --elevated:#20242D; --border:#2D323C;
-  --text:#ECEEF3; --muted:#98A1AE; --accent:#8E88F2; --accent2:#5FD0B4;
-  --danger:#F06A5B; --warning:#F0973E; --success:#5FC98A;
+  --bg:#12100E; --panel:#1A1714; --elevated:#24201C; --border:#363029;
+  --text:#EFE9E2; --muted:#A69C91; --accent:#F2A15E; --on-accent:#1A1209; --accent2:#5FD0B4;
+  --danger:#F06A5B; --warning:#E6C04F; --success:#5FC98A;
   --l0:#3FD3B6; --l1:#F98CAD; --l2:#8AA0FF; --l3:#F6BA50; --l4:#C79BF0; --l5:#5ED0EA; --l6:#A9DC5F;
   --fur:#E1A85C; --fur-shade:#C6883C; --fur-line:#3B2C1B; --ear-in:#DC8B99;
   --skin:#F2D4B4; --skin-line:#8C6C4C; --eye:#F5B843; --eye-dark:#A96C14; --eye-lite:#FFD888;
@@ -230,7 +230,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   transition:border-color .12s,background-color .12s}
 .tb-btn:hover{border-color:var(--muted)}
 .tb-btn:disabled{opacity:.45;cursor:default;pointer-events:none}
-.tb-btn .badge{font-family:var(--mono);font-size:11px;background:var(--accent);color:#fff;
+.tb-btn .badge{font-family:var(--mono);font-size:11px;background:var(--accent);color:var(--on-accent);
   border-radius:var(--r-pill);padding:0 6px;font-weight:700}
 .tb-btn.undo{border-color:color-mix(in srgb,var(--accent2) 40%,var(--border))}
 .tb-btn.undo span{display:flex;align-items:center;gap:6px}
@@ -791,6 +791,15 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .loading-pill .spinner{width:15px;height:15px;border-width:2px;color:var(--accent);opacity:1}
 @media (prefers-reduced-motion:reduce){.loading-pill.show{animation:none}}
 #cv{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+/* A same-repo full reload keeps the OLD rows painted until the new stream's first
+   batch (see heldRows in legacy/main.ts). Dimmed so they read as "about to be
+   replaced" — after a short delay, so a fast reload never flickers — and
+   pointer-inert so a click can't select a commit the reload is dropping. The
+   class comes off with no transition, so the new rows land at full strength.
+   Compositor opacity only: the canvas pixels (and the scroll-blit buffer) are
+   untouched. */
+#cv.graph-stale{opacity:.55;pointer-events:none;transition:opacity .2s ease .15s}
+@media (prefers-reduced-motion:reduce){#cv.graph-stale{transition:none}}
 /* Panel-resize drag guide: a thin vertical rule that follows the cursor while a
    splitter is being dragged, so ONLY the line moves — the panels and the graph
    canvas don't reflow/re-render until the drag is released (see main.ts's
@@ -935,6 +944,10 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .gpg.good{color:var(--success);background:color-mix(in srgb,var(--success) 15%,transparent)}
 .gpg.none{color:var(--muted);background:var(--bg)}
 .gpg.bad{color:var(--danger);background:color-mix(in srgb,var(--danger) 15%,transparent)}
+.gpg.untrusted{color:var(--success);background:color-mix(in srgb,var(--success) 8%,transparent)}
+.gpg.expired{color:var(--warning);background:color-mix(in srgb,var(--warning) 15%,transparent)}
+.gpg.unverified,.gpg.checking{color:var(--muted);background:var(--bg)}
+.gpg.checking{opacity:.7}
 .who-split{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border-radius:var(--r-panel);overflow:hidden;margin-top:4px}
 .who{background:var(--panel);padding:9px 11px;min-width:0}
 .who h4{margin:0 0 5px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
@@ -1103,6 +1116,21 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    controller or re-fetch) — a file list down the left (reuses .tree/dirNode
    verbatim) so switching files doesn't require closing it first. */
 .modal.diffx{width:min(1200px,96vw);height:88vh;display:flex;flex-direction:column}
+/* Same "don't inherit the danger-red tint by mistake" fix as .resolver/
+   .bisecter/.settings/.setupwizard above (see .setupwizard .modal-head's own
+   comment) — showing a diff is a completely neutral action, never alarming,
+   but with no override this modal was inheriting the base .modal-head's
+   danger-tinted background anyway. Barely noticeable against the rest of a
+   normal window's own UI; the one thing a diff-only window (DIFF_ONLY_WINDOW)
+   shows, where it read as a warning banner sitting directly under the native
+   titlebar — exactly what made the whole window look like a dialog someone
+   popped up, not a dedicated view of its own. */
+.modal.diffx .modal-head{background:var(--panel)}
+/* min-width:0 so the ellipsis below can actually apply, flex:1 so it eats the
+   header's free space and pushes the pop-out-to-window button (.modal-head's
+   own child, after .diffx-head-main) to the far right — same "title grows,
+   actions pin to the end" shape as .blame-head-main. */
+.diffx-head-main{min-width:0;flex:1}
 .diffx-head-main h3{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .modal.diffx .modal-body{flex:1;min-height:0;overflow:hidden;padding:0;display:flex}
 /* File panel: a fixed header (Files label + Collapse/Expand-all) over a
@@ -1112,6 +1140,41 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .diffx-files-head{display:flex;align-items:center;gap:8px;padding:10px 10px 6px;flex:none}
 .diffx-files-scroll{flex:1;min-height:0;overflow:auto;margin-top:0;padding:0 10px 10px}
 .diffx-diff{flex:1;min-width:0;min-height:0;max-height:none;border:0;border-radius:0}
+/* ---- Diff-only window (DIFF_ONLY_WINDOW — env.ts) ----
+   windows.rs's open_diff_in_new_window spawns a window whose ONLY job is
+   showing one commit's diff ("pop this diff out into its own window", not
+   "open a second full GitCat on this repo") — legacy/main.ts's boot sequence
+   stamps this class on <body> instead of ever calling openRepo(), so there is
+   no graph/sidebar/dashboard data to show even if this CSS didn't hide them;
+   it's belt-and-braces against a stray keyboard shortcut or resize reaching
+   that dormant chrome, and against the one-frame flash it'd otherwise paint
+   before expandDiff() flips .scrim.on. The modal itself is stretched to fill
+   the whole window (no centered card, no dimmed backdrop behind it — there's
+   nothing back there to dim) rather than reusing its normal floating-overlay
+   look, so the window reads as a dedicated diff viewer, not a modal stranded
+   in an otherwise-empty app shell. */
+body.diff-only .topbar,
+body.diff-only .subnav,
+body.diff-only .sidebar,
+body.diff-only .graph{display:none}
+body.diff-only .app{grid-template-columns:1fr;grid-template-rows:1fr;grid-template-areas:"detail"}
+body.diff-only .detail{border-left:none}
+/* detailCtrl.diffExpanded is permanently true here (see legacy/main.ts's
+   boot sequence), so .scrim/.modal.diffx IS the whole window — but Detail.
+   svelte's normal (non-modal) content — TabStrip, the tama-hero empty
+   state, the embedded small diffview, author/gpg info — is a SIBLING of
+   .scrim in the same #detail mount, not nested inside it, and was never
+   hidden on its own. Making the scrim transparent (below) would otherwise
+   let all of that show straight through. */
+body.diff-only .detail>:not(.scrim){display:none}
+body.diff-only .scrim{background:transparent;backdrop-filter:none}
+body.diff-only .modal.diffx{width:100vw;height:100vh;border-radius:0;box-shadow:none;border:0}
+/* The native OS titlebar already closes this window (collapseDiff() calls
+   getCurrentWindow().close() here — see detail.svelte.ts's own doc comment);
+   an in-content "Close" footer bar is a dialog's own affordance, redundant
+   with — and visually competing against — chrome the window already has.
+   .modal-body's flex:1 fills the height this frees up on its own. */
+body.diff-only .modal-foot{display:none}
 /* The shared two-pane divider (src/islands/detailpanel/Splitter.svelte), used
    by the expanded-diff modal in each of Detail.svelte and Workdir.svelte, and
    by both of the detail panel's "changes" tabs. An 8px grab zone with negative
@@ -2255,27 +2318,27 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
         </svg>
         <span id="pillBranch">main</span><span class="ab" id="pillAb"><b>&#8593;2</b>&#183;<b>&#8595;0</b></span>
       </div>
-      <button class="tb-btn" id="gotoHeadBtn" data-i18n-title="topbar.goto_head" data-i18n-aria="topbar.goto_head_aria" title="Jump to the current commit (HEAD)  &#8984;&#8679;H" aria-label="Jump to current commit (HEAD)">
+      <button class="tb-btn" id="gotoHeadBtn" data-i18n-title="topbar.goto_head" data-i18n-aria="topbar.goto_head_aria" title="Jump to the current commit (HEAD)" aria-label="Jump to current commit (HEAD)">
         <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.6v2.4M8 12v2.4M1.6 8h2.4M12 8h2.4"/></svg>
       </button>
     </div>
     </div>
-    <div class="cmd-hint" data-i18n-title="topbar.cmd_palette" title="Command palette"><span data-i18n="topbar.search_hint">Search commits, refs, actions&#8230;</span><kbd>&#8984;K</kbd></div>
+    <div class="cmd-hint" data-i18n-title="topbar.cmd_palette" title="Command palette"><span data-i18n="topbar.search_hint">Search commits, refs, actions&#8230;</span><kbd data-shortcut="palette"></kbd></div>
     <div class="tb-right">
       <!-- Fetch/Pull/Push live here (repo ACTIONS), not next to the repo-pick/
            branch-pill cluster on the left (repo IDENTITY) — grouped with
            Undo/theme (also actions) per direct feedback that this is the
            clearer split, not "everything about the current repo together". -->
       <div class="sync-actions">
-        <button class="tb-btn" id="fetchBtn" data-i18n-title="topbar.fetch_tip" title="Fetch — update remote-tracking refs (⌘⇧D)">
+        <button class="tb-btn" id="fetchBtn" data-i18n-title="topbar.fetch_tip" title="Fetch — update remote-tracking refs">
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.6v3h-3"/></svg>
           <span data-i18n="topbar.fetch">Fetch</span>
         </button>
-        <button class="tb-btn" id="pullBtn" data-i18n-title="topbar.pull_tip" title="Pull (fast-forward only) (⌘⇧L)">
+        <button class="tb-btn" id="pullBtn" data-i18n-title="topbar.pull_tip" title="Pull (fast-forward only)">
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.2v7.3"/><path d="M4.8 7.2 8 10.4l3.2-3.2"/><path d="M3.2 13h9.6"/></svg>
           <span data-i18n="topbar.pull">Pull</span>
         </button>
-        <button class="tb-btn" id="pushBtn" data-i18n-title="topbar.push_tip" title="Push (⌘⇧P)">
+        <button class="tb-btn" id="pushBtn" data-i18n-title="topbar.push_tip" title="Push">
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.8V5.5"/><path d="M4.8 7.8 8 4.6l3.2 3.2"/><path d="M3.2 13h9.6"/></svg>
           <span data-i18n="topbar.push">Push</span>
         </button>
@@ -2295,7 +2358,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
           <path d="M3.4 13.4v-3.2h3.2"/>
         </svg>
       </button>
-      <button class="tb-btn undo" id="undoBtn" data-i18n-title="topbar.undo_tip" title="Global Undo — Safety Manager (⌘Z)">
+      <button class="tb-btn undo" id="undoBtn" data-i18n-title="topbar.undo_tip" title="Global Undo — Safety Manager">
         <span>
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h6.5a3.5 3.5 0 0 1 0 7H7.2"/><path d="M6.5 3.3 4 6l2.5 2.7"/></svg>
           <span data-i18n="topbar.undo">Undo</span>
@@ -2397,11 +2460,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
       </section>
       <section>
         <h4 data-i18n="help.navigate_h">Navigate</h4>
-        <p data-i18n-html="help.navigate_p">Scroll or drag to move; <kbd>&#8984;</kbd>+scroll (or <kbd>+</kbd>/<kbd>-</kbd>) to zoom. <kbd>&#8984;K</kbd> opens the command palette. <kbd>&#8984;F</kbd> searches code, <kbd>&#8984;&#8679;F</kbd> searches commit content. <kbd>&#8984;&#8679;H</kbd> jumps to HEAD, <kbd>&#8984;&#8679;U</kbd> to Uncommitted changes. <kbd>&#8984;\</kbd> toggles focus mode. Press <kbd>?</kbd> for every shortcut.</p>
+        <p data-i18n-html="help.navigate_p">Scroll or drag to move; <kbd data-shortcut="mod"></kbd>+scroll (or <kbd>+</kbd>/<kbd>-</kbd>) to zoom. <kbd data-shortcut="palette"></kbd> opens the command palette. <kbd data-shortcut="codeSearch"></kbd> searches code, <kbd data-shortcut="pickaxe"></kbd> searches commit content. <kbd data-shortcut="head"></kbd> jumps to HEAD, <kbd data-shortcut="uncommitted"></kbd> to Uncommitted changes. <kbd data-shortcut="focusMode"></kbd> toggles focus mode. Press <kbd>?</kbd> for every shortcut.</p>
       </section>
       <section>
         <h4 data-i18n="help.commits_h">Commits</h4>
-        <p data-i18n-html="help.commits_p">Click a commit to see its files and diff on the right. <b>Drag</b> a commit onto another to cherry-pick it there &#8212; hold <kbd>&#8679;</kbd> while dragging to merge instead. <b>Right-click</b> a commit for cherry-pick / merge / revert / reset / create branch or tag / copy.</p>
+        <p data-i18n-html="help.commits_p">Click a commit to see its files and diff on the right. <b>Drag</b> a commit onto another to cherry-pick it there &#8212; hold <kbd data-shortcut="shift"></kbd> while dragging to merge instead. <b>Right-click</b> a commit for cherry-pick / merge / revert / reset / create branch or tag / copy.</p>
       </section>
       <section>
         <h4 data-i18n="help.branches_h">Branches &amp; tags</h4>

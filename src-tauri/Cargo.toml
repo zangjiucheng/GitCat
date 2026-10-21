@@ -1,6 +1,6 @@
 [package]
 name = "gitcat"
-version = "1.4.0"
+version = "1.5.0"
 description = "A cozy, safety-first desktop Git client."
 authors = ["Jiucheng Zang <git.jiucheng@gmail.com>"]
 license = "GPL-3.0-or-later"
@@ -108,6 +108,13 @@ rfd = { version = "0.16", default-features = false, features = ["gtk3"] }
 tauri-plugin-devtools = "2.1.0"
 console-subscriber = "0.5"
 tokio = { version = "1", features = ["tracing"] }
+
+# Windows: `gitcat --version` / `--help` from a terminal. Release builds are
+# GUI-subsystem, so cli.rs attaches to the parent console before printing.
+# Already in the tree (tauri, git2, ...), so this promotes a locked version
+# to a direct dependency rather than adding one.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
 
 # A separate profile for local flamegraph profiling (samply, WPA, etc. —
 # see run()'s own doc comment in lib.rs for the profiling story this is

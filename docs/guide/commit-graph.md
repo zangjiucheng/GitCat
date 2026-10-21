@@ -17,7 +17,7 @@ The graph is where you'll spend most of your time. It draws your history as a **
 
 Click any commit row (or move to it with the keyboard) to select it. The **detail panel** then shows everything about that commit, split across two tabs:
 
-- **Commit** — the message, the **author** and **committer** split out separately (so you can tell a rebased or cherry-picked commit apart from the original), its **GPG signature** status, and which refs point at it.
+- **Commit** — the message, the **author** and **committer** split out separately (so you can tell a rebased or cherry-picked commit apart from the original), its **signature** status (verified by git itself — GPG, SSH or X.509; hover the badge for the signer and key), and which refs point at it.
 - **Changes** — a **file tree** beside a **syntax-highlighted diff**, with a **diffstat** at the top of the file list. You can expand the diff to a full-page view for reading a real changeset comfortably. Whether the file tree sits above or beside the diff follows the detail panel's own placement — see [Settings](/guide/settings).
 
 ## Acting on a commit

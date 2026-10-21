@@ -7,7 +7,7 @@ export default {
     "<b>Mixed(混合)</b> —— 移动 HEAD 并取消暂存,但保留你的工作区文件 <em>(git 的默认值)</em>。",
   mode_hard:
     "<b>Hard(硬)</b> —— 移动 HEAD 并<b>丢弃所有已暂存和未暂存的改动</b>。未提交的工作会丢失且无法撤销。",
-  note_snapshot: "我会先给 HEAD 当前的位置拍一张快照,所以 ⌘Z/撤销 能把它移回来 —— 前提是你的工作区是干净的。",
+  note_snapshot: "我会先给 HEAD 当前的位置拍一张快照,所以 {undoKey}/撤销 能把它移回来 —— 前提是你的工作区是干净的。",
   note_hard: "<b>hard</b> 重置还会丢弃未提交的改动,而这些并不在快照的保护范围内。",
   arm_say_known: "正在把 HEAD 重置到 {sha} —— 输入短 sha 以解锁。",
   title_known: "把 HEAD 重置到 {sha}",

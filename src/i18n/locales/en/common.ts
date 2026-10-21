@@ -18,9 +18,10 @@ export default {
 
   // Row / repo context menus (Detail, Workdir, the topbar repo chip).
   //
-  // The reveal_* and open_dir_* families are the ONE place this app's copy
-  // varies by platform — see legacy/platform.ts for why a proper noun earns
-  // that when a ⌘ glyph does not. Translators: keep whatever the OS itself
+  // The reveal_* and open_dir_* families are the one place this app's copy
+  // varies by platform in its WORDS — see legacy/platform.ts. (Shortcut keys
+  // vary too, via `{undoKey}`-style placeholders, never a literal ⌘ in a
+  // string — see keymap/shortcuts.ts.) Translators: keep whatever the OS itself
   // is called in your language (Finder ships under a localized name in some
   // locales), and keep the two verbs distinct — reveal_* opens the
   // containing folder with the file selected, open_dir_* lands you inside

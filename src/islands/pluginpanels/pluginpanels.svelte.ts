@@ -229,7 +229,7 @@ class PluginPanelsState {
     // and is refused the same way when nothing is selected. A panel widget
     // carries no selection of its own; the command it names is what decides
     // what it needs.
-    const ctx = pluginCommandsCtrl.ctxFor(pluginId, item.command);
+    const ctx = await pluginCommandsCtrl.ctxFor(pluginId, item.command);
     if (!ctx) {
       // ctxFor has already warned through Tama; the panel just stops showing a
       // spinner for output that is never coming.

@@ -4,7 +4,7 @@ description: Using plugins in GitCat — install, enable, disable, and remove th
 
 # Plugins
 
-Plugins extend GitCat with extra `⌘K` commands, lifecycle hooks, panels, and Tama skins. This page is about **using** them; to **write** one, see the dedicated [plugin authoring guide](/plugins).
+Plugins extend GitCat with extra `⌘K` commands, lifecycle hooks, panels, diff-highlighting languages, and Tama skins. This page is about **using** them; to **write** one, see the dedicated [plugin authoring guide](/plugins).
 
 ::: info This page is being expanded
 The full walkthrough is on its way. Here's the outline of what it covers.
@@ -14,11 +14,11 @@ The full walkthrough is on its way. Here's the outline of what it covers.
 
 - **The Plugins manager** — open it from **Tools ▸ Plugins…** or `⌘K`. It's a two-pane view: the installed plugins on the left, the selected one's details on the right (what it contributes, plus its enable and remove controls).
 - **Finding one** — open **Tools ▸ Plugins…** and switch to the **Browse** tab: it reads the community [**gitcat-plugins**](https://github.com/zangjiucheng/gitcat-plugins) index and can fetch a listed plugin for you. Installing from there still shows you every command the plugin runs before anything is installed, exactly like picking a file does — GitCat vouches for where the catalogue is, not for what is in it.
-- **Install from a file** — plugins are local files; install one by picking its `plugin.json` (downloaded from the index above, or your own).
+- **Install from a file** — plugins are local files; click **Install from file…** in the Plugins manager and pick the plugin's `plugin.json` file (downloaded from the index above, or your own), not its folder.
 - **Enable / disable** a plugin with its toggle, or **remove** it (which unregisters it — the `plugin.json` on disk is left untouched).
-- **What a plugin can contribute** — `⌘K` commands, lifecycle hooks, declarative panels, a Tama skin, and Luau-scripted handlers.
+- **What a plugin can contribute** — `⌘K` commands, lifecycle hooks, declarative panels, diff-highlighting languages, a Tama skin, and Luau-scripted handlers.
 - **The trust boundary** — GitCat never connects to anything itself; a plugin only runs the external commands (or sandboxed Luau) it declares. Install only plugins you trust.
 
 ## Writing your own
 
-The full manifest reference, the placeholder grammar, hooks, panels, Tama skins, and Luau scripting all live in the [plugin authoring guide](/plugins).
+The full manifest reference, the placeholder grammar, hooks, panels, languages, Tama skins, and Luau scripting all live in the [plugin authoring guide](/plugins).

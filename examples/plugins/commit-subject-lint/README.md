@@ -61,6 +61,6 @@ script. This lint only reads, so it needs no `"mutates"` flag; a handler that
 
 ## Install
 
-Settings → **Plugins** → **Install plugin…**, pick this folder's `plugin.json`.
+**Tools ▸ Plugins…** → **Install from file…**, pick this folder's `plugin.json`.
 The hook fires automatically on your next commit; the `lint-head` command shows
 up live in ⌘K.

@@ -9,7 +9,7 @@ use git2::RepositoryState;
 use gitcat_lib::conflict::{conflict_status, resolve_conflict_file};
 use gitcat_lib::git_write::checkout;
 use gitcat_lib::model::DiffHunkRow;
-use gitcat_lib::safety::{list_snapshots, undo};
+use gitcat_lib::safety::{list_snapshots, undo, UndoRefusal};
 use gitcat_lib::workdir::{
     commit, discard_file, discard_lines, stage_all, stage_file, stage_lines, stash_apply, unstage_all,
     stash_conflict_abort, stash_conflict_continue, stash_drop, stash_list, stash_pop, stash_save,
@@ -364,6 +364,7 @@ fn global_undo_refuses_after_stash_apply_but_stash_undo_apply_restores_a_clean_t
         "unexpected refusal message: {}",
         blocked.message
     );
+    assert_eq!(blocked.reason, Some(UndoRefusal::DirtyWorktree));
 
     // The dedicated stash-undo path succeeds instead, restoring a clean tree.
     let undone = tauri::async_runtime::block_on(stash_undo_apply(path.clone()));

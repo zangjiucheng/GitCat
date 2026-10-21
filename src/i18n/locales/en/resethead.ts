@@ -7,7 +7,7 @@ export default {
   mode_hard:
     "<b>Hard</b> — move HEAD and <b>discard every staged &amp; unstaged change</b>. Uncommitted work is lost with no Undo.",
   note_snapshot:
-    "I snapshot where HEAD is now first, so ⌘Z/Undo can move it back — as long as your working tree is clean.",
+    "I snapshot where HEAD is now first, so {undoKey}/Undo can move it back — as long as your working tree is clean.",
   note_hard:
     "A <b>hard</b> reset additionally throws away uncommitted changes, and those are NOT covered by the snapshot.",
   arm_say_known: "Resetting HEAD to {sha} — type the short sha to arm it.",

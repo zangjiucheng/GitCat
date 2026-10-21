@@ -46,4 +46,9 @@ export default {
   couldnt_install_with_admin: "无法以管理员权限安装：{detail}",
   couldnt_find_home: "找不到你的主目录（$HOME）。",
   couldnt_find_localappdata: "找不到 %LOCALAPPDATA%。",
+
+  // promisor.rs —— 部分克隆（`--filter=blob:none`）按需获取文件内容
+  partial_clone_fetch_failed:
+    "此内容尚未下载（这是一个部分克隆），且从“{remote}”获取失败。请检查网络连接后重试。详情：{detail}",
+  partial_clone_no_remote: "此内容尚未下载（这是一个部分克隆），且未配置可从中获取的 promisor 远程仓库。",
 };

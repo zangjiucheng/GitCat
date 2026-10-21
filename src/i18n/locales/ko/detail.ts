@@ -4,10 +4,10 @@ export default {
   // Tama 히어로 / 빈 상태.
   hero_alt: "GitCat의 수호자 Tama",
   hero_bubble_loaded:
-    'はじめまして! 나는 GitCat의 수호자 <b>Tama</b>다옹. 매번 무언가 바뀌기 전에 스냅샷을 찍어두니까, 히스토리는 언제나 나와 함께 <span class="jp">안전하다옹♪</span>',
-  hero_bubble_loaded_plain: "매번 변경 전에 스냅샷이 찍혀요 — 히스토리는 항상 안전해요.",
+    'はじめまして! 나는 GitCat의 수호자 <b>Tama</b>다옹. 평소 히스토리가 바뀌기 전엔 스냅샷을 찍어두니까, {undoKey}로 <span class="jp">되돌아갈 수 있다옹♪</span>',
+  hero_bubble_loaded_plain: "평소 히스토리가 바뀌기 전엔 스냅샷이 찍혀요 — {undoKey}로 되돌아갈 수 있어요.",
   hero_stat: '<b>{ms}ms</b> 만에 배치된 커밋 <span class="n">{n}</span>개',
-  hero_hint_loaded: "커밋을 클릭해 살펴보세요 · 점을 다른 점 위로 끌어다 놓으면 체리픽돼요 · ⌘Z로 실행 취소",
+  hero_hint_loaded: "커밋을 클릭해 살펴보세요 · 점을 다른 점 위로 끌어다 놓으면 체리픽돼요 · {undoKey}로 실행 취소",
   hero_bubble_empty:
     'はじめまして! 나는 <b>Tama</b>다옹. Git 저장소를 열어주면 눈 깜짝할 사이에 히스토리를 전부 펼쳐 <span class="jp">보인다옹♪</span>',
   hero_bubble_empty_plain: "시작하려면 Git 저장소를 열어주세요.",
@@ -22,6 +22,20 @@ export default {
   row_of: "{row} / {total}행",
   cant_revert_merge: "병합 커밋은 되돌릴 수 없어요",
   revert_commit: "커밋 되돌리기",
+  sig_checking: "… 서명 확인 중",
+  sig_good: "✔ 유효한 서명",
+  sig_untrusted: "✔ 유효한 서명 (신뢰되지 않은 키)",
+  sig_expired: "⚠ 만료된 서명",
+  sig_bad: "✘ 잘못된 서명",
+  sig_unverified: "? 서명 미확인",
+  sig_none: "○ 서명 없음",
+  sig_signer: "서명자: {name}",
+  sig_key: "키: {key}",
+  sig_untrusted_note: "서명은 키와 일치하지만, 키링에서 이 키를 신뢰하지 않아요.",
+  sig_expired_note: "서명 또는 서명 키가 만료됐어요.",
+  sig_bad_note: "서명이 일치하지 않거나 키가 폐기됐어요.",
+  sig_unverified_note: "git이 이 서명을 확인하지 못했어요 (gpg/키/allowed-signers 파일 없음) — 서명이 유효한지 여부와는 무관해요.",
+  sig_demo: "데모 데이터 — 실제 서명 확인이 아니에요.",
   // 탭 이름. 지금 **보고 있는** 커밋이에요 — 쓰고 있는 커밋을 가리키는
   // workdir.commit과는 일부러 다른 키예요.
   tab_commit: "커밋",
@@ -33,7 +47,7 @@ export default {
   refs_pointing_here: "여기를 가리키는 ref",
   no_refs: "여기를 가리키는 ref가 없어요",
   covered:
-    '<b>backup/…{ago} 전</b> 스냅샷이 이 커밋을 보호하고 있어요<br /><span class="mut">Safety Manager 백업 ref로 도달할 수 있어요 — ⌘Z로 여기까지 되돌릴 수 있어요.</span>',
+    '<b>backup/…{ago} 전</b> 스냅샷이 이 커밋을 보호하고 있어요<br /><span class="mut">Safety Manager 백업 ref로 도달할 수 있어요 — {undoKey}로 여기까지 되돌릴 수 있어요.</span>',
   // 변경사항 / diffstat / 파일 트리.
   changes: "변경사항",
   loading_diff: "diff 불러오는 중…",
@@ -45,6 +59,9 @@ export default {
   diff: "Diff",
   expand_diff: "diff 확대",
   expand_diff_aria: "diff를 전체 화면으로 확대",
+  pop_out_diff: "새 창에서 열기",
+  pop_out_diff_aria: "이 diff를 새 창에서 열기",
+  demo_pop_out_window: "여기서 diff가 새 창에서 열려요 (demo).",
   files_label: "파일",
   resize_file_list: "파일 목록 크기 조절",
   collapse_all_folders: "모든 폴더 접기",

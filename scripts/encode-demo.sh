@@ -14,8 +14,14 @@
 # (see CONTRIBUTING.md's "Docs site assets" for the how) — encoding shouldn't be.
 #
 # The source can be any resolution ≥1080p; it is scaled to 1920×1080 with
-# lanczos. Audio is dropped outright: the video is silent by design, and a
-# muted-but-present track just makes browsers show a pointless volume control.
+# lanczos. A narration track, if the source has one, is kept (AAC in the mp4,
+# Opus in the webm); a source with no audio stays silent. Silent sources get no
+# audio track at all: a muted-but-present track just makes browsers show a
+# pointless volume control.
+#
+# Captions: if a WebVTT file sits next to the source with the same basename
+# (gitcat.mkv → gitcat.vtt), it is copied to docs/public/demo.vtt for the
+# homepage's <track>.
 set -euo pipefail
 
 SRC=${1:?usage: scripts/encode-demo.sh <recording> [poster-timestamp]}
@@ -30,13 +36,23 @@ command -v ffmpeg >/dev/null || { echo "ffmpeg not found" >&2; exit 1; }
 # image; yuv420p because VP9/H.264 4:4:4 plays nowhere useful.
 VF="fps=30,scale=1920:-2:flags=lanczos,format=yuv420p"
 
+if [ -n "$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$SRC")" ]; then
+  echo "==> narration track found — keeping it"
+  AUDIO_MP4=(-c:a aac -b:a 128k -ac 2)
+  AUDIO_WEBM=(-c:a libopus -b:a 96k -ac 2)
+else
+  AUDIO_MP4=(-an)
+  AUDIO_WEBM=(-an)
+fi
+
 echo "==> H.264  → demo.mp4"
 # crf 22 / preset slow is the point where screen text stops showing mosquito
 # noise around glyph edges at this bitrate. +faststart moves the moov atom to
 # the front so the browser can start playing before the whole file lands.
 ffmpeg -y -hide_banner -loglevel error -stats -i "$SRC" \
-  -an -vf "$VF" \
+  -vf "$VF" \
   -c:v libx264 -crf 22 -preset slow -profile:v high -level 4.1 \
+  "${AUDIO_MP4[@]}" \
   -movflags +faststart \
   "$OUT/demo.mp4"
 
@@ -46,15 +62,21 @@ echo "==> VP9    → demo.webm (2-pass)"
 # old Safari takes the webm, that made the smaller format the one nobody gets.
 # row-mt + tile-columns are what keep libvpx-vp9 from taking all afternoon on a
 # 1080p source; expect a few minutes for a minute of footage either way.
-VP9_COMMON=(-an -vf "$VF" -c:v libvpx-vp9 -b:v 0 -crf 33
+VP9_COMMON=(-vf "$VF" -c:v libvpx-vp9 -b:v 0 -crf 33
   -row-mt 1 -tile-columns 2 -frame-parallel 1 -threads 8
   -deadline good -cpu-used 2 -auto-alt-ref 1 -lag-in-frames 25)
 PASSLOG=$(mktemp -t gitcat-vp9.XXXXXX)
-ffmpeg -y -hide_banner -loglevel error -stats -i "$SRC" "${VP9_COMMON[@]}" \
+ffmpeg -y -hide_banner -loglevel error -stats -i "$SRC" "${VP9_COMMON[@]}" -an \
   -pass 1 -passlogfile "$PASSLOG" -f null /dev/null
-ffmpeg -y -hide_banner -loglevel error -stats -i "$SRC" "${VP9_COMMON[@]}" \
+ffmpeg -y -hide_banner -loglevel error -stats -i "$SRC" "${VP9_COMMON[@]}" "${AUDIO_WEBM[@]}" \
   -pass 2 -passlogfile "$PASSLOG" "$OUT/demo.webm"
 rm -f "$PASSLOG"*
+
+VTT="${SRC%.*}.vtt"
+if [ -f "$VTT" ]; then
+  echo "==> captions → demo.vtt"
+  cp "$VTT" "$OUT/demo.vtt"
+fi
 
 echo "==> poster → demo-poster.jpg (at $POSTER_AT)"
 # -ss before -i seeks by keyframe (fast); q:v 3 keeps text crisp without the

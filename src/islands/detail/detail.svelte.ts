@@ -15,13 +15,15 @@
 import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { t, be } from "@/i18n/i18n.svelte.ts";
-import type { CommitDetail } from "../../ipc/bindings";
+import type { CommitDetail, CommitSignature, SigStatus } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { blameCtrl } from "../blame/blame.svelte.ts";
 import { fileHistoryCtrl } from "../filehistory/filehistory.svelte.ts";
 import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 import { pluginLanguagesCtrl } from "../pluginlanguages/pluginlanguages.svelte.ts";
-import { IN_TAURI } from "../../ipc/env";
+import { settingsCtrl } from "../settings/settings.svelte.ts";
+import { IN_TAURI, DIFF_ONLY_WINDOW } from "../../ipc/env";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { previewKind } from "../diffpreview/preview-kind";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
 import { contextMenuCtrl } from "../contextmenu/contextmenu.svelte.ts";
@@ -33,11 +35,33 @@ function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
 }
 
-const GPG: Record<string, [string, string]> = {
-  good: ["good", "✔ Good signature"],
-  none: ["none", "○ Unsigned"],
-  bad: ["bad", "✘ Bad signature"],
+// Signature badge: [css class, label, tooltip]. "checking" is the transient
+// state while commit_signature is in flight for the selected commit.
+export type SigBadgeState = SigStatus | "checking";
+export type SigBadge = [string, string, string];
+// How long the selection must stay on one commit before its signature is
+// verified (see loadSignature).
+const SIG_DEBOUNCE_MS = 150;
+// Extra tooltip line per verdict — the part a one-word badge can't say.
+const SIG_NOTE: Partial<Record<SigBadgeState, string>> = {
+  untrusted: "detail.sig_untrusted_note",
+  expired: "detail.sig_expired_note",
+  bad: "detail.sig_bad_note",
+  unverified: "detail.sig_unverified_note",
 };
+
+/** Badge for a verdict. `sig` (git's signer/key/reason) feeds the tooltip; `extra` is a caller-supplied reason (e.g. a timeout). */
+export function sigBadge(state: SigBadgeState, sig?: CommitSignature | null, extra?: string): SigBadge {
+  const lines: string[] = [];
+  if (sig?.signer) lines.push(t("detail.sig_signer", { name: sig.signer }));
+  const key = sig?.fingerprint || sig?.key;
+  if (key) lines.push(t("detail.sig_key", { key }));
+  const note = SIG_NOTE[state];
+  if (note) lines.push(t(note));
+  if (sig?.detail) lines.push(sig.detail);
+  if (extra) lines.push(extra);
+  return [state, t("detail.sig_" + state), lines.join("\n")];
+}
 
 type RefChip = { n: string; t: "tag" | "remote" | "head" };
 type CommitVM = {
@@ -47,12 +71,23 @@ type CommitVM = {
   an: { n: string; e: string; d: string; abs: string };
   cm: { n: string; e: string; d: string; abs: string };
   differ: boolean;
-  gpg: "good" | "none" | "bad";
+  // Demo (design-mode) commits only — a deterministic MOCK verdict. Live
+  // commits carry null here: their real verdict is fetched lazily into
+  // DetailState.sig (see loadSignature), never derived from commit metadata.
+  gpg: SigStatus | null;
   refs: RefChip[];
   add: number;
   del: number;
   merge: boolean;
 };
+
+// Placeholder author/committer identity for selectBySha's sha-only CommitVM
+// below — a diff-only window (see DIFF_ONLY_WINDOW) never has a graph row to
+// read real identities from, and the expanded-diff modal it drives is the
+// ONE renderer of `commit` that never shows an/cm at all (just subject + sha
+// — see Detail.svelte's `.diffx-head-main`), so an empty identity is never
+// actually displayed, just structurally required by CommitVM.
+const EMPTY_IDENT = { n: "", e: "", d: "", abs: "" };
 
 type FileEntry = { p: string; st: string; add: number; del: number; oldPath: string | null };
 type TreeFile = FileEntry & { name: string; i: number };
@@ -138,6 +173,12 @@ class DetailState {
   // comment) — lets the row swap those two buttons for a spinner instead of
   // showing nothing while that extra round trip is in flight.
   resolvingDeletedFileFor = $state<string | null>(null);
+  // The selected live commit's signature verdict, fetched lazily and
+  // separately from the diff (see loadSignature). `forSha` is the row sha it
+  // was requested for — the badge only trusts it while that is still the
+  // selected commit.
+  sig = $state<{ forSha: string; badge: SigBadge } | null>(null);
+  private sigSeq = 0;
 
   // $state (not a plain field): `tree` below is a getter over this, and it's
   // now read from TWO template call sites (the embedded file list and the
@@ -173,7 +214,7 @@ class DetailState {
         an: { n: m.an.n, e: m.an.e, d: bridge.relTime(m.an.t), abs: bridge.absTime(m.an.t) },
         cm: { n: m.cm.n, e: m.cm.e, d: bridge.relTime(m.cm.t), abs: bridge.absTime(m.cm.t) },
         differ,
-        gpg: "none",
+        gpg: null, // real verdict arrives via loadSignature()
         refs,
         add: 0,
         del: 0,
@@ -190,7 +231,9 @@ class DetailState {
     const cm = rebased
       ? { n: "GitCat (rebase)", e: "noreply@gitcat.dev", d: bridge.fakeAgo(Math.max(0, r - 2)) + " ago", abs: bridge.absTime(fakeEpoch(Math.max(0, r - 2))) }
       : { n: a.n, e: a.e, d: bridge.fakeAgo(r) + " ago", abs: bridge.absTime(fakeEpoch(r)) };
-    const gpg: "good" | "none" | "bad" = r % 11 === 0 ? "none" : (bridge.hhex(r).charCodeAt(1) & 7) === 0 ? "bad" : "good";
+    // MOCK, design mode only: a stable pseudo-verdict from the row number so the
+    // browser preview shows every badge colour. Never used for a real repo.
+    const gpg: SigStatus = r % 11 === 0 ? "none" : (bridge.hhex(r).charCodeAt(1) & 7) === 0 ? "bad" : "good";
     const refs: RefChip[] = [];
     if (r === 0) refs.push({ n: "HEAD", t: "head" }, { n: "main", t: "head" });
     const gr = G.refs[r];
@@ -227,8 +270,39 @@ class DetailState {
     return cov >= 0 ? { ago: G.snapTs[cov] } : null;
   }
 
-  get gpgBadge(): [string, string] {
-    return this.commit ? GPG[this.commit.gpg] : GPG.none;
+  get gpgBadge(): SigBadge {
+    const c = this.commit;
+    if (!c) return sigBadge("none");
+    // Design mode: the deterministic MOCK verdict, labelled as such.
+    if (c.gpg) return [c.gpg, t("detail.sig_" + c.gpg), t("detail.sig_demo")];
+    return this.sig && this.sig.forSha === c.sha ? this.sig.badge : sigBadge("checking");
+  }
+
+  /**
+   * Ask git for the selected commit's signature verdict. Separate from
+   * loadCommitDetail on purpose: verification runs gpg/ssh-keygen/gpgsm and
+   * can be slow, so the diff never waits on it (and the commit list never
+   * asks at all). Race-guarded like the diff: only the latest selection's
+   * answer lands. A failure (timeout, no git) shows as "not verified", never
+   * as "bad" or "unsigned".
+   */
+  private async loadSignature(sha: string) {
+    const myReq = ++this.sigSeq;
+    // Debounce: holding j/k through the graph selects a commit per keypress,
+    // and each verification spawns gpg/ssh-keygen/gpgsm (through wsl.exe for
+    // a WSL repo). Only ask once the selection has settled.
+    await new Promise((r) => setTimeout(r, SIG_DEBOUNCE_MS));
+    if (myReq !== this.sigSeq) return;
+    let badge: SigBadge;
+    try {
+      const r = await commands.commitSignature(bridge.CUR_REPO as unknown as string, sha);
+      if (r.status !== "ok") throw new Error(be(r.error));
+      badge = sigBadge(r.data.status, r.data);
+    } catch (e) {
+      badge = sigBadge("unverified", null, e instanceof Error ? e.message : String(e));
+    }
+    if (myReq !== this.sigSeq) return; // a newer selection superseded this one
+    this.sig = { forSha: sha, badge };
   }
 
   // Whether the "Revert commit" button should be disabled: the existing
@@ -379,6 +453,7 @@ class DetailState {
       this.diffHeader = "";
       this.diffRows = [];
       this.loadCommitDetail(row);
+      void this.loadSignature(c.sha); // in parallel — never gates the diff
     } else {
       this.bodyText = c.merge
         ? "Merge commit — reconciles two lines of history."
@@ -427,6 +502,68 @@ class DetailState {
       if (myReq !== this.detailSeq) return;
       this.diffstat = null;
       this.bodyText = /loading/.test(this.bodyText) ? "" : this.bodyText;
+      this.treeLoading = false;
+      this.diffLoading = false;
+      this.diffHeader = "";
+      this.diffRows = [{ kind: "note", text: "diff unavailable — " + String(e) }];
+      console.error("commit_detail failed", e);
+    }
+  }
+
+  // The DIFF_ONLY_WINDOW boot path's entry point (legacy/main.ts) — loads
+  // ONE commit's diff directly off (repo, sha), with no graph row to read a
+  // CommitVM from (a diff-only window never streams the graph at all; see
+  // env.ts's own doc comment on DIFF_ONLY_WINDOW for why). A parallel copy of
+  // loadCommitDetail's own fetch-and-populate body, not a shared refactor of
+  // it: loadCommitDetail is the proven, exercised-on-every-click path for
+  // every normal window, and this is a genuinely different caller (no row,
+  // no `alreadyShowing` reselect-is-a-no-op short-circuit — a diff-only
+  // window selects exactly once, at boot) — folding them into one shared
+  // helper would only risk the common path for a rare one's sake.
+  async selectBySha(repo: string, sha: string): Promise<void> {
+    this.commit = { row: -1, subject: "", sha, an: EMPTY_IDENT, cm: EMPTY_IDENT, differ: false, gpg: "none", refs: [], add: 0, del: 0, merge: false };
+    this.hero = null;
+    this.bodyText = "loading…";
+    this.treeLoading = true;
+    this.diffLoading = true;
+    this.curChanged = [];
+    this.curDiffs = {};
+    this.diffstat = null;
+    this.selectedFile = null;
+    this.diffHeader = "";
+    this.diffRows = [];
+    const myReq = ++this.detailSeq;
+    try {
+      const r = await commands.commitDetail(repo, sha);
+      if (myReq !== this.detailSeq) return;
+      if (r.status !== "ok") throw new Error(be(r.error));
+      const d: CommitDetail = r.data;
+      this.commit = { ...this.commit!, subject: d.subject, sha: d.shortSha || sha };
+      const files = Array.isArray(d.fileTree) ? d.fileTree : [];
+      this.curChanged = files.map((f) => ({ p: f.path, st: f.status, add: f.additions | 0, del: f.deletions | 0, oldPath: f.oldPath ?? null }));
+      this.curDiffs = {};
+      files.forEach((f) => {
+        const lines: [string, string][] = [];
+        (f.hunks || []).forEach((h) => {
+          lines.push(["@@", h.header]);
+          (h.lines || []).forEach((l) => lines.push([l.kind, l.text]));
+        });
+        this.curDiffs[f.path] = { lang: bridge.resolveLang(f.path), lines, truncated: !!f.truncated, binary: !!f.binary };
+      });
+      this.bodyText = d.body && d.body.trim() ? d.body : "(no message body)";
+      this.diffstat = {
+        add: d.additions | 0,
+        del: d.deletions | 0,
+        files: d.filesChanged != null ? d.filesChanged : this.curChanged.length,
+        truncated: !!d.truncated,
+      };
+      this.treeLoading = false;
+      this.diffLoading = false;
+      this.selectFile();
+    } catch (e) {
+      if (myReq !== this.detailSeq) return;
+      this.diffstat = null;
+      this.bodyText = "";
       this.treeLoading = false;
       this.diffLoading = false;
       this.diffHeader = "";
@@ -628,8 +765,55 @@ class DetailState {
     this.diffExpanded = true;
   }
 
+  // In a DIFF_ONLY_WINDOW there is no app behind the modal to reveal —
+  // index.html's own `.diff-only` CSS hides the topbar/sidebar/graph
+  // entirely and nothing ever calls openRepo() to populate them (see
+  // legacy/main.ts's boot sequence) — so "Close" has to close the WINDOW
+  // itself rather than just toggling diffExpanded back to an empty app
+  // shell. Every other window (where this modal is reached via the normal
+  // expand icon, never DIFF_ONLY_WINDOW) keeps today's plain collapse.
   collapseDiff() {
+    if (DIFF_ONLY_WINDOW) {
+      void getCurrentWindow().close();
+      return;
+    }
     this.diffExpanded = false;
+  }
+
+  // Detaches this commit's diff into its own GitCat window — a genuinely
+  // separate OS process (src-tauri/src/windows.rs's open_diff_in_new_window
+  // + spawn_new_window), pre-selected on `sha` with its diff already
+  // expanded (see legacy/main.ts's `?commit=` boot-sequence handling). Demo
+  // mode has no second process to spawn, so it's a toast instead — same
+  // idiom as dashboardCtrl.openRepositoryInNewWindow's own demo guard.
+  popOutDiff() {
+    const c = this.commit;
+    if (!c) return;
+    if (!IN_TAURI) {
+      bridge.tama.say(t("detail.demo_pop_out_window"));
+      return;
+    }
+    const repo = bridge.CUR_REPO as unknown as string;
+    void commands.openDiffInNewWindow(repo, c.sha);
+  }
+
+  // The expanded modal's own explicit pop-out button: spawn the new window,
+  // then close THIS window's modal — "detach" reads as moving the diff out,
+  // not duplicating it into a second place still open here too.
+  popOutDiffAndClose() {
+    this.popOutDiff();
+    this.collapseDiff();
+  }
+
+  // The expand-diff icon's actual click handler (Detail.svelte) — defers to
+  // settingsCtrl.diffOpenMode, read fresh on every click (it has no live
+  // wiring of its own; see the setting's doc comment), rather than always
+  // calling expandDiff(): a user who has set the "window" default should get
+  // a new window from the ONE icon they already know, not have to discover
+  // the modal's separate pop-out button first.
+  expandOrPopOutDiff() {
+    if (settingsCtrl.diffOpenMode === "window") this.popOutDiff();
+    else this.expandDiff();
   }
 
   copySha() {

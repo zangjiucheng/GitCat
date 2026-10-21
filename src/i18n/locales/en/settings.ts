@@ -43,6 +43,13 @@ export default {
   detail_placement_right: "Right side",
   detail_placement_bottom: "Bottom",
 
+  // What the expand-diff icon does by default — open the existing modal in
+  // this window, or detach straight into a new GitCat window.
+  diff_open_mode: "Open diffs in",
+  diff_open_mode_desc: "What the expand icon on a commit's diff does by default. Either way, an expanded diff always has its own pop-out button.",
+  diff_open_mode_modal: "Full-screen panel",
+  diff_open_mode_window: "New window",
+
   // Cherry-pick
   cherrypick: "Cherry-pick",
   cherrypick_origin_hint: "Append '(cherry picked from …)' to the resulting commit message",
@@ -85,7 +92,7 @@ export default {
   // Snapshots
   snapshots: "Snapshots",
   snapshots_desc:
-    "Every history-changing action pins a recoverable backup — this is what powers ⌘Z Undo and the Snapshots ribbon. Without cleanup they build up over time. Auto-cleanup prunes old ones each time a repo opens; the single most recent snapshot is always kept.",
+    "Everyday history-changing actions pin a recoverable backup — this is what powers {undoKey} Undo and the Snapshots ribbon. Without cleanup they build up over time. Auto-cleanup prunes old ones each time a repo opens; the single most recent snapshot is always kept.",
   snapshot_keep_all: "Keep everything (no cleanup)",
   snapshot_keep_count: "Keep the newest N",
   snapshot_keep_age: "Keep the last N days",

@@ -26,6 +26,21 @@
 //! is unchanged from the same-process design's own URL trick, just now
 //! sourced from argv instead of always being present/absent based on which
 //! code path created the window.
+//!
+//! Diff pop-out: an optional SECOND argv flag, `--commit=<sha>`, rides
+//! alongside the repo path and becomes a `&commit=<percent-encoded sha>` on
+//! that same URL (see `open_diff_in_new_window`). Unlike every other window
+//! this one is NOT a second full GitCat on the repo — a repo+commit pair
+//! together means "show ONLY this commit's diff", so it gets its own
+//! smaller, differently-titled window (see `create_initial_window`'s own
+//! sizing below), and `legacy/main.ts`'s boot sequence skips the normal
+//! repo-wide graph load entirely in favor of loading exactly that one commit
+//! (see its own `DIFF_ONLY_WINDOW`/`selectBySha`). A flag rather than a
+//! THIRD `InitialArg` variant: which repo to open and which commit (if any)
+//! to show the diff of are independent questions — `--commit` only ever
+//! makes sense alongside a `Repo` argv, but folding it into `InitialArg`
+//! itself would force every `NotRepo`/`None` match arm to also account for a
+//! commit that can't apply to them.
 
 use std::path::Path;
 use std::process::Command;
@@ -39,6 +54,15 @@ const WINDOW_W: f64 = 1440.0;
 const WINDOW_H: f64 = 900.0;
 const WINDOW_MIN_W: f64 = 960.0;
 const WINDOW_MIN_H: f64 = 600.0;
+
+// A diff-only window (repo+commit both present — see this module's own doc
+// comment) never shows the graph/sidebar it'd otherwise need room for, so it
+// defaults smaller than the main window — roughly a diff-reading size, not
+// a repo-browsing one. Still freely resizable past this; MIN stays the same
+// `.diff-rows`/file-tree content needs regardless of window purpose.
+const DIFF_WINDOW_TITLE: &str = "GitCat — Diff";
+const DIFF_WINDOW_W: f64 = 1100.0;
+const DIFF_WINDOW_H: f64 = 760.0;
 
 fn enc(p: &str) -> String {
     percent_encoding::utf8_percent_encode(p, percent_encoding::NON_ALPHANUMERIC).to_string()
@@ -56,16 +80,43 @@ enum InitialArg {
     NotRepo(String),
 }
 
-fn window_url(arg: &InitialArg) -> WebviewUrl {
+/// `commit` is only ever meaningful alongside `InitialArg::Repo` — a
+/// `NotRepo`/`None` window has nothing to select, so it's silently dropped
+/// for those (nothing reads `?commit=` unless `?repo=` is also present; see
+/// `legacy/main.ts`'s boot sequence).
+fn window_url(arg: &InitialArg, commit: Option<&str>) -> WebviewUrl {
     match arg {
-        InitialArg::Repo(p) => WebviewUrl::App(format!("index.html?repo={}", enc(p)).into()),
+        InitialArg::Repo(p) => {
+            let mut url = format!("index.html?repo={}", enc(p));
+            if let Some(sha) = commit {
+                url.push_str("&commit=");
+                url.push_str(&enc(sha));
+            }
+            WebviewUrl::App(url.into())
+        }
         InitialArg::NotRepo(p) => WebviewUrl::App(format!("index.html?repoError={}", enc(p)).into()),
         InitialArg::None => WebviewUrl::App("index.html".into()),
     }
 }
 
+/// The (title, width, height) this process's window should be created with.
+/// Pure over `InitialArg`'s own shape + whether a commit was given, so it's
+/// unit-testable the same way `window_url` is — split out of
+/// `create_initial_window` specifically so this decision doesn't need an
+/// `AppHandle` to exercise. A diff-only window (`has_commit` true, which
+/// only ever happens alongside `InitialArg::Repo` — see `window_url`'s own
+/// doc) never shows the graph/sidebar it'd otherwise need room for, so it
+/// gets the smaller `DIFF_WINDOW_*` size/title instead of the main window's.
+fn window_chrome(arg: &InitialArg, has_commit: bool) -> (&'static str, f64, f64) {
+    if matches!(arg, InitialArg::Repo(_)) && has_commit {
+        (DIFF_WINDOW_TITLE, DIFF_WINDOW_W, DIFF_WINDOW_H)
+    } else {
+        (WINDOW_TITLE, WINDOW_W, WINDOW_H)
+    }
+}
+
 /// Classify this process's repo argument. Pure over its input so it can be
-/// unit-tested; `initial_arg()` below feeds it `std::env::args().nth(1)` (read
+/// unit-tested; `create_initial_window` feeds it the path `cli::parse` found (read
 /// directly, not from Tauri state, since it's needed before the app/window even
 /// exists).
 ///
@@ -73,8 +124,9 @@ fn window_url(arg: &InitialArg) -> WebviewUrl {
 /// (normalizing `.`/`..`/symlinks) so `gitcat .` and `gitcat ../other` work from
 /// a terminal; an ABSOLUTE path is used verbatim (no canonicalization) so a repo
 /// handed over by `spawn_new_window` keeps the exact identity the registry tracks
-/// it under. A leading-`-` arg is ignored — nothing here takes flags, and
-/// askpass mode is env-gated, not argv-gated (see askpass.rs). A path that
+/// it under. Flags never reach here: `cli::parse` has already split them off
+/// (and `main` has already exited on `--version`/`--help`/an unknown flag),
+/// so a path that starts with `-` (`gitcat -- -weird`) is a real path. A path that
 /// resolves to a real git repo is `Repo`; one that exists but isn't a repo, or
 /// can't be resolved at all, is `NotRepo` so the user is told rather than left
 /// staring at a window that silently opened nothing.
@@ -107,7 +159,7 @@ pub(crate) fn strip_windows_verbatim_prefix(p: String) -> String {
 
 fn classify_initial_arg(raw: Option<String>) -> InitialArg {
     let raw = match raw {
-        Some(r) if !r.is_empty() && !r.starts_with('-') => r,
+        Some(r) if !r.is_empty() => r,
         _ => return InitialArg::None,
     };
     let abs = if Path::new(&raw).is_absolute() {
@@ -143,10 +195,6 @@ fn classify_initial_arg(raw: Option<String>) -> InitialArg {
     }
 }
 
-fn initial_arg() -> InitialArg {
-    classify_initial_arg(std::env::args().nth(1))
-}
-
 /// Called once, from `run()`'s own `.setup()` hook — creates THIS process's
 /// one and only window, labeled "main" (matching `capabilities/default.json`'s
 /// existing `"windows": ["main"]` scope — every process's own window reuses
@@ -154,13 +202,14 @@ fn initial_arg() -> InitialArg {
 /// collision to worry about), pointed at whichever repo (if any) this
 /// process was launched with.
 pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
-    let arg = initial_arg();
+    let launch = crate::cli::launch_args();
+    let arg = classify_initial_arg(launch.path);
     // #39: if this repo is already open in another window — and this launch
     // isn't the explicit "Open in New Window" action (which passes `--new-window`,
     // see spawn_new_window) — raise that window and exit instead of duplicating
     // it. `gitcat <same repo>` run twice now focuses the first window.
     if let InitialArg::Repo(p) = &arg {
-        if !std::env::args().any(|a| a == "--new-window") && crate::instance_focus::focus_if_open(app, p) {
+        if !launch.new_window && crate::instance_focus::focus_if_open(app, p) {
             std::process::exit(0);
         }
     }
@@ -182,9 +231,11 @@ pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
     if let InitialArg::Repo(p) = &arg {
         crate::instance_focus::register(app, p);
     }
-    WebviewWindowBuilder::new(app, "main", window_url(&arg))
-        .title(WINDOW_TITLE)
-        .inner_size(WINDOW_W, WINDOW_H)
+    let commit = launch.commit;
+    let (title, w, h) = window_chrome(&arg, commit.is_some());
+    WebviewWindowBuilder::new(app, "main", window_url(&arg, commit.as_deref()))
+        .title(title)
+        .inner_size(w, h)
         .min_inner_size(WINDOW_MIN_W, WINDOW_MIN_H)
         .center()
         .build()?;
@@ -203,7 +254,12 @@ pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
 /// surfaced back to whichever menu click or IPC call triggered this, same
 /// as every other best-effort fire-and-forget spawn in this codebase
 /// (`watch_repo`'s own callers, `track_repo_opened`).
-pub fn spawn_new_window(repo_path: Option<&str>) {
+///
+/// `commit_sha` is ignored when `repo_path` is `None` — there's nothing to
+/// select a commit within — and otherwise rides along as a second
+/// `--commit=<sha>` argv flag, read back by `cli::parse`. The repo path goes
+/// last, after `--`, so a path is never mistaken for a flag.
+pub fn spawn_new_window(repo_path: Option<&str>, commit_sha: Option<&str>) {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
@@ -235,7 +291,11 @@ pub fn spawn_new_window(repo_path: Option<&str>) {
             // `--new-window` after the repo reaches the new instance's argv and
             // tells it to skip the #39 already-open dedup — this is the explicit
             // "Open in New Window" action, which SHOULD get its own window.
-            cmd.arg("--args").arg(p).arg("--new-window");
+            cmd.arg("--args").arg("--new-window");
+            if let Some(sha) = commit_sha {
+                cmd.arg(format!("--commit={sha}"));
+            }
+            cmd.arg("--").arg(p);
         }
         match cmd.spawn() {
             Ok(_) => return,
@@ -248,7 +308,11 @@ pub fn spawn_new_window(repo_path: Option<&str>) {
     // foreground on its own, so no LaunchServices dance is needed.
     let mut cmd = Command::new(&exe);
     if let Some(p) = repo_path {
-        cmd.arg(p).arg("--new-window"); // explicit new window: skip the #39 dedup
+        cmd.arg("--new-window"); // explicit new window: skip the #39 dedup
+        if let Some(sha) = commit_sha {
+            cmd.arg(format!("--commit={sha}"));
+        }
+        cmd.arg("--").arg(p);
     }
     cmd.no_console_window();
     if let Err(e) = cmd.spawn() {
@@ -282,7 +346,20 @@ pub(crate) fn macos_app_bundle(exe: &std::path::Path) -> Option<std::path::PathB
 #[tauri::command]
 #[specta::specta]
 pub fn open_repo_in_new_window(path: String) {
-    spawn_new_window(Some(&path));
+    spawn_new_window(Some(&path), None);
+}
+
+/// JS: `commands.openDiffInNewWindow(repo, sha)` — detaches a commit's diff
+/// out of the current window's own expanded-diff modal into its own
+/// dedicated, diff-only GitCat window (see this module's own doc comment,
+/// and `legacy/main.ts`'s `DIFF_ONLY_WINDOW` boot path — `detail.svelte.ts`'s
+/// `popOutDiff` is the one caller). Same fire-and-forget spawn as
+/// `open_repo_in_new_window` just above — see `spawn_new_window`'s own doc
+/// for why this never touches the calling window's own state.
+#[tauri::command]
+#[specta::specta]
+pub fn open_diff_in_new_window(repo: String, sha: String) {
+    spawn_new_window(Some(&repo), Some(&sha));
 }
 
 #[cfg(test)]
@@ -303,11 +380,12 @@ mod tests {
     }
 
     #[test]
-    fn none_for_no_arg_empty_or_flag() {
+    fn none_for_no_arg_or_empty() {
         assert!(matches!(classify_initial_arg(None), InitialArg::None));
         assert!(matches!(classify_initial_arg(Some(String::new())), InitialArg::None));
-        assert!(matches!(classify_initial_arg(Some("--help".into())), InitialArg::None));
-        assert!(matches!(classify_initial_arg(Some("-v".into())), InitialArg::None));
+        // A leading-`-` path is a real path now (cli::parse splits off flags
+        // before this runs); a missing one is reported, not silently dropped.
+        assert!(matches!(classify_initial_arg(Some("-no-such-dir".into())), InitialArg::NotRepo(p) if p == "-no-such-dir"));
     }
 
     #[test]
@@ -359,10 +437,45 @@ mod tests {
 
     #[test]
     fn window_url_carries_repo_vs_error_vs_none() {
-        assert!(matches!(window_url(&InitialArg::None), WebviewUrl::App(p) if p.to_str() == Some("index.html")));
-        let repo = window_url(&InitialArg::Repo("/tmp/x y".into()));
+        assert!(matches!(window_url(&InitialArg::None, None), WebviewUrl::App(p) if p.to_str() == Some("index.html")));
+        let repo = window_url(&InitialArg::Repo("/tmp/x y".into()), None);
         assert!(matches!(&repo, WebviewUrl::App(p) if p.to_str().unwrap().starts_with("index.html?repo=") && p.to_str().unwrap().contains("%20")));
-        let err = window_url(&InitialArg::NotRepo("/tmp/x y".into()));
+        let err = window_url(&InitialArg::NotRepo("/tmp/x y".into()), None);
         assert!(matches!(&err, WebviewUrl::App(p) if p.to_str().unwrap().starts_with("index.html?repoError=")));
+    }
+
+    #[test]
+    fn window_url_appends_commit_only_for_a_real_repo() {
+        let repo = window_url(&InitialArg::Repo("/tmp/x".into()), Some("deadbeef"));
+        assert!(matches!(&repo, WebviewUrl::App(p) if p.to_str().unwrap() == "index.html?repo=%2Ftmp%2Fx&commit=deadbeef"));
+        // A commit sha is meaningless without a repo to select it in — dropped
+        // silently for NotRepo/None rather than producing a dangling `?commit=`.
+        let err = window_url(&InitialArg::NotRepo("/tmp/x".into()), Some("deadbeef"));
+        assert!(matches!(&err, WebviewUrl::App(p) if !p.to_str().unwrap().contains("commit")));
+        let none = window_url(&InitialArg::None, Some("deadbeef"));
+        assert!(matches!(&none, WebviewUrl::App(p) if !p.to_str().unwrap().contains("commit")));
+    }
+
+    #[test]
+    fn window_chrome_is_the_diff_size_only_for_a_repo_with_a_commit() {
+        assert_eq!(window_chrome(&InitialArg::Repo("/tmp/x".into()), true), (DIFF_WINDOW_TITLE, DIFF_WINDOW_W, DIFF_WINDOW_H));
+        // No commit: the ordinary main-window size, even for a real repo.
+        assert_eq!(window_chrome(&InitialArg::Repo("/tmp/x".into()), false), (WINDOW_TITLE, WINDOW_W, WINDOW_H));
+        // A commit flag with nothing (or an invalid path) to apply it to is
+        // nonsensical input `spawn_new_window` never actually produces, but
+        // still falls back to the main size rather than a diff-only window
+        // with no repo to show a diff of.
+        assert_eq!(window_chrome(&InitialArg::NotRepo("/tmp/x".into()), true), (WINDOW_TITLE, WINDOW_W, WINDOW_H));
+        assert_eq!(window_chrome(&InitialArg::None, true), (WINDOW_TITLE, WINDOW_W, WINDOW_H));
+    }
+
+    #[test]
+    fn spawn_new_window_argv_round_trips_through_cli_parse() {
+        // The argv spawn_new_window builds (flags, then `--`, then the path).
+        let argv = ["--new-window", "--commit=deadbeef", "--", "/tmp/-x"].map(String::from);
+        let crate::cli::CliAction::Launch(l) = crate::cli::parse(argv) else { panic!("not a launch") };
+        assert_eq!(l.path.as_deref(), Some("/tmp/-x"));
+        assert!(l.new_window);
+        assert_eq!(l.commit.as_deref(), Some("deadbeef"));
     }
 }

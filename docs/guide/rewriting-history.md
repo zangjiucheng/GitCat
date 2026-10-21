@@ -7,7 +7,7 @@ description: Rewriting history in GitCat with the git-filter-repo wizard — sco
 The one genuinely irreversible-by-normal-Undo operation in GitCat gets its own careful, multi-step wizard.
 
 ::: warning The heavy operation
-Rewriting history changes every affected commit's hash and expires the reflog. GitCat wraps it in a dedicated wizard with a full backup and restore step *on top of* the usual snapshot — but it's still the biggest thing you can do to a repository, so it's worth understanding before you run it.
+Rewriting history changes every affected commit's hash and expires the reflog. GitCat wraps it in a dedicated wizard with a full `git bundle` backup of every ref and a restore step *instead of* the usual ⌘Z snapshot — but it's still the biggest thing you can do to a repository, so it's worth understanding before you run it.
 :::
 
 ::: info This page is being expanded

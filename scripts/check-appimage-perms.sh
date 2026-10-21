@@ -38,6 +38,19 @@ world_x() {
 
 check_tree() {
   local root="$1" label="$2" fail=0
+  # DIRECTORIES FIRST, including the root. A directory the world cannot enter
+  # makes every mode inside it irrelevant, and this is not hypothetical: the
+  # v1.4.0 repack fixed AppRun.wrapped and left every directory at 0700, so the
+  # AppImage failed on `AppRun` itself — one level up from anything this used to
+  # look at. Checking only `-type f` is how that shipped.
+  local d m
+  for d in $(find "$root" -type d); do
+    m="$(mode_of "$d")"
+    case "${m: -1}" in
+      1|3|5|7) ;;
+      *) echo "  BROKEN  ${d#"$root"}/ is $m — the world cannot enter it, so nothing inside can be reached"; fail=1 ;;
+    esac
+  done
   # AppRun and AppRun.wrapped are what the launch path itself needs.
   local must
   for must in AppRun AppRun.wrapped; do

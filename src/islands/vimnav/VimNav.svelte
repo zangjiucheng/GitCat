@@ -11,6 +11,12 @@
   import { helpGroups } from "@/keymap/help.ts";
   import { BINDINGS } from "@/keymap/bindings.ts";
   import { platform } from "@/keymap/platform.ts";
+  import { modifierLabel } from "@/keymap/label.ts";
+
+  // The glyph legend only means something where the chords below are spelled
+  // in glyphs. On Windows/Linux formatChord already writes "Ctrl+Shift+U", so a
+  // "⌘ = …" key would explain a symbol that appears nowhere on screen.
+  const glyphs = platform() === "macos";
 
   // Rebuilt every time the overlay opens rather than once: which scope leads
   // depends on where focus was when "?" was pressed, and t() has to run under
@@ -41,7 +47,7 @@
     <div class="modal-head">
       <div>
         <h3>{t("vimnav.title")}</h3>
-        <p>{t("vimnav.subtitle")} <span class="mono">⌘</span> = {t("vimnav.cmd_legend")}; <span class="mono">⇧</span> = {t("vimnav.shift_legend")}.</p>
+        <p>{t("vimnav.subtitle")}{#if glyphs}{" "}<span class="mono">{modifierLabel("Mod", "macos")}</span> = {t("vimnav.cmd_legend")}; <span class="mono">{modifierLabel("Shift", "macos")}</span> = {t("vimnav.shift_legend")}.{/if}</p>
       </div>
     </div>
     <div class="modal-body" bind:this={bodyEl} tabindex="-1">

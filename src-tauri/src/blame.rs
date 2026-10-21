@@ -162,6 +162,12 @@ fn blame_file_inner(
     let entry = tree
         .get_path(Path::new(file))
         .map_err(|_| ierrp("err_misc.path_does_not_exist", &[("path", file), ("short", short_sha.as_str())]))?;
+    // Partial clone: blame reads this file's content at EVERY commit that
+    // touched it, and libgit2 can't fetch a missing blob itself. Fetch the
+    // whole set in one go up front (no-op in an ordinary repo).
+    if entry.kind() == Some(git2::ObjectType::Blob) && crate::promisor::is_partial_clone(&repo) {
+        crate::promisor::ensure_blobs(&repo, history_blobs(&repo, commit.id(), Path::new(file)))?;
+    }
     let obj = entry
         .to_object(&repo)
         .map_err(|_| ierrp("err_misc.path_does_not_exist", &[("path", file), ("short", short_sha.as_str())]))?;
@@ -198,8 +204,10 @@ fn blame_file_inner(
         opts.max_line(MAX_BLAME_LINES);
     }
 
-    let blame = repo
-        .blame_file(Path::new(file), Some(&mut opts))
+    // `retry_on_missing`: the prefetch above follows `file` by name only; when
+    // libgit2's walk crosses a rename it reads blobs under the old name, which
+    // a partial clone fetches here one round at a time.
+    let blame = crate::promisor::retry_on_missing(&repo, || repo.blame_file(Path::new(file), Some(&mut opts)))
         .map_err(|e| e.message().to_string())?;
 
     let mut hunks = Vec::with_capacity(blame.len());
@@ -241,6 +249,28 @@ fn blame_file_inner(
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+/// Every distinct blob `file` has had in the history reachable from `tip` —
+/// what a blame walk will read. Trees and commits only (a partial clone has
+/// all of them), so this reads no blob content itself. Only called for a
+/// partial clone, to batch the fetch (see `blame_file_inner`).
+fn history_blobs(repo: &git2::Repository, tip: git2::Oid, file: &Path) -> Vec<git2::Oid> {
+    let mut out = std::collections::HashSet::new();
+    let Ok(mut walk) = repo.revwalk() else { return Vec::new() };
+    if walk.push(tip).is_err() {
+        return Vec::new();
+    }
+    for oid in walk.flatten() {
+        let Ok(commit) = repo.find_commit(oid) else { continue };
+        let Ok(tree) = commit.tree() else { continue };
+        if let Ok(entry) = tree.get_path(file) {
+            if entry.kind() == Some(git2::ObjectType::Blob) {
+                out.insert(entry.id());
+            }
+        }
+    }
+    out.into_iter().collect()
+}
 
 fn short(sha: &str) -> String {
     sha.chars().take(7).collect()

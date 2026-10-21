@@ -21,6 +21,8 @@ export default {
   cannot_resolve_target: "대상을 확인할 수 없어요: {detail}",
   bad_commit_id: "잘못된 커밋 id {sha}: {detail}",
   cannot_find_commit: "커밋 {sha}을(를) 찾을 수 없어요: {detail}",
+  signature_timed_out: "서명 확인이 {secs}초 후 시간 초과됐어요.",
+  signature_check_failed: "서명 확인에 실패했어요: {detail}",
   could_not_create_todo_dir: "rebase-todo 디렉터리를 만들지 못했어요: {detail}",
   could_not_write_todo: "미리 계산된 todo를 쓰지 못했어요: {detail}",
   rebase_in_progress: "이미 리베이스가 진행 중이에요 — 먼저 해결하거나 중단해주세요.",

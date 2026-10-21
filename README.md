@@ -4,7 +4,7 @@
 
 **Git you can take back.**
 
-A cozy, safety-first desktop Git client — Tauri 2 + Rust + Svelte 5. Every mutation snapshots first, so ⌘Z always works.
+A cozy, safety-first desktop Git client — Tauri 2 + Rust + Svelte 5. Everyday history-changing operations snapshot your branches first, so ⌘Z can put them back.
 
 [![CI](https://github.com/zangjiucheng/GitCat/actions/workflows/ci.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/ci.yml)
 [![Docs](https://github.com/zangjiucheng/GitCat/actions/workflows/docs.yml/badge.svg)](https://github.com/zangjiucheng/GitCat/actions/workflows/docs.yml)
@@ -19,7 +19,7 @@ A cozy, safety-first desktop Git client — Tauri 2 + Rust + Svelte 5. Every mut
 
 ## Why
 
-Every Git GUI makes it easy to run a dangerous command. GitCat is built so you can take it back: a **Safety Manager** snapshots refs, index, worktree and stash before every mutation, so a global Undo (⌘Z) is always one keystroke away — and Undo is itself undoable.
+Every Git GUI makes it easy to run a dangerous command. GitCat is built so you can take it back: before everyday history-changing operations (commit, merge, rebase, reset, cherry-pick, revert, …) the **Safety Manager** pins a snapshot of `HEAD` and every local branch tip, so a global Undo (⌘Z) rewinds them in one keystroke — and Undo is itself undoable. Uncommitted work isn't in that snapshot, but some of it has its own safety nets: discarded changes are backed up under `.git/gitgui/discard-backup/` first, deleted branches, tags and dropped stashes are pinned under `refs/gitgui/` so they stay recoverable, and if Undo finds a dirty working tree it offers to stash, undo and re-apply rather than overwrite it. A hard reset discards uncommitted changes for good, so it asks for a typed confirmation, and `git-filter-repo` sits outside ⌘Z with its own full `git bundle` backup instead.
 
 ## Features
 
@@ -70,6 +70,8 @@ Run **Install 'gitcat' command** from Settings → Command line (or ⌘K), then 
 ```bash
 gitcat .                 # open the repo in the current directory
 gitcat ~/src/my-project  # open a repo by path
+gitcat -- -odd-name      # a path that starts with '-'
+gitcat --version         # print the version (-V); --help (-h) prints usage
 ```
 
 It writes a launcher to `/usr/local/bin` (macOS), `~/.local/bin` (Linux), or `%LOCALAPPDATA%\Microsoft\WindowsApps` (Windows, plus one inside each WSL distro). The `.deb`/`.rpm` packages already put `gitcat` on `PATH`.
@@ -97,7 +99,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
 
 ## Tech stack
 
-- **Rust core** (`src-tauri/`) — [git2](https://github.com/rust-lang/git2-rs) for reads, the `git` CLI for writes (every mutation snapshots first), [tauri-specta](https://github.com/specta-rs/tauri-specta) for a typed IPC boundary generated into `src/ipc/bindings.ts`
+- **Rust core** (`src-tauri/`) — [git2](https://github.com/rust-lang/git2-rs) for reads, the `git` CLI for writes (everyday history-changing writes snapshot first), [tauri-specta](https://github.com/specta-rs/tauri-specta) for a typed IPC boundary generated into `src/ipc/bindings.ts`
 - **Frontend** — Svelte 5 islands (one per feature) over a hand-tuned vanilla canvas for the graph itself
 - **CI/CD** — `cargo test` + `pnpm test` on every push, a 6-platform release matrix on tags, and a [VitePress](https://vitepress.dev) site auto-deployed to [GitHub Pages](https://zangjiucheng.github.io/GitCat/)
 

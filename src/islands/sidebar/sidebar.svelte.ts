@@ -87,6 +87,7 @@
 
 import { commands } from "../../ipc/bindings";
 import { be, t } from "@/i18n/i18n.svelte.ts";
+import { shortcutLabel } from "@/keymap/label.ts";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { rebasePlanCtrl } from "../rebaseplan/rebaseplan.svelte.ts";
@@ -1449,7 +1450,9 @@ class SidebarState {
         ICON_BACKUP +
         " I back up " +
         esc(path) +
-        "'s own uncommitted changes before clearing it — its committed history is untouched and restorable via Init + update. This is NOT the global Undo (⌘Z) — that only ever rewinds THIS repo's own branches/HEAD.",
+        "'s own uncommitted changes before clearing it — its committed history is untouched and restorable via Init + update. This is NOT the global Undo (" +
+        shortcutLabel("undo") +
+        ") — that only ever rewinds THIS repo's own branches/HEAD.",
       name: path,
       confirmLabel: "Deinit submodule",
       onConfirm: async () => {
@@ -1990,7 +1993,7 @@ class SidebarState {
         '<h5>What happens</h5><ul><li>Removes local branch <code>' +
         esc(name) +
         "</code></li><li>Its tip is pinned under <code>refs/gitgui/deleted/…</code> — recover with ＋ New branch → the printed sha</li></ul>",
-      note: ICON_BACKUP + " I pin the branch tip before deleting; ⌘Z restores your CURRENT branch position (not the deleted branch).",
+      note: ICON_BACKUP + " I pin the branch tip before deleting; " + shortcutLabel("undo") + " restores your CURRENT branch position (not the deleted branch).",
       name,
       confirmLabel: "Delete branch",
       onConfirm: async () => {
@@ -2057,7 +2060,9 @@ class SidebarState {
         ICON_BACKUP +
         " I pin " +
         name +
-        "'s current tip before resetting; ⌘Z restores it" +
+        "'s current tip before resetting; " +
+        shortcutLabel("undo") +
+        " restores it" +
         (name === this.head ? "" : " (checking " + name + " back out first, since it may no longer be the current branch)") +
         ".",
       name,
@@ -2457,7 +2462,7 @@ class SidebarState {
         "</code></li><li>Its target is pinned under <code>refs/gitgui/deleted-tag/…</code> — recover with <code>git tag " +
         esc(name) +
         " &lt;pinned ref&gt;</code></li></ul>",
-      note: ICON_BACKUP + " I pin the tag's target before deleting; this is NOT restorable via the global Undo (⌘Z) — that only rewinds branches, never tags.",
+      note: ICON_BACKUP + " I pin the tag's target before deleting; this is NOT restorable via the global Undo (" + shortcutLabel("undo") + ") — that only rewinds branches, never tags.",
       name,
       confirmLabel: "Delete tag",
       onConfirm: async () => {

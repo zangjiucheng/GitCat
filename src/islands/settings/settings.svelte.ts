@@ -119,6 +119,18 @@ export type GraphLabelLayout = "inline" | "column";
 // reads it. "right" is the original and stays the default, so an existing
 // user's layout only moves if they choose to move it.
 export type DetailPanelPlacement = "right" | "bottom";
+// What the expand-diff icon (Detail.svelte's Maximize2 button) does by
+// default: "modal" opens the existing near-fullscreen overlay IN this
+// window (today's only behavior); "window" instead detaches straight into
+// its own GitCat process via windows.rs's `open_diff_in_new_window` (see
+// detail.svelte.ts's popOutDiff). Read fresh at the moment the button is
+// clicked (detail.svelte.ts's expandOrPopOutDiff), not cached — same
+// instant-apply, no-live-wiring idiom as autoFetchEnabled below. "modal" is
+// the default so an existing user's click keeps doing exactly what it always
+// did; the modal itself still carries its own explicit pop-out button
+// regardless of this setting, so "window" just changes what the ONE-CLICK
+// default is, never removes the other option.
+export type DiffOpenMode = "modal" | "window";
 
 // ── Tama customization (PER-54) ────────────────────────────────────────────
 // PER-54: how lively Tama's idle animation + state-change timing feel.
@@ -220,6 +232,7 @@ export interface PersistedSettings {
   // not an unexamined leftover default.
   graphLabelLayout: GraphLabelLayout;
   detailPanelPlacement: DetailPanelPlacement;
+  diffOpenMode: DiffOpenMode;
   // Periodically `git fetch --all --prune` while a repo is open, so
   // ahead/behind counts and incoming remote changes stay current without a
   // manual Pull. Off by default — unlike autoCheckUpdates (checking GitHub
@@ -318,6 +331,7 @@ export const DEFAULTS: PersistedSettings = {
   graphLabelPriority: "tag",
   graphLabelLayout: "inline",
   detailPanelPlacement: "right",
+  diffOpenMode: "modal",
   autoFetchEnabled: false,
   autoFetchIntervalMinutes: 15,
   autoMaintenanceEnabled: false,
@@ -548,6 +562,7 @@ class SettingsState {
   graphLabelPriority = $state<GraphLabelPriority>(BOOT.graphLabelPriority);
   graphLabelLayout = $state<GraphLabelLayout>(BOOT.graphLabelLayout);
   detailPanelPlacement = $state<DetailPanelPlacement>(BOOT.detailPanelPlacement);
+  diffOpenMode = $state<DiffOpenMode>(BOOT.diffOpenMode);
   autoFetchEnabled = $state(BOOT.autoFetchEnabled);
   autoFetchIntervalMinutes = $state(BOOT.autoFetchIntervalMinutes);
   autoMaintenanceEnabled = $state(BOOT.autoMaintenanceEnabled);
@@ -858,6 +873,7 @@ class SettingsState {
     this.graphLabelPriority = s.graphLabelPriority;
     this.graphLabelLayout = s.graphLabelLayout;
     this.detailPanelPlacement = s.detailPanelPlacement;
+    this.diffOpenMode = s.diffOpenMode;
     this.autoFetchEnabled = s.autoFetchEnabled;
     this.autoFetchIntervalMinutes = s.autoFetchIntervalMinutes;
     this.autoMaintenanceEnabled = s.autoMaintenanceEnabled;
@@ -948,6 +964,14 @@ class SettingsState {
     this.detailPanelPlacement = v;
     saveSettings({ detailPanelPlacement: v });
     bridge.setDetailPanelPlacement(v); // moves the panel live — see legacy/main.ts
+  }
+
+  // No bridge call: nothing needs to react live (unlike detailPanelPlacement's
+  // CSS move above) — detail.svelte.ts's expandOrPopOutDiff reads this fresh
+  // at the moment the expand-diff button is actually clicked.
+  setDiffOpenMode(v: DiffOpenMode): void {
+    this.diffOpenMode = v;
+    saveSettings({ diffOpenMode: v });
   }
 
   // The background timer itself lives in main.ts (mirrors the existing

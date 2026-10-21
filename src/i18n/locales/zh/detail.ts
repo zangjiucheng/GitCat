@@ -4,10 +4,10 @@ export default {
   // Tama 主视觉 / 空状态。
   hero_alt: "Tama,GitCat 的守护者",
   hero_bubble_loaded:
-    'はじめまして!我是 <b>Tama</b>,GitCat 的守护者。每次改动前我都会保存一份快照 —— 你的历史记录在我这儿始终安全无虞。<span class="jp">にゃ〜♪</span>',
-  hero_bubble_loaded_plain: "每次改动前都会保存一份快照 —— 你的历史记录始终安全。",
+    'はじめまして!我是 <b>Tama</b>,GitCat 的守护者。日常改动历史前我都会保存一份快照 —— {undoKey} 能带你回去。<span class="jp">にゃ〜♪</span>',
+  hero_bubble_loaded_plain: "日常改动历史前都会保存一份快照 —— {undoKey} 能带你回去。",
   hero_stat: '<span class="n">{n}</span> 个 commit 在 <b>{ms} ms</b> 内完成布局',
-  hero_hint_loaded: "点击 commit 查看详情 · 把圆点拖到另一个上可 cherry-pick · ⌘Z 撤回",
+  hero_hint_loaded: "点击 commit 查看详情 · 把圆点拖到另一个上可 cherry-pick · {undoKey} 撤回",
   hero_bubble_empty:
     'はじめまして!我是 <b>Tama</b>。打开一个 Git 仓库,我会一瞬间为你铺开它的完整历史。<span class="jp">にゃ〜♪</span>',
   hero_bubble_empty_plain: "打开一个 Git 仓库即可开始。",
@@ -22,6 +22,20 @@ export default {
   row_of: "第 {row} / {total} 行",
   cant_revert_merge: "无法回退一个合并 commit",
   revert_commit: "回退此 commit",
+  sig_checking: "… 正在校验签名",
+  sig_good: "✔ 签名有效",
+  sig_untrusted: "✔ 签名有效（密钥未受信任）",
+  sig_expired: "⚠ 签名已过期",
+  sig_bad: "✘ 签名无效",
+  sig_unverified: "? 签名未校验",
+  sig_none: "○ 未签名",
+  sig_signer: "签名者：{name}",
+  sig_key: "密钥：{key}",
+  sig_untrusted_note: "签名与密钥匹配，但该密钥在你的密钥环中未受信任。",
+  sig_expired_note: "签名或签名密钥已过期。",
+  sig_bad_note: "签名不匹配，或密钥已被吊销。",
+  sig_unverified_note: "git 无法校验此签名（缺少 gpg / 公钥 / allowed-signers 文件）——这并不代表签名无效。",
+  sig_demo: "演示数据——并非真实的签名校验。",
   // 标签名称。指的是你当前**查看**的这个 commit —— 与 workdir.commit(你正在
   // 编写的那个)故意分开的独立键。
   tab_commit: "提交",
@@ -33,7 +47,7 @@ export default {
   refs_pointing_here: "指向此处的引用",
   no_refs: "没有引用指向此处",
   covered:
-    '已由快照覆盖 <b>backup/…{ago} 前</b><br /><span class="mut">可经安全管理员备份引用到达 —— ⌘Z 可回退到这里。</span>',
+    '已由快照覆盖 <b>backup/…{ago} 前</b><br /><span class="mut">可经安全管理员备份引用到达 —— {undoKey} 可回退到这里。</span>',
   // 更改 / 差异统计 / 文件树。
   changes: "更改",
   loading_diff: "正在加载 diff…",
@@ -45,6 +59,9 @@ export default {
   diff: "差异",
   expand_diff: "放大差异",
   expand_diff_aria: "将差异放大到整页",
+  pop_out_diff: "在新窗口中打开",
+  pop_out_diff_aria: "在新窗口中打开此差异",
+  demo_pop_out_window: "这里会在新窗口中打开差异(演示)。",
   files_label: "文件",
   resize_file_list: "调整文件列表宽度",
   collapse_all_folders: "折叠所有文件夹",

@@ -32,6 +32,7 @@ pub mod patch; // format-patch export + git am --3way apply (with am's own conti
 pub mod pickaxe; // pickaxe / diff-content search: git log -S/-G across (a subset of) history
 pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/tag by rev)
 pub mod preview; // #37: raw image/PDF blob bytes for a visual before/after diff preview
+pub mod promisor; // partial clones (`--filter=blob:none`): fetch missing blobs on demand, in one `git fetch`, before a git2 read
 pub mod procutil; // suppresses the console window Windows flashes open per subprocess spawn
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod repo_files; // backlog #14 (final item): .gitignore/.mailmap in-app editors — allow-listed repo-root file read/write
@@ -40,11 +41,13 @@ pub mod registry_lock; // #60: cross-PROCESS lock around each registry's load->m
 pub mod repo_registry; // backlog #11: app-level tracked-repos JSON persistence
 pub mod repo_summary; // Repository Summary: git-log-derived churn/contributor/activity/problem-area diagnostics
 pub mod rerere; // M5a: git-rerere status/toggle panel
+pub mod signature; // commit signature verdict (git's own %G? — gpg/ssh/x509) for the detail panel's badge, fetched lazily per selected commit
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
 pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 deinit/remove
 pub mod terminal; // "Open Terminal": a real PTY-backed shell embedded in GitCat's own UI
 pub mod plugin_exec; // PER-40: plugin command executor + placeholder grammar (declarative, external-process plugins)
 pub mod plugin_lua; // PER-56: embedded Luau plugin scripting runtime (sandboxed, curated host API)
+pub mod plugin_git_policy; // allowlist + argument screening for the Luau sandbox's git() host function
 pub mod plugin_market; // in-app plugin catalogue: reads the community index and fetches a plugin's files so the ORDINARY install path can take over
 pub mod plugin_registry; // PER-39: app-level plugin registry (plugins.json under app_config_dir) + install/enable/remove CRUD
 pub mod tool_settings; // backlog #12: external diff/merge tool settings + delegate entirely to `git difftool`/`git mergetool`
@@ -52,6 +55,7 @@ pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious owne
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
 pub mod windows; // multi-window: spawn a fresh, fully independent GitCat process, optionally pointed directly at a repo
 pub mod instance_focus; // #39: focus the existing window for an already-open repo instead of duplicating it (per-repo loopback registry)
+pub mod cli; // argv: `--version` / `--help` / unknown-flag handling before Tauri starts, plus the launch path/flags
 pub mod cli_shim; // "Install 'gitcat' command in PATH": writes a VS Code `code`-style launcher (macOS /usr/local/bin, Linux ~/.local/bin, Windows WindowsApps)
 pub mod i18n_err; // PER-82: app-authored errors as `i18n:<key>` strings the frontend's be() translates (raw git stderr stays passthrough)
 pub mod updater; // channel-aware "check for updates" (stable vs nightly endpoint + downgrade-allowing comparator)
@@ -75,6 +79,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::graph_fast_refresh,
         commands::head_ancestor_flags,
         commands::commit_detail,
+        signature::commit_signature, // the detail badge's signature verdict, lazily, for the selected commit only
         commands::ancestors_of,
         // #37: raw image/PDF blob bytes for a side-by-side visual diff preview
         // (serves both the commit-detail diff and the working-tree diff), plus
@@ -348,6 +353,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
         plugin_market::download_market_plugin, // fetch a catalogue entry onto disk; installs NOTHING
         plugin_exec::run_plugin_command,
         plugin_exec::run_hooks, // PER-43: run enabled plugins' hooks for a lifecycle event
+        plugin_exec::plugin_commit_files, // #77: `{files}` for a `commit` command
+        plugin_exec::plugin_staged_files, // #77: `{files}` for a `staged` command
         // Repo-root file editors (backlog #14, final item): view/edit .gitignore
         // and .mailmap directly — allow-listed to exactly these two names, see
         // repo_files.rs's own module doc.
@@ -369,6 +376,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // generic "New Window" menu item is handled entirely in Rust, see
         // menu.rs's own handle_event — no command round trip for that path).
         windows::open_repo_in_new_window,
+        // Diff pop-out: detaches the expanded-diff modal into its own window,
+        // pre-selected on a specific commit (see detail.svelte.ts's popOutDiff).
+        windows::open_diff_in_new_window,
         // #39: the frontend registers/clears this window's current repo so a
         // later `gitcat <same repo>` focuses it (see instance_focus.rs).
         instance_focus::set_open_repo,

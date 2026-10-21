@@ -49,7 +49,7 @@ const E0: ReflogEntry = { index: 0, sha: "abc1234", message: "reset: moving to a
 const E1: ReflogEntry = { index: 1, sha: "def5678", message: "commit: wip", kind: "commit", committerName: "You", committerEmail: "you@x.com", ts: 0 };
 
 function undoResult(partial: Partial<UndoResult>): UndoResult {
-  return { ok: true, message: "", restoredTo: null, sealed: null, ...partial };
+  return { ok: true, message: "", restoredTo: null, sealed: null, reason: null, ...partial };
 }
 
 function resetCtrl() {
@@ -128,7 +128,7 @@ describe("restore — real mode", () => {
     reflogCtrl.repo = "repo1";
     reflogCtrl.entries = [E0, E1];
     vi.mocked(commands.reflogRestore).mockResolvedValueOnce(
-      undoResult({ ok: false, message: "Working tree has uncommitted changes.", restoredTo: null, sealed: null }),
+      undoResult({ ok: false, message: "Working tree has uncommitted changes.", restoredTo: null, sealed: null, reason: "dirty_worktree" }),
     );
 
     await reflogCtrl.restore(0);

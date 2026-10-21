@@ -287,6 +287,21 @@ function stashList(repo: TempRepo) {
   });
 }
 
+// Mirrors signature.rs's commit_signature: git's own %G? verdict. The e2e temp
+// repos are unsigned, so in practice this is always { status: "none" }.
+function commitSignature(repo: TempRepo, sha: string) {
+  const code = repo.git("log", "-1", "--no-show-signature", "--format=%G?", sha).trim();
+  // Mirrors signature.rs's map_sig_code.
+  const status =
+    code === "N" || code === "" ? "none"
+    : code === "G" ? "good"
+    : code === "U" ? "untrusted"
+    : code === "X" || code === "Y" ? "expired"
+    : code === "B" || code === "R" ? "bad"
+    : "unverified";
+  return { sha, status, code, signer: "", key: "", fingerprint: "", detail: "" };
+}
+
 function commitDetail(repo: TempRepo, sha: string) {
   const subject = repo.git("log", "-1", "--format=%s", sha);
   const body = repo.git("log", "-1", "--format=%b", sha);
@@ -563,6 +578,8 @@ function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[]) {
         return stashList(repo);
       case "commit_detail":
         return commitDetail(repo, args.sha);
+      case "commit_signature":
+        return commitSignature(repo, args.sha);
       case "watch_repo":
       case "unwatch_repo":
         return null;
@@ -600,12 +617,23 @@ async function installTauriMock(page: Page, repo: TempRepo, calls: RecordedCall[
     const emit = (event: string, payload: unknown) => {
       for (const cb of listeners.get(event) ?? []) cb({ event, payload });
     };
+    // A spec can set `__e2eHoldGraph = true` to park load_graph's batch instead
+    // of emitting it, then call `__e2eReleaseGraph()` — standing in for the
+    // real backend's multi-second wait before a big repo's first batch, which
+    // is the window the graph-reload spec needs to look at.
+    const held: unknown[] = [];
+    w.__e2eHoldGraph = false;
+    w.__e2eReleaseGraph = () => {
+      w.__e2eHoldGraph = false;
+      for (const b of held.splice(0)) emit("graph-batch", b);
+    };
     const invoke = async (cmd: string, args: unknown) => {
       if (cmd === "load_graph") {
         // Node builds the batch; we emit it and resolve null so the frontend
         // exercises the same startGraphStream → onGraphBatch path as production.
         const batch = await w.__e2eInvoke(cmd, args);
-        queueMicrotask(() => emit("graph-batch", batch));
+        if (w.__e2eHoldGraph) held.push(batch);
+        else queueMicrotask(() => emit("graph-batch", batch));
         return null;
       }
       return w.__e2eInvoke(cmd, args);
