@@ -2119,6 +2119,10 @@ mod tests {
             .unwrap_or_else(|e| panic!("could not read examples dir {}: {e}", examples.display()));
 
         let mut ids: Vec<String> = Vec::new();
+        // #75: at least one shipped example must exercise each of these
+        // surfaces, or this test validates zero manifests of that kind and a
+        // regression in its rules goes unnoticed.
+        let (mut saw_panels, mut saw_tama) = (false, false);
         for entry in entries {
             let entry = entry.expect("read_dir entry");
             let dir = entry.path();
@@ -2131,8 +2135,12 @@ mod tests {
             }
             let plugin = read_and_validate_manifest(&manifest)
                 .unwrap_or_else(|e| panic!("example manifest {} failed to validate: {e}", manifest.display()));
+            saw_panels |= !plugin.panels.is_empty();
+            saw_tama |= plugin.tama.is_some();
             ids.push(plugin.id);
         }
+        assert!(saw_panels, "no shipped example declares `panels`: {ids:?}");
+        assert!(saw_tama, "no shipped example declares `tama`: {ids:?}");
 
         assert!(ids.len() >= 2, "expected the shipped example plugins, found {}: {ids:?}", ids.len());
         let unique: std::collections::HashSet<&String> = ids.iter().collect();

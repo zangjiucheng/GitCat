@@ -9,6 +9,11 @@ A GitCat plugin is a `plugin.json` describing:
 
 - **`commands`** — user-invokable actions surfaced in the ⌘K command palette.
 - **`hooks`** — external commands GitCat runs when a lifecycle event fires.
+- **`panels`** — small declarative surfaces opened from ⌘K, built from a fixed
+  set of widgets GitCat renders itself; a widget can only run one of the
+  plugin's own commands (see [`staged-review`](./staged-review/)).
+- **`languages`** — keyword and comment syntax for diff highlighting (see
+  [`language-pack`](./language-pack/)).
 - **`tama`** — an optional alternate look (and voice) for Tama: pose art, a
   greeting line, and a `voicePitch` (a skin ships its own character art; see
   [Tama skins](../../docs/plugins.md#tama-skins)).
@@ -31,6 +36,7 @@ way, install only plugins you trust.
 | [`lua-hello`](./lua-hello/) | The smallest **Luau-scripted** command: the `lua` manifest field + a command with a `handler` (not a shell `run`), using the sandboxed host API (`ctx`, `git`, `tama.react`, `print`). |
 | [`commit-subject-lint`](./commit-subject-lint/) | A **Luau** `commit-created` **hook** + on-demand command that share one lint function, reading the subject via `git()` and reacting via Tama — logic that a shell one-liner handled awkwardly (and only on POSIX). |
 | [`language-pack`](./language-pack/) | The **`languages`** manifest field: purely declarative diff syntax highlighting (keywords + comment syntax) for Python, Rust, Go, Java, C, C++ and Shell — no commands, no code. |
+| [`staged-review`](./staged-review/) | The **`panels`** field (all four widget types: `heading`, `text`, `command-output`, `button`), a **`tama`** skin that changes only voice and copy, and **`"context": "staged"`** commands that get the staged paths through **`{files}`**. |
 
 ## Installing
 
@@ -53,7 +59,7 @@ persisted in `plugins.json` under the app config dir.
       "id": "do-thing",
       "label": "Do the thing",
       "run": "mytool --repo {repo}", // external command TEMPLATE (non-empty)
-      "context": "repo",   // none | commit | file | repo   (default: none)
+      "context": "repo",   // none | commit | file | repo | staged   (default: none)
       "placement": "palette" // palette | menu | both        (default: palette)
     }
   ],
