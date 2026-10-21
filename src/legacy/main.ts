@@ -175,6 +175,29 @@ let graphGeneration=0;
 // onGraphBatch()'s own `done` handling) — a fresh openRepo() never sets this,
 // since there's nothing to restore on a brand new open.
 let pendingReselect=null;
+// Keep-old-rows-until-first-batch (see startGraphStream's keepRows / reloadGraph).
+// A same-repo full reload (Undo, reset HEAD, pull, …) used to empty BACKEND/G
+// the instant it started, so a big repo (CPython: ~2s to its first batch) showed
+// a BLANK canvas — only the pinned header — until rows streamed back in. Now the
+// fresh, empty BACKEND waits here as {gen, backend} while the OLD rows stay on
+// screen (dimmed, and #cv ignores the pointer — see .graph-stale in index.html —
+// so a click can't select a commit the reload is about to drop); onGraphBatch()
+// swaps it in on this generation's FIRST batch, in the same task that appends
+// that batch, so no empty frame is ever painted. null when nothing is held.
+let heldRows=null;
+function setGraphStale(on){
+  cv.classList.toggle("graph-stale", on);
+  if(on){ state.hoverRow=-1; showLabelTip(null); dirty=true; }
+}
+// Forget a held swap without applying it — openRepo()/bootEmpty() replace the
+// graph wholesale themselves, so a pending same-repo swap must not outlive them.
+function dropHeldRows(){ if(heldRows){ heldRows=null; setGraphStale(false); } }
+// Apply the held swap now: the fresh BACKEND goes live and loadGraph(0) resets
+// G/selection/scroll exactly as reloadGraph() used to do up front.
+function swapInHeldRows(){
+  BACKEND=heldRows.backend; heldRows=null; setGraphStale(false);
+  loadGraph(0);
+}
 export let CUR_REPO=null;   // absolute path of the open repo; commit_detail(path, sha) needs it — exported (live binding) for the Svelte islands via bridge.ts
 const IN_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
 // Rejections are RESOLVED here, at the one seam every raw command call in
@@ -3017,11 +3040,16 @@ function setGraphLoadingPill(on,count){
     p.classList.remove("show");
   }
 }
-async function startGraphStream(path){
+// keepRows (reloadGraph only): leave the current BACKEND/G on screen and hold
+// the fresh one in heldRows until this stream's first batch — see heldRows.
+async function startGraphStream(path, keepRows=false){
   const myGen = ++graphRequestSeq;
   dlog("graph", "stream START gen", myGen, "—", path);
   graphGeneration = myGen;
-  BACKEND = { n:0, oids:[], lane:[], color:[], merge:[], gapStart:[0], gapTop:[], gapBot:[], gapColor:[], rows:[], refs:[], allRefs:[], ncol:7, laneCount:0 };
+  const fresh = { n:0, oids:[], lane:[], color:[], merge:[], gapStart:[0], gapTop:[], gapBot:[], gapColor:[], rows:[], refs:[], allRefs:[], ncol:7, laneCount:0 };
+  // Nothing worth keeping (no graph yet, or an empty one) → reset up front as before.
+  if(keepRows && BACKEND && G && G.N>0){ heldRows={gen:myGen, backend:fresh}; setGraphStale(true); }
+  else { dropHeldRows(); BACKEND = fresh; }
   // A fresh graph (repo switch or refresh) invalidates any per-commit label
   // rotation the user had spun up — the ref set itself may have changed.
   refRot.clear(); overflowHit.clear();
@@ -3044,7 +3072,14 @@ async function startGraphStream(path){
   // new window's graph stayed blank). The backend now emits again, but via
   // emit_on_main (main-thread marshaled), so it's still deadlock-free. onGraphBatch
   // self-filters by generation, so a superseded stream's late batches are ignored.
-  await tinvoke("load_graph", { path, requestId: myGen });
+  try{ await tinvoke("load_graph", { path, requestId: myGen }); }
+  catch(e){
+    // load_graph rejected (e.g. the repo can't be opened) — no batch will ever
+    // arrive to swap the held rows out, so fall back to the old reset-up-front
+    // behaviour now instead of leaving stale, non-interactive rows up forever.
+    if(heldRows && heldRows.gen===myGen) swapInHeldRows();
+    throw e;
+  }
   return myGen;
 }
 // Registered ONCE, here in legacy/main.ts (not main.ts) and BEFORE the boot-time
@@ -3071,6 +3106,10 @@ if(IN_TAURI) window.__TAURI__.event.listen("graph-batch", (e)=>onGraphBatch(e.pa
 // needing new bounds checks sprinkled through draw() itself.
 function onGraphBatch(payload){
   if(!payload || payload.generation!==graphGeneration || !BACKEND) return; // stale/superseded — ignore
+  // First batch of a keepRows reload: swap the held (empty) BACKEND in and reset
+  // G/selection/scroll NOW, in the same task that appends this batch below, so
+  // the old rows go straight to the new ones without an empty frame between.
+  if(heldRows && heldRows.gen===payload.generation) swapInHeldRows();
 
   // ADVERSARIALLY-FOUND FIX: the "Loading repository…" overlay used to only
   // hide in openRepo()'s own `finally`, which doesn't run until its ENTIRE
@@ -3256,6 +3295,9 @@ async function openRepo(path){
   // doesn't have a backlog to churn through. startGraphStream() bumps again for
   // the new stream, which is what the backend's request_id will actually match.
   graphGeneration = ++graphRequestSeq;
+  // A held same-repo reload swap (and its reselect) is moot — this open replaces
+  // the graph itself, and the old repo's selection means nothing in the new one.
+  dropHeldRows(); pendingReselect=null;
   // An automated bisect run (bisect_run_start) is a real, long-lived blocking
   // Tauri call actually executing the user's command against THIS repo's
   // working tree. Switching repos out from under it would leave it running
@@ -3601,15 +3643,21 @@ async function reloadGraph(preserveRow, forceFull=false){
           // instead of trying (and failing) to find it in BACKEND.rows below.
           const keepWorkdir = nextPreserveRow && state.selectedRow===-2;
           // Same streaming load openRepo() itself now uses (see
-          // startGraphStream()'s own doc comment) — loadGraph(0) here resets to
-          // the now-empty BACKEND/selection exactly like a fresh open would;
-          // re-selecting keepSha/keepWorkdir has to wait until the stream
+          // startGraphStream()'s own doc comment), but with keepRows: the old
+          // rows stay up until the first batch, which is where the reset to the
+          // empty BACKEND/selection (loadGraph(0)) now happens — see heldRows.
+          // It used to run right here, blanking the canvas for the whole wait.
+          // Re-selecting keepSha/keepWorkdir has to wait until the stream
           // actually finishes (the previously-selected commit might be deep in
           // history, not necessarily in the very first batch), so it's handed
           // to onGraphBatch() via pendingReselect instead of done inline here.
-          await startGraphStream(CUR_REPO);
-          loadGraph(0);
-          pendingReselect = keepSha ? {sha:keepSha} : (keepWorkdir ? {workdir:true} : null);
+          // Set BEFORE the stream starts: its `done` can land before
+          // startGraphStream()'s await returns. A coalesced second pass (Undo +
+          // the file watcher both reloading) that finds the selection already
+          // reset by the first pass's swap keeps that pass's pending reselect.
+          if(keepSha||keepWorkdir) pendingReselect = keepSha ? {sha:keepSha} : {workdir:true};
+          else if(!nextPreserveRow) pendingReselect = null;
+          await startGraphStream(CUR_REPO, true);
           await sidebarCtrl.refresh(CUR_REPO); await Safety.refresh();
         }
       }catch(e){ Tama.warn(t("legacy.reload_failed",{error:e})); console.error(e); }
@@ -3691,6 +3739,7 @@ function bootEmpty(){
   // at 1 and only ever increases).
   graphGeneration=-1;
   pendingReselect=null;
+  dropHeldRows();
   Safety.snaps=[]; Safety.updateBadge();
   if(IN_TAURI) tinvoke("unwatch_repo").catch(e=>console.error("unwatch_repo",e));
   sidebarCtrl.reset();
