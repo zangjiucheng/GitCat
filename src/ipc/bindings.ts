@@ -3292,6 +3292,32 @@ async runHooks(event: PluginEvent, ctx: PlaceholderCtx) : Promise<Result<HookRun
 }
 },
 /**
+ * `{files}` for a `commit` command — see [`commit_changed_paths`].
+ * 
+ * JS: `commands.pluginCommitFiles(path, sha)`.
+ */
+async pluginCommitFiles(path: string, sha: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_commit_files", { path, sha }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `{files}` for a `staged` command — see [`staged_paths`].
+ * 
+ * JS: `commands.pluginStagedFiles(path)`.
+ */
+async pluginStagedFiles(path: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_staged_files", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Read `file_name`'s current content (repo-root only). Missing file => `Ok("")`,
  * never an error — see module doc comment.
  * JS: `commands.readRepoFile(path, fileName)` -> `Result<string, string>`.
@@ -4223,7 +4249,8 @@ sha: string | null;
 file: string | null; 
 /**
  * `{files}` — several file paths; expands to each path shell-quoted,
- * space-joined (File context, multi-select).
+ * space-joined. Filled for a Commit command (that commit's changed paths)
+ * and a Staged command (the staged paths); empty otherwise (#77).
  */
 files: string[]; 
 /**
@@ -4396,7 +4423,15 @@ export type PluginContext =
 /**
  * Repo-scoped (needs only the open repository).
  */
-"repo"
+"repo" | 
+/**
+ * Works on the currently STAGED files (#77): `{files}` is the index's
+ * changed paths, read fresh when the command is invoked — no selection
+ * needed, so a pre-commit lint/format command can run from ⌘K at any
+ * time. `{file}`/`{sha}` are not filled. With nothing staged the command
+ * is refused rather than run with an empty `{files}`.
+ */
+"staged"
 /**
  * A lifecycle event a hook can fire on. Serialized kebab-case
  * (`"repo-opened"`, `"pre-mutation"`, …).

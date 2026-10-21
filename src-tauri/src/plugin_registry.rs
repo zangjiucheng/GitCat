@@ -96,6 +96,12 @@ pub enum PluginContext {
     File,
     /// Repo-scoped (needs only the open repository).
     Repo,
+    /// Works on the currently STAGED files (#77): `{files}` is the index's
+    /// changed paths, read fresh when the command is invoked — no selection
+    /// needed, so a pre-commit lint/format command can run from ⌘K at any
+    /// time. `{file}`/`{sha}` are not filled. With nothing staged the command
+    /// is refused rather than run with an empty `{files}`.
+    Staged,
 }
 
 /// Where a command surfaces. Serialized lowercase (`"palette"`/`"menu"`/
@@ -563,7 +569,22 @@ pub fn validate_manifest(plugin: &Plugin) -> Result<(), String> {
     // `has_lua` gates that requirement once for the whole manifest.
     let has_lua = plugin.lua.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
     let non_empty = |o: &Option<String>| o.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    // Commands (#62): mirror the panel/language loops below — a valid,
+    // plugin-unique id and a non-blank label. A duplicate id would surface as
+    // two ⌘K rows sharing one `ActionItem` id, both resolving (via
+    // `find_command`'s first match) to the SAME command — one row silently
+    // running the other's `run`.
+    let mut seen_cmd_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for cmd in &plugin.commands {
+        if !is_valid_id(&cmd.id) {
+            return Err(ierrp("err_plugins.cmd_id_invalid", &[("id", &format!("{:?}", cmd.id))]));
+        }
+        if !seen_cmd_ids.insert(cmd.id.as_str()) {
+            return Err(ierrp("err_plugins.cmd_id_duplicate", &[("id", &format!("{:?}", cmd.id))]));
+        }
+        if cmd.label.trim().is_empty() {
+            return Err(ierrp("err_plugins.cmd_missing_label", &[("id", &format!("{:?}", cmd.id))]));
+        }
         let has_run = non_empty(&cmd.run);
         let has_handler = non_empty(&cmd.handler);
         if has_run == has_handler {
@@ -2098,6 +2119,10 @@ mod tests {
             .unwrap_or_else(|e| panic!("could not read examples dir {}: {e}", examples.display()));
 
         let mut ids: Vec<String> = Vec::new();
+        // #75: at least one shipped example must exercise each of these
+        // surfaces, or this test validates zero manifests of that kind and a
+        // regression in its rules goes unnoticed.
+        let (mut saw_panels, mut saw_tama) = (false, false);
         for entry in entries {
             let entry = entry.expect("read_dir entry");
             let dir = entry.path();
@@ -2110,8 +2135,12 @@ mod tests {
             }
             let plugin = read_and_validate_manifest(&manifest)
                 .unwrap_or_else(|e| panic!("example manifest {} failed to validate: {e}", manifest.display()));
+            saw_panels |= !plugin.panels.is_empty();
+            saw_tama |= plugin.tama.is_some();
             ids.push(plugin.id);
         }
+        assert!(saw_panels, "no shipped example declares `panels`: {ids:?}");
+        assert!(saw_tama, "no shipped example declares `tama`: {ids:?}");
 
         assert!(ids.len() >= 2, "expected the shipped example plugins, found {}: {ids:?}", ids.len());
         let unique: std::collections::HashSet<&String> = ids.iter().collect();
@@ -2676,6 +2705,74 @@ mod tests {
             ],
         }];
         validate_manifest(&p).expect("a widget referencing an existing command must validate");
+    }
+
+    /// A second command for `sample_plugin` — same shape as `greet`, own id.
+    fn extra_command(id: &str, label: &str) -> PluginCommand {
+        PluginCommand {
+            id: id.into(),
+            label: label.into(),
+            run: Some("echo other".into()),
+            handler: None,
+            context: PluginContext::None,
+            placement: PluginPlacement::Palette,
+            mutates: false,
+        }
+    }
+
+    #[test]
+    fn staged_context_parses_validates_and_round_trips() {
+        // #77: `"context": "staged"` is a real context value, lowercase on the
+        // wire like the others, and survives a manifest → registry round trip.
+        let json = r#"{"id":"stagey","name":"Stagey","version":"1.0.0","commands":[
+            {"id":"lint-staged","label":"Lint staged","run":"eslint -- {files}","context":"staged"}]}"#;
+        let p: Plugin = serde_json::from_str(json).expect("staged context must parse");
+        assert_eq!(p.commands[0].context, PluginContext::Staged);
+        validate_manifest(&p).expect("a staged command must validate");
+        let back = serde_json::to_value(&p).unwrap();
+        assert_eq!(back["commands"][0]["context"], "staged");
+
+        // Case-sensitive like every other context value — `Staged` is not one.
+        let bad = json.replace("\"staged\"", "\"Staged\"");
+        assert!(serde_json::from_str::<Plugin>(&bad).is_err(), "context values are lowercase only");
+    }
+
+    #[test]
+    fn duplicate_command_id_is_rejected() {
+        // #62: two commands sharing an id would surface as two ⌘K rows that
+        // both run `find_command`'s FIRST match — one silently shadowing the other.
+        let mut p = sample_plugin("cmdy");
+        p.commands.push(extra_command("greet", "Greet again"));
+        let err = validate_manifest(&p).unwrap_err();
+        assert!(err.contains("err_plugins.cmd_id_duplicate") && err.contains("greet"), "got: {err}");
+
+        // Distinct ids validate.
+        let mut p = sample_plugin("cmdy");
+        p.commands.push(extra_command("wave", "Wave"));
+        validate_manifest(&p).expect("distinct command ids must validate");
+    }
+
+    #[test]
+    fn invalid_command_id_is_rejected() {
+        for bad in ["", "Greet", "has space", "-leading", "under_score", "dot.ted"] {
+            let mut p = sample_plugin("cmdy");
+            p.commands[0].id = bad.into();
+            let err = validate_manifest(&p).unwrap_err();
+            assert!(err.contains("err_plugins.cmd_id_invalid"), "id {bad:?} got: {err}");
+        }
+        let mut p = sample_plugin("cmdy");
+        p.commands[0].id = "0k-id-2".into();
+        validate_manifest(&p).expect("a well-formed command id must validate");
+    }
+
+    #[test]
+    fn blank_command_label_is_rejected() {
+        for blank in ["", "   ", "\t\n"] {
+            let mut p = sample_plugin("cmdy");
+            p.commands[0].label = blank.into();
+            let err = validate_manifest(&p).unwrap_err();
+            assert!(err.contains("err_plugins.cmd_missing_label") && err.contains("greet"), "got: {err}");
+        }
     }
 
     #[test]

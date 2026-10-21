@@ -48,7 +48,7 @@ only needs `git`.
 
 ## Install
 
-Settings → **Plugins** → **Install plugin…**, pick this folder's `plugin.json`.
+**Tools ▸ Plugins…** → **Install from file…**, pick this folder's `plugin.json`.
 Both commands appear live in ⌘K.
 
 ## Windows note

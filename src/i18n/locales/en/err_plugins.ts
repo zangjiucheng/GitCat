@@ -21,6 +21,10 @@ export default {
   needs_newer_gitcat: "This plugin needs GitCat {required} or newer — this copy is {host}. Update GitCat, then install it again.",
   min_version_invalid:
     "Plugin manifest has an unreadable minGitcatVersion {value} — it must look like \"1.3.0\".",
+  cmd_id_invalid:
+    "Plugin command id {id} is invalid — it must start with a lowercase letter or digit and then contain only lowercase letters, digits, and '-'.",
+  cmd_id_duplicate: "Plugin has a duplicate command id {id} — command ids must be unique within a plugin.",
+  cmd_missing_label: "Plugin command {id} is missing a non-empty label.",
   cmd_exactly_one_both:
     "Plugin command {id} must declare exactly one of a non-empty `run` (shell) or a non-empty `handler` (Luau) — it declares both.",
   cmd_exactly_one_neither:

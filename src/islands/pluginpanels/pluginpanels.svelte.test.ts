@@ -24,6 +24,8 @@ vi.mock("../../ipc/bindings", () => ({
   commands: {
     listPlugins: vi.fn(),
     runPluginCommand: vi.fn(),
+    pluginCommitFiles: vi.fn(),
+    pluginStagedFiles: vi.fn(),
   },
 }));
 

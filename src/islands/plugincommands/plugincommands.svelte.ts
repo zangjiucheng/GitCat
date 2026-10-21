@@ -25,7 +25,7 @@ import { IN_TAURI } from "../../ipc/env";
 import { t, be } from "@/i18n/i18n.svelte.ts";
 import { detailCtrl } from "../detail/detail.svelte.ts";
 import { workdirCtrl } from "../workdir/workdir.svelte.ts";
-import type { Plugin, PluginContext, PlaceholderCtx } from "../../ipc/bindings";
+import type { Plugin, PluginContext, PlaceholderCtx, Result } from "../../ipc/bindings";
 import type { ActionItem } from "../cmdk/cmdk.svelte.ts";
 
 // ─── Plugin → Tama reaction protocol (PER-46) ────────────────────────────────
@@ -232,7 +232,24 @@ class PluginCommandsState {
   // repository. `{file}` is new here, so nothing can depend on the old
   // repo-only behaviour; `{sha}` keeps its existing permissiveness rather than
   // changing under plugins that already ship.
-  ctxFor(pluginId: string, commandId: string, context?: PluginContext): PlaceholderCtx | null {
+  //
+  // `{files}` (#77) follows the same "the command's declared context decides"
+  // rule, and is the one token that needs the repository rather than UI state:
+  //
+  //  * `commit` — the selected commit's changed paths (deletions left out),
+  //    read from the backend for THAT sha, so it can never disagree with
+  //    `{sha}`. The detail pane's own tree is not reused: it is capped for
+  //    rendering, and a truncated list would let a linter "pass" a commit it
+  //    never looked at. With no commit selected `{files}` stays empty, matching
+  //    `{sha}`'s permissiveness.
+  //  * `staged` — the staged paths, read FRESH here at invocation (the working
+  //    tree pane's status can be a refresh behind, or never loaded). Needs no
+  //    selection at all. An EMPTY staged set is refused for the same reason a
+  //    `file` command with no selection is: `prettier --write {files}` with
+  //    `{files}` expanded to nothing reformats the whole project.
+  //
+  // Every other context leaves `{files}` empty.
+  async ctxFor(pluginId: string, commandId: string, context?: PluginContext): Promise<PlaceholderCtx | null> {
     const repo = bridge.CUR_REPO as unknown as string | null;
     if (!repo) {
       bridge.tama.warn(t("plugincommands.open_repo_first"));
@@ -242,7 +259,12 @@ class PluginCommandsState {
     const ctx: PlaceholderCtx = { repo, sha: null, file: null, files: [], diff: null, branch: null, ref: null };
     if (kind === "commit") {
       const sha = this.selectedSha();
-      if (sha) ctx.sha = sha;
+      if (sha) {
+        ctx.sha = sha;
+        const files = await this.fetchFiles(() => commands.pluginCommitFiles(repo, sha));
+        if (!files) return null;
+        ctx.files = files;
+      }
     }
     if (kind === "file") {
       const file = this.selectedFile();
@@ -252,7 +274,31 @@ class PluginCommandsState {
       }
       ctx.file = file;
     }
+    if (kind === "staged") {
+      const files = await this.fetchFiles(() => commands.pluginStagedFiles(repo));
+      if (!files) return null;
+      if (files.length === 0) {
+        bridge.tama.warn(t("plugincommands.nothing_staged"));
+        return null;
+      }
+      ctx.files = files;
+    }
     return ctx;
+  }
+
+  // One `{files}` backend read, or null — having warned — when it failed.
+  // Design mode has no backend: an empty list, and invoke()'s own !IN_TAURI
+  // branch takes it from there.
+  private async fetchFiles(read: () => Promise<Result<string[], string>>): Promise<string[] | null> {
+    if (!IN_TAURI) return [];
+    try {
+      const res = await read();
+      if (res.status === "ok") return res.data;
+      bridge.tama.warn(t("plugincommands.err_files", { err: be(res.error) }));
+    } catch (e) {
+      bridge.tama.warn(t("plugincommands.err_files", { err: String(e) }));
+    }
+    return null;
   }
 
   // `pluginId:commandId` -> the context that command declared. Indexed over
@@ -272,7 +318,7 @@ class PluginCommandsState {
   // — this never touches the manifest's `run` template (the Rust side expands
   // it).
   async invoke(pluginId: string, commandId: string, context?: PluginContext): Promise<void> {
-    const ctx = this.ctxFor(pluginId, commandId, context);
+    const ctx = await this.ctxFor(pluginId, commandId, context);
     if (!ctx) return; // ctxFor has already warned about what was missing
     if (!IN_TAURI) {
       bridge.tama.say(t("plugincommands.demo_run"));
