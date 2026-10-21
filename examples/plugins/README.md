@@ -92,10 +92,13 @@ Honest caveats worth knowing:
 - A plugin/hook command that changes the repo should declare **`"mutates": true`**:
   GitCat then snapshots before running it, so the change is covered by global
   **Undo** (a mutating action that omits `mutates` runs outside Undo).
-- **Windows**: `run` lines are POSIX-shell one-liners; the Windows executor uses
-  `cmd.exe`, and a value containing a `cmd` metacharacter (`& | < > ^ % ! "`,
-  CR/LF) is refused fail-closed (so `{diff}` is usually refused on Windows).
-  Assume a POSIX shell (Git-Bash / WSL) on PATH.
+- **Windows**: the executor uses `cmd.exe`, and placeholder values are
+  double-quoted for it. A value containing a `cmd` metacharacter (`& | < > ^ % ! "`,
+  CR/LF) is still refused fail-closed, so `{diff}` is usually refused on
+  Windows. The `run` text itself is `cmd` syntax there: single quotes, `$VAR`
+  and `$(...)` are `sh`-only. `staged-review`'s lines work in both shells; the
+  shell `run` lines in the other examples assume a POSIX shell (Git-Bash / WSL)
+  on `PATH` (the Luau examples need no shell at all).
 
 ## More
 

@@ -35,11 +35,11 @@ touch — `panels` and `tama` — and for the `staged` command context.
 | ------- | ---- |
 | `staged-summary` | `git diff --cached --stat` |
 | `whitespace-check` | `git diff --cached --check`, and an `ok` Tama reaction when it is clean |
-| `todo-scan` | `grep -nE 'TODO\|FIXME' -- {files}`, and an `ok` Tama reaction when nothing matches |
+| `todo-scan` | `git grep --cached -n -E "TODO\|FIXME" -- {files}`, and an `ok` Tama reaction when nothing matches |
 
-`todo-scan` reads the files as they are on disk, the way most pre-commit
-linters do, so an unstaged edit to a staged file counts. The `--` before
-`{files}` keeps a file whose name starts with `-` from being read as an option.
+`todo-scan` searches the **staged** content of each file (`--cached`), so an
+unstaged edit doesn't count. The `--` before `{files}` keeps a file whose name
+starts with `-` from being read as an option.
 
 ## Install
 
@@ -50,10 +50,10 @@ straight away.
 
 ## Windows note
 
-`staged-summary` and `whitespace-check` are plain `git` invocations and run the
-same under `cmd.exe`. `todo-scan` is a POSIX-shell line: it needs `grep` on
-`PATH`, and `cmd.exe` passes the POSIX single quotes around each `{files}` path
-through to `grep` unchanged. Run GitCat with Git-Bash or WSL on `PATH` for it,
-as the other examples assume.
+All three lines work unchanged under `cmd.exe` as well as `sh`. They call only
+`git` and `echo`, use `"double quotes"` (which mean the same in both shells),
+and chain with `&&` / `||`. On Windows GitCat double-quotes each `{files}` path
+for `cmd`, so `my file.txt` is still one argument. That's why `todo-scan` uses
+`git grep` rather than `grep`, which doesn't ship with Windows.
 
 > **Note:** like every plugin command, these need an **open repository**.

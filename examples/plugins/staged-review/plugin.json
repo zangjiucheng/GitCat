@@ -21,7 +21,7 @@
     {
       "id": "todo-scan",
       "label": "Staged Review: Find TODO/FIXME in staged files",
-      "run": "grep -nE 'TODO|FIXME' -- {files} || echo ::gitcat.tama ok No TODO or FIXME in the staged files.",
+      "run": "git grep --cached -n -E \"TODO|FIXME\" -- {files} || echo ::gitcat.tama ok No TODO or FIXME in the staged files.",
       "context": "staged",
       "placement": "palette"
     }
