@@ -110,8 +110,8 @@ Each entry in `commands[]` contributes one invocable action.
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `id` | ✅ | Unique within the plugin. Combined with the plugin `id` to address the command. |
-| `label` | ✅ | The text shown in ⌘K. |
+| `id` | ✅ | Same `^[a-z0-9][a-z0-9-]*$` charset as a plugin id, and **unique within the plugin** — a duplicate is rejected at install. Combined with the plugin `id` to address the command. |
+| `label` | ✅ | The text shown in ⌘K. Must be non-blank. |
 | `run` | ✳️ | The external command [template](#placeholders). **Declare exactly one of `run` or `handler`.** |
 | `handler` | ✳️ | The name of a [Luau handler](#scripting-with-luau) function instead of a shell `run`. Requires the plugin to declare a top-level `lua` script. **Declare exactly one of `run` or `handler`.** |
 | `context` | — | What selection the command needs. Default `"none"`. |

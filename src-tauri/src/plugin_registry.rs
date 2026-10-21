@@ -563,7 +563,22 @@ pub fn validate_manifest(plugin: &Plugin) -> Result<(), String> {
     // `has_lua` gates that requirement once for the whole manifest.
     let has_lua = plugin.lua.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
     let non_empty = |o: &Option<String>| o.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    // Commands (#62): mirror the panel/language loops below — a valid,
+    // plugin-unique id and a non-blank label. A duplicate id would surface as
+    // two ⌘K rows sharing one `ActionItem` id, both resolving (via
+    // `find_command`'s first match) to the SAME command — one row silently
+    // running the other's `run`.
+    let mut seen_cmd_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for cmd in &plugin.commands {
+        if !is_valid_id(&cmd.id) {
+            return Err(ierrp("err_plugins.cmd_id_invalid", &[("id", &format!("{:?}", cmd.id))]));
+        }
+        if !seen_cmd_ids.insert(cmd.id.as_str()) {
+            return Err(ierrp("err_plugins.cmd_id_duplicate", &[("id", &format!("{:?}", cmd.id))]));
+        }
+        if cmd.label.trim().is_empty() {
+            return Err(ierrp("err_plugins.cmd_missing_label", &[("id", &format!("{:?}", cmd.id))]));
+        }
         let has_run = non_empty(&cmd.run);
         let has_handler = non_empty(&cmd.handler);
         if has_run == has_handler {
@@ -2676,6 +2691,57 @@ mod tests {
             ],
         }];
         validate_manifest(&p).expect("a widget referencing an existing command must validate");
+    }
+
+    /// A second command for `sample_plugin` — same shape as `greet`, own id.
+    fn extra_command(id: &str, label: &str) -> PluginCommand {
+        PluginCommand {
+            id: id.into(),
+            label: label.into(),
+            run: Some("echo other".into()),
+            handler: None,
+            context: PluginContext::None,
+            placement: PluginPlacement::Palette,
+            mutates: false,
+        }
+    }
+
+    #[test]
+    fn duplicate_command_id_is_rejected() {
+        // #62: two commands sharing an id would surface as two ⌘K rows that
+        // both run `find_command`'s FIRST match — one silently shadowing the other.
+        let mut p = sample_plugin("cmdy");
+        p.commands.push(extra_command("greet", "Greet again"));
+        let err = validate_manifest(&p).unwrap_err();
+        assert!(err.contains("err_plugins.cmd_id_duplicate") && err.contains("greet"), "got: {err}");
+
+        // Distinct ids validate.
+        let mut p = sample_plugin("cmdy");
+        p.commands.push(extra_command("wave", "Wave"));
+        validate_manifest(&p).expect("distinct command ids must validate");
+    }
+
+    #[test]
+    fn invalid_command_id_is_rejected() {
+        for bad in ["", "Greet", "has space", "-leading", "under_score", "dot.ted"] {
+            let mut p = sample_plugin("cmdy");
+            p.commands[0].id = bad.into();
+            let err = validate_manifest(&p).unwrap_err();
+            assert!(err.contains("err_plugins.cmd_id_invalid"), "id {bad:?} got: {err}");
+        }
+        let mut p = sample_plugin("cmdy");
+        p.commands[0].id = "0k-id-2".into();
+        validate_manifest(&p).expect("a well-formed command id must validate");
+    }
+
+    #[test]
+    fn blank_command_label_is_rejected() {
+        for blank in ["", "   ", "\t\n"] {
+            let mut p = sample_plugin("cmdy");
+            p.commands[0].label = blank.into();
+            let err = validate_manifest(&p).unwrap_err();
+            assert!(err.contains("err_plugins.cmd_missing_label") && err.contains("greet"), "got: {err}");
+        }
     }
 
     #[test]
