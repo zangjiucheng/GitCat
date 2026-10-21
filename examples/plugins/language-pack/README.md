@@ -39,8 +39,8 @@ commands and does nothing when invoked; it exists purely to declare
 
 ## Install
 
-Settings → **Plugins** → **Install plugin…** and pick this folder's
-`plugin.json` (or the folder itself). Open any commit that touches one of the
+**Tools ▸ Plugins…** → **Install from file…** and pick this folder's
+`plugin.json`. Open any commit that touches one of the
 covered file types and its diff now shows keyword highlighting.
 
 ## Extending it

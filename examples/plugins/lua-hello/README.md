@@ -65,5 +65,5 @@ running it so the change is covered by global **Undo**.
 
 ## Install
 
-Settings → **Plugins** → **Install plugin…** → pick this folder's `plugin.json`.
+**Tools ▸ Plugins…** → **Install from file…** → pick this folder's `plugin.json`.
 Run **Luau: Say hello (and cheer up Tama)** from ⌘K.

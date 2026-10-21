@@ -1,15 +1,23 @@
 ---
-description: Author a GitCat plugin — a declarative plugin.json that contributes ⌘K commands and lifecycle hooks backed by your own external commands.
+description: Author a GitCat plugin — a declarative plugin.json that contributes ⌘K commands, lifecycle hooks, panels, diff-highlighting languages and Tama skins; commands and hooks run a shell command or a sandboxed Luau handler.
 ---
 
 # Writing a plugin
 
-A GitCat plugin is a small, **declarative** manifest — a single `plugin.json` file. It doesn't ship code that runs inside GitCat; it contributes two things:
+A GitCat plugin is a small, **declarative** manifest — a single `plugin.json` file. It can contribute:
 
-- **Commands** — actions that show up in the ⌘K command palette and run an external command you specify.
-- **Hooks** — external commands GitCat runs automatically when something happens (a repo opens, a commit is created, an undo runs, …).
+- **Commands** — actions that show up in the ⌘K command palette.
+- **Hooks** — actions GitCat runs automatically when something happens (a repo opens, a commit is created, an undo runs, …).
+- **[Panels](#panels)** — small surfaces built from a fixed set of widgets GitCat renders itself.
+- **[Languages](#languages)** — keyword and comment syntax for diff highlighting.
+- **A [Tama skin](#tama-skins)** — alternate art and voice for Tama.
 
-There is no plugin API, no sandbox, and no in-process JavaScript or Rust. A plugin's only moving part is a shell `run` string — a command line GitCat expands and executes on your machine, exactly like the external diff/merge tools you configure under **External Tools**. That's the whole trust model: **a plugin can do anything the command you wrote can do** (see [Security & trust](#security-trust) at the end).
+Panels, languages and skins are pure data: GitCat draws them, and they run nothing. A command or hook does its work in one of two ways:
+
+- **A shell `run` string** — a command line GitCat expands and executes on your machine, exactly like the external diff/merge tools you configure under **External Tools**. It is **not sandboxed**: it runs with your privileges, so **a `run` command can do anything the command line you wrote can do**.
+- **A [Luau handler](#scripting-with-luau)** — a function in a script the plugin ships, run in an embedded, **sandboxed** Luau VM. The script gets no filesystem, process, or network access; its only reach outward is a `git()` function restricted to an [allowlist](#what-git-allows) of subcommands, which refuses repository-changing ones unless the command declares `"mutates": true`.
+
+There is no in-process JavaScript or Rust plugin API. Either way, install only plugins you trust — see [Security & trust](#security-trust) at the end.
 
 Like the rest of GitCat, plugins are AI-agnostic: GitCat itself contacts no AI service and no network. If you want a plugin that calls an AI, *you* write the `run` line that shells out to your own tool — GitCat only runs it.
 
@@ -456,6 +464,81 @@ repository-changing subcommand with a Lua error, so a handler's `git()` writes
 never run outside Undo. See [what `git()` allows](#what-git-allows) and
 [Mutating actions & Undo](#mutating-actions-undo).
 
+## Panels {#panels}
+
+A plugin can declare `panels`: small surfaces that open from ⌘K and show a
+column of **widgets GitCat renders itself**. A panel is data, not code. There
+is no HTML, script, or styling in it, and the only thing a widget can *do* is
+run one of the plugin's **own** commands, through the same path a ⌘K entry
+uses.
+
+```json
+{
+  "id": "my-panel-plugin",
+  "name": "My Panel Plugin",
+  "version": "1.0.0",
+  "commands": [
+    { "id": "status", "label": "Short status", "run": "git status --short", "context": "repo" },
+    { "id": "fetch", "label": "Fetch all remotes", "run": "git fetch --all --prune", "context": "repo" }
+  ],
+  "panels": [
+    {
+      "id": "overview",
+      "title": "Repo overview",
+      "items": [
+        { "type": "heading", "text": "Working tree" },
+        { "type": "text", "text": "Press Re-run to refresh the status below." },
+        { "type": "command-output", "command": "status", "label": "git status --short" },
+        { "type": "button", "label": "Fetch now", "command": "fetch" }
+      ]
+    }
+  ]
+}
+```
+
+### Panel fields
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `id` | ✅ | string | Same `^[a-z0-9][a-z0-9-]*$` charset as a plugin id, and **unique within the plugin**. |
+| `title` | ✅ | string | Non-blank. It's the panel's ⌘K entry and the heading of the panel window. |
+| `items` | ✅ | array | The widgets, top to bottom. May be empty (the panel then says so). |
+
+### Widgets
+
+Each item is an object with a `type`:
+
+| `type` | Fields | What it shows |
+| --- | --- | --- |
+| `heading` | `text` ✅ | A section heading. |
+| `text` | `text` ✅ | A paragraph of plain text. |
+| `button` | `label` ✅, `command` ✅ | A button that runs command `command` when clicked. The result comes back through Tama, exactly as if you had picked the command in ⌘K (including [Tama reactions](#tama-reactions)). |
+| `command-output` | `command` ✅, `label` — | A box that shows command `command`'s stdout **inline**, verbatim. `label` is an optional caption (the command id is shown if you omit it). It does **not** run when the panel opens, because the command might change the repository. Press **Re-run** to run it. A non-zero exit shows its exit code beside the output, and a valid `::gitcat.tama` line in the output still makes Tama react. |
+
+### Where a panel appears
+
+A panel has **no `placement`**. Each panel adds exactly one ⌘K entry, named by
+its `title` and hinted "Plugin panel · *plugin name*"; choosing it opens the
+panel in a window. A disabled plugin's panels leave ⌘K along with its commands.
+
+### Rules checked at install
+
+- The panel `id` is valid and unique within the plugin, and `title` is non-blank.
+- `heading` / `text` `text`, a `button`'s `label`, and a `command-output`'s
+  `label` (when present) are non-blank.
+- A `button` or `command-output` `command` must be the `id` of a command **in
+  the same plugin**. A missing one is rejected, not ignored. The command's
+  `placement` doesn't matter, so a `"menu"`-only command can still back a widget.
+- An unknown `type`, or an unknown key on a panel or widget, is rejected like
+  any other key GitCat doesn't understand.
+
+A widget's command runs with the context **it** declares: a `file` command run
+from a panel still needs a selected file, and a `staged` command still needs
+something staged. A `mutates: true` command still takes its safety snapshot.
+
+[`staged-review`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins/staged-review)
+in the examples is a complete plugin with a panel that uses all four widgets.
+
 ## Tama skins {#tama-skins}
 
 A plugin can also ship an alternate **look and voice** for Tama by declaring a top-level `tama` object. This is purely declarative art and copy — a skin contributes no commands and no hooks, runs no process, and needs no open repository. It ships its own pose images (bring real character art; recolors of the default read as off), and once installed you pick it in **Settings → Tama → Skin**.
@@ -594,14 +677,14 @@ Plugins install from a local file, or from the **Browse** tab that fetches one
 for you — see [Finding plugins](#finding-plugins) above. Either way the review
 step below is the same.
 
-1. Open **Settings → Plugins**.
-2. Click **Install plugin…** and pick the plugin's `plugin.json` file (open the plugin's folder and select its `plugin.json`).
+1. Open **Tools ▸ Plugins…** (or run "Plugins" from ⌘K).
+2. Click **Install from file…** and pick the plugin's `plugin.json` file (open the plugin's folder and select its `plugin.json`, not the folder itself).
 3. GitCat parses and validates the manifest and shows you **what it runs** — every command's `run` template, every hook and its event, anything marked `mutates`, and the folder it loads from. Nothing is installed until you confirm.
 4. The plugin appears in the list, enabled by default. Its commands are immediately available in ⌘K.
 
 Selecting an installed plugin in the same panel shows that identical view, so you can check later what you agreed to at install time.
 
-From the same tab you can:
+From the same window you can:
 
 - **Enable / disable** a plugin with its toggle. A disabled plugin's commands and hooks stop running immediately — the check is in the backend, so it holds even for a second GitCat window whose command palette was listed before you flipped the toggle (each window is a separate process and keeps its own cached list). That window may still *show* the commands until it reloads its registry; running one reports that the plugin is disabled rather than executing it.
 - **Remove** a plugin. This only drops it from GitCat's registry — your original `plugin.json` file on disk is untouched, so you can reinstall it later.
@@ -622,6 +705,8 @@ This file stores the *installed* manifests (GitCat copies them in at install tim
 
 A plugin's `run` string is a **user-authored external command that runs on your machine** — the same trust boundary as an external diff/merge tool `cmd`. Install a plugin only if you'd be comfortable running its commands yourself in a terminal. GitCat never evaluates the `run` string in-process, and it contacts no AI service or network on its own; whatever a plugin does lives entirely inside its own commands.
 
+A [Luau handler](#scripting-with-luau) is narrower: it runs in the [sandbox](#the-luau-sandbox), and its only way out is `git()` with [an allowlist](#what-git-allows). That allowlist still runs real git in your repository, so treat a scripted plugin like any other code you install. Panels, languages and Tama skins are declarative data and run nothing of their own.
+
 A few limits worth knowing while the plugin security model is still being built out:
 
 - <a id="mutating-actions-undo"></a>**Mutating actions & Undo.** GitCat snapshots `HEAD` and every local branch before its own history-changing operations so global Undo can rewind them. A plugin command or hook that changes the repo (`git reset --hard`, `git checkout`, etc.) gets the same protection **when it declares `"mutates": true`**: GitCat takes a snapshot before running it, so the branch and `HEAD` movement is covered by Undo. Like any snapshot, it doesn't capture uncommitted changes — working-tree edits a `git reset --hard` throws away can't be brought back by Undo. A command declared this way that can't be snapshotted is **refused** rather than run unprotected. A mutating action that does **not** set `mutates` runs **outside** Undo (and takes no snapshot) — so **always set `"mutates": true` on anything that changes the repo.** GitCat can't infer it from your opaque `run` string.
@@ -630,4 +715,4 @@ A few limits worth knowing while the plugin security model is still being built 
 
 ## Example plugins {#example-plugins}
 
-Ready-to-read manifests live in [`examples/plugins/`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins) in the repository — copy one, edit its `id`/`run` lines, and install it from **Settings → Plugins** to get started. The same ones (plus anything else contributed since) are also mirrored under `official/` in the [community index](#finding-plugins), alongside third-party plugins.
+Ready-to-read manifests live in [`examples/plugins/`](https://github.com/zangjiucheng/GitCat/tree/main/examples/plugins) in the repository — copy one, edit its `id`/`run` lines, and install it from **Tools ▸ Plugins…** to get started. The same ones (plus anything else contributed since) are also mirrored under `official/` in the [community index](#finding-plugins), alongside third-party plugins.

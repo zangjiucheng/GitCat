@@ -33,8 +33,8 @@ celebrates and says *"Hello from your plugin!"*.
 
 ## Install
 
-Settings → **Plugins** → **Install plugin…** and pick this folder's
-`plugin.json` (or the folder itself). The command appears live in ⌘K.
+**Tools ▸ Plugins…** → **Install from file…** and pick this folder's
+`plugin.json`. The command appears live in ⌘K.
 
 ## Windows note
 
