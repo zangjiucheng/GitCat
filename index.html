@@ -791,6 +791,15 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .loading-pill .spinner{width:15px;height:15px;border-width:2px;color:var(--accent);opacity:1}
 @media (prefers-reduced-motion:reduce){.loading-pill.show{animation:none}}
 #cv{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+/* A same-repo full reload keeps the OLD rows painted until the new stream's first
+   batch (see heldRows in legacy/main.ts). Dimmed so they read as "about to be
+   replaced" — after a short delay, so a fast reload never flickers — and
+   pointer-inert so a click can't select a commit the reload is dropping. The
+   class comes off with no transition, so the new rows land at full strength.
+   Compositor opacity only: the canvas pixels (and the scroll-blit buffer) are
+   untouched. */
+#cv.graph-stale{opacity:.55;pointer-events:none;transition:opacity .2s ease .15s}
+@media (prefers-reduced-motion:reduce){#cv.graph-stale{transition:none}}
 /* Panel-resize drag guide: a thin vertical rule that follows the cursor while a
    splitter is being dragged, so ONLY the line moves — the panels and the graph
    canvas don't reflow/re-render until the drag is released (see main.ts's

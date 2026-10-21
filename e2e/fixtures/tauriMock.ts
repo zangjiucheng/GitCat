@@ -617,12 +617,23 @@ async function installTauriMock(page: Page, repo: TempRepo, calls: RecordedCall[
     const emit = (event: string, payload: unknown) => {
       for (const cb of listeners.get(event) ?? []) cb({ event, payload });
     };
+    // A spec can set `__e2eHoldGraph = true` to park load_graph's batch instead
+    // of emitting it, then call `__e2eReleaseGraph()` — standing in for the
+    // real backend's multi-second wait before a big repo's first batch, which
+    // is the window the graph-reload spec needs to look at.
+    const held: unknown[] = [];
+    w.__e2eHoldGraph = false;
+    w.__e2eReleaseGraph = () => {
+      w.__e2eHoldGraph = false;
+      for (const b of held.splice(0)) emit("graph-batch", b);
+    };
     const invoke = async (cmd: string, args: unknown) => {
       if (cmd === "load_graph") {
         // Node builds the batch; we emit it and resolve null so the frontend
         // exercises the same startGraphStream → onGraphBatch path as production.
         const batch = await w.__e2eInvoke(cmd, args);
-        queueMicrotask(() => emit("graph-batch", batch));
+        if (w.__e2eHoldGraph) held.push(batch);
+        else queueMicrotask(() => emit("graph-batch", batch));
         return null;
       }
       return w.__e2eInvoke(cmd, args);
