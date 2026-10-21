@@ -132,9 +132,15 @@ fn plumbing_inspect_inner(path: String, rev: String) -> Result<PlumbingObject, S
     }
     let repo =
         crate::trust::open_repo(&path).map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))?;
-    let obj = repo
-        .revparse_single(&rev)
-        .map_err(|e| ierrp("err_misc.not_a_valid_rev", &[("rev", &format!("{rev:?}")), ("detail", e.message())]))?;
+    // retry_on_missing: a rev naming a blob a partial clone hasn't fetched yet
+    // (`<sha>:path`, a full blob sha) is fetched on demand, then resolved.
+    let obj = crate::promisor::retry_on_missing(&repo, || repo.revparse_single(&rev)).map_err(|e| {
+        if e.message().starts_with("i18n:") {
+            e.message().to_string() // the on-demand fetch failed: already a complete message
+        } else {
+            ierrp("err_misc.not_a_valid_rev", &[("rev", &format!("{rev:?}")), ("detail", e.message())])
+        }
+    })?;
 
     match obj.kind() {
         Some(ObjectType::Commit) => {

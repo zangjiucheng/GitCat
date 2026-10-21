@@ -143,6 +143,8 @@ pub fn commit_range_summary_inner(path: &str, a: &str, b: &str) -> Result<RangeS
     let diff = repo
         .diff_tree_to_tree(Some(&from_tree), Some(&to_tree), Some(&mut opts))
         .map_err(|e| e.message().to_string())?;
+    // Line totals read blob content; a partial clone fetches it first.
+    crate::promisor::ensure_blobs(&repo, crate::promisor::diff_blob_oids(&diff))?;
     let stats = diff.stats().map_err(|e| e.message().to_string())?;
 
     // The chain, only when there is one. A diverged pair has two legs and the

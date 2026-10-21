@@ -777,6 +777,13 @@ pub(crate) fn diff_trees(
     let mut diff =
         repo.diff_tree_to_tree(old, new, Some(&mut opts))?;
 
+    // Partial clone (`--filter=blob:none`): the tree diff above reads trees
+    // only, which a partial clone always has. Everything below — rename
+    // similarity and the patches — reads blob CONTENT, which libgit2 cannot
+    // fetch on its own. Fetch every blob this diff touches in one go first;
+    // in an ordinary repo this is one cached stat (see promisor.rs).
+    crate::promisor::ensure_blobs_git2(repo, crate::promisor::diff_blob_oids(&diff))?;
+
     // Fold rename/copy detection in so status R/C (and old_path) are meaningful.
     let mut find = DiffFindOptions::new();
     find.renames(true).copies(true).rename_limit(1000); // bound O(files^2) scan on pathological commits
