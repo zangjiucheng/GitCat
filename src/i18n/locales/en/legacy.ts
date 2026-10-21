@@ -11,7 +11,7 @@ export default {
   undo_stash_message: "You have uncommitted changes, so Undo can't run — it resets the working tree.\n\nStash your changes, undo, then put them back? Nothing is lost; if re-applying conflicts you'll resolve it, and your changes are also kept in a stash.",
   undo_stash_confirm: "Stash & undo",
   undo_stash_cancel: "Cancel",
-  redo_unsupported: "There's no Redo yet — but Undo is itself undoable: press ⌘Z again to undo the undo.",
+  redo_unsupported: "There's no Redo yet — but Undo is itself undoable: press {undoKey} again to undo the undo.",
   undo_nothing: "Nothing to undo — no snapshots yet.",
   undo_failed: "Undo failed — {error}",
   fetched_demo: "Fetched (demo). にゃ〜",

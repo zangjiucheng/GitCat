@@ -58,7 +58,7 @@ export default {
   empty_title: "No plugins installed yet.",
   empty_desc_pre: "A GitCat plugin is a ",
   empty_desc_post:
-    " manifest. It can add ⌘K commands, run on repository events, contribute panels, or reskin Tama. Install one with the button above.",
+    " manifest. It can add {paletteKey} commands, run on repository events, contribute panels, or reskin Tama. Install one with the button above.",
   installed_aria: "Installed plugins",
   enabled: "Enabled",
   disabled: "Disabled",
@@ -66,7 +66,7 @@ export default {
   contributes: "Contributes",
   contrib_commands_one: "{n} command",
   contrib_commands_other: "{n} commands",
-  contrib_commands_palette: "(⌘K palette)",
+  contrib_commands_palette: "({paletteKey} palette)",
   contrib_hooks_one: "{n} lifecycle hook",
   contrib_hooks_other: "{n} lifecycle hooks",
   contrib_panels_one: "{n} panel",

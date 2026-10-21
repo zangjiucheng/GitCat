@@ -1,12 +1,10 @@
-// Which desktop this window is running on, for the ONE place the app's copy
-// has to differ per platform: the name of the OS file manager.
+// Which desktop this window is running on, for the place the app's copy has
+// to differ per platform by NAME: the OS file manager. (Keyboard shortcuts
+// differ too, but never through copy: strings carry `{undoKey}`-style
+// placeholders that keymap/label.ts spells "⌘Z" or "Ctrl+Z".)
 //
-// This is GitCat's first platform branch, and it is deliberately the only
-// one. Everything else in the UI is written once and reads the same
-// everywhere — the keyboard hints say ⌘ on Windows too. That is a defensible
-// house style for a shortcut glyph, but not for a proper noun: telling a Mac
-// user to look in "File Explorer", or a Windows user to look in "Finder",
-// names an application that isn't on their machine.
+// Telling a Mac user to look in "File Explorer", or a Windows user to look in
+// "Finder", names an application that isn't on their machine.
 //
 // The user agent, not a Tauri command: the webview already knows, so a sniff
 // here costs nothing, stays synchronous (menu labels are rendered during a

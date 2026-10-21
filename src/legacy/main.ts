@@ -38,6 +38,7 @@ import { playTamaSound, STATE_SOUND, setVoicePitch } from "./sound.ts";
 // reactive, so t() is called imperatively (applyStaticI18n below + the busy
 // labels in doFetch/doPull/doPush) and re-run on i18nEvents "change".
 import { t, be, beReject, locale, i18nEvents } from "@/i18n/i18n.svelte.ts";
+import { shortcutParams } from "@/keymap/label.ts";
 import { fitEllipsis } from "./fitellipsis.ts";
 import { registerPluginLanguages as mergePluginLanguages, resolveLangFromMap } from "./pluginGrammars.ts";
 "use strict";
@@ -3891,6 +3892,11 @@ function applyStaticI18n(root=document){
   root.querySelectorAll("[data-i18n-title]").forEach(el=>{ const k=key(el,"data-i18n-title"); if(k!==null) el.title=t(k); });
   root.querySelectorAll("[data-i18n-ph]").forEach(el=>{ const k=key(el,"data-i18n-ph"); if(k!==null) el.setAttribute("placeholder",t(k)); });
   root.querySelectorAll("[data-i18n-aria]").forEach(el=>{ const k=key(el,"data-i18n-aria"); if(k!==null) el.setAttribute("aria-label",t(k)); });
+  // A bare shortcut badge (<kbd data-shortcut="palette">) has no copy to
+  // translate, only a key to spell per platform: "⌘K" on macOS, "Ctrl+K"
+  // elsewhere. Same table the i18n `{paletteKey}` placeholders read.
+  const keys=shortcutParams();
+  root.querySelectorAll("[data-shortcut]").forEach(el=>{ const v=keys[`${el.getAttribute("data-shortcut")}Key`]; if(v) el.textContent=v; });
 }
 applyStaticI18n();
 

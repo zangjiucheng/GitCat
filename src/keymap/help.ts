@@ -15,6 +15,7 @@
 // scoped letter learnable rather than a hidden mode.
 
 import { formatChord, parseChord, type Platform } from "./chord.ts";
+import { formatSpec, modifierLabel } from "./label.ts";
 import type { Binding, HelpSection } from "./types.ts";
 import type { ScopeId } from "./scopes.ts";
 
@@ -59,12 +60,12 @@ const UNMIGRATED: readonly {
 }[] = [
   { chord: () => "j / k", labelKey: "vimnav.down_up", section: "navigate" },
   { chord: () => "gg / G", labelKey: "vimnav.first_last", section: "navigate" },
-  // Spelled per platform like every generated row. The hand-written overlay
-  // hardcoded ⌘ here, so Windows and Linux users were shown a key their
-  // keyboard does not have.
-  { chord: (p) => (p === "macos" ? "⌘D / ⌘U" : "Ctrl+D / Ctrl+U"), labelKey: "vimnav.half_page", section: "navigate" },
+  // Spelled per platform like every generated row, through the same
+  // formatter. The hand-written overlay hardcoded ⌘ here, so Windows and Linux
+  // users were shown a key their keyboard does not have.
+  { chord: (p) => `${formatSpec("Mod+KeyD", p)} / ${formatSpec("Mod+KeyU", p)}`, labelKey: "vimnav.half_page", section: "navigate" },
   { chord: () => "Enter", labelKey: "vimnav.enter", section: "navigate" },
-  { chord: (p) => (p === "macos" ? "⌘+scroll, + / -" : "Ctrl+scroll, + / -"), labelKey: "vimnav.zoom", section: "view" },
+  { chord: (p) => `${modifierLabel("Mod", p)}+scroll, + / -`, labelKey: "vimnav.zoom", section: "view" },
   { chord: () => "?", labelKey: "vimnav.toggle_help", section: "actions" },
 ];
 

@@ -1,4 +1,5 @@
 import { ACCELERATORS } from "./accelerators.ts";
+import { SHORTCUTS } from "./shortcuts.ts";
 import { keymap } from "./registry.ts";
 import { focusPane } from "./panes.ts";
 import { workdirKeys } from "./actions/workdir.ts";
@@ -30,7 +31,7 @@ export const BINDINGS: readonly Binding[] = [
     // shiftKey is NOT excluded, so ⌘⇧K toggles the palette TODAY. An exact
     // four-bit mask would silently drop it, so PR 1 registers both and the
     // narrowing (if wanted) becomes a visible decision in a later PR.
-    chords: ["Mod+KeyK", "Mod+Shift+KeyK"],
+    chords: [SHORTCUTS.palette, "Mod+Shift+KeyK"],
     scope: "global",
     layer: "always",
     when: ["notInTerminal", "noScrimOpen"],
@@ -70,7 +71,7 @@ export const BINDINGS: readonly Binding[] = [
   // ── search ─────────────────────────────────────────────────────────────
   {
     id: "search.code",
-    chords: [ACCELERATORS["code-search"]],
+    chords: [SHORTCUTS.codeSearch],
     scope: "global",
     when: ["repoOpen", "notTextInputOrSelect", "noScrimOpen"],
     dispatch: "both", // menu.rs:150; codeSearchCtrl.show() is idempotent, not a toggle
@@ -83,7 +84,7 @@ export const BINDINGS: readonly Binding[] = [
 
   {
     id: "search.pickaxe",
-    chords: [ACCELERATORS["pickaxe-search"]],
+    chords: [SHORTCUTS.pickaxe],
     scope: "global",
     when: ["repoOpen", "notTextInput"],
     dispatch: "both", // menu.rs:160 + the new main.ts fallback added in commit E
@@ -125,7 +126,7 @@ export const BINDINGS: readonly Binding[] = [
   },
   {
     id: "view.focusMode",
-    chords: ["Mod+Backslash", "Mod+Shift+Backslash"],
+    chords: [SHORTCUTS.focusMode, "Mod+Shift+Backslash"],
     scope: "global",
     when: ["notTextInput"],
     dispatch: "js",
@@ -139,7 +140,7 @@ export const BINDINGS: readonly Binding[] = [
   },
 
   // ── navigation ─────────────────────────────────────────────────────────
-  { id: "nav.uncommitted", chords: ["Mod+Shift+KeyU"], scope: "global",
+  { id: "nav.uncommitted", chords: [SHORTCUTS.uncommitted], scope: "global",
     when: ["notTextInput"], dispatch: "js", labelKey: "vimnav.jump_uncommitted",
     help: { section: "view", order: 10 }, mode: "shadow", owns: "legacy/main.ts:2190" },
   // NOTE: no `menu` field. The "uncommitted-changes" item exists in menu.rs but
@@ -148,7 +149,7 @@ export const BINDINGS: readonly Binding[] = [
   // webview keydown — a silent, platform-divergent behaviour change inside the
   // PR whose whole property is inertness.
 
-  { id: "nav.head", chords: ["Mod+Shift+KeyH"], scope: "global",
+  { id: "nav.head", chords: [SHORTCUTS.head], scope: "global",
     when: ["notTextInput"], dispatch: "js", labelKey: "vimnav.jump_head",
     help: { section: "view", order: 20 }, mode: "shadow", owns: "legacy/main.ts:2197" },
 
@@ -157,20 +158,20 @@ export const BINDINGS: readonly Binding[] = [
   //    that handler WITHOUT preventDefault; three separate bindings reproduce
   //    that exactly. menu.rs:91-93 gives Fetch/Pull/Push no accelerators on
   //    purpose, so all three stay dispatch:"js" and codegen must not emit them.
-  { id: "remote.fetch", chords: ["Mod+Shift+KeyD"], scope: "global",
+  { id: "remote.fetch", chords: [SHORTCUTS.fetch], scope: "global",
     when: ["notTextInput"], dispatch: "js", labelKey: "vimnav.fetch",
     help: { section: "sync", order: 10 }, mode: "shadow", owns: "legacy/main.ts:2206" },
-  { id: "remote.pull", chords: ["Mod+Shift+KeyL"], scope: "global",
+  { id: "remote.pull", chords: [SHORTCUTS.pull], scope: "global",
     when: ["notTextInput"], dispatch: "js", labelKey: "vimnav.pull",
     help: { section: "sync", order: 20 }, mode: "shadow", owns: "legacy/main.ts:2206" },
-  { id: "remote.push", chords: ["Mod+Shift+KeyP"], scope: "global",
+  { id: "remote.push", chords: [SHORTCUTS.push], scope: "global",
     when: ["notTextInput"], dispatch: "js", destructive: true, labelKey: "vimnav.push",
     help: { section: "sync", order: 30 }, mode: "shadow", owns: "legacy/main.ts:2206" },
 
   // ── undo ───────────────────────────────────────────────────────────────
   // legacy/main.ts:2398-2412 is PR 0's rewrite and is already the exact-mask /
   // e.code model, so it is the reference implementation this table copies.
-  { id: "edit.undo", chords: ["Mod+KeyZ"], scope: "global",
+  { id: "edit.undo", chords: [SHORTCUTS.undo], scope: "global",
     when: ["notTextInput"], dispatch: "js", destructive: true, labelKey: "vimnav.undo",
     help: { section: "actions", order: 10 }, mode: "shadow", owns: "legacy/main.ts:2406" },
   { id: "edit.redoUnsupported", chords: ["Mod+Shift+KeyZ"], scope: "global",
@@ -539,7 +540,7 @@ export const BINDINGS: readonly Binding[] = [
   // this operation did not exist, which is the bug.
   {
     id: "terminal.focusOut",
-    chords: ["Shift+Escape"],
+    chords: [SHORTCUTS.terminalFocusOut],
     scope: "terminal",
     dispatch: "js",
     // A shell is a text surface by nature; the default deny would make this

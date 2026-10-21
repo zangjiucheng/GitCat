@@ -4,10 +4,10 @@ export default {
   // Tama 主视觉 / 空状态。
   hero_alt: "Tama,GitCat 的守护者",
   hero_bubble_loaded:
-    'はじめまして!我是 <b>Tama</b>,GitCat 的守护者。日常改动历史前我都会保存一份快照 —— ⌘Z 能带你回去。<span class="jp">にゃ〜♪</span>',
-  hero_bubble_loaded_plain: "日常改动历史前都会保存一份快照 —— ⌘Z 能带你回去。",
+    'はじめまして!我是 <b>Tama</b>,GitCat 的守护者。日常改动历史前我都会保存一份快照 —— {undoKey} 能带你回去。<span class="jp">にゃ〜♪</span>',
+  hero_bubble_loaded_plain: "日常改动历史前都会保存一份快照 —— {undoKey} 能带你回去。",
   hero_stat: '<span class="n">{n}</span> 个 commit 在 <b>{ms} ms</b> 内完成布局',
-  hero_hint_loaded: "点击 commit 查看详情 · 把圆点拖到另一个上可 cherry-pick · ⌘Z 撤回",
+  hero_hint_loaded: "点击 commit 查看详情 · 把圆点拖到另一个上可 cherry-pick · {undoKey} 撤回",
   hero_bubble_empty:
     'はじめまして!我是 <b>Tama</b>。打开一个 Git 仓库,我会一瞬间为你铺开它的完整历史。<span class="jp">にゃ〜♪</span>',
   hero_bubble_empty_plain: "打开一个 Git 仓库即可开始。",
@@ -47,7 +47,7 @@ export default {
   refs_pointing_here: "指向此处的引用",
   no_refs: "没有引用指向此处",
   covered:
-    '已由快照覆盖 <b>backup/…{ago} 前</b><br /><span class="mut">可经安全管理员备份引用到达 —— ⌘Z 可回退到这里。</span>',
+    '已由快照覆盖 <b>backup/…{ago} 前</b><br /><span class="mut">可经安全管理员备份引用到达 —— {undoKey} 可回退到这里。</span>',
   // 更改 / 差异统计 / 文件树。
   changes: "更改",
   loading_diff: "正在加载 diff…",
