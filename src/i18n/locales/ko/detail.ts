@@ -4,10 +4,10 @@ export default {
   // Tama 히어로 / 빈 상태.
   hero_alt: "GitCat의 수호자 Tama",
   hero_bubble_loaded:
-    'はじめまして! 나는 GitCat의 수호자 <b>Tama</b>다옹. 평소 히스토리가 바뀌기 전엔 스냅샷을 찍어두니까, ⌘Z로 <span class="jp">되돌아갈 수 있다옹♪</span>',
-  hero_bubble_loaded_plain: "평소 히스토리가 바뀌기 전엔 스냅샷이 찍혀요 — ⌘Z로 되돌아갈 수 있어요.",
+    'はじめまして! 나는 GitCat의 수호자 <b>Tama</b>다옹. 평소 히스토리가 바뀌기 전엔 스냅샷을 찍어두니까, {undoKey}로 <span class="jp">되돌아갈 수 있다옹♪</span>',
+  hero_bubble_loaded_plain: "평소 히스토리가 바뀌기 전엔 스냅샷이 찍혀요 — {undoKey}로 되돌아갈 수 있어요.",
   hero_stat: '<b>{ms}ms</b> 만에 배치된 커밋 <span class="n">{n}</span>개',
-  hero_hint_loaded: "커밋을 클릭해 살펴보세요 · 점을 다른 점 위로 끌어다 놓으면 체리픽돼요 · ⌘Z로 실행 취소",
+  hero_hint_loaded: "커밋을 클릭해 살펴보세요 · 점을 다른 점 위로 끌어다 놓으면 체리픽돼요 · {undoKey}로 실행 취소",
   hero_bubble_empty:
     'はじめまして! 나는 <b>Tama</b>다옹. Git 저장소를 열어주면 눈 깜짝할 사이에 히스토리를 전부 펼쳐 <span class="jp">보인다옹♪</span>',
   hero_bubble_empty_plain: "시작하려면 Git 저장소를 열어주세요.",
@@ -47,7 +47,7 @@ export default {
   refs_pointing_here: "여기를 가리키는 ref",
   no_refs: "여기를 가리키는 ref가 없어요",
   covered:
-    '<b>backup/…{ago} 전</b> 스냅샷이 이 커밋을 보호하고 있어요<br /><span class="mut">Safety Manager 백업 ref로 도달할 수 있어요 — ⌘Z로 여기까지 되돌릴 수 있어요.</span>',
+    '<b>backup/…{ago} 전</b> 스냅샷이 이 커밋을 보호하고 있어요<br /><span class="mut">Safety Manager 백업 ref로 도달할 수 있어요 — {undoKey}로 여기까지 되돌릴 수 있어요.</span>',
   // 변경사항 / diffstat / 파일 트리.
   changes: "변경사항",
   loading_diff: "diff 불러오는 중…",

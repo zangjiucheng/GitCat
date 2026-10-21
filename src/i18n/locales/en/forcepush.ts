@@ -10,7 +10,7 @@ export default {
   lose_lease:
     "<h5>What happens</h5><ul><li>Overwrites <code>{branch}</code> on the remote to match your local branch</li><li>Refuses cleanly, with no changes made, if the remote moved since your last fetch — fetch and reconcile first, then retry</li><li>Nothing local changes — HEAD, your branch, and your working tree are untouched</li></ul>",
   note_lease:
-    "This only touches the REMOTE — there's nothing local for ⌘Z/Undo to protect here. If it succeeds and it did overwrite prior remote commits, they have no in-app recovery path.",
+    "This only touches the REMOTE — there's nothing local for {undoKey}/Undo to protect here. If it succeeds and it did overwrite prior remote commits, they have no in-app recovery path.",
   confirm_lease: "Force push",
   arm_say_override:
     "Force-pushing {branch} — type the branch name to arm it. This overwrites the remote NO MATTER WHAT is there.",

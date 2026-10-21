@@ -2309,27 +2309,27 @@ body.diff-only .modal-foot{display:none}
         </svg>
         <span id="pillBranch">main</span><span class="ab" id="pillAb"><b>&#8593;2</b>&#183;<b>&#8595;0</b></span>
       </div>
-      <button class="tb-btn" id="gotoHeadBtn" data-i18n-title="topbar.goto_head" data-i18n-aria="topbar.goto_head_aria" title="Jump to the current commit (HEAD)  &#8984;&#8679;H" aria-label="Jump to current commit (HEAD)">
+      <button class="tb-btn" id="gotoHeadBtn" data-i18n-title="topbar.goto_head" data-i18n-aria="topbar.goto_head_aria" title="Jump to the current commit (HEAD)" aria-label="Jump to current commit (HEAD)">
         <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.6v2.4M8 12v2.4M1.6 8h2.4M12 8h2.4"/></svg>
       </button>
     </div>
     </div>
-    <div class="cmd-hint" data-i18n-title="topbar.cmd_palette" title="Command palette"><span data-i18n="topbar.search_hint">Search commits, refs, actions&#8230;</span><kbd>&#8984;K</kbd></div>
+    <div class="cmd-hint" data-i18n-title="topbar.cmd_palette" title="Command palette"><span data-i18n="topbar.search_hint">Search commits, refs, actions&#8230;</span><kbd data-shortcut="palette"></kbd></div>
     <div class="tb-right">
       <!-- Fetch/Pull/Push live here (repo ACTIONS), not next to the repo-pick/
            branch-pill cluster on the left (repo IDENTITY) — grouped with
            Undo/theme (also actions) per direct feedback that this is the
            clearer split, not "everything about the current repo together". -->
       <div class="sync-actions">
-        <button class="tb-btn" id="fetchBtn" data-i18n-title="topbar.fetch_tip" title="Fetch — update remote-tracking refs (⌘⇧D)">
+        <button class="tb-btn" id="fetchBtn" data-i18n-title="topbar.fetch_tip" title="Fetch — update remote-tracking refs">
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.6v3h-3"/></svg>
           <span data-i18n="topbar.fetch">Fetch</span>
         </button>
-        <button class="tb-btn" id="pullBtn" data-i18n-title="topbar.pull_tip" title="Pull (fast-forward only) (⌘⇧L)">
+        <button class="tb-btn" id="pullBtn" data-i18n-title="topbar.pull_tip" title="Pull (fast-forward only)">
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.2v7.3"/><path d="M4.8 7.2 8 10.4l3.2-3.2"/><path d="M3.2 13h9.6"/></svg>
           <span data-i18n="topbar.pull">Pull</span>
         </button>
-        <button class="tb-btn" id="pushBtn" data-i18n-title="topbar.push_tip" title="Push (⌘⇧P)">
+        <button class="tb-btn" id="pushBtn" data-i18n-title="topbar.push_tip" title="Push">
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.8V5.5"/><path d="M4.8 7.8 8 4.6l3.2 3.2"/><path d="M3.2 13h9.6"/></svg>
           <span data-i18n="topbar.push">Push</span>
         </button>
@@ -2349,7 +2349,7 @@ body.diff-only .modal-foot{display:none}
           <path d="M3.4 13.4v-3.2h3.2"/>
         </svg>
       </button>
-      <button class="tb-btn undo" id="undoBtn" data-i18n-title="topbar.undo_tip" title="Global Undo — Safety Manager (⌘Z)">
+      <button class="tb-btn undo" id="undoBtn" data-i18n-title="topbar.undo_tip" title="Global Undo — Safety Manager">
         <span>
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h6.5a3.5 3.5 0 0 1 0 7H7.2"/><path d="M6.5 3.3 4 6l2.5 2.7"/></svg>
           <span data-i18n="topbar.undo">Undo</span>
@@ -2451,11 +2451,11 @@ body.diff-only .modal-foot{display:none}
       </section>
       <section>
         <h4 data-i18n="help.navigate_h">Navigate</h4>
-        <p data-i18n-html="help.navigate_p">Scroll or drag to move; <kbd>&#8984;</kbd>+scroll (or <kbd>+</kbd>/<kbd>-</kbd>) to zoom. <kbd>&#8984;K</kbd> opens the command palette. <kbd>&#8984;F</kbd> searches code, <kbd>&#8984;&#8679;F</kbd> searches commit content. <kbd>&#8984;&#8679;H</kbd> jumps to HEAD, <kbd>&#8984;&#8679;U</kbd> to Uncommitted changes. <kbd>&#8984;\</kbd> toggles focus mode. Press <kbd>?</kbd> for every shortcut.</p>
+        <p data-i18n-html="help.navigate_p">Scroll or drag to move; <kbd data-shortcut="mod"></kbd>+scroll (or <kbd>+</kbd>/<kbd>-</kbd>) to zoom. <kbd data-shortcut="palette"></kbd> opens the command palette. <kbd data-shortcut="codeSearch"></kbd> searches code, <kbd data-shortcut="pickaxe"></kbd> searches commit content. <kbd data-shortcut="head"></kbd> jumps to HEAD, <kbd data-shortcut="uncommitted"></kbd> to Uncommitted changes. <kbd data-shortcut="focusMode"></kbd> toggles focus mode. Press <kbd>?</kbd> for every shortcut.</p>
       </section>
       <section>
         <h4 data-i18n="help.commits_h">Commits</h4>
-        <p data-i18n-html="help.commits_p">Click a commit to see its files and diff on the right. <b>Drag</b> a commit onto another to cherry-pick it there &#8212; hold <kbd>&#8679;</kbd> while dragging to merge instead. <b>Right-click</b> a commit for cherry-pick / merge / revert / reset / create branch or tag / copy.</p>
+        <p data-i18n-html="help.commits_p">Click a commit to see its files and diff on the right. <b>Drag</b> a commit onto another to cherry-pick it there &#8212; hold <kbd data-shortcut="shift"></kbd> while dragging to merge instead. <b>Right-click</b> a commit for cherry-pick / merge / revert / reset / create branch or tag / copy.</p>
       </section>
       <section>
         <h4 data-i18n="help.branches_h">Branches &amp; tags</h4>

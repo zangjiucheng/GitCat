@@ -29,7 +29,7 @@ export default {
   empty_title: "아직 설치된 플러그인이 없어요.",
   empty_desc_pre: "GitCat 플러그인은 ",
   empty_desc_post:
-    " 매니페스트예요. ⌘K 명령을 추가하거나, 저장소 이벤트에서 실행되거나, 패널을 제공하거나, Tama의 스킨을 바꿀 수 있어요. 위 버튼으로 하나 설치해보세요.",
+    " 매니페스트예요. {paletteKey} 명령을 추가하거나, 저장소 이벤트에서 실행되거나, 패널을 제공하거나, Tama의 스킨을 바꿀 수 있어요. 위 버튼으로 하나 설치해보세요.",
   installed_aria: "설치된 플러그인",
   enabled: "활성화됨",
   disabled: "비활성화됨",
@@ -37,7 +37,7 @@ export default {
   contributes: "제공 내용",
   contrib_commands_one: "명령 {n}개",
   contrib_commands_other: "명령 {n}개",
-  contrib_commands_palette: "(⌘K 팔레트)",
+  contrib_commands_palette: "({paletteKey} 팔레트)",
   contrib_hooks_one: "라이프사이클 훅 {n}개",
   contrib_hooks_other: "라이프사이클 훅 {n}개",
   contrib_panels_one: "패널 {n}개",

@@ -4,10 +4,10 @@ export default {
   // Tama hero / empty state.
   hero_alt: "Tama, GitCat's guardian",
   hero_bubble_loaded:
-    'はじめまして! I\'m <b>Tama</b>, GitCat\'s guardian. I pin a snapshot before your everyday history changes — so ⌘Z can take you back. <span class="jp">にゃ〜♪</span>',
-  hero_bubble_loaded_plain: "A snapshot is taken before everyday history changes — ⌘Z can take you back.",
+    'はじめまして! I\'m <b>Tama</b>, GitCat\'s guardian. I pin a snapshot before your everyday history changes — so {undoKey} can take you back. <span class="jp">にゃ〜♪</span>',
+  hero_bubble_loaded_plain: "A snapshot is taken before everyday history changes — {undoKey} can take you back.",
   hero_stat: '<span class="n">{n}</span> commits laid out in <b>{ms} ms</b>',
-  hero_hint_loaded: "Click a commit to inspect it · drag a dot onto another to cherry-pick · ⌘Z to rewind",
+  hero_hint_loaded: "Click a commit to inspect it · drag a dot onto another to cherry-pick · {undoKey} to rewind",
   hero_bubble_empty:
     'はじめまして! I\'m <b>Tama</b>. Open a Git repository and I\'ll lay out its whole history in a blink. <span class="jp">にゃ〜♪</span>',
   hero_bubble_empty_plain: "Open a Git repository to get started.",
@@ -48,7 +48,7 @@ export default {
   refs_pointing_here: "Refs pointing here",
   no_refs: "no refs point here",
   covered:
-    'Covered by snapshot <b>backup/…{ago} ago</b><br /><span class="mut">reachable via a Safety-Manager backup ref — ⌘Z can rewind here.</span>',
+    'Covered by snapshot <b>backup/…{ago} ago</b><br /><span class="mut">reachable via a Safety-Manager backup ref — {undoKey} can rewind here.</span>',
   // Changes / diffstat / tree.
   changes: "Changes",
   loading_diff: "loading diff…",

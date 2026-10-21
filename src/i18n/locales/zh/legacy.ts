@@ -10,7 +10,7 @@ export default {
   undo_stash_message: "你有未提交的改动，所以没法直接撤销——撤销会重置工作区。\n\n要先把改动 stash 起来，撤销之后再放回去吗？什么都不会丢：放回时如果有冲突，由你来解决，而且改动也会一直留在 stash 里。",
   undo_stash_confirm: "Stash 并撤销",
   undo_stash_cancel: "取消",
-  redo_unsupported: "还没有重做功能——不过撤销本身也可撤销:再按一次 ⌘Z 就能撤销刚才的撤销。",
+  redo_unsupported: "还没有重做功能——不过撤销本身也可撤销:再按一次 {undoKey} 就能撤销刚才的撤销。",
   undo_nothing: "没有可以撤销的内容——还没有任何快照。",
   undo_failed: "撤销失败——{error}",
   fetched_demo: "已获取(演示)。にゃ〜",
