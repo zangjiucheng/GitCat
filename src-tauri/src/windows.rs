@@ -115,18 +115,8 @@ fn window_chrome(arg: &InitialArg, has_commit: bool) -> (&'static str, f64, f64)
     }
 }
 
-/// This process's `--commit=<sha>` argv flag, if any — see `spawn_new_window`
-/// for how it's set and this module's own doc comment for why it's a flag
-/// rather than a positional arg or an `InitialArg` variant. Scanned directly
-/// off `std::env::args()` (same as the existing `--new-window` check in
-/// `create_initial_window`) rather than threaded through `classify_initial_arg`,
-/// since it never affects repo classification.
-fn initial_commit_arg() -> Option<String> {
-    std::env::args().find_map(|a| a.strip_prefix("--commit=").map(str::to_string))
-}
-
 /// Classify this process's repo argument. Pure over its input so it can be
-/// unit-tested; `initial_arg()` below feeds it `std::env::args().nth(1)` (read
+/// unit-tested; `create_initial_window` feeds it the path `cli::parse` found (read
 /// directly, not from Tauri state, since it's needed before the app/window even
 /// exists).
 ///
@@ -134,8 +124,9 @@ fn initial_commit_arg() -> Option<String> {
 /// (normalizing `.`/`..`/symlinks) so `gitcat .` and `gitcat ../other` work from
 /// a terminal; an ABSOLUTE path is used verbatim (no canonicalization) so a repo
 /// handed over by `spawn_new_window` keeps the exact identity the registry tracks
-/// it under. A leading-`-` arg is ignored — nothing here takes flags, and
-/// askpass mode is env-gated, not argv-gated (see askpass.rs). A path that
+/// it under. Flags never reach here: `cli::parse` has already split them off
+/// (and `main` has already exited on `--version`/`--help`/an unknown flag),
+/// so a path that starts with `-` (`gitcat -- -weird`) is a real path. A path that
 /// resolves to a real git repo is `Repo`; one that exists but isn't a repo, or
 /// can't be resolved at all, is `NotRepo` so the user is told rather than left
 /// staring at a window that silently opened nothing.
@@ -168,7 +159,7 @@ pub(crate) fn strip_windows_verbatim_prefix(p: String) -> String {
 
 fn classify_initial_arg(raw: Option<String>) -> InitialArg {
     let raw = match raw {
-        Some(r) if !r.is_empty() && !r.starts_with('-') => r,
+        Some(r) if !r.is_empty() => r,
         _ => return InitialArg::None,
     };
     let abs = if Path::new(&raw).is_absolute() {
@@ -204,10 +195,6 @@ fn classify_initial_arg(raw: Option<String>) -> InitialArg {
     }
 }
 
-fn initial_arg() -> InitialArg {
-    classify_initial_arg(std::env::args().nth(1))
-}
-
 /// Called once, from `run()`'s own `.setup()` hook — creates THIS process's
 /// one and only window, labeled "main" (matching `capabilities/default.json`'s
 /// existing `"windows": ["main"]` scope — every process's own window reuses
@@ -215,13 +202,14 @@ fn initial_arg() -> InitialArg {
 /// collision to worry about), pointed at whichever repo (if any) this
 /// process was launched with.
 pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
-    let arg = initial_arg();
+    let launch = crate::cli::launch_args();
+    let arg = classify_initial_arg(launch.path);
     // #39: if this repo is already open in another window — and this launch
     // isn't the explicit "Open in New Window" action (which passes `--new-window`,
     // see spawn_new_window) — raise that window and exit instead of duplicating
     // it. `gitcat <same repo>` run twice now focuses the first window.
     if let InitialArg::Repo(p) = &arg {
-        if !std::env::args().any(|a| a == "--new-window") && crate::instance_focus::focus_if_open(app, p) {
+        if !launch.new_window && crate::instance_focus::focus_if_open(app, p) {
             std::process::exit(0);
         }
     }
@@ -243,7 +231,7 @@ pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
     if let InitialArg::Repo(p) = &arg {
         crate::instance_focus::register(app, p);
     }
-    let commit = initial_commit_arg();
+    let commit = launch.commit;
     let (title, w, h) = window_chrome(&arg, commit.is_some());
     WebviewWindowBuilder::new(app, "main", window_url(&arg, commit.as_deref()))
         .title(title)
@@ -269,7 +257,8 @@ pub fn create_initial_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
 ///
 /// `commit_sha` is ignored when `repo_path` is `None` — there's nothing to
 /// select a commit within — and otherwise rides along as a second
-/// `--commit=<sha>` argv flag, read back by `initial_commit_arg()`.
+/// `--commit=<sha>` argv flag, read back by `cli::parse`. The repo path goes
+/// last, after `--`, so a path is never mistaken for a flag.
 pub fn spawn_new_window(repo_path: Option<&str>, commit_sha: Option<&str>) {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -302,10 +291,11 @@ pub fn spawn_new_window(repo_path: Option<&str>, commit_sha: Option<&str>) {
             // `--new-window` after the repo reaches the new instance's argv and
             // tells it to skip the #39 already-open dedup — this is the explicit
             // "Open in New Window" action, which SHOULD get its own window.
-            cmd.arg("--args").arg(p).arg("--new-window");
+            cmd.arg("--args").arg("--new-window");
             if let Some(sha) = commit_sha {
                 cmd.arg(format!("--commit={sha}"));
             }
+            cmd.arg("--").arg(p);
         }
         match cmd.spawn() {
             Ok(_) => return,
@@ -318,10 +308,11 @@ pub fn spawn_new_window(repo_path: Option<&str>, commit_sha: Option<&str>) {
     // foreground on its own, so no LaunchServices dance is needed.
     let mut cmd = Command::new(&exe);
     if let Some(p) = repo_path {
-        cmd.arg(p).arg("--new-window"); // explicit new window: skip the #39 dedup
+        cmd.arg("--new-window"); // explicit new window: skip the #39 dedup
         if let Some(sha) = commit_sha {
             cmd.arg(format!("--commit={sha}"));
         }
+        cmd.arg("--").arg(p);
     }
     cmd.no_console_window();
     if let Err(e) = cmd.spawn() {
@@ -389,11 +380,12 @@ mod tests {
     }
 
     #[test]
-    fn none_for_no_arg_empty_or_flag() {
+    fn none_for_no_arg_or_empty() {
         assert!(matches!(classify_initial_arg(None), InitialArg::None));
         assert!(matches!(classify_initial_arg(Some(String::new())), InitialArg::None));
-        assert!(matches!(classify_initial_arg(Some("--help".into())), InitialArg::None));
-        assert!(matches!(classify_initial_arg(Some("-v".into())), InitialArg::None));
+        // A leading-`-` path is a real path now (cli::parse splits off flags
+        // before this runs); a missing one is reported, not silently dropped.
+        assert!(matches!(classify_initial_arg(Some("-no-such-dir".into())), InitialArg::NotRepo(p) if p == "-no-such-dir"));
     }
 
     #[test]
@@ -478,16 +470,12 @@ mod tests {
     }
 
     #[test]
-    fn initial_commit_arg_parses_the_flag_regardless_of_position() {
-        // initial_commit_arg() reads real argv (std::env::args()), which a unit
-        // test can't repoint — so this exercises the same find_map logic directly
-        // against a synthetic argv, mirroring how classify_initial_arg's own
-        // tests exercise its logic apart from initial_arg()'s real argv read.
-        fn parse(args: &[&str]) -> Option<String> {
-            args.iter().find_map(|a| a.strip_prefix("--commit=").map(str::to_string))
-        }
-        assert_eq!(parse(&["gitcat", "/tmp/x", "--new-window", "--commit=deadbeef"]), Some("deadbeef".into()));
-        assert_eq!(parse(&["gitcat", "/tmp/x"]), None);
-        assert_eq!(parse(&["gitcat", "--commit=deadbeef", "/tmp/x", "--new-window"]), Some("deadbeef".into()));
+    fn spawn_new_window_argv_round_trips_through_cli_parse() {
+        // The argv spawn_new_window builds (flags, then `--`, then the path).
+        let argv = ["--new-window", "--commit=deadbeef", "--", "/tmp/-x"].map(String::from);
+        let crate::cli::CliAction::Launch(l) = crate::cli::parse(argv) else { panic!("not a launch") };
+        assert_eq!(l.path.as_deref(), Some("/tmp/-x"));
+        assert!(l.new_window);
+        assert_eq!(l.commit.as_deref(), Some("deadbeef"));
     }
 }

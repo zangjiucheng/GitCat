@@ -55,6 +55,7 @@ pub mod trust; // auto-trust WSL/UNC-path repos libgit2 refuses as "dubious owne
 pub mod watch; // live refresh: watch the open repo's git-dir for externally-made changes
 pub mod windows; // multi-window: spawn a fresh, fully independent GitCat process, optionally pointed directly at a repo
 pub mod instance_focus; // #39: focus the existing window for an already-open repo instead of duplicating it (per-repo loopback registry)
+pub mod cli; // argv: `--version` / `--help` / unknown-flag handling before Tauri starts, plus the launch path/flags
 pub mod cli_shim; // "Install 'gitcat' command in PATH": writes a VS Code `code`-style launcher (macOS /usr/local/bin, Linux ~/.local/bin, Windows WindowsApps)
 pub mod i18n_err; // PER-82: app-authored errors as `i18n:<key>` strings the frontend's be() translates (raw git stderr stays passthrough)
 pub mod updater; // channel-aware "check for updates" (stable vs nightly endpoint + downgrade-allowing comparator)

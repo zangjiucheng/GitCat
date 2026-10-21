@@ -70,6 +70,8 @@ Run **Install 'gitcat' command** from Settings → Command line (or ⌘K), then 
 ```bash
 gitcat .                 # open the repo in the current directory
 gitcat ~/src/my-project  # open a repo by path
+gitcat -- -odd-name      # a path that starts with '-'
+gitcat --version         # print the version (-V); --help (-h) prints usage
 ```
 
 It writes a launcher to `/usr/local/bin` (macOS), `~/.local/bin` (Linux), or `%LOCALAPPDATA%\Microsoft\WindowsApps` (Windows, plus one inside each WSL distro). The `.deb`/`.rpm` packages already put `gitcat` on `PATH`.
