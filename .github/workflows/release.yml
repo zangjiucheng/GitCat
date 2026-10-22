@@ -263,16 +263,29 @@ jobs:
           # Fail loudly if the pin did not take, rather than bundling a broken 2.46+.
           test "$(dpkg-query -W -f='${Version}' libwebkit2gtk-4.1-0)" = "$WV"
 
-      # Must run before actions/setup-node's `cache: pnpm`, which shells out
-      # to `pnpm store path` to locate what to cache (same as ci.yml).
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
-
+      # NODE FIRST, then pnpm — the reverse of the order everywhere else, and of
+      # pnpm's own documented recipe. That recipe works on a hosted runner only
+      # because Node is preinstalled there: `pnpm/action-setup` installs pnpm by
+      # shelling out to `npm ci`, so in a bare container it dies with
+      # "Error: spawn npm ENOENT" before anything else runs. (Its `standalone`
+      # input does NOT avoid this — it only swaps the package being installed
+      # for `@pnpm/exe`; the install still goes through npm.)
+      #
+      # The reason the old order existed was `cache: pnpm` on setup-node, which
+      # shells out to `pnpm store path` and so needed pnpm first. That is a real
+      # constraint and it is why this cannot simply be swapped: the store cache
+      # moves to pnpm/action-setup's own `cache` input, which is the same cache
+      # keyed on the same lockfile, just owned by the step that knows where the
+      # store is.
       - name: Install Node
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          cache: true
 
       - name: Install Rust stable toolchain (with this matrix entry's target)
         uses: dtolnay/rust-toolchain@stable
