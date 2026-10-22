@@ -350,8 +350,15 @@ jobs:
       # SMOKE-INSTALLED per-platform (launch + drive the app, watch for CSP/EGL
       # issues) WITHOUT cutting a release tag. This is the pre-1.0 verification
       # path: it does not touch Releases.
+      # `always()`, so a red guard does not withhold the bundle. On the manual
+      # path there is no repack job (it is tag-only) and the FIRST guard above is
+      # fatal, so a linuxdeploy AppRun.wrapped at 0770 — the known, expected
+      # x86_64 defect the tag path repairs — skipped this upload entirely. That
+      # left the smoke-test path unable to produce the one artifact you most
+      # want to look at: the one that just failed its check. The leg still goes
+      # red, which is the right signal; it just hands you the evidence now.
       - name: Upload bundles (manual build only)
-        if: github.event_name == 'workflow_dispatch'
+        if: always() && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v5
         with:
           name: gitcat-${{ matrix.target }}
