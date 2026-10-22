@@ -40,9 +40,29 @@ permissions:
 jobs:
   # Builds/tests the Rust core (src-tauri, crate `gitcat_lib`).
   # Independent of the `frontend` job below so the two run in parallel.
+  # PINNED, not `ubuntu-latest`. That label is migrating to Ubuntu 26.04 over a
+  # rollout that began 2026-10-19 and completes around 2026-11-19
+  # (actions/runner-images#14748). During a phased rollout the label is not one
+  # thing: two jobs in the same run can land on different images, so a failure
+  # cannot be attributed to a change in the code rather than a change in the
+  # runner. Pinning makes the upgrade a commit someone chose.
+  #
+  # 24.04 is what `ubuntu-latest` resolved to in every run up to this one, so
+  # this freezes today's known-good environment rather than asserting a new one.
+  # Checked before pinning, so nobody has to re-derive it: every apt package
+  # these jobs install IS present in 26.04 (resolute) — libwebkit2gtk-4.1-dev
+  # and libwebkitgtk-6.0-dev 2.52.6, libgtk-3-dev, libayatana-appindicator3-dev,
+  # librsvg2-dev, libssl-dev, libxdo-dev, patchelf, xdg-utils, squashfs-tools —
+  # so the migration does not break the install, and moving to `ubuntu-26.04`
+  # should be a small, separate, testable change.
+  #
+  # Note this is a WEAKER pin than release.yml's. That file pins its Linux legs
+  # to 22.04 to hold the glibc/GTK floor a release binary demands; CI has no such
+  # constraint and never launches a webview, so the WebKitGTK 2.46+ EGL
+  # regression that release.yml works around does not apply here.
   rust:
     name: Rust (build + test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: src-tauri
@@ -262,7 +282,8 @@ jobs:
   # the fly, no Rust and no Node, so it runs in parallel with everything else.
   appimage-guard:
     name: AppImage permission scripts (tests)
-    runs-on: ubuntu-latest
+    # Pinned for the reason spelled out on the `rust` job above.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -286,7 +307,8 @@ jobs:
   # Independent of the `rust` job above so the two run in parallel.
   frontend:
     name: Frontend (check + build + test)
-    runs-on: ubuntu-latest
+    # Pinned for the reason spelled out on the `rust` job above.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -336,7 +358,8 @@ jobs:
   # this does and doesn't reach.
   e2e:
     name: E2E (Playwright)
-    runs-on: ubuntu-latest
+    # Pinned for the reason spelled out on the `rust` job above.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
