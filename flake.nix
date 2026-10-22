@@ -42,7 +42,7 @@
         # Only packaged for Linux for now — nix/package.nix links against
         # WebKitGTK/GTK3, which have no macOS nixpkgs equivalent (Tauri uses
         # the system WebKit there instead).
-        packages = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+        packages = pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           default = pkgs.callPackage ./nix/package.nix { src = self; };
         };
 
@@ -57,18 +57,18 @@
             pnpm
             cargo-tauri
             pkg-config
-          ] ++ lib.optionals stdenv.isLinux (linuxDeps ++ linuxRuntimeOnly)
-            ++ lib.optionals stdenv.isDarwin darwinDeps;
+          ] ++ lib.optionals stdenv.hostPlatform.isLinux (linuxDeps ++ linuxRuntimeOnly)
+            ++ lib.optionals stdenv.hostPlatform.isDarwin darwinDeps;
 
           # Runtime libs (GTK modules, EGL/GL, gdk-pixbuf loaders, ...) that
           # WebKitGTK dlopen()s instead of linking at build time — without
           # this, `cargo tauri dev` builds fine but the window fails to open.
-          LD_LIBRARY_PATH = pkgs.lib.optionalString pkgs.stdenv.isLinux
+          LD_LIBRARY_PATH = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux
             (pkgs.lib.makeLibraryPath linuxDeps);
 
           # GSettings schemas (webkitgtk/gtk3 need these at runtime for e.g.
           # font/proxy settings) and icon themes.
-          XDG_DATA_DIRS = pkgs.lib.optionalString pkgs.stdenv.isLinux
+          XDG_DATA_DIRS = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux
             (pkgs.lib.concatStringsSep ":" [
               "${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}"
               "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}"
