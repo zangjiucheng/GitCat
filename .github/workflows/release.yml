@@ -338,9 +338,15 @@ jobs:
       # byte-identical if it is already correct, so the day linuxdeploy ships a
       # 0755 AppRun this stops repacking and re-signing for nothing.
       #
-      # Re-signing matters even here. `tauri build` has already signed the
-      # pre-repack bytes, so leaving that .sig next to a repacked AppImage would
-      # ship an artifact whose signature silently does not match it.
+      # Re-signing matters even here, though it took a correction to say why.
+      # `tauri build` has already signed the pre-repack bytes, so that .sig does
+      # not match a repacked AppImage. The upload globs below did not include
+      # `*.sig` at all, so no mismatched signature was ever actually shipped in
+      # an artifact — the first version of this comment claimed otherwise and was
+      # wrong. The fix is to carry the signatures rather than to stop producing
+      # them: with the .sig present, a smoke-test bundle can be verified the way
+      # a user's updater verifies it, which is the only check that would catch a
+      # re-sign that silently went wrong.
       - name: Repack the AppImage (manual build only)
         if: github.event_name == 'workflow_dispatch' && runner.os == 'Linux'
         # fix-appimage-perms.sh and the guard are both bash; a container's
@@ -411,6 +417,13 @@ jobs:
         # v7, not v5: v5 runs on node20, which the runner now force-upgrades to
         # node24 with a deprecation warning. Every input used here (name, path,
         # if-no-files-found, retention-days) is unchanged in v7.
+        #
+        # `*.sig` is in the path list and was not before. Without the updater
+        # signatures a smoke-test bundle cannot be checked the way a user's
+        # machine checks it, which is the only check that would catch a repack
+        # whose re-sign silently went wrong — and the step above re-signs the
+        # x86_64 AppImage every time. (The note goes here, not in `path:`: that
+        # is a literal block, so a `#` line inside it would be read as a glob.)
         uses: actions/upload-artifact@v7
         with:
           name: gitcat-${{ matrix.target }}
@@ -421,6 +434,7 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
           if-no-files-found: ignore
           retention-days: 7
 
