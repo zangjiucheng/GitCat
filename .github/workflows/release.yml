@@ -76,6 +76,16 @@ jobs:
     # there's no release to upload into.
     if: ${{ !cancelled() && needs.create-release.result != 'failure' }}
     runs-on: ${{ matrix.runner }}
+    # Empty for every non-Linux leg, which is how Actions is told "no container".
+    # The Linux legs set it to pin the glibc the bundle links against — see the
+    # matrix comment below.
+    container: ${{ matrix.container }}
+    env:
+      # linuxdeploy and appimagetool are themselves AppImages, and they mount
+      # themselves with FUSE to run. A container has no /dev/fuse, so without
+      # this they abort and take the AppImage bundle with them. Harmless on the
+      # macOS and Windows legs, which never see an AppImage.
+      APPIMAGE_EXTRACT_AND_RUN: 1
     strategy:
       # One slow/flaky platform (e.g. a transient arm64 runner hiccup)
       # shouldn't cancel the other 5 — every platform reports its own real
@@ -96,17 +106,42 @@ jobs:
             runner: macos-15-intel # the current Intel-hosted macOS image label (Intel runners are versioned separately from the Apple Silicon "macos-latest" line now)
             target: x86_64-apple-darwin
 
-          # Linux: pin to 22.04 (NOT "ubuntu-latest") deliberately — a release
-          # binary linked against a newer glibc/GTK than 22.04 ships raises the
-          # MINIMUM OS version end users need, which is the opposite of what a
-          # release build wants. 22.04-arm is a native arm64 runner (no GTK/
-          # WebKit cross-compilation sysroot needed — same apt packages as x64,
-          # just resolved for the native arch we're already running on).
+          # Linux: the GLIBC FLOOR IS THE POINT, and it now lives in a
+          # container rather than in the runner label.
+          #
+          # A release binary linked against a newer glibc than the oldest distro
+          # we mean to support raises the minimum OS every user needs, which is
+          # the opposite of what a release build wants. That is why this used to
+          # pin `ubuntu-22.04`. Measured on the published v1.5.0 bundles, both
+          # arches require at most **glibc 2.34** — below jammy's own 2.35.
+          #
+          #   glibc 2.34  RHEL/Rocky/Alma 9
+          #   glibc 2.35  Ubuntu 22.04 LTS
+          #   glibc 2.36  Debian 12 bookworm — the CURRENT Debian stable
+          #   glibc 2.39  Ubuntu 24.04 LTS   (what noble would link against)
+          #
+          # So simply bumping the label to 24.04 would have cut off current
+          # Debian stable, among others. But the `ubuntu-22.04` images are
+          # themselves being retired (deprecation from 2026-09-17, unsupported
+          # by 2027-04-17, with brownouts before that), so staying was not an
+          # option either.
+          #
+          # Hence: a SUPPORTED runner supplying the hardware and the Actions
+          # plumbing, and a `ubuntu:22.04` CONTAINER supplying the userspace the
+          # binary links against. The floor is now a line in this file that
+          # someone has to choose to change, instead of a side effect of which
+          # images GitHub still offers. When 24.04 retires in turn, only
+          # `runner:` moves and the floor does not.
+          #
+          # `-arm` is a native arm64 runner, and `ubuntu:22.04` is multi-arch,
+          # so each leg gets its own architecture with no cross-sysroot.
           - name: Linux (x86_64)
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
+            container: ubuntu:22.04
             target: x86_64-unknown-linux-gnu
           - name: Linux (arm64)
-            runner: ubuntu-22.04-arm
+            runner: ubuntu-24.04-arm
+            container: ubuntu:22.04
             target: aarch64-unknown-linux-gnu
 
           # Windows: both native now — GitHub added a hosted native arm64
@@ -121,6 +156,39 @@ jobs:
             target: aarch64-pc-windows-msvc
 
     steps:
+      # The container is a bare `ubuntu:22.04`, not a runner image: it ships
+      # none of the things every later step and action assumes are present.
+      # This has to come BEFORE checkout, which needs git.
+      #
+      # `sudo` is installed rather than stripped from the steps below. We are
+      # root here and do not need it, but the Linux dependency steps are shared
+      # with nothing and read better matching the shape they have always had —
+      # and a missing `sudo` fails them in a way that reads like a permission
+      # problem rather than a missing package.
+      #
+      # `build-essential` and `pkg-config` are the ones easy to forget: the
+      # hosted images have a compiler already, so the dependency list below
+      # never needed to name one, and git2's vendored libgit2 plus every
+      # *-sys crate here will not build without them.
+      - name: Bootstrap the build container
+        if: matrix.container != ''
+        # Deliberately NOT `shell: bash`, unlike the steps below. This is the
+        # step that runs before anything is installed, so it should assume as
+        # little about the image as possible — it is POSIX sh on purpose, and
+        # must stay that way. Everything after it may rely on bash.
+        run: |
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            sudo ca-certificates curl wget gnupg git \
+            build-essential pkg-config file xz-utils \
+            desktop-file-utils zsync
+          # actions/checkout refuses to work in a directory it does not trust,
+          # and inside a container the workspace is owned by a different uid
+          # than the root we run as.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Checkout
         uses: actions/checkout@v7
 
@@ -162,6 +230,12 @@ jobs:
       # delete that prerelease) once 22.04 ships a fixed WebKitGTK.
       - name: Pin WebKitGTK to 2.44.3 (avoid 2.46+ EGL_BAD_PARAMETER launch crash)
         if: runner.os == 'Linux'
+        # `shell: bash` is REQUIRED, not stylistic. A hosted runner defaults
+        # `run:` to bash, but inside a container Actions falls back to `sh`,
+        # because it cannot assume the image has bash. This script's
+        # `set -euxo pipefail` is a bashism and died on the first line with
+        # "Illegal option -o pipefail" the first time this ran in a container.
+        shell: bash
         run: |
           set -euxo pipefail
           WV=2.44.3-0ubuntu0.22.04.1
@@ -189,16 +263,29 @@ jobs:
           # Fail loudly if the pin did not take, rather than bundling a broken 2.46+.
           test "$(dpkg-query -W -f='${Version}' libwebkit2gtk-4.1-0)" = "$WV"
 
-      # Must run before actions/setup-node's `cache: pnpm`, which shells out
-      # to `pnpm store path` to locate what to cache (same as ci.yml).
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
-
+      # NODE FIRST, then pnpm — the reverse of the order everywhere else, and of
+      # pnpm's own documented recipe. That recipe works on a hosted runner only
+      # because Node is preinstalled there: `pnpm/action-setup` installs pnpm by
+      # shelling out to `npm ci`, so in a bare container it dies with
+      # "Error: spawn npm ENOENT" before anything else runs. (Its `standalone`
+      # input does NOT avoid this — it only swaps the package being installed
+      # for `@pnpm/exe`; the install still goes through npm.)
+      #
+      # The reason the old order existed was `cache: pnpm` on setup-node, which
+      # shells out to `pnpm store path` and so needed pnpm first. That is a real
+      # constraint and it is why this cannot simply be swapped: the store cache
+      # moves to pnpm/action-setup's own `cache` input, which is the same cache
+      # keyed on the same lockfile, just owned by the step that knows where the
+      # store is.
       - name: Install Node
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          cache: true
 
       - name: Install Rust stable toolchain (with this matrix entry's target)
         uses: dtolnay/rust-toolchain@stable
@@ -250,6 +337,9 @@ jobs:
       # directories broken on a clean image. See check-appimage-perms.sh.
       - name: Check the AppImage is world-executable
         if: runner.os == 'Linux'
+        # Same reason as the WebKitGTK step: `shopt` and `imgs=(...)` are
+        # bashisms, and a container's default shell is `sh`.
+        shell: bash
         run: |
           shopt -s nullglob
           imgs=(src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage)
@@ -260,8 +350,15 @@ jobs:
       # SMOKE-INSTALLED per-platform (launch + drive the app, watch for CSP/EGL
       # issues) WITHOUT cutting a release tag. This is the pre-1.0 verification
       # path: it does not touch Releases.
+      # `always()`, so a red guard does not withhold the bundle. On the manual
+      # path there is no repack job (it is tag-only) and the FIRST guard above is
+      # fatal, so a linuxdeploy AppRun.wrapped at 0770 — the known, expected
+      # x86_64 defect the tag path repairs — skipped this upload entirely. That
+      # left the smoke-test path unable to produce the one artifact you most
+      # want to look at: the one that just failed its check. The leg still goes
+      # red, which is the right signal; it just hands you the evidence now.
       - name: Upload bundles (manual build only)
-        if: github.event_name == 'workflow_dispatch'
+        if: always() && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v5
         with:
           name: gitcat-${{ matrix.target }}
@@ -351,6 +448,9 @@ jobs:
       - name: Check the AppImage is world-executable
         if: runner.os == 'Linux'
         continue-on-error: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
+        # Same reason as the WebKitGTK step: `shopt` and `imgs=(...)` are
+        # bashisms, and a container's default shell is `sh`.
+        shell: bash
         run: |
           shopt -s nullglob
           imgs=(src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage)
