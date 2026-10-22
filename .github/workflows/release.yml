@@ -172,6 +172,10 @@ jobs:
       # *-sys crate here will not build without them.
       - name: Bootstrap the build container
         if: matrix.container != ''
+        # Deliberately NOT `shell: bash`, unlike the steps below. This is the
+        # step that runs before anything is installed, so it should assume as
+        # little about the image as possible — it is POSIX sh on purpose, and
+        # must stay that way. Everything after it may rely on bash.
         run: |
           set -eux
           export DEBIAN_FRONTEND=noninteractive
@@ -226,6 +230,12 @@ jobs:
       # delete that prerelease) once 22.04 ships a fixed WebKitGTK.
       - name: Pin WebKitGTK to 2.44.3 (avoid 2.46+ EGL_BAD_PARAMETER launch crash)
         if: runner.os == 'Linux'
+        # `shell: bash` is REQUIRED, not stylistic. A hosted runner defaults
+        # `run:` to bash, but inside a container Actions falls back to `sh`,
+        # because it cannot assume the image has bash. This script's
+        # `set -euxo pipefail` is a bashism and died on the first line with
+        # "Illegal option -o pipefail" the first time this ran in a container.
+        shell: bash
         run: |
           set -euxo pipefail
           WV=2.44.3-0ubuntu0.22.04.1
@@ -314,6 +324,9 @@ jobs:
       # directories broken on a clean image. See check-appimage-perms.sh.
       - name: Check the AppImage is world-executable
         if: runner.os == 'Linux'
+        # Same reason as the WebKitGTK step: `shopt` and `imgs=(...)` are
+        # bashisms, and a container's default shell is `sh`.
+        shell: bash
         run: |
           shopt -s nullglob
           imgs=(src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage)
@@ -415,6 +428,9 @@ jobs:
       - name: Check the AppImage is world-executable
         if: runner.os == 'Linux'
         continue-on-error: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
+        # Same reason as the WebKitGTK step: `shopt` and `imgs=(...)` are
+        # bashisms, and a container's default shell is `sh`.
+        shell: bash
         run: |
           shopt -s nullglob
           imgs=(src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage)
