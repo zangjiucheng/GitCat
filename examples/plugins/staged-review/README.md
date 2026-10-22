@@ -5,8 +5,8 @@ gathered in a **panel**, with a **Tama skin** that gives the reviewer its own
 voice. It is the example for the two manifest surfaces the other examples don't
 touch — `panels` and `tama` — and for the `staged` command context.
 
-**Needs GitCat 1.4.1 or later.** The `staged` command context it is built on
-first shipped in 1.4.1. The copy published to the
+**Needs GitCat 1.5.0 or later.** The `staged` command context it is built on
+first shipped in 1.5.0. The copy published to the
 [plugin index](https://github.com/zangjiucheng/gitcat-plugins) declares that
 floor (`minGitcatVersion`), so an older GitCat refuses to install it with a
 clear message instead of installing commands that never get a file list.
