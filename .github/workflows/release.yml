@@ -141,7 +141,8 @@ jobs:
             libssl-dev \
             libxdo-dev \
             patchelf \
-            xdg-utils
+            xdg-utils \
+            squashfs-tools
 
       # WebKitGTK 2.46 shipped an upstream regression that aborts a Tauri app at
       # launch with "Could not create default EGL display: EGL_BAD_PARAMETER"
@@ -242,6 +243,11 @@ jobs:
       # Runs AFTER the build on purpose. It cannot stop a broken AppImage being
       # built, but it turns the leg red, and the release is a draft nobody has
       # published yet — which is the window this is meant to catch.
+      #
+      # Reads the modes stored in the squashfs (needs squashfs-tools, installed
+      # above) and never an extracted tree: `--appimage-extract` creates every
+      # directory it writes at 0700, so walking its output reported ~150
+      # directories broken on a clean image. See check-appimage-perms.sh.
       - name: Check the AppImage is world-executable
         if: runner.os == 'Linux'
         run: |
@@ -329,7 +335,19 @@ jobs:
       # with it.
       #
       # aarch64 keeps failing hard, because nothing downstream repacks it — the
-      # guard is the only thing that would ever notice.
+      # guard is the only thing that would ever notice. Which is precisely why
+      # the guard must not cry wolf: on v1.5.0 it walked an `--appimage-extract`
+      # tree, read the extractor's own 0700 directories as the image's, and
+      # failed a leg whose AppImage was in fact clean (137 directories at 0755,
+      # both AppRun files 0755, measured from the squashfs). That took the
+      # repack and finalize jobs down with it and stopped the release — the
+      # x86_64 bug of the v1.4.0 run, reached through the other arch. The guard
+      # now reads stored modes, so a red aarch64 leg means a real defect.
+      #
+      # Still asymmetric, and knowingly: nothing repacks aarch64. If that ever
+      # fires for real, the repack has to be taught to handle both arches
+      # (unsquashfs can read an arm64 image on an x86_64 runner, so the "cannot
+      # be extracted here" reason in that job's comment no longer holds).
       - name: Check the AppImage is world-executable
         if: runner.os == 'Linux'
         continue-on-error: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}

@@ -43,6 +43,19 @@ changed=0
 # tree 0700, so a repack that only touched files produced an AppImage nothing
 # could be traversed in — which is exactly what v1.4.0 shipped. A directory the
 # world cannot enter makes every file mode inside it moot.
+#
+# Do NOT "optimize" this away on the grounds that the source image's directories
+# were already 0755 (they were — measured on v1.5.0: every directory 0755 bar
+# one 0777). That is the point. The 0700 is the EXTRACTOR's, and mksquashfs
+# below would bake it into the new image, so this chmod is what keeps the repack
+# from introducing the very defect it exists to remove. It is a fix applied
+# blind, not a judgement about the input — check-appimage-perms.sh is what
+# judges, and it reads the squashfs precisely because an extracted tree cannot.
+#
+# A consequence worth knowing: because the extractor always yields 0700
+# directories, `changed` is always 1 here, so this script always repacks. The
+# decision not to repack belongs to the caller, which asks
+# check-appimage-perms.sh first.
 for d in $(find "$root" -type d); do
   m="$(stat -c '%a' "$d")"
   case "${m: -1}" in
