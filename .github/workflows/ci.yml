@@ -383,7 +383,10 @@ jobs:
       # traces (trace: "on-first-retry") only exist when something retried.
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v5
+        # v7, not v5: v5 runs on node20, which the runner now force-upgrades to
+        # node24 with a deprecation warning. `name`, `path` and `retention-days`
+        # are unchanged in v7.
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: playwright-report/

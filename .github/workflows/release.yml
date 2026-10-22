@@ -318,6 +318,55 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --target ${{ matrix.target }}
 
+      # The manual path's own repack, so a workflow_dispatch build hands over a
+      # bundle you can actually install.
+      #
+      # WHY HERE and not in fix-linux-appimage: that job repairs an asset that is
+      # already uploaded to a draft release, because on the tag path tauri-action
+      # builds AND uploads in one step and that is the only seam there is. A
+      # manual run has no release, so it has the opposite situation — the bundle
+      # is sitting on disk and the seam is right here, before the guard looks at
+      # it and before it is uploaded as an artifact.
+      #
+      # Until now nothing repaired the manual path at all: the guard below is
+      # fatal and the repack job is tag-only, so every dispatch run reddened its
+      # x86_64 leg on linuxdeploy's 0770 AppRun.wrapped and the artifact was a
+      # bundle that would not start under firejail or extract-and-run — which is
+      # exactly what that path exists to let you test.
+      #
+      # Self-disabling, like the tag path's: each image is checked first and left
+      # byte-identical if it is already correct, so the day linuxdeploy ships a
+      # 0755 AppRun this stops repacking and re-signing for nothing.
+      #
+      # Re-signing matters even here. `tauri build` has already signed the
+      # pre-repack bytes, so leaving that .sig next to a repacked AppImage would
+      # ship an artifact whose signature silently does not match it.
+      - name: Repack the AppImage (manual build only)
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'Linux'
+        # fix-appimage-perms.sh and the guard are both bash; a container's
+        # default shell is sh.
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euxo pipefail
+          shopt -s nullglob
+          imgs=(src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage)
+          if [ ${#imgs[@]} -eq 0 ]; then echo "no AppImage built for this target"; exit 0; fi
+          for img in "${imgs[@]}"; do
+            echo "== $img"
+            if scripts/check-appimage-perms.sh "$img"; then
+              echo "   already world-executable — left untouched, not re-signed"
+              continue
+            fi
+            scripts/fix-appimage-perms.sh "$img"
+            scripts/check-appimage-perms.sh "$img"
+            rm -f "$img.sig"
+            npx --yes @tauri-apps/cli@2 signer sign "$img"
+            [ -s "$img.sig" ] || { echo "signer produced no .sig for $img" >&2; exit 1; }
+          done
+
       # v1.3.2's x86_64 AppImage shipped AppRun.wrapped as 0770, so the app
       # could not start wherever the running user did not own the file — under
       # firejail, under APPIMAGE_EXTRACT_AND_RUN, under AppImageLauncher. It was
@@ -350,16 +399,19 @@ jobs:
       # SMOKE-INSTALLED per-platform (launch + drive the app, watch for CSP/EGL
       # issues) WITHOUT cutting a release tag. This is the pre-1.0 verification
       # path: it does not touch Releases.
-      # `always()`, so a red guard does not withhold the bundle. On the manual
-      # path there is no repack job (it is tag-only) and the FIRST guard above is
-      # fatal, so a linuxdeploy AppRun.wrapped at 0770 — the known, expected
-      # x86_64 defect the tag path repairs — skipped this upload entirely. That
-      # left the smoke-test path unable to produce the one artifact you most
-      # want to look at: the one that just failed its check. The leg still goes
-      # red, which is the right signal; it just hands you the evidence now.
+      # `always()`, so a red guard never withholds the bundle. The repack step
+      # above now handles the one defect we know about, so this is no longer
+      # load-bearing for the 0770 case — but it is still the right gate: if the
+      # guard ever fails for something the repack does NOT cover, the artifact is
+      # the evidence, and skipping the upload would throw it away. The leg still
+      # goes red, which is the correct signal; it just hands the bundle over
+      # first.
       - name: Upload bundles (manual build only)
         if: always() && github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v5
+        # v7, not v5: v5 runs on node20, which the runner now force-upgrades to
+        # node24 with a deprecation warning. Every input used here (name, path,
+        # if-no-files-found, retention-days) is unchanged in v7.
+        uses: actions/upload-artifact@v7
         with:
           name: gitcat-${{ matrix.target }}
           path: |
