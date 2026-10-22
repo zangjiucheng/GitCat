@@ -141,7 +141,8 @@ jobs:
             libssl-dev \
             libxdo-dev \
             patchelf \
-            xdg-utils
+            xdg-utils \
+            squashfs-tools
 
       # WebKitGTK 2.46 shipped an upstream regression that aborts a Tauri app at
       # launch with "Could not create default EGL display: EGL_BAD_PARAMETER"
@@ -242,6 +243,11 @@ jobs:
       # Runs AFTER the build on purpose. It cannot stop a broken AppImage being
       # built, but it turns the leg red, and the release is a draft nobody has
       # published yet — which is the window this is meant to catch.
+      #
+      # Reads the modes stored in the squashfs (needs squashfs-tools, installed
+      # above) and never an extracted tree: `--appimage-extract` creates every
+      # directory it writes at 0700, so walking its output reported ~150
+      # directories broken on a clean image. See check-appimage-perms.sh.
       - name: Check the AppImage is world-executable
         if: runner.os == 'Linux'
         run: |
@@ -328,8 +334,20 @@ jobs:
       # 0770, reddened this leg, and took the repack and finalize jobs down
       # with it.
       #
-      # aarch64 keeps failing hard, because nothing downstream repacks it — the
-      # guard is the only thing that would ever notice.
+      # aarch64 still fails hard. Which is precisely why
+      # the guard must not cry wolf: on v1.5.0 it walked an `--appimage-extract`
+      # tree, read the extractor's own 0700 directories as the image's, and
+      # failed a leg whose AppImage was in fact clean (137 directories at 0755,
+      # both AppRun files 0755, measured from the squashfs). That took the
+      # repack and finalize jobs down with it and stopped the release — the
+      # x86_64 bug of the v1.4.0 run, reached through the other arch. The guard
+      # now reads stored modes, so a red aarch64 leg means a real defect.
+      #
+      # The asymmetry is gone: fix-linux-appimage now repacks BOTH arches from
+      # one x86_64 runner, so aarch64 could be continue-on-error here too. It
+      # deliberately is not, until a release has actually exercised the aarch64
+      # repack path — right now that arch has never needed one, so making its
+      # guard non-fatal would retire the only signal that it started to.
       - name: Check the AppImage is world-executable
         if: runner.os == 'Linux'
         continue-on-error: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
@@ -340,7 +358,7 @@ jobs:
           scripts/check-appimage-perms.sh "${imgs[@]}"
 
   # ---------------------------------------------------------------------------
-  # Repack the x86_64 AppImage so it is world-executable, then RE-SIGN it.
+  # Repack the Linux AppImages so they are world-executable, then RE-SIGN them.
   #
   # v1.3.2 shipped AppRun.wrapped as 0770. AppRun is a shell script linuxdeploy
   # generates whose last line is `exec "$this_dir"/AppRun.wrapped`, so with no
@@ -350,11 +368,22 @@ jobs:
   # Reproduced directly: that binary at 0770 is NOT executable to a process which
   # is neither its owner nor in its group, and at 0755 it is.
   #
-  # x86_64 only. The aarch64 AppImage of the same tag was already 0755 — this is
-  # whichever AppRun the arch's linuxdeploy embeds, not anything configured here
-  # — and an arm64 AppImage cannot be extracted on this x86_64 runner anyway.
-  # Both arches are still covered by the per-leg guard, which runs on the native
-  # runner right after each build.
+  # BOTH ARCHES, on this one x86_64 runner. This job used to be x86_64-only for
+  # a reason that no longer holds: fix-appimage-perms.sh unpacked with
+  # `--appimage-extract`, which runs the image's own ELF runtime, so an aarch64
+  # AppImage genuinely could not be touched here. It now uses `unsquashfs`,
+  # which reads the filesystem without executing anything in it. Rehearsed
+  # against the real v1.5.0 x86_64 asset from an arm64 machine: 370 entries in,
+  # 370 out, runtime bytes identical, AppRun.wrapped 0770 -> 0755.
+  #
+  # Which also retires the asymmetry that stopped v1.5.0: the aarch64 leg's
+  # guard was fatal because nothing downstream repaired what it found. Now
+  # something does.
+  #
+  # Self-disabling per arch: each asset is checked first and left completely
+  # alone if it is already correct, so the day linuxdeploy ships a 0755 AppRun
+  # this stops churning assets instead of re-signing them for no reason.
+  # Verified: the clean v1.5.0 aarch64 asset comes back byte-identical.
   #
   # WHY HERE and not in the build leg: tauri-action builds AND uploads in one
   # step, so the only seam is after the asset is already in the draft. The draft
@@ -368,15 +397,15 @@ jobs:
   # verifies its own new signature against the public key in tauri.conf.json
   # BEFORE replacing anything, and re-checks what actually landed afterwards.
   fix-linux-appimage:
-    name: Repack + re-sign the x86_64 AppImage
+    name: Repack + re-sign the Linux AppImages
     needs: [create-release, build]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      # mksquashfs to repack; minisign to check our own work the same way a
-      # user's updater will.
+      # unsquashfs to read and unpack (arch-neutrally), mksquashfs to repack,
+      # minisign to check our own work the same way a user's updater will.
       - name: Install repack + verify tooling
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends squashfs-tools minisign
 
@@ -393,58 +422,103 @@ jobs:
           work="$(mktemp -d)"
           cd "$work"
 
-          name="$(gh release view "$TAG" --repo "$REPO" --json assets \
-                    --jq '.assets[].name | select(test("_amd64\\.AppImage$"))' | head -1)"
-          if [ -z "$name" ]; then
-            echo "this release has no x86_64 AppImage — nothing to do"
+          # asset-name suffix -> the latest.json platform key whose entry (and
+          # whose URL-sharing aliases) records that asset's signature.
+          declare -A KEYS=(
+            ["_amd64.AppImage"]="linux-x86_64-appimage"
+            ["_aarch64.AppImage"]="linux-aarch64-appimage"
+          )
+
+          repacked=()   # "<asset name>|<platform key>" for each one we rewrote
+          found=0
+
+          gh release view "$TAG" --repo "$REPO" --json assets > assets.json
+
+          for suffix in "${!KEYS[@]}"; do
+            key="${KEYS[$suffix]}"
+            # endswith + --arg, NOT a regex. jq string literals reject `\.` as an
+            # invalid escape, so building a pattern with sed needs a DOUBLE
+            # backslash — and getting that wrong does not fail loudly: jq errors,
+            # the capture comes back empty, and the loop reports "no such
+            # AppImage, nothing to do" for every arch. The repack would then
+            # silently do nothing and the release would ship broken again.
+            # Suffix matching needs no escaping at all, so there is nothing to
+            # get wrong.
+            name="$(jq -r --arg s "$suffix" '.assets[].name | select(endswith($s))' assets.json | head -1)"
+            if [ -z "$name" ]; then
+              echo "== $suffix: this release has no such AppImage — nothing to do"
+              continue
+            fi
+            found=$((found + 1))
+            echo "== $name  (latest.json key: $key)"
+            rm -f "$name" "$name.sig"
+            gh release download "$TAG" --repo "$REPO" -p "$name" -p "$name.sig" -D .
+
+            if "$repo_dir/scripts/check-appimage-perms.sh" "$name"; then
+              echo "   already world-executable — left untouched, not re-signed"
+              continue
+            fi
+
+            "$repo_dir/scripts/fix-appimage-perms.sh" "$name"
+            "$repo_dir/scripts/check-appimage-perms.sh" "$name"
+
+            # Sign the NEW bytes. minisign's trusted comment records the file
+            # name, so keeping the name identical keeps that record true.
+            rm -f "$name.sig"
+            npx --yes @tauri-apps/cli@2 signer sign "$name"
+            [ -s "$name.sig" ] || { echo "signer produced no .sig" >&2; exit 1; }
+
+            # Prove the signature before anything downstream depends on it.
+            # This is the same check the updater makes on a user's machine.
+            python3 "$repo_dir/scripts/minisign-materialize.py" \
+              "$name.sig" "$repo_dir/src-tauri/tauri.conf.json" "$name.minisig" tauri.pub
+            minisign -V -p tauri.pub -x "$name.minisig" -m "$name"
+
+            gh release upload "$TAG" "$name" "$name.sig" --repo "$REPO" --clobber
+            repacked+=("$name|$key")
+          done
+
+          # Finding NOTHING is not a quiet success. Every tag build produces both
+          # Linux AppImages, so zero matches means the selector broke, which is
+          # exactly the failure the endswith change above exists to prevent —
+          # and the one shape of it that looks identical to "all clean".
+          if [ "$found" -eq 0 ]; then
+            echo "no Linux AppImage matched any known suffix — the selector is wrong" >&2
+            jq -r '.assets[].name' assets.json | sed 's/^/  /' >&2
+            exit 1
+          fi
+
+          if [ "${#repacked[@]}" -eq 0 ]; then
+            echo "no AppImage needed repacking ($found checked) — latest.json untouched"
             exit 0
           fi
-          echo "asset: $name"
-          gh release download "$TAG" --repo "$REPO" -p "$name" -p "$name.sig" -D .
-
-          # Self-disabling: the day linuxdeploy ships a 0755 AppRun, this job
-          # stops repacking and re-signing for no reason instead of quietly
-          # churning the asset on every release.
-          if "$repo_dir/scripts/check-appimage-perms.sh" "$name"; then
-            echo "already world-executable — no repack needed"
-            exit 0
-          fi
-
-          "$repo_dir/scripts/fix-appimage-perms.sh" "$name"
-          "$repo_dir/scripts/check-appimage-perms.sh" "$name"
-
-          # Sign the NEW bytes. minisign's trusted comment records the file
-          # name, so keeping the name identical keeps that record true.
-          rm -f "$name.sig"
-          npx --yes @tauri-apps/cli@2 signer sign "$name"
-          [ -s "$name.sig" ] || { echo "signer produced no .sig" >&2; exit 1; }
-
-          # Prove the signature before anything downstream depends on it. This
-          # is the same check the updater makes on a user's machine.
-          python3 "$repo_dir/scripts/minisign-materialize.py" \
-            "$name.sig" "$repo_dir/src-tauri/tauri.conf.json" new.minisig tauri.pub
-          minisign -V -p tauri.pub -x new.minisig -m "$name"
-
-          gh release upload "$TAG" "$name" "$name.sig" --repo "$REPO" --clobber
 
           # latest.json records the signature too, for every entry pointing at
-          # this asset — the bare `linux-x86_64` alias as well as
-          # `linux-x86_64-appimage`, but NOT the deb and rpm entries, which are
-          # different files with their own signatures.
+          # each repacked asset — the bare `linux-<arch>` alias as well as
+          # `linux-<arch>-appimage`, but NOT the deb and rpm entries, which are
+          # different files with their own signatures. Downloaded once and
+          # uploaded once, so two arches cannot race each other's edit.
           gh release download "$TAG" --repo "$REPO" -p latest.json -D . --clobber
-          python3 "$repo_dir/scripts/latest-json-set-linux-sig.py" \
-            latest.json "$name.sig" linux-x86_64-appimage
+          for entry in "${repacked[@]}"; do
+            name="${entry%%|*}"
+            key="${entry##*|}"
+            python3 "$repo_dir/scripts/latest-json-set-linux-sig.py" \
+              latest.json "$name.sig" "$key"
+          done
           gh release upload "$TAG" latest.json --repo "$REPO" --clobber
 
           # Re-read what is on the release now, rather than trusting what we
           # think we uploaded, and check it the way a user's machine would.
-          rm -f "$name" "$name.sig" final.minisig
-          gh release download "$TAG" --repo "$REPO" -p "$name" -p "$name.sig" -D .
-          "$repo_dir/scripts/check-appimage-perms.sh" "$name"
-          python3 "$repo_dir/scripts/minisign-materialize.py" \
-            "$name.sig" "$repo_dir/src-tauri/tauri.conf.json" final.minisig tauri.pub
-          minisign -V -p tauri.pub -x final.minisig -m "$name"
-          echo "published asset is world-executable and its signature verifies"
+          for entry in "${repacked[@]}"; do
+            name="${entry%%|*}"
+            rm -f "$name" "$name.sig" "$name.final.minisig"
+            gh release download "$TAG" --repo "$REPO" -p "$name" -p "$name.sig" -D .
+            "$repo_dir/scripts/check-appimage-perms.sh" "$name"
+            python3 "$repo_dir/scripts/minisign-materialize.py" \
+              "$name.sig" "$repo_dir/src-tauri/tauri.conf.json" "$name.final.minisig" tauri.pub
+            minisign -V -p tauri.pub -x "$name.final.minisig" -m "$name"
+            echo "published $name is world-executable and its signature verifies"
+          done
 
   # Runs ONCE after every matrix leg has uploaded its assets (not per-leg —
   # all 6 platforms share one release) to finish two things tauri-action

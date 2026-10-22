@@ -250,6 +250,38 @@ jobs:
       - name: Build examples
         run: cargo build --examples --locked
 
+  # The AppImage permission scripts, which only ever run during a release and so
+  # have no other test coverage at all. It has mis-fired in both directions, and
+  # each time it cost a release: v1.4.0 shipped an untraversable AppImage
+  # because the check only walked `-type f`, and v1.5.0 was blocked by the
+  # opposite — ~150 invented findings, because the check read an
+  # `--appimage-extract` tree whose directories the extractor itself creates at
+  # 0700. Both are pinned by scripts/check-appimage-perms.test.sh.
+  #
+  # Cheap and self-contained: squashfs-tools and a handful of fixtures built on
+  # the fly, no Rust and no Node, so it runs in parallel with everything else.
+  appimage-guard:
+    name: AppImage permission scripts (tests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # mksquashfs to build the fixtures, unsquashfs for the guard itself to
+      # read stored modes with.
+      - name: Install squashfs-tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends squashfs-tools
+
+      - name: Test the guard
+        run: ./scripts/check-appimage-perms.test.sh
+
+      # The repack half. It rewrites an asset that is then re-signed and
+      # shipped, so what it must prove is not only that it corrects the mode but
+      # that it preserves everything else — v1.4.0 is the proof a repack can
+      # introduce a defect of its own.
+      - name: Test the repack
+        run: ./scripts/fix-appimage-perms.test.sh
+
   # Type-checks/builds/tests the Svelte 5 frontend.
   # Independent of the `rust` job above so the two run in parallel.
   frontend:
