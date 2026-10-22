@@ -56,6 +56,8 @@
 # script's own test uses on a Mac).
 set -euo pipefail
 
+here="$(cd "$(dirname "$0")" && pwd)"
+
 # GNU coreutils vs BSD/macOS, for the directory form only.
 mode_of() {
   stat -c '%a' "$1" 2>/dev/null || stat -f '%OLp' "$1"
@@ -90,41 +92,10 @@ rwx_to_octal() {
   printf '%s' "$oct"
 }
 
+# Where the squashfs starts. Shared with fix-appimage-perms.sh so the two can
+# never disagree about it — see that script for why the fallback matters.
 appimage_offset() {
-  local img="$1" off=""
-  # The runtime in the ELF header answers this, and it is the same number
-  # fix-appimage-perms.sh slices the runtime off at. Only works for an image
-  # built for this machine's architecture, so it is tried and not relied on.
-  if off="$("$img" --appimage-offset 2>/dev/null)" && [ -n "$off" ]; then
-    printf '%s' "$off"
-    return 0
-  fi
-  # Cross-architecture fallback: locate the squashfs superblock directly. The
-  # filesystem is APPENDED to the runtime, never interleaved, so the first
-  # VALIDATED superblock is it. Validated, not merely magic-matched: "hsqs" is
-  # four bytes and a 45 MB binary will contain it by chance, so the version and
-  # the block_size/block_log agreement are what make a hit real. (The two
-  # v1.5.0 images sit at 944632 and 936456, neither 4 KiB-aligned, which is why
-  # this scans rather than steps.)
-  python3 - "$img" <<'SUPERBLOCK_SCAN'
-import struct, sys
-
-with open(sys.argv[1], 'rb') as f:
-    data = f.read(32 << 20)
-
-pos = 0
-while True:
-    pos = data.find(b'hsqs', pos)
-    if pos < 0 or pos + 32 > len(data):
-        sys.exit('could not locate a squashfs superblock in %s' % sys.argv[1])
-    block_size, = struct.unpack_from('<I', data, pos + 12)
-    block_log, = struct.unpack_from('<H', data, pos + 22)
-    major, = struct.unpack_from('<H', data, pos + 28)
-    if major == 4 and 0 < block_log < 32 and block_size == (1 << block_log):
-        print(pos)
-        break
-    pos += 4
-SUPERBLOCK_SCAN
+  "$here/appimage-offset.sh" "$1"
 }
 
 check_image() {
