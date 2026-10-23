@@ -213,6 +213,7 @@ use serde::Serialize;
 
 use crate::git_write::WriteResult;
 use crate::i18n_err::{ierr, ierrp};
+use crate::procutil::{git_timeout, run_with, CancelToken, RunOptions};
 
 /// One `.gitmodules`-registered submodule row.
 #[derive(Serialize, specta::Type)]
@@ -581,9 +582,16 @@ struct GitOut {
 /// this module (like `git_remote.rs`) routes ALL of them through its
 /// WSL-aware builder rather than splitting this one helper in two.
 fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
-    let output = crate::wsl::git_command(path, args)
-        .output()
-        .map_err(|e| ierrp("err_remote.run_git_failed", &[("detail", &e.to_string())]))?;
+    run_git_c(path, args, None)
+}
+
+/// [`run_git`] with an optional [`CancelToken`]. `submodule update`/`add` get
+/// no hard timeout (they clone/fetch); everything else follows
+/// `procutil::git_timeout`.
+fn run_git_c(path: &str, args: &[&str], cancel: Option<&CancelToken>) -> Result<GitOut, String> {
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, &[]);
+    let output = run_with(cmd, RunOptions { timeout: git_timeout(args), cancel: cancel.cloned(), wsl: tag, ..Default::default() })
+        .map_err(|e| e.to_ierr("err_remote.run_git_failed"))?;
     Ok(GitOut {
         ok: output.status.success(),
         code: output.status.code(),
@@ -793,7 +801,9 @@ pub async fn submodule_update(path: String, submodule_path: Option<String>, recu
             args.push("--");
             args.push(p.as_str());
         }
-        match run_git(&path, &args) {
+        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
+        // Cancelled run cancel_cleanup::after_cancel.
+        match run_git_c(&path, &args, None) {
             Ok(out) if out.ok => ok_result(
                 match &submodule_path {
                     Some(p) => format!("Updated submodule {p}."),
@@ -936,7 +946,9 @@ pub async fn submodule_add(
         args.push(&repository_url);
         args.push(&submodule_path);
 
-        match run_git(&path, &args) {
+        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
+        // Cancelled run cancel_cleanup::after_cancel.
+        match run_git_c(&path, &args, None) {
             Ok(out) if out.ok => ok_result(
                 match &branch {
                     Some(b) => format!("Added submodule {submodule_path} (branch {b})."),
