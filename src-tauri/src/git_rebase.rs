@@ -124,7 +124,7 @@ use git2::{Oid, Repository, Sort};
 use serde::{Deserialize, Serialize};
 
 use crate::i18n_err::{ierr, ierrp};
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions, LOCAL_OP_TIMEOUT};
 
 // ---------------------------------------------------------------------------
 // Payload
@@ -238,9 +238,8 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
         cmd.env("GIT_EDITOR", "true")
             .env("GIT_SEQUENCE_EDITOR", "true");
     }
-    let o = cmd
-        .output()
-        .map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let o = run_with(cmd, RunOptions { timeout: git_timeout(args), ..Default::default() })
+        .map_err(|e| e.to_ierr("err_history.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -259,8 +258,16 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
 /// need Linux translation to run inside the distro (a flagged phase-2 item), so
 /// an interactive rebase on a WSL repo can still churn. No-op on non-WSL paths.
 fn git_worktree(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
+    git_worktree_c(path, args, no_editor, None)
+}
+
+/// [`git_worktree`] with an optional [`CancelToken`]: a cancel kills git's
+/// whole process tree (in-distro too) and surfaces as `err_misc.cancelled`.
+fn git_worktree_c(path: &str, args: &[&str], no_editor: bool, cancel: Option<&CancelToken>) -> Result<Out, String> {
     let envs: &[(&str, &str)] = if no_editor { &[("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")] } else { &[] };
-    let o = crate::wsl::git_command_env(path, args, envs).output().map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, envs);
+    let o = run_with(cmd, RunOptions { timeout: git_timeout(args), cancel: cancel.cloned(), wsl: tag, ..Default::default() })
+        .map_err(|e| e.to_ierr("err_history.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -274,17 +281,17 @@ fn git_worktree(path: &str, args: &[&str], no_editor: bool) -> Result<Out, Strin
 /// precomputed-todo `cp` invocation — see that command's doc comment) rather
 /// than the blanket `no_editor` no-op. Kept as its own tiny function (not a
 /// third parameter bolted onto `git`) so every EXISTING call site's signature
-/// is completely undisturbed.
-fn git_with_env(path: &str, args: &[&str], envs: &[(&str, &str)]) -> Result<Out, String> {
+/// is completely undisturbed. Always [`LOCAL_OP_TIMEOUT`] (`rebase -i` runs
+/// hooks and possibly gpg); `cancel` kills the whole tree.
+fn git_with_env(path: &str, args: &[&str], envs: &[(&str, &str)], cancel: Option<&CancelToken>) -> Result<Out, String> {
     let mut cmd = Command::new("git");
     cmd.no_console_window();
     cmd.arg("-C").arg(path).args(args);
     for (k, v) in envs {
         cmd.env(k, v);
     }
-    let o = cmd
-        .output()
-        .map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let o = run_with(cmd, RunOptions { timeout: Some(LOCAL_OP_TIMEOUT), cancel: cancel.cloned(), ..Default::default() })
+        .map_err(|e| e.to_ierr("err_history.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -725,7 +732,9 @@ pub async fn rebase_start(path: String, onto: String) -> RebaseResult {
         // independent of what the user's global gitconfig happens to set.
         let args: Vec<&str> = vec!["rebase", "--no-autostash", "--end-of-options", &onto];
 
-        let out = match git_worktree(&path, &args, true) {
+        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
+        // Cancelled run cancel_cleanup::after_cancel.
+        let out = match git_worktree_c(&path, &args, true, None) {
             Ok(o) => o,
             Err(e) => {
                 return RebaseResult {
@@ -780,7 +789,9 @@ pub async fn rebase_continue(path: String) -> RebaseResult {
         // possible even if it can't run.
         let backup = crate::safety::snapshot(&repo).ok();
 
-        let out = match git_worktree(&path, &["rebase", "--continue"], true) {
+        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
+        // Cancelled run cancel_cleanup::after_cancel.
+        let out = match git_worktree_c(&path, &["rebase", "--continue"], true, None) {
             Ok(o) => o,
             Err(e) => {
                 return RebaseResult {
@@ -1072,10 +1083,13 @@ pub async fn rebase_interactive_start(path: String, onto: String, todo: Vec<Todo
         // position; there is nothing branch-name-specific about how `-i` uses it).
         let onto_oid_str = onto_oid.to_string();
         let seq_editor = format!("cp {}", shell_single_quote(&todo_path.to_string_lossy()));
+        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
+        // Cancelled run cancel_cleanup::after_cancel.
         let out = git_with_env(
             &path,
             &["rebase", "-i", "--end-of-options", &onto_oid_str],
             &[("GIT_SEQUENCE_EDITOR", seq_editor.as_str()), ("GIT_EDITOR", "true")],
+            None,
         );
         // Best-effort cleanup, always — git has already copied the content into
         // .git/rebase-merge/git-rebase-todo by the time this invocation returns.
