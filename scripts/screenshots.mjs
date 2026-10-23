@@ -57,8 +57,13 @@ try {
 
   browser = await chromium.launch();
 
+  // Shortcut hints follow the platform (⌘K on macOS, Ctrl+K elsewhere — see
+  // src/keymap/platform.ts), so pin a macOS user agent: the shots must not
+  // depend on which OS regenerates them, and the docs spell shortcuts the
+  // macOS way.
+  const MAC_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15";
   async function newPage() {
-    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, userAgent: MAC_UA });
     return ctx.newPage();
   }
   async function boot(page) {
@@ -85,8 +90,15 @@ try {
   await page.keyboard.press("Escape");
   await sleep(400);
 
-  await page.mouse.click(760, 235); // select a commit -> detail panel + diff
-  await sleep(1300);
+  // Select a commit -> detail panel + diff. Design mode's signature badge is a
+  // deterministic MOCK per row (detail.svelte.ts), and some rows mock "bad" —
+  // not what the hero shot should show — so walk down until a row reads good.
+  for (let row = 0; row < 12; row++) {
+    await page.mouse.click(760, 235 + 26 * row);
+    await sleep(500);
+    if (await page.locator("#detail .gpg.good").count()) break;
+  }
+  await sleep(800);
   await shot(page, "commit-detail");
 
   await page.keyboard.press("Meta+k");
