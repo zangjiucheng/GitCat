@@ -1043,7 +1043,112 @@ pub fn bisect_run_cancel(state: State<BisectRunState>) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use super::parse_first_bad;
+    use super::{parse_first_bad, try_run_bisect, BisectRunState};
+    use crate::procutil::CancelToken;
+    use std::time::{Duration, Instant};
+
+    // -----------------------------------------------------------------------
+    // The cancel path the app actually uses: bisect_run_cancel ->
+    // BisectRunState::request_cancel -> the token try_run_bisect installed in
+    // `current`. tests/bisect.rs can only drive run_bisect_cancellable with a
+    // token it owns (request_cancel is private), so if this wiring broke the
+    // integration tests would still pass while the real Cancel button waited
+    // out the whole test command.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn request_cancel_cancels_the_installed_token() {
+        let state = BisectRunState::default();
+        let token = CancelToken::new();
+        state.set_current(Some(token.clone()));
+        state.request_cancel();
+        assert!(token.is_cancelled(), "request_cancel must reach the in-flight run's token");
+        assert!(state.is_cancelled());
+
+        // Once the run cleared `current`, a later cancel must not touch a stale token.
+        let next = CancelToken::new();
+        state.set_current(None);
+        state.request_cancel();
+        assert!(!next.is_cancelled());
+    }
+
+    /// A throwaway repo with a few commits and `git bisect start HEAD <root>`
+    /// already run. Plain git CLI, since tests/common::TempRepo lives in the
+    /// integration-test crate and is unreachable from here. Auto-removed on drop.
+    struct BisectDir(std::path::PathBuf);
+
+    impl BisectDir {
+        fn init() -> Self {
+            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+            let dir = std::env::temp_dir().join(format!("gitcat-bisect-unit-{}-{}", std::process::id(), nanos));
+            std::fs::create_dir_all(&dir).expect("mkdir temp repo");
+            let me = BisectDir(dir);
+            me.git(&["init", "-q"]);
+            for i in 0..4 {
+                std::fs::write(me.0.join("f.txt"), format!("line {i}\n")).unwrap();
+                me.git(&["add", "-A"]);
+                me.git(&["commit", "-q", "--no-verify", "-m", &format!("c{i}")]);
+            }
+            let root = me.git(&["rev-list", "--max-parents=0", "HEAD"]);
+            me.git(&["bisect", "start", "HEAD", root.trim()]);
+            me
+        }
+        fn git(&self, args: &[&str]) -> String {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&self.0)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .output()
+                .expect("run git");
+            assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        }
+        fn path(&self) -> String {
+            self.0.to_string_lossy().to_string()
+        }
+    }
+
+    impl Drop for BisectDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn request_cancel_kills_the_test_command_try_run_bisect_is_running() {
+        let repo = BisectDir::init();
+        let path = repo.path();
+        let command = if cfg!(windows) { "ping -n 30 127.0.0.1 >NUL" } else { "sleep 30" };
+        let state = BisectRunState::default();
+
+        let started = Instant::now();
+        let (result, steps) = std::thread::scope(|s| {
+            let run = s.spawn(|| {
+                let mut n = 0usize;
+                let r = try_run_bisect(&state, &path, command, || state.is_cancelled(), |_| n += 1);
+                (r, n)
+            });
+            // Wait for try_run_bisect to install its token, then give the test
+            // command a moment to actually be running before cancelling.
+            while state.current.lock().unwrap().is_none() {
+                assert!(started.elapsed() < Duration::from_secs(5), "try_run_bisect never installed a token");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_millis(500));
+            state.request_cancel();
+            run.join().expect("try_run_bisect thread panicked")
+        });
+        let elapsed = started.elapsed();
+
+        let result = result.expect("the guard was free, so the run must have started");
+        assert!(elapsed < Duration::from_secs(5), "request_cancel should kill the running test command, took {elapsed:?}");
+        assert_eq!(steps, 0, "a killed test command must not mark the commit");
+        assert!(result.first_bad.is_none());
+        assert!(result.message.to_lowercase().contains("cancel"), "message should say it was cancelled: {}", result.message);
+        assert!(state.current.lock().unwrap().is_none(), "try_run_bisect must clear its token on the way out");
+        assert!(!state.is_cancelled(), "the cancel flag must not leak into the next run");
+    }
 
     fn log(lines: &[&str]) -> Vec<String> {
         lines.iter().map(|s| s.to_string()).collect()
