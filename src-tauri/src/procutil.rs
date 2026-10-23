@@ -272,10 +272,16 @@ impl RunError {
 /// group leader is never reaped while we may still `killpg` its pgid (see
 /// `KillTree`).
 ///
-/// Known limit, the same as before this runner existed: on a NORMAL exit, a
-/// grandchild that escaped the job/group (or is a daemon, e.g. fsmonitor) and
-/// still holds our stdout/stderr pipe keeps the reader threads — and so this
-/// call — from returning until it closes the pipe.
+/// Known limit, the same as before this runner existed: a descendant that
+/// escaped the tree and still holds our stdout/stderr pipe keeps the reader
+/// threads — and so this call — from returning until it closes the pipe. On a
+/// NORMAL exit that is any daemon (e.g. fsmonitor) or escapee, on every
+/// platform. On Unix it also applies to timeout and cancel: `killpg` reaches
+/// only the process group, so a descendant that called `setsid`/`setpgid`
+/// (ssh and `git-remote-*` may) survives it and blocks the return. The Windows
+/// Job Object (membership can't be left without BREAKAWAY_OK) and the WSL
+/// `GITCAT_OP` sweep (matched by inherited env, whatever the group) don't have
+/// that gap.
 pub fn run_with(mut cmd: Command, opts: RunOptions<'_>) -> Result<Output, RunError> {
     let RunOptions { stdin, timeout, cancel, on_stdout_line, on_stderr_line, stall, wsl, discard_output } = opts;
     debug_assert!(
@@ -384,7 +390,9 @@ pub fn run_with(mut cmd: Command, opts: RunOptions<'_>) -> Result<Output, RunErr
                 Ok(Output { status, stdout, stderr })
             }
             Err(e) => {
-                // The tree is dead, so both pipes are closed and these return.
+                // The tree is dead, so both pipes are closed and these return —
+                // except, on Unix, when a descendant left our process group
+                // still holding a pipe (the known limit in the doc above).
                 join(stdout_reader);
                 join(stderr_reader);
                 Err(e)
@@ -526,8 +534,11 @@ fn cancel_tree(child: &mut Child, tree: Option<&KillTree>, wsl: Option<&crate::w
 /// incomplete tree kill on a timeout, and a Toolhelp snapshot per spawn to
 /// close the window isn't worth paying on every `git config`.
 ///
-/// Unix: the child leads a fresh process group (`process_group(0)`), which its
-/// descendants inherit, and `killpg` signals them all. Invariant: `killpg` is
+/// Unix: the child leads a fresh session (`setsid`, so it also has no
+/// controlling terminal to be job-control-stopped on — see `prepare`) and so a
+/// fresh process group, which its descendants inherit, and `killpg` signals
+/// them all. A descendant that `setsid`/`setpgid`s itself out of the group is
+/// not reached (see the known limit on [`run_with`]). Invariant: `killpg` is
 /// only ever called while the leader is unreaped — alive or a zombie — so its
 /// pgid can't have been reused; `run_with` never calls `try_wait`/`wait` on the
 /// cancel/timeout paths before the final `kill()`.
@@ -681,7 +692,25 @@ struct KillTree {
 impl KillTree {
     fn prepare(cmd: &mut Command, _suspended: bool) {
         use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
+        // A new SESSION, not just `process_group(0)`: a background group that
+        // still shares GitCat's controlling terminal (launched from a shell,
+        // e.g. `pnpm tauri dev`) gets SIGTTIN/SIGTTOU-stopped the moment ssh's
+        // host-key question, its passphrase prompt or pinentry-curses opens
+        // /dev/tty — a silent hang, and a stopped process ignores the cancel's
+        // SIGTERM. With no controlling terminal, /dev/tty fails to open and
+        // they fall back (SSH_ASKPASS) or error out, exactly as they already
+        // do when GitCat is launched from the desktop. The session leader's
+        // pgid is its pid, so `killpg(child.id())` is unchanged.
+        // SAFETY: setsid is async-signal-safe, and it cannot fail with EPERM
+        // here: the freshly forked child is never already a group leader.
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
     }
 
     fn attach(child: &mut Child, _suspended: bool) -> std::io::Result<Option<Self>> {
@@ -952,7 +981,8 @@ mod tests {
     /// the inherited stdout: Windows `ping` is a separate process of `cmd`,
     /// and the trailing `; :` stops `sh` from exec-ing `sleep` in its own
     /// place. Killing only the leader would leave the pipe open and hang the
-    /// reader join — returning promptly at all proves the whole tree died.
+    /// reader join — returning promptly at all proves the whole tree (this
+    /// one stays in its group; see the known limit on `run_with`) died.
     fn grandchild_holding_stdout() -> Command {
         if cfg!(target_os = "windows") {
             shell("ping -n 30 127.0.0.1")
@@ -1040,6 +1070,20 @@ mod tests {
         let out = run_with(echo_command("hi"), RunOptions { cancel: Some(token), ..Default::default() }).expect("never cancelled");
         assert!(out.status.success());
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unix_child_leads_its_own_session() {
+        // Session leader (sid == pid) means no controlling terminal, so a
+        // /dev/tty prompt fails fast instead of SIGTTIN-stopping the child when
+        // GitCat runs from a shell. Field 6 of /proc/<pid>/stat is the sid
+        // (the `(sh)` comm field has no spaces).
+        let out = run_with(shell(r#"read -r _ _ _ _ _ sid _ < /proc/$$/stat; echo "$$ $sid""#), RunOptions::default()).expect("ran");
+        let text = String::from_utf8_lossy(&out.stdout);
+        let ids: Vec<&str> = text.split_whitespace().collect();
+        assert_eq!(ids.len(), 2, "unexpected output: {text:?}");
+        assert_eq!(ids[0], ids[1], "child is not a session leader: {text:?}");
     }
 
     // Drive `feed_progress` chunk-by-chunk (mirroring run_with's reader loop,
