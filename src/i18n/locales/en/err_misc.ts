@@ -13,6 +13,9 @@ export default {
   not_a_valid_commit: "Not a valid commit: {rev} ({detail})",
   could_not_run_git: "Could not run git: {detail}",
   git_exited_with_status: "git exited with status {code}",
+  // procutil.rs (RunError::to_ierr) — shared by every run_with caller.
+  git_timed_out: "git timed out after {secs}s",
+  cancelled: "Cancelled.",
 
   // file_history.rs
   path_does_not_exist: "{path} does not exist at {short}.",

@@ -10,6 +10,9 @@ export default {
   not_a_valid_commit: "不是有效的提交：{rev}（{detail}）",
   could_not_run_git: "无法运行 git：{detail}",
   git_exited_with_status: "git 退出，状态码 {code}",
+  // procutil.rs（RunError::to_ierr）—— 所有 run_with 调用方共用。
+  git_timed_out: "git 运行超时（{secs} 秒）",
+  cancelled: "已取消。",
 
   // file_history.rs
   path_does_not_exist: "{path} 在 {short} 处不存在。",

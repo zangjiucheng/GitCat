@@ -114,7 +114,10 @@ tokio = { version = "1", features = ["tracing"] }
 # Already in the tree (tauri, git2, ...), so this promotes a locked version
 # to a direct dependency rather than adding one.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security", "Win32_System_Diagnostics_ToolHelp"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # A separate profile for local flamegraph profiling (samply, WPA, etc. —
 # see run()'s own doc comment in lib.rs for the profiling story this is
