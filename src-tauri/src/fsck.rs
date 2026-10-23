@@ -94,7 +94,7 @@ use serde::Serialize;
 
 use crate::i18n_err::ierrp;
 use crate::model::Person;
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions};
 
 /// Defense-in-depth cap on the returned list — see module doc; not expected
 /// to ever bind (dangling commits are inherently a small set).
@@ -148,14 +148,16 @@ pub struct DanglingCommits {
 #[tauri::command]
 #[specta::specta]
 pub async fn dangling_commits(path: String) -> Result<DanglingCommits, String> {
-    crate::blocking::run_blocking(move || dangling_commits_inner(&path)).await
+    // FOLLOW-UP(jobs): register + supersede-on-new-query cancel
+    crate::blocking::run_blocking(move || dangling_commits_inner(&path, None)).await
 }
 
-fn dangling_commits_inner(path: &str) -> Result<DanglingCommits, String> {
+fn dangling_commits_inner(path: &str, cancel: Option<&CancelToken>) -> Result<DanglingCommits, String> {
     let repo = crate::trust::open_repo(path)
         .map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))?;
 
-    let out = run_git(path, &["fsck", "--dangling", "--no-reflogs"])?;
+    // git_timeout gives fsck LONG_OP_TIMEOUT: it walks the whole object db.
+    let out = run_git(path, &["fsck", "--dangling", "--no-reflogs"], cancel)?;
     if !out.ok {
         return Err(git_msg(&out));
     }
@@ -212,16 +214,11 @@ struct Out {
 /// English porcelain strings that (like every other git CLI message) are
 /// gettext-translatable — without locale-pinning, a non-English git install
 /// could silently produce zero parsed rows with no error at all.
-fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
-    let o = std::process::Command::new("git")
-        .no_console_window()
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .env("LC_ALL", "C")
-        .env("LANGUAGE", "")
-        .output()
-        .map_err(|e| ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())]))?;
+fn run_git(path: &str, args: &[&str], cancel: Option<&CancelToken>) -> Result<Out, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.no_console_window().arg("-C").arg(path).args(args).env("LC_ALL", "C").env("LANGUAGE", "");
+    let opts = RunOptions { timeout: git_timeout(args), cancel: cancel.cloned(), ..Default::default() };
+    let o = run_with(cmd, opts).map_err(|e| e.to_ierr("err_misc.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code(),

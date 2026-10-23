@@ -57,7 +57,7 @@ use std::collections::HashMap;
 use std::process::Command;
 
 use crate::i18n_err::ierrp;
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{git_timeout, run_with, NoConsoleWindowExt, RunOptions};
 
 /// How far back the whole walk looks — "the last year", matching the
 /// article's own example window.
@@ -456,13 +456,10 @@ struct Out {
 }
 
 fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
-    let o = Command::new("git")
-        .no_console_window()
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()
-        .map_err(|e| ierrp("err_repo.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let mut cmd = Command::new("git");
+    cmd.no_console_window().arg("-C").arg(path).args(args);
+    let opts = RunOptions { timeout: git_timeout(args), ..Default::default() };
+    let o = run_with(cmd, opts).map_err(|e| e.to_ierr("err_repo.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code(),

@@ -52,7 +52,7 @@
 use std::process::{Command, Stdio};
 
 use crate::i18n_err::ierrp;
-use crate::procutil::{output_with_timeout, NoConsoleWindowExt, SUBPROCESS_TIMEOUT};
+use crate::procutil::{output_with_timeout, run_with, NoConsoleWindowExt, RunError, RunOptions, SUBPROCESS_TIMEOUT};
 
 /// `path` -> `(distro, linux_path)` when `path` is a WSL UNC path, checking
 /// both the modern `wsl.localhost` host and the legacy `wsl$` alias, and
@@ -374,15 +374,17 @@ pub fn parse_status_porcelain_v2(raw: &str) -> Vec<StatusEntry> {
 /// problem.
 pub fn wsl_status(path: &str) -> Option<Result<Vec<StatusEntry>, String>> {
     wsl_target(path)?;
-    let cmd = git_command(path, &["status", "--porcelain=v2", "-z", "--untracked-files=all", "--find-renames"]);
-    let out = output_with_timeout(cmd, SUBPROCESS_TIMEOUT);
+    // Tagged, so a timeout also kills the git inside the distro (killing
+    // wsl.exe alone doesn't reliably do that).
+    let (cmd, tag) = git_command_tagged(path, &["status", "--porcelain=v2", "-z", "--untracked-files=all", "--find-renames"], &[]);
+    let out = run_with(cmd, RunOptions { timeout: Some(SUBPROCESS_TIMEOUT), wsl: tag, ..Default::default() });
     Some(match out {
         Ok(o) if o.status.success() => Ok(parse_status_porcelain_v2(&String::from_utf8_lossy(&o.stdout))),
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+        Err(RunError::TimedOut(_)) => {
             Err(ierrp("err_misc.wsl_status_timed_out", &[("timeout", &format!("{SUBPROCESS_TIMEOUT:?}"))]))
         }
-        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())])),
+        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.into_io().to_string())])),
     })
 }
 
@@ -416,8 +418,8 @@ pub fn wsl_status(path: &str) -> Option<Result<Vec<StatusEntry>, String>> {
 pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize, usize)>, String>> {
     wsl_target(path)?;
     let revspec = format!("{branch}...{branch}@{{upstream}}");
-    let cmd = git_command(path, &["rev-list", "--left-right", "--count", &revspec]);
-    Some(match output_with_timeout(cmd, SUBPROCESS_TIMEOUT) {
+    let (cmd, tag) = git_command_tagged(path, &["rev-list", "--left-right", "--count", &revspec], &[]);
+    Some(match run_with(cmd, RunOptions { timeout: Some(SUBPROCESS_TIMEOUT), wsl: tag, ..Default::default() }) {
         Ok(o) if o.status.success() => {
             let text = String::from_utf8_lossy(&o.stdout);
             match parse_ahead_behind_count(&text) {
@@ -431,10 +433,10 @@ pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize
         // comment on the Ok(None) case).
         Ok(o) if String::from_utf8_lossy(&o.stderr).contains("no upstream") => Ok(None),
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+        Err(RunError::TimedOut(_)) => {
             Err(ierrp("err_misc.wsl_ahead_behind_timed_out", &[("timeout", &format!("{SUBPROCESS_TIMEOUT:?}"))]))
         }
-        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())])),
+        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.into_io().to_string())])),
     })
 }
 
@@ -476,14 +478,14 @@ pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize
 pub fn wsl_create_ref(path: &str, ref_name: &str, oid: &str, reason: &str) -> Option<Result<(), String>> {
     wsl_target(path)?;
     const ZERO_OID: &str = "0000000000000000000000000000000000000000";
-    let cmd = git_command(path, &["update-ref", "-m", reason, ref_name, oid, ZERO_OID]);
-    Some(match output_with_timeout(cmd, SUBPROCESS_TIMEOUT) {
+    let (cmd, tag) = git_command_tagged(path, &["update-ref", "-m", reason, ref_name, oid, ZERO_OID], &[]);
+    Some(match run_with(cmd, RunOptions { timeout: Some(SUBPROCESS_TIMEOUT), wsl: tag, ..Default::default() }) {
         Ok(o) if o.status.success() => Ok(()),
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+        Err(RunError::TimedOut(_)) => {
             Err(ierrp("err_misc.wsl_create_ref_timed_out", &[("timeout", &format!("{SUBPROCESS_TIMEOUT:?}"))]))
         }
-        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())])),
+        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.into_io().to_string())])),
     })
 }
 

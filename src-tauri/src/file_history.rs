@@ -70,7 +70,7 @@ use serde::Serialize;
 
 use crate::i18n_err::{ierr, ierrp};
 use crate::model::Person;
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions};
 
 /// Cap on returned history entries. Duplicated (own constant, not shared —
 /// see blame.rs's MAX_BLAME_LINES / commands.rs's MAX_FILES precedent) rather
@@ -145,10 +145,11 @@ pub struct FileHistory {
 #[tauri::command]
 #[specta::specta]
 pub async fn file_history(path: String, file: String, at_commit: Option<String>) -> Result<FileHistory, String> {
-    crate::blocking::run_blocking(move || file_history_inner(&path, &file, at_commit.as_deref())).await
+    // FOLLOW-UP(jobs): register + supersede-on-new-query cancel
+    crate::blocking::run_blocking(move || file_history_inner(&path, &file, at_commit.as_deref(), None)).await
 }
 
-fn file_history_inner(path: &str, file: &str, at_commit: Option<&str>) -> Result<FileHistory, String> {
+fn file_history_inner(path: &str, file: &str, at_commit: Option<&str>, cancel: Option<&CancelToken>) -> Result<FileHistory, String> {
     validate_path(file)?;
 
     let repo = crate::trust::open_repo(path)
@@ -210,6 +211,7 @@ fn file_history_inner(path: &str, file: &str, at_commit: Option<&str>) -> Result
             "--",
             file,
         ],
+        cancel,
     )?;
     if !out.ok {
         return Err(git_msg(&out));
@@ -241,19 +243,19 @@ struct Out {
     stderr: String,
 }
 
-fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
-    let o = Command::new("git")
-        .no_console_window()
+fn run_git(path: &str, args: &[&str], cancel: Option<&CancelToken>) -> Result<Out, String> {
+    let mut cmd = Command::new("git");
+    cmd.no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)
         // In a partial clone, `--follow`'s rename detection makes git fetch
         // missing blobs from the promisor remote on its own. A credential
-        // prompt there must fail rather than wait on a stdin nobody answers.
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|e| ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())]))?;
+        // prompt there must fail rather than wait on a stdin nobody answers
+        // (run_with also gives the child a null stdin).
+        .env("GIT_TERMINAL_PROMPT", "0");
+    let opts = RunOptions { timeout: git_timeout(args), cancel: cancel.cloned(), ..Default::default() };
+    let o = run_with(cmd, opts).map_err(|e| e.to_ierr("err_misc.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code(),
