@@ -47,7 +47,7 @@ function err(error: string): { status: "error"; error: string } {
   return { status: "error", error };
 }
 function result(partial: Partial<RemoteResult>): RemoteResult {
-  return { ok: true, message: "", backupRef: null, ...partial };
+  return { ok: true, message: "", backupRef: null, cancelled: false, ...partial };
 }
 
 const ORIGIN: RemoteEntry = { name: "origin", url: "https://example.com/acme/gitcat.git", pushUrl: null };

@@ -2585,56 +2585,83 @@ function clearSyncButtonsBusy(){
     if(b.dataset.label){ b.innerHTML=b.dataset.label; delete b.dataset.label; }
   });
 }
+// Design mode (no backend): the same progress modal, fed canned output by
+// beginDemo, so Cancel and the stalled banner can be seen in a browser too.
+async function demoSync(btnId,busyLabel,phase,onOk){
+  if(syncBusy) return; syncBusy=true;
+  setSyncButtonsBusy(btnId,busyLabel);
+  try{
+    const r=await syncProgressCtrl.beginDemo(busyLabel,phase);
+    if(r.ok) onOk();
+    else if(r.cancelled){ Tama.event("mutation.cancel"); Tama.say(syncProgressCtrl.cancelNote,5000); }
+  }finally{ syncBusy=false; clearSyncButtonsBusy(); }
+}
+// A cancelled op (#133) is the user's choice, not a failure: no warn — Tama
+// just relays what the backend cleaned up (and, for pull, that Undo restores
+// the pre-pull snapshot).
+function syncCancelled(res){ Tama.event("mutation.cancel"); Tama.say(be(res.message),5000); }
 async function doFetch(){
-  if(!IN_TAURI){ Tama.set("hint"); Tama.say(t("legacy.fetched_demo"),3200); return; }
+  if(!IN_TAURI){ await demoSync("fetchBtn",t("topbar.fetching"),"fetch",()=>{ Tama.set("hint"); Tama.say(t("legacy.fetched_demo"),3200); }); return; }
   if(!CUR_REPO){ Tama.warn(t("legacy.open_repo_first")); return; }
   if(syncBusy) return; syncBusy=true;
   setSyncButtonsBusy("fetchBtn",t("topbar.fetching"));
   Tama.set("syncing"); Tama.say(t("legacy.fetching"));
   // Open the live-progress modal and start listening BEFORE invoking, so the
-  // first "remote: Counting objects…" segment isn't missed. fetch_stream is the
+  // first "remote: Counting objects…" segment (and the job-started event that
+  // gives the modal its Cancel target) isn't missed. fetch_stream is the
   // streaming twin of fetch (same result); the ambient auto-fetch timer and the
   // pull-with-strategy flows still use the silent, non-modal `fetch`.
-  await syncProgressCtrl.begin(t("topbar.fetching"),"fetch");
+  const repo=CUR_REPO;
+  await syncProgressCtrl.begin(t("topbar.fetching"),"fetch",repo);
   try{
-    const res=await tinvoke("fetch_stream",{path:CUR_REPO,remote:null});
-    syncProgressCtrl.settle(!!(res&&res.ok),be(res&&res.message)||"");
-    if(res&&res.ok){ await sidebarCtrl.refresh(CUR_REPO); Tama.set("hint"); Tama.say(be(res.message)||t("legacy.fetched"),3200); }
+    const res=await tinvoke("fetch_stream",{path:repo,remote:null});
+    syncProgressCtrl.settle(!!(res&&res.ok),be(res&&res.message)||"",!!(res&&res.cancelled));
+    if(res&&res.ok){ await sidebarCtrl.refresh(repo); Tama.set("hint"); Tama.say(be(res.message)||t("legacy.fetched"),3200); }
+    else if(res&&res.cancelled){ await sidebarCtrl.refresh(repo); syncCancelled(res); }
     else Tama.warn(be(res&&res.message)||t("legacy.fetch_failed"));
   }catch(e){ syncProgressCtrl.settle(false,be(String(e))); Tama.warn(t("legacy.fetch_failed_reason",{error:e})); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPull(){
-  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say(t("legacy.pulled_demo"),3200); cheer(t("legacy.cheer_pulled_demo"),tamaPose("happy")); return; }
+  if(!IN_TAURI){ await demoSync("pullBtn",t("topbar.pulling"),"pull",()=>{ Tama.set("celebrate"); Tama.say(t("legacy.pulled_demo"),3200); cheer(t("legacy.cheer_pulled_demo"),tamaPose("happy")); }); return; }
   if(!CUR_REPO){ Tama.warn(t("legacy.open_repo_first")); return; }
   if(syncBusy) return; syncBusy=true;
   setSyncButtonsBusy("pullBtn",t("topbar.pulling"));
   Tama.set("syncing"); Tama.say(t("legacy.pulling"));
-  await syncProgressCtrl.begin(t("topbar.pulling"),"pull");
+  const repo=CUR_REPO;
+  await syncProgressCtrl.begin(t("topbar.pulling"),"pull",repo);
   try{
-    const res=await tinvoke("pull_stream",{path:CUR_REPO});
-    syncProgressCtrl.settle(!!(res&&res.ok),be(res&&res.message)||"");
+    const res=await tinvoke("pull_stream",{path:repo});
+    syncProgressCtrl.settle(!!(res&&res.ok),be(res&&res.message)||"",!!(res&&res.cancelled));
     if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(be(res.message)||t("legacy.pulled"),3200); cheer(be(res.message)||t("legacy.pulled"),tamaPose("happy")); }
+    // A cancel can land mid-merge; reload so the graph shows whatever state
+    // the cleanup left (normally exactly the pre-pull one).
+    else if(res&&res.cancelled){ await reloadGraph(true); syncCancelled(res); }
     else Tama.warn(be(res&&res.message)||t("legacy.pull_failed"));
   }catch(e){ syncProgressCtrl.settle(false,be(String(e))); Tama.warn(t("legacy.pull_failed_reason",{error:e})); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 async function doPush(){
-  if(!IN_TAURI){ Tama.set("celebrate"); Tama.say(t("legacy.pushed_demo"),3200); cheer(t("legacy.cheer_pushed_demo"),tamaPose("happy")); return; }
+  if(!IN_TAURI){ await demoSync("pushBtn",t("topbar.pushing"),"push",()=>{ Tama.set("celebrate"); Tama.say(t("legacy.pushed_demo"),3200); cheer(t("legacy.cheer_pushed_demo"),tamaPose("happy")); }); return; }
   if(!CUR_REPO){ Tama.warn(t("legacy.open_repo_first")); return; }
   if(syncBusy) return; syncBusy=true;
   setSyncButtonsBusy("pushBtn",t("topbar.pushing"));
   Tama.set("syncing"); Tama.say(t("legacy.pushing"));
+  const repo=CUR_REPO;
+  await syncProgressCtrl.begin(t("topbar.pushing"),"push",repo);
   try{
-    const res=await tinvoke("push",{path:CUR_REPO});
+    const res=await tinvoke("push_stream",{path:repo});
+    syncProgressCtrl.settle(!!(res&&res.ok),be(res&&res.message)||"",!!(res&&res.cancelled));
     // reloadGraph (not just sidebarCtrl.refresh) so the graph's origin/* ref
     // label moves forward and the branch pill's ahead/behind resets — a push
     // moves the remote-tracking ref but not local HEAD, so nothing else picks
     // it up. reloadGraph's tail refreshes the sidebar too (and the incremental
-    // path keeps this cheap — no commits changed).
+    // path keeps this cheap — no commits changed). Also after a cancel: the
+    // remote may have taken the push anyway.
     if(res&&res.ok){ await reloadGraph(true); Tama.set("celebrate"); Tama.say(be(res.message)||t("legacy.pushed"),3200); cheer(be(res.message)||t("legacy.pushed"),tamaPose("happy")); }
+    else if(res&&res.cancelled){ await reloadGraph(true); syncCancelled(res); }
     else Tama.warn(be(res&&res.message)||t("legacy.push_failed"));
-  }catch(e){ Tama.warn(t("legacy.push_failed_reason",{error:e})); console.error(e); }
+  }catch(e){ syncProgressCtrl.settle(false,be(String(e))); Tama.warn(t("legacy.push_failed_reason",{error:e})); console.error(e); }
   finally{ syncBusy=false; clearSyncButtonsBusy(); }
 }
 $("#fetchBtn").addEventListener("click",doFetch);

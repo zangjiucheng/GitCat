@@ -253,10 +253,10 @@ fn git_remote_fetch_and_push_route_through_the_wsl_distros_own_git() {
     let (ok, _, err) = repo.wsl_git(&["remote", "add", "origin", &bare.linux_path]);
     assert!(ok, "fixture setup (remote add) failed: {err}");
 
-    let fetch_result = tauri::async_runtime::block_on(git_remote::fetch(path.clone(), Some("origin".to_string())));
+    let fetch_result = git_remote::fetch_core(&path, Some("origin"), false, git_remote::OpCtx::default());
     assert!(fetch_result.ok, "fetch should route through wsl and succeed: {}", fetch_result.message);
 
-    let push_result = tauri::async_runtime::block_on(git_remote::push(path.clone()));
+    let push_result = git_remote::push_core(&path, false, git_remote::OpCtx::default());
     assert!(push_result.ok, "push should route through wsl and succeed: {}", push_result.message);
 
     // Prove it actually landed on the "remote" (not a silent success).

@@ -6,7 +6,11 @@
 mod common;
 
 use common::TempRepo;
-use gitcat_lib::git_remote::{current_upstream, fetch, force_push, pull, push, push_branch, reset_branch_to_upstream};
+use gitcat_lib::git_remote::{
+    current_upstream, fetch_core, force_push, pull_core, push_branch, push_core, reset_branch_to_upstream, OpCtx,
+};
+use gitcat_lib::procutil::{CancelToken, StallHook};
+use std::time::{Duration, Instant};
 
 /// A bare "origin" + a local clone of it (remote already configured, one
 /// commit already pushed) — the shared starting point for every test here.
@@ -39,7 +43,7 @@ fn fetch_updates_remote_tracking_refs_without_touching_local_head() {
     let head_before = local.rev("HEAD");
     assert_ne!(local.rev("refs/remotes/origin/main"), Some(new_tip.clone()));
 
-    let res = tauri::async_runtime::block_on(fetch(local.path(), None));
+    let res = fetch_core(&local.path(), None, false, OpCtx::default());
     assert!(res.ok, "fetch failed: {}", res.message);
     assert_eq!(local.rev("refs/remotes/origin/main"), Some(new_tip));
     assert_eq!(local.rev("HEAD"), head_before, "fetch must never move local HEAD");
@@ -49,7 +53,7 @@ fn fetch_updates_remote_tracking_refs_without_touching_local_head() {
 #[test]
 fn fetch_named_remote_validates_the_name() {
     let (_origin, local) = origin_and_clone("fetch_validate");
-    let res = tauri::async_runtime::block_on(fetch(local.path(), Some("--upload-pack=evil".to_string())));
+    let res = fetch_core(&local.path(), Some("--upload-pack=evil"), false, OpCtx::default());
     assert!(!res.ok);
     assert!(res.message.contains("flag"), "expected a flag-injection refusal, got: {}", res.message);
 }
@@ -61,7 +65,7 @@ fn pull_fast_forwards_and_snapshots_first() {
     let new_tip = other.commit("g.txt", "1\n", "c1");
     other.must(&["push", "-q", "origin", "main"]);
 
-    let res = tauri::async_runtime::block_on(pull(local.path()));
+    let res = pull_core(&local.path(), false, OpCtx::default());
     assert!(res.ok, "pull failed: {}", res.message);
     assert_eq!(local.rev("HEAD"), Some(new_tip));
     assert!(res.backup_ref.is_some(), "pull moves local HEAD, so it must snapshot first");
@@ -77,7 +81,7 @@ fn pull_refuses_to_merge_on_divergence_ff_only() {
     // Local now has an UNPUSHED commit of its own -> the two histories diverge.
     let local_tip = local.commit("h.txt", "local\n", "my commit");
 
-    let res = tauri::async_runtime::block_on(pull(local.path()));
+    let res = pull_core(&local.path(), false, OpCtx::default());
     assert!(!res.ok, "a diverged ff-only pull must be refused, not silently merged");
     assert_eq!(local.rev("HEAD"), Some(local_tip), "a refused pull must leave HEAD untouched");
     assert!(local.is_clean(), "a refused ff-only pull must never leave a conflict/merge in progress");
@@ -91,7 +95,7 @@ fn push_publishes_a_branch_with_no_upstream_to_origin() {
     local.must(&["remote", "add", "origin", &origin.path()]);
 
     assert!(local.rev("refs/remotes/origin/main").is_none(), "nothing pushed yet");
-    let res = tauri::async_runtime::block_on(push(local.path()));
+    let res = push_core(&local.path(), false, OpCtx::default());
     assert!(res.ok, "push failed: {}", res.message);
     assert_eq!(origin.rev("main"), local.rev("HEAD"), "origin's bare main should now match local HEAD");
 
@@ -104,7 +108,7 @@ fn push_with_existing_upstream_does_not_need_set_upstream_again() {
     let (origin, local) = origin_and_clone("push_existing");
     let new_tip = local.commit("g.txt", "1\n", "c1");
 
-    let res = tauri::async_runtime::block_on(push(local.path()));
+    let res = push_core(&local.path(), false, OpCtx::default());
     assert!(res.ok, "push failed: {}", res.message);
     assert_eq!(origin.rev("main"), Some(new_tip));
 }
@@ -118,7 +122,7 @@ fn push_rejects_a_non_fast_forward_without_forcing() {
 
     // local is now BEHIND origin — its push should be rejected, not forced.
     local.commit("h.txt", "1\n", "diverged commit");
-    let res = tauri::async_runtime::block_on(push(local.path()));
+    let res = push_core(&local.path(), false, OpCtx::default());
     assert!(!res.ok, "a non-fast-forward push must be rejected");
     assert_eq!(origin.rev("main"), Some(their_tip), "a rejected push must never overwrite origin");
 }
@@ -477,4 +481,141 @@ fn push_branch_with_existing_upstream_pushes_new_commits() {
     assert!(res.ok, "push_branch failed: {}", res.message);
     assert_eq!(origin.rev("feature"), Some(new_tip));
     assert_ne!(feature_tip, origin.rev("feature").unwrap(), "sanity: origin actually moved past the first push");
+}
+
+// ── cancel / stall (#133) ────────────────────────────────────────────────
+//
+// A "hung remote" without a network: `remote.origin.uploadpack` is run by git
+// through its shell (it contains a `;`), so `sleep N` runs first, as a
+// GRANDCHILD of the git we spawn, and the transfer goes silent for N seconds.
+// Git for Windows ships `sh` and `sleep`, so this works on every host. A
+// cancel returning quickly proves the whole tree died: the `sleep` holds git's
+// stderr, and the runner can't return while anything still holds a pipe.
+
+/// `origin_and_clone` whose clone fetches through a silent `sleep <secs>`
+/// first, plus a new commit on origin so a pull/fetch has something to move.
+fn hung_remote(tag: &str, secs: u32) -> (TempRepo, TempRepo, TempRepo) {
+    let (origin, local) = origin_and_clone(tag);
+    let other = second_clone(&origin, tag);
+    other.commit("g.txt", "1\n", "c1");
+    other.must(&["push", "-q", "origin", "main"]);
+    local.must(&["config", "remote.origin.uploadpack", &format!("sleep {secs}; git-upload-pack")]);
+    (origin, local, other)
+}
+
+/// Fire `token` from another thread after `after`.
+fn cancel_after(token: &CancelToken, after: Duration) -> std::thread::JoinHandle<()> {
+    let t = token.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(after);
+        t.cancel();
+    })
+}
+
+/// Every `*.lock` file under `dir`, recursively.
+fn lock_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(lock_files(&p));
+            } else if p.extension().is_some_and(|x| x == "lock") {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn fetch_core_cancel_kills_a_hung_transfer() {
+    let (_origin, local, _other) = hung_remote("fetch_cancel", 30);
+    let token = CancelToken::new();
+    let t = cancel_after(&token, Duration::from_millis(500));
+    let start = Instant::now();
+    let res = fetch_core(&local.path(), Some("origin"), false, OpCtx { cancel: Some(token), ..Default::default() });
+    t.join().unwrap();
+    assert!(res.cancelled, "expected a cancelled result, got: {} (ok={})", res.message, res.ok);
+    assert!(!res.ok);
+    assert!(res.message.contains("err_remote.fetch_cancelled"), "unexpected message: {}", res.message);
+    assert!(start.elapsed() < Duration::from_secs(6), "cancel took {:?} — the tree survived", start.elapsed());
+}
+
+#[test]
+fn pull_core_cancel_returns_snapshot_and_leaves_no_new_lock() {
+    let (_origin, local, _other) = hung_remote("pull_cancel", 30);
+    let git_dir = local.dir.join(".git");
+    let locks_before = lock_files(&git_dir);
+    let head_before = local.rev("HEAD");
+    let token = CancelToken::new();
+    let t = cancel_after(&token, Duration::from_millis(500));
+    let start = Instant::now();
+    let res = pull_core(&local.path(), false, OpCtx { cancel: Some(token), ..Default::default() });
+    t.join().unwrap();
+    assert!(res.cancelled && !res.ok, "expected a cancelled result, got: {}", res.message);
+    assert!(res.backup_ref.is_some(), "a cancelled pull still points at its pre-pull snapshot");
+    assert!(res.message.contains("err_remote.pull_cancelled"), "unexpected message: {}", res.message);
+    assert!(start.elapsed() < Duration::from_secs(6), "cancel took {:?}", start.elapsed());
+    assert_eq!(lock_files(&git_dir), locks_before, "a cancelled pull must not leave a new lock behind");
+    assert_eq!(local.rev("HEAD"), head_before, "cancelled during the fetch phase, so HEAD never moved");
+}
+
+#[test]
+fn pull_core_cancel_keeps_a_preexisting_lock() {
+    let (_origin, local, _other) = hung_remote("pull_cancel_prelock", 30);
+    // A lock that was there BEFORE the op is never ours to remove, whatever
+    // left it (the user's terminal, an earlier crash). index.lock stops
+    // neither the snapshot (a ref write) nor pull's fetch phase, which is
+    // where the cancel lands.
+    let lock = local.dir.join(".git").join("index.lock");
+    std::fs::write(&lock, "").unwrap();
+    let token = CancelToken::new();
+    let t = cancel_after(&token, Duration::from_millis(500));
+    let res = pull_core(&local.path(), false, OpCtx { cancel: Some(token), ..Default::default() });
+    t.join().unwrap();
+    assert!(res.cancelled, "expected a cancelled result, got: {}", res.message);
+    assert!(lock.exists(), "a pre-existing lock must survive a cancel's cleanup");
+    let _ = std::fs::remove_file(&lock);
+}
+
+#[test]
+fn stall_hook_fires_on_a_silent_transfer() {
+    let (_origin, local, _other) = hung_remote("fetch_stall", 5);
+    let token = CancelToken::new();
+    let canceller = token.clone();
+    let mut events: Vec<bool> = Vec::new();
+    let mut on_change = |stalled: bool| {
+        events.push(stalled);
+        // Stall only informs; here the "user" answers it by cancelling.
+        if stalled {
+            canceller.cancel();
+        }
+    };
+    let res = fetch_core(
+        &local.path(),
+        Some("origin"),
+        false,
+        OpCtx {
+            cancel: Some(token),
+            stall: Some(StallHook { after: Duration::from_secs(1), on_change: &mut on_change }),
+            ..Default::default()
+        },
+    );
+    assert_eq!(events.first(), Some(&true), "the first stall event must be `stalled`: {events:?}");
+    assert!(res.cancelled, "the stall-prompted cancel should beat the 5 s sleep: {}", res.message);
+}
+
+#[test]
+fn pre_cancelled_token_does_not_spawn() {
+    let (_origin, local, _other) = hung_remote("fetch_precancel", 30);
+    let tracking_before = local.rev("refs/remotes/origin/main");
+    let token = CancelToken::new();
+    token.cancel();
+    let start = Instant::now();
+    let res = fetch_core(&local.path(), Some("origin"), false, OpCtx { cancel: Some(token), ..Default::default() });
+    assert!(res.cancelled && !res.ok);
+    assert!(start.elapsed() < Duration::from_secs(3), "a pre-cancelled run must not spawn git at all");
+    assert_eq!(local.rev("refs/remotes/origin/main"), tracking_before);
 }

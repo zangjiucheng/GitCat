@@ -928,6 +928,9 @@ async stashConflictContinue(path: string) : Promise<StashResolveResult> {
  * Update remote-tracking refs. `remote` fetches just that one remote;
  * omitted, it fetches every configured remote (`--all`). Always `--prune`s
  * stale remote-tracking branches that no longer exist on the remote.
+ * Registered as a background job (the auto-fetch timer and the
+ * pull-with-strategy flows call this), so it can be cancelled from the jobs
+ * list like any other.
  * JS call: `invoke("fetch", { path, remote? })`.
  * 
  * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
@@ -944,7 +947,7 @@ async fetch(path: string, remote: string | null) : Promise<RemoteResult> {
 /**
  * Fast-forward the current branch to its upstream (`git pull --ff-only`).
  * Refuses (git's own message) rather than merging/rebasing on divergence —
- * see module doc for why.
+ * see module doc for why. A background job, like `fetch`.
  * JS call: `invoke("pull", { path })`.
  * 
  * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
@@ -974,17 +977,12 @@ async runGitMaintenance(path: string) : Promise<Result<null, string>> {
 /**
  * Streaming twin of [`fetch`]: identical behaviour (same validation, args,
  * success message, and `git_error_message` failure path), but forces
- * `--progress` so git writes transfer progress to stderr, reads it live via
- * `run_git_streaming`, and emits each segment as a `"sync-progress"` event so
- * the frontend's progress modal can show what git is doing. `fetch` (silent,
- * used by the ambient auto-fetch timer and the pull-with-strategy flows) is
- * left in place; only the user-initiated topbar/menu Fetch calls this one.
- * 
- * FOLLOW-UP: no process-kill cancel yet — the modal is dismissable and the op
- * runs to completion in the background (`fetch` only moves remote-tracking
- * refs, so a background finish is harmless). A real cancel would need a shared
- * `Child` handle + a `sync_cancel` command (mirroring `bisect_run_cancel`), and
- * killing `wsl.exe` doesn't reliably kill the inner git on the WSL path.
+ * `--progress`, emits each stderr segment as a `"sync-progress"` event for
+ * the frontend's progress modal, and reports a stall (no output for
+ * `NETWORK_STALL`) through `"job-progress"`. A foreground job: the modal's
+ * Cancel (or Escape) calls `job_cancel` on it. `fetch` (silent) is left in
+ * place for the ambient auto-fetch timer and the pull-with-strategy flows;
+ * only the user-initiated topbar/menu Fetch calls this one.
  * JS call: `invoke("fetch_stream", { path, remote? })`.
  */
 async fetchStream(path: string, remote: string | null) : Promise<RemoteResult> {
@@ -994,11 +992,10 @@ async fetchStream(path: string, remote: string | null) : Promise<RemoteResult> {
  * Streaming twin of [`pull`]: identical behaviour — takes the SAME pre-op
  * safety snapshot, stays `--ff-only`, returns the same `backup_ref`, and routes
  * failures through the same `git_error_message` — but forces `--progress` (git
- * pull forwards it to the underlying fetch) and streams stderr via
- * `run_git_streaming`, emitting `"sync-progress"` events for the modal. The
- * ff-only merge summary ("Already up to date." / "Updating …") still lands on
- * stdout, which is captured intact, so the success-message parse below is
- * unchanged. See `fetch_stream` for the (deferred) cancellation rationale.
+ * pull forwards it to the underlying fetch), emits `"sync-progress"` events for
+ * the modal and reports stalls, as `fetch_stream` does. The ff-only merge
+ * summary ("Already up to date." / "Updating …") still lands on stdout, which
+ * is captured intact, so the success-message parse is unchanged.
  * JS call: `invoke("pull_stream", { path })`.
  */
 async pullStream(path: string) : Promise<RemoteResult> {
@@ -1069,6 +1066,7 @@ async resetBranchToUpstream(path: string, branch: string) : Promise<RemoteResult
  * Push the current branch. Publishes to "origin" with `--set-upstream` when
  * it has no configured upstream yet; otherwise a plain `git push`. Never
  * force-pushes — a non-fast-forward rejection surfaces git's own message.
+ * A background job, like `fetch`.
  * JS call: `invoke("push", { path })`.
  * 
  * BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
@@ -1080,6 +1078,32 @@ async resetBranchToUpstream(path: string, branch: string) : Promise<RemoteResult
  */
 async push(path: string) : Promise<RemoteResult> {
     return await TAURI_INVOKE("push", { path });
+},
+/**
+ * Streaming twin of [`push`]: identical behaviour and arguments, plus
+ * `--progress`, `"sync-progress"` events and stall reporting exactly as
+ * `fetch_stream` does — the topbar Push shows the same progress modal (with
+ * the same Cancel) as Fetch and Pull.
+ * JS call: `invoke("push_stream", { path })`.
+ */
+async pushStream(path: string) : Promise<RemoteResult> {
+    return await TAURI_INVOKE("push_stream", { path });
+},
+/**
+ * Every running job in this window, ascending by id.
+ * JS: invoke("jobs_list").
+ */
+async jobsList() : Promise<JobInfo[]> {
+    return await TAURI_INVOKE("jobs_list");
+},
+/**
+ * Ask a running job to stop. `false` means it was already gone (it finished
+ * between the user's click and this call) — benign, its own result is on the
+ * way. Plain sync fn: it only flips a flag, like `bisect_run_cancel`.
+ * JS: invoke("job_cancel", { id }).
+ */
+async jobCancel(id: number) : Promise<boolean> {
+    return await TAURI_INVOKE("job_cancel", { id });
 },
 /**
  * The ONE sanctioned exception to this module's "never force" rule (see
@@ -3979,6 +4003,39 @@ export type HookRun = { pluginId: string; event: PluginEvent; output: CommandOut
  */
 export type HunkSelection = { header: string; lines: SelectedLine[] }
 /**
+ * Emitted as `"job-finished"` once a job leaves the registry.
+ */
+export type JobFinished = { id: number; outcome: JobOutcome }
+/**
+ * One registered job, as `jobs_list` returns it and `"job-started"` carries it.
+ */
+export type JobInfo = { id: number; kind: JobKind; repo: string; 
+/**
+ * Machine detail — the remote name for a named fetch, the branch for a
+ * push, otherwise empty. The UI localizes the kind itself.
+ */
+label: string; 
+/**
+ * Unix epoch milliseconds.
+ */
+startedAtMs: number; 
+/**
+ * True for the silent fetch/pull/push (auto-fetch timer, resolver flows),
+ * false for the user-initiated streaming ops the progress modal shows.
+ */
+background: boolean; stalled: boolean; cancelling: boolean }
+export type JobKind = "fetch" | "pull" | "push"
+export type JobOutcome = "ok" | "failed" | "cancelled"
+/**
+ * Emitted as `"job-progress"` when a job's stalled flag flips.
+ */
+export type JobProgress = { id: number; stalled: boolean; 
+/**
+ * The stall threshold at the moment of the transition — this event fires
+ * only on change, so it is not a live counter.
+ */
+idleSecs: number }
+/**
  * A local branch row for the data-driven sidebar. `ahead`/`behind` are relative
  * to the branch's configured upstream, or `None` when it has no upstream.
  * `upstream` is that same configured branch's own full shorthand (e.g.
@@ -4725,7 +4782,12 @@ export type RemoteResult = { ok: boolean; message: string;
 /**
  * Pre-op safety snapshot ref — only ever `Some` for `pull` (see module doc).
  */
-backupRef: string | null }
+backupRef: string | null; 
+/**
+ * The user cancelled the op (`ok` is then false). The frontend shows it as
+ * a neutral outcome, not an error.
+ */
+cancelled: boolean }
 /**
  * Result of [`write_repo_file`] — deliberately its own minimal shape (just
  * `ok`/`message`), NOT `git_write::WriteResult`: that type carries
@@ -4960,18 +5022,19 @@ backupRef: string | null;
 backupPatch: string | null }
 /**
  * One live progress segment emitted to the frontend during a streaming
- * fetch/pull (see `fetch_stream`/`pull_stream`). Emitted as the `"sync-progress"`
- * event, never taken as a command parameter — exported to TS via `specta_builder`
- * exactly like `GraphBatch`.
+ * fetch/pull/push (see `fetch_stream`/`pull_stream`/`push_stream`). Emitted as
+ * the `"sync-progress"` event, never taken as a command parameter — exported
+ * to TS via `specta_builder` exactly like `GraphBatch`.
  */
 export type SyncProgress = { 
 /**
- * Operation kind — "fetch" | "pull". The frontend uses it as a cheap
- * discriminator so a late event from one op can't leak into another's modal.
+ * Operation kind — "fetch" | "pull" | "push". The frontend uses it as a
+ * cheap discriminator so a late event from one op can't leak into
+ * another's modal.
  */
 phase: string; 
 /**
- * One raw git progress segment (see `feed_progress`'s `\r`/`\n` split).
+ * One raw git progress segment (see `procutil::feed_progress`'s `\r`/`\n` split).
  */
 line: string }
 export type TagObject = { sha: string; name: string; tagger: PlumbingPerson | null; message: string; targetOid: string; targetKind: string }

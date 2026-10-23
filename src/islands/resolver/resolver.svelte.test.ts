@@ -94,8 +94,8 @@ function err(error: string): { status: "error"; error: string } {
   return { status: "error", error };
 }
 
-function remoteResult(partial: { ok: boolean; message?: string; backupRef?: string | null }) {
-  return { message: "", backupRef: null, ...partial };
+function remoteResult(partial: { ok: boolean; message?: string; backupRef?: string | null; cancelled?: boolean }) {
+  return { message: "", backupRef: null, cancelled: false, ...partial };
 }
 
 const FILE_A: ConflictFile = { path: "a.ts", ours: "o", base: "b", theirs: "t" };

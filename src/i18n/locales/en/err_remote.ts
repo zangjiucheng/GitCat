@@ -16,6 +16,23 @@ export default {
     "{base} (run any ssh/git command against this remote from a WSL terminal once to accept its host key, then retry)",
   host_key_hint:
     "{base} (run any ssh/git command against this remote from a terminal once to accept its host key, then retry)",
+  // A user-cancelled fetch/pull/push (#133). One flat key per outcome — be()
+  // can't nest keys, so each variant carries all of its own params. {locks} is
+  // the removed lock files, relative to the git dir; {snapshot} the pre-pull
+  // snapshot's short name; {op} the git command that was aborted.
+  fetch_cancelled: "Fetch cancelled. Remote-tracking refs may be partly updated; fetch again to finish.",
+  fetch_cancelled_locks:
+    "Fetch cancelled. Removed the lock files the cancelled git left behind: {locks}. Fetch again to finish.",
+  push_cancelled: "Push cancelled. The remote may or may not have received it; fetch to check.",
+  push_cancelled_locks:
+    "Push cancelled. The remote may or may not have received it; fetch to check. Removed the lock files the cancelled git left behind: {locks}.",
+  pull_cancelled: "Pull cancelled. If anything looks half-updated, {undoKey} restores the pre-pull snapshot {snapshot}.",
+  pull_cancelled_locks:
+    "Pull cancelled. Removed the lock files the cancelled git left behind: {locks}. If anything looks half-updated, {undoKey} restores the pre-pull snapshot {snapshot}.",
+  pull_cancelled_aborted:
+    "Pull cancelled. Ran git {op} --abort to back out the half-finished {op}. {undoKey} restores the pre-pull snapshot {snapshot} if anything still looks wrong.",
+  pull_cancelled_locks_aborted:
+    "Pull cancelled. Removed the lock files the cancelled git left behind ({locks}) and ran git {op} --abort to back out the half-finished {op}. {undoKey} restores the pre-pull snapshot {snapshot} if anything still looks wrong.",
   // Repo open / snapshot.
   cannot_open: "Cannot open repository: {detail}",
   snapshot_failed: "Safety snapshot failed, aborting: {detail}",

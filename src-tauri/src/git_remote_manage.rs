@@ -72,10 +72,10 @@ use crate::procutil::{git_timeout, run_with, NoConsoleWindowExt, RunOptions};
 // ---------------------------------------------------------------------------
 
 fn ok_result(message: impl Into<String>) -> RemoteResult {
-    RemoteResult { ok: true, message: message.into(), backup_ref: None }
+    RemoteResult { ok: true, message: message.into(), backup_ref: None, cancelled: false }
 }
 fn err_result(message: impl Into<String>) -> RemoteResult {
-    RemoteResult { ok: false, message: message.into(), backup_ref: None }
+    RemoteResult { ok: false, message: message.into(), backup_ref: None, cancelled: false }
 }
 
 // ---------------------------------------------------------------------------
