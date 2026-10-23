@@ -14,8 +14,10 @@ mod common;
 use common::TempRepo;
 use git2::{Oid, Repository, RepositoryState};
 use gitcat_lib::git_bisect::{
-    bisect_mark, bisect_reset, bisect_start, bisect_status, run_bisect, try_run_bisect, BisectRunState, BisectStatus,
+    bisect_mark, bisect_reset, bisect_start, bisect_status, run_bisect, run_bisect_cancellable, try_run_bisect, BisectRunState,
+    BisectStatus,
 };
+use gitcat_lib::procutil::CancelToken;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -384,6 +386,52 @@ fn bisect_run_cancel_stops_the_loop_before_convergence() {
         result.message
     );
     assert!(steps_applied <= 1, "cancellation should stop the loop right after the in-flight step, got {steps_applied} steps");
+
+    let status = tauri::async_runtime::block_on(bisect_status(path.clone()));
+    assert!(status.in_progress, "bisect session should still be in progress after a cancelled run");
+
+    let reset: BisectStatus = tauri::async_runtime::block_on(bisect_reset(path.clone()));
+    assert!(reset.ok, "bisect_reset failed: {}", reset.message);
+}
+
+/// The closure-only cancel above can only stop the loop BETWEEN steps; a
+/// `CancelToken` must also kill a test command that is running right now —
+/// including the shell's own child (`sleep` under `sh`, `ping` under `cmd`),
+/// which holds no pipe here (output is discarded) but would otherwise keep
+/// the run going for 30 s.
+#[test]
+fn bisect_run_cancellable_kills_a_running_test_command() {
+    std::env::set_var("LC_ALL", "C");
+    let (repo, _branch, root, _k, head) = build_repo("bisect_run_cancellable");
+    let path = repo.path();
+
+    let start: BisectStatus = tauri::async_runtime::block_on(bisect_start(path.clone(), head.to_string(), vec![root.to_string()]));
+    assert!(start.ok, "bisect_start failed: {}", start.message);
+
+    let command = if cfg!(windows) { "ping -n 30 127.0.0.1 >NUL" } else { "sleep 30" };
+    let token = CancelToken::new();
+    let token_for_run = token.clone();
+    let path_for_run = path.clone();
+    let started = Instant::now();
+    let handle = std::thread::spawn(move || {
+        let mut n = 0usize;
+        let result = run_bisect_cancellable(&path_for_run, command, &token_for_run, |_status| n += 1);
+        (result, n)
+    });
+
+    std::thread::sleep(Duration::from_millis(500));
+    token.cancel();
+    let (result, steps_applied) = handle.join().expect("run_bisect_cancellable thread panicked");
+    let elapsed = started.elapsed();
+
+    assert!(elapsed < Duration::from_secs(5), "cancel should kill the running test command, took {elapsed:?}");
+    assert_eq!(steps_applied, 0, "a killed test command must not mark the commit");
+    assert!(result.first_bad.is_none());
+    assert!(
+        result.message.to_lowercase().contains("cancel"),
+        "message should clearly say it was cancelled: {}",
+        result.message
+    );
 
     let status = tauri::async_runtime::block_on(bisect_status(path.clone()));
     assert!(status.in_progress, "bisect session should still be in progress after a cancelled run");

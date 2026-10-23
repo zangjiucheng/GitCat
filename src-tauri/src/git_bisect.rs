@@ -64,13 +64,14 @@
 use std::fs;
 use std::process::{Command, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use git2::Repository;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, Wry};
 
 use crate::i18n_err::{ierr, ierrp};
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunError, RunOptions};
 
 #[derive(Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -128,8 +129,8 @@ struct Out {
 /// Run `git -C <path> <args…>` with LC_ALL=C (stable English prose/stderr) and
 /// the pager disabled. Returns `Err` only when git can't be spawned.
 fn git(path: &str, args: &[&str]) -> Result<Out, String> {
-    let o = Command::new("git")
-        .no_console_window()
+    let mut cmd = Command::new("git");
+    cmd.no_console_window()
         .arg("-C")
         .arg(path)
         .args(args)
@@ -137,9 +138,9 @@ fn git(path: &str, args: &[&str]) -> Result<Out, String> {
         .env("LANGUAGE", "")
         .env("GIT_PAGER", "cat")
         .env("GIT_EDITOR", "true")
-        .env("GIT_SEQUENCE_EDITOR", "true")
-        .output()
-        .map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
+        .env("GIT_SEQUENCE_EDITOR", "true");
+    let o = run_with(cmd, RunOptions { timeout: git_timeout(args), ..Default::default() })
+        .map_err(|e| e.to_ierr("err_ops.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -155,13 +156,13 @@ fn git(path: &str, args: &[&str]) -> Result<Out, String> {
 /// ref`, `rev-list`, `status`) stay on plain `git`. Same full env set as `git`
 /// (LC_ALL=C etc.). Args are OIDs/subcommands only. No-op on non-WSL paths.
 fn git_worktree(path: &str, args: &[&str]) -> Result<Out, String> {
-    let o = crate::wsl::git_command_env(
+    let (cmd, tag) = crate::wsl::git_command_tagged(
         path,
         args,
         &[("LC_ALL", "C"), ("LANGUAGE", ""), ("GIT_PAGER", "cat"), ("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")],
-    )
-    .output()
-    .map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
+    );
+    let o = run_with(cmd, RunOptions { timeout: git_timeout(args), wsl: tag, ..Default::default() })
+        .map_err(|e| e.to_ierr("err_ops.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -670,15 +671,26 @@ pub async fn bisect_reset(path: String) -> BisectStatus {
 ///     on-disk sequencer state. Mirrors `watch::WatchState`'s single-watcher
 ///     invariant, which is likewise structurally enforced (a
 ///     `Mutex<Option<Debouncer>>`), not just documented as an assumption.
+///
+/// `current` holds the in-flight run's [`CancelToken`] (installed and cleared
+/// by `try_run_bisect`), so a cancel also kills a test command that is
+/// RUNNING right now rather than waiting for it to finish on its own.
 #[derive(Default)]
 pub struct BisectRunState {
     cancel: AtomicBool,
     running: AtomicBool,
+    current: Mutex<Option<CancelToken>>,
 }
 
 impl BisectRunState {
     fn request_cancel(&self) {
         self.cancel.store(true, Ordering::SeqCst);
+        if let Some(token) = self.current.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+            token.cancel();
+        }
+    }
+    fn set_current(&self, token: Option<CancelToken>) {
+        *self.current.lock().unwrap_or_else(|p| p.into_inner()) = token;
     }
     fn is_cancelled(&self) -> bool {
         self.cancel.load(Ordering::SeqCst)
@@ -762,7 +774,13 @@ fn classify_exit(status: &ExitStatus) -> Step {
 /// good/bad/skip. See `classify_exit`'s doc comment for the Unix-derived
 /// exit-code convention this result is fed into, and its documented gap on
 /// Windows.
-fn run_test_command(path: &str, command: &str) -> Result<ExitStatus, String> {
+///
+/// `cancel` kills the command's whole process tree (a test suite spawns plenty
+/// of children); that comes back as [`TestCmdError::Cancelled`], distinct from
+/// a spawn failure. No hard timeout — a real suite can legitimately take a
+/// long time — and its output is discarded rather than buffered (it used to
+/// go to GitCat's own, usually absent, stdio).
+fn run_test_command(path: &str, command: &str, cancel: Option<&CancelToken>) -> Result<ExitStatus, TestCmdError> {
     #[cfg(windows)]
     let mut cmd = {
         use std::os::windows::process::CommandExt;
@@ -794,7 +812,19 @@ fn run_test_command(path: &str, command: &str) -> Result<ExitStatus, String> {
     // console) is exactly the kind of noise this should stay quiet through.
     cmd.no_console_window();
     cmd.current_dir(path);
-    cmd.status().map_err(|e| format!("Could not run the test command: {e}"))
+    match run_with(cmd, RunOptions { timeout: None, cancel: cancel.cloned(), discard_output: true, ..Default::default() }) {
+        Ok(out) => Ok(out.status),
+        Err(RunError::Cancelled) => Err(TestCmdError::Cancelled),
+        Err(e) => Err(TestCmdError::Spawn(format!("Could not run the test command: {e}"))),
+    }
+}
+
+/// Why [`run_test_command`] produced no exit status.
+enum TestCmdError {
+    /// The run's [`CancelToken`] fired; treated like the cooperative cancel.
+    Cancelled,
+    /// The shell itself could not be spawned.
+    Spawn(String),
 }
 
 /// The automated step loop itself, independent of any running Tauri app —
@@ -816,6 +846,27 @@ pub fn run_bisect(
     path: &str,
     command: &str,
     should_cancel: impl Fn() -> bool,
+    on_progress: impl FnMut(&BisectStatus),
+) -> BisectStatus {
+    run_bisect_inner(path, command, should_cancel, None, on_progress)
+}
+
+/// [`run_bisect`] driven by a [`CancelToken`]: cancelling it stops the loop
+/// before the next step AND kills a test command that is running right now.
+pub fn run_bisect_cancellable(
+    path: &str,
+    command: &str,
+    token: &CancelToken,
+    on_progress: impl FnMut(&BisectStatus),
+) -> BisectStatus {
+    run_bisect_inner(path, command, || token.is_cancelled(), Some(token), on_progress)
+}
+
+fn run_bisect_inner(
+    path: &str,
+    command: &str,
+    should_cancel: impl Fn() -> bool,
+    cancel: Option<&CancelToken>,
     mut on_progress: impl FnMut(&BisectStatus),
 ) -> BisectStatus {
     let repo = match Repository::open(path) {
@@ -826,16 +877,23 @@ pub fn run_bisect(
         return BisectStatus::refused(ierr("err_ops.no_bisect_in_progress_start"));
     }
 
+    let cancelled = |repo: &Repository| {
+        let mut s = read_status(repo, path);
+        s.message = format!("Automated bisect run cancelled. {}", s.message);
+        s
+    };
+
     loop {
         if should_cancel() {
-            let mut s = read_status(&repo, path);
-            s.message = format!("Automated bisect run cancelled. {}", s.message);
-            return s;
+            return cancelled(&repo);
         }
 
-        let exit = match run_test_command(path, command) {
+        let exit = match run_test_command(path, command, cancel) {
             Ok(e) => e,
-            Err(e) => {
+            // Killed mid-run: its exit says nothing about this commit, so
+            // nothing is marked — same outcome as the between-steps cancel.
+            Err(TestCmdError::Cancelled) => return cancelled(&repo),
+            Err(TestCmdError::Spawn(e)) => {
                 let mut s = read_status(&repo, path);
                 s.ok = false;
                 s.message = ierrp("err_ops.bisect_run_aborted", &[("detail", &e)]);
@@ -890,7 +948,10 @@ pub fn try_run_bisect(
         return None;
     }
     state.clear_cancel(); // a stale cancel from a previous run must never leak into this one
-    let result = run_bisect(path, command, should_cancel, on_progress);
+    let token = CancelToken::new();
+    state.set_current(Some(token.clone())); // lets bisect_run_cancel kill a running test command
+    let result = run_bisect_inner(path, command, should_cancel, Some(&token), on_progress);
+    state.set_current(None);
     state.clear_cancel(); // always leave the flag clear on the way out, whatever the reason
     state.finish(); // release the run-in-progress claim on every exit path, mirroring the above
     Some(result)
