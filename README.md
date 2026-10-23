@@ -25,12 +25,13 @@ Every Git GUI makes it easy to run a dangerous command. GitCat is built so you c
 
 - **Fast commit graph** — git2 reads and a Rust swimlane layout on a virtualized canvas, no depth cap. 150k commits scroll smoothly with the text still readable.
 - **Everyday git, made safe** — stage by file, hunk or line; commit, stash, branch, tag, checkout; fetch / pull / push; merge, cherry-pick, revert, and rebase (linear plus a drag-to-reorder planner), behind a real 3-way conflict resolver.
-- **Diffs that aren't just text** — syntax highlighting, plus side-by-side before/after previews for images and PDFs, rendered natively and zoomable.
-- **The deep cuts** — submodules, patch export/apply, `git bisect`, `git blame` with rename-following, per-file history, author and pickaxe search, a `git-filter-repo` wizard, external diff/merge tools, reflog rescue and dangling-object recovery.
-- **⌘K everything** — fuzzy search across commits, refs and actions, vim-style keys, and a real native menu.
-- **Plugins** *(1.1)* — ⌘K commands, hooks, side panels, named tools, and Tama skins and reactions. Browse ready-made ones in the community [**plugin index**](https://github.com/zangjiucheng/gitcat-plugins).
+- **Diffs that aren't just text** — syntax highlighting, plus side-by-side before/after previews for images and PDFs, rendered natively and zoomable. Pop any commit's diff out into **its own window** to read it next to your work.
+- **Signatures Git actually verified** — GPG, SSH and X.509 commit signatures checked by Git itself, so the badge reads good, untrusted, expired, bad or not verified, never a guess.
+- **The deep cuts** — submodules, patch export/apply, `git bisect`, `git blame` with rename-following, per-file history, author and pickaxe search, a `git-filter-repo` wizard, external diff/merge tools, reflog rescue and dangling-object recovery. Partial clones (`--filter=blob:none`) work too, fetching file contents on demand.
+- **⌘K everything** (Ctrl+K on Windows/Linux) — fuzzy search across commits, refs and actions, vim-style keys, and a real native menu.
+- **Plugins** — ⌘K commands, hooks, side panels, syntax grammars, named tools, and Tama skins and reactions. Commands can lint exactly what you've staged on every platform, and Luau plugins run in a sandbox with an allowlisted `git()`. Browse and install ready-made ones from inside the app (**Tools ▸ Plugins… → Browse**), backed by the community [**plugin index**](https://github.com/zangjiucheng/gitcat-plugins).
 - **English, 中文 & 한국어** — the whole interface, switchable live with no reload.
-- **`gitcat .`** — open a repo from your terminal the way `code .` does. WSL-aware.
+- **`gitcat .`** — open a repo from your terminal the way `code .` does (`gitcat --help` for the rest). WSL-aware.
 
 Full list: **[Features](https://zangjiucheng.github.io/GitCat/features)**.
 
