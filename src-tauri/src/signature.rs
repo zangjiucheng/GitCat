@@ -8,7 +8,7 @@
 //! the ONE selected commit only, and the commit list never touches it.
 //!
 //! Verification is git's own (`%G?` and friends), routed through
-//! `wsl::git_command_env`, so a WSL repo verifies with the distro's keyring and
+//! `wsl::git_command_tagged`, so a WSL repo verifies with the distro's keyring and
 //! allowed-signers file — the same answer `git log --show-signature` would give
 //! in that shell. libgit2 can EXTRACT a signature but cannot verify one, which
 //! is why this is the git CLI rather than git2.
@@ -18,7 +18,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::i18n_err::ierrp;
-use crate::procutil::output_with_timeout;
+use crate::procutil::{run_with, RunError, RunOptions};
 
 /// How long one verification may take before the badge gives up on it. Well
 /// under `SUBPROCESS_TIMEOUT`: this is a badge, not an operation, and a user
@@ -123,13 +123,11 @@ pub fn commit_signature_inner(path: &str, sha: &str) -> Result<CommitSignature, 
     // LC_ALL=C keeps git's stderr parseable/consistent with the rest of the app.
     // --no-replace-objects: libgit2 above ignores refs/replace, so git must
     // too, or the two could be looking at different commit objects.
-    let cmd = crate::wsl::git_command_env(path, &["--no-replace-objects", "log", "-1", "--no-show-signature", SIG_FORMAT, &full], &[("LC_ALL", "C")]);
-    let out = output_with_timeout(cmd, SIGNATURE_TIMEOUT).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::TimedOut {
-            ierrp("err_history.signature_timed_out", &[("secs", &SIGNATURE_TIMEOUT.as_secs().to_string())])
-        } else {
-            ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())])
-        }
+    // Tagged, so a timeout also kills a WSL-side gpg/ssh-keygen still running.
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, &["--no-replace-objects", "log", "-1", "--no-show-signature", SIG_FORMAT, &full], &[("LC_ALL", "C")]);
+    let out = run_with(cmd, RunOptions { timeout: Some(SIGNATURE_TIMEOUT), wsl: tag, ..Default::default() }).map_err(|e| match e {
+        RunError::TimedOut(_) => ierrp("err_history.signature_timed_out", &[("secs", &SIGNATURE_TIMEOUT.as_secs().to_string())]),
+        e => ierrp("err_history.could_not_run_git", &[("detail", &e.into_io().to_string())]),
     })?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();

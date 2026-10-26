@@ -562,6 +562,14 @@ class ResolverState {
     bridge.tama.say(t("resolver.fetching"));
     try {
       const f = await commands.fetch(repo, null);
+      // Cancelled from the jobs chip: the user's choice, not a failure — stop
+      // quietly, the way legacy/main.ts's syncCancelled() does for the modal.
+      if (f.cancelled) {
+        bridge.tama.event("mutation.cancel");
+        bridge.tama.say(be(f.message), 5000);
+        this.busy = false;
+        return;
+      }
       if (!f.ok) {
         bridge.tama.warn(be(f.message) || t("resolver.fetch_failed_pull"));
         this.busy = false;

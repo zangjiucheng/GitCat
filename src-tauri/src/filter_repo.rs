@@ -46,12 +46,12 @@ use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use git2::Repository;
 use serde::{Deserialize, Serialize};
 
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunError, RunOptions, LONG_OP_TIMEOUT};
 
 /// Process-wide monotonic tie-breaker, mirrors `safety.rs`'s `SNAP_SEQ`: two
 /// backups taken in the same nanosecond still get distinct ids.
@@ -70,13 +70,19 @@ struct Out {
 /// Run `git -C <path> <args…>`. `Err` only when git itself can't be spawned
 /// (not installed / not on PATH); a non-zero git exit is `Ok(Out{ok:false})`.
 fn git(path: &str, args: &[&str]) -> Result<Out, String> {
-    let o = Command::new("git")
-        .no_console_window()
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()
-        .map_err(|e| format!("failed to run git: {e}"))?;
+    git_c(path, args, git_timeout(args), None)
+}
+
+/// [`git`] with an explicit hard timeout and an optional [`CancelToken`]. A
+/// timeout keeps the `failed to run git: …` literal (via `into_io`, so the
+/// detail reads `timed out after …`); a cancel is `err_misc.cancelled`.
+fn git_c(path: &str, args: &[&str], timeout: Option<Duration>, cancel: Option<&CancelToken>) -> Result<Out, String> {
+    let mut cmd = Command::new("git");
+    cmd.no_console_window().arg("-C").arg(path).args(args);
+    let o = run_with(cmd, RunOptions { timeout, cancel: cancel.cloned(), ..Default::default() }).map_err(|e| match e {
+        RunError::Cancelled => e.to_ierr("err_misc.cancelled"),
+        e => format!("failed to run git: {}", e.into_io()),
+    })?;
     Ok(Out {
         ok: o.status.success(),
         stdout: String::from_utf8_lossy(&o.stdout).trim_end().to_string(),
@@ -245,7 +251,7 @@ fn filter_repo_available(path: &str) -> bool {
 /// manifest (every ref the bundle captured). On ANY failure the partial
 /// bundle file is removed and an error is returned — callers must treat this
 /// as "do not proceed to filter-repo".
-fn backup(repo: &Repository, path: &str) -> Result<BackupManifest, String> {
+fn backup(repo: &Repository, path: &str, cancel: Option<&CancelToken>) -> Result<BackupManifest, String> {
     let dir = backups_dir(repo);
     fs::create_dir_all(&dir).map_err(|e| format!("could not create backup directory: {e}"))?;
 
@@ -253,13 +259,28 @@ fn backup(repo: &Repository, path: &str) -> Result<BackupManifest, String> {
     let bundle_path = dir.join(format!("{id}.bundle"));
     let bundle_str = bundle_path.to_string_lossy().to_string();
 
-    let create = git(path, &["bundle", "create", &bundle_str, "--all"])?;
+    let create_args = ["bundle", "create", &bundle_str, "--all"];
+    let create = match git_c(path, &create_args, git_timeout(&create_args), cancel) {
+        Ok(o) => o,
+        Err(e) => {
+            // A timed-out/cancelled run can leave a partial bundle behind.
+            let _ = fs::remove_file(&bundle_path);
+            return Err(e);
+        }
+    };
     if !create.ok {
         let _ = fs::remove_file(&bundle_path);
         return Err(format!("backup bundle creation failed: {}", git_msg(&create)));
     }
 
-    let verify = git(path, &["bundle", "verify", &bundle_str])?;
+    let verify_args = ["bundle", "verify", &bundle_str];
+    let verify = match git_c(path, &verify_args, git_timeout(&verify_args), cancel) {
+        Ok(o) => o,
+        Err(e) => {
+            let _ = fs::remove_file(&bundle_path);
+            return Err(e);
+        }
+    };
     if !verify.ok {
         let _ = fs::remove_file(&bundle_path);
         return Err(format!("backup bundle failed verification, aborting: {}", git_msg(&verify)));
@@ -386,10 +407,12 @@ pub fn filter_repo_list_backups(path: String) -> Result<Vec<FilterRepoBackupInfo
 #[tauri::command]
 #[specta::specta]
 pub async fn filter_repo_run(path: String, paths: Vec<String>, invert: bool) -> FilterRepoResult {
-    crate::blocking::run_blocking(move || filter_repo_run_inner(path, paths, invert)).await
+    // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
+    // Cancelled run cancel_cleanup::after_cancel.
+    crate::blocking::run_blocking(move || filter_repo_run_inner(path, paths, invert, None)).await
 }
 
-fn filter_repo_run_inner(path: String, paths: Vec<String>, invert: bool) -> FilterRepoResult {
+fn filter_repo_run_inner(path: String, paths: Vec<String>, invert: bool, cancel: Option<&CancelToken>) -> FilterRepoResult {
     let repo = match open(&path) {
         Ok(r) => r,
         Err(e) => return FilterRepoResult::error(e),
@@ -436,7 +459,7 @@ fn filter_repo_run_inner(path: String, paths: Vec<String>, invert: bool) -> Filt
 
     // BACKUP FIRST — mandatory. Abort before ever invoking filter-repo if
     // creation or verification fails for any reason.
-    let manifest = match backup(&repo, &path) {
+    let manifest = match backup(&repo, &path, cancel) {
         Ok(m) => m,
         Err(e) => return FilterRepoResult::error(format!("Backup failed, aborting before touching history: {e}")),
     };
@@ -454,7 +477,7 @@ fn filter_repo_run_inner(path: String, paths: Vec<String>, invert: bool) -> Filt
     let mut args: Vec<&str> = vec!["filter-repo"];
     args.extend(owned_args.iter().map(|s| s.as_str()));
 
-    let run = match git(&path, &args) {
+    let run = match git_c(&path, &args, git_timeout(&args), cancel) {
         Ok(o) => o,
         Err(e) => {
             return FilterRepoResult {
@@ -498,10 +521,12 @@ fn filter_repo_run_inner(path: String, paths: Vec<String>, invert: bool) -> Filt
 #[tauri::command]
 #[specta::specta]
 pub async fn filter_repo_restore(path: String, backup_id: String) -> FilterRepoResult {
-    crate::blocking::run_blocking(move || filter_repo_restore_inner(path, backup_id)).await
+    // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
+    // Cancelled run cancel_cleanup::after_cancel.
+    crate::blocking::run_blocking(move || filter_repo_restore_inner(path, backup_id, None)).await
 }
 
-fn filter_repo_restore_inner(path: String, backup_id: String) -> FilterRepoResult {
+fn filter_repo_restore_inner(path: String, backup_id: String, cancel: Option<&CancelToken>) -> FilterRepoResult {
     let repo = match open(&path) {
         Ok(r) => r,
         Err(e) => return FilterRepoResult::error(e),
@@ -536,7 +561,8 @@ fn filter_repo_restore_inner(path: String, backup_id: String) -> FilterRepoResul
 
     // Re-verify the bundle before trusting it (cheap, and the bundle could in
     // principle have rotted/been truncated since it was written).
-    let verify = match git(&path, &["bundle", "verify", &manifest.bundle_path]) {
+    let verify_args = ["bundle", "verify", manifest.bundle_path.as_str()];
+    let verify = match git_c(&path, &verify_args, git_timeout(&verify_args), cancel) {
         Ok(o) => o,
         Err(e) => return FilterRepoResult::error(e),
     };
@@ -578,7 +604,15 @@ fn filter_repo_restore_inner(path: String, backup_id: String) -> FilterRepoResul
     for (i, (name, sha)) in manifest.refs.iter().enumerate() {
         let scratch = format!("refs/gitgui/filter-repo-restore-tmp/{i}");
         let refspec = format!("+{sha}:{scratch}");
-        let fetch = git(&path, &["fetch", "--no-tags", manifest.bundle_path.as_str(), refspec.as_str()]);
+        // A LOCAL fetch out of our own bundle, not a network op: bound it
+        // like the other whole-repo ops rather than git_timeout's `fetch` =>
+        // no timeout.
+        let fetch = git_c(
+            &path,
+            &["fetch", "--no-tags", manifest.bundle_path.as_str(), refspec.as_str()],
+            Some(LONG_OP_TIMEOUT),
+            cancel,
+        );
         match fetch {
             Ok(o) if o.ok => {
                 scratch_refs.push(scratch);

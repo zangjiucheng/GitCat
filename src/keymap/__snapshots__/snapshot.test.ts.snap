@@ -12,6 +12,8 @@ canvas.up  graph  |key:ArrowUp  js  live  -  -  -  -  graphHasRows,noScrimOpen,n
 detail.tab  detail  |key:t  js  live  -  -  -  -  -  -  vimnav.cycle_tab
 edit.redoUnsupported  global  MS|code:KeyZ  js  shadow  -  -  -  -  notTextInput  -  legacy.redo_unsupported
 edit.undo  global  M|code:KeyZ  js  shadow  -  -  destructive  -  notTextInput  -  vimnav.undo
+jobs.close  modal  MS|code:KeyJ  js  live  -  -  -  -  notTextInput  -  jobs.toggle_shortcut
+jobs.toggle  global  MS|code:KeyJ  js  live  -  -  -  -  notTextInput,noScrimOpen  -  jobs.toggle_shortcut
 modal.close  modal  |key:Escape  js  live  -  -  -  -  -  -  vimnav.esc
 nav.head  global  MS|code:KeyH  js  shadow  -  -  -  -  notTextInput  -  vimnav.jump_head
 nav.uncommitted  global  MS|code:KeyU  js  shadow  -  -  -  -  notTextInput  -  vimnav.jump_uncommitted

@@ -13,6 +13,8 @@ pub mod fsck; // backlog #13: fsck-based dangling-object recovery (list dangling
 pub mod git_pick;
 pub mod git_read;
 pub mod git_remote; // fetch / pull (ff-only) / push / force_push / push_tag
+pub mod jobs; // #133: registry of running cancellable git ops (fetch/pull/push) + jobs_list/job_cancel and job-* events
+pub mod cancel_cleanup; // #133: after a cancel, remove only the lock files OUR killed git left and --abort a merge/rebase it left half-done
 pub mod git_remote_manage; // Remote CONFIG CRUD: add/rename/set-url/remove/list (fetch/pull/push/push_tag stay in git_remote.rs — see both modules' own doc comments for why they're split)
 pub mod git_tag; // Tags: create / delete (push_tag lives in git_remote.rs — see its doc comment)
 pub mod git_write;
@@ -158,6 +160,13 @@ fn specta_builder() -> Builder<tauri::Wry> {
         // resetToUpstream).
         git_remote::reset_branch_to_upstream,
         git_remote::push,
+        // Streaming twin of push, for the progress modal (see doPush).
+        git_remote::push_stream,
+        // Running jobs (#133): list + cancel. Both only touch the in-memory
+        // registry (cancel just fires a token), so they are plain sync fns,
+        // like bisect_run_cancel.
+        jobs::jobs_list,
+        jobs::job_cancel,
         // The one sanctioned "push never forces" exception — see
         // git_remote.rs's module doc + force_push's own doc comment. The two
         // Tools-menu/⌘K entries "Force Push (Safe)" / "Force Push (Override
@@ -401,6 +410,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
     // emitted over the "sync-progress" event (fetch_stream/pull_stream), never a
     // command parameter, so it needs an explicit `.typ()` to reach bindings.ts.
     .typ::<git_remote::SyncProgress>()
+    // Same again for the job lifecycle events ("job-started" / "job-progress" /
+    // "job-finished", see jobs.rs). JobInfo is also jobs_list's return type, so
+    // it would be reached anyway; listed here so the three travel together.
+    .typ::<jobs::JobInfo>()
+    .typ::<jobs::JobProgress>()
+    .typ::<jobs::JobFinished>()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -581,6 +596,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(watch::WatchState::default())
         .manage(git_bisect::BisectRunState::default())
+        .manage(jobs::JobRegistry::default())
         .manage(terminal::TerminalRegistry::default())
         .manage(commands::GraphLoadState::default())
         // invoke_handler is the tauri-specta equivalent of generate_handler! —
@@ -611,6 +627,11 @@ pub fn run() {
             // than orphaned as a background process once GitCat quits.
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 app_handle.state::<terminal::TerminalRegistry>().kill_all();
+                // Ask every running fetch/pull/push to stop. On Windows the Job
+                // Object's KILL_ON_JOB_CLOSE takes the trees down at process
+                // exit regardless; on Unix an in-flight git may still outlive
+                // quit, as before (follow-up: kill the groups synchronously).
+                app_handle.state::<jobs::JobRegistry>().cancel_all();
             }
         });
 }

@@ -1788,7 +1788,7 @@ describe("resetToUpstream", () => {
 
   it("onConfirm calls reset_branch_to_upstream and reloads on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.resetBranchToUpstream).mockResolvedValueOnce({ ok: true, message: "reset", backupRef: "refs/gitgui/backup/x" });
+    vi.mocked(commands.resetBranchToUpstream).mockResolvedValueOnce({ ok: true, message: "reset", backupRef: "refs/gitgui/backup/x", cancelled: false });
     sidebarCtrl.resetToUpstream("feature", "origin/feature");
     const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
     await ctx.onConfirm();
@@ -1799,7 +1799,7 @@ describe("resetToUpstream", () => {
 
   it("onConfirm warns and does not reload when the backend refuses", async () => {
     mockInTauri = true;
-    vi.mocked(commands.resetBranchToUpstream).mockResolvedValueOnce({ ok: false, message: "feature has no configured upstream to reset to.", backupRef: null });
+    vi.mocked(commands.resetBranchToUpstream).mockResolvedValueOnce({ ok: false, message: "feature has no configured upstream to reset to.", backupRef: null, cancelled: false });
     sidebarCtrl.resetToUpstream("feature", "origin/feature");
     const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
     await ctx.onConfirm();
@@ -2088,7 +2088,7 @@ describe("pushTag", () => {
 
   it("real mode: pushes the tag to origin (default remote) and cheers on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.pushTag).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null });
+    vi.mocked(commands.pushTag).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null, cancelled: false });
     await sidebarCtrl.pushTag("v1.0.0");
     expect(commands.pushTag).toHaveBeenCalledWith("/repo", null, "v1.0.0");
     expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
@@ -2096,7 +2096,7 @@ describe("pushTag", () => {
 
   it("real mode: warns on failure", async () => {
     mockInTauri = true;
-    vi.mocked(commands.pushTag).mockResolvedValueOnce({ ok: false, message: "rejected", backupRef: null });
+    vi.mocked(commands.pushTag).mockResolvedValueOnce({ ok: false, message: "rejected", backupRef: null, cancelled: false });
     await sidebarCtrl.pushTag("v1.0.0");
     expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("rejected"));
   });
@@ -2120,7 +2120,7 @@ describe("pushBranch", () => {
 
   it("real mode: pushes the named branch (not necessarily current) and cheers on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null });
+    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null, cancelled: false });
     const ok = await sidebarCtrl.pushBranch("feature", null);
     expect(ok).toBe(true);
     expect(commands.pushBranch).toHaveBeenCalledWith("/repo", "feature", null, null);
@@ -2131,14 +2131,14 @@ describe("pushBranch", () => {
 
   it("real mode: passes a differently-named remote branch through", async () => {
     mockInTauri = true;
-    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null });
+    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null, cancelled: false });
     await sidebarCtrl.pushBranch("feature", "feature-review");
     expect(commands.pushBranch).toHaveBeenCalledWith("/repo", "feature", null, "feature-review");
   });
 
   it("real mode: warns and returns false on failure", async () => {
     mockInTauri = true;
-    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: false, message: "rejected", backupRef: null });
+    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: false, message: "rejected", backupRef: null, cancelled: false });
     const ok = await sidebarCtrl.pushBranch("feature", null);
     expect(ok).toBe(false);
     expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("rejected"));
@@ -2174,7 +2174,7 @@ describe("push-to popover (openPushMenu / confirmPushMenu / cancelPushMenu)", ()
 
   it("confirmPushMenu with an empty input pushes under the SAME name and closes on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null });
+    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null, cancelled: false });
     sidebarCtrl.openPushMenu("feature", 10, 20);
     await sidebarCtrl.confirmPushMenu();
     expect(commands.pushBranch).toHaveBeenCalledWith("/repo", "feature", null, null);
@@ -2183,7 +2183,7 @@ describe("push-to popover (openPushMenu / confirmPushMenu / cancelPushMenu)", ()
 
   it("confirmPushMenu with typed text pushes under that remote branch name", async () => {
     mockInTauri = true;
-    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null });
+    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: true, message: "pushed", backupRef: null, cancelled: false });
     sidebarCtrl.openPushMenu("feature", 10, 20);
     sidebarCtrl.pushBranchInput = "  feature-review  ";
     await sidebarCtrl.confirmPushMenu();
@@ -2192,7 +2192,7 @@ describe("push-to popover (openPushMenu / confirmPushMenu / cancelPushMenu)", ()
 
   it("confirmPushMenu keeps the popover OPEN on failure so it can be retried", async () => {
     mockInTauri = true;
-    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: false, message: "rejected", backupRef: null });
+    vi.mocked(commands.pushBranch).mockResolvedValueOnce({ ok: false, message: "rejected", backupRef: null, cancelled: false });
     sidebarCtrl.openPushMenu("feature", 10, 20);
     sidebarCtrl.pushBranchInput = "feature-review";
     await sidebarCtrl.confirmPushMenu();

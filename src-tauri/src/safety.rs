@@ -27,7 +27,7 @@ use git2::Repository;
 use serde::Serialize;
 
 use crate::i18n_err::{ierr, ierrp};
-use crate::procutil::{output_with_timeout, NoConsoleWindowExt, SUBPROCESS_TIMEOUT};
+use crate::procutil::{output_with_timeout, run_with, NoConsoleWindowExt, RunError, RunOptions, SUBPROCESS_TIMEOUT};
 
 const BACKUP_GLOB: &str = "refs/gitgui/backup/*";
 const BACKUP_PREFIX: &str = "refs/gitgui/backup/";
@@ -123,7 +123,11 @@ pub fn run_git(repo: &str, args: &[&str]) -> Result<GitOut, String> {
 /// on non-WSL paths (`git_command` falls back to plain `git -C`), so
 /// `tests/safety_undo.rs`'s temp-repo scenarios are unaffected.
 pub fn run_git_worktree(repo: &str, args: &[&str]) -> Result<GitOut, String> {
-    let out = output_with_timeout(crate::wsl::git_command(repo, args), SUBPROCESS_TIMEOUT).map_err(|e| {
+    // Tagged so a timeout also kills the in-distro git; into_io keeps the
+    // error text byte-identical to output_with_timeout's.
+    let (cmd, tag) = crate::wsl::git_command_tagged(repo, args, &[]);
+    let opts = RunOptions { timeout: Some(SUBPROCESS_TIMEOUT), wsl: tag, ..Default::default() };
+    let out = run_with(cmd, opts).map_err(RunError::into_io).map_err(|e| {
         if e.kind() == std::io::ErrorKind::TimedOut {
             format!("git timed out after {SUBPROCESS_TIMEOUT:?} (repo: {repo})")
         } else {

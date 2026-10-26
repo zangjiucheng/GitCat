@@ -86,7 +86,7 @@ use tauri::{AppHandle, Manager, Wry};
 
 use crate::conflict;
 use crate::i18n_err::{ierr, ierrp};
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{run_with, NoConsoleWindowExt, RunOptions};
 use crate::safety::{self, GitOut};
 
 const FILE_NAME: &str = "external_tools.json";
@@ -554,7 +554,7 @@ pub fn resolve_commit_command(settings: &ToolSettings) -> Option<String> {
 /// Build the `git difftool` argv, EXCLUDING the leading `-C <repo>` (the
 /// caller adds that — see [`open_diff_tool_inner`] — since it differs between
 /// the fire-and-forget `Command::spawn` path used here and
-/// `safety::run_git`'s own `-C` handling used by the blocking merge-tool
+/// [`run_mergetool`]'s own `-C` handling used by the blocking merge-tool
 /// path).
 fn build_difftool_argv(file: &str, staged: bool, from_rev: &Option<String>, to_rev: &Option<String>, tool: &ExternalTool) -> Vec<String> {
     let mut args = Vec::new();
@@ -576,8 +576,32 @@ fn build_difftool_argv(file: &str, staged: bool, from_rev: &Option<String>, to_r
     args
 }
 
+/// How [`run_mergetool`] runs `git mergetool`: NO timeout. The child is an
+/// interactive GUI tool the user is editing in, so the wait is entirely at
+/// their pace — any hard bound would kill it mid-resolve.
+fn mergetool_options() -> RunOptions<'static> {
+    RunOptions { timeout: None, ..Default::default() }
+}
+
+/// `git -C <path> <args…>` for the blocking merge-tool path, mapped into the
+/// same [`GitOut`] shape (and the same `"failed to run git: {e}"` spawn-error
+/// text) `safety::run_git` produces, but under [`mergetool_options`] instead of
+/// `safety::run_git`'s fixed `SUBPROCESS_TIMEOUT`.
+fn run_mergetool(path: &str, args: &[&str]) -> Result<GitOut, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.no_console_window().arg("-C").arg(path).args(args);
+    // With no timeout and no cancel token, the only error left is Io.
+    let out = run_with(cmd, mergetool_options()).map_err(|e| format!("failed to run git: {}", e.into_io()))?;
+    Ok(GitOut {
+        ok: out.status.success(),
+        stdout: String::from_utf8_lossy(&out.stdout).trim_end().to_string(),
+        stderr: String::from_utf8_lossy(&out.stderr).trim_end().to_string(),
+        code: out.status.code().unwrap_or(-1),
+    })
+}
+
 /// Build the `git mergetool` argv, EXCLUDING the leading `-C <repo>` (passed
-/// via `safety::run_git`'s own `repo` param at the call site).
+/// via [`run_mergetool`]'s own `path` param at the call site).
 /// `mergetool.<name>.trustExitCode=true` and the global `mergetool.
 /// keepBackup=false` are ALWAYS present — see the module doc's empirical
 /// notes on why both are required to fully suppress prompts and avoid a
@@ -1191,7 +1215,10 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
 
     let args = build_mergetool_argv(file, &tool);
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let out = match safety::run_git(path, &arg_refs) {
+    // Not `safety::run_git`: that runs under SUBPROCESS_TIMEOUT (20 s), which
+    // killed the tool while the user was still resolving in it.
+    // FOLLOW-UP(jobs): register the mergetool wait as a job so it can be cancelled.
+    let out = match run_mergetool(path, &arg_refs) {
         Ok(o) => o,
         Err(e) => {
             return conflict::ResolveResult {
@@ -1632,6 +1659,16 @@ mod tests {
             args,
             vec!["-c", "difftool.mytool.cmd=code --wait --diff $LOCAL $REMOTE", "difftool", "-y", "-t", "mytool", "--", "f.txt"]
         );
+    }
+
+    #[test]
+    fn mergetool_runner_has_no_timeout() {
+        // The user resolves in the tool at their own pace; it used to run
+        // under safety::run_git's 20 s SUBPROCESS_TIMEOUT and get killed.
+        let opts = mergetool_options();
+        assert!(opts.timeout.is_none());
+        assert!(opts.cancel.is_none());
+        assert!(!opts.discard_output, "the outcome needs git's stderr");
     }
 
     #[test]

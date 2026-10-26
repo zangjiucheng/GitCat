@@ -75,7 +75,7 @@ use std::process::Command;
 
 use crate::i18n_err::{ierr, ierrp};
 use crate::model::Person;
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions};
 
 /// Cap on returned matches. Kept at the SAME value as file_history.rs's own
 /// `MAX_HISTORY_COMMITS` (2000) — deliberately NOT raised despite this
@@ -158,12 +158,14 @@ pub async fn pickaxe_search(
     file: Option<String>,
     at_commit: Option<String>,
 ) -> Result<PickaxeResults, String> {
+    // FOLLOW-UP(jobs): register + supersede-on-new-query cancel
     crate::blocking::run_blocking(move || {
-        pickaxe_search_inner(&path, &query, &mode, regex, all_refs, file.as_deref(), at_commit.as_deref())
+        pickaxe_search_inner(&path, &query, &mode, regex, all_refs, file.as_deref(), at_commit.as_deref(), None)
     })
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pickaxe_search_inner(
     path: &str,
     query: &str,
@@ -172,6 +174,7 @@ fn pickaxe_search_inner(
     all_refs: bool,
     file: Option<&str>,
     at_commit: Option<&str>,
+    cancel: Option<&CancelToken>,
 ) -> Result<PickaxeResults, String> {
     validate_query(query)?;
     let file = match file {
@@ -239,7 +242,7 @@ fn pickaxe_search_inner(
         args.push(f);
     }
 
-    let out = run_git(path, &args)?;
+    let out = run_git(path, &args, cancel)?;
     if !out.ok {
         return Err(git_msg(&out));
     }
@@ -297,14 +300,11 @@ struct Out {
     stderr: String,
 }
 
-fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
-    let o = Command::new("git")
-        .no_console_window()
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()
-        .map_err(|e| ierrp("err_tools.could_not_run_git", &[("detail", &e.to_string())]))?;
+fn run_git(path: &str, args: &[&str], cancel: Option<&CancelToken>) -> Result<Out, String> {
+    let mut cmd = Command::new("git");
+    cmd.no_console_window().arg("-C").arg(path).args(args);
+    let opts = RunOptions { timeout: git_timeout(args), cancel: cancel.cloned(), ..Default::default() };
+    let o = run_with(cmd, opts).map_err(|e| e.to_ierr("err_tools.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code(),

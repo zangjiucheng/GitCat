@@ -60,6 +60,9 @@
 //!   the way the symlink-status bug above is. See `src/wsl.rs`'s own
 //!   `wsl_create_ref` doc comment for the fix (routes ref creation through
 //!   the distro's own `git update-ref` instead).
+//! - `run_with_cancel_kills_the_in_distro_git_by_its_tag` — cancelling a
+//!   WSL-routed run kills the Linux-side git and its children by their
+//!   `GITCAT_OP` env tag (`wsl::kill_tagged`), not just `wsl.exe`.
 
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -250,10 +253,10 @@ fn git_remote_fetch_and_push_route_through_the_wsl_distros_own_git() {
     let (ok, _, err) = repo.wsl_git(&["remote", "add", "origin", &bare.linux_path]);
     assert!(ok, "fixture setup (remote add) failed: {err}");
 
-    let fetch_result = tauri::async_runtime::block_on(git_remote::fetch(path.clone(), Some("origin".to_string())));
+    let fetch_result = git_remote::fetch_core(&path, Some("origin"), false, git_remote::OpCtx::default());
     assert!(fetch_result.ok, "fetch should route through wsl and succeed: {}", fetch_result.message);
 
-    let push_result = tauri::async_runtime::block_on(git_remote::push(path.clone()));
+    let push_result = git_remote::push_core(&path, false, git_remote::OpCtx::default());
     assert!(push_result.ok, "push should route through wsl and succeed: {}", push_result.message);
 
     // Prove it actually landed on the "remote" (not a silent success).
@@ -415,4 +418,46 @@ fn list_distros_finds_the_real_registered_distro() {
     let all = wsl::list_distros();
     assert!(!all.is_empty(), "a machine with a registered distro must not report an empty list");
     assert!(all.iter().any(|d| d == &distro), "expected {distro:?} among {all:?}");
+}
+
+/// `procutil::run_with`'s WSL cancel path: a WSL-routed git whose child sleeps
+/// 30 s INSIDE the distro is cancelled, `run_with` returns promptly, and the
+/// in-distro `GITCAT_OP` sweep (`wsl::kill_tagged`) left nothing carrying the
+/// run's tag alive — killing `wsl.exe` alone does not reliably take the Linux
+/// side down with it.
+#[test]
+#[ignore]
+fn run_with_cancel_kills_the_in_distro_git_by_its_tag() {
+    use gitcat_lib::procutil::{run_with, CancelToken, RunOptions};
+    use std::time::{Duration, Instant};
+
+    let distro = skip_without_wsl!();
+    let repo = WslTempRepo::init(&distro, "cancel");
+    // The alias runs `sleep` through git's own shell — a grandchild of git
+    // that inherits GITCAT_OP from it.
+    let (cmd, tag) = wsl::git_command_tagged(&repo.unc_path(), &["-c", "alias.gitcatzz=!sleep 30", "gitcatzz"], &[]);
+    let tag = tag.expect("a WSL path is tagged");
+
+    let token = CancelToken::new();
+    let remote = token.clone();
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(2));
+        remote.cancel();
+    });
+    let started = Instant::now();
+    let err = run_with(cmd, RunOptions { cancel: Some(token), wsl: Some(tag.clone()), ..Default::default() })
+        .expect_err("a cancelled run must not succeed");
+    canceller.join().unwrap();
+    assert!(err.is_cancelled(), "{err:?}");
+    assert!(started.elapsed() < Duration::from_secs(15), "cancel took {:?}", started.elapsed());
+
+    // Same scan as WSL_KILL_SCRIPT, printing instead of killing.
+    let out = Command::new("wsl.exe")
+        .args(["-d", &distro, "-e", "sh", "-c"])
+        .arg(r#"for p in /proc/[0-9]*; do tr '\0' '\n' < "$p/environ" 2>/dev/null | grep -qx "GITCAT_OP=$1" && echo "${p#/proc/}"; done; :"#)
+        .args(["sh", &tag.token])
+        .output()
+        .expect("failed to spawn wsl.exe");
+    let left = String::from_utf8_lossy(&out.stdout);
+    assert!(left.trim().is_empty(), "processes still carrying GITCAT_OP={} after cancel: {left}", tag.token);
 }

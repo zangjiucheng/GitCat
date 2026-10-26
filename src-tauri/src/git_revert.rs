@@ -69,7 +69,7 @@ use git2::Repository;
 use serde::Serialize;
 
 use crate::i18n_err::{ierr, ierrp};
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions};
 
 // ---------------------------------------------------------------------------
 // Payload
@@ -161,9 +161,8 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
         cmd.env("GIT_EDITOR", "true")
             .env("GIT_SEQUENCE_EDITOR", "true");
     }
-    let o = cmd
-        .output()
-        .map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let o = run_with(cmd, RunOptions { timeout: git_timeout(args), ..Default::default() })
+        .map_err(|e| e.to_ierr("err_history.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -179,12 +178,20 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
 /// Keeps LC_ALL=C/LANGUAGE="" (locale-stable stderr) plus the editor guard when
 /// `no_editor`. Args are SHAs/flags only. No-op on non-WSL paths.
 fn git_worktree(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
+    git_worktree_c(path, args, no_editor, None)
+}
+
+/// [`git_worktree`] with an optional [`CancelToken`]: a cancel kills git's
+/// whole process tree (in-distro too) and surfaces as `err_misc.cancelled`.
+fn git_worktree_c(path: &str, args: &[&str], no_editor: bool, cancel: Option<&CancelToken>) -> Result<Out, String> {
     let mut envs: Vec<(&str, &str)> = vec![("LC_ALL", "C"), ("LANGUAGE", "")];
     if no_editor {
         envs.push(("GIT_EDITOR", "true"));
         envs.push(("GIT_SEQUENCE_EDITOR", "true"));
     }
-    let o = crate::wsl::git_command_env(path, args, &envs).output().map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, &envs);
+    let o = run_with(cmd, RunOptions { timeout: git_timeout(args), cancel: cancel.cloned(), wsl: tag, ..Default::default() })
+        .map_err(|e| e.to_ierr("err_history.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -414,7 +421,9 @@ pub async fn revert_start(path: String, sha: String, signoff: Option<bool>) -> R
         args.push("--end-of-options");
         args.push(&sha);
 
-        let out = match git_worktree(&path, &args, true) {
+        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
+        // Cancelled run cancel_cleanup::after_cancel.
+        let out = match git_worktree_c(&path, &args, true, None) {
             Ok(o) => o,
             Err(e) => {
                 return RevertResult {

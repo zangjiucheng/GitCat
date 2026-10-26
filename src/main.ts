@@ -72,6 +72,8 @@ import Sidebar from "./islands/sidebar/Sidebar.svelte";
 import { sidebarCtrl } from "./islands/sidebar/sidebar.svelte.ts";
 import SubmoduleNav from "./islands/submodulenav/SubmoduleNav.svelte";
 import { submoduleNavCtrl } from "./islands/submodulenav/submodulenav.svelte.ts";
+import Jobs from "./islands/jobs/Jobs.svelte";
+import { jobsCtrl } from "./islands/jobs/jobs.svelte.ts";
 import { IN_TAURI } from "./ipc/env";
 import * as bridge from "./legacy/bridge";
 import { dlog } from "./devlog";
@@ -187,6 +189,13 @@ mount(SubmoduleNav, { target: document.getElementById("submoduleNavMount")! });
 // CUR_REPO), so on a real launch this reads null. refresh() takes
 // `string | null` and resets to the empty strip for it.
 submoduleNavCtrl.refresh(bridge.CUR_REPO);
+
+// Running-jobs chip (#133), in the topbar just before Fetch/Pull/Push. Eager:
+// it renders nothing while idle, but init() must subscribe to the job events
+// at boot or a hidden or silent fetch would have no way to be cancelled.
+// init() never throws (it warns), so it is fire-and-forget.
+mount(Jobs, { target: document.getElementById("jobsMount")! });
+void jobsCtrl.init();
 
 // Reflog/Rerere/Plumbing: on-demand modals now (Tools menu / ⌘K — see
 // menu.rs / cmdk.svelte.ts), each opened via its own controller's show()

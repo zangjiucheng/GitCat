@@ -12,6 +12,9 @@ export default {
   not_a_valid_commit: "유효한 커밋이 아니에요: {rev} ({detail})",
   could_not_run_git: "git을 실행하지 못했어요: {detail}",
   git_exited_with_status: "git이 상태 코드 {code}(으)로 종료됐어요",
+  // procutil.rs(RunError::to_ierr) — 모든 run_with 호출부가 공유.
+  git_timed_out: "git이 {secs}초 후 시간 초과되었습니다",
+  cancelled: "취소되었습니다.",
 
   // file_history.rs
   path_does_not_exist: "{path} 경로가 {short}에 존재하지 않아요.",

@@ -30,7 +30,7 @@
 //! - `--stdin`: the oids go on stdin, one per line, so a commit touching
 //!   thousands of files never runs into the Windows command-line length limit.
 //!
-//! It runs through [`crate::wsl::git_command`], so a WSL repo fetches inside
+//! It runs through [`crate::wsl::git_command_tagged`], so a WSL repo fetches inside
 //! its distro and credentials, `GIT_TERMINAL_PROMPT=0` and the SSH askpass
 //! wiring are the same as for an ordinary fetch, and under a timeout
 //! ([`FETCH_TIMEOUT`]). A failure (offline, remote removed, auth refused)
@@ -49,6 +49,7 @@ use std::time::{Duration, SystemTime};
 use git2::{Diff, ErrorCode, FileMode, OdbLookupFlags, Oid, Repository};
 
 use crate::i18n_err::{ierr, ierrp};
+use crate::procutil::{run_with, RunOptions};
 
 /// How long one on-demand fetch may run. Generous: it can carry many blobs
 /// over a slow link, and the user asked for exactly this content. A hang (a
@@ -283,7 +284,7 @@ fn git_dir_arg(repo: &Repository) -> String {
 
 fn fetch(repo: &Repository, remote: &str, oids: &[Oid]) -> Result<(), String> {
     let path = git_dir_arg(repo);
-    let cmd = crate::wsl::git_command(
+    let (cmd, tag) = crate::wsl::git_command_tagged(
         &path,
         &[
             "-c",
@@ -296,6 +297,7 @@ fn fetch(repo: &Repository, remote: &str, oids: &[Oid]) -> Result<(), String> {
             "--filter=blob:none",
             "--stdin",
         ],
+        &[],
     );
     let mut input = String::with_capacity(oids.len() * 41);
     for o in oids {
@@ -303,7 +305,14 @@ fn fetch(repo: &Repository, remote: &str, oids: &[Oid]) -> Result<(), String> {
         input.push('\n');
     }
     log::info!("partial clone: fetching {} missing blob(s) from '{remote}' for {path}", oids.len());
-    match crate::procutil::output_with_timeout_stdin(cmd, input.into_bytes(), FETCH_TIMEOUT) {
+    // A network op with a hard timeout, deliberately: it blocks diff, blame
+    // and preview, and nothing in the UI can cancel it, so an unbounded wait
+    // would turn a stuck remote into a permanently stuck pane. The WSL tag
+    // makes a timeout kill the in-distro git (and its ssh) too.
+    // FOLLOW-UP(jobs): register as a job so it can be cancelled from the UI,
+    // then drop the hard timeout in favour of stall detection.
+    let opts = RunOptions { stdin: Some(input.into_bytes()), timeout: Some(FETCH_TIMEOUT), wsl: tag, ..Default::default() };
+    match run_with(cmd, opts) {
         Ok(out) if out.status.success() => Ok(()),
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);

@@ -79,7 +79,7 @@ use serde::Serialize;
 use std::process::Command;
 
 use crate::i18n_err::{ierr, ierrp};
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions};
 
 /// Cap on returned matches — same value as `pickaxe::MAX_PICKAXE_MATCHES`/
 /// `file_history::MAX_HISTORY_COMMITS`, though (per module doc) enforced
@@ -129,7 +129,8 @@ pub async fn code_search(
     case_sensitive: bool,
     at_commit: Option<String>,
 ) -> Result<CodeSearchResults, String> {
-    crate::blocking::run_blocking(move || code_search_inner(&path, &query, case_sensitive, at_commit.as_deref())).await
+    // FOLLOW-UP(jobs): register + supersede-on-new-query cancel
+    crate::blocking::run_blocking(move || code_search_inner(&path, &query, case_sensitive, at_commit.as_deref(), None)).await
 }
 
 fn code_search_inner(
@@ -137,6 +138,7 @@ fn code_search_inner(
     query: &str,
     case_sensitive: bool,
     at_commit: Option<&str>,
+    cancel: Option<&CancelToken>,
 ) -> Result<CodeSearchResults, String> {
     validate_query(query)?;
 
@@ -187,7 +189,7 @@ fn code_search_inner(
         args.push(s);
     }
 
-    let out = run_git(path, &args)?;
+    let out = run_git(path, &args, cancel)?;
     match interpret_exit(out.ok, out.code, out.stdout.is_empty(), out.stderr.is_empty()) {
         ExitOutcome::Matches => {}
         ExitOutcome::NoMatches => {
@@ -280,14 +282,11 @@ struct Out {
     stderr: String,
 }
 
-fn run_git(path: &str, args: &[&str]) -> Result<Out, String> {
-    let o = Command::new("git")
-        .no_console_window()
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()
-        .map_err(|e| ierrp("err_tools.could_not_run_git", &[("detail", &e.to_string())]))?;
+fn run_git(path: &str, args: &[&str], cancel: Option<&CancelToken>) -> Result<Out, String> {
+    let mut cmd = Command::new("git");
+    cmd.no_console_window().arg("-C").arg(path).args(args);
+    let opts = RunOptions { timeout: git_timeout(args), cancel: cancel.cloned(), ..Default::default() };
+    let o = run_with(cmd, opts).map_err(|e| e.to_ierr("err_tools.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code(),

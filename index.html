@@ -213,6 +213,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    before either side does, and 200px was yielding less than it could. */
 .cmd-hint>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .cmd-hint kbd{flex:none}
+/* The running-jobs chip (src/islands/jobs) renders only while a job runs, and
+   it costs ~45px the 960px bar doesn't have on every platform: Linux's wider
+   fonts overflowed by 18px. Search yields that space while the chip is up,
+   by the same rule as above; the ⌘K and a few letters of the label stay. */
+.topbar:has(.jobs) .cmd-hint{min-width:104px}
 .cmd-hint kbd{margin-left:auto;font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:5px;
   background:var(--elevated);border:1px solid var(--border);color:var(--muted)}
 /* Fetch/Pull/Push as ONE segmented control (shared frame, internal
@@ -2329,6 +2334,10 @@ body.diff-only .modal-foot{display:none}
            branch-pill cluster on the left (repo IDENTITY) — grouped with
            Undo/theme (also actions) per direct feedback that this is the
            clearer split, not "everything about the current repo together". -->
+      <!-- Running-jobs chip (src/islands/jobs): empty while idle.
+           display:contents so the empty mount is not a flex item, and so
+           costs no .tb-right gap at the minimum window width. -->
+      <span id="jobsMount" style="display:contents"></span>
       <div class="sync-actions">
         <button class="tb-btn" id="fetchBtn" data-i18n-title="topbar.fetch_tip" title="Fetch — update remote-tracking refs">
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.6v3h-3"/></svg>

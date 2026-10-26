@@ -94,8 +94,8 @@ function err(error: string): { status: "error"; error: string } {
   return { status: "error", error };
 }
 
-function remoteResult(partial: { ok: boolean; message?: string; backupRef?: string | null }) {
-  return { message: "", backupRef: null, ...partial };
+function remoteResult(partial: { ok: boolean; message?: string; backupRef?: string | null; cancelled?: boolean }) {
+  return { message: "", backupRef: null, cancelled: false, ...partial };
 }
 
 const FILE_A: ConflictFile = { path: "a.ts", ours: "o", base: "b", theirs: "t" };
@@ -629,6 +629,22 @@ describe("pullMerge", () => {
     expect(commands.fetch).toHaveBeenCalledWith("repo1", null);
     expect(commands.mergeStart).not.toHaveBeenCalled();
     expect(bridge.tama.warn).toHaveBeenCalledWith("Could not resolve host.");
+    expect(resolver.open).toBe(false);
+    expect(resolver.busy).toBe(false);
+  });
+
+  it("a fetch cancelled from the jobs chip stops quietly, without a warning", async () => {
+    vi.mocked(commands.currentUpstream).mockResolvedValueOnce(ok("origin/main"));
+    vi.mocked(commands.fetch).mockResolvedValueOnce(
+      remoteResult({ ok: false, message: "Fetch cancelled.", cancelled: true }),
+    );
+
+    await resolver.pullMerge("repo1");
+
+    expect(commands.mergeStart).not.toHaveBeenCalled();
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+    expect(bridge.tama.event).toHaveBeenCalledWith("mutation.cancel");
+    expect(bridge.tama.say).toHaveBeenLastCalledWith("Fetch cancelled.", 5000);
     expect(resolver.open).toBe(false);
     expect(resolver.busy).toBe(false);
   });

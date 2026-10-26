@@ -52,7 +52,7 @@
 use std::process::{Command, Stdio};
 
 use crate::i18n_err::ierrp;
-use crate::procutil::{output_with_timeout, NoConsoleWindowExt, SUBPROCESS_TIMEOUT};
+use crate::procutil::{output_with_timeout, run_with, NoConsoleWindowExt, RunError, RunOptions, SUBPROCESS_TIMEOUT};
 
 /// `path` -> `(distro, linux_path)` when `path` is a WSL UNC path, checking
 /// both the modern `wsl.localhost` host and the legacy `wsl$` alias, and
@@ -374,15 +374,17 @@ pub fn parse_status_porcelain_v2(raw: &str) -> Vec<StatusEntry> {
 /// problem.
 pub fn wsl_status(path: &str) -> Option<Result<Vec<StatusEntry>, String>> {
     wsl_target(path)?;
-    let cmd = git_command(path, &["status", "--porcelain=v2", "-z", "--untracked-files=all", "--find-renames"]);
-    let out = output_with_timeout(cmd, SUBPROCESS_TIMEOUT);
+    // Tagged, so a timeout also kills the git inside the distro (killing
+    // wsl.exe alone doesn't reliably do that).
+    let (cmd, tag) = git_command_tagged(path, &["status", "--porcelain=v2", "-z", "--untracked-files=all", "--find-renames"], &[]);
+    let out = run_with(cmd, RunOptions { timeout: Some(SUBPROCESS_TIMEOUT), wsl: tag, ..Default::default() });
     Some(match out {
         Ok(o) if o.status.success() => Ok(parse_status_porcelain_v2(&String::from_utf8_lossy(&o.stdout))),
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+        Err(RunError::TimedOut(_)) => {
             Err(ierrp("err_misc.wsl_status_timed_out", &[("timeout", &format!("{SUBPROCESS_TIMEOUT:?}"))]))
         }
-        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())])),
+        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.into_io().to_string())])),
     })
 }
 
@@ -416,8 +418,8 @@ pub fn wsl_status(path: &str) -> Option<Result<Vec<StatusEntry>, String>> {
 pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize, usize)>, String>> {
     wsl_target(path)?;
     let revspec = format!("{branch}...{branch}@{{upstream}}");
-    let cmd = git_command(path, &["rev-list", "--left-right", "--count", &revspec]);
-    Some(match output_with_timeout(cmd, SUBPROCESS_TIMEOUT) {
+    let (cmd, tag) = git_command_tagged(path, &["rev-list", "--left-right", "--count", &revspec], &[]);
+    Some(match run_with(cmd, RunOptions { timeout: Some(SUBPROCESS_TIMEOUT), wsl: tag, ..Default::default() }) {
         Ok(o) if o.status.success() => {
             let text = String::from_utf8_lossy(&o.stdout);
             match parse_ahead_behind_count(&text) {
@@ -431,10 +433,10 @@ pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize
         // comment on the Ok(None) case).
         Ok(o) if String::from_utf8_lossy(&o.stderr).contains("no upstream") => Ok(None),
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+        Err(RunError::TimedOut(_)) => {
             Err(ierrp("err_misc.wsl_ahead_behind_timed_out", &[("timeout", &format!("{SUBPROCESS_TIMEOUT:?}"))]))
         }
-        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())])),
+        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.into_io().to_string())])),
     })
 }
 
@@ -476,14 +478,14 @@ pub fn wsl_ahead_behind(path: &str, branch: &str) -> Option<Result<Option<(usize
 pub fn wsl_create_ref(path: &str, ref_name: &str, oid: &str, reason: &str) -> Option<Result<(), String>> {
     wsl_target(path)?;
     const ZERO_OID: &str = "0000000000000000000000000000000000000000";
-    let cmd = git_command(path, &["update-ref", "-m", reason, ref_name, oid, ZERO_OID]);
-    Some(match output_with_timeout(cmd, SUBPROCESS_TIMEOUT) {
+    let (cmd, tag) = git_command_tagged(path, &["update-ref", "-m", reason, ref_name, oid, ZERO_OID], &[]);
+    Some(match run_with(cmd, RunOptions { timeout: Some(SUBPROCESS_TIMEOUT), wsl: tag, ..Default::default() }) {
         Ok(o) if o.status.success() => Ok(()),
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+        Err(RunError::TimedOut(_)) => {
             Err(ierrp("err_misc.wsl_create_ref_timed_out", &[("timeout", &format!("{SUBPROCESS_TIMEOUT:?}"))]))
         }
-        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.to_string())])),
+        Err(e) => Err(ierrp("err_misc.could_not_run_git", &[("detail", &e.into_io().to_string())])),
     })
 }
 
@@ -501,9 +503,176 @@ fn parse_ahead_behind_count(text: &str) -> Option<(usize, usize)> {
     Some((ahead, behind))
 }
 
+/// Identifies one WSL-routed git run INSIDE its distro, so a cancel/timeout can
+/// kill it there. Killing `wsl.exe` on the Windows side does NOT reliably take
+/// the Linux-side git (or its `ssh`/`git-remote-*`) down with it, and those
+/// processes' pids are invisible from Windows — so each run carries a random
+/// `GITCAT_OP=<token>` in its environment, which every descendant inherits,
+/// and [`kill_tagged`] signals whatever in the distro has it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WslTag {
+    pub distro: String,
+    pub token: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum WslSignal {
+    Term,
+    Kill,
+}
+
+impl WslSignal {
+    fn as_str(self) -> &'static str {
+        match self {
+            WslSignal::Term => "TERM",
+            WslSignal::Kill => "KILL",
+        }
+    }
+}
+
+/// 16 lowercase hex chars, unique within this process and unpredictable enough
+/// across processes. The seed (`SystemTime` nanos ^ (pid << 32)) is taken once;
+/// each token is splitmix64 of `seed + counter * golden-gamma` — splitmix64's
+/// own generator, a bijection of the counter, so two tokens from one process
+/// can never collide. No new crate for this.
+pub fn new_op_token() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+    static SEED: OnceLock<u64> = OnceLock::new();
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seed = *SEED.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        nanos ^ (u64::from(std::process::id()) << 32)
+    });
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut z = seed.wrapping_add(n.wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    format!("{:016x}", z ^ (z >> 31))
+}
+
+/// Exactly 16 bytes, all `[0-9a-f]` — the only shape [`new_op_token`] makes,
+/// and the only one [`kill_tagged`] will ever put on a command line.
+pub fn is_valid_op_token(t: &str) -> bool {
+    t.len() == 16 && t.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// [`git_command_env`] plus `GITCAT_OP=<token>` appended as the LAST `env`
+/// argv token (after `GIT_TERMINAL_PROMPT=0` and the caller's envs), returning
+/// the tag to hand to `procutil::RunOptions::wsl`. Plain (non-WSL) path:
+/// identical to [`git_command_env`], tag `None` — a Windows/Unix git is killed
+/// through its job/process group, no tag needed.
+pub fn git_command_tagged(path: &str, args: &[&str], envs: &[(&str, &str)]) -> (Command, Option<WslTag>) {
+    let Some((distro, _)) = wsl_target(path) else {
+        return (git_command_env(path, args, envs), None);
+    };
+    let token = new_op_token();
+    let mut all = envs.to_vec();
+    all.push(("GITCAT_OP", &token));
+    let cmd = git_command_env(path, args, &all);
+    (cmd, Some(WslTag { distro, token }))
+}
+
+/// Signal every process in the distro whose ENVIRONMENT carries
+/// `GITCAT_OP=$1`. A compile-time constant: the token and signal name travel
+/// only as positional `$1`/`$2`.
+const WSL_KILL_SCRIPT: &str = r#"for p in /proc/[0-9]*; do
+  tr '\0' '\n' < "$p/environ" 2>/dev/null | grep -qx "GITCAT_OP=$1" && kill -"$2" "${p#/proc/}" 2>/dev/null
+done; :"#;
+
+/// `wsl.exe -d <distro> -e sh -c WSL_KILL_SCRIPT sh <token> TERM|KILL`,
+/// no_console_window, output_with_timeout(SUBPROCESS_TIMEOUT), errors ignored
+/// (best-effort: the caller kills the Windows side regardless). Returns early,
+/// without spawning anything, if the token isn't [`is_valid_op_token`].
+///
+/// Why this stays as safe as the `-e` direct-exec model the module doc
+/// describes: the script is a constant, `-e` means no shell ever parses the
+/// argv (so `$1`/`$2` arrive as plain data), and the token is validated hex
+/// besides. The scan matches `environ` only, never argv — so it can't hit the
+/// scan's own `sh` (whose argv holds the token but whose environment doesn't,
+/// since `wsl.exe`'s Windows env never crosses into the distro) — and only a
+/// same-user process has a readable `environ` at all. It also catches an
+/// `ssh`/`git-remote-*` that called `setsid` and left git's process group.
+pub fn kill_tagged(tag: &WslTag, sig: WslSignal) {
+    if !is_valid_op_token(&tag.token) {
+        return;
+    }
+    let mut cmd = Command::new("wsl.exe");
+    cmd.arg("-d")
+        .arg(&tag.distro)
+        .arg("-e")
+        .arg("sh")
+        .arg("-c")
+        .arg(WSL_KILL_SCRIPT)
+        .arg("sh")
+        .arg(&tag.token)
+        .arg(sig.as_str())
+        .no_console_window();
+    let _ = output_with_timeout(cmd, SUBPROCESS_TIMEOUT);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn argv(cmd: &Command) -> Vec<String> {
+        cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect()
+    }
+
+    #[test]
+    fn tagged_argv_puts_gitcat_op_last_before_git() {
+        let path = r"\\wsl.localhost\Ubuntu\home\jc\repo";
+        let (cmd, tag) = git_command_tagged(path, &["fetch", "origin"], &[]);
+        let tag = tag.expect("a WSL path is tagged");
+        assert_eq!(tag.distro, "Ubuntu");
+        assert!(is_valid_op_token(&tag.token));
+        assert_eq!(cmd.get_program(), "wsl.exe");
+        let op = format!("GITCAT_OP={}", tag.token);
+        assert_eq!(
+            argv(&cmd),
+            ["-d", "Ubuntu", "-e", "env", "GIT_TERMINAL_PROMPT=0", op.as_str(), "git", "-C", "/home/jc/repo", "fetch", "origin"]
+        );
+
+        let (cmd, tag) = git_command_tagged(path, &["pull"], &[("LC_ALL", "C"), ("GIT_EDITOR", "true")]);
+        let op = format!("GITCAT_OP={}", tag.unwrap().token);
+        assert_eq!(
+            argv(&cmd),
+            ["-d", "Ubuntu", "-e", "env", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C", "GIT_EDITOR=true", op.as_str(), "git", "-C", "/home/jc/repo", "pull"]
+        );
+    }
+
+    #[test]
+    fn plain_path_has_no_tag() {
+        let (cmd, tag) = git_command_tagged(r"C:\Users\me\repo", &["fetch"], &[("LC_ALL", "C")]);
+        assert_eq!(tag, None);
+        assert_eq!(cmd.get_program(), "git");
+        assert_eq!(argv(&cmd), argv(&git_command_env(r"C:\Users\me\repo", &["fetch"], &[("LC_ALL", "C")])));
+        assert!(!cmd.get_envs().any(|(k, _)| k == "GITCAT_OP"));
+    }
+
+    #[test]
+    fn op_token_is_16_hex() {
+        let tokens: std::collections::HashSet<String> = (0..1000).map(|_| new_op_token()).collect();
+        assert_eq!(tokens.len(), 1000, "no duplicates");
+        for t in &tokens {
+            assert!(is_valid_op_token(t), "{t:?}");
+        }
+    }
+
+    #[test]
+    fn invalid_tokens_are_rejected() {
+        assert!(is_valid_op_token("0123456789abcdef"));
+        assert!(!is_valid_op_token("x;rm -rf /"));
+        assert!(!is_valid_op_token("0123456789ABCDEF"));
+        assert!(!is_valid_op_token("0123456789abcde"));
+        assert!(!is_valid_op_token("0123456789abcdef0"));
+        assert!(!is_valid_op_token(""));
+        // Must not even spawn for a bad token (this would otherwise launch wsl.exe).
+        kill_tagged(&WslTag { distro: "Ubuntu".into(), token: "$(reboot)".into() }, WslSignal::Kill);
+    }
 
     // output_with_timeout's own generic wait/kill/drain behavior is tested
     // at its actual home, procutil.rs — nothing WSL-specific about it to

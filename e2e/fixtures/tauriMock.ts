@@ -46,6 +46,19 @@ import { TempRepo } from "./tempRepo";
 // mock's own file header warns against for the graph/layout case).
 export type RecordedCall = { cmd: string; args: any };
 
+// The streaming fetch/pull/push (#133) don't resolve on their own: each parks
+// here until the spec either cancels it (`job_cancel` resolves it as a
+// cancelled RemoteResult) or finishes it (`window.__e2eFinishSync()`), so the
+// progress modal can be looked at while "git is running".
+type SyncKind = "fetch" | "pull" | "push";
+type PendingSync = { pending: { kind: SyncKind; resolve: (r: unknown) => void } | null };
+
+const SYNC_OK_MESSAGE: Record<SyncKind, string> = {
+  fetch: "Fetched all remotes.",
+  pull: "Already up to date.",
+  push: "Pushed main.",
+};
+
 type RefChip = { n: string; t: "head" | "branch" | "remote" | "tag" };
 type CommitRow = {
   sha: string;
@@ -361,7 +374,7 @@ function dashboardRepoStatus(repo: TempRepo) {
   };
 }
 
-function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[]) {
+function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[], sync: PendingSync) {
   // Starts EMPTY on purpose: a test that means to open a repo has to go through
   // the picker like a user does, rather than finding its repo pre-tracked.
   const tracked: { path: string; lastOpenedAt: number | null }[] = [];
@@ -583,6 +596,38 @@ function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[]) {
       case "watch_repo":
       case "unwatch_repo":
         return null;
+      // ── remote sync + running jobs (#133) ───────────────────────────────
+      // The silent ops (auto-fetch, resolver flows) just succeed.
+      case "fetch":
+      case "pull":
+      case "push":
+        calls.push({ cmd, args });
+        return { ok: true, message: SYNC_OK_MESSAGE[cmd as SyncKind], backupRef: null, cancelled: false };
+      // The streaming ones park until cancelled or finished — see PendingSync.
+      case "fetch_stream":
+      case "pull_stream":
+      case "push_stream": {
+        calls.push({ cmd, args });
+        const kind = cmd.replace("_stream", "") as SyncKind;
+        return new Promise((resolve) => {
+          sync.pending = { kind, resolve };
+        });
+      }
+      case "jobs_list":
+        return [];
+      case "job_cancel": {
+        calls.push({ cmd, args });
+        const p = sync.pending;
+        if (!p) return false; // nothing running: the benign "already gone" race
+        sync.pending = null;
+        p.resolve({
+          ok: false,
+          message: `i18n:err_remote.${p.kind}_cancelled` + (p.kind === "pull" ? "\u001fsnapshot\u001fmock" : ""),
+          backupRef: p.kind === "pull" ? "refs/gitcat-backup/mock" : null,
+          cancelled: true,
+        });
+        return true;
+      }
       // @tauri-apps/api/event's listen/unlisten/emit via invoke — unused by the
       // graph stream (that goes through window.__TAURI__.event.listen below).
       // No test here drives these, so they stay inert stubs.
@@ -603,7 +648,16 @@ function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[]) {
 
 /** Wires the mock Tauri bridge into `page` and returns once the app can see IN_TAURI === true. */
 async function installTauriMock(page: Page, repo: TempRepo, calls: RecordedCall[]): Promise<void> {
-  await page.exposeFunction("__e2eInvoke", makeInvokeHandler(repo, calls));
+  const sync: PendingSync = { pending: null };
+  await page.exposeFunction("__e2eInvoke", makeInvokeHandler(repo, calls, sync));
+  // Lets a spec finish the parked streaming op successfully.
+  await page.exposeFunction("__e2eFinishSync", () => {
+    const p = sync.pending;
+    if (!p) return false;
+    sync.pending = null;
+    p.resolve({ ok: true, message: SYNC_OK_MESSAGE[p.kind], backupRef: null, cancelled: false });
+    return true;
+  });
   await page.addInitScript((repoDir: string) => {
     // Skip the first-run setup wizard (src/islands/setupwizard) — it auto-opens
     // over the hero card whenever IN_TAURI is true and no repo is open yet,
@@ -623,6 +677,9 @@ async function installTauriMock(page: Page, repo: TempRepo, calls: RecordedCall[
     // is the window the graph-reload spec needs to look at.
     const held: unknown[] = [];
     w.__e2eHoldGraph = false;
+    // Lets a spec stand in for the backend's emit_on_main — e.g. the
+    // job-started / job-progress events the sync-progress modal listens for.
+    w.__e2eEmit = emit;
     w.__e2eReleaseGraph = () => {
       w.__e2eHoldGraph = false;
       for (const b of held.splice(0)) emit("graph-batch", b);

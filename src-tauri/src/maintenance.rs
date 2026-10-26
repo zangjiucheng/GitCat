@@ -13,7 +13,8 @@
 //! never shown to the user.
 
 use crate::blocking::run_blocking;
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{run_with, CancelToken, RunOptions, LONG_OP_TIMEOUT};
+use crate::wsl::WslTag;
 
 /// Run `git maintenance run --auto` in `path`, off-thread. `Ok(())` on success;
 /// `Err(git's stderr)` otherwise (the caller logs it and simply tries again on a
@@ -22,24 +23,34 @@ use crate::procutil::NoConsoleWindowExt;
 #[tauri::command]
 #[specta::specta]
 pub async fn run_git_maintenance(path: String) -> Result<(), String> {
-    run_blocking(move || {
-        let out = crate::wsl::git_command(&path, &["maintenance", "run", "--auto"])
-            .no_console_window()
-            .output()
-            .map_err(|e| format!("could not run git maintenance: {e}"))?;
-        if out.status.success() {
-            Ok(())
-        } else {
-            let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            Err(if msg.is_empty() { "git maintenance failed".to_string() } else { msg })
-        }
-    })
-    .await
+    // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(), so quitting
+    // or a user cancel stops a long repack instead of waiting it out.
+    run_blocking(move || maintenance_run(&path, None)).await
+}
+
+/// The [`RunOptions`] [`maintenance_run`] runs under: the long-op timeout. It
+/// had none before, so one wedged `git maintenance` (a stuck gc, a dead
+/// prefetch connection) pinned a blocking thread for the rest of the session.
+/// Split out so the test checks the options the runner actually uses.
+fn maintenance_options(cancel: Option<&CancelToken>, tag: Option<WslTag>) -> RunOptions<'static> {
+    RunOptions { timeout: Some(LONG_OP_TIMEOUT), cancel: cancel.cloned(), wsl: tag, ..Default::default() }
+}
+
+fn maintenance_run(path: &str, cancel: Option<&CancelToken>) -> Result<(), String> {
+    // Tagged, so a timeout or cancel also kills the git inside a WSL distro.
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, &["maintenance", "run", "--auto"], &[]);
+    let out = run_with(cmd, maintenance_options(cancel, tag)).map_err(|e| format!("could not run git maintenance: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(if msg.is_empty() { "git maintenance failed".to_string() } else { msg })
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::run_git_maintenance;
+    use super::{maintenance_options, maintenance_run, run_git_maintenance};
     use std::process::Command;
 
     fn tmp_dir(tag: &str) -> std::path::PathBuf {
@@ -64,6 +75,22 @@ mod tests {
         assert!(res.is_ok(), "maintenance on a real repo should succeed, got {res:?}");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn runs_under_a_timeout() {
+        // It used to run with no bound at all; maintenance_run now takes its
+        // options from maintenance_options, which carries the long-op timeout.
+        assert_eq!(maintenance_options(None, None).timeout, Some(crate::procutil::LONG_OP_TIMEOUT));
+    }
+
+    #[test]
+    fn pre_cancelled_token_stops_it_before_spawning() {
+        // run_with checks the token before it spawns anything, so no repo is needed.
+        let token = crate::procutil::CancelToken::new();
+        token.cancel();
+        let res = maintenance_run("/no/such/path/at/all", Some(&token));
+        assert_eq!(res, Err("could not run git maintenance: cancelled".to_string()));
     }
 
     #[test]

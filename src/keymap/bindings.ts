@@ -3,6 +3,7 @@ import { SHORTCUTS } from "./shortcuts.ts";
 import { keymap } from "./registry.ts";
 import { focusPane } from "./panes.ts";
 import { workdirKeys } from "./actions/workdir.ts";
+import { jobsKeys } from "./actions/jobs.ts";
 import { canvasKeys } from "./actions/canvas.ts";
 import { sidebarKeys } from "./actions/sidebar.ts";
 import { detailKeys } from "./actions/detail.ts";
@@ -167,6 +168,20 @@ export const BINDINGS: readonly Binding[] = [
   { id: "remote.push", chords: [SHORTCUTS.push], scope: "global",
     when: ["notTextInput"], dispatch: "js", destructive: true, labelKey: "vimnav.push",
     help: { section: "sync", order: 30 }, mode: "shadow", owns: "legacy/main.ts:2206" },
+  // The running-jobs popover (#133). Live from day one — it never had a legacy
+  // listener to shadow. JS only: no menu item, so keymap_generated.rs is
+  // untouched. Declines when nothing is running (see actions/jobs.ts).
+  { id: "jobs.toggle", chords: ["Mod+Shift+KeyJ"], scope: "global",
+    when: ["notTextInput", "noScrimOpen"], dispatch: "js", labelKey: "jobs.toggle_shortcut",
+    help: { section: "sync", order: 40 },
+    run: () => jobsKeys.toggle() },
+  // The popover pushes "modal", which stops the walk before "global", so the
+  // row above cannot close what it opened. This one can, and it declines under
+  // every other modal (SyncProgress, dialogs), where the popover is not open.
+  { id: "jobs.close", chords: ["Mod+Shift+KeyJ"], scope: "modal",
+    when: ["notTextInput"], dispatch: "js", labelKey: "jobs.toggle_shortcut",
+    help: { section: "sync", order: 41, hidden: true },
+    run: () => jobsKeys.close() },
 
   // ── undo ───────────────────────────────────────────────────────────────
   // legacy/main.ts:2398-2412 is PR 0's rewrite and is already the exact-mask /

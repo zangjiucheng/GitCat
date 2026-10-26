@@ -10,6 +10,19 @@ export default {
     "{base}（请先在 WSL 终端中对该远程执行一次任意 ssh/git 命令以接受其主机密钥，然后重试）",
   host_key_hint:
     "{base}（请先在终端中对该远程执行一次任意 ssh/git 命令以接受其主机密钥，然后重试）",
+  // 用户取消的获取/拉取/推送（#133）。
+  fetch_cancelled: "已取消获取。远程跟踪引用可能只更新了一部分；再次获取即可完成。",
+  fetch_cancelled_locks: "已取消获取。已删除被取消的 git 留下的锁文件：{locks}。再次获取即可完成。",
+  push_cancelled: "已取消推送。远程可能已收到，也可能没有；请获取一次以确认。",
+  push_cancelled_locks:
+    "已取消推送。远程可能已收到，也可能没有；请获取一次以确认。已删除被取消的 git 留下的锁文件：{locks}。",
+  pull_cancelled: "已取消拉取。如果有内容看起来只更新了一半，按 {undoKey} 即可恢复拉取前的快照 {snapshot}。",
+  pull_cancelled_locks:
+    "已取消拉取。已删除被取消的 git 留下的锁文件：{locks}。如果有内容看起来只更新了一半，按 {undoKey} 即可恢复拉取前的快照 {snapshot}。",
+  pull_cancelled_aborted:
+    "已取消拉取。已运行 git {op} --abort，撤回了未完成的 {op}。如果仍有异常，按 {undoKey} 即可恢复拉取前的快照 {snapshot}。",
+  pull_cancelled_locks_aborted:
+    "已取消拉取。已删除被取消的 git 留下的锁文件（{locks}），并运行 git {op} --abort 撤回了未完成的 {op}。如果仍有异常，按 {undoKey} 即可恢复拉取前的快照 {snapshot}。",
   cannot_open: "无法打开仓库：{detail}",
   snapshot_failed: "安全快照失败，已中止：{detail}",
   remote_name_empty: "远程名称为空。",

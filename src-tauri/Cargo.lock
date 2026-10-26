@@ -1715,6 +1715,7 @@ dependencies = [
  "console-subscriber",
  "git2",
  "image",
+ "libc",
  "log",
  "mlua",
  "notify-debouncer-mini",

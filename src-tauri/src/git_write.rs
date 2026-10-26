@@ -27,6 +27,7 @@ use git2::{BranchType, Repository};
 use serde::Serialize;
 
 use crate::i18n_err::{ierr, ierrp};
+use crate::procutil::{git_timeout, run_with, RunOptions};
 
 // ---------------------------------------------------------------------------
 // Payloads
@@ -155,9 +156,9 @@ fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
     // The LC_ALL/LANGUAGE/GIT_PAGER vars still reach git (argv `env` prefix on
     // WSL, ordinary Command::env off it), so `checkout_collision_files`'s stderr
     // parsing stays locale-stable. A strict no-op on non-WSL paths.
-    let output = crate::wsl::git_command_env(path, args, &[("LC_ALL", "C"), ("LANGUAGE", ""), ("GIT_PAGER", "cat")])
-        .output()
-        .map_err(|e| ierrp("err_workdir.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, &[("LC_ALL", "C"), ("LANGUAGE", ""), ("GIT_PAGER", "cat")]);
+    let output = run_with(cmd, RunOptions { timeout: git_timeout(args), wsl: tag, ..Default::default() })
+        .map_err(|e| e.to_ierr("err_workdir.could_not_run_git"))?;
     Ok(GitOut {
         ok: output.status.success(),
         code: output.status.code(),

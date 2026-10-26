@@ -32,6 +32,20 @@
 //! configured upstream is published to "origin" (`--set-upstream`) — the
 //! overwhelmingly common case for a repo with a single remote.
 //!
+//! Timeouts, stalls and cancel (#133). No network op here has a hard timeout:
+//! a big clone or a slow remote is legitimately slow, and killing it on a
+//! clock would turn "slow" into "broken". Instead `fetch`/`pull`/`push` (and
+//! their `*_stream` twins) run as registered jobs (see jobs.rs): a job whose
+//! git has printed nothing for `jobs::NETWORK_STALL` is REPORTED as stalled
+//! ("looks stuck — cancel?"), never killed automatically, and the user can
+//! cancel it. A cancel kills git's whole process tree (`git-remote-https`,
+//! `ssh`, hooks — on a WSL repo inside the distro too; see
+//! `procutil::run_with`), then cancel_cleanup.rs removes only lock files that
+//! killed git created and, for a pull only, `--abort`s a merge/rebase it left
+//! behind (only if the repo was clean before). A cancelled pull points the user at its
+//! pre-pull snapshot, which Undo restores. force_push/push_tag/push_branch/
+//! reset_branch_to_upstream are not registered yet (follow-up).
+//!
 //! `force_push` is this module's ONE deliberate, sanctioned exception to the
 //! "never force" rule above — added so a branch that's been rebased/amended
 //! AFTER already being pushed (a routine result of this app's own
@@ -64,7 +78,10 @@ use git2::{BranchType, Repository};
 use serde::Serialize;
 use tauri::{AppHandle, Wry};
 
+use crate::cancel_cleanup::{self, CleanupReport, PreOp};
 use crate::i18n_err::{ierr, ierrp};
+use crate::jobs::{self, JobKind, JobOutcome, NETWORK_STALL};
+use crate::procutil::{run_with, CancelToken, LineSink, RunError, RunOptions, StallHook};
 
 #[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -73,14 +90,29 @@ pub struct RemoteResult {
     pub message: String,
     /// Pre-op safety snapshot ref — only ever `Some` for `pull` (see module doc).
     pub backup_ref: Option<String>,
+    /// The user cancelled the op (`ok` is then false). The frontend shows it as
+    /// a neutral outcome, not an error.
+    pub cancelled: bool,
 }
 
 impl RemoteResult {
     fn ok(message: impl Into<String>, backup_ref: Option<String>) -> Self {
-        Self { ok: true, message: message.into(), backup_ref }
+        Self { ok: true, message: message.into(), backup_ref, cancelled: false }
     }
     fn err(message: impl Into<String>) -> Self {
-        Self { ok: false, message: message.into(), backup_ref: None }
+        Self { ok: false, message: message.into(), backup_ref: None, cancelled: false }
+    }
+    pub(crate) fn cancelled(message: String, backup_ref: Option<String>) -> Self {
+        Self { ok: false, message, backup_ref, cancelled: true }
+    }
+    fn outcome(&self) -> JobOutcome {
+        if self.cancelled {
+            JobOutcome::Cancelled
+        } else if self.ok {
+            JobOutcome::Ok
+        } else {
+            JobOutcome::Failed
+        }
     }
 }
 
@@ -91,17 +123,29 @@ struct GitOut {
     stderr: String,
 }
 
+impl GitOut {
+    fn from_output(output: &std::process::Output) -> Self {
+        GitOut {
+            ok: output.status.success(),
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        }
+    }
+}
+
 /// One live progress segment emitted to the frontend during a streaming
-/// fetch/pull (see `fetch_stream`/`pull_stream`). Emitted as the `"sync-progress"`
-/// event, never taken as a command parameter — exported to TS via `specta_builder`
-/// exactly like `GraphBatch`.
+/// fetch/pull/push (see `fetch_stream`/`pull_stream`/`push_stream`). Emitted as
+/// the `"sync-progress"` event, never taken as a command parameter — exported
+/// to TS via `specta_builder` exactly like `GraphBatch`.
 #[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncProgress {
-    /// Operation kind — "fetch" | "pull". The frontend uses it as a cheap
-    /// discriminator so a late event from one op can't leak into another's modal.
+    /// Operation kind — "fetch" | "pull" | "push". The frontend uses it as a
+    /// cheap discriminator so a late event from one op can't leak into
+    /// another's modal.
     pub phase: String,
-    /// One raw git progress segment (see `feed_progress`'s `\r`/`\n` split).
+    /// One raw git progress segment (see `procutil::feed_progress`'s `\r`/`\n` split).
     pub line: String,
 }
 
@@ -110,92 +154,71 @@ pub struct SyncProgress {
 /// `fetch` already learned about) — see `crate::wsl` for why that means
 /// EVERY call here goes through its WSL-aware routing, not just the ones
 /// that fetch/push over the network directly.
+///
+/// No hard timeout, like every network op here (see the module doc). Not
+/// cancellable yet either — force_push/push_tag/push_branch/
+/// reset_branch_to_upstream are not registered jobs (follow-up) — but the run
+/// is tagged, so a WSL git still gets the in-distro kill if anything does stop it.
 fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
-    let output = crate::wsl::git_command(path, args)
-        .output()
-        .map_err(|e| ierrp("err_remote.run_git_failed", &[("detail", &e.to_string())]))?;
-    Ok(GitOut {
-        ok: output.status.success(),
-        code: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-    })
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, &[]);
+    let output = run_with(cmd, RunOptions { timeout: None, wsl: tag, ..Default::default() })
+        .map_err(|e| e.to_ierr("err_remote.run_git_failed"))?;
+    Ok(GitOut::from_output(&output))
 }
 
-/// Feed one chunk of raw progress bytes through the segmenter, invoking
-/// `on_line` once per completed segment. git rewrites its current progress line
-/// with a bare `\r` (carriage return) between updates and only ends a phase with
-/// `\n`, so a `\n`-only reader would see nothing until the whole op finished —
-/// we split on BOTH. `seg` carries the partial trailing segment across chunk
-/// boundaries; because a completed segment is UTF-8-decoded only once it's whole,
-/// a multi-byte char split across two reads is handled correctly. Pure + no I/O,
-/// so it's unit-tested directly (see tests below).
-fn feed_progress(chunk: &[u8], seg: &mut Vec<u8>, on_line: &mut impl FnMut(&str)) {
-    for &b in chunk {
-        if b == b'\r' || b == b'\n' {
-            if !seg.is_empty() {
-                on_line(String::from_utf8_lossy(seg).trim_end());
-                seg.clear();
-            }
-        } else {
-            seg.push(b);
-        }
-    }
+/// How a cancellable fetch/pull/push runs: its cancel token, a live stderr
+/// progress sink, the stall hook, and whether a cancel may clean up locks.
+#[derive(Default)]
+pub struct OpCtx<'a> {
+    pub cancel: Option<CancelToken>,
+    /// Receives each stderr progress segment (see `procutil::feed_progress`).
+    pub on_line: Option<LineSink<'a>>,
+    pub stall: Option<StallHook<'a>>,
+    /// Asked only after a cancel: `true` skips the whole cleanup (locks and
+    /// pull's `--abort`), because another live job on the same repo may own
+    /// that lock or state (see
+    /// `JobRegistry::others_on_repo`). A callback rather than a bool so it is
+    /// answered at cancel time — a job that started meanwhile still counts.
+    /// `None` never skips.
+    pub skip_lock_cleanup: Option<&'a dyn Fn() -> bool>,
 }
 
-/// Streaming sibling of `run_git`: spawns the SAME WSL-aware `git_command` (so
-/// `GIT_TERMINAL_PROMPT=0` / null stdin / `no_console_window` / `SSH_ASKPASS` are
-/// all inherited unchanged), but pipes stderr and reads it live, calling `on_line`
-/// once per progress segment (see `feed_progress`). stdout is drained
-/// concurrently on its own thread: a child blocked writing to a full, unread
-/// stdout pipe would deadlock (the same hazard `procutil::output_with_timeout`
-/// documents). Deliberately NO timeout — a live-progress remote op is expected to
-/// be long, and the non-streaming `run_git` above never had one either.
-fn run_git_streaming(path: &str, args: &[&str], mut on_line: impl FnMut(&str)) -> Result<GitOut, String> {
-    use std::io::Read;
-    use std::process::Stdio;
-    let mut child = crate::wsl::git_command(path, args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| ierrp("err_remote.run_git_failed", &[("detail", &e.to_string())]))?;
+/// Run one network git op: the tagged WSL-aware command, NO hard timeout,
+/// stderr streamed to `on_line`, stall reported through `stall`, and on cancel
+/// the whole process tree killed (the WSL in-distro sweep included) before
+/// this returns `Err(Cancelled)`.
+fn run_git_op(path: &str, args: &[&str], ctx: OpCtx<'_>) -> Result<GitOut, RunError> {
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, &[]);
+    let output = run_with(
+        cmd,
+        RunOptions {
+            timeout: None,
+            cancel: ctx.cancel,
+            on_stderr_line: ctx.on_line,
+            stall: ctx.stall,
+            wsl: tag,
+            ..Default::default()
+        },
+    )?;
+    Ok(GitOut::from_output(&output))
+}
 
-    // Drain stdout on a sibling thread so a large stdout can't deadlock the
-    // stderr read loop below (and vice versa).
-    let mut stdout_pipe = child.stdout.take().expect("stdout piped above");
-    let stdout_thread = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = stdout_pipe.read_to_end(&mut buf);
-        buf
-    });
+/// Lock/state snapshot for a cancellable run only — an uncancellable one never
+/// cleans up. A repo git2 can't open just leaves nothing to compare against
+/// (git's own error will say why the op failed).
+fn pre_op_if_cancellable(path: &str, ctx: &OpCtx<'_>) -> Option<PreOp> {
+    ctx.cancel.as_ref()?;
+    crate::trust::open_repo(path).ok().map(|r| cancel_cleanup::pre_op(&r))
+}
 
-    let mut stderr_pipe = child.stderr.take().expect("stderr piped above");
-    let mut stderr_all: Vec<u8> = Vec::new();
-    let mut seg: Vec<u8> = Vec::new();
-    let mut chunk = [0u8; 4096];
-    loop {
-        match stderr_pipe.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => {
-                stderr_all.extend_from_slice(&chunk[..n]);
-                feed_progress(&chunk[..n], &mut seg, &mut on_line);
-            }
-            Err(_) => break,
-        }
+/// `abort` only for pull: fetch and push never leave a merge/rebase behind, so
+/// one that shows up while they ran is someone else's (a terminal `git
+/// rebase`) and must not be thrown away.
+fn cleanup_after_cancel(path: &str, pre: Option<&PreOp>, skip: Option<&dyn Fn() -> bool>, abort: bool) -> CleanupReport {
+    match pre {
+        Some(pre) => cancel_cleanup::after_cancel(path, pre, skip.is_some_and(|f| f()), abort),
+        None => CleanupReport::default(),
     }
-    // Flush a final segment with no trailing \r/\n (e.g. the last "done." line).
-    if !seg.is_empty() {
-        on_line(String::from_utf8_lossy(&seg).trim_end());
-    }
-
-    let status = child.wait().map_err(|e| ierrp("err_remote.git_wait_failed", &[("detail", &e.to_string())]))?;
-    let stdout = stdout_thread.join().unwrap_or_default();
-    Ok(GitOut {
-        ok: status.success(),
-        code: status.code(),
-        stdout: String::from_utf8_lossy(&stdout).trim().to_string(),
-        stderr: String::from_utf8_lossy(&stderr_all).trim().to_string(),
-    })
 }
 
 /// Best human message from a failed git run (prefer stderr, then stdout).
@@ -366,9 +389,75 @@ fn validate_tag_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The message for a cancelled fetch/push: the plain key, or its `_locks`
+/// variant naming the lock files the cleanup removed.
+fn cancelled_message(key: &str, report: &CleanupReport) -> String {
+    if report.removed_locks.is_empty() {
+        ierr(key)
+    } else {
+        ierrp(&format!("{key}_locks"), &[("locks", &report.removed_locks.join(", "))])
+    }
+}
+
+fn fetch_args(remote: Option<&str>, progress: bool) -> Vec<&str> {
+    let mut args = vec!["fetch"];
+    if remote.is_none() {
+        args.push("--all");
+    }
+    args.push("--prune");
+    // `--progress` MUST precede `--end-of-options` — anything after that
+    // marker is parsed as a positional (same rule this module documents for
+    // the specific-remote fetch's remote arg).
+    if progress {
+        args.push("--progress");
+    }
+    if let Some(r) = remote {
+        args.extend(["--end-of-options", r]);
+    }
+    args
+}
+
+/// The body of `fetch`/`fetch_stream`, callable without an `AppHandle` (the
+/// integration tests drive it directly). `progress` forces `--progress` so git
+/// writes transfer progress to stderr even though it isn't a terminal.
+///
+/// On cancel: fetch only ever moves remote-tracking refs, so there is nothing
+/// to abort — only lock files the killed git left behind to clean up.
+pub fn fetch_core(path: &str, remote: Option<&str>, progress: bool, ctx: OpCtx<'_>) -> RemoteResult {
+    if let Some(r) = remote {
+        if let Err(e) = validate_remote_name(r) {
+            return RemoteResult::err(e);
+        }
+    }
+    // No git2 needed for the fetch itself: nothing here is derived from repo
+    // state, and an invalid path surfaces git's own "not a git repository"
+    // error just as clearly. (`pre_op` opens the repo only to snapshot locks.)
+    let args = fetch_args(remote, progress);
+    let pre = pre_op_if_cancellable(path, &ctx);
+    let skip = ctx.skip_lock_cleanup;
+    match run_git_op(path, &args, ctx) {
+        Ok(out) if out.ok => RemoteResult::ok(
+            match remote {
+                Some(r) => format!("Fetched {r}."),
+                None => "Fetched all remotes.".to_string(),
+            },
+            None,
+        ),
+        Ok(out) => RemoteResult::err(git_error_message(path, &out)),
+        Err(RunError::Cancelled) => {
+            let report = cleanup_after_cancel(path, pre.as_ref(), skip, false);
+            RemoteResult::cancelled(cancelled_message("err_remote.fetch_cancelled", &report), None)
+        }
+        Err(e) => RemoteResult::err(e.to_ierr("err_remote.run_git_failed")),
+    }
+}
+
 /// Update remote-tracking refs. `remote` fetches just that one remote;
 /// omitted, it fetches every configured remote (`--all`). Always `--prune`s
 /// stale remote-tracking branches that no longer exist on the remote.
+/// Registered as a background job (the auto-fetch timer and the
+/// pull-with-strategy flows call this), so it can be cancelled from the jobs
+/// list like any other.
 /// JS call: `invoke("fetch", { path, remote? })`.
 ///
 /// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
@@ -380,85 +469,120 @@ fn validate_tag_name(name: &str) -> Result<(), String> {
 /// blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub async fn fetch(path: String, remote: Option<String>) -> RemoteResult {
+pub async fn fetch(app: AppHandle<Wry>, path: String, remote: Option<String>) -> RemoteResult {
     crate::blocking::run_blocking(move || {
-        if let Some(r) = &remote {
-            if let Err(e) = validate_remote_name(r) {
-                return RemoteResult::err(e);
-            }
-        }
-        // No git2 needed: nothing here is derived from repo state, and an invalid
-        // path surfaces git's own "not a git repository" error just as clearly.
-        let args: Vec<&str> = match &remote {
-            Some(r) => vec!["fetch", "--prune", "--end-of-options", r.as_str()],
-            None => vec!["fetch", "--all", "--prune"],
-        };
-        match run_git(&path, &args) {
-            Ok(out) if out.ok => RemoteResult::ok(
-                match &remote {
-                    Some(r) => format!("Fetched {r}."),
-                    None => "Fetched all remotes.".to_string(),
-                },
-                None,
-            ),
-            Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
-            Err(e) => RemoteResult::err(e),
-        }
+        let job = jobs::begin(&app, JobKind::Fetch, &path, remote.as_deref().unwrap_or(""), true);
+        let skip = || job.others_on_repo();
+        let res = fetch_core(
+            &path,
+            remote.as_deref(),
+            false,
+            OpCtx { cancel: Some(job.token()), skip_lock_cleanup: Some(&skip), ..Default::default() },
+        );
+        job.finish(res.outcome());
+        res
     })
     .await
 }
 
 /// Streaming twin of [`fetch`]: identical behaviour (same validation, args,
 /// success message, and `git_error_message` failure path), but forces
-/// `--progress` so git writes transfer progress to stderr, reads it live via
-/// `run_git_streaming`, and emits each segment as a `"sync-progress"` event so
-/// the frontend's progress modal can show what git is doing. `fetch` (silent,
-/// used by the ambient auto-fetch timer and the pull-with-strategy flows) is
-/// left in place; only the user-initiated topbar/menu Fetch calls this one.
-///
-/// FOLLOW-UP: no process-kill cancel yet — the modal is dismissable and the op
-/// runs to completion in the background (`fetch` only moves remote-tracking
-/// refs, so a background finish is harmless). A real cancel would need a shared
-/// `Child` handle + a `sync_cancel` command (mirroring `bisect_run_cancel`), and
-/// killing `wsl.exe` doesn't reliably kill the inner git on the WSL path.
+/// `--progress`, emits each stderr segment as a `"sync-progress"` event for
+/// the frontend's progress modal, and reports a stall (no output for
+/// `NETWORK_STALL`) through `"job-progress"`. A foreground job: the modal's
+/// Cancel (or Escape) calls `job_cancel` on it. `fetch` (silent) is left in
+/// place for the ambient auto-fetch timer and the pull-with-strategy flows;
+/// only the user-initiated topbar/menu Fetch calls this one.
 /// JS call: `invoke("fetch_stream", { path, remote? })`.
 #[tauri::command]
 #[specta::specta]
 pub async fn fetch_stream(app: AppHandle<Wry>, path: String, remote: Option<String>) -> RemoteResult {
     crate::blocking::run_blocking(move || {
-        if let Some(r) = &remote {
-            if let Err(e) = validate_remote_name(r) {
-                return RemoteResult::err(e);
-            }
-        }
-        // `--progress` MUST precede `--end-of-options` — anything after that
-        // marker is parsed as a positional (same rule this module documents for
-        // the specific-remote fetch's remote arg).
-        let args: Vec<&str> = match &remote {
-            Some(r) => vec!["fetch", "--prune", "--progress", "--end-of-options", r.as_str()],
-            None => vec!["fetch", "--all", "--prune", "--progress"],
-        };
-        let mut emit = |line: &str| {
-            crate::event_util::emit_on_main(&app, "sync-progress", SyncProgress { phase: "fetch".into(), line: line.to_string() });
-        };
-        match run_git_streaming(&path, &args, &mut emit) {
-            Ok(out) if out.ok => RemoteResult::ok(
-                match &remote {
-                    Some(r) => format!("Fetched {r}."),
-                    None => "Fetched all remotes.".to_string(),
-                },
-                None,
-            ),
-            Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
-            Err(e) => RemoteResult::err(e),
-        }
+        let job = jobs::begin(&app, JobKind::Fetch, &path, remote.as_deref().unwrap_or(""), false);
+        let res = stream_op(&app, &job, "fetch", |ctx| fetch_core(&path, remote.as_deref(), true, ctx));
+        job.finish(res.outcome());
+        res
     })
     .await
 }
 
+/// Shared wiring for the three `*_stream` commands: the job's cancel token,
+/// `"sync-progress"` emission for each stderr segment, the stall hook feeding
+/// `"job-progress"`, and the cancel-time lock-cleanup guard.
+fn stream_op(
+    app: &AppHandle<Wry>,
+    job: &jobs::Job,
+    phase: &'static str,
+    run: impl FnOnce(OpCtx<'_>) -> RemoteResult,
+) -> RemoteResult {
+    let mut emit = |line: &str| {
+        crate::event_util::emit_on_main(app, "sync-progress", SyncProgress { phase: phase.into(), line: line.to_string() });
+    };
+    let mut on_stall = job.stall_sink();
+    let skip = || job.others_on_repo();
+    run(OpCtx {
+        cancel: Some(job.token()),
+        on_line: Some(&mut emit),
+        stall: Some(StallHook { after: NETWORK_STALL, on_change: &mut on_stall }),
+        skip_lock_cleanup: Some(&skip),
+    })
+}
+
+/// The body of `pull`/`pull_stream` (see `fetch_core` for why it's split out).
+/// Snapshots first, then `git pull --ff-only`.
+///
+/// On cancel: lock files the killed git left behind are removed, and if the
+/// pull was caught mid-merge/rebase (possible only with a rebase config on top
+/// of `--ff-only`) that is `--abort`ed — both only when they're ours (see
+/// cancel_cleanup.rs). Either way the message points at the pre-pull snapshot,
+/// which Undo restores.
+pub fn pull_core(path: &str, progress: bool, ctx: OpCtx<'_>) -> RemoteResult {
+    let repo = match open_repo(path) {
+        Ok(r) => r,
+        Err(w) => return w,
+    };
+    let backup = match take_snapshot(&repo) {
+        Ok(b) => b,
+        Err(e) => return RemoteResult::err(ierrp("err_remote.snapshot_failed", &[("detail", &e)])),
+    };
+    drop(repo);
+    let args: &[&str] = if progress { &["pull", "--ff-only", "--progress"] } else { &["pull", "--ff-only"] };
+    // AFTER the snapshot: its own ref write must not count as "ours" later.
+    let pre = pre_op_if_cancellable(path, &ctx);
+    let skip = ctx.skip_lock_cleanup;
+    match run_git_op(path, args, ctx) {
+        Ok(out) if out.ok => {
+            let msg = if out.stdout.contains("Already up to date") {
+                "Already up to date.".to_string()
+            } else {
+                format!("Pulled (snapshot {}).", short_backup(&backup))
+            };
+            RemoteResult::ok(msg, Some(backup))
+        }
+        // e.g. "fatal: Not possible to fast-forward, aborting."
+        Ok(out) => RemoteResult::err(git_error_message(path, &out)),
+        Err(RunError::Cancelled) => {
+            let report = cleanup_after_cancel(path, pre.as_ref(), skip, true);
+            let snapshot = short_backup(&backup);
+            let locks = report.removed_locks.join(", ");
+            let msg = match (report.removed_locks.is_empty(), report.aborted) {
+                (true, None) => ierrp("err_remote.pull_cancelled", &[("snapshot", &snapshot)]),
+                (false, None) => ierrp("err_remote.pull_cancelled_locks", &[("snapshot", &snapshot), ("locks", &locks)]),
+                (true, Some(op)) => ierrp("err_remote.pull_cancelled_aborted", &[("snapshot", &snapshot), ("op", op)]),
+                (false, Some(op)) => ierrp(
+                    "err_remote.pull_cancelled_locks_aborted",
+                    &[("snapshot", &snapshot), ("locks", &locks), ("op", op)],
+                ),
+            };
+            RemoteResult::cancelled(msg, Some(backup))
+        }
+        Err(e) => RemoteResult::err(e.to_ierr("err_remote.run_git_failed")),
+    }
+}
+
 /// Fast-forward the current branch to its upstream (`git pull --ff-only`).
 /// Refuses (git's own message) rather than merging/rebasing on divergence —
-/// see module doc for why.
+/// see module doc for why. A background job, like `fetch`.
 /// JS call: `invoke("pull", { path })`.
 ///
 /// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
@@ -469,29 +593,13 @@ pub async fn fetch_stream(app: AppHandle<Wry>, path: String, remote: Option<Stri
 /// moves the whole body onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub async fn pull(path: String) -> RemoteResult {
+pub async fn pull(app: AppHandle<Wry>, path: String) -> RemoteResult {
     crate::blocking::run_blocking(move || {
-        let repo = match open_repo(&path) {
-            Ok(r) => r,
-            Err(w) => return w,
-        };
-        let backup = match take_snapshot(&repo) {
-            Ok(b) => b,
-            Err(e) => return RemoteResult::err(ierrp("err_remote.snapshot_failed", &[("detail", &e)])),
-        };
-        match run_git(&path, &["pull", "--ff-only"]) {
-            Ok(out) if out.ok => {
-                let msg = if out.stdout.contains("Already up to date") {
-                    "Already up to date.".to_string()
-                } else {
-                    format!("Pulled (snapshot {}).", short_backup(&backup))
-                };
-                RemoteResult::ok(msg, Some(backup))
-            }
-            // e.g. "fatal: Not possible to fast-forward, aborting."
-            Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
-            Err(e) => RemoteResult::err(e),
-        }
+        let job = jobs::begin(&app, JobKind::Pull, &path, "", true);
+        let skip = || job.others_on_repo();
+        let res = pull_core(&path, false, OpCtx { cancel: Some(job.token()), skip_lock_cleanup: Some(&skip), ..Default::default() });
+        job.finish(res.outcome());
+        res
     })
     .await
 }
@@ -499,39 +607,19 @@ pub async fn pull(path: String) -> RemoteResult {
 /// Streaming twin of [`pull`]: identical behaviour — takes the SAME pre-op
 /// safety snapshot, stays `--ff-only`, returns the same `backup_ref`, and routes
 /// failures through the same `git_error_message` — but forces `--progress` (git
-/// pull forwards it to the underlying fetch) and streams stderr via
-/// `run_git_streaming`, emitting `"sync-progress"` events for the modal. The
-/// ff-only merge summary ("Already up to date." / "Updating …") still lands on
-/// stdout, which is captured intact, so the success-message parse below is
-/// unchanged. See `fetch_stream` for the (deferred) cancellation rationale.
+/// pull forwards it to the underlying fetch), emits `"sync-progress"` events for
+/// the modal and reports stalls, as `fetch_stream` does. The ff-only merge
+/// summary ("Already up to date." / "Updating …") still lands on stdout, which
+/// is captured intact, so the success-message parse is unchanged.
 /// JS call: `invoke("pull_stream", { path })`.
 #[tauri::command]
 #[specta::specta]
 pub async fn pull_stream(app: AppHandle<Wry>, path: String) -> RemoteResult {
     crate::blocking::run_blocking(move || {
-        let repo = match open_repo(&path) {
-            Ok(r) => r,
-            Err(w) => return w,
-        };
-        let backup = match take_snapshot(&repo) {
-            Ok(b) => b,
-            Err(e) => return RemoteResult::err(ierrp("err_remote.snapshot_failed", &[("detail", &e)])),
-        };
-        let mut emit = |line: &str| {
-            crate::event_util::emit_on_main(&app, "sync-progress", SyncProgress { phase: "pull".into(), line: line.to_string() });
-        };
-        match run_git_streaming(&path, &["pull", "--ff-only", "--progress"], &mut emit) {
-            Ok(out) if out.ok => {
-                let msg = if out.stdout.contains("Already up to date") {
-                    "Already up to date.".to_string()
-                } else {
-                    format!("Pulled (snapshot {}).", short_backup(&backup))
-                };
-                RemoteResult::ok(msg, Some(backup))
-            }
-            Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
-            Err(e) => RemoteResult::err(e),
-        }
+        let job = jobs::begin(&app, JobKind::Pull, &path, "", false);
+        let res = stream_op(&app, &job, "pull", |ctx| pull_core(&path, true, ctx));
+        job.finish(res.outcome());
+        res
     })
     .await
 }
@@ -663,9 +751,62 @@ pub async fn reset_branch_to_upstream(path: String, branch: String) -> RemoteRes
     .await
 }
 
+/// HEAD's branch name, if HEAD is on one — `push`'s target and its job label.
+fn head_branch(repo: &Repository) -> Option<String> {
+    repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string()))
+}
+
+/// The job label for a push: the branch it will push, or "" if that can't be
+/// read (push_core then reports why).
+fn push_label(path: &str) -> String {
+    crate::trust::open_repo(path).ok().and_then(|r| head_branch(&r)).unwrap_or_default()
+}
+
+/// The body of `push`/`push_stream` (see `fetch_core` for why it's split out).
+///
+/// On cancel there is nothing local to abort — push never touches local state
+/// — but whether the REMOTE took the update is unknowable from here, and the
+/// message says so. Lock files the killed git left behind are still cleaned up.
+pub fn push_core(path: &str, progress: bool, ctx: OpCtx<'_>) -> RemoteResult {
+    let repo = match open_repo(path) {
+        Ok(r) => r,
+        Err(w) => return w,
+    };
+    let branch = match head_branch(&repo) {
+        Some(b) => b,
+        None => return RemoteResult::err(ierr("err_remote.head_not_on_branch_push")),
+    };
+    let has_upstream = repo.find_branch(&branch, BranchType::Local).ok().and_then(|b| b.upstream().ok()).is_some();
+    drop(repo);
+
+    let mut args = vec!["push"];
+    if progress {
+        args.push("--progress");
+    }
+    if !has_upstream {
+        args.extend(["--set-upstream", "origin", "--end-of-options", &branch]);
+    }
+    let pre = pre_op_if_cancellable(path, &ctx);
+    let skip = ctx.skip_lock_cleanup;
+    match run_git_op(path, &args, ctx) {
+        Ok(out) if out.ok => RemoteResult::ok(
+            if has_upstream { format!("Pushed {branch}.") } else { format!("Published {branch} to origin.") },
+            None,
+        ),
+        // e.g. "! [rejected] ... (non-fast-forward)" or "fatal: 'origin' does not appear to be a git repository"
+        Ok(out) => RemoteResult::err(git_error_message(path, &out)),
+        Err(RunError::Cancelled) => {
+            let report = cleanup_after_cancel(path, pre.as_ref(), skip, false);
+            RemoteResult::cancelled(cancelled_message("err_remote.push_cancelled", &report), None)
+        }
+        Err(e) => RemoteResult::err(e.to_ierr("err_remote.run_git_failed")),
+    }
+}
+
 /// Push the current branch. Publishes to "origin" with `--set-upstream` when
 /// it has no configured upstream yet; otherwise a plain `git push`. Never
 /// force-pushes — a non-fast-forward rejection surfaces git's own message.
+/// A background job, like `fetch`.
 /// JS call: `invoke("push", { path })`.
 ///
 /// BUG FIX: was a plain (non-async) `fn` — per `blocking.rs`'s own doc
@@ -676,32 +817,30 @@ pub async fn reset_branch_to_upstream(path: String, branch: String) -> RemoteRes
 /// onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub async fn push(path: String) -> RemoteResult {
+pub async fn push(app: AppHandle<Wry>, path: String) -> RemoteResult {
     crate::blocking::run_blocking(move || {
-        let repo = match open_repo(&path) {
-            Ok(r) => r,
-            Err(w) => return w,
-        };
-        let branch = match repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string())) {
-            Some(b) => b,
-            None => return RemoteResult::err(ierr("err_remote.head_not_on_branch_push")),
-        };
-        let has_upstream = repo.find_branch(&branch, BranchType::Local).ok().and_then(|b| b.upstream().ok()).is_some();
+        let job = jobs::begin(&app, JobKind::Push, &path, &push_label(&path), true);
+        let skip = || job.others_on_repo();
+        let res = push_core(&path, false, OpCtx { cancel: Some(job.token()), skip_lock_cleanup: Some(&skip), ..Default::default() });
+        job.finish(res.outcome());
+        res
+    })
+    .await
+}
 
-        let out = if has_upstream {
-            run_git(&path, &["push"])
-        } else {
-            run_git(&path, &["push", "--set-upstream", "origin", "--end-of-options", &branch])
-        };
-        match out {
-            Ok(out) if out.ok => RemoteResult::ok(
-                if has_upstream { format!("Pushed {branch}.") } else { format!("Published {branch} to origin.") },
-                None,
-            ),
-            // e.g. "! [rejected] ... (non-fast-forward)" or "fatal: 'origin' does not appear to be a git repository"
-            Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
-            Err(e) => RemoteResult::err(e),
-        }
+/// Streaming twin of [`push`]: identical behaviour and arguments, plus
+/// `--progress`, `"sync-progress"` events and stall reporting exactly as
+/// `fetch_stream` does — the topbar Push shows the same progress modal (with
+/// the same Cancel) as Fetch and Pull.
+/// JS call: `invoke("push_stream", { path })`.
+#[tauri::command]
+#[specta::specta]
+pub async fn push_stream(app: AppHandle<Wry>, path: String) -> RemoteResult {
+    crate::blocking::run_blocking(move || {
+        let job = jobs::begin(&app, JobKind::Push, &path, &push_label(&path), false);
+        let res = stream_op(&app, &job, "push", |ctx| push_core(&path, true, ctx));
+        job.finish(res.outcome());
+        res
     })
     .await
 }
@@ -1046,54 +1185,5 @@ mod tests {
             git_error_message("/any/path", &empty),
             crate::i18n_err::ierrp("err_remote.git_exited_status", &[("code", "Some(1)")])
         );
-    }
-
-    // Drive `feed_progress` chunk-by-chunk (mirroring run_git_streaming's read
-    // loop, including the final flush) and collect every emitted segment.
-    fn segment(chunks: &[&[u8]]) -> Vec<String> {
-        let mut seg: Vec<u8> = Vec::new();
-        let mut lines: Vec<String> = Vec::new();
-        let mut on_line = |s: &str| lines.push(s.to_string());
-        for c in chunks {
-            feed_progress(c, &mut seg, &mut on_line);
-        }
-        if !seg.is_empty() {
-            on_line(String::from_utf8_lossy(&seg).trim_end());
-        }
-        lines
-    }
-
-    #[test]
-    fn feed_progress_splits_on_both_carriage_return_and_newline() {
-        // git rewrites the SAME progress line with \r, ending a phase with \n.
-        let input = b"remote: Counting objects: 100%\rReceiving objects:  42% (42/100)\rReceiving objects: 100% (100/100)\nResolving deltas: 100% (10/10)\n";
-        assert_eq!(
-            segment(&[input]),
-            vec![
-                "remote: Counting objects: 100%",
-                "Receiving objects:  42% (42/100)",
-                "Receiving objects: 100% (100/100)",
-                "Resolving deltas: 100% (10/10)",
-            ]
-        );
-    }
-
-    #[test]
-    fn feed_progress_flushes_a_final_segment_with_no_trailing_delimiter() {
-        assert_eq!(segment(&[b"done."]), vec!["done."]);
-    }
-
-    #[test]
-    fn feed_progress_reassembles_a_segment_and_a_utf8_char_split_across_chunks() {
-        // A segment (and a multi-byte char, "é" = 0xC3 0xA9) split across two
-        // reads must reassemble, not corrupt or drop.
-        let lines = segment(&[b"Receiving obj\xc3", b"\xa9cts: 5%\rok\n"]);
-        assert_eq!(lines, vec!["Receiving objécts: 5%", "ok"]);
-    }
-
-    #[test]
-    fn feed_progress_ignores_empty_segments_from_blank_lines() {
-        // Back-to-back delimiters (e.g. \r\n or a blank line) must not emit "".
-        assert_eq!(segment(&[b"a\r\n\nb\n"]), vec!["a", "b"]);
     }
 }

@@ -16,6 +16,20 @@ export default {
     "{base} (WSL 터미널에서 이 원격을 대상으로 ssh/git 명령을 한 번 실행해서 호스트 키를 수락한 뒤 다시 시도해주세요)",
   host_key_hint:
     "{base} (터미널에서 이 원격을 대상으로 ssh/git 명령을 한 번 실행해서 호스트 키를 수락한 뒤 다시 시도해주세요)",
+  // 사용자가 취소한 fetch/pull/push(#133).
+  fetch_cancelled: "가져오기(fetch)를 취소했어요. 원격 추적 참조가 일부만 갱신됐을 수 있으니 다시 가져오면 마무리돼요.",
+  fetch_cancelled_locks:
+    "가져오기(fetch)를 취소했어요. 취소된 git이 남긴 잠금 파일을 삭제했어요: {locks}. 다시 가져오면 마무리돼요.",
+  push_cancelled: "푸시를 취소했어요. 원격에 반영됐는지 확실하지 않으니 가져오기(fetch)로 확인해주세요.",
+  push_cancelled_locks:
+    "푸시를 취소했어요. 원격에 반영됐는지 확실하지 않으니 가져오기(fetch)로 확인해주세요. 취소된 git이 남긴 잠금 파일을 삭제했어요: {locks}.",
+  pull_cancelled: "풀(pull)을 취소했어요. 일부만 갱신된 것처럼 보이면 {undoKey}로 풀 이전 스냅샷 {snapshot}을(를) 복원할 수 있어요.",
+  pull_cancelled_locks:
+    "풀(pull)을 취소했어요. 취소된 git이 남긴 잠금 파일을 삭제했어요: {locks}. 일부만 갱신된 것처럼 보이면 {undoKey}로 풀 이전 스냅샷 {snapshot}을(를) 복원할 수 있어요.",
+  pull_cancelled_aborted:
+    "풀(pull)을 취소했어요. 완료되지 않은 {op}을(를) 되돌리려고 git {op} --abort를 실행했어요. 여전히 이상하면 {undoKey}로 풀 이전 스냅샷 {snapshot}을(를) 복원할 수 있어요.",
+  pull_cancelled_locks_aborted:
+    "풀(pull)을 취소했어요. 취소된 git이 남긴 잠금 파일({locks})을 삭제하고, 완료되지 않은 {op}을(를) 되돌리려고 git {op} --abort를 실행했어요. 여전히 이상하면 {undoKey}로 풀 이전 스냅샷 {snapshot}을(를) 복원할 수 있어요.",
   // 저장소 열기 / 스냅샷.
   cannot_open: "저장소를 열 수 없어요: {detail}",
   snapshot_failed: "안전 스냅샷에 실패해서 중단해요: {detail}",

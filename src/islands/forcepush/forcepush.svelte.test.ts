@@ -34,11 +34,11 @@ import * as bridge from "../../legacy/bridge";
 import { sidebarCtrl } from "../sidebar/sidebar.svelte.ts";
 import { forcePushCtrl } from "./forcepush.svelte.ts";
 
-function ok(message = "Force-pushed main (lease)."): { ok: true; message: string; backupRef: null } {
-  return { ok: true, message, backupRef: null };
+function ok(message = "Force-pushed main (lease)."): { ok: true; message: string; backupRef: null; cancelled: false } {
+  return { ok: true, message, backupRef: null, cancelled: false };
 }
-function fail(message: string): { ok: false; message: string; backupRef: null } {
-  return { ok: false, message, backupRef: null };
+function fail(message: string): { ok: false; message: string; backupRef: null; cancelled: false } {
+  return { ok: false, message, backupRef: null, cancelled: false };
 }
 
 beforeEach(() => {
