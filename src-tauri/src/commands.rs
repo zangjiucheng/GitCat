@@ -8,7 +8,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State, Wry};
 
 use crate::git_read::{collect_refs, filter_hidden_chips, read_repo, seed_tip_oids, walk_repo};
-use crate::i18n_err::ierrp;
+use crate::i18n_err::{ierr, ierrp};
 use crate::layout::{layout, LayoutBuilder, NCOL};
 use crate::model::{
     AncestorFlags, CommitDetail, CommitMeta, DiffHunkRow, DiffLineRow, FastRefresh, FileChange,
@@ -183,6 +183,18 @@ impl GraphLoadState {
     }
 }
 
+/// Why a repository in a format GitCat can't read won't open, in words a
+/// user can act on.
+fn unsupported_format_message(why: &crate::repo_format::Unsupported) -> String {
+    use crate::repo_format::Unsupported;
+    match why {
+        Unsupported::Sha256 => ierr("err_repo.unsupported_sha256"),
+        Unsupported::Reftable => ierr("err_repo.unsupported_reftable"),
+        Unsupported::Version(v) => ierrp("err_repo.unsupported_format_version", &[("version", &v.to_string())]),
+        Unsupported::Extensions(names) => ierrp("err_repo.unsupported_extensions", &[("names", &names.join(", "))]),
+    }
+}
+
 /// Start a STREAMING graph load and return almost immediately — the actual
 /// data arrives entirely via `"graph-batch"` events (see [`stream_graph`]),
 /// not this command's own return value. Replaces the old "one big blocking
@@ -218,9 +230,18 @@ pub async fn load_graph(app: AppHandle<Wry>, state: State<'_, GraphLoadState>, p
     // the spawned walk emits from this point on will already match.
     state.accept(request_id);
     let probe_path = path.clone();
-    crate::blocking::run_blocking(move || crate::trust::open_repo(&probe_path).map(|_| ()))
-        .await
-        .map_err(|e| ierrp("err_repo.cannot_open_repo", &[("detail", e.message())]))?;
+    crate::blocking::run_blocking(move || {
+        crate::trust::open_repo(&probe_path).map(|_| ()).map_err(|e| {
+            // libgit2's own words for an unsupported format ("unsupported
+            // extension name extensions.refstorage") say nothing a user can
+            // act on; the repo's config says exactly what it is.
+            match crate::repo_format::detect(&probe_path).and_then(|f| f.unsupported()) {
+                Some(why) => unsupported_format_message(&why),
+                None => ierrp("err_repo.cannot_open_repo", &[("detail", e.message())]),
+            }
+        })
+    })
+    .await?;
 
     let app2 = app.clone();
     // NOT awaited: spawn_blocking's returned JoinHandle, simply dropped here,

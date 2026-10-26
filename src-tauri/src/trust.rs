@@ -28,6 +28,9 @@ fn is_dubious_ownership(e: &git2::Error) -> bool {
 /// working exactly as it does today; this is a drop-in rename, not a
 /// signature change, at every call site.
 pub fn open_repo(path: &str) -> Result<Repository, git2::Error> {
+    // A no-op after startup's call; here so tests and any other entry point
+    // open old-style partial clones too.
+    crate::repo_format::register_libgit2_extensions();
     match Repository::open(path) {
         Ok(r) => Ok(r),
         Err(e) if is_dubious_ownership(&e) => {

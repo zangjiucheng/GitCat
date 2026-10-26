@@ -36,6 +36,8 @@ pub mod plumbing; // M5b: read-only object-database inspector (commit/tree/blob/
 pub mod preview; // #37: raw image/PDF blob bytes for a visual before/after diff preview
 pub mod promisor; // partial clones (`--filter=blob:none`): fetch missing blobs on demand, in one `git fetch`, before a git2 read
 pub mod procutil; // suppresses the console window Windows flashes open per subprocess spawn
+pub mod repo_format; // M0: on-disk repo format (objectFormat / refStorage / extensions) read from config, plus libgit2 extension registration
+pub mod git_version; // M0: per-executable git version, cached, with capability checks
 pub mod reflog; // M4: reflog rescue (read HEAD reflog + restore to a historical entry)
 pub mod repo_files; // backlog #14 (final item): .gitignore/.mailmap in-app editors — allow-listed repo-root file read/write
 pub mod file_manager; // row/repo context menus: hand a path to the desktop file browser, trust-gated (see its module doc)
@@ -420,6 +422,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before any thread can open a repository: libgit2 keeps this list in a
+    // process-global (see repo_format::register_libgit2_extensions).
+    repo_format::register_libgit2_extensions();
     let builder = specta_builder();
 
     // In dev, regenerate the TS bindings on every launch so a changed command

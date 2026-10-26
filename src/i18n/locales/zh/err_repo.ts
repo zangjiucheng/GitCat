@@ -2,6 +2,11 @@
 //（见 src/i18n/i18n.svelte.ts）从 Rust 的 `ierr`/`ierrp` 机制中查找。
 // 英文为最终来源（en/err_repo.ts）；此处缺失的键会自动回退到英文。
 export default {
+  // commands.rs（图加载）：GitCat 暂时读不了这种格式的仓库。{names}（仓库配置里的扩展名）原样传递。
+  unsupported_sha256: "此仓库使用 SHA-256 对象名，GitCat 暂时无法读取。git 本身可以照常使用它。",
+  unsupported_reftable: "此仓库以 reftable 格式存储引用，GitCat 暂时无法读取。git 本身可以照常使用它，用 `git refs migrate --ref-format=files` 可以转换回来。",
+  unsupported_format_version: "此仓库使用第 {version} 版仓库格式，GitCat 无法识别。",
+  unsupported_extensions: "此仓库使用了 GitCat 暂时无法读取的 git 扩展：{names}。",
   // repo_files.rs / repo_summary.rs / commands.rs（图加载）共用
   cannot_open_repo: "无法打开仓库：{detail}",
   // identity.rs（set_git_identity）
