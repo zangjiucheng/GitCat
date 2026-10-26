@@ -41,8 +41,8 @@
 //! cancel it. A cancel kills git's whole process tree (`git-remote-https`,
 //! `ssh`, hooks — on a WSL repo inside the distro too; see
 //! `procutil::run_with`), then cancel_cleanup.rs removes only lock files that
-//! killed git created and `--abort`s a merge/rebase it left behind (only if
-//! the repo was clean before). A cancelled pull points the user at its
+//! killed git created and, for a pull only, `--abort`s a merge/rebase it left
+//! behind (only if the repo was clean before). A cancelled pull points the user at its
 //! pre-pull snapshot, which Undo restores. force_push/push_tag/push_branch/
 //! reset_branch_to_upstream are not registered yet (follow-up).
 //!
@@ -174,8 +174,9 @@ pub struct OpCtx<'a> {
     /// Receives each stderr progress segment (see `procutil::feed_progress`).
     pub on_line: Option<LineSink<'a>>,
     pub stall: Option<StallHook<'a>>,
-    /// Asked only after a cancel: `true` skips the lock cleanup, because
-    /// another live job on the same repo may own a lock (see
+    /// Asked only after a cancel: `true` skips the whole cleanup (locks and
+    /// pull's `--abort`), because another live job on the same repo may own
+    /// that lock or state (see
     /// `JobRegistry::others_on_repo`). A callback rather than a bool so it is
     /// answered at cancel time — a job that started meanwhile still counts.
     /// `None` never skips.
@@ -210,9 +211,12 @@ fn pre_op_if_cancellable(path: &str, ctx: &OpCtx<'_>) -> Option<PreOp> {
     crate::trust::open_repo(path).ok().map(|r| cancel_cleanup::pre_op(&r))
 }
 
-fn cleanup_after_cancel(path: &str, pre: Option<&PreOp>, skip: Option<&dyn Fn() -> bool>) -> CleanupReport {
+/// `abort` only for pull: fetch and push never leave a merge/rebase behind, so
+/// one that shows up while they ran is someone else's (a terminal `git
+/// rebase`) and must not be thrown away.
+fn cleanup_after_cancel(path: &str, pre: Option<&PreOp>, skip: Option<&dyn Fn() -> bool>, abort: bool) -> CleanupReport {
     match pre {
-        Some(pre) => cancel_cleanup::after_cancel(path, pre, skip.is_some_and(|f| f())),
+        Some(pre) => cancel_cleanup::after_cancel(path, pre, skip.is_some_and(|f| f()), abort),
         None => CleanupReport::default(),
     }
 }
@@ -441,7 +445,7 @@ pub fn fetch_core(path: &str, remote: Option<&str>, progress: bool, ctx: OpCtx<'
         ),
         Ok(out) => RemoteResult::err(git_error_message(path, &out)),
         Err(RunError::Cancelled) => {
-            let report = cleanup_after_cancel(path, pre.as_ref(), skip);
+            let report = cleanup_after_cancel(path, pre.as_ref(), skip, false);
             RemoteResult::cancelled(cancelled_message("err_remote.fetch_cancelled", &report), None)
         }
         Err(e) => RemoteResult::err(e.to_ierr("err_remote.run_git_failed")),
@@ -558,7 +562,7 @@ pub fn pull_core(path: &str, progress: bool, ctx: OpCtx<'_>) -> RemoteResult {
         // e.g. "fatal: Not possible to fast-forward, aborting."
         Ok(out) => RemoteResult::err(git_error_message(path, &out)),
         Err(RunError::Cancelled) => {
-            let report = cleanup_after_cancel(path, pre.as_ref(), skip);
+            let report = cleanup_after_cancel(path, pre.as_ref(), skip, true);
             let snapshot = short_backup(&backup);
             let locks = report.removed_locks.join(", ");
             let msg = match (report.removed_locks.is_empty(), report.aborted) {
@@ -792,7 +796,7 @@ pub fn push_core(path: &str, progress: bool, ctx: OpCtx<'_>) -> RemoteResult {
         // e.g. "! [rejected] ... (non-fast-forward)" or "fatal: 'origin' does not appear to be a git repository"
         Ok(out) => RemoteResult::err(git_error_message(path, &out)),
         Err(RunError::Cancelled) => {
-            let report = cleanup_after_cancel(path, pre.as_ref(), skip);
+            let report = cleanup_after_cancel(path, pre.as_ref(), skip, false);
             RemoteResult::cancelled(cancelled_message("err_remote.push_cancelled", &report), None)
         }
         Err(e) => RemoteResult::err(e.to_ierr("err_remote.run_git_failed")),

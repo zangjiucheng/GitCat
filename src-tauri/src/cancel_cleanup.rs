@@ -12,9 +12,11 @@
 //! before the op started (`pre_op` snapshots the existing ones) and its mtime
 //! falls inside the op's window — a lock the user's own terminal git, or an
 //! earlier crash, left behind is never touched. A merge/rebase/… state is
-//! aborted only if the repo was clean before the op. The caller also skips the
-//! lock step entirely while another registered job is live on the same repo
-//! (`JobRegistry::others_on_repo`).
+//! aborted only for an op that can create one (pull; never fetch or push,
+//! where such a state can only be someone else's) and only if the repo was
+//! clean before the op. The caller also skips both steps entirely while
+//! another registered job is live on the same repo
+//! (`JobRegistry::others_on_repo`), since the lock or state may be its.
 //!
 //! Residual case, documented rather than solved: a lock created DURING our op
 //! by an unregistered git (the user's terminal, or one of GitCat's own
@@ -38,9 +40,21 @@ const MAX_REFS_ENTRIES: usize = 10_000;
 
 /// Taken right before the op spawns.
 pub struct PreOp {
-    locks: HashSet<PathBuf>,
+    locks: Locks,
     state: RepositoryState,
     started: SystemTime,
+}
+
+/// The lock files one scan found: the fixed-name ones, and those from the
+/// bounded `refs/` walk, kept apart so a truncated walk can be accounted for.
+#[derive(Default)]
+struct Locks {
+    fixed: HashSet<PathBuf>,
+    refs: HashSet<PathBuf>,
+    /// The `refs/` walk stopped early. Which entries it reached depends on
+    /// `read_dir` order and on what the op itself added or pruned, so a later
+    /// walk may reach a pre-existing lock this one never saw.
+    refs_truncated: bool,
 }
 
 #[derive(Debug, Default)]
@@ -55,52 +69,61 @@ pub struct CleanupReport {
 /// (per-worktree) git dir: index/HEAD/ORIG_HEAD/config/FETCH_HEAD. In the
 /// common dir: packed-refs, shallow, config, and every `*.lock` under `refs/`
 /// (a bounded walk).
-fn scan_locks(git_dir: &Path, common_dir: &Path) -> HashSet<PathBuf> {
-    let mut found = HashSet::new();
+fn scan_locks(git_dir: &Path, common_dir: &Path, max_refs_entries: usize) -> Locks {
+    let mut found = Locks::default();
     for name in ["index.lock", "HEAD.lock", "ORIG_HEAD.lock", "config.lock", "FETCH_HEAD.lock"] {
         let p = git_dir.join(name);
         if p.is_file() {
-            found.insert(p);
+            found.fixed.insert(p);
         }
     }
     for name in ["packed-refs.lock", "shallow.lock", "config.lock"] {
         let p = common_dir.join(name);
         if p.is_file() {
-            found.insert(p);
+            found.fixed.insert(p);
         }
     }
-    let mut budget = MAX_REFS_ENTRIES;
-    walk_ref_locks(&common_dir.join("refs"), 0, &mut budget, &mut found);
+    let mut budget = max_refs_entries;
+    let mut complete = walk_ref_locks(&common_dir.join("refs"), 0, &mut budget, &mut found.refs);
     if git_dir != common_dir {
         // A linked worktree's own refs (refs/bisect, refs/worktree, …).
-        walk_ref_locks(&git_dir.join("refs"), 0, &mut budget, &mut found);
+        complete &= walk_ref_locks(&git_dir.join("refs"), 0, &mut budget, &mut found.refs);
     }
+    found.refs_truncated = !complete;
     found
 }
 
-fn walk_ref_locks(dir: &Path, depth: usize, budget: &mut usize, found: &mut HashSet<PathBuf>) {
+/// False when the walk stopped early (out of budget, or too deep), i.e. part
+/// of `dir` was never looked at.
+fn walk_ref_locks(dir: &Path, depth: usize, budget: &mut usize, found: &mut HashSet<PathBuf>) -> bool {
     if depth > MAX_REFS_DEPTH {
-        return;
+        return false;
     }
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else { return true };
+    let mut complete = true;
     for entry in rd.flatten() {
         if *budget == 0 {
-            return;
+            return false;
         }
         *budget -= 1;
         let Ok(ft) = entry.file_type() else { continue };
         let p = entry.path();
         if ft.is_dir() {
-            walk_ref_locks(&p, depth + 1, budget, found);
+            complete &= walk_ref_locks(&p, depth + 1, budget, found);
         } else if ft.is_file() && p.extension().is_some_and(|e| e == "lock") {
             found.insert(p);
         }
     }
+    complete
 }
 
 pub fn pre_op(repo: &git2::Repository) -> PreOp {
+    pre_op_bounded(repo, MAX_REFS_ENTRIES)
+}
+
+fn pre_op_bounded(repo: &git2::Repository, max_refs_entries: usize) -> PreOp {
     PreOp {
-        locks: scan_locks(repo.path(), repo.commondir()),
+        locks: scan_locks(repo.path(), repo.commondir(), max_refs_entries),
         state: repo.state(),
         started: SystemTime::now(),
     }
@@ -131,23 +154,37 @@ fn rel_to_git_dir(p: &Path, git_dir: &Path, common_dir: &Path) -> String {
 /// Call only AFTER `run_with` returned `Cancelled` — the tree is dead by then,
 /// the WSL in-distro sweep included, so nothing of ours still holds a lock.
 ///
-/// 1. Unless `skip_locks`: remove lock files that are new since `pre_op` AND
-///    whose mtime is no older than `started - MTIME_SLACK`. Never a
-///    pre-existing one.
-/// 2. Then, if the repo was clean before and is now mid-merge/rebase/am/
-///    cherry-pick/revert, run the matching `git <op> --abort`.
+/// `skip` is set while another registered job is live on the same repo: the
+/// leftovers may then be ITS, so neither step runs.
+///
+/// 1. Remove lock files that are new since `pre_op` AND whose mtime is no
+///    older than `started - MTIME_SLACK`. Never a pre-existing one. If
+///    `pre_op`'s `refs/` walk was truncated, `refs/**.lock` is left alone:
+///    there "new" can't be told from "beyond the first walk's cutoff".
+/// 2. Then, only if `abort` (the op can itself leave such a state: pull, not
+///    fetch or push), the repo was clean before and is now mid-merge/rebase/
+///    am/cherry-pick/revert, run the matching `git <op> --abort`.
 ///
 /// Locks go first because `--abort` itself needs `index.lock`.
-pub fn after_cancel(path: &str, pre: &PreOp, skip_locks: bool) -> CleanupReport {
+pub fn after_cancel(path: &str, pre: &PreOp, skip: bool, abort: bool) -> CleanupReport {
     let mut report = CleanupReport::default();
+    if skip {
+        return report;
+    }
     let Ok(repo) = crate::trust::open_repo(path) else { return report };
     let git_dir = repo.path().to_path_buf();
     let common_dir = repo.commondir().to_path_buf();
 
-    if !skip_locks {
+    {
         let floor = pre.started.checked_sub(MTIME_SLACK).unwrap_or(pre.started);
-        let mut now: Vec<PathBuf> =
-            scan_locks(&git_dir, &common_dir).into_iter().filter(|p| !pre.locks.contains(p)).collect();
+        let scan = scan_locks(&git_dir, &common_dir, MAX_REFS_ENTRIES);
+        let refs = if pre.locks.refs_truncated { HashSet::new() } else { scan.refs };
+        let mut now: Vec<PathBuf> = scan
+            .fixed
+            .into_iter()
+            .filter(|p| !pre.locks.fixed.contains(p))
+            .chain(refs.into_iter().filter(|p| !pre.locks.refs.contains(p)))
+            .collect();
         now.sort();
         for p in now {
             let fresh = std::fs::metadata(&p).and_then(|m| m.modified()).map(|t| t >= floor).unwrap_or(false);
@@ -157,7 +194,7 @@ pub fn after_cancel(path: &str, pre: &PreOp, skip_locks: bool) -> CleanupReport 
         }
     }
 
-    if pre.state == RepositoryState::Clean {
+    if abort && pre.state == RepositoryState::Clean {
         // Re-open: git2 caches nothing about the state, but the first handle
         // predates the lock removal above and a fresh one costs nothing here.
         let state = crate::trust::open_repo(path).map(|r| r.state()).unwrap_or(RepositoryState::Clean);
@@ -271,7 +308,7 @@ mod tests {
         std::fs::write(&index_lock, "").unwrap();
         std::fs::write(&ref_lock, "").unwrap();
 
-        let rep = after_cancel(&r.path(), &pre, false);
+        let rep = after_cancel(&r.path(), &pre, false, true);
         assert!(!index_lock.exists());
         assert!(!ref_lock.exists());
         assert!(old.exists(), "a lock that predates the op is never ours");
@@ -287,9 +324,56 @@ mod tests {
         let index_lock = r.git_dir().join("index.lock");
         std::fs::write(&index_lock, "").unwrap();
 
-        let rep = after_cancel(&r.path(), &pre, true);
+        let rep = after_cancel(&r.path(), &pre, true, true);
         assert!(index_lock.exists());
         assert!(rep.removed_locks.is_empty());
+    }
+
+    #[test]
+    fn skip_also_skips_the_abort() {
+        let r = Repo::new("skipabort");
+        r.with_conflicting_branch();
+        let pre = pre_op(&r.open());
+        assert!(!r.git(&["merge", "other"]));
+
+        let rep = after_cancel(&r.path(), &pre, true, true);
+        assert_eq!(rep.aborted, None, "another live job on the repo may own this merge");
+        assert_eq!(r.open().state(), RepositoryState::Merge);
+    }
+
+    #[test]
+    fn merge_state_is_left_alone_without_abort() {
+        // A fetch/push never creates a merge; one that appears while it runs
+        // is the user's (a terminal `git merge`), so cancelling must keep it.
+        let r = Repo::new("noabort");
+        r.with_conflicting_branch();
+        let pre = pre_op(&r.open());
+        assert!(!r.git(&["merge", "other"]));
+        assert_eq!(r.open().state(), RepositoryState::Merge);
+
+        let rep = after_cancel(&r.path(), &pre, false, false);
+        assert_eq!(rep.aborted, None);
+        assert_eq!(r.open().state(), RepositoryState::Merge);
+    }
+
+    #[test]
+    fn truncated_refs_walk_keeps_ref_locks_but_cleans_fixed_ones() {
+        let r = Repo::new("truncated");
+        r.commit("f.txt", "0\n", "c0");
+        // A budget of 1 can't cover refs/ (heads, tags, …), so the walk is
+        // truncated and a refs/**.lock can no longer be judged new.
+        let pre = pre_op_bounded(&r.open(), 1);
+        assert!(pre.locks.refs_truncated);
+
+        let index_lock = r.git_dir().join("index.lock");
+        let ref_lock = r.git_dir().join("refs/heads/beyond-cutoff.lock");
+        std::fs::write(&index_lock, "").unwrap();
+        std::fs::write(&ref_lock, "").unwrap();
+
+        let rep = after_cancel(&r.path(), &pre, false, false);
+        assert_eq!(rep.removed_locks, vec!["index.lock".to_string()]);
+        assert!(!index_lock.exists());
+        assert!(ref_lock.exists(), "a refs/ lock the first walk may never have reached is not ours to remove");
     }
 
     #[test]
@@ -300,7 +384,7 @@ mod tests {
         assert!(!r.git(&["merge", "other"]), "the fixture must conflict");
         assert_eq!(r.open().state(), RepositoryState::Merge);
 
-        let rep = after_cancel(&r.path(), &pre, false);
+        let rep = after_cancel(&r.path(), &pre, false, true);
         assert_eq!(rep.aborted, Some("merge"));
         assert_eq!(r.open().state(), RepositoryState::Clean);
     }
@@ -312,7 +396,7 @@ mod tests {
         assert!(!r.git(&["merge", "other"]));
         let pre = pre_op(&r.open());
 
-        let rep = after_cancel(&r.path(), &pre, false);
+        let rep = after_cancel(&r.path(), &pre, false, true);
         assert_eq!(rep.aborted, None, "the user's own merge is theirs to finish");
         assert_eq!(r.open().state(), RepositoryState::Merge);
     }
@@ -328,7 +412,7 @@ mod tests {
         let index_lock = r.git_dir().join("index.lock");
         std::fs::write(&index_lock, "").unwrap();
 
-        let rep = after_cancel(&r.path(), &pre, false);
+        let rep = after_cancel(&r.path(), &pre, false, true);
         assert_eq!(rep.removed_locks, vec!["index.lock".to_string()]);
         assert_eq!(rep.aborted, Some("merge"));
         assert_eq!(r.open().state(), RepositoryState::Clean);

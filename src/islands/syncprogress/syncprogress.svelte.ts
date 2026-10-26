@@ -75,6 +75,10 @@ class SyncProgressState {
   // Unlisten fns for this op's subscriptions, live only between begin() and
   // settle()/close() (mirrors bisect's runUnlisten).
   private unlisteners: (() => void)[] = [];
+  // The "job-started" subscription, kept apart from the rest: while a cancel
+  // is queued it must outlive close() (Hide, or a second Escape), or the
+  // cancel would be silently lost. settle() and the next begin() drop it.
+  private jobSub: (() => void) | null = null;
   // Bumped by begin() and close(), so subscriptions that finish arming after
   // the modal moved on are dropped instead of leaking.
   private gen = 0;
@@ -127,7 +131,7 @@ class SyncProgressState {
     const gen = ++this.gen;
     const listen = (window as unknown as { __TAURI__?: { event: { listen: Listen } } }).__TAURI__?.event.listen;
     if (!listen) return;
-    const subs = await Promise.all([
+    const [progressSub, jobSub, jobProgressSub] = await Promise.all([
       listen<{ phase: string; line: string }>("sync-progress", (e) => {
         if (e.payload.phase !== this.phase) return; // defensive: never mix a fetch's tail into a pull
         this.lines = [...this.lines, e.payload.line]; // reassign (not push) so runes sees the change
@@ -140,12 +144,25 @@ class SyncProgressState {
       }),
     ]);
     // Closed (or re-begun) while the subscriptions were still being set up:
-    // they belong to nobody now.
+    // they belong to nobody now — except "job-started" when a cancel was
+    // queued meanwhile (Escape, then Escape again), which still has to land.
     if (gen !== this.gen) {
-      for (const u of subs) u();
+      progressSub();
+      jobProgressSub();
+      if (this.keepJobSub() && this.jobSub == null) this.jobSub = jobSub;
+      else jobSub();
       return;
     }
-    this.unlisteners.push(...subs);
+    this.unlisteners.push(progressSub, jobProgressSub);
+    // Normally null here (begin() just dropped it); defensive against a stale
+    // begin()'s kept subscription leaking.
+    this.jobSub?.();
+    this.jobSub = jobSub;
+  }
+
+  // A cancel is waiting for its job id and the op hasn't settled yet.
+  private keepJobSub(): boolean {
+    return this.cancelQueued && this.running;
   }
 
   private onJobStarted(p: JobInfo): void {
@@ -214,12 +231,13 @@ class SyncProgressState {
 
   // Hide/Close — hides the modal and drops its listeners and keyboard scope.
   // A still-running backend op keeps going unless it was cancelled; that's
-  // intentional and safe (see the header note).
+  // intentional and safe (see the header note). A cancel still queued for
+  // "job-started" keeps that one subscription, so it is sent on arrival.
   close(): void {
     this.clearAutoClose();
     this.open = false;
     this.gen++;
-    this.stopListening();
+    this.stopListening(this.keepJobSub());
     this.scope?.release();
     this.scope = null;
   }
@@ -273,8 +291,12 @@ class SyncProgressState {
     });
   }
 
-  private stopListening(): void {
+  private stopListening(keepJobSub = false): void {
     for (const u of this.unlisteners.splice(0)) u();
+    if (!keepJobSub) {
+      this.jobSub?.();
+      this.jobSub = null;
+    }
   }
 
   private clearAutoClose(): void {

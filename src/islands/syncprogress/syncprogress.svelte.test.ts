@@ -125,6 +125,48 @@ describe("cancel", () => {
     expect(commands.jobCancel).toHaveBeenCalledWith(9);
   });
 
+  it("a queued cancel survives close() and is sent when job-started arrives", async () => {
+    vi.mocked(commands.jobCancel).mockResolvedValue(true);
+    await syncProgressCtrl.begin("Fetching…", "fetch", "/r");
+    await syncProgressCtrl.cancel();
+    syncProgressCtrl.close(); // Cancel, then Hide
+    expect(listeners.get("sync-progress")?.size ?? 0).toBe(0);
+    emit("job-started", started({ id: 11 }));
+    await flush();
+    expect(commands.jobCancel).toHaveBeenCalledWith(11);
+    syncProgressCtrl.settle(false, "i18n:err_remote.fetch_cancelled", true);
+    expect(listeners.get("job-started")?.size ?? 0).toBe(0);
+  });
+
+  it("a double Escape before job-started still cancels", async () => {
+    vi.mocked(commands.jobCancel).mockResolvedValue(true);
+    await syncProgressCtrl.begin("Fetching…", "fetch", "/r");
+    syncProgressCtrl.escape(); // queues the cancel
+    syncProgressCtrl.escape(); // already cancelling -> hides
+    expect(syncProgressCtrl.open).toBe(false);
+    emit("job-started", started({ id: 12 }));
+    await flush();
+    expect(commands.jobCancel).toHaveBeenCalledWith(12);
+  });
+
+  it("a cancel queued while begin() is still arming survives close()", async () => {
+    vi.mocked(commands.jobCancel).mockResolvedValue(true);
+    const pending = syncProgressCtrl.begin("Fetching…", "fetch", "/r");
+    syncProgressCtrl.escape();
+    syncProgressCtrl.escape();
+    await pending;
+    expect(listeners.get("sync-progress")?.size ?? 0).toBe(0);
+    emit("job-started", started({ id: 13 }));
+    await flush();
+    expect(commands.jobCancel).toHaveBeenCalledWith(13);
+  });
+
+  it("close() without a queued cancel drops job-started too", async () => {
+    await syncProgressCtrl.begin("Fetching…", "fetch", "/r");
+    syncProgressCtrl.close();
+    expect(listeners.get("job-started")?.size ?? 0).toBe(0);
+  });
+
   it("jobCancel false (already gone) leaves state for settle", async () => {
     vi.mocked(commands.jobCancel).mockResolvedValue(false);
     await syncProgressCtrl.begin("Fetching…", "fetch", "/r");

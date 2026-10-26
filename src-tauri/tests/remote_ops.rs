@@ -608,7 +608,12 @@ fn stall_hook_fires_on_a_silent_transfer() {
 }
 
 #[test]
-fn pre_cancelled_token_does_not_spawn() {
+fn pre_cancelled_fetch_returns_cancelled_quickly_and_moves_no_refs() {
+    // What this can observe is the outcome, not the absence of a spawn: a
+    // spawned git would be torn down by run_with's first poll just as fast.
+    // That run_with never spawns for a pre-cancelled token is proven by
+    // procutil's cancel_before_spawn_never_spawns (a missing exe -> Cancelled,
+    // not Io).
     let (_origin, local, _other) = hung_remote("fetch_precancel", 30);
     let tracking_before = local.rev("refs/remotes/origin/main");
     let token = CancelToken::new();
@@ -616,6 +621,6 @@ fn pre_cancelled_token_does_not_spawn() {
     let start = Instant::now();
     let res = fetch_core(&local.path(), Some("origin"), false, OpCtx { cancel: Some(token), ..Default::default() });
     assert!(res.cancelled && !res.ok);
-    assert!(start.elapsed() < Duration::from_secs(3), "a pre-cancelled run must not spawn git at all");
+    assert!(start.elapsed() < Duration::from_secs(3), "a pre-cancelled fetch must return promptly");
     assert_eq!(local.rev("refs/remotes/origin/main"), tracking_before);
 }
