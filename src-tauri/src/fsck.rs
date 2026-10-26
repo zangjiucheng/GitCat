@@ -94,7 +94,7 @@ use serde::Serialize;
 
 use crate::i18n_err::ierrp;
 use crate::model::Person;
-use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions};
+use crate::procutil::{git_timeout, run_with, CancelToken, RunOptions};
 
 /// Defense-in-depth cap on the returned list — see module doc; not expected
 /// to ever bind (dangling commits are inherently a small set).
@@ -214,10 +214,13 @@ struct Out {
 /// English porcelain strings that (like every other git CLI message) are
 /// gettext-translatable — without locale-pinning, a non-English git install
 /// could silently produce zero parsed rows with no error at all.
+///
+/// WSL-routed: on a `\\wsl.localhost\` repo it runs the distro's own git,
+/// which reads the object store natively instead of over the 9P bridge, and a
+/// timeout or cancel also kills that inner git (B5).
 fn run_git(path: &str, args: &[&str], cancel: Option<&CancelToken>) -> Result<Out, String> {
-    let mut cmd = std::process::Command::new("git");
-    cmd.no_console_window().arg("-C").arg(path).args(args).env("LC_ALL", "C").env("LANGUAGE", "");
-    let opts = RunOptions { timeout: git_timeout(args), cancel: cancel.cloned(), ..Default::default() };
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, &[("LC_ALL", "C"), ("LANGUAGE", "")]);
+    let opts = RunOptions { timeout: git_timeout(args), cancel: cancel.cloned(), wsl: tag, ..Default::default() };
     let o = run_with(cmd, opts).map_err(|e| e.to_ierr("err_misc.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),

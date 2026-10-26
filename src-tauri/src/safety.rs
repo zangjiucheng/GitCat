@@ -363,12 +363,9 @@ pub fn prune_backups(repo: &Repository, mode: &str, count: usize, days: u64) -> 
         if keep {
             continue;
         }
-        match repo.find_reference(&snap.reference) {
-            Ok(mut r) => match r.delete() {
-                Ok(()) => deleted += 1,
-                Err(e) => eprintln!("prune_backups: could not delete {}: {}", snap.reference, e.message()),
-            },
-            Err(e) => eprintln!("prune_backups: {} vanished before delete: {}", snap.reference, e.message()),
+        match delete_backup_ref(repo, &snap.reference) {
+            Ok(()) => deleted += 1,
+            Err(e) => eprintln!("prune_backups: could not delete {}: {}", snap.reference, e),
         }
     }
     Ok(deleted)
@@ -398,7 +395,10 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
 
     // A dirty tree would be silently discarded by `reset --hard`, and the backup
     // only preserves committed history — so refuse and surface it, don't force.
-    let dirty = run_git(workdir, &["status", "--porcelain"])?;
+    // In the distro for a WSL repo: Windows git over the bridge can't see exec
+    // bits, so it reports every +x file as modified and the guard would refuse
+    // a clean tree.
+    let dirty = run_git_worktree(workdir, &["status", "--porcelain"])?;
     if !dirty.ok {
         return Ok(UndoResult {
             ok: false,
@@ -417,6 +417,10 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
             reason: Some(UndoRefusal::DirtyWorktree),
         });
     }
+
+    // The op line's headBefore must be a sha, like every other line's: the
+    // seal's ref name went here before (B6).
+    let head_before_sha = repo.head().ok().and_then(|h| h.target()).map(|o| o.to_string()).unwrap_or_default();
 
     // Undo-is-undoable: pin the CURRENT state before moving anything. If that
     // fails, abort — never reset --hard with no backup of the current state.
@@ -543,7 +547,7 @@ pub fn undo(repo: &Repository) -> Result<UndoResult, String> {
             ts: now_secs(),
             op: "undo".to_string(),
             backup_ref: sealed.clone().unwrap_or_default(),
-            head_before: sealed.clone().unwrap_or_default(),
+            head_before: head_before_sha,
             head_after: target_sha.clone(),
             head_ref: head_ref.unwrap_or_default(),
             refs: BTreeMap::new(),
@@ -733,6 +737,20 @@ pub fn create_backup_ref(repo: &Repository, ref_name: &str, oid: git2::Oid, reas
     repo.reference(ref_name, oid, false, reason)
         .map(|_| ())
         .map_err(|e| e.message().to_string())
+}
+
+/// Delete `ref_name` if it still points where it did when read. For a WSL
+/// repo this goes through [`crate::wsl::wsl_delete_ref`] (B3): git2's delete
+/// takes the same `<ref>.lock` path over the bridge that [`create_backup_ref`]
+/// already routes around. Plain git2 otherwise.
+fn delete_backup_ref(repo: &Repository, ref_name: &str) -> Result<(), String> {
+    let mut r = repo.find_reference(ref_name).map_err(|e| format!("vanished before delete: {}", e.message()))?;
+    if let (Some(path), Some(old)) = (repo.workdir().and_then(|p| p.to_str()), r.target()) {
+        if let Some(result) = crate::wsl::wsl_delete_ref(path, ref_name, &old.to_string()) {
+            return result;
+        }
+    }
+    r.delete().map_err(|e| e.message().to_string())
 }
 
 /// Unique backup ref: `refs/gitgui/backup/<secs>-<nanos>-<seq>`. `secs` is the

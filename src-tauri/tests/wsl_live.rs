@@ -68,7 +68,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gitcat_lib::{code_search, dashboard, git_remote, safety, trust, wsl, workdir};
+use gitcat_lib::{code_search, dashboard, fsck, git_remote, reflog, safety, trust, wsl, workdir};
 
 /// The first registered WSL distro's name, or `None` if WSL isn't installed
 /// / no distro is registered at all — `wsl::list_distros()` (EMPIRICALLY
@@ -403,6 +403,119 @@ fn safety_snapshot_creates_a_backup_ref_on_a_wsl_repo() {
     // check on the WSL path) must not just be a one-shot fluke.
     let second = safety::snapshot(&opened).expect("a second snapshot must also succeed");
     assert_ne!(ref_name, second, "two snapshots must get distinct ref names");
+
+    untrust(&path);
+}
+
+// B4: reflog_restore's `reset --hard` ran Windows git over the bridge, which
+// rewrites the restored tree as CRLF and drops +x. It now runs in the distro.
+#[test]
+#[ignore]
+fn reflog_restore_keeps_lf_and_exec_bits_on_a_wsl_repo() {
+    let distro = skip_without_wsl!();
+    let repo = WslTempRepo::init(&distro, "reflog_restore");
+    WslTempRepo::wsl_setup(
+        &distro,
+        &format!(
+            "set -e; cd '{p}'; printf '#!/bin/sh\\necho one\\n' > run.sh; chmod +x run.sh; git add run.sh; \
+             git commit -q -m c1; printf '#!/bin/sh\\necho two\\n' > run.sh; git commit -q -am c2",
+            p = repo.linux_path
+        ),
+    );
+    let c1 = repo.wsl_git(&["rev-parse", "HEAD~1"]).1;
+    let path = repo.unc_path();
+    trust::open_repo(&path).expect("trust::open_repo should succeed on a fresh wsl repo");
+
+    let r = tauri::async_runtime::block_on(reflog::reflog_restore(path.clone(), 1)); // HEAD@{1} = c1
+    assert!(r.ok, "reflog_restore failed: {}", r.message);
+    assert_eq!(repo.wsl_git(&["rev-parse", "HEAD"]).1, c1);
+
+    let (ok, status, err) = repo.wsl_git(&["status", "--porcelain"]);
+    assert!(ok, "status failed: {err}");
+    assert!(status.is_empty(), "the distro's git should see a clean tree, got: {status:?}");
+    WslTempRepo::wsl_setup(
+        &distro,
+        &format!("set -e; cd '{p}'; test -x run.sh; ! grep -q $'\\r' run.sh", p = repo.linux_path),
+    );
+
+    untrust(&path);
+}
+
+// Same root cause as above, in undo: its clean-tree guard ran Windows git,
+// which reports every +x file as modified, so undo refused on any WSL repo
+// containing an executable.
+#[test]
+#[ignore]
+fn undo_is_not_refused_by_an_exec_bit_on_a_wsl_repo() {
+    let distro = skip_without_wsl!();
+    let repo = WslTempRepo::init(&distro, "undo_exec");
+    WslTempRepo::wsl_setup(
+        &distro,
+        &format!(
+            "set -e; cd '{p}'; printf '#!/bin/sh\\n' > run.sh; chmod +x run.sh; git add run.sh; git commit -q -m c1; \
+             echo more > more.txt; git add more.txt; git commit -q -m c2",
+            p = repo.linux_path
+        ),
+    );
+    let c2 = repo.wsl_git(&["rev-parse", "HEAD"]).1;
+    let path = repo.unc_path();
+    let opened = trust::open_repo(&path).expect("trust::open_repo should succeed on a fresh wsl repo");
+
+    safety::snapshot(&opened).expect("snapshot"); // pins c2
+    // Back to c1: run.sh (+x) is still in the tree when undo checks it.
+    WslTempRepo::wsl_setup(&distro, &format!("set -e; cd '{p}'; git reset -q --hard HEAD~1", p = repo.linux_path));
+
+    let u = safety::undo(&trust::open_repo(&path).unwrap()).expect("undo");
+    assert!(u.ok, "undo refused or failed: {}", u.message);
+    assert_eq!(repo.wsl_git(&["rev-parse", "HEAD"]).1, c2);
+    WslTempRepo::wsl_setup(&distro, &format!("set -e; cd '{p}'; test -x run.sh", p = repo.linux_path));
+
+    untrust(&path);
+}
+
+// B5: fsck ran Windows git over the bridge with no WSL routing.
+#[test]
+#[ignore]
+fn dangling_commits_finds_a_dropped_commit_on_a_wsl_repo() {
+    let distro = skip_without_wsl!();
+    let repo = WslTempRepo::init(&distro, "fsck");
+    WslTempRepo::wsl_setup(
+        &distro,
+        &format!(
+            "set -e; cd '{p}'; echo lost > lost.txt; git add lost.txt; git commit -q -m lost; \
+             git reset -q --hard HEAD~1",
+            p = repo.linux_path
+        ),
+    );
+    let lost = repo.wsl_git(&["rev-parse", "HEAD@{1}"]).1;
+    let path = repo.unc_path();
+    trust::open_repo(&path).expect("trust::open_repo should succeed on a fresh wsl repo");
+
+    let found = tauri::async_runtime::block_on(fsck::dangling_commits(path.clone())).expect("dangling_commits");
+    assert!(found.commits.iter().any(|c| c.sha == lost), "the dropped commit {lost} should be listed");
+
+    untrust(&path);
+}
+
+// B3: pruning deleted with git2, the same `<ref>.lock` path over the bridge
+// that creating did. It now goes through the distro's `update-ref -d`.
+#[test]
+#[ignore]
+fn prune_backups_deletes_old_snapshots_on_a_wsl_repo() {
+    let distro = skip_without_wsl!();
+    let repo = WslTempRepo::init(&distro, "prune");
+    let path = repo.unc_path();
+    let opened = trust::open_repo(&path).expect("trust::open_repo should succeed on a fresh wsl repo");
+
+    for _ in 0..3 {
+        safety::snapshot(&opened).expect("snapshot");
+    }
+    let deleted = safety::prune_backups(&opened, "count", 1, 0).expect("prune_backups");
+    assert_eq!(deleted, 2, "keeps only the newest of three");
+
+    let (ok, out, err) = repo.wsl_git(&["for-each-ref", "refs/gitgui/backup/"]);
+    assert!(ok, "for-each-ref failed: {err}");
+    assert_eq!(out.lines().count(), 1, "the distro's own git should see one snapshot left, got: {out:?}");
 
     untrust(&path);
 }

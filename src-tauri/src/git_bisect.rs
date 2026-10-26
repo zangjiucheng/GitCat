@@ -445,7 +445,9 @@ pub async fn bisect_start(path: String, bad: String, good: Vec<String>) -> Bisec
             return BisectStatus::refused(ierr("err_ops.select_known_good"));
         }
 
-        match git(&path, &["status", "--porcelain"]) {
+        // git_worktree: Windows git reports every +x file in a WSL repo as
+        // modified, which would refuse a clean tree here.
+        match git_worktree(&path, &["status", "--porcelain"]) {
             Ok(o) if !o.ok => {
                 return BisectStatus::refused(ierrp("err_ops.cannot_verify_clean", &[("detail", &o.stderr)]))
             }

@@ -2000,9 +2000,18 @@ pub async fn commit(path: String, message: Option<String>, amend: Option<bool>) 
             Ok(r) => r,
             Err(w) => return w,
         };
-        let backup = match crate::safety::snapshot(&repo) {
-            Ok(b) => b,
-            Err(e) => return WorkdirResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
+        // An unborn HEAD (a new repo's first commit) has no history for a
+        // snapshot to pin and none for this commit to lose, so it commits
+        // without one. Amend still snapshots: with nothing to amend it fails
+        // there, before git is ever run.
+        let unborn = matches!(repo.head(), Err(e) if e.code() == git2::ErrorCode::UnbornBranch);
+        let backup = if unborn && !is_amend {
+            None
+        } else {
+            match crate::safety::snapshot(&repo) {
+                Ok(b) => Some(b),
+                Err(e) => return WorkdirResult::err(ierrp("err_workdir.safety_snapshot_failed", &[("detail", &e)])),
+            }
         };
 
         let mut args: Vec<&str> = vec!["commit"];
@@ -2024,12 +2033,16 @@ pub async fn commit(path: String, message: Option<String>, amend: Option<bool>) 
         // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
         // Cancelled run cancel_cleanup::after_cancel.
         match git_c(&path, &args, true, None) {
-            Ok(out) if out.ok => WorkdirResult::ok(
-                format!("{} (snapshot {}).", if is_amend { "Amended commit" } else { "Committed" }, short_backup(&backup)),
-                Some(backup),
-            ),
-            Ok(out) => WorkdirResult::err_with_backup(git_msg(&out), Some(backup)),
-            Err(e) => WorkdirResult::err_with_backup(e, Some(backup)),
+            Ok(out) if out.ok => {
+                let verb = if is_amend { "Amended commit" } else { "Committed" };
+                let message = match &backup {
+                    Some(b) => format!("{verb} (snapshot {}).", short_backup(b)),
+                    None => format!("{verb}."),
+                };
+                WorkdirResult::ok(message, backup)
+            }
+            Ok(out) => WorkdirResult::err_with_backup(git_msg(&out), backup),
+            Err(e) => WorkdirResult::err_with_backup(e, backup),
         }
     })
     .await
@@ -2660,7 +2673,10 @@ pub async fn stash_undo_apply(path: String) -> WorkdirResult {
         if !unmerged_files(&path).is_empty() {
             return WorkdirResult::err(ierr("err_workdir.unresolved_conflicts_use_resolver"));
         }
-        let dirty = match git(&path, &["status", "--porcelain"], false) {
+        // git_worktree, unlike the other status reads: this one gates a
+        // mutation, and Windows git reports every +x file in a WSL repo as
+        // modified.
+        let dirty = match git_worktree(&path, &["status", "--porcelain"], false) {
             Ok(o) if o.ok => o.stdout,
             Ok(o) => return WorkdirResult::err(git_msg(&o)),
             Err(e) => return WorkdirResult::err(e),
