@@ -2329,6 +2329,10 @@ body.diff-only .modal-foot{display:none}
            branch-pill cluster on the left (repo IDENTITY) — grouped with
            Undo/theme (also actions) per direct feedback that this is the
            clearer split, not "everything about the current repo together". -->
+      <!-- Running-jobs chip (src/islands/jobs): empty while idle.
+           display:contents so the empty mount is not a flex item, and so
+           costs no .tb-right gap at the minimum window width. -->
+      <span id="jobsMount" style="display:contents"></span>
       <div class="sync-actions">
         <button class="tb-btn" id="fetchBtn" data-i18n-title="topbar.fetch_tip" title="Fetch — update remote-tracking refs">
           <svg class="tb-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.6v3h-3"/></svg>
