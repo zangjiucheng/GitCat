@@ -106,3 +106,57 @@ fn does_not_fire_on_an_unrelated_working_tree_file_change() {
     std::thread::sleep(Duration::from_millis(900));
     assert!(!fired.load(Ordering::SeqCst), "watcher should NOT fire for a plain working-tree file untouched by git itself");
 }
+
+#[test]
+fn does_not_fire_on_gitcats_own_refs() {
+    let repo = TempRepo::init("watch_own_refs");
+    let c0 = repo.commit("f.txt", "0\n", "c0");
+
+    let fired = Arc::new(AtomicBool::new(false));
+    let _debouncer = arm_and_settle(&repo.path(), &fired);
+
+    repo.must(&["update-ref", "refs/gitgui/backup/1-2-3", &c0]);
+    repo.must(&["update-ref", "refs/gitcat/oplog", &c0]);
+
+    std::thread::sleep(Duration::from_millis(900));
+    assert!(!fired.load(Ordering::SeqCst), "a snapshot or op-log write must not reload the graph");
+}
+
+/// The old filter matched path COMPONENTS anywhere in the absolute path, so a
+/// repo that merely lived under a directory named `gitgui` never refreshed.
+#[test]
+fn fires_for_a_repo_living_under_a_directory_named_gitgui() {
+    let holder = TempRepo::init("watch_gitgui_parent");
+    let dir = holder.dir.join("gitgui").join("app");
+    std::fs::create_dir_all(&dir).unwrap();
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git").arg("-C").arg(&dir).args(args).status().unwrap().success();
+        assert!(ok, "git {args:?} failed");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "c0"]);
+
+    let fired = Arc::new(AtomicBool::new(false));
+    let _debouncer = arm_and_settle(dir.to_str().unwrap(), &fired);
+
+    git(&["branch", "feature"]);
+    assert!(wait_until(&fired, Duration::from_secs(3)), "a branch created in a repo under .../gitgui/... must still fire");
+}
+
+/// A linked worktree's branches live in the COMMON dir's refs/, which the
+/// worktree's own git dir doesn't contain.
+#[test]
+fn a_linked_worktree_fires_on_a_branch_created_in_the_main_checkout() {
+    let repo = TempRepo::init("watch_worktree");
+    repo.commit("f.txt", "0\n", "c0");
+    let wt = repo.dir.with_file_name(format!("{}-wt", repo.dir.file_name().unwrap().to_string_lossy()));
+    repo.must(&["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()]);
+
+    let fired = Arc::new(AtomicBool::new(false));
+    let _debouncer = arm_and_settle(wt.to_str().unwrap(), &fired);
+
+    repo.must(&["branch", "from-main-checkout"]);
+    let ok = wait_until(&fired, Duration::from_secs(3));
+    let _ = std::fs::remove_dir_all(&wt);
+    assert!(ok, "the worktree's watcher should see refs/ in the common dir");
+}

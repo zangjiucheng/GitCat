@@ -42,16 +42,34 @@ const DEBOUNCE: Duration = Duration::from_millis(400);
 #[derive(Default)]
 pub struct WatchState(Mutex<Option<Debouncer<RecommendedWatcher>>>);
 
-fn is_relevant(path: &Path) -> bool {
-    // GitCat's own Safety-Manager snapshot refs (refs/gitgui/…) are NOT shown in
-    // the graph and are written by the app itself — notably the on-repo-open
-    // auto-prune (see pruneSnapshotsPerPolicy). Reacting to them would pointlessly
-    // reload the graph, and during a large repo's initial stream that RESTARTS the
-    // whole load. Ignore them; a real HEAD/refs change still fires.
-    if path.components().any(|c| c.as_os_str() == "gitgui") {
-        return false;
+/// Whether a change at `rel` — a path RELATIVE to the git dir or the common
+/// dir — should reload the graph: `HEAD`, or anything under `refs/` except
+/// GitCat's own namespaces.
+///
+/// GitCat's own refs (`refs/gitgui/…` safety snapshots, `refs/gitcat/…` the
+/// 2.0 op log) are NOT shown in the graph and are written by the app itself —
+/// notably the on-repo-open auto-prune (see pruneSnapshotsPerPolicy). Reacting
+/// to them would pointlessly reload the graph, and during a large repo's
+/// initial stream that RESTARTS the whole load.
+///
+/// Relative, not absolute: matching on any path component named `gitgui` or
+/// `refs` meant a repo that merely LIVED under such a directory
+/// (`~/src/gitgui/app`) never refreshed, and one under a `refs` directory
+/// reloaded on every index write.
+fn is_relevant(rel: &Path) -> bool {
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    if rel == "HEAD" {
+        return true;
     }
-    path.file_name().is_some_and(|n| n == "HEAD") || path.components().any(|c| c.as_os_str() == "refs")
+    // The namespace directory itself counts too: creating `refs/gitcat/` is an
+    // event at `refs/gitcat`, with no trailing slash.
+    let internal = crate::safety::INTERNAL_REF_PREFIXES.iter().any(|p| rel.starts_with(p) || rel == p.trim_end_matches('/'));
+    rel.starts_with("refs/") && !internal
+}
+
+/// `path` relative to whichever of `roots` contains it.
+fn relative_to<'a>(path: &'a Path, roots: &[std::path::PathBuf]) -> Option<&'a Path> {
+    roots.iter().find_map(|r| path.strip_prefix(r).ok())
 }
 
 /// Core watcher setup, independent of any running Tauri app — `on_change` is
@@ -63,10 +81,21 @@ fn is_relevant(path: &Path) -> bool {
 pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Result<Debouncer<RecommendedWatcher>, String> {
     let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
     let git_dir = repo.path().to_path_buf();
+    // A linked worktree's git dir (`.git/worktrees/<name>`) holds only its own
+    // HEAD; the branches it shows live in the common dir's `refs/`.
+    let common_dir = repo.commondir().to_path_buf();
+    // Events may arrive with either spelling of a path (a canonicalized one on
+    // macOS's /private/var, a \\?\-prefixed one on Windows), so match against
+    // both forms of each root.
+    let mut roots = vec![git_dir.clone(), common_dir.clone()];
+    roots.extend([&git_dir, &common_dir].iter().filter_map(|p| std::fs::canonicalize(p).ok()));
+    // Longest first, so a worktree's git dir (inside the common dir) wins.
+    roots.sort_by_key(|r| std::cmp::Reverse(r.as_os_str().len()));
+    roots.dedup();
 
     let mut debouncer = new_debouncer(DEBOUNCE, move |res: DebounceEventResult| {
         let Ok(events) = res else { return };
-        if events.iter().any(|e| is_relevant(&e.path)) {
+        if events.iter().any(|e| relative_to(&e.path, &roots).is_some_and(is_relevant)) {
             on_change();
         }
     })
@@ -92,6 +121,9 @@ pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Resu
     // missing/unusual layout — the git-dir root watch above still catches
     // checkouts/commits via HEAD either way.
     let _ = debouncer.watcher().watch(&git_dir.join("refs"), RecursiveMode::Recursive);
+    if common_dir != git_dir {
+        let _ = debouncer.watcher().watch(&common_dir.join("refs"), RecursiveMode::Recursive);
+    }
 
     Ok(debouncer)
 }
@@ -135,21 +167,41 @@ mod is_relevant_tests {
 
     #[test]
     fn head_and_branch_refs_are_relevant() {
-        assert!(is_relevant(Path::new("/r/.git/HEAD")));
-        assert!(is_relevant(Path::new("/r/.git/refs/heads/main")));
-        assert!(is_relevant(Path::new("/r/.git/refs/remotes/origin/main")));
-        assert!(is_relevant(Path::new("/r/.git/refs/tags/v1")));
+        assert!(is_relevant(Path::new("HEAD")));
+        assert!(is_relevant(Path::new("refs/heads/main")));
+        assert!(is_relevant(Path::new("refs/remotes/origin/main")));
+        assert!(is_relevant(Path::new("refs/tags/v1")));
+        assert!(is_relevant(Path::new("refs\\heads\\main")), "Windows separators");
     }
 
     #[test]
-    fn snapshot_and_unrelated_paths_are_not() {
-        // GitCat's own Safety-Manager snapshot refs — must NOT trigger a reload
-        // (the on-open auto-prune writes these; reacting restarts a big load).
-        assert!(!is_relevant(Path::new("/r/.git/refs/gitgui/backup/2026-07-24T00-00")));
-        assert!(!is_relevant(Path::new("/r/.git/refs/gitgui/HEAD")));
+    fn gitcat_refs_and_unrelated_paths_are_not() {
+        // GitCat's own refs — must NOT trigger a reload (the on-open auto-prune
+        // writes these; reacting restarts a big load).
+        assert!(!is_relevant(Path::new("refs/gitgui/backup/2026-07-24T00-00")));
+        assert!(!is_relevant(Path::new("refs/gitgui/HEAD")));
+        assert!(!is_relevant(Path::new("refs/gitcat/oplog")));
+        assert!(!is_relevant(Path::new("refs/gitcat/pending/abc")));
+        assert!(!is_relevant(Path::new("refs/gitcat")), "creating the namespace directory");
+        assert!(!is_relevant(Path::new("refs/gitgui")));
+        assert!(is_relevant(Path::new("refs/gitcatalog/x")), "only the exact namespaces");
         // Neither do non-ref housekeeping files.
-        assert!(!is_relevant(Path::new("/r/.git/index")));
-        assert!(!is_relevant(Path::new("/r/.git/packed-refs")));
-        assert!(!is_relevant(Path::new("/r/.git/COMMIT_EDITMSG")));
+        assert!(!is_relevant(Path::new("index")));
+        assert!(!is_relevant(Path::new("packed-refs")));
+        assert!(!is_relevant(Path::new("COMMIT_EDITMSG")));
+        assert!(!is_relevant(Path::new("logs/HEAD")), "a reflog append is not a HEAD move by itself");
+    }
+
+    #[test]
+    fn paths_are_judged_relative_to_the_git_dir_not_absolutely() {
+        use super::relative_to;
+        // A repo living under directories named `gitgui` or `refs`.
+        let roots = vec![std::path::PathBuf::from("/home/me/gitgui/app/.git")];
+        let head = Path::new("/home/me/gitgui/app/.git/HEAD");
+        assert!(relative_to(head, &roots).is_some_and(is_relevant), "the old any-component check ignored this repo");
+        let roots = vec![std::path::PathBuf::from("/srv/refs/app/.git")];
+        let index = Path::new("/srv/refs/app/.git/index");
+        assert!(!relative_to(index, &roots).is_some_and(is_relevant), "the old check reloaded on every index write");
+        assert!(relative_to(Path::new("/elsewhere/HEAD"), &roots).is_none());
     }
 }

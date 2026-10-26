@@ -10,7 +10,8 @@
 //! from `safety.rs`'s oplog:
 //!
 //!   1. BACKUP (mandatory, before ever invoking filter-repo): a full
-//!      `git bundle create --all`, immediately verified with
+//!      `git bundle create --exclude=refs/gitcat/* --all` (everything but the
+//!      2.0 op log), immediately verified with
 //!      `git bundle verify`. If EITHER step fails, we abort before running
 //!      filter-repo at all — never rewrite history without a verified,
 //!      independent copy of every reachable object already safely on disk.
@@ -232,7 +233,7 @@ fn find_manifest(repo: &Repository, backup_id: &str) -> Option<BackupManifest> {
 }
 
 fn commit_count(path: &str) -> usize {
-    git(path, &["rev-list", "--all", "--count"])
+    git(path, &["rev-list", crate::safety::EXCLUDE_OPLOG_REFS, "--all", "--count"])
         .ok()
         .filter(|o| o.ok)
         .and_then(|o| o.stdout.parse().ok())
@@ -259,7 +260,9 @@ fn backup(repo: &Repository, path: &str, cancel: Option<&CancelToken>) -> Result
     let bundle_path = dir.join(format!("{id}.bundle"));
     let bundle_str = bundle_path.to_string_lossy().to_string();
 
-    let create_args = ["bundle", "create", &bundle_str, "--all"];
+    // Every ref but the 2.0 op log, which is GitCat bookkeeping, not history
+    // the restore should bring back.
+    let create_args = ["bundle", "create", &bundle_str, crate::safety::EXCLUDE_OPLOG_REFS, "--all"];
     let create = match git_c(path, &create_args, git_timeout(&create_args), cancel) {
         Ok(o) => o,
         Err(e) => {

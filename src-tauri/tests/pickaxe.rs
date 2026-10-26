@@ -475,3 +475,34 @@ fn entries_carry_correctly_shortened_shas() {
     assert_eq!(r.entries[0].sha, c1);
     assert_eq!(r.entries[0].short_sha, short(&c1));
 }
+
+/// `--all` must not walk the 2.0 op log (refs/gitcat/*): its commits are op
+/// metadata and captured WIP, not history. Safety pins (refs/gitgui/*) are
+/// real user commits and still are walked.
+#[test]
+fn all_refs_skips_the_op_log_but_keeps_safety_pins() {
+    let repo = TempRepo::init("pickaxe_oplog");
+    let _c1 = repo.commit("content.txt", "base\n", "c1");
+    repo.must(&["checkout", "-q", "-b", "scratch"]);
+    let pinned = repo.commit("p.txt", "needle pinned\n", "only reachable from a safety pin");
+    repo.must(&["checkout", "-q", "main"]);
+    repo.must(&["checkout", "-q", "-b", "scratch2"]);
+    let op = repo.commit("o.txt", "needle oplog\n", "only reachable from the op log");
+    repo.must(&["checkout", "-q", "main"]);
+    repo.must(&["update-ref", "refs/gitgui/deleted/1-2-3", &pinned]);
+    repo.must(&["update-ref", "refs/gitcat/oplog", &op]);
+    repo.must(&["branch", "-D", "scratch", "scratch2"]);
+
+    let res = tauri::async_runtime::block_on(pickaxe_search(
+        repo.path(),
+        "needle".to_string(),
+        "added-removed".to_string(),
+        false,
+        true,
+        None,
+        None,
+    ))
+    .expect("search with --all should succeed");
+    assert!(res.entries.iter().any(|e| e.sha == pinned), "a safety pin is still searched: {}", fmt_entries(&res.entries));
+    assert!(!res.entries.iter().any(|e| e.sha == op), "the op log is not: {}", fmt_entries(&res.entries));
+}
