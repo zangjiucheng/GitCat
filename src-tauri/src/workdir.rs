@@ -91,8 +91,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::Write as _;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -101,7 +100,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::i18n_err::{ierr, ierrp};
 use crate::model::{DiffHunkRow, DiffLineRow, FileChange};
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions};
 
 /// Per-file line cap for [`workdir_file_diff`], identical to commands.rs's own
 /// `MAX_LINES_PER_FILE` — kept as a private copy rather than a shared const
@@ -242,13 +241,20 @@ struct Out {
 }
 
 fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
+    git_c(path, args, no_editor, None)
+}
+
+/// [`git`] with an optional [`CancelToken`]: a cancel kills git's whole
+/// process tree and surfaces as `err_misc.cancelled`.
+fn git_c(path: &str, args: &[&str], no_editor: bool, cancel: Option<&CancelToken>) -> Result<Out, String> {
     let mut cmd = Command::new("git");
     cmd.no_console_window();
     cmd.arg("-C").arg(path).args(args);
     if no_editor {
         cmd.env("GIT_EDITOR", "true").env("GIT_SEQUENCE_EDITOR", "true");
     }
-    let o = cmd.output().map_err(|e| ierrp("err_workdir.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let o = run_with(cmd, RunOptions { timeout: git_timeout(args), cancel: cancel.cloned(), ..Default::default() })
+        .map_err(|e| e.to_ierr("err_workdir.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -269,7 +275,9 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
 /// correctly inside the distro. A strict no-op on non-WSL paths.
 fn git_worktree(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     let envs: &[(&str, &str)] = if no_editor { &[("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")] } else { &[] };
-    let o = crate::wsl::git_command_env(path, args, envs).output().map_err(|e| ierrp("err_workdir.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, envs);
+    let o = run_with(cmd, RunOptions { timeout: git_timeout(args), wsl: tag, ..Default::default() })
+        .map_err(|e| e.to_ierr("err_workdir.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -1823,21 +1831,14 @@ fn build_sub_patch(
 /// is dynamically constructed text, never written to disk. Same `Out`
 /// contract as every other mutation in this module.
 fn git_apply_stdin(path: &str, args: &[&str], patch: &str) -> Result<Out, String> {
-    // Routed through wsl::git_command so `git apply` runs the distro's own git on
-    // a WSL repo (Windows git would CRLF-churn / drop +x). git_command sets stdin
-    // to null and applies -C/no_console_window; override the three stdio here so
-    // we can feed the patch. Safe to route: build_sub_patch emits repo-relative
-    // a/…, b/… headers, no absolute path crosses into the distro.
-    let mut cmd = crate::wsl::git_command(path, args);
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| ierrp("err_workdir.could_not_run_git", &[("detail", &e.to_string())]))?;
-    child
-        .stdin
-        .take()
-        .expect("stdin was requested as piped")
-        .write_all(patch.as_bytes())
-        .map_err(|e| ierrp("err_workdir.could_not_write_patch_stdin", &[("detail", &e.to_string())]))?;
-    let o = child.wait_with_output().map_err(|e| ierrp("err_workdir.could_not_run_git", &[("detail", &e.to_string())]))?;
+    // Routed through wsl::git_command_tagged so `git apply` runs the distro's own
+    // git on a WSL repo (Windows git would CRLF-churn / drop +x). run_with pipes
+    // the patch to stdin (on its own thread) and closes it. Safe to route:
+    // build_sub_patch emits repo-relative a/…, b/… headers, no absolute path
+    // crosses into the distro.
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, &[]);
+    let o = run_with(cmd, RunOptions { stdin: Some(patch.as_bytes().to_vec()), timeout: git_timeout(args), wsl: tag, ..Default::default() })
+        .map_err(|e| e.to_ierr("err_workdir.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         code: o.status.code().unwrap_or(-1),
@@ -2020,7 +2021,9 @@ pub async fn commit(path: String, message: Option<String>, amend: Option<bool>) 
 
         // GIT_EDITOR=true set defensively (mirrors git_merge.rs's `no_editor`)
         // even though -m/--no-edit should already avoid invoking one.
-        match git(&path, &args, true) {
+        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
+        // Cancelled run cancel_cleanup::after_cancel.
+        match git_c(&path, &args, true, None) {
             Ok(out) if out.ok => WorkdirResult::ok(
                 format!("{} (snapshot {}).", if is_amend { "Amended commit" } else { "Committed" }, short_backup(&backup)),
                 Some(backup),

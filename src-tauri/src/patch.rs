@@ -129,14 +129,13 @@
 //! boundary or fail to escape a colliding body line — it isn't a heuristic
 //! at all, it's exact.
 
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use git2::{Repository, RepositoryState};
 use serde::Serialize;
 
 use crate::i18n_err::{ierr, ierrp};
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions};
 
 // ---------------------------------------------------------------------------
 // Payloads
@@ -217,7 +216,7 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
     if no_editor {
         cmd.env("GIT_EDITOR", "true").env("GIT_SEQUENCE_EDITOR", "true");
     }
-    let o = cmd.output().map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let o = run_with(cmd, RunOptions { timeout: git_timeout(args), ..Default::default() }).map_err(|e| e.to_ierr("err_ops.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         stdout: String::from_utf8_lossy(&o.stdout).trim().to_string(),
@@ -231,9 +230,9 @@ fn git(path: &str, args: &[&str], no_editor: bool) -> Result<Out, String> {
 /// churn the applied tree / drop +x). Editor suppressed so `--continue` never
 /// opens one. No path args here. A strict no-op on non-WSL paths.
 fn git_worktree(path: &str, args: &[&str]) -> Result<Out, String> {
-    let o = crate::wsl::git_command_env(path, args, &[("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")])
-        .output()
-        .map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, &[("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")]);
+    let o = run_with(cmd, RunOptions { timeout: git_timeout(args), wsl: tag, ..Default::default() })
+        .map_err(|e| e.to_ierr("err_ops.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         stdout: String::from_utf8_lossy(&o.stdout).trim().to_string(),
@@ -247,18 +246,12 @@ fn git_worktree(path: &str, args: &[&str]) -> Result<Out, String> {
 /// Windows/UNC path that Linux git inside the distro could not resolve, so the
 /// caller `fs::read`s the bytes (Rust reads either filesystem) and pipes them
 /// in — no path ever crosses the WSL boundary. Editor suppressed so `am` never
-/// opens one. A strict no-op on non-WSL paths.
-fn git_am_stdin(path: &str, args: &[&str], patch: &[u8]) -> Result<Out, String> {
-    let mut cmd = crate::wsl::git_command_env(path, args, &[("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")]);
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
-    child
-        .stdin
-        .take()
-        .expect("stdin was requested as piped")
-        .write_all(patch)
-        .map_err(|e| ierrp("err_ops.could_not_write_am_stdin", &[("detail", &e.to_string())]))?;
-    let o = child.wait_with_output().map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
+/// opens one. A strict no-op on non-WSL paths. `cancel` kills the whole tree
+/// (surfacing as `err_misc.cancelled`).
+fn git_am_stdin(path: &str, args: &[&str], patch: &[u8], cancel: Option<&CancelToken>) -> Result<Out, String> {
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, &[("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")]);
+    let opts = RunOptions { stdin: Some(patch.to_vec()), timeout: git_timeout(args), cancel: cancel.cloned(), wsl: tag, ..Default::default() };
+    let o = run_with(cmd, opts).map_err(|e| e.to_ierr("err_ops.could_not_run_git"))?;
     Ok(Out {
         ok: o.status.success(),
         stdout: String::from_utf8_lossy(&o.stdout).trim().to_string(),
@@ -286,13 +279,9 @@ struct RawOut {
 }
 
 fn run_format_patch(path: &str, args: &[&str]) -> Result<RawOut, String> {
-    let o = Command::new("git")
-        .no_console_window()
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()
-        .map_err(|e| ierrp("err_ops.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let mut cmd = Command::new("git");
+    cmd.no_console_window().arg("-C").arg(path).args(args);
+    let o = run_with(cmd, RunOptions { timeout: git_timeout(args), ..Default::default() }).map_err(|e| e.to_ierr("err_ops.could_not_run_git"))?;
     Ok(RawOut {
         ok: o.status.success(),
         stdout: String::from_utf8_lossy(&o.stdout).into_owned(), // NOT trimmed
@@ -657,7 +646,9 @@ fn apply_patch_sync(path: String, patch_file_path: String) -> ApplyPatchResult {
     // exported; a no-op for a patch that never needed escaping (an ordinary
     // external patch with no colliding body lines applies identically
     // either way — empirically verified).
-    let out = match git_am_stdin(&path, &["am", "--3way", "--patch-format=mboxrd"], &patch_bytes) {
+    // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
+    // Cancelled run cancel_cleanup::after_cancel.
+    let out = match git_am_stdin(&path, &["am", "--3way", "--patch-format=mboxrd"], &patch_bytes, None) {
         Ok(o) => o,
         Err(e) => {
             return ApplyPatchResult {

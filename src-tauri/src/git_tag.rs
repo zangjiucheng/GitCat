@@ -72,7 +72,7 @@ use git2::{Oid, Repository};
 
 use crate::git_write::WriteResult;
 use crate::i18n_err::{ierr, ierrp};
-use crate::procutil::NoConsoleWindowExt;
+use crate::procutil::{git_timeout, run_with, NoConsoleWindowExt, RunOptions};
 
 /// Process-wide monotonic tie-breaker for `refs/gitgui/deleted-tag/*` names —
 /// its own counter (not shared with `safety.rs`'s `SNAP_SEQ` or `workdir.rs`'s
@@ -108,13 +108,10 @@ struct GitOut {
 }
 
 fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
-    let output = Command::new("git")
-        .no_console_window()
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()
-        .map_err(|e| ierrp("err_history.could_not_run_git", &[("detail", &e.to_string())]))?;
+    let mut cmd = Command::new("git");
+    cmd.no_console_window().arg("-C").arg(path).args(args);
+    let output = run_with(cmd, RunOptions { timeout: git_timeout(args), ..Default::default() })
+        .map_err(|e| e.to_ierr("err_history.could_not_run_git"))?;
     Ok(GitOut {
         ok: output.status.success(),
         code: output.status.code(),
