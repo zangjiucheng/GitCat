@@ -213,6 +213,11 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
    before either side does, and 200px was yielding less than it could. */
 .cmd-hint>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .cmd-hint kbd{flex:none}
+/* The running-jobs chip (src/islands/jobs) renders only while a job runs, and
+   it costs ~45px the 960px bar doesn't have on every platform: Linux's wider
+   fonts overflowed by 18px. Search yields that space while the chip is up,
+   by the same rule as above; the ⌘K and a few letters of the label stay. */
+.topbar:has(.jobs) .cmd-hint{min-width:104px}
 .cmd-hint kbd{margin-left:auto;font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:5px;
   background:var(--elevated);border:1px solid var(--border);color:var(--muted)}
 /* Fetch/Pull/Push as ONE segmented control (shared frame, internal
