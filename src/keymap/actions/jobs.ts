@@ -12,4 +12,12 @@ export const jobsKeys = {
   toggle(): false | void {
     return jobsCtrl.toggle() ? undefined : false;
   },
+  /**
+   * Mod+Shift+J again, from inside the popover's own "modal" scope, where the
+   * global row is unreachable. Declines under any other modal.
+   */
+  close(): false | void {
+    if (!jobsCtrl.open) return false;
+    jobsCtrl.close();
+  },
 };

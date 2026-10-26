@@ -50,7 +50,7 @@ describe("the real table compiles", () => {
   // The LIVE set, enumerated. Every other JS row must still be shadow, so
   // flipping one live is a visible decision in this list rather than a quiet
   // property change in a 300-line table. PR 1 shipped this list empty.
-  const LIVE = ["modal.close", "pane.graph", "pane.sidebar", "pane.detail", "workdir.commit", "workdir.amend", "workdir.stage", "workdir.unstage", "workdir.stageAll", "workdir.unstageAll", "workdir.discard", "canvas.menu", "canvas.down", "canvas.up", "canvas.first", "canvas.last", "canvas.deselect", "sidebar.filter", "sidebar.menu", "sidebar.checkout", "detail.tab", "workdir.tab", "terminal.focusOut", "jobs.toggle"];
+  const LIVE = ["modal.close", "pane.graph", "pane.sidebar", "pane.detail", "workdir.commit", "workdir.amend", "workdir.stage", "workdir.unstage", "workdir.stageAll", "workdir.unstageAll", "workdir.discard", "canvas.menu", "canvas.down", "canvas.up", "canvas.first", "canvas.last", "canvas.deselect", "sidebar.filter", "sidebar.menu", "sidebar.checkout", "detail.tab", "workdir.tab", "terminal.focusOut", "jobs.toggle", "jobs.close"];
 
   it("keeps every JS binding in shadow mode except the enumerated live ones", () => {
     for (const x of BINDINGS) {

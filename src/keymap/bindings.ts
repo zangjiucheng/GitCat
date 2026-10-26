@@ -175,6 +175,13 @@ export const BINDINGS: readonly Binding[] = [
     when: ["notTextInput", "noScrimOpen"], dispatch: "js", labelKey: "jobs.toggle_shortcut",
     help: { section: "sync", order: 40 },
     run: () => jobsKeys.toggle() },
+  // The popover pushes "modal", which stops the walk before "global", so the
+  // row above cannot close what it opened. This one can, and it declines under
+  // every other modal (SyncProgress, dialogs), where the popover is not open.
+  { id: "jobs.close", chords: ["Mod+Shift+KeyJ"], scope: "modal",
+    when: ["notTextInput"], dispatch: "js", labelKey: "jobs.toggle_shortcut",
+    help: { section: "sync", order: 41, hidden: true },
+    run: () => jobsKeys.close() },
 
   // ── undo ───────────────────────────────────────────────────────────────
   // legacy/main.ts:2398-2412 is PR 0's rewrite and is already the exact-mask /

@@ -42,6 +42,11 @@ export type JobView = JobInfo & { idleSecs: number };
 
 export const BACKGROUND_GRACE_MS = 5000;
 
+// jobs.rs NETWORK_STALL: the idle threshold "job-progress" reports at the
+// transition. JobInfo.stalled carries no number, so a row that arrives
+// already stalled uses this.
+const NETWORK_STALL_SECS = 60;
+
 type TauriEvent<T> = { payload: T };
 type Listen = <T>(event: string, cb: (e: TauriEvent<T>) => void) => Promise<() => void>;
 
@@ -128,8 +133,12 @@ class JobsState {
 
   onStarted(i: JobInfo): void {
     if (this.jobs.some((j) => j.id === i.id)) return; // already merged
-    this.jobs = [...this.jobs, { ...i, idleSecs: 0 }];
+    this.jobs = [...this.jobs, { ...i, stalled: false, idleSecs: 0 }];
     this.syncTicker();
+    // A jobs_list row can already be stalled (a reload mid-stall), and
+    // "job-progress" fires only on change — so replay the transition: it
+    // fills in the threshold JobInfo lacks and runs the one-time prompt.
+    if (i.stalled) this.onProgress({ id: i.id, stalled: true, idleSecs: NETWORK_STALL_SECS });
   }
 
   onProgress(p: JobProgress): void {

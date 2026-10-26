@@ -188,6 +188,15 @@ describe("events", () => {
     jobsCtrl.onProgress({ id: 6, stalled: true, idleSecs: 60 });
     expect(bridge.tama.warn).toHaveBeenCalledTimes(2);
   });
+
+  it("a row that arrives already stalled gets the threshold and the one-time prompt", () => {
+    // A reload mid-stall: jobs_list reports stalled, and no job-progress follows.
+    jobsCtrl.onStarted(job({ id: 7, stalled: true }));
+    expect(jobsCtrl.jobs[0]).toMatchObject({ stalled: true, idleSecs: 60 });
+    expect(bridge.tama.warn).toHaveBeenCalledTimes(1);
+    jobsCtrl.onProgress({ id: 7, stalled: true, idleSecs: 60 });
+    expect(bridge.tama.warn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("cancel", () => {

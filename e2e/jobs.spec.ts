@@ -75,6 +75,14 @@ test("a foreground job shows the chip; the popover cancels it and Escape closes 
   await expect(pop(page)).toHaveCount(0);
   expect(await topScope(page)).toBe("global");
 
+  // The chord is a toggle: from inside the popover's modal scope it closes it.
+  await page.keyboard.press(`${MOD}+Shift+KeyJ`);
+  await expect(pop(page)).toBeVisible();
+  await expect.poll(() => topScope(page)).toBe("modal");
+  await page.keyboard.press(`${MOD}+Shift+KeyJ`);
+  await expect(pop(page)).toHaveCount(0);
+  expect(await topScope(page)).toBe("global");
+
   await chip(page).click();
   await pop(page).getByRole("button", { name: "Cancel Fetch · origin — gitcat" }).click();
   await expect.poll(() => calls.find((c) => c.cmd === "job_cancel")?.args).toEqual({ id: 21 });
