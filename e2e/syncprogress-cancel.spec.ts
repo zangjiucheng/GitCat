@@ -86,3 +86,30 @@ test("the stalled banner follows job-progress, and a finished fetch closes itsel
   expect(await topScope(page)).toBe("global");
   expect(calls.some((c) => c.cmd === "job_cancel")).toBe(false);
 });
+
+// Hide keeps the op running; its busy topbar button (still enabled, unlike the
+// other two) and the jobs chip's Show both bring the modal back.
+test("a hidden modal comes back from the busy Fetch button and from the jobs chip", async ({ page, repo, calls }) => {
+  await openFixtureRepo(page, repo);
+  const path = await startFetch(page, calls);
+  await emit(page, "job-started", jobStarted(7, path));
+
+  await modal(page).getByRole("button", { name: "Hide" }).click();
+  await expect(modal(page)).not.toHaveClass(/\bon\b/);
+  await expect(page.locator("#fetchBtn")).toBeEnabled();
+  await expect(page.locator("#pullBtn")).toBeDisabled();
+
+  await page.locator("#fetchBtn").click();
+  await expect(modal(page)).toHaveClass(/\bon\b/);
+  expect(calls.filter((c) => c.cmd === "fetch_stream")).toHaveLength(1);
+  await expect(modal(page).locator(".modal.syncprogress")).toContainText("output while hidden was not kept");
+
+  await modal(page).getByRole("button", { name: "Hide" }).click();
+  await expect(modal(page)).not.toHaveClass(/\bon\b/);
+  await page.locator(".jobs-chip").click();
+  await page.locator(".jobs-row-show").click();
+  await expect(modal(page)).toHaveClass(/\bon\b/);
+
+  await page.evaluate(() => (window as unknown as { __e2eFinishSync: () => boolean }).__e2eFinishSync());
+  await expect(page.locator("#pullBtn")).toBeEnabled();
+});

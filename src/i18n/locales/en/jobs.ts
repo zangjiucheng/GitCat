@@ -11,5 +11,13 @@ export default {
   kind_fetch: "Fetch",
   kind_pull: "Pull",
   kind_push: "Push",
+  kind_force_push: "Force push",
+  kind_push_tag: "Push tag",
+  kind_push_branch: "Push branch",
+  kind_reset_to_upstream: "Reset to upstream",
+  kind_submodule_update: "Submodule update",
+  kind_submodule_add: "Add submodule",
+  show: "Show",
+  show_aria: "Show the progress of {label}",
   toggle_shortcut: "Show running jobs",
 };

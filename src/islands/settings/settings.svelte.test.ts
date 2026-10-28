@@ -742,7 +742,7 @@ describe("saveIdentity", () => {
     settingsCtrl.repo = "/repo/a";
     settingsCtrl.nameInput = "  A. Turing  ";
     settingsCtrl.emailInput = "  alan@enigma.dev  ";
-    vi.mocked(commands.setGitIdentity).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.setGitIdentity).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false });
 
     await settingsCtrl.saveIdentity();
 
@@ -755,7 +755,7 @@ describe("saveIdentity", () => {
     settingsCtrl.repo = "/repo/a";
     settingsCtrl.nameInput = "A";
     settingsCtrl.emailInput = "a@x.com";
-    vi.mocked(commands.setGitIdentity).mockResolvedValueOnce({ ok: false, message: "could not write .git/config", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.setGitIdentity).mockResolvedValueOnce({ ok: false, message: "could not write .git/config", backupRef: null, conflictingFiles: [], cancelled: false });
 
     await settingsCtrl.saveIdentity();
 

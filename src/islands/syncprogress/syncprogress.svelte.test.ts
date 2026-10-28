@@ -59,6 +59,7 @@ function started(partial: Partial<JobInfo> = {}): JobInfo {
     background: false,
     stalled: false,
     cancelling: false,
+    stallSecs: 60,
     ...partial,
   };
 }
@@ -280,5 +281,41 @@ describe("beginDemo", () => {
     await vi.advanceTimersByTimeAsync(2500);
     await expect(p).resolves.toEqual({ ok: true, cancelled: false });
     expect(syncProgressCtrl.stalled).toBe(false);
+  });
+});
+
+describe("reopen", () => {
+  it("brings a hidden running modal back, notes the gap, and re-arms the log", async () => {
+    await syncProgressCtrl.begin("Fetching…", "fetch", "/r");
+    emit("job-started", started({ id: 7, kind: "fetch", repo: "/r" }));
+    emit("sync-progress", { phase: "fetch", line: "A" });
+    syncProgressCtrl.close();
+    expect(syncProgressCtrl.canReopen).toBe(true);
+    emit("sync-progress", { phase: "fetch", line: "while hidden" });
+
+    listen.mockClear();
+    await syncProgressCtrl.reopen();
+    expect(syncProgressCtrl.open).toBe(true);
+    expect(keymap.pushScope).toHaveBeenCalledTimes(2);
+    expect(syncProgressCtrl.lines).toHaveLength(2);
+    expect(syncProgressCtrl.lines[0]).toBe("A");
+    expect(syncProgressCtrl.lines[1]).not.toBe("while hidden");
+    // The job id is known, so only the log and the stall banner re-subscribe.
+    expect(listen.mock.calls.map((c) => c[0]).sort()).toEqual(["job-progress", "sync-progress"]);
+
+    emit("sync-progress", { phase: "fetch", line: "B" });
+    expect(syncProgressCtrl.lines[syncProgressCtrl.lines.length - 1]).toBe("B");
+  });
+
+  it("does nothing while showing, or once the op has settled", async () => {
+    await syncProgressCtrl.begin("Fetching…", "fetch", "/r");
+    expect(syncProgressCtrl.canReopen).toBe(false);
+    syncProgressCtrl.settle(false, "boom");
+    syncProgressCtrl.close();
+    expect(syncProgressCtrl.canReopen).toBe(false);
+    listen.mockClear();
+    await syncProgressCtrl.reopen();
+    expect(syncProgressCtrl.open).toBe(false);
+    expect(listen).not.toHaveBeenCalled();
   });
 });

@@ -10,5 +10,13 @@ export default {
   kind_fetch: "获取",
   kind_pull: "拉取",
   kind_push: "推送",
+  kind_force_push: "强制推送",
+  kind_push_tag: "推送标签",
+  kind_push_branch: "推送分支",
+  kind_reset_to_upstream: "重置到上游",
+  kind_submodule_update: "更新子模块",
+  kind_submodule_add: "添加子模块",
+  show: "显示",
+  show_aria: "显示 {label} 的进度",
   toggle_shortcut: "显示运行中的任务",
 };

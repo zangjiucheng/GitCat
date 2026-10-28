@@ -10,5 +10,13 @@ export default {
   kind_fetch: "가져오기",
   kind_pull: "풀",
   kind_push: "푸시",
+  kind_force_push: "강제 푸시",
+  kind_push_tag: "태그 푸시",
+  kind_push_branch: "브랜치 푸시",
+  kind_reset_to_upstream: "업스트림으로 재설정",
+  kind_submodule_update: "서브모듈 업데이트",
+  kind_submodule_add: "서브모듈 추가",
+  show: "보기",
+  show_aria: "{label} 진행 상황 보기",
   toggle_shortcut: "실행 중인 작업 보기",
 };

@@ -80,7 +80,7 @@ use tauri::{AppHandle, Wry};
 
 use crate::cancel_cleanup::{self, CleanupReport, PreOp};
 use crate::i18n_err::{ierr, ierrp};
-use crate::jobs::{self, JobKind, JobOutcome, NETWORK_STALL};
+use crate::jobs::{self, JobKind, JobOutcome, JobResult, NETWORK_STALL};
 use crate::procutil::{run_with, CancelToken, LineSink, RunError, RunOptions, StallHook};
 
 #[derive(Serialize, specta::Type)]
@@ -105,6 +105,9 @@ impl RemoteResult {
     pub(crate) fn cancelled(message: String, backup_ref: Option<String>) -> Self {
         Self { ok: false, message, backup_ref, cancelled: true }
     }
+}
+
+impl JobResult for RemoteResult {
     fn outcome(&self) -> JobOutcome {
         if self.cancelled {
             JobOutcome::Cancelled
@@ -149,24 +152,7 @@ pub struct SyncProgress {
     pub line: String,
 }
 
-/// Every command in this module talks to a remote (even
-/// `reset_branch_to_upstream`, which only ever moves a branch to a ref
-/// `fetch` already learned about) — see `crate::wsl` for why that means
-/// EVERY call here goes through its WSL-aware routing, not just the ones
-/// that fetch/push over the network directly.
-///
-/// No hard timeout, like every network op here (see the module doc). Not
-/// cancellable yet either — force_push/push_tag/push_branch/
-/// reset_branch_to_upstream are not registered jobs (follow-up) — but the run
-/// is tagged, so a WSL git still gets the in-distro kill if anything does stop it.
-fn run_git(path: &str, args: &[&str]) -> Result<GitOut, String> {
-    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, &[]);
-    let output = run_with(cmd, RunOptions { timeout: None, wsl: tag, ..Default::default() })
-        .map_err(|e| e.to_ierr("err_remote.run_git_failed"))?;
-    Ok(GitOut::from_output(&output))
-}
-
-/// How a cancellable fetch/pull/push runs: its cancel token, a live stderr
+/// How a cancellable op in this module runs: its cancel token, a live stderr
 /// progress sink, the stall hook, and whether a cancel may clean up locks.
 #[derive(Default)]
 pub struct OpCtx<'a> {
@@ -183,7 +169,9 @@ pub struct OpCtx<'a> {
     pub skip_lock_cleanup: Option<&'a dyn Fn() -> bool>,
 }
 
-/// Run one network git op: the tagged WSL-aware command, NO hard timeout,
+/// Run one git op of this module: the tagged WSL-aware command (even
+/// `reset_branch_to_upstream`, which only moves a branch to a ref `fetch`
+/// already learned about, so every call here is WSL-routed), NO hard timeout,
 /// stderr streamed to `on_line`, stall reported through `stall`, and on cancel
 /// the whole process tree killed (the WSL in-distro sweep included) before
 /// this returns `Err(Cancelled)`.
@@ -528,6 +516,31 @@ fn stream_op(
     })
 }
 
+/// Run `run` as a BACKGROUND job (no progress modal — the jobs indicator is
+/// where it shows and is cancelled): the job's cancel token, stall reporting
+/// when the kind has a threshold, and the cancel-time lock-cleanup guard.
+pub(crate) fn background_op<R: JobResult>(
+    app: &AppHandle<Wry>,
+    kind: JobKind,
+    path: &str,
+    label: &str,
+    run: impl FnOnce(OpCtx<'_>) -> R,
+) -> R {
+    let job = jobs::begin(app, kind, path, label, true);
+    let res = {
+        let mut on_stall = job.stall_sink();
+        let skip = || job.others_on_repo();
+        run(OpCtx {
+            cancel: Some(job.token()),
+            on_line: None,
+            stall: kind.stall_after().map(|after| StallHook { after, on_change: &mut on_stall }),
+            skip_lock_cleanup: Some(&skip),
+        })
+    };
+    job.finish(res.outcome());
+    res
+}
+
 /// The body of `pull`/`pull_stream` (see `fetch_core` for why it's split out).
 /// Snapshots first, then `git pull --ff-only`.
 ///
@@ -693,8 +706,19 @@ pub async fn current_upstream(path: String) -> Result<Option<String>, String> {
 /// Tauri's blocking-task thread pool so it can't freeze the window.
 #[tauri::command]
 #[specta::specta]
-pub async fn reset_branch_to_upstream(path: String, branch: String) -> RemoteResult {
+pub async fn reset_branch_to_upstream(app: AppHandle<Wry>, path: String, branch: String) -> RemoteResult {
     crate::blocking::run_blocking(move || {
+        background_op(&app, JobKind::ResetToUpstream, &path.clone(), &branch.clone(), |ctx| reset_branch_to_upstream_core(path, branch, ctx))
+    })
+    .await
+}
+
+/// The body of [`reset_branch_to_upstream`]. A cancel can stop `reset --hard`
+/// part-way through the working tree: the lock it held is removed (when it is
+/// ours), and the message points at the snapshot taken first, which Undo
+/// restores.
+pub fn reset_branch_to_upstream_core(path: String, branch: String, ctx: OpCtx<'_>) -> RemoteResult {
+    {
         if let Err(e) = validate_branch_name(&branch) {
             return RemoteResult::err(e);
         }
@@ -734,10 +758,15 @@ pub async fn reset_branch_to_upstream(path: String, branch: String) -> RemoteRes
         // --end-of-options -f <branch> <start>` misparses `-f` as a positional
         // once it comes after the marker ("usage: git branch ..."); only
         // `-f --end-of-options <branch> <start>` (flag first) works.
+        drop(upstream);
+        drop(local);
+        drop(repo);
+        let pre = pre_op_if_cancellable(&path, &ctx);
+        let skip = ctx.skip_lock_cleanup;
         let out = if is_current {
-            run_git(&path, &["reset", "--hard", "--end-of-options", &upstream_name])
+            run_git_op(&path, &["reset", "--hard", "--end-of-options", &upstream_name], ctx)
         } else {
-            run_git(&path, &["branch", "-f", "--end-of-options", &branch, &upstream_name])
+            run_git_op(&path, &["branch", "-f", "--end-of-options", &branch, &upstream_name], ctx)
         };
         match out {
             Ok(out) if out.ok => RemoteResult::ok(
@@ -745,10 +774,22 @@ pub async fn reset_branch_to_upstream(path: String, branch: String) -> RemoteRes
                 Some(backup),
             ),
             Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
-            Err(e) => RemoteResult::err(e),
+            Err(RunError::Cancelled) => {
+                let report = cleanup_after_cancel(&path, pre.as_ref(), skip, false);
+                let snapshot = short_backup(&backup);
+                let msg = if report.removed_locks.is_empty() {
+                    ierrp("err_remote.reset_cancelled", &[("branch", &branch), ("snapshot", &snapshot)])
+                } else {
+                    ierrp(
+                        "err_remote.reset_cancelled_locks",
+                        &[("branch", &branch), ("snapshot", &snapshot), ("locks", &report.removed_locks.join(", "))],
+                    )
+                };
+                RemoteResult::cancelled(msg, Some(backup))
+            }
+            Err(e) => RemoteResult::err(e.to_ierr("err_remote.run_git_failed")),
         }
-    })
-    .await
+    }
 }
 
 /// HEAD's branch name, if HEAD is on one — `push`'s target and its job label.
@@ -984,8 +1025,18 @@ pub async fn push_stream(app: AppHandle<Wry>, path: String) -> RemoteResult {
 /// onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub async fn force_push(path: String, lease: bool) -> RemoteResult {
+pub async fn force_push(app: AppHandle<Wry>, path: String, lease: bool) -> RemoteResult {
     crate::blocking::run_blocking(move || {
+        let label = push_label(&path);
+        background_op(&app, JobKind::ForcePush, &path.clone(), &label, |ctx| force_push_core(path, lease, ctx))
+    })
+    .await
+}
+
+/// The body of [`force_push`]. On cancel, like `push_core`: whether the
+/// remote took the update can't be known from here, and the message says so.
+pub fn force_push_core(path: String, lease: bool, ctx: OpCtx<'_>) -> RemoteResult {
+    {
         let repo = match open_repo(&path) {
             Ok(r) => r,
             Err(w) => return w,
@@ -1002,8 +1053,11 @@ pub async fn force_push(path: String, lease: bool) -> RemoteResult {
             Err(e) => return RemoteResult::err(e),
         };
 
+        drop(repo);
         let flag = if lease { "--force-with-lease" } else { "--force" };
-        let out = run_git(&path, &["push", flag, "--end-of-options", &target.remote, &target.refspec]);
+        let pre = pre_op_if_cancellable(&path, &ctx);
+        let skip = ctx.skip_lock_cleanup;
+        let out = run_git_op(&path, &["push", flag, "--end-of-options", &target.remote, &target.refspec], ctx);
         match out {
             Ok(out) if out.ok => {
                 RemoteResult::ok(format!("Force-pushed {branch} ({}).", if lease { "lease" } else { "forced" }), None)
@@ -1012,10 +1066,13 @@ pub async fn force_push(path: String, lease: bool) -> RemoteResult {
             // and the remote moved since our last fetch — never silently retried
             // as a raw force; see this function's own doc comment.
             Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
-            Err(e) => RemoteResult::err(e),
+            Err(RunError::Cancelled) => {
+                let report = cleanup_after_cancel(&path, pre.as_ref(), skip, false);
+                RemoteResult::cancelled(cancelled_message("err_remote.push_cancelled", &report), None)
+            }
+            Err(e) => RemoteResult::err(e.to_ierr("err_remote.run_git_failed")),
         }
-    })
-    .await
+    }
 }
 
 /// Push a single tag (`git push <remote> refs/tags/<name>:refs/tags/<name>`).
@@ -1053,8 +1110,16 @@ pub async fn force_push(path: String, lease: bool) -> RemoteResult {
 /// `async fn` + `run_blocking` moves it onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub async fn push_tag(path: String, remote: Option<String>, name: String) -> RemoteResult {
+pub async fn push_tag(app: AppHandle<Wry>, path: String, remote: Option<String>, name: String) -> RemoteResult {
     crate::blocking::run_blocking(move || {
+        background_op(&app, JobKind::PushTag, &path.clone(), &name.clone(), |ctx| push_tag_core(path, remote, name, ctx))
+    })
+    .await
+}
+
+/// The body of [`push_tag`].
+pub fn push_tag_core(path: String, remote: Option<String>, name: String, ctx: OpCtx<'_>) -> RemoteResult {
+    {
         let remote = remote.unwrap_or_else(|| "origin".to_string());
         if let Err(e) = validate_remote_name(&remote) {
             return RemoteResult::err(e);
@@ -1065,16 +1130,21 @@ pub async fn push_tag(path: String, remote: Option<String>, name: String) -> Rem
         // No git2, no snapshot: pushing a tag doesn't touch local state at all —
         // same rationale as plain `push` (see module doc comment).
         let refspec = format!("refs/tags/{name}:refs/tags/{name}");
-        match run_git(&path, &["push", "--end-of-options", &remote, &refspec]) {
+        let pre = pre_op_if_cancellable(&path, &ctx);
+        let skip = ctx.skip_lock_cleanup;
+        match run_git_op(&path, &["push", "--end-of-options", &remote, &refspec], ctx) {
             Ok(out) if out.ok => RemoteResult::ok(format!("Pushed tag {name} to {remote}."), None),
             // e.g. "! [rejected] <name> -> <name> (already exists)" — never forced.
             // Or, if `name` is a branch with no same-named local tag: "error: src
             // refspec refs/tags/<name> does not match any" — never a branch push.
             Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
-            Err(e) => RemoteResult::err(e),
+            Err(RunError::Cancelled) => {
+                let report = cleanup_after_cancel(&path, pre.as_ref(), skip, false);
+                RemoteResult::cancelled(cancelled_message("err_remote.push_cancelled", &report), None)
+            }
+            Err(e) => RemoteResult::err(e.to_ierr("err_remote.run_git_failed")),
         }
-    })
-    .await
+    }
 }
 
 /// Push a SPECIFIC local branch — not necessarily HEAD/the checked-out one —
@@ -1128,8 +1198,30 @@ pub async fn push_tag(path: String, remote: Option<String>, name: String) -> Rem
 /// body onto Tauri's blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub async fn push_branch(path: String, branch: String, remote: Option<String>, remote_branch: Option<String>) -> RemoteResult {
+pub async fn push_branch(
+    app: AppHandle<Wry>,
+    path: String,
+    branch: String,
+    remote: Option<String>,
+    remote_branch: Option<String>,
+) -> RemoteResult {
     crate::blocking::run_blocking(move || {
+        background_op(&app, JobKind::PushBranch, &path.clone(), &branch.clone(), |ctx| {
+            push_branch_core(path, branch, remote, remote_branch, ctx)
+        })
+    })
+    .await
+}
+
+/// The body of [`push_branch`].
+pub fn push_branch_core(
+    path: String,
+    branch: String,
+    remote: Option<String>,
+    remote_branch: Option<String>,
+    ctx: OpCtx<'_>,
+) -> RemoteResult {
+    {
         if let Err(e) = validate_branch_name(&branch) {
             return RemoteResult::err(e);
         }
@@ -1165,11 +1257,15 @@ pub async fn push_branch(path: String, branch: String, remote: Option<String>, r
             return RemoteResult::err(e);
         }
 
+        drop(local);
+        drop(repo);
         let refspec = format!("refs/heads/{branch}:refs/heads/{remote_branch}");
+        let pre = pre_op_if_cancellable(&path, &ctx);
+        let skip = ctx.skip_lock_cleanup;
         let out = if has_upstream {
-            run_git(&path, &["push", "--end-of-options", &remote, &refspec])
+            run_git_op(&path, &["push", "--end-of-options", &remote, &refspec], ctx)
         } else {
-            run_git(&path, &["push", "--set-upstream", &remote, "--end-of-options", &refspec])
+            run_git_op(&path, &["push", "--set-upstream", &remote, "--end-of-options", &refspec], ctx)
         };
         match out {
             Ok(out) if out.ok => RemoteResult::ok(
@@ -1182,10 +1278,13 @@ pub async fn push_branch(path: String, branch: String, remote: Option<String>, r
             ),
             // e.g. "! [rejected] ... (non-fast-forward)" — never forced.
             Ok(out) => RemoteResult::err(git_error_message(&path, &out)),
-            Err(e) => RemoteResult::err(e),
+            Err(RunError::Cancelled) => {
+                let report = cleanup_after_cancel(&path, pre.as_ref(), skip, false);
+                RemoteResult::cancelled(cancelled_message("err_remote.push_cancelled", &report), None)
+            }
+            Err(e) => RemoteResult::err(e.to_ierr("err_remote.run_git_failed")),
         }
-    })
-    .await
+    }
 }
 
 #[cfg(test)]

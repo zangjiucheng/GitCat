@@ -1195,6 +1195,9 @@ class SidebarState {
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
         bridge.tama.say(be(res.message) || t("sidebar.initialized", { path }), 3200);
+      } else if (res?.cancelled) {
+        await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
+        bridge.relayCancelled(res.message);
       } else {
         bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_initialize", { path }));
       }
@@ -1230,6 +1233,9 @@ class SidebarState {
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
         bridge.tama.say(be(res.message) || t("sidebar.updated", { path }), 3200);
+      } else if (res?.cancelled) {
+        await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
+        bridge.relayCancelled(res.message);
       } else {
         bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_update", { path }));
       }
@@ -1268,6 +1274,9 @@ class SidebarState {
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
         bridge.tama.say(be(res.message) || t("sidebar.submodules_updated"), 3200);
+      } else if (res?.cancelled) {
+        await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
+        bridge.relayCancelled(res.message);
       } else {
         bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_update_submodules"));
       }
@@ -1337,6 +1346,9 @@ class SidebarState {
         await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
         bridge.tama.set("celebrate");
         bridge.tama.say(be(res.message) || t("sidebar.added_submodule", { path }), 3200);
+      } else if (res?.cancelled) {
+        await this.refreshSubmodules(bridge.CUR_REPO as unknown as string);
+        bridge.relayCancelled(res.message);
       } else {
         bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_add_submodule", { path }));
       }
@@ -2090,6 +2102,10 @@ class SidebarState {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
         bridge.tama.say(be(res.message) || t("sidebar.reset_done", { name, upstream }), 4200);
+      } else if (res?.cancelled) {
+        // A cancelled reset --hard may have rewritten part of the tree.
+        await bridge.reloadGraph(true);
+        bridge.relayCancelled(res.message);
       } else {
         bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_reset", { name }));
       }
@@ -2188,6 +2204,10 @@ class SidebarState {
         bridge.tama.set("celebrate");
         bridge.tama.say(be(res.message) || t("sidebar.pushed", { target }), 3200);
         return true;
+      }
+      if (res?.cancelled) {
+        bridge.relayCancelled(res.message);
+        return false;
       }
       bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_push", { target }));
       return false;
@@ -2516,6 +2536,8 @@ class SidebarState {
       if (res && res.ok) {
         bridge.tama.set("celebrate");
         bridge.tama.say(be(res.message) || t("sidebar.pushed_tag", { name }), 3200);
+      } else if (res?.cancelled) {
+        bridge.relayCancelled(res.message);
       } else {
         bridge.tama.warn(be(res && res.message) || t("sidebar.couldnt_push_tag", { name }));
       }

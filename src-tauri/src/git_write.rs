@@ -54,20 +54,24 @@ pub struct WriteResult {
     /// dirty-tree resolution chooser" apart from "just show the plain error
     /// toast" without doing any prose-matching of its own.
     pub conflicting_files: Vec<String>,
+    /// The user cancelled the op from the jobs indicator (`submodule_update`/
+    /// `submodule_add` today): not a failure, so the UI relays `message` without
+    /// a warning. Always false for everything else.
+    pub cancelled: bool,
 }
 
 impl WriteResult {
     fn ok(message: impl Into<String>, backup_ref: Option<String>) -> Self {
-        Self { ok: true, message: message.into(), backup_ref, conflicting_files: Vec::new() }
+        Self { ok: true, message: message.into(), backup_ref, conflicting_files: Vec::new(), cancelled: false }
     }
     fn err(message: impl Into<String>) -> Self {
-        Self { ok: false, message: message.into(), backup_ref: None, conflicting_files: Vec::new() }
+        Self { ok: false, message: message.into(), backup_ref: None, conflicting_files: Vec::new(), cancelled: false }
     }
     /// `backup_ref` stays `None` like every other failure in this module
     /// (convention: an atomic git command either fully succeeds or fully
     /// no-ops, so a refused one has nothing new for Undo to point at).
     fn dirty_collision(message: impl Into<String>, files: Vec<String>) -> Self {
-        Self { ok: false, message: message.into(), backup_ref: None, conflicting_files: files }
+        Self { ok: false, message: message.into(), backup_ref: None, conflicting_files: files, cancelled: false }
     }
 }
 

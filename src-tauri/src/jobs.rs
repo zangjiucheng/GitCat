@@ -1,5 +1,5 @@
-//! Running-jobs registry: every cancellable long-running git op (today the
-//! fetch/pull/push family in git_remote.rs) registers here for its lifetime,
+//! Running-jobs registry: every cancellable long-running git op (the remote
+//! ops in git_remote.rs, submodule update/add) registers here for its lifetime,
 //! so the frontend can list what is running and cancel any of it (#133).
 //!
 //! A job is a `(JobInfo, CancelToken)` pair. Cancelling only flips the token;
@@ -36,11 +36,28 @@ pub type JobId = u64;
 pub const NETWORK_STALL: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, specta::Type)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum JobKind {
     Fetch,
     Pull,
     Push,
+    ForcePush,
+    PushTag,
+    PushBranch,
+    ResetToUpstream,
+    SubmoduleUpdate,
+    SubmoduleAdd,
+}
+
+impl JobKind {
+    /// How long without git output before the job is reported stalled, or
+    /// `None` for a local op that has no output to go quiet on.
+    pub fn stall_after(self) -> Option<Duration> {
+        match self {
+            JobKind::ResetToUpstream => None,
+            _ => Some(NETWORK_STALL),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, specta::Type)]
@@ -68,6 +85,9 @@ pub struct JobInfo {
     pub background: bool,
     pub stalled: bool,
     pub cancelling: bool,
+    /// The kind's stall threshold in seconds (`JobKind::stall_after`), 0 when
+    /// it has none — so the UI never hard-codes it.
+    pub stall_secs: u32,
 }
 
 /// Emitted as `"job-progress"` when a job's stalled flag flips.
@@ -129,6 +149,7 @@ impl JobRegistry {
             background,
             stalled: false,
             cancelling: false,
+            stall_secs: kind.stall_after().map_or(0, |d| d.as_secs() as u32),
         };
         let token = CancelToken::new();
         g.jobs.insert(id, (info.clone(), token.clone()));
@@ -177,13 +198,49 @@ impl JobRegistry {
         self.lock().jobs.iter().any(|(&other, (info, _))| other != id && info.repo == repo)
     }
 
-    /// Fire every token. Called on app exit; each op's runner then tears its
-    /// own tree down.
+    /// Fire every token. Each op's runner then tears its own tree down.
     pub fn cancel_all(&self) {
         let mut g = self.lock();
         for (info, token) in g.jobs.values_mut() {
             info.cancelling = true;
             token.cancel();
+        }
+    }
+
+    /// [`cancel_all`](Self::cancel_all), then wait up to `timeout` for every
+    /// job to leave the registry; `true` if they all did. For app exit: a
+    /// Windows Job Object dies with GitCat anyway, but on Unix an in-flight git
+    /// (and its ssh) would otherwise outlive the quit. Each job's runner kills
+    /// its tree and then `Job::finish` removes it — removal happens before the
+    /// "job-finished" emit, so this never waits on the (blocked) main thread.
+    pub fn cancel_all_and_wait(&self, timeout: Duration) -> bool {
+        self.cancel_all();
+        let start = std::time::Instant::now();
+        loop {
+            if self.lock().jobs.is_empty() {
+                return true;
+            }
+            if start.elapsed() >= timeout {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// What a job's command returns, read for the `"job-finished"` outcome.
+pub trait JobResult {
+    fn outcome(&self) -> JobOutcome;
+}
+
+impl JobResult for crate::git_write::WriteResult {
+    fn outcome(&self) -> JobOutcome {
+        if self.cancelled {
+            JobOutcome::Cancelled
+        } else if self.ok {
+            JobOutcome::Ok
+        } else {
+            JobOutcome::Failed
         }
     }
 }
@@ -230,7 +287,7 @@ impl Job {
                 crate::event_util::emit_on_main(
                     &self.app,
                     "job-progress",
-                    JobProgress { id: self.info.id, stalled, idle_secs: NETWORK_STALL.as_secs() as u32 },
+                    JobProgress { id: self.info.id, stalled, idle_secs: self.info.stall_secs },
                 );
             }
         }
@@ -338,6 +395,40 @@ mod tests {
         r.cancel_all();
         assert!(tokens.iter().all(CancelToken::is_cancelled));
         assert!(r.list().iter().all(|j| j.cancelling));
+    }
+
+    #[test]
+    fn stall_secs_follow_the_kind() {
+        let r = JobRegistry::default();
+        assert_eq!(r.register(JobKind::Fetch, "/r", "", true).0.stall_secs, 60);
+        assert_eq!(r.register(JobKind::SubmoduleUpdate, "/r", "", true).0.stall_secs, 60);
+        assert_eq!(r.register(JobKind::ResetToUpstream, "/r", "main", true).0.stall_secs, 0, "a local op never stalls");
+    }
+
+    #[test]
+    fn cancel_all_and_wait_returns_once_the_jobs_are_gone() {
+        let r = std::sync::Arc::new(JobRegistry::default());
+        let (info, token) = r.register(JobKind::Fetch, "/r", "", true);
+        let worker = {
+            let r = r.clone();
+            std::thread::spawn(move || {
+                while !token.is_cancelled() {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                std::thread::sleep(Duration::from_millis(50)); // tearing its tree down
+                r.remove(info.id);
+            })
+        };
+        assert!(r.cancel_all_and_wait(Duration::from_secs(5)));
+        worker.join().unwrap();
+        let (_, _stuck) = r.register(JobKind::Push, "/r", "main", true);
+        assert!(!r.cancel_all_and_wait(Duration::from_millis(100)), "a job that never finishes times the wait out");
+    }
+
+    #[test]
+    fn kinds_serialize_snake_case() {
+        assert_eq!(serde_json::to_string(&JobKind::ForcePush).unwrap(), "\"force_push\"");
+        assert_eq!(serde_json::to_string(&JobKind::Fetch).unwrap(), "\"fetch\"");
     }
 
     #[test]

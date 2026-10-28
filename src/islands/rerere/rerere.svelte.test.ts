@@ -62,7 +62,7 @@ function status(partial: Partial<RerereStatus>): RerereStatus {
 }
 
 function writeResult(partial: Partial<WriteResult>): WriteResult {
-  return { ok: true, message: "", backupRef: null, conflictingFiles: [], ...partial };
+  return { ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false, ...partial };
 }
 
 function resetCtrl() {

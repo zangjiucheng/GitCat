@@ -33,10 +33,10 @@ const SHA = "abc1234def5678";
 const SHORT = "abc1234";
 
 function ok(message = "Reset HEAD to abc1234 (mixed, snapshot 1-2)."): any {
-  return { ok: true, message, backupRef: "refs/gitgui/backup/1-2", conflictingFiles: [] };
+  return { ok: true, message, backupRef: "refs/gitgui/backup/1-2", conflictingFiles: [], cancelled: false };
 }
 function fail(message: string): any {
-  return { ok: false, message, backupRef: null, conflictingFiles: [] };
+  return { ok: false, message, backupRef: null, conflictingFiles: [], cancelled: false };
 }
 
 // Inject the controls the controller reads back out of the (mocked-away) danger

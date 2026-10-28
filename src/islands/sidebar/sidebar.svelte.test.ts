@@ -1050,7 +1050,7 @@ describe("initAndUpdateSubmodule (per-row 'Init + update', not-initialized rows)
 
   it("real mode: calls submodule_update with init:true, recursive:false and refreshes on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "initialized", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "initialized", backupRef: null, conflictingFiles: [], cancelled: false });
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(
       ok([{ name: "docs/theme", path: "docs/theme", absolutePath: "/repo/docs/theme", url: "https://example.com/theme.git", status: "clean", headSha: "a", workdirSha: "a" }]),
     );
@@ -1063,7 +1063,7 @@ describe("initAndUpdateSubmodule (per-row 'Init + update', not-initialized rows)
 
   it("real mode: a refusal surfaces via tama.warn and does not refresh (not a silent no-op)", async () => {
     mockInTauri = true;
-    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: false, message: "submodule has local changes, update refused", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: false, message: "submodule has local changes, update refused", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.initAndUpdateSubmodule("docs/theme");
     expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("update refused"));
     expect(commands.submoduleStatus).not.toHaveBeenCalled();
@@ -1078,13 +1078,13 @@ describe("initAndUpdateSubmodule (per-row 'Init + update', not-initialized rows)
 
   it("scopes busy/busyTarget to just the acted-on row (not the whole Submodules section) while in flight", async () => {
     mockInTauri = true;
-    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null; conflictingFiles: string[] }) => void;
+    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null; conflictingFiles: string[]; cancelled: boolean }) => void;
     vi.mocked(commands.submoduleUpdate).mockImplementationOnce(() => new Promise((resolve) => (resolveFn = resolve)));
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
     const pending = sidebarCtrl.initAndUpdateSubmodule("docs/theme");
     expect(sidebarCtrl.busy).toBe(true);
     expect(sidebarCtrl.busyTarget).toBe("docs/theme");
-    resolveFn({ ok: true, message: "initialized", backupRef: null, conflictingFiles: [] });
+    resolveFn({ ok: true, message: "initialized", backupRef: null, conflictingFiles: [], cancelled: false });
     await pending;
     expect(sidebarCtrl.busy).toBe(false);
     expect(sidebarCtrl.busyTarget).toBeNull();
@@ -1101,7 +1101,7 @@ describe("updateSubmodule (per-row 'Update', out-of-date rows)", () => {
 
   it("real mode: calls submodule_update with init:false (already registered+cloned) and refreshes on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "updated", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "updated", backupRef: null, conflictingFiles: [], cancelled: false });
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(
       ok([{ name: "third_party/tool", path: "third_party/tool", absolutePath: "/repo/third_party/tool", url: null, status: "clean", headSha: "a", workdirSha: "a" }]),
     );
@@ -1113,7 +1113,7 @@ describe("updateSubmodule (per-row 'Update', out-of-date rows)", () => {
 
   it("real mode: a refusal (dirty submodule) surfaces via tama.warn and does not refresh", async () => {
     mockInTauri = true;
-    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: false, message: "submodule has local changes, update refused", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: false, message: "submodule has local changes, update refused", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.updateSubmodule("third_party/tool");
     expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("update refused"));
     expect(commands.submoduleStatus).not.toHaveBeenCalled();
@@ -1138,7 +1138,7 @@ describe("updateAllSubmodules (bulk 'Update all')", () => {
 
   it("real mode: calls submodule_update with submodulePath:null and init:true, passing the recursive flag through", async () => {
     mockInTauri = true;
-    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "updated", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "updated", backupRef: null, conflictingFiles: [], cancelled: false });
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
     await sidebarCtrl.updateAllSubmodules(true);
     expect(commands.submoduleUpdate).toHaveBeenCalledWith("/repo", null, true, true);
@@ -1146,7 +1146,7 @@ describe("updateAllSubmodules (bulk 'Update all')", () => {
 
   it("real mode: recursive:false is passed through unchanged when the toggle is off", async () => {
     mockInTauri = true;
-    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "updated", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: true, message: "updated", backupRef: null, conflictingFiles: [], cancelled: false });
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
     await sidebarCtrl.updateAllSubmodules(false);
     expect(commands.submoduleUpdate).toHaveBeenCalledWith("/repo", null, false, true);
@@ -1154,7 +1154,7 @@ describe("updateAllSubmodules (bulk 'Update all')", () => {
 
   it("real mode: a refusal surfaces via tama.warn and does not refresh", async () => {
     mockInTauri = true;
-    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: false, message: "submodule has local changes, update refused", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.submoduleUpdate).mockResolvedValueOnce({ ok: false, message: "submodule has local changes, update refused", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.updateAllSubmodules(false);
     expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("update refused"));
     expect(commands.submoduleStatus).not.toHaveBeenCalled();
@@ -1169,13 +1169,13 @@ describe("updateAllSubmodules (bulk 'Update all')", () => {
 
   it("uses the SUBMODULES_ALL sentinel as busyTarget while in flight (distinct from any row's path)", async () => {
     mockInTauri = true;
-    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null; conflictingFiles: string[] }) => void;
+    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null; conflictingFiles: string[]; cancelled: boolean }) => void;
     vi.mocked(commands.submoduleUpdate).mockImplementationOnce(() => new Promise((resolve) => (resolveFn = resolve)));
     vi.mocked(commands.submoduleStatus).mockResolvedValueOnce(ok([]));
     const pending = sidebarCtrl.updateAllSubmodules(false);
     expect(sidebarCtrl.busy).toBe(true);
     expect(sidebarCtrl.busyTarget).toBe(SUBMODULES_ALL);
-    resolveFn({ ok: true, message: "updated", backupRef: null, conflictingFiles: [] });
+    resolveFn({ ok: true, message: "updated", backupRef: null, conflictingFiles: [], cancelled: false });
     await pending;
     expect(sidebarCtrl.busyTarget).toBeNull();
   });
@@ -1191,7 +1191,7 @@ describe("syncSubmodule (per-row 'Sync', any status)", () => {
 
   it("real mode: calls submodule_sync with recursive:false and cheers on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: true, message: "synced", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: true, message: "synced", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.syncSubmodule("vendor/a");
     expect(commands.submoduleSync).toHaveBeenCalledWith("/repo", "vendor/a", false);
     expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
@@ -1199,7 +1199,7 @@ describe("syncSubmodule (per-row 'Sync', any status)", () => {
 
   it("real mode: a failure surfaces via tama.warn", async () => {
     mockInTauri = true;
-    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: false, message: "no url found for submodule path", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: false, message: "no url found for submodule path", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.syncSubmodule("vendor/a");
     expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("no url found"));
   });
@@ -1213,12 +1213,12 @@ describe("syncSubmodule (per-row 'Sync', any status)", () => {
 
   it("scopes busy/busyTarget to just the acted-on row (not the whole Submodules section) while in flight", async () => {
     mockInTauri = true;
-    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null; conflictingFiles: string[] }) => void;
+    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null; conflictingFiles: string[]; cancelled: boolean }) => void;
     vi.mocked(commands.submoduleSync).mockImplementationOnce(() => new Promise((resolve) => (resolveFn = resolve)));
     const pending = sidebarCtrl.syncSubmodule("vendor/a");
     expect(sidebarCtrl.busy).toBe(true);
     expect(sidebarCtrl.busyTarget).toBe("vendor/a");
-    resolveFn({ ok: true, message: "synced", backupRef: null, conflictingFiles: [] });
+    resolveFn({ ok: true, message: "synced", backupRef: null, conflictingFiles: [], cancelled: false });
     await pending;
     expect(sidebarCtrl.busy).toBe(false);
     expect(sidebarCtrl.busyTarget).toBeNull();
@@ -1235,21 +1235,21 @@ describe("syncAllSubmodules (bulk 'Sync all')", () => {
 
   it("real mode: calls submodule_sync with submodulePath:null, passing the recursive flag through", async () => {
     mockInTauri = true;
-    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: true, message: "synced", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: true, message: "synced", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.syncAllSubmodules(true);
     expect(commands.submoduleSync).toHaveBeenCalledWith("/repo", null, true);
   });
 
   it("real mode: recursive:false is passed through unchanged when the toggle is off", async () => {
     mockInTauri = true;
-    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: true, message: "synced", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: true, message: "synced", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.syncAllSubmodules(false);
     expect(commands.submoduleSync).toHaveBeenCalledWith("/repo", null, false);
   });
 
   it("real mode: a failure surfaces via tama.warn", async () => {
     mockInTauri = true;
-    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: false, message: "no url found for submodule path", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.submoduleSync).mockResolvedValueOnce({ ok: false, message: "no url found for submodule path", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.syncAllSubmodules(false);
     expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("no url found"));
   });
@@ -1263,13 +1263,13 @@ describe("syncAllSubmodules (bulk 'Sync all')", () => {
 
   it("uses the SUBMODULES_SYNC_ALL sentinel as busyTarget while in flight (distinct from SUBMODULES_ALL and any row's path)", async () => {
     mockInTauri = true;
-    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null; conflictingFiles: string[] }) => void;
+    let resolveFn!: (v: { ok: boolean; message: string; backupRef: string | null; conflictingFiles: string[]; cancelled: boolean }) => void;
     vi.mocked(commands.submoduleSync).mockImplementationOnce(() => new Promise((resolve) => (resolveFn = resolve)));
     const pending = sidebarCtrl.syncAllSubmodules(false);
     expect(sidebarCtrl.busy).toBe(true);
     expect(sidebarCtrl.busyTarget).toBe(SUBMODULES_SYNC_ALL);
     expect(sidebarCtrl.busyTarget).not.toBe(SUBMODULES_ALL);
-    resolveFn({ ok: true, message: "synced", backupRef: null, conflictingFiles: [] });
+    resolveFn({ ok: true, message: "synced", backupRef: null, conflictingFiles: [], cancelled: false });
     await pending;
     expect(sidebarCtrl.busyTarget).toBeNull();
   });
@@ -1285,7 +1285,7 @@ describe("checkout", () => {
 
   it("real mode: reloads the graph and cheers on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.checkout("feature");
     expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
     expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
@@ -1293,7 +1293,7 @@ describe("checkout", () => {
 
   it("real mode: warns on failure without reloading", async () => {
     mockInTauri = true;
-    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "dirty tree", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "dirty tree", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.checkout("feature");
     expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("dirty tree"));
     expect(bridge.reloadGraph).not.toHaveBeenCalled();
@@ -1312,7 +1312,7 @@ describe("checkout", () => {
   // plain toast unchanged (regression-checked in its own test below).
   it("a dirty-tree collision opens the resolution chooser (not a toast), carrying the colliding files and position", async () => {
     mockInTauri = true;
-    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "would be overwritten", backupRef: null, conflictingFiles: ["a.txt", "b.txt"] });
+    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "would be overwritten", backupRef: null, conflictingFiles: ["a.txt", "b.txt"], cancelled: false });
     await sidebarCtrl.checkout("feature", { x: 10, y: 40 });
     expect(sidebarCtrl.dirtyCheckoutMenu).toEqual({ name: "feature", startPoint: null, files: ["a.txt", "b.txt"], x: 10, y: 40 });
     expect(bridge.tama.warn).not.toHaveBeenCalled();
@@ -1321,7 +1321,7 @@ describe("checkout", () => {
 
   it("a dirty-tree collision with no position given falls back to a default", async () => {
     mockInTauri = true;
-    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "would be overwritten", backupRef: null, conflictingFiles: ["a.txt"] });
+    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "would be overwritten", backupRef: null, conflictingFiles: ["a.txt"], cancelled: false });
     await sidebarCtrl.checkout("feature");
     expect(sidebarCtrl.dirtyCheckoutMenu).toEqual({ name: "feature", startPoint: null, files: ["a.txt"], x: 24, y: 80 });
   });
@@ -1330,7 +1330,7 @@ describe("checkout", () => {
   // OTHER kind of refusal) must stay completely unaffected by this feature.
   it("a failure with no conflictingFiles still just toasts the plain error, unaffected by this feature", async () => {
     mockInTauri = true;
-    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "not a valid branch name", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "not a valid branch name", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.checkout("feature");
     expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("not a valid branch name"));
     expect(sidebarCtrl.dirtyCheckoutMenu).toBeNull();
@@ -1340,7 +1340,7 @@ describe("checkout", () => {
 describe("checkoutRemote", () => {
   it("with no matching local branch: creates one tracking the remote ref", async () => {
     mockInTauri = true;
-    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.checkoutRemote("origin/feature-x");
     expect(commands.createBranch).toHaveBeenCalledWith("/repo", "feature-x", "origin/feature-x", true);
     expect(commands.checkout).not.toHaveBeenCalled();
@@ -1350,7 +1350,7 @@ describe("checkoutRemote", () => {
   it("with an existing local branch of the same short name: switches to it instead of creating a duplicate", async () => {
     mockInTauri = true;
     sidebarCtrl.locals = [{ name: "feature-x", sha: "a1", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];
-    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.checkoutRemote("origin/feature-x");
     expect(commands.checkout).toHaveBeenCalledWith("/repo", "feature-x");
     expect(commands.createBranch).not.toHaveBeenCalled();
@@ -1377,7 +1377,7 @@ describe("checkoutRemote", () => {
   // switch to an already-existing local branch.
   it("a dirty-tree collision creating the new branch opens the chooser with startPoint = the remote ref", async () => {
     mockInTauri = true;
-    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: false, message: "would be overwritten", backupRef: null, conflictingFiles: ["a.txt"] });
+    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: false, message: "would be overwritten", backupRef: null, conflictingFiles: ["a.txt"], cancelled: false });
     await sidebarCtrl.checkoutRemote("origin/feature-x", { x: 5, y: 6 });
     expect(sidebarCtrl.dirtyCheckoutMenu).toEqual({ name: "feature-x", startPoint: "origin/feature-x", files: ["a.txt"], x: 5, y: 6 });
     expect(bridge.tama.warn).not.toHaveBeenCalled();
@@ -1386,7 +1386,7 @@ describe("checkoutRemote", () => {
   it("forwards the position through to checkout() when delegating to an existing local branch of the same short name", async () => {
     mockInTauri = true;
     sidebarCtrl.locals = [{ name: "feature-x", sha: "a1", ahead: null, behind: null, upstream: null, lastCommitTime: NOW }];
-    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "would be overwritten", backupRef: null, conflictingFiles: ["a.txt"] });
+    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "would be overwritten", backupRef: null, conflictingFiles: ["a.txt"], cancelled: false });
     await sidebarCtrl.checkoutRemote("origin/feature-x", { x: 5, y: 6 });
     expect(sidebarCtrl.dirtyCheckoutMenu).toEqual({ name: "feature-x", startPoint: null, files: ["a.txt"], x: 5, y: 6 });
   });
@@ -1522,7 +1522,7 @@ describe("stashSwitchReapply / stashSwitchLeaveStashed (#34 modes 1 & 2)", () =>
   it("stashSwitchLeaveStashed: stashes everything (incl. untracked), switches, and never reapplies", async () => {
     mockInTauri = true;
     vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null });
-    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.stashSwitchLeaveStashed("feature", null);
     expect(commands.stashSave).toHaveBeenCalledWith("/repo", expect.stringContaining("feature"), true);
     expect(commands.checkout).toHaveBeenCalledWith("/repo", "feature");
@@ -1535,7 +1535,7 @@ describe("stashSwitchReapply / stashSwitchLeaveStashed (#34 modes 1 & 2)", () =>
   it("with a startPoint, switches via create_branch (not plain checkout) — the checkoutRemote 'new branch' shape", async () => {
     mockInTauri = true;
     vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null });
-    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.stashSwitchLeaveStashed("feature-x", "origin/feature-x");
     expect(commands.createBranch).toHaveBeenCalledWith("/repo", "feature-x", "origin/feature-x", true);
     expect(commands.checkout).not.toHaveBeenCalled();
@@ -1544,7 +1544,7 @@ describe("stashSwitchReapply / stashSwitchLeaveStashed (#34 modes 1 & 2)", () =>
   it("stashSwitchReapply: pops stash@{0} back after a clean switch, using the freshly-stashed entry's own sha", async () => {
     mockInTauri = true;
     vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null });
-    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false });
     vi.mocked(commands.stashList).mockResolvedValueOnce(ok([{ index: 0, sha: "abc1234", branch: null, message: "auto" }]));
     vi.mocked(commands.stashPop).mockResolvedValueOnce({ ok: true, message: "popped", conflictedFiles: [], backupRef: null, backupPatch: null, droppedStashRef: null });
     await sidebarCtrl.stashSwitchReapply("feature", null);
@@ -1555,7 +1555,7 @@ describe("stashSwitchReapply / stashSwitchLeaveStashed (#34 modes 1 & 2)", () =>
   it("stashSwitchReapply: a reapply conflict opens the SAME shared Resolver a stash-pop conflict already uses, not a new flow", async () => {
     mockInTauri = true;
     vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null });
-    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false });
     vi.mocked(commands.stashList).mockResolvedValueOnce(ok([{ index: 0, sha: "abc1234", branch: null, message: "auto" }]));
     const conflictRes = { ok: false, message: "conflict", conflictedFiles: ["a.txt"], backupRef: "refs/gitgui/backup/1", backupPatch: null, droppedStashRef: null };
     vi.mocked(commands.stashPop).mockResolvedValueOnce(conflictRes);
@@ -1576,7 +1576,7 @@ describe("stashSwitchReapply / stashSwitchLeaveStashed (#34 modes 1 & 2)", () =>
   it("if the switch fails after a successful stash, warns that the changes are safely stashed and never attempts to reapply", async () => {
     mockInTauri = true;
     vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null });
-    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "not a valid branch name", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "not a valid branch name", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.stashSwitchReapply("bad name", null);
     expect(commands.stashPop).not.toHaveBeenCalled();
     expect(commands.stashApply).not.toHaveBeenCalled();
@@ -1595,7 +1595,7 @@ describe("forceDiscardCheckout (#34 mode 3 — armDanger-gated, never fires with
 
   it("onConfirm calls checkout_discard with the branch name + startPoint and reloads on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.checkoutDiscard).mockResolvedValueOnce({ ok: true, message: "force-switched", backupRef: "refs/gitgui/backup/1", conflictingFiles: [] });
+    vi.mocked(commands.checkoutDiscard).mockResolvedValueOnce({ ok: true, message: "force-switched", backupRef: "refs/gitgui/backup/1", conflictingFiles: [], cancelled: false });
     sidebarCtrl.forceDiscardCheckout("feature-x", "origin/feature-x", 2);
     const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
     await ctx.onConfirm();
@@ -1606,7 +1606,7 @@ describe("forceDiscardCheckout (#34 mode 3 — armDanger-gated, never fires with
 
   it("onConfirm warns and does not reload on failure", async () => {
     mockInTauri = true;
-    vi.mocked(commands.checkoutDiscard).mockResolvedValueOnce({ ok: false, message: "bad ref", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.checkoutDiscard).mockResolvedValueOnce({ ok: false, message: "bad ref", backupRef: null, conflictingFiles: [], cancelled: false });
     sidebarCtrl.forceDiscardCheckout("feature", null, 1);
     const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
     await ctx.onConfirm();
@@ -1635,7 +1635,7 @@ describe("newBranch", () => {
 
   it("real mode: creates the branch from HEAD (no from selected) and reloads on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [], cancelled: false });
     sidebarCtrl.startNewBranch();
     sidebarCtrl.newBranchInput = "feature/new";
     await sidebarCtrl.confirmNewBranch();
@@ -1646,7 +1646,7 @@ describe("newBranch", () => {
 
   it("real mode: passes the selected start point through as create_branch's start_point", async () => {
     mockInTauri = true;
-    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [], cancelled: false });
     sidebarCtrl.startNewBranch();
     sidebarCtrl.newBranchInput = "feature/new";
     sidebarCtrl.newBranchFrom = "origin/main";
@@ -1659,7 +1659,7 @@ describe("newBranch", () => {
     mockInTauri = true;
     sidebarCtrl.visibleLocal = ["main"];
     sidebarCtrl.visibleRemote = [];
-    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [], cancelled: false });
     sidebarCtrl.startNewBranch();
     sidebarCtrl.newBranchInput = "feature/new";
     await sidebarCtrl.confirmNewBranch();
@@ -1669,7 +1669,7 @@ describe("newBranch", () => {
 
   it("with no filter active, creating a branch never touches setVisibleBranches", async () => {
     mockInTauri = true;
-    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [], cancelled: false });
     sidebarCtrl.startNewBranch();
     sidebarCtrl.newBranchInput = "feature/new";
     await sidebarCtrl.confirmNewBranch();
@@ -1690,7 +1690,7 @@ describe("rename branch (openRenameMenu / confirmRenameMenu)", () => {
 
   it("real mode: renames from -> to and reloads on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.renameBranch).mockResolvedValueOnce({ ok: true, message: "renamed", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.renameBranch).mockResolvedValueOnce({ ok: true, message: "renamed", backupRef: null, conflictingFiles: [], cancelled: false });
     sidebarCtrl.openRenameMenu("old-name", 0, 0);
     sidebarCtrl.renameInput = "new-name";
     await sidebarCtrl.confirmRenameMenu();
@@ -1717,7 +1717,7 @@ describe("rename branch (openRenameMenu / confirmRenameMenu)", () => {
     mockInTauri = true;
     sidebarCtrl.visibleLocal = ["main", "old-name"];
     sidebarCtrl.visibleRemote = [];
-    vi.mocked(commands.renameBranch).mockResolvedValueOnce({ ok: true, message: "renamed", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.renameBranch).mockResolvedValueOnce({ ok: true, message: "renamed", backupRef: null, conflictingFiles: [], cancelled: false });
     sidebarCtrl.openRenameMenu("old-name", 0, 0);
     sidebarCtrl.renameInput = "new-name";
     await sidebarCtrl.confirmRenameMenu();
@@ -1727,7 +1727,7 @@ describe("rename branch (openRenameMenu / confirmRenameMenu)", () => {
 
   it("keeps the popover open on failure so it can be retried", async () => {
     mockInTauri = true;
-    vi.mocked(commands.renameBranch).mockResolvedValueOnce({ ok: false, message: "already exists", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.renameBranch).mockResolvedValueOnce({ ok: false, message: "already exists", backupRef: null, conflictingFiles: [], cancelled: false });
     sidebarCtrl.openRenameMenu("old-name", 0, 0);
     sidebarCtrl.renameInput = "taken";
     await sidebarCtrl.confirmRenameMenu();
@@ -1746,7 +1746,7 @@ describe("deleteBranch", () => {
 
   it("onConfirm calls delete_branch and reloads on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.deleteBranch).mockResolvedValueOnce({ ok: true, message: "deleted", backupRef: "refs/gitgui/deleted/x", conflictingFiles: [] });
+    vi.mocked(commands.deleteBranch).mockResolvedValueOnce({ ok: true, message: "deleted", backupRef: "refs/gitgui/deleted/x", conflictingFiles: [], cancelled: false });
     sidebarCtrl.deleteBranch("old-feature");
     const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
     await ctx.onConfirm();
@@ -1757,8 +1757,8 @@ describe("deleteBranch", () => {
   it("onConfirm retries with force when not-fully-merged and the user confirms", async () => {
     mockInTauri = true;
     vi.mocked(commands.deleteBranch)
-      .mockResolvedValueOnce({ ok: false, message: "branch is not fully merged", backupRef: null, conflictingFiles: [] })
-      .mockResolvedValueOnce({ ok: true, message: "force deleted", backupRef: null, conflictingFiles: [] });
+      .mockResolvedValueOnce({ ok: false, message: "branch is not fully merged", backupRef: null, conflictingFiles: [], cancelled: false })
+      .mockResolvedValueOnce({ ok: true, message: "force deleted", backupRef: null, conflictingFiles: [], cancelled: false });
     vi.spyOn(window, "confirm").mockReturnValueOnce(true);
     sidebarCtrl.deleteBranch("old-feature");
     const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
@@ -1768,7 +1768,7 @@ describe("deleteBranch", () => {
 
   it("onConfirm keeps the branch when the user declines the force-delete confirm", async () => {
     mockInTauri = true;
-    vi.mocked(commands.deleteBranch).mockResolvedValueOnce({ ok: false, message: "branch is not fully merged", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.deleteBranch).mockResolvedValueOnce({ ok: false, message: "branch is not fully merged", backupRef: null, conflictingFiles: [], cancelled: false });
     vi.spyOn(window, "confirm").mockReturnValueOnce(false);
     sidebarCtrl.deleteBranch("old-feature");
     const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
@@ -2016,7 +2016,7 @@ describe("newTag", () => {
 
   it("real mode: creates a lightweight tag at HEAD (no message, no from) and reloads on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.createTag).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.createTag).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [], cancelled: false });
     sidebarCtrl.startNewTag();
     sidebarCtrl.newTagName = "v1.0.0";
     await sidebarCtrl.confirmNewTag();
@@ -2027,7 +2027,7 @@ describe("newTag", () => {
 
   it("real mode: passes a non-empty message through as an annotated tag, and the selected target", async () => {
     mockInTauri = true;
-    vi.mocked(commands.createTag).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.createTag).mockResolvedValueOnce({ ok: true, message: "created", backupRef: null, conflictingFiles: [], cancelled: false });
     sidebarCtrl.startNewTag();
     sidebarCtrl.newTagName = "v1.0.0";
     sidebarCtrl.newTagMessage = "release notes";
@@ -2039,7 +2039,7 @@ describe("newTag", () => {
 
   it("real mode: warns and does not reload on failure", async () => {
     mockInTauri = true;
-    vi.mocked(commands.createTag).mockResolvedValueOnce({ ok: false, message: "tag already exists", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.createTag).mockResolvedValueOnce({ ok: false, message: "tag already exists", backupRef: null, conflictingFiles: [], cancelled: false });
     sidebarCtrl.startNewTag();
     sidebarCtrl.newTagName = "v1.0.0";
     await sidebarCtrl.confirmNewTag();
@@ -2059,7 +2059,7 @@ describe("deleteTag", () => {
 
   it("onConfirm calls delete_tag and reloads on success", async () => {
     mockInTauri = true;
-    vi.mocked(commands.deleteTag).mockResolvedValueOnce({ ok: true, message: "deleted", backupRef: "refs/gitgui/deleted-tag/x", conflictingFiles: [] });
+    vi.mocked(commands.deleteTag).mockResolvedValueOnce({ ok: true, message: "deleted", backupRef: "refs/gitgui/deleted-tag/x", conflictingFiles: [], cancelled: false });
     sidebarCtrl.deleteTag("v1.0.0");
     const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
     await ctx.onConfirm();
@@ -2069,7 +2069,7 @@ describe("deleteTag", () => {
 
   it("onConfirm warns and does not reload on failure", async () => {
     mockInTauri = true;
-    vi.mocked(commands.deleteTag).mockResolvedValueOnce({ ok: false, message: "tag does not exist", backupRef: null, conflictingFiles: [] });
+    vi.mocked(commands.deleteTag).mockResolvedValueOnce({ ok: false, message: "tag does not exist", backupRef: null, conflictingFiles: [], cancelled: false });
     sidebarCtrl.deleteTag("v1.0.0");
     const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
     await ctx.onConfirm();

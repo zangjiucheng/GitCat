@@ -264,11 +264,11 @@ pub async fn set_git_config_value(path: String, key: String, value: Option<Strin
 }
 
 fn ok_result(message: String) -> WriteResult {
-    WriteResult { ok: true, message, backup_ref: None, conflicting_files: Vec::new() }
+    WriteResult { ok: true, message, backup_ref: None, conflicting_files: Vec::new(), cancelled: false }
 }
 
 fn err_result(message: String) -> WriteResult {
-    WriteResult { ok: false, message, backup_ref: None, conflicting_files: Vec::new() }
+    WriteResult { ok: false, message, backup_ref: None, conflicting_files: Vec::new(), cancelled: false }
 }
 
 /// Best human message from a failed git run (prefer stderr) — identical copy

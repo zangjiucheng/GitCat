@@ -2571,11 +2571,15 @@ document.addEventListener("keydown",e=>{
 let syncBusy=false;
 // All three buttons dim while ANY one is in flight (they share syncBusy) —
 // only the one actually clicked gets the spinner + verb-label swap.
+// The running op's own button stays clickable: it brings back the progress
+// modal if it was hidden (see syncBusyClick). The other two are disabled.
 function setSyncButtonsBusy(activeId,busyLabel){
   ["fetchBtn","pullBtn","pushBtn"].forEach(id=>{
     const b=$("#"+id); if(!b) return;
-    b.disabled=true;
-    if(id===activeId){ b.dataset.label=b.innerHTML; b.innerHTML='<span class="spinner"></span> '+busyLabel; }
+    if(id===activeId){
+      b.dataset.label=b.innerHTML; b.innerHTML='<span class="spinner"></span> '+busyLabel;
+      b.dataset.busy=b.title; b.title=t("syncprogress.show_progress");
+    } else b.disabled=true;
   });
 }
 function clearSyncButtonsBusy(){
@@ -2583,12 +2587,16 @@ function clearSyncButtonsBusy(){
     const b=$("#"+id); if(!b) return;
     b.disabled=false;
     if(b.dataset.label){ b.innerHTML=b.dataset.label; delete b.dataset.label; }
+    if(b.dataset.busy!==undefined){ b.title=b.dataset.busy; delete b.dataset.busy; }
   });
 }
+// A click on the busy button (or its shortcut) while an op runs: show its
+// hidden progress modal again rather than start a second op.
+function syncBusyClick(){ void syncProgressCtrl.reopen(); }
 // Design mode (no backend): the same progress modal, fed canned output by
 // beginDemo, so Cancel and the stalled banner can be seen in a browser too.
 async function demoSync(btnId,busyLabel,phase,onOk){
-  if(syncBusy) return; syncBusy=true;
+  if(syncBusy){ syncBusyClick(); return; } syncBusy=true;
   setSyncButtonsBusy(btnId,busyLabel);
   try{
     const r=await syncProgressCtrl.beginDemo(busyLabel,phase);
@@ -2599,11 +2607,13 @@ async function demoSync(btnId,busyLabel,phase,onOk){
 // A cancelled op (#133) is the user's choice, not a failure: no warn — Tama
 // just relays what the backend cleaned up (and, for pull, that Undo restores
 // the pre-pull snapshot).
-function syncCancelled(res){ Tama.event("mutation.cancel"); Tama.say(be(res.message),5000); }
+// Shared with the islands (via bridge) for every other cancellable op.
+export function relayCancelled(message){ Tama.event("mutation.cancel"); Tama.say(be(message),5000); }
+function syncCancelled(res){ relayCancelled(res.message); }
 async function doFetch(){
   if(!IN_TAURI){ await demoSync("fetchBtn",t("topbar.fetching"),"fetch",()=>{ Tama.set("hint"); Tama.say(t("legacy.fetched_demo"),3200); }); return; }
   if(!CUR_REPO){ Tama.warn(t("legacy.open_repo_first")); return; }
-  if(syncBusy) return; syncBusy=true;
+  if(syncBusy){ syncBusyClick(); return; } syncBusy=true;
   setSyncButtonsBusy("fetchBtn",t("topbar.fetching"));
   Tama.set("syncing"); Tama.say(t("legacy.fetching"));
   // Open the live-progress modal and start listening BEFORE invoking, so the
@@ -2625,7 +2635,7 @@ async function doFetch(){
 async function doPull(){
   if(!IN_TAURI){ await demoSync("pullBtn",t("topbar.pulling"),"pull",()=>{ Tama.set("celebrate"); Tama.say(t("legacy.pulled_demo"),3200); cheer(t("legacy.cheer_pulled_demo"),tamaPose("happy")); }); return; }
   if(!CUR_REPO){ Tama.warn(t("legacy.open_repo_first")); return; }
-  if(syncBusy) return; syncBusy=true;
+  if(syncBusy){ syncBusyClick(); return; } syncBusy=true;
   setSyncButtonsBusy("pullBtn",t("topbar.pulling"));
   Tama.set("syncing"); Tama.say(t("legacy.pulling"));
   const repo=CUR_REPO;
@@ -2644,7 +2654,7 @@ async function doPull(){
 async function doPush(){
   if(!IN_TAURI){ await demoSync("pushBtn",t("topbar.pushing"),"push",()=>{ Tama.set("celebrate"); Tama.say(t("legacy.pushed_demo"),3200); cheer(t("legacy.cheer_pushed_demo"),tamaPose("happy")); }); return; }
   if(!CUR_REPO){ Tama.warn(t("legacy.open_repo_first")); return; }
-  if(syncBusy) return; syncBusy=true;
+  if(syncBusy){ syncBusyClick(); return; } syncBusy=true;
   setSyncButtonsBusy("pushBtn",t("topbar.pushing"));
   Tama.set("syncing"); Tama.say(t("legacy.pushing"));
   const repo=CUR_REPO;

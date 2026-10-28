@@ -4,6 +4,18 @@
 // call sites in git_remote.rs / git_remote_manage.rs / submodule.rs verbatim.
 // Raw git stderr is NEVER keyed here; it passes through unchanged.
 export default {
+  // reset_branch_to_upstream cancelled from the jobs indicator.
+  reset_cancelled: "Reset of {branch} cancelled. If anything looks half-updated, {undoKey} restores the snapshot {snapshot}.",
+  reset_cancelled_locks:
+    "Reset of {branch} cancelled. Removed the lock files the cancelled git left behind: {locks}. If anything looks half-updated, {undoKey} restores the snapshot {snapshot}.",
+  // submodule update/add cancelled. {paths}: what the half-finished clone had
+  // created (and lock files), removed so the next attempt starts clean.
+  submodule_update_cancelled: "Submodule update cancelled. Run it again to finish.",
+  submodule_update_cancelled_cleaned:
+    "Submodule update cancelled. Removed what the interrupted clone had begun ({paths}) so the next update starts clean.",
+  submodule_add_cancelled: "Adding the submodule was cancelled.",
+  submodule_add_cancelled_cleaned:
+    "Adding the submodule was cancelled. Removed what the interrupted clone had begun ({paths}). If git had already changed .gitmodules, discard that change.",
   // Shared git-runner failures.
   run_git_failed: "Could not run git: {detail}",
   git_wait_failed: "git wait failed: {detail}",

@@ -4055,8 +4055,13 @@ startedAtMs: number;
  * True for the silent fetch/pull/push (auto-fetch timer, resolver flows),
  * false for the user-initiated streaming ops the progress modal shows.
  */
-background: boolean; stalled: boolean; cancelling: boolean }
-export type JobKind = "fetch" | "pull" | "push"
+background: boolean; stalled: boolean; cancelling: boolean; 
+/**
+ * The kind's stall threshold in seconds (`JobKind::stall_after`), 0 when
+ * it has none — so the UI never hard-codes it.
+ */
+stallSecs: number }
+export type JobKind = "fetch" | "pull" | "push" | "force_push" | "push_tag" | "push_branch" | "reset_to_upstream" | "submodule_update" | "submodule_add"
 export type JobOutcome = "ok" | "failed" | "cancelled"
 /**
  * Emitted as `"job-progress"` when a job's stalled flag flips.
@@ -5332,7 +5337,13 @@ backupRef: string | null;
  * dirty-tree resolution chooser" apart from "just show the plain error
  * toast" without doing any prose-matching of its own.
  */
-conflictingFiles: string[] }
+conflictingFiles: string[]; 
+/**
+ * The user cancelled the op from the jobs indicator (`submodule_update`/
+ * `submodule_add` today): not a failure, so the UI relays `message` without
+ * a warning. Always false for everything else.
+ */
+cancelled: boolean }
 
 /** tauri-specta globals **/
 

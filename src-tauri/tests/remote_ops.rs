@@ -7,7 +7,7 @@ mod common;
 
 use common::TempRepo;
 use gitcat_lib::git_remote::{
-    current_upstream, fetch_core, force_push, pull_core, push_branch, push_core, reset_branch_to_upstream, OpCtx,
+    current_upstream, fetch_core, force_push_core, pull_core, push_branch_core, push_core, reset_branch_to_upstream_core, OpCtx,
 };
 use gitcat_lib::procutil::{CancelToken, StallHook};
 use std::time::{Duration, Instant};
@@ -170,7 +170,7 @@ fn force_push_lease_succeeds_after_a_local_rebase_amend() {
     let rewritten_tip = amend_last_commit(&local, "1 reworded\n", "c1 (amended)");
     assert_ne!(rewritten_tip, pushed_tip, "amend must actually rewrite the commit");
 
-    let res = tauri::async_runtime::block_on(force_push(local.path(), true));
+    let res = force_push_core(local.path(), true, OpCtx::default());
     assert!(res.ok, "force_push(lease=true) should succeed: {}", res.message);
     assert_eq!(origin.rev("main"), Some(rewritten_tip), "origin should now hold the rewritten history");
     assert!(res.backup_ref.is_none(), "force_push never snapshots — nothing local changes");
@@ -193,7 +193,7 @@ fn force_push_lease_is_rejected_when_remote_moved_since_last_fetch() {
     let rewritten_tip = amend_last_commit(&local, "1 reworded\n", "c1 (amended)");
     assert_ne!(rewritten_tip, pushed_tip);
 
-    let res = tauri::async_runtime::block_on(force_push(local.path(), true));
+    let res = force_push_core(local.path(), true, OpCtx::default());
     assert!(!res.ok, "force_push(lease=true) must be rejected, not silently forced, when the remote moved");
     assert_eq!(origin.rev("main"), Some(theirs_tip), "a rejected --force-with-lease must never touch origin");
 }
@@ -213,7 +213,7 @@ fn force_push_without_lease_overrides_remote_changes_unconditionally() {
     let rewritten_tip = amend_last_commit(&local, "1 reworded\n", "c1 (amended)");
     assert_ne!(rewritten_tip, pushed_tip);
 
-    let res = tauri::async_runtime::block_on(force_push(local.path(), false));
+    let res = force_push_core(local.path(), false, OpCtx::default());
     assert!(res.ok, "force_push(lease=false) should succeed even when the remote moved: {}", res.message);
     assert_eq!(
         origin.rev("main"),
@@ -267,7 +267,7 @@ fn force_push_is_confined_to_the_current_branch_even_under_push_default_matching
     // itself would have succeeded.
     local.must(&["config", "push.default", "matching"]);
 
-    let res = tauri::async_runtime::block_on(force_push(local.path(), true));
+    let res = force_push_core(local.path(), true, OpCtx::default());
     assert!(res.ok, "force_push(lease=true) on main alone should succeed: {}", res.message);
     assert_eq!(origin.rev("main"), Some(rewritten_tip), "origin's main should hold the rewritten history");
     assert_eq!(
@@ -285,7 +285,7 @@ fn force_push_refuses_a_branch_with_no_upstream_before_attempting_anything() {
     local.must(&["remote", "add", "origin", &origin.path()]);
     // Deliberately never pushed / never `--set-upstream`'d.
 
-    let res = tauri::async_runtime::block_on(force_push(local.path(), true));
+    let res = force_push_core(local.path(), true, OpCtx::default());
     assert!(!res.ok, "force_push must refuse a branch with no upstream");
     assert!(
         res.message.contains("upstream"),
@@ -296,7 +296,7 @@ fn force_push_refuses_a_branch_with_no_upstream_before_attempting_anything() {
 
     // Same refusal for the raw-force variant too — the no-upstream guard
     // applies regardless of `lease`.
-    let res2 = tauri::async_runtime::block_on(force_push(local.path(), false));
+    let res2 = force_push_core(local.path(), false, OpCtx::default());
     assert!(!res2.ok, "force_push(lease=false) must also refuse a branch with no upstream");
 }
 
@@ -311,7 +311,7 @@ fn reset_current_branch_discards_local_commits_and_working_tree_changes() {
     std::fs::write(local.dir.join("f.txt"), "dirty uncommitted\n").expect("write dirty change");
     assert!(!local.is_clean(), "sanity: working tree should be dirty before reset");
 
-    let res = tauri::async_runtime::block_on(reset_branch_to_upstream(local.path(), "main".to_string()));
+    let res = reset_branch_to_upstream_core(local.path(), "main".to_string(), OpCtx::default());
     assert!(res.ok, "reset_branch_to_upstream failed: {}", res.message);
     assert_eq!(local.rev("HEAD"), Some(upstream_tip.clone()), "HEAD should land exactly on origin/main's tip");
     assert!(local.is_clean(), "reset --hard must discard the dirty working-tree change too");
@@ -342,7 +342,7 @@ fn reset_non_current_branch_only_moves_the_ref_without_touching_working_tree() {
     assert_ne!(feature_local_tip, upstream_tip, "sanity: feature must actually diverge from its upstream");
 
     let before_current_head = local.rev("HEAD");
-    let res = tauri::async_runtime::block_on(reset_branch_to_upstream(local.path(), "feature".to_string()));
+    let res = reset_branch_to_upstream_core(local.path(), "feature".to_string(), OpCtx::default());
     assert!(res.ok, "reset_branch_to_upstream failed: {}", res.message);
     assert_eq!(local.rev("refs/heads/feature"), Some(upstream_tip), "feature's ref should now match its upstream");
     assert_eq!(local.current_branch(), "main", "resetting a non-current branch must never move HEAD off the checked-out branch");
@@ -359,7 +359,7 @@ fn reset_refuses_a_branch_with_no_configured_upstream() {
     // Deliberately never tracked/pushed.
 
     let tip_before = local.rev("HEAD");
-    let res = tauri::async_runtime::block_on(reset_branch_to_upstream(local.path(), "orphan".to_string()));
+    let res = reset_branch_to_upstream_core(local.path(), "orphan".to_string(), OpCtx::default());
     assert!(!res.ok, "reset must refuse a branch with no configured upstream");
     assert!(res.message.contains("upstream"), "expected a clear no-upstream refusal, got: {}", res.message);
     assert_eq!(local.rev("HEAD"), tip_before, "a refused reset must never move HEAD");
@@ -370,7 +370,7 @@ fn reset_refuses_a_branch_with_no_configured_upstream() {
 fn reset_refuses_a_nonexistent_branch() {
     let (_origin, local) = origin_and_clone("reset_nonexistent");
 
-    let res = tauri::async_runtime::block_on(reset_branch_to_upstream(local.path(), "does-not-exist".to_string()));
+    let res = reset_branch_to_upstream_core(local.path(), "does-not-exist".to_string(), OpCtx::default());
     assert!(!res.ok, "reset must refuse a branch that doesn't exist locally");
     assert!(res.backup_ref.is_none(), "a refused reset must not snapshot");
 }
@@ -394,7 +394,7 @@ fn push_branch_publishes_a_non_checked_out_branch_without_switching() {
     assert_eq!(local.current_branch(), "main", "sanity: still on main before pushing");
     assert!(origin.rev("feature").is_none(), "nothing pushed yet");
 
-    let res = tauri::async_runtime::block_on(push_branch(local.path(), "feature".to_string(), None, None));
+    let res = push_branch_core(local.path(), "feature".to_string(), None, None, OpCtx::default());
     assert!(res.ok, "push_branch failed: {}", res.message);
     assert_eq!(origin.rev("feature"), Some(feature_tip), "origin should now have feature at the same tip");
     assert_eq!(local.current_branch(), "main", "push_branch must never switch the checked-out branch");
@@ -406,7 +406,7 @@ fn push_branch_can_publish_under_a_different_remote_name() {
     local.must(&["branch", "feature"]);
     let feature_tip = local.rev("refs/heads/feature").expect("feature branch should exist");
 
-    let res = tauri::async_runtime::block_on(push_branch(local.path(), "feature".to_string(), None, Some("feature-review".to_string())));
+    let res = push_branch_core(local.path(), "feature".to_string(), None, Some("feature-review".to_string()), OpCtx::default());
     assert!(res.ok, "push_branch failed: {}", res.message);
     assert_eq!(origin.rev("feature-review"), Some(feature_tip), "origin should have the renamed branch");
     assert!(origin.rev("feature").is_none(), "must not ALSO create a same-named branch on origin");
@@ -417,7 +417,7 @@ fn push_branch_sets_upstream_tracking_on_first_publish() {
     let (_origin, local) = origin_and_clone("push_branch_upstream");
     local.must(&["branch", "feature"]);
 
-    let res = tauri::async_runtime::block_on(push_branch(local.path(), "feature".to_string(), None, None));
+    let res = push_branch_core(local.path(), "feature".to_string(), None, None, OpCtx::default());
     assert!(res.ok, "push_branch failed: {}", res.message);
 
     let (has_upstream, _, _) = local.git(&["rev-parse", "--abbrev-ref", "feature@{upstream}"]);
@@ -429,7 +429,7 @@ fn push_branch_set_upstream_tracks_the_renamed_remote_branch() {
     let (_origin, local) = origin_and_clone("push_branch_upstream_renamed");
     local.must(&["branch", "feature"]);
 
-    let res = tauri::async_runtime::block_on(push_branch(local.path(), "feature".to_string(), None, Some("feature-review".to_string())));
+    let res = push_branch_core(local.path(), "feature".to_string(), None, Some("feature-review".to_string()), OpCtx::default());
     assert!(res.ok, "push_branch failed: {}", res.message);
 
     let tracked = local.must(&["rev-parse", "--abbrev-ref", "feature@{upstream}"]);
@@ -439,7 +439,7 @@ fn push_branch_set_upstream_tracks_the_renamed_remote_branch() {
 #[test]
 fn push_branch_rejects_a_nonexistent_local_branch() {
     let (_origin, local) = origin_and_clone("push_branch_missing");
-    let res = tauri::async_runtime::block_on(push_branch(local.path(), "no-such-branch".to_string(), None, None));
+    let res = push_branch_core(local.path(), "no-such-branch".to_string(), None, None, OpCtx::default());
     assert!(!res.ok);
     assert!(res.message.contains("no-such-branch"), "expected the missing branch name in the error, got: {}", res.message);
 }
@@ -447,7 +447,7 @@ fn push_branch_rejects_a_nonexistent_local_branch() {
 #[test]
 fn push_branch_rejects_a_branch_name_that_looks_like_a_flag() {
     let (_origin, local) = origin_and_clone("push_branch_flag_branch");
-    let res = tauri::async_runtime::block_on(push_branch(local.path(), "--upload-pack=evil".to_string(), None, None));
+    let res = push_branch_core(local.path(), "--upload-pack=evil".to_string(), None, None, OpCtx::default());
     assert!(!res.ok);
     assert!(res.message.contains("flag"), "expected a flag-injection refusal, got: {}", res.message);
 }
@@ -456,7 +456,7 @@ fn push_branch_rejects_a_branch_name_that_looks_like_a_flag() {
 fn push_branch_rejects_a_remote_branch_name_that_looks_like_a_flag() {
     let (_origin, local) = origin_and_clone("push_branch_flag_remote_branch");
     local.must(&["branch", "feature"]);
-    let res = tauri::async_runtime::block_on(push_branch(local.path(), "feature".to_string(), None, Some("--upload-pack=evil".to_string())));
+    let res = push_branch_core(local.path(), "feature".to_string(), None, Some("--upload-pack=evil".to_string()), OpCtx::default());
     assert!(!res.ok);
     assert!(res.message.contains("flag"), "expected a flag-injection refusal, got: {}", res.message);
 }
@@ -477,7 +477,7 @@ fn push_branch_with_existing_upstream_pushes_new_commits() {
     };
     assert_ne!(origin.rev("feature"), Some(new_tip.clone()), "sanity: origin doesn't have the new commit yet");
 
-    let res = tauri::async_runtime::block_on(push_branch(local.path(), "feature".to_string(), None, None));
+    let res = push_branch_core(local.path(), "feature".to_string(), None, None, OpCtx::default());
     assert!(res.ok, "push_branch failed: {}", res.message);
     assert_eq!(origin.rev("feature"), Some(new_tip));
     assert_ne!(feature_tip, origin.rev("feature").unwrap(), "sanity: origin actually moved past the first push");
@@ -682,7 +682,7 @@ fn push_refuses_a_branch_whose_upstream_has_another_name_under_simple() {
     assert_eq!(origin.rev("main"), main_before, "main must be untouched");
     assert!(origin.rev("feature").is_none());
 
-    let res = tauri::async_runtime::block_on(force_push(local.path(), true));
+    let res = force_push_core(local.path(), true, OpCtx::default());
     assert!(!res.ok, "force push resolves the same target, so it refuses too");
     assert_eq!(origin.rev("main"), main_before);
 }
@@ -727,4 +727,76 @@ fn push_honors_branch_push_remote() {
     assert!(res.ok, "push failed: {}", res.message);
     assert_eq!(fork.rev("main"), Some(tip), "pushRemote wins");
     assert_eq!(origin.rev("main"), before, "the upstream remote is not pushed to");
+}
+
+// ── the remote writes that became background jobs ──────────────────────────
+//
+// Same "hung remote" idea as above, on the push side: `remote.origin.
+// receivepack` runs through the shell, so `sleep` goes first as a grandchild.
+
+fn hung_push_remote(tag: &str, secs: u32) -> (TempRepo, TempRepo) {
+    let (origin, local) = origin_and_clone(tag);
+    local.must(&["config", "remote.origin.receivepack", &format!("sleep {secs}; git-receive-pack")]);
+    (origin, local)
+}
+
+fn assert_push_cancelled(res: &gitcat_lib::git_remote::RemoteResult, start: Instant) {
+    assert!(res.cancelled && !res.ok, "expected a cancelled result, got: {} (ok={})", res.message, res.ok);
+    assert!(res.message.contains("err_remote.push_cancelled"), "unexpected message: {}", res.message);
+    assert!(start.elapsed() < Duration::from_secs(6), "cancel took {:?} — the tree survived", start.elapsed());
+}
+
+#[test]
+fn force_push_core_cancel_kills_a_hung_push_and_leaves_the_remote_alone() {
+    let (origin, local) = hung_push_remote("force_push_cancel", 30);
+    let before = origin.rev("main");
+    amend_last_commit(&local, "0 reworded\n", "c0 (amended)");
+    let token = CancelToken::new();
+    let t = cancel_after(&token, Duration::from_millis(500));
+    let start = Instant::now();
+    let res = force_push_core(local.path(), true, OpCtx { cancel: Some(token), ..Default::default() });
+    t.join().unwrap();
+    assert_push_cancelled(&res, start);
+    assert_eq!(origin.rev("main"), before);
+}
+
+#[test]
+fn push_branch_core_cancel_kills_a_hung_push() {
+    let (origin, local) = hung_push_remote("push_branch_cancel", 30);
+    local.must(&["branch", "feature"]);
+    let token = CancelToken::new();
+    let t = cancel_after(&token, Duration::from_millis(500));
+    let start = Instant::now();
+    let res = push_branch_core(local.path(), "feature".into(), None, None, OpCtx { cancel: Some(token), ..Default::default() });
+    t.join().unwrap();
+    assert_push_cancelled(&res, start);
+    assert!(origin.rev("feature").is_none());
+}
+
+#[test]
+fn push_tag_core_cancel_kills_a_hung_push() {
+    let (origin, local) = hung_push_remote("push_tag_cancel", 30);
+    local.must(&["tag", "v1"]);
+    let token = CancelToken::new();
+    let t = cancel_after(&token, Duration::from_millis(500));
+    let start = Instant::now();
+    let res = gitcat_lib::git_remote::push_tag_core(local.path(), None, "v1".into(), OpCtx { cancel: Some(token), ..Default::default() });
+    t.join().unwrap();
+    assert_push_cancelled(&res, start);
+    assert!(origin.rev("refs/tags/v1").is_none());
+}
+
+/// A local op: it can't be made to hang, so a pre-cancelled token stands in.
+/// The snapshot is taken first, so the cancelled result still names it.
+#[test]
+fn reset_to_upstream_core_cancelled_keeps_the_branch_and_names_the_snapshot() {
+    let (_origin, local) = origin_and_clone("reset_cancel");
+    let mine = local.commit("g.txt", "1\n", "local only");
+    let token = CancelToken::new();
+    token.cancel();
+    let res = reset_branch_to_upstream_core(local.path(), "main".into(), OpCtx { cancel: Some(token), ..Default::default() });
+    assert!(res.cancelled && !res.ok, "expected a cancelled result, got: {}", res.message);
+    assert!(res.message.contains("err_remote.reset_cancelled"), "unexpected message: {}", res.message);
+    assert!(res.backup_ref.is_some(), "the snapshot is taken before git runs");
+    assert_eq!(local.rev("main"), Some(mine), "nothing moved");
 }
