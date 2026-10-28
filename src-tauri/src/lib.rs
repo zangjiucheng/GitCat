@@ -636,11 +636,16 @@ pub fn run() {
             // than orphaned as a background process once GitCat quits.
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 app_handle.state::<terminal::TerminalRegistry>().kill_all();
-                // Ask every running fetch/pull/push to stop. On Windows the Job
-                // Object's KILL_ON_JOB_CLOSE takes the trees down at process
-                // exit regardless; on Unix an in-flight git may still outlive
-                // quit, as before (follow-up: kill the groups synchronously).
-                app_handle.state::<jobs::JobRegistry>().cancel_all();
+                // Stop every running job and give the runners a moment to kill
+                // their process trees: on Unix an in-flight git (and its ssh)
+                // would otherwise outlive the quit. Bounded: CANCEL_GRACE plus
+                // margin, and nothing at all when no job is running.
+                let done = app_handle
+                    .state::<jobs::JobRegistry>()
+                    .cancel_all_and_wait(crate::procutil::CANCEL_GRACE + std::time::Duration::from_secs(1));
+                if !done {
+                    log::warn!("quitting with jobs still running after the cancel grace");
+                }
             }
         });
 }

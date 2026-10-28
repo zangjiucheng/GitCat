@@ -129,6 +129,8 @@ class ForcePushState {
         await bridge.reloadGraph(true);
         bridge.tama.set("celebrate");
         bridge.tama.say(be(res.message) || t("forcepush.pushed", { branch }), 3200);
+      } else if (res?.cancelled) {
+        bridge.relayCancelled(res.message);
       } else {
         bridge.tama.warn(be(res && res.message) || t("forcepush.failed"));
       }

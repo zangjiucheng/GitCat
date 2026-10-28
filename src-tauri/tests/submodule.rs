@@ -57,9 +57,10 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::TempRepo;
+use gitcat_lib::git_remote::OpCtx;
 use gitcat_lib::submodule::{
-    submodule_add, submodule_deinit, submodule_init, submodule_remove, submodule_status,
-    submodule_superproject_chain, submodule_sync, submodule_update,
+    submodule_add_core, submodule_deinit, submodule_init, submodule_remove, submodule_status,
+    submodule_superproject_chain, submodule_sync, submodule_update_core,
 };
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -667,7 +668,7 @@ fn submodule_update_with_init_clones_and_checks_out_never_initialized_submodule(
 
     // init:true folds registration + clone + checkout into this one call —
     // no prior submodule_init needed.
-    let result = tauri::async_runtime::block_on(submodule_update(clone.path(), Some("sub".to_string()), false, true));
+    let result = submodule_update_core(clone.path(), Some("sub".to_string()), false, true, OpCtx::default());
     assert!(result.ok, "submodule_update failed: {}", result.message);
     assert!(result.backup_ref.is_none(), "submodule_update must never snapshot (see module doc comment)");
 
@@ -705,7 +706,7 @@ fn submodule_update_over_unreachable_ssh_fails_fast_not_hangs() {
     parent.must(&["commit", "-aqm", "point sub at ssh"]);
 
     let clone = FreshClone::of(&parent, "submodule_ssh");
-    let result = tauri::async_runtime::block_on(submodule_update(clone.path(), Some("sub".to_string()), false, true));
+    let result = submodule_update_core(clone.path(), Some("sub".to_string()), false, true, OpCtx::default());
     assert!(!result.ok, "expected a clean failure cloning an unreachable ssh submodule, got ok");
     assert!(!result.message.is_empty(), "a failure must carry git's message, not an empty string");
 }
@@ -735,7 +736,7 @@ fn submodule_update_recursive_handles_nested_submodule_of_a_submodule() {
 
     // recursive:true must init+clone+checkout "sub" AND recurse into "sub" to
     // do the same for ITS OWN "nested" submodule, in one call.
-    let result = tauri::async_runtime::block_on(submodule_update(clone.path(), Some("sub".to_string()), true, true));
+    let result = submodule_update_core(clone.path(), Some("sub".to_string()), true, true, OpCtx::default());
     assert!(result.ok, "submodule_update (recursive) failed: {}", result.message);
 
     let nested_file = PathBuf::from(clone.path()).join("sub").join("nested").join("gc.txt");
@@ -773,7 +774,7 @@ fn submodule_update_without_recursive_leaves_the_nested_submodule_uninitialized(
 
     let clone = FreshClone::of(&parent, "submodule_nonrecursive");
 
-    let result = tauri::async_runtime::block_on(submodule_update(clone.path(), Some("sub".to_string()), false, true));
+    let result = submodule_update_core(clone.path(), Some("sub".to_string()), false, true, OpCtx::default());
     assert!(result.ok, "submodule_update (non-recursive) failed: {}", result.message);
 
     // "sub" itself was cloned+checked out...
@@ -822,7 +823,7 @@ fn submodule_update_refuses_over_dirty_submodule_and_keeps_local_changes() {
     // EMPIRICALLY VERIFIED (see submodule.rs's module doc comment): real
     // git's own default refuses a checkout that would clobber this edit —
     // submodule_update must surface that refusal, not force past it.
-    let result = tauri::async_runtime::block_on(submodule_update(parent.path(), Some("sub".to_string()), false, false));
+    let result = submodule_update_core(parent.path(), Some("sub".to_string()), false, false, OpCtx::default());
     assert!(!result.ok, "expected submodule_update to refuse over a dirty submodule, got ok: {}", result.message);
     assert!(
         result.message.contains("overwritten") || result.message.contains("local changes"),
@@ -861,7 +862,7 @@ fn submodule_update_all_updates_multiple_submodules_in_one_call() {
 
     // submodule_path: None => update EVERY registered submodule, no path
     // restriction — the bulk "Update all" action.
-    let result = tauri::async_runtime::block_on(submodule_update(clone.path(), None, false, true));
+    let result = submodule_update_core(clone.path(), None, false, true, OpCtx::default());
     assert!(result.ok, "submodule_update (all) failed: {}", result.message);
 
     let rows_after = tauri::async_runtime::block_on(submodule_status(clone.path())).expect("submodule_status failed");
@@ -899,7 +900,7 @@ fn submodule_add_clones_new_submodule_and_it_is_immediately_clean() {
     let parent = TempRepo::init("submodule_add_parent");
     let _p0 = parent.commit("root.txt", "root\n", "p0");
 
-    let result = tauri::async_runtime::block_on(submodule_add(parent.path(), child.path(), "sub".to_string(), None));
+    let result = submodule_add_core(parent.path(), child.path(), "sub".to_string(), None, OpCtx::default());
     assert!(result.ok, "submodule_add failed: {}", result.message);
     assert!(result.backup_ref.is_none(), "submodule_add must never snapshot (see module doc comment)");
 
@@ -946,7 +947,7 @@ fn submodule_add_with_branch_checks_out_that_branch_not_the_default() {
     let parent = TempRepo::init("submodule_add_branch_parent");
     let _p0 = parent.commit("root.txt", "root\n", "p0");
 
-    let result = tauri::async_runtime::block_on(submodule_add(parent.path(), child.path(), "sub".to_string(), Some("feature".to_string())));
+    let result = submodule_add_core(parent.path(), child.path(), "sub".to_string(), Some("feature".to_string()), OpCtx::default());
     assert!(result.ok, "submodule_add (with branch) failed: {}", result.message);
 
     // The submodule's own checked-out branch is "feature", NOT the child
@@ -978,7 +979,7 @@ fn submodule_add_refuses_cleanly_for_a_colliding_path() {
     // submodule at.
     let _existing = parent.commit("existing.txt", "not a submodule\n", "add existing file");
 
-    let result = tauri::async_runtime::block_on(submodule_add(parent.path(), child.path(), "existing.txt".to_string(), None));
+    let result = submodule_add_core(parent.path(), child.path(), "existing.txt".to_string(), None, OpCtx::default());
     assert!(!result.ok, "expected submodule_add to refuse a colliding path, got ok: {}", result.message);
     assert!(result.backup_ref.is_none());
     // EMPIRICALLY VERIFIED (git 2.53, see submodule.rs's module doc comment):
@@ -1015,7 +1016,7 @@ fn submodule_add_refuses_a_path_traversal_target() {
     let parent = TempRepo::init("submodule_add_traversal_parent");
     let _p0 = parent.commit("root.txt", "root\n", "p0");
 
-    let result = tauri::async_runtime::block_on(submodule_add(parent.path(), child.path(), "../../etc/evil".to_string(), None));
+    let result = submodule_add_core(parent.path(), child.path(), "../../etc/evil".to_string(), None, OpCtx::default());
     assert!(!result.ok, "expected submodule_add to refuse a path-traversal target, got ok: {}", result.message);
     assert!(result.backup_ref.is_none());
     assert!(
@@ -1228,7 +1229,7 @@ fn submodule_deinit_with_force_backs_up_dirty_content_then_clears() {
     // back the exact discarded content, byte for byte.
     let init_result = tauri::async_runtime::block_on(submodule_init(parent.path(), "sub".to_string()));
     assert!(init_result.ok, "submodule_init failed: {}", init_result.message);
-    let update_result = tauri::async_runtime::block_on(submodule_update(parent.path(), Some("sub".to_string()), false, false));
+    let update_result = submodule_update_core(parent.path(), Some("sub".to_string()), false, false, OpCtx::default());
     assert!(update_result.ok, "submodule_update failed: {}", update_result.message);
     assert_eq!(parent.read("sub/f.txt"), "hello\n", "restored checkout should be back at HEAD's content");
     assert_eq!(parent.read("sub/g.txt"), "g0\n", "restored checkout should be back at HEAD's content");
@@ -1316,7 +1317,7 @@ fn submodule_deinit_recovers_offline_via_init_and_update() {
 
     // update restores the checkout straight from .git/modules/sub — ZERO
     // network/file access to the (now-gone) original source.
-    let update_result = tauri::async_runtime::block_on(submodule_update(parent.path(), Some("sub".to_string()), false, false));
+    let update_result = submodule_update_core(parent.path(), Some("sub".to_string()), false, false, OpCtx::default());
     assert!(update_result.ok, "submodule_update failed (offline recovery): {}", update_result.message);
 
     assert_eq!(
@@ -1701,7 +1702,7 @@ fn bug2_force_deinit_refuses_when_a_nested_submodule_of_a_submodule_is_dirty() {
     // "sub" is cloned+checked out by add_submodule, but its OWN "nested"
     // submodule is NOT (`git submodule add` never recurses) — init+update it
     // recursively first so there's something real to dirty.
-    let update_result = tauri::async_runtime::block_on(submodule_update(parent.path(), Some("sub".to_string()), true, true));
+    let update_result = submodule_update_core(parent.path(), Some("sub".to_string()), true, true, OpCtx::default());
     assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
     assert_eq!(parent.read("sub/nested/gc.txt"), "grandchild\n");
 
@@ -1747,7 +1748,7 @@ fn bug2_remove_refuses_when_a_nested_submodule_of_a_submodule_is_dirty() {
     let _p0 = parent.commit("root.txt", "root\n", "p0");
     add_submodule(&parent, &mid, "sub");
 
-    let update_result = tauri::async_runtime::block_on(submodule_update(parent.path(), Some("sub".to_string()), true, true));
+    let update_result = submodule_update_core(parent.path(), Some("sub".to_string()), true, true, OpCtx::default());
     assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
 
     std::fs::write(parent.dir.join("sub").join("nested").join("gc.txt"), "important nested uncommitted work\n")
@@ -2023,7 +2024,7 @@ fn submodule_status_on_cyclic_nested_submodule_terminates_cleanly_instead_of_cra
     // "nested" submodule is NOT (`git submodule add` never recurses) — init +
     // update it recursively first so there is a real, normal nested-submodule
     // checkout to corrupt.
-    let update_result = tauri::async_runtime::block_on(submodule_update(parent.path(), Some("sub".to_string()), true, true));
+    let update_result = submodule_update_core(parent.path(), Some("sub".to_string()), true, true, OpCtx::default());
     assert!(update_result.ok, "recursive submodule_update failed: {}", update_result.message);
     assert_eq!(parent.read("sub/nested/gc.txt"), "grandchild\n");
 

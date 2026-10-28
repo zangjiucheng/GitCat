@@ -282,7 +282,7 @@ fn push_branch_with_shell_metacharacters_is_not_reinterpreted_by_wsl_exe() {
     let (ok, _, err) = repo.wsl_git(&["branch", branch]);
     assert!(ok, "fixture setup (branch create) failed: {err}");
 
-    let result = tauri::async_runtime::block_on(git_remote::push_branch(path.clone(), branch.to_string(), None, None));
+    let result = git_remote::push_branch_core(path.clone(), branch.to_string(), None, None, git_remote::OpCtx::default());
     assert!(result.ok, "push_branch should succeed: {}", result.message);
 
     let (ok, out, err) = bare.wsl_git(&["branch", "-a"]);

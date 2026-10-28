@@ -51,12 +51,20 @@
             {#if j.stalled}
               <div class="jobs-row-stalled">{t("jobs.stalled", { secs: j.idleSecs })}</div>
             {/if}
-            <button
-              class="btn danger jobs-row-cancel"
-              disabled={j.cancelling}
-              aria-label={t("jobs.cancel_aria", { label })}
-              onclick={() => jobsCtrl.cancel(j.id)}>{t("common.cancel")}</button
-            >
+            <div class="jobs-row-actions">
+              {#if jobsCtrl.canShow(j)}
+                <!-- A hidden progress modal of this job: bring it back. -->
+                <button class="btn jobs-row-show" aria-label={t("jobs.show_aria", { label })} onclick={() => jobsCtrl.show(j.id)}
+                  >{t("jobs.show")}</button
+                >
+              {/if}
+              <button
+                class="btn danger jobs-row-cancel"
+                disabled={j.cancelling}
+                aria-label={t("jobs.cancel_aria", { label })}
+                onclick={() => jobsCtrl.cancel(j.id)}>{t("common.cancel")}</button
+              >
+            </div>
           </div>
         {:else}
           <div class="mut jobs-empty">{t("jobs.empty")}</div>
@@ -152,9 +160,13 @@
     font-size: 11.5px;
     color: var(--warning);
   }
-  .jobs-row-cancel {
+  .jobs-row-actions {
     grid-column: 2;
     grid-row: 1 / span 2;
+    display: flex;
+    gap: 4px;
+  }
+  .jobs-row-actions .btn {
     padding: 3px 10px;
     font-size: 12px;
   }

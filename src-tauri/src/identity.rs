@@ -131,6 +131,7 @@ pub async fn set_git_identity(path: String, name: String, email: String) -> Writ
                 message: ierrp("err_repo.cannot_open_repo_cap", &[("detail", e.message())]),
                 backup_ref: None,
                 conflicting_files: Vec::new(),
+                cancelled: false,
             };
         }
         let name = name.trim();
@@ -141,19 +142,21 @@ pub async fn set_git_identity(path: String, name: String, email: String) -> Writ
                 message: ierr("err_repo.name_and_email_required"),
                 backup_ref: None,
                 conflicting_files: Vec::new(),
+                cancelled: false,
             };
         }
         if let Err(msg) = write_local(&path, "user.name", name) {
-            return WriteResult { ok: false, message: msg, backup_ref: None, conflicting_files: Vec::new() };
+            return WriteResult { ok: false, message: msg, backup_ref: None, conflicting_files: Vec::new(), cancelled: false };
         }
         if let Err(msg) = write_local(&path, "user.email", email) {
-            return WriteResult { ok: false, message: msg, backup_ref: None, conflicting_files: Vec::new() };
+            return WriteResult { ok: false, message: msg, backup_ref: None, conflicting_files: Vec::new(), cancelled: false };
         }
         WriteResult {
             ok: true,
             message: ierrp("err_repo.set_identity_success", &[("name", name), ("email", email)]),
             backup_ref: None,
             conflicting_files: Vec::new(),
+            cancelled: false,
         }
     })
     .await

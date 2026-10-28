@@ -4,6 +4,14 @@
 // stderr는 여기에 키로 등록되지 않으며, 그대로 통과돼요 — `{detail}` 같은 자리에
 // 담기는 그 원문은 번역하지 않아요.
 export default {
+  // 작업 표시기에서 취소한 "업스트림으로 재설정".
+  reset_cancelled: "{branch} 재설정을 취소했어요. 반쯤 바뀐 것 같다면 {undoKey}로 스냅샷 {snapshot}을(를) 복원할 수 있어요.",
+  reset_cancelled_locks: "{branch} 재설정을 취소했어요. 취소된 git이 남긴 잠금 파일을 지웠어요: {locks}. 반쯤 바뀐 것 같다면 {undoKey}로 스냅샷 {snapshot}을(를) 복원할 수 있어요.",
+  // 취소한 서브모듈 업데이트/추가. {paths}: 중단된 클론이 만들기 시작한 것(과 잠금 파일). 다음에 깨끗하게 시작하도록 지웠어요.
+  submodule_update_cancelled: "서브모듈 업데이트를 취소했어요. 다시 실행하면 마저 끝나요.",
+  submodule_update_cancelled_cleaned: "서브모듈 업데이트를 취소했어요. 중단된 클론이 만들기 시작한 것({paths})을 지워서 다음 업데이트는 깨끗하게 시작해요.",
+  submodule_add_cancelled: "서브모듈 추가를 취소했어요.",
+  submodule_add_cancelled_cleaned: "서브모듈 추가를 취소했어요. 중단된 클론이 만들기 시작한 것({paths})을 지웠어요. git이 이미 .gitmodules를 바꿨다면 그 변경은 버려주세요.",
   // 공용 git 실행 실패.
   run_git_failed: "git을 실행하지 못했어요: {detail}",
   git_wait_failed: "git 대기에 실패했어요: {detail}",

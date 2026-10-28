@@ -8,4 +8,8 @@ export default {
   cancelling: "취소하는 중…",
   cancelled: "취소됐어요.",
   stalled: "git에서 {secs}초 넘게 진행 상황이 없어요. 멈춘 것 같아요. 취소할까요?",
+  // 숨겼던 창을 다시 보여줄 때 로그에 덧붙여요: 숨긴 동안의 git 출력은 남지 않아요.
+  hidden_gap: "… (숨긴 동안의 출력은 남지 않았어요)",
+  // 실행 중인 작업의 상단 버튼 툴팁.
+  show_progress: "진행 상황 보기",
 };

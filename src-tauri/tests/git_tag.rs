@@ -8,7 +8,7 @@
 mod common;
 
 use common::TempRepo;
-use gitcat_lib::git_remote::push_tag;
+use gitcat_lib::git_remote::{push_tag_core, OpCtx};
 use gitcat_lib::git_tag::{create_tag, delete_tag};
 
 #[test]
@@ -149,7 +149,7 @@ fn push_tag_to_a_bare_remote_makes_it_appear_there() {
     assert!(tauri::async_runtime::block_on(create_tag(path.clone(), "v1".into(), None, None)).ok);
     assert!(origin.rev("refs/tags/v1").is_none(), "tag shouldn't exist on the remote yet");
 
-    let res = tauri::async_runtime::block_on(push_tag(path.clone(), None, "v1".into()));
+    let res = push_tag_core(path.clone(), None, "v1".into(), OpCtx::default());
     assert!(res.ok, "push_tag failed: {}", res.message);
     assert!(res.backup_ref.is_none(), "pushing a tag never touches local state, so it must not snapshot");
     assert_eq!(origin.rev("refs/tags/v1"), Some(c0), "tag should now exist on the remote, pointing at c0");
@@ -165,7 +165,7 @@ fn push_tag_defaults_to_origin_and_never_forces_a_rejected_move() {
     let path = local.path();
 
     assert!(tauri::async_runtime::block_on(create_tag(path.clone(), "v1".into(), None, None)).ok);
-    assert!(tauri::async_runtime::block_on(push_tag(path.clone(), None, "v1".into())).ok);
+    assert!(push_tag_core(path.clone(), None, "v1".into(), OpCtx::default()).ok);
     let remote_sha_before = origin.rev("refs/tags/v1");
 
     // Move the LOCAL tag to a new commit without going through GitCat, then
@@ -174,7 +174,7 @@ fn push_tag_defaults_to_origin_and_never_forces_a_rejected_move() {
     let _c1 = local.commit("g.txt", "1\n", "c1");
     local.must(&["tag", "-f", "v1"]);
 
-    let res = tauri::async_runtime::block_on(push_tag(path.clone(), None, "v1".into()));
+    let res = push_tag_core(path.clone(), None, "v1".into(), OpCtx::default());
     assert!(!res.ok, "a moved-tag push must be rejected, not forced");
     assert_eq!(origin.rev("refs/tags/v1"), remote_sha_before, "a rejected push must never overwrite the remote's tag");
 }
@@ -204,7 +204,7 @@ fn push_tag_refuses_to_push_a_same_named_branch_when_no_such_tag_exists() {
     assert!(local.rev("refs/tags/X").is_none(), "precondition: no local tag named X");
     assert!(local.rev("refs/heads/X").is_some(), "precondition: a local branch named X exists");
 
-    let res = tauri::async_runtime::block_on(push_tag(path.clone(), None, "X".into()));
+    let res = push_tag_core(path.clone(), None, "X".into(), OpCtx::default());
     assert!(
         !res.ok,
         "push_tag must fail cleanly when no tag named X exists locally, not silently push the branch \
@@ -244,7 +244,7 @@ fn push_tag_pushes_the_tag_not_the_same_named_branch_when_both_exist() {
     assert_eq!(local.rev("refs/heads/Y"), Some(c1.clone()));
     assert_eq!(local.rev("refs/tags/Y"), Some(c0.clone()));
 
-    let res = tauri::async_runtime::block_on(push_tag(path.clone(), None, "Y".into()));
+    let res = push_tag_core(path.clone(), None, "Y".into(), OpCtx::default());
     assert!(res.ok, "push_tag failed: {}", res.message);
 
     assert_eq!(origin.rev("refs/tags/Y"), Some(c0), "the pushed tag must resolve to the TAG's target, not the branch's");
@@ -267,7 +267,7 @@ fn tag_name_validation_rejects_an_illegal_name_across_all_three_commands() {
         assert!(!deleted.ok, "delete_tag should refuse {bad:?}");
         assert!(deleted.backup_ref.is_none());
 
-        let pushed = tauri::async_runtime::block_on(push_tag(path.clone(), None, bad.into()));
+        let pushed = push_tag_core(path.clone(), None, bad.into(), OpCtx::default());
         assert!(!pushed.ok, "push_tag should refuse {bad:?}");
         assert!(pushed.backup_ref.is_none());
     }

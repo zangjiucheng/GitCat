@@ -213,7 +213,9 @@ use serde::Serialize;
 
 use crate::git_write::WriteResult;
 use crate::i18n_err::{ierr, ierrp};
-use crate::procutil::{git_timeout, run_with, CancelToken, RunOptions};
+use crate::git_remote::OpCtx;
+use crate::procutil::{git_timeout, run_with, CancelToken, RunError, RunOptions};
+use tauri::{AppHandle, Wry};
 
 /// One `.gitmodules`-registered submodule row.
 #[derive(Serialize, specta::Type)]
@@ -600,6 +602,141 @@ fn run_git_c(path: &str, args: &[&str], cancel: Option<&CancelToken>) -> Result<
     })
 }
 
+/// `submodule update`/`add` as a job: no hard timeout, the job's cancel token
+/// and stall hook. `Err(Cancelled)` once the whole tree is down.
+fn run_git_op(path: &str, args: &[&str], ctx: OpCtx<'_>) -> Result<GitOut, RunError> {
+    let (cmd, tag) = crate::wsl::git_command_tagged(path, args, &[]);
+    let output = run_with(
+        cmd,
+        RunOptions { timeout: git_timeout(args), cancel: ctx.cancel, stall: ctx.stall, wsl: tag, ..Default::default() },
+    )?;
+    Ok(GitOut {
+        ok: output.status.success(),
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+    })
+}
+
+/// What a submodule clone creates, recorded before it runs so a cancel can
+/// remove exactly what it had only begun: the module git dirs under
+/// `<common>/modules/` (directories holding a `HEAD`), and which submodule
+/// working-tree paths were missing or empty. A hard-killed clone (Windows has
+/// no soft stop) leaves both half-written, and the next `submodule update`
+/// then tries to reuse that broken git dir and fails.
+struct CloneSites {
+    workdir: std::path::PathBuf,
+    modules: std::path::PathBuf,
+    module_dirs: HashSet<std::path::PathBuf>,
+    /// Repo-relative submodule paths that were missing or empty.
+    fresh_worktrees: Vec<String>,
+}
+
+const MODULE_WALK_DEPTH: usize = 12;
+
+fn module_git_dirs(dir: &std::path::Path, depth: usize, out: &mut HashSet<std::path::PathBuf>) {
+    if depth > MODULE_WALK_DEPTH {
+        return;
+    }
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        if p.join("HEAD").is_file() {
+            out.insert(p.clone());
+            // A nested submodule's git dir lives in its parent's own modules/.
+            module_git_dirs(&p.join("modules"), depth + 1, out);
+        } else {
+            module_git_dirs(&p, depth + 1, out);
+        }
+    }
+}
+
+fn is_missing_or_empty(p: &std::path::Path) -> bool {
+    match fs::read_dir(p) {
+        Ok(mut rd) => rd.next().is_none(),
+        Err(_) => !p.exists(),
+    }
+}
+
+impl CloneSites {
+    /// `extra` is a path not (yet) in `.gitmodules`: `submodule_add`'s target.
+    fn record(path: &str, extra: Option<&str>) -> Option<Self> {
+        let repo = crate::trust::open_repo(path).ok()?;
+        let workdir = repo.workdir()?.to_path_buf();
+        let modules = repo.commondir().join("modules");
+        let mut module_dirs = HashSet::new();
+        module_git_dirs(&modules, 0, &mut module_dirs);
+        let mut candidates: Vec<String> = repo
+            .submodules()
+            .map(|subs| subs.iter().filter_map(|s| s.path().to_str().map(|p| p.replace('\\', "/"))).collect())
+            .unwrap_or_default();
+        candidates.extend(extra.map(str::to_string));
+        let fresh_worktrees = candidates.into_iter().filter(|rel| is_missing_or_empty(&workdir.join(rel))).collect();
+        Some(Self { workdir, modules, module_dirs, fresh_worktrees })
+    }
+
+    /// Remove what the cancelled op created; returns what was removed, for
+    /// the message. Only paths that did not exist (or were empty) before, and
+    /// only inside this repository.
+    fn remove_new(&self) -> Vec<String> {
+        let mut removed = Vec::new();
+        let mut now = HashSet::new();
+        module_git_dirs(&self.modules, 0, &mut now);
+        let mut new_dirs: Vec<_> = now.difference(&self.module_dirs).cloned().collect();
+        // Parents first, so a nested one inside a removed parent isn't retried.
+        new_dirs.sort();
+        for d in new_dirs {
+            if d.starts_with(&self.modules) && d.exists() && fs::remove_dir_all(&d).is_ok() {
+                removed.push(d.strip_prefix(&self.workdir).unwrap_or(&d).to_string_lossy().replace('\\', "/"));
+            }
+        }
+        for rel in &self.fresh_worktrees {
+            if validate_submodule_path(rel).is_err() {
+                continue;
+            }
+            let w = self.workdir.join(rel);
+            if w.starts_with(&self.workdir) && w != self.workdir && w.exists() && !is_missing_or_empty(&w) && fs::remove_dir_all(&w).is_ok() {
+                removed.push(rel.clone());
+            }
+        }
+        removed
+    }
+}
+
+/// After a cancelled `submodule update`/`add`: remove the lock files the
+/// killed git left behind and the half-made clone sites, unless another job
+/// is live on this repo (it may own them).
+fn cleanup_cancelled_clone(
+    path: &str,
+    pre: Option<&crate::cancel_cleanup::PreOp>,
+    sites: Option<&CloneSites>,
+    skip: Option<&dyn Fn() -> bool>,
+) -> Vec<String> {
+    if skip.is_some_and(|f| f()) {
+        return Vec::new();
+    }
+    let mut removed = match pre {
+        Some(pre) => crate::cancel_cleanup::after_cancel(path, pre, false, false).removed_locks,
+        None => Vec::new(),
+    };
+    if let Some(sites) = sites {
+        removed.extend(sites.remove_new());
+    }
+    removed
+}
+
+fn cancelled_result(key: &str, removed: &[String]) -> WriteResult {
+    let message = if removed.is_empty() {
+        ierr(key)
+    } else {
+        ierrp(&format!("{key}_cleaned"), &[("paths", &removed.join(", "))])
+    };
+    WriteResult { ok: false, message, backup_ref: None, conflicting_files: Vec::new(), cancelled: true }
+}
+
 /// This repo's IMMEDIATE superproject working tree, or `None` when it isn't a
 /// submodule. `git rev-parse --show-superproject-working-tree` is the only
 /// robust way to answer this — it consults the gitlink/`.git`-file wiring rather
@@ -664,10 +801,10 @@ fn git_error_message(out: &GitOut) -> String {
 /// this module builds the struct literal directly (all fields are `pub`) —
 /// same pattern as `git_tag.rs`'s own `ok_result`/`err_result` wrappers.
 fn ok_result(message: impl Into<String>, backup_ref: Option<String>) -> WriteResult {
-    WriteResult { ok: true, message: message.into(), backup_ref, conflicting_files: Vec::new() }
+    WriteResult { ok: true, message: message.into(), backup_ref, conflicting_files: Vec::new(), cancelled: false }
 }
 fn err_result(message: impl Into<String>) -> WriteResult {
-    WriteResult { ok: false, message: message.into(), backup_ref: None, conflicting_files: Vec::new() }
+    WriteResult { ok: false, message: message.into(), backup_ref: None, conflicting_files: Vec::new(), cancelled: false }
 }
 
 /// Reject anything that could be read as a flag or carries a control
@@ -783,8 +920,33 @@ const SUBMODULE_SSH: &str =
     "core.sshCommand=ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4";
 #[tauri::command]
 #[specta::specta]
-pub async fn submodule_update(path: String, submodule_path: Option<String>, recursive: bool, init: bool) -> WriteResult {
+pub async fn submodule_update(
+    app: AppHandle<Wry>,
+    path: String,
+    submodule_path: Option<String>,
+    recursive: bool,
+    init: bool,
+) -> WriteResult {
     crate::blocking::run_blocking(move || {
+        let label = submodule_path.clone().unwrap_or_default();
+        crate::git_remote::background_op(&app, crate::jobs::JobKind::SubmoduleUpdate, &path.clone(), &label, |ctx| {
+            submodule_update_core(path, submodule_path, recursive, init, ctx)
+        })
+    })
+    .await
+}
+
+/// The body of [`submodule_update`]. A cancel removes the lock files the
+/// killed git left and whatever clone it had only begun (see [`CloneSites`]),
+/// so the next Update starts clean.
+pub fn submodule_update_core(
+    path: String,
+    submodule_path: Option<String>,
+    recursive: bool,
+    init: bool,
+    ctx: OpCtx<'_>,
+) -> WriteResult {
+    {
         if let Some(p) = &submodule_path {
             if let Err(e) = validate_submodule_path(p) {
                 return err_result(e);
@@ -801,9 +963,11 @@ pub async fn submodule_update(path: String, submodule_path: Option<String>, recu
             args.push("--");
             args.push(p.as_str());
         }
-        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
-        // Cancelled run cancel_cleanup::after_cancel.
-        match run_git_c(&path, &args, None) {
+        let cancellable = ctx.cancel.is_some();
+        let pre = cancellable.then(|| crate::trust::open_repo(&path).ok().map(|r| crate::cancel_cleanup::pre_op(&r))).flatten();
+        let sites = cancellable.then(|| CloneSites::record(&path, None)).flatten();
+        let skip = ctx.skip_lock_cleanup;
+        match run_git_op(&path, &args, ctx) {
             Ok(out) if out.ok => ok_result(
                 match &submodule_path {
                     Some(p) => format!("Updated submodule {p}."),
@@ -814,10 +978,13 @@ pub async fn submodule_update(path: String, submodule_path: Option<String>, recu
             // e.g. "error: Your local changes to the following files would be
             // overwritten by checkout ... Aborting" — never forced, surfaced verbatim.
             Ok(out) => err_result(git_error_message(&out)),
-            Err(e) => err_result(e),
+            Err(RunError::Cancelled) => {
+                let removed = cleanup_cancelled_clone(&path, pre.as_ref(), sites.as_ref(), skip);
+                cancelled_result("err_remote.submodule_update_cancelled", &removed)
+            }
+            Err(e) => err_result(e.to_ierr("err_remote.run_git_failed")),
         }
-    })
-    .await
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -918,12 +1085,32 @@ fn validate_branch_name(name: &str) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn submodule_add(
+    app: AppHandle<Wry>,
     path: String,
     repository_url: String,
     submodule_path: String,
     branch: Option<String>,
 ) -> WriteResult {
     crate::blocking::run_blocking(move || {
+        crate::git_remote::background_op(&app, crate::jobs::JobKind::SubmoduleAdd, &path.clone(), &submodule_path.clone(), |ctx| {
+            submodule_add_core(path, repository_url, submodule_path, branch, ctx)
+        })
+    })
+    .await
+}
+
+/// The body of [`submodule_add`]. A cancel cleans up like
+/// [`submodule_update_core`]'s; a kill after the clone finished but before
+/// git staged `.gitmodules` can leave that file changed, which the message
+/// says to check.
+pub fn submodule_add_core(
+    path: String,
+    repository_url: String,
+    submodule_path: String,
+    branch: Option<String>,
+    ctx: OpCtx<'_>,
+) -> WriteResult {
+    {
         if let Err(e) = validate_repository_url(&repository_url) {
             return err_result(e);
         }
@@ -946,9 +1133,11 @@ pub async fn submodule_add(
         args.push(&repository_url);
         args.push(&submodule_path);
 
-        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
-        // Cancelled run cancel_cleanup::after_cancel.
-        match run_git_c(&path, &args, None) {
+        let cancellable = ctx.cancel.is_some();
+        let pre = cancellable.then(|| crate::trust::open_repo(&path).ok().map(|r| crate::cancel_cleanup::pre_op(&r))).flatten();
+        let sites = cancellable.then(|| CloneSites::record(&path, Some(&submodule_path))).flatten();
+        let skip = ctx.skip_lock_cleanup;
+        match run_git_op(&path, &args, ctx) {
             Ok(out) if out.ok => ok_result(
                 match &branch {
                     Some(b) => format!("Added submodule {submodule_path} (branch {b})."),
@@ -960,10 +1149,13 @@ pub async fn submodule_add(
             // '<path>' already exists and is not a valid git repo" — see module
             // doc comment for why no pre-check duplicates this.
             Ok(out) => err_result(git_error_message(&out)),
-            Err(e) => err_result(e),
+            Err(RunError::Cancelled) => {
+                let removed = cleanup_cancelled_clone(&path, pre.as_ref(), sites.as_ref(), skip);
+                cancelled_result("err_remote.submodule_add_cancelled", &removed)
+            }
+            Err(e) => err_result(e.to_ierr("err_remote.run_git_failed")),
         }
-    })
-    .await
+    }
 }
 
 /// Rewrite the superproject's OWN `.git/config` entries for submodule(s)'
@@ -2072,5 +2264,76 @@ mod tests {
         // non-WSL-formatted path, landing on the graceful "clean" fallback.
         assert_eq!(classify_status_wsl("/any/path", Some("abc123"), Some("abc123")), "clean");
     }
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let ok = std::process::Command::new("git").arg("-C").arg(dir).args(args).status().unwrap().success();
+        assert!(ok, "git {args:?} failed");
+    }
+
+    /// A repo with one registered, initialized submodule "kept" and one
+    /// registered but never-cloned submodule "fresh" — the state a cancelled
+    /// `submodule update --init` starts from.
+    fn superproject(tag: &str) -> std::path::PathBuf {
+        let base = std::env::temp_dir().join(format!("gitcat-clonesites-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let (child, sup) = (base.join("child"), base.join("sup"));
+        for d in [&child, &sup] {
+            fs::create_dir_all(d).unwrap();
+            git(d, &["init", "-q", "-b", "main"]);
+            git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "c0"]);
+        }
+        let url = child.to_str().unwrap();
+        for name in ["kept", "fresh"] {
+            git(&sup, &["-c", "protocol.file.allow=always", "submodule", "add", "-q", url, name]);
+        }
+        git(&sup, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "subs"]);
+        // Make "fresh" never-cloned: drop its git dir and empty its folder.
+        git(&sup, &["submodule", "deinit", "-q", "-f", "fresh"]);
+        fs::remove_dir_all(sup.join(".git").join("modules").join("fresh")).unwrap();
+        sup
+    }
+
+    #[test]
+    fn clone_sites_remove_only_what_appeared_after_recording() {
+        let sup = superproject("remove_new");
+        let path = sup.to_str().unwrap();
+        let sites = CloneSites::record(path, Some("added")).expect("a repo with a workdir");
+        assert!(sites.fresh_worktrees.contains(&"fresh".to_string()), "empty after deinit: {:?}", sites.fresh_worktrees);
+        assert!(sites.fresh_worktrees.contains(&"added".to_string()));
+        assert!(!sites.fresh_worktrees.contains(&"kept".to_string()), "kept has a checkout");
+
+        // What a killed clone leaves: a module git dir and a partial checkout,
+        // for both the registered "fresh" and the being-added "added".
+        for name in ["fresh", "added"] {
+            let gd = sup.join(".git").join("modules").join(name);
+            fs::create_dir_all(&gd).unwrap();
+            fs::write(gd.join("HEAD"), "ref: refs/heads/main
+").unwrap();
+            fs::create_dir_all(sup.join(name)).unwrap();
+            fs::write(sup.join(name).join("half.txt"), "partial
+").unwrap();
+        }
+        let mut removed = sites.remove_new();
+        removed.sort();
+        assert_eq!(removed, vec![".git/modules/added", ".git/modules/fresh", "added", "fresh"]);
+        assert!(!sup.join("fresh").join("half.txt").exists() && !sup.join("added").exists());
+        assert!(sup.join(".git").join("modules").join("kept").join("HEAD").is_file(), "a pre-existing module dir is never touched");
+        assert!(sup.join("kept").join(".git").exists(), "a pre-existing checkout is never touched");
+        let _ = fs::remove_dir_all(sup.parent().unwrap());
+    }
+
+    #[test]
+    fn a_pre_cancelled_update_is_a_cancelled_result_and_touches_nothing() {
+        let sup = superproject("precancel");
+        let token = CancelToken::new();
+        token.cancel();
+        let ctx = OpCtx { cancel: Some(token), ..Default::default() };
+        let res = submodule_update_core(sup.to_str().unwrap().to_string(), None, false, true, ctx);
+        assert!(res.cancelled && !res.ok, "got: {}", res.message);
+        assert_eq!(res.message, ierr("err_remote.submodule_update_cancelled"), "nothing to clean: plain message");
+        assert!(sup.join(".git").join("modules").join("kept").join("HEAD").is_file());
+        let _ = fs::remove_dir_all(sup.parent().unwrap());
+    }
+
 }
 

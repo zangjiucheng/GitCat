@@ -30,7 +30,7 @@ vi.mock("@/keymap/registry.ts", () => ({
 }));
 
 vi.mock("../syncprogress/syncprogress.svelte.ts", () => ({
-  syncProgressCtrl: { open: false, jobId: null as number | null },
+  syncProgressCtrl: { open: false, jobId: null as number | null, canReopen: false, reopen: vi.fn() },
 }));
 
 import { commands } from "../../ipc/bindings";
@@ -58,6 +58,7 @@ function job(partial: Partial<JobInfo> = {}): JobInfo {
     background: false,
     stalled: false,
     cancelling: false,
+    stallSecs: 60,
     ...partial,
   };
 }
@@ -189,6 +190,11 @@ describe("events", () => {
     expect(bridge.tama.warn).toHaveBeenCalledTimes(2);
   });
 
+  it("an already-stalled row uses its own job's threshold, not a hard-coded one", () => {
+    jobsCtrl.onStarted(job({ id: 11, stalled: true, stallSecs: 90 }));
+    expect(jobsCtrl.jobs[0]).toMatchObject({ stalled: true, idleSecs: 90 });
+  });
+
   it("a row that arrives already stalled gets the threshold and the one-time prompt", () => {
     // A reload mid-stall: jobs_list reports stalled, and no job-progress follows.
     jobsCtrl.onStarted(job({ id: 7, stalled: true }));
@@ -200,9 +206,9 @@ describe("events", () => {
 });
 
 describe("cancel", () => {
-  it("calls jobCancel and sets cancelling; a cancelled finish toasts", async () => {
+  it("calls jobCancel and sets cancelling; a cancelled background job toasts", async () => {
     vi.mocked(commands.jobCancel).mockResolvedValue(true);
-    jobsCtrl.onStarted(job({ id: 7, label: "origin" }));
+    jobsCtrl.onStarted(job({ id: 7, label: "origin", background: true }));
     const p = jobsCtrl.cancel(7);
     expect(jobsCtrl.jobs[0].cancelling).toBe(true);
     await p;
@@ -212,6 +218,14 @@ describe("cancel", () => {
     jobsCtrl.onFinished({ id: 7, outcome: "cancelled" });
     expect(bridge.tama.say).toHaveBeenCalledTimes(1);
     expect(vi.mocked(bridge.tama.say).mock.calls[0][0]).toContain("origin");
+  });
+
+  it("a cancelled FOREGROUND job does not toast: its own caller relays the backend message", async () => {
+    vi.mocked(commands.jobCancel).mockResolvedValue(true);
+    jobsCtrl.onStarted(job({ id: 9, background: false }));
+    await jobsCtrl.cancel(9);
+    jobsCtrl.onFinished({ id: 9, outcome: "cancelled" });
+    expect(bridge.tama.say).not.toHaveBeenCalled();
   });
 
   it("a cancelled finish it did not cause does not toast", () => {
@@ -279,5 +293,35 @@ describe("elapsed", () => {
     expect(elapsed(65_400)).toBe("1:05");
     expect(elapsed(3_790_000)).toBe("63:10");
     expect(elapsed(-5)).toBe("0:00");
+  });
+});
+
+describe("show (reopen a hidden progress modal)", () => {
+  const sp = syncProgressCtrl as unknown as { open: boolean; jobId: number | null; canReopen: boolean; reopen: ReturnType<typeof vi.fn> };
+
+  it("is offered only for the modal's own foreground job while it is hidden", () => {
+    jobsCtrl.onStarted(job({ id: 21, background: false }));
+    jobsCtrl.onStarted(job({ id: 22, background: true }));
+    sp.jobId = 21;
+    sp.canReopen = false;
+    expect(jobsCtrl.canShow(jobsCtrl.jobs[0])).toBe(false);
+    sp.canReopen = true;
+    expect(jobsCtrl.canShow(jobsCtrl.jobs[0])).toBe(true);
+    expect(jobsCtrl.canShow(jobsCtrl.jobs[1])).toBe(false);
+    sp.jobId = 99;
+    expect(jobsCtrl.canShow(jobsCtrl.jobs[0])).toBe(false);
+  });
+
+  it("closes the popover and reopens the modal", () => {
+    jobsCtrl.onStarted(job({ id: 23, background: false }));
+    sp.jobId = 23;
+    sp.canReopen = true;
+    jobsCtrl.open = true;
+    jobsCtrl.show(23);
+    expect(jobsCtrl.open).toBe(false);
+    expect(sp.reopen).toHaveBeenCalledTimes(1);
+    sp.canReopen = false;
+    jobsCtrl.show(23);
+    expect(sp.reopen).toHaveBeenCalledTimes(1);
   });
 });

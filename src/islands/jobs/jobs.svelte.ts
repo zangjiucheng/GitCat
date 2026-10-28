@@ -31,7 +31,7 @@
 import { tick, untrack } from "svelte";
 import { IN_TAURI } from "../../ipc/env";
 import { commands } from "../../ipc/bindings";
-import type { JobFinished, JobInfo, JobKind, JobProgress } from "../../ipc/bindings";
+import type { JobFinished, JobInfo, JobProgress } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { be, t } from "@/i18n/i18n.svelte.ts";
 import { keymap } from "@/keymap/registry.ts";
@@ -41,11 +41,6 @@ import { syncProgressCtrl } from "../syncprogress/syncprogress.svelte.ts";
 export type JobView = JobInfo & { idleSecs: number };
 
 export const BACKGROUND_GRACE_MS = 5000;
-
-// jobs.rs NETWORK_STALL: the idle threshold "job-progress" reports at the
-// transition. JobInfo.stalled carries no number, so a row that arrives
-// already stalled uses this.
-const NETWORK_STALL_SECS = 60;
 
 type TauriEvent<T> = { payload: T };
 type Listen = <T>(event: string, cb: (e: TauriEvent<T>) => void) => Promise<() => void>;
@@ -136,9 +131,9 @@ class JobsState {
     this.jobs = [...this.jobs, { ...i, stalled: false, idleSecs: 0 }];
     this.syncTicker();
     // A jobs_list row can already be stalled (a reload mid-stall), and
-    // "job-progress" fires only on change — so replay the transition: it
-    // fills in the threshold JobInfo lacks and runs the one-time prompt.
-    if (i.stalled) this.onProgress({ id: i.id, stalled: true, idleSecs: NETWORK_STALL_SECS });
+    // "job-progress" fires only on change — so replay the transition with the
+    // job's own threshold, which runs the one-time prompt.
+    if (i.stalled) this.onProgress({ id: i.id, stalled: true, idleSecs: i.stallSecs });
   }
 
   onProgress(p: JobProgress): void {
@@ -160,7 +155,10 @@ class JobsState {
     const ours = this.cancelledHere.delete(f.id);
     if (!j) return;
     this.jobs = this.jobs.filter((x) => x.id !== f.id);
-    if (ours && f.outcome === "cancelled") bridge.tama.say(t("jobs.cancelled_toast", { label: jobLabel(j) }));
+    // Only for a background job: a foreground one's own caller (doFetch/doPull/
+    // doPush) relays the backend's fuller message, and two in a row read as
+    // noise. Every other job here is background.
+    if (ours && j.background && f.outcome === "cancelled") bridge.tama.say(t("jobs.cancelled_toast", { label: jobLabel(j) }));
     this.syncTicker();
     if (this.open && this.count === 0) this.close();
   }
@@ -183,6 +181,20 @@ class JobsState {
       this.patch(id, { cancelling: false });
       bridge.tama.warn(be(String(e)));
     }
+  }
+
+  // A foreground job whose progress modal was hidden can be brought back.
+  canShow(j: Pick<JobView, "id" | "background">): boolean {
+    // The design-mode demo run has no backend id; the modal is always showing it.
+    const mine = syncProgressCtrl.jobId === j.id || j.id === DEMO_JOB_ID;
+    return !j.background && mine && syncProgressCtrl.canReopen;
+  }
+
+  show(id: number): void {
+    const j = this.jobs.find((x) => x.id === id);
+    if (!j || !this.canShow(j)) return;
+    this.close();
+    void syncProgressCtrl.reopen();
   }
 
   // The chip and Mod+Shift+J. Returns false — so the key is declined, not
@@ -247,13 +259,14 @@ class JobsState {
       this.gone.delete(DEMO_JOB_ID);
       this.onStarted({
         id: DEMO_JOB_ID,
-        kind: demoKind(syncProgressCtrl.title),
+        kind: syncProgressCtrl.opPhase,
         repo: "/demo/gitcat",
         label: "",
         startedAtMs: Date.now(),
         background: false,
         stalled: false,
         cancelling: false,
+        stallSecs: 60,
       });
     } else if (!running && has) {
       this.onFinished({ id: DEMO_JOB_ID, outcome: syncProgressCtrl.cancelled ? "cancelled" : "ok" });
@@ -265,12 +278,5 @@ class JobsState {
   }
 }
 
-// The demo modal only exposes its (localized) title, which legacy/main.ts
-// sets from topbar.fetching/pulling/pushing.
-function demoKind(title: string): JobKind {
-  if (title === t("topbar.pulling")) return "pull";
-  if (title === t("topbar.pushing")) return "push";
-  return "fetch";
-}
 
 export const jobsCtrl = new JobsState();

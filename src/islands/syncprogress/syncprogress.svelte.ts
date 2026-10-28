@@ -34,7 +34,7 @@ import { IN_TAURI } from "../../ipc/env";
 import { commands } from "../../ipc/bindings";
 import type { JobInfo, JobProgress } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
-import { be } from "@/i18n/i18n.svelte.ts";
+import { be, t } from "@/i18n/i18n.svelte.ts";
 import { keymap } from "@/keymap/registry.ts";
 import type { ScopeHandle } from "@/keymap/scopes.ts";
 
@@ -99,6 +99,36 @@ class SyncProgressState {
     return this.job;
   }
 
+  // Which op the modal is showing (or last showed).
+  get opPhase(): Phase {
+    return this.phase;
+  }
+
+  // A hidden modal whose op is still running — what reopen() brings back.
+  get canReopen(): boolean {
+    return !this.open && this.running;
+  }
+
+  // Bring a hidden modal back while its op is still running: the jobs chip's
+  // Show, or clicking the busy topbar button. close() dropped the log's
+  // subscription, so what git printed meanwhile is gone; the log says so
+  // rather than pretend to be complete. Design mode's canned run keeps
+  // feeding the log by itself, so it only needs to become visible again.
+  async reopen(): Promise<void> {
+    if (!this.canReopen) return;
+    this.clearAutoClose();
+    this.lines = [...this.lines, t("syncprogress.hidden_gap")];
+    this.open = true;
+    this.scope ??= keymap.pushScope("modal", {
+      el: document.querySelector<HTMLElement>(".modal.syncprogress"),
+      autoFocus: false,
+      onEscape: () => this.escape(),
+      restoreFocus: true,
+    });
+    if (!IN_TAURI || this.demo) return;
+    await this.subscribe(this.job == null);
+  }
+
   // Open the modal and start listening. Awaited by doFetch/doPull/doPush
   // BEFORE they invoke the streaming command, so no early event is dropped.
   async begin(title: string, phase: Phase, repo: string): Promise<void> {
@@ -128,15 +158,22 @@ class SyncProgressState {
       restoreFocus: true,
     });
     if (!IN_TAURI) return; // design mode: beginDemo drives the modal instead
+    await this.subscribe(true);
+  }
+
+  // Arm this op's listeners: the log, the stalled banner, and (until the id is
+  // known) "job-started". begin() and reopen().
+  private async subscribe(withJobStarted: boolean): Promise<void> {
     const gen = ++this.gen;
     const listen = (window as unknown as { __TAURI__?: { event: { listen: Listen } } }).__TAURI__?.event.listen;
     if (!listen) return;
+    const noop = () => {};
     const [progressSub, jobSub, jobProgressSub] = await Promise.all([
       listen<{ phase: string; line: string }>("sync-progress", (e) => {
         if (e.payload.phase !== this.phase) return; // defensive: never mix a fetch's tail into a pull
         this.lines = [...this.lines, e.payload.line]; // reassign (not push) so runes sees the change
       }),
-      listen<JobInfo>("job-started", (e) => this.onJobStarted(e.payload)),
+      withJobStarted ? listen<JobInfo>("job-started", (e) => this.onJobStarted(e.payload)) : Promise.resolve(noop),
       listen<JobProgress>("job-progress", (e) => {
         if (e.payload.id !== this.job) return;
         this.stalled = e.payload.stalled;
@@ -154,6 +191,7 @@ class SyncProgressState {
       return;
     }
     this.unlisteners.push(progressSub, jobProgressSub);
+    if (!withJobStarted) return;
     // Normally null here (begin() just dropped it); defensive against a stale
     // begin()'s kept subscription leaking.
     this.jobSub?.();

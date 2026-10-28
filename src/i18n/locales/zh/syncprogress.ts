@@ -8,4 +8,8 @@ export default {
   cancelling: "正在取消…",
   cancelled: "已取消。",
   stalled: "git 已超过 {secs} 秒没有任何进度，看起来卡住了。要取消吗？",
+  // 隐藏后重新显示时追加到日志：隐藏期间 git 的输出没有保留。
+  hidden_gap: "……（隐藏期间的输出未保留）",
+  // 正在运行的那个操作在顶栏按钮上的提示。
+  show_progress: "显示进度",
 };

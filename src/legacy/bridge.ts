@@ -20,6 +20,9 @@ export {
   resolveLang,
   registerPluginLanguages,
   Tama as tama,
+  // A cancelled op is the user's choice, not a failure: Tama relays the
+  // backend's message without a warning. Hoisted `function`, no TDZ risk.
+  relayCancelled,
   // Additive, subscribable Tama event bus (legacy/main.ts) — islands call
   // `bridge.tamaBus.subscribe(fn)` to observe the SAME event stream the mascot
   // reacts to. A mid-file `export const` in legacy/main.ts, so this live

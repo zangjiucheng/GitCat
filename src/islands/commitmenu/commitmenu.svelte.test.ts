@@ -48,11 +48,11 @@ import { commands } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { commitMenuCtrl } from "./commitmenu.svelte.ts";
 
-function ok(message = "ok"): { ok: true; message: string; backupRef: null; conflictingFiles: string[] } {
-  return { ok: true, message, backupRef: null, conflictingFiles: [] };
+function ok(message = "ok"): { ok: true; message: string; backupRef: null; conflictingFiles: string[]; cancelled: false } {
+  return { ok: true, message, backupRef: null, conflictingFiles: [], cancelled: false };
 }
-function fail(message = "nope"): { ok: false; message: string; backupRef: null; conflictingFiles: string[] } {
-  return { ok: false, message, backupRef: null, conflictingFiles: [] };
+function fail(message = "nope"): { ok: false; message: string; backupRef: null; conflictingFiles: string[]; cancelled: false } {
+  return { ok: false, message, backupRef: null, conflictingFiles: [], cancelled: false };
 }
 
 function resetMenu() {

@@ -1,6 +1,14 @@
 // err_remote 的简体中文翻译（PER-82）。英文为准；此处缺失的键会自动回退到英文。
 // {base}/{detail} 等占位符承载的是逐字透传的 git stderr 或 io/git2 细节，本身不翻译。
 export default {
+  // 从任务指示器取消的“重置到上游”。
+  reset_cancelled: "已取消重置 {branch}。如果有内容看起来只更新了一半，{undoKey} 可以恢复快照 {snapshot}。",
+  reset_cancelled_locks: "已取消重置 {branch}。已删除被取消的 git 留下的锁文件：{locks}。如果有内容看起来只更新了一半，{undoKey} 可以恢复快照 {snapshot}。",
+  // 取消的子模块更新/添加。{paths}：被中断的克隆已经创建的内容（以及锁文件），已删除，以便下次干净地开始。
+  submodule_update_cancelled: "已取消子模块更新。再运行一次即可完成。",
+  submodule_update_cancelled_cleaned: "已取消子模块更新。已删除被中断的克隆创建的内容（{paths}），下次更新会干净地开始。",
+  submodule_add_cancelled: "已取消添加子模块。",
+  submodule_add_cancelled_cleaned: "已取消添加子模块。已删除被中断的克隆创建的内容（{paths}）。如果 git 已经改动了 .gitmodules，请放弃这一改动。",
   run_git_failed: "无法运行 git：{detail}",
   git_wait_failed: "等待 git 结束失败：{detail}",
   git_exited_status: "git 以状态 {code} 退出",
