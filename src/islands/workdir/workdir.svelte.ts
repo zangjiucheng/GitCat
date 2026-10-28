@@ -1167,6 +1167,11 @@ class WorkdirState {
         bridge.tama.say(res.message || "Committed.", 3200);
         await bridge.reloadGraph(true);
         await this.refreshStatus(repo);
+      } else if (res.cancelled) {
+        // A hook or gpg that never returned, stopped from the jobs indicator.
+        // The message is kept so the user can simply commit again.
+        bridge.relayCancelled(res.message);
+        await this.refreshStatus(repo);
       } else {
         bridge.tama.warn(res.message || "Commit failed.");
       }

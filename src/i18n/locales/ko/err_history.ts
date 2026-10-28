@@ -5,6 +5,20 @@
 // 키로 등록되지 않으며(병합/리베이스 실패 후 그런 출력이 많이 나와요), 그대로
 // 통과돼요 — `{detail}` 같은 자리에 담기는 그 원문은 번역하지 않아요.
 export default {
+  // 작업 표시기에서 취소한 히스토리 작업(#233). 백엔드가 작업 문장과 아래의 선택적 문장들을 이어 붙여요(Rust `ijoin`).
+  commit_cancelled: "커밋을 취소했어요. 메시지와 스테이징한 변경은 그대로 있어요.",
+  merge_cancelled: "병합을 취소했어요.",
+  cherry_pick_cancelled: "체리픽을 취소했어요.",
+  revert_cancelled: "되돌리기를 취소했어요.",
+  rebase_cancelled: "리베이스를 취소했어요.",
+  rebase_continue_cancelled: "계속하기를 취소했어요. 리베이스는 아직 진행 중이에요.",
+  apply_patch_cancelled: "패치 적용을 취소했어요.",
+  mergetool_cancelled: "병합 도구 기다리기를 멈췄어요. 파일은 아직 해결되지 않았어요.",
+  cancel_removed_locks: "취소된 git이 남긴 잠금 파일을 지웠어요: {locks}.",
+  cancel_aborted: "git {op} --abort를 실행해서 하다 만 {op}을(를) 되돌렸어요.",
+  cancel_reset_tree: "인덱스와 작업 트리를 작업 전 상태로 되돌렸어요.",
+  cancel_undo: "그래도 이상해 보이면 {undoKey}로 스냅샷 {snapshot}을(를) 복원할 수 있어요.",
+
   // 공용 git 실행 / 저장소 열기 / 스냅샷 / 리비전 검증 실패.
   // ({detail}에는 원본 io/git2 사유가 그대로 담기며 번역하지 않아요.)
   could_not_run_git: "git을 실행하지 못했어요: {detail}",

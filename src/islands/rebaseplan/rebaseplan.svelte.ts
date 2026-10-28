@@ -183,6 +183,11 @@ class RebasePlanState {
         bridge.tama.set("hint");
         bridge.tama.say(be(res.message) || t("rebaseplan.up_to_date_empty"), 4200);
         break;
+      case "cancelled":
+        this.close();
+        await bridge.reloadGraph(true);
+        bridge.relayCancelled(res.message);
+        break;
       case "conflict":
       case "editing":
         // Hand off to the SAME shared conflict/editing UI the plain

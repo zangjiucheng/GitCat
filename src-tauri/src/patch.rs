@@ -133,6 +133,7 @@ use std::process::Command;
 
 use git2::{Repository, RepositoryState};
 use serde::Serialize;
+use tauri::{AppHandle, Wry};
 
 use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions};
@@ -613,11 +614,15 @@ fn export_patch_sync(path: String, from: Option<String>, to: String, dest: Strin
 /// Wrapped in `run_blocking` to move it onto the blocking-task thread pool.
 #[tauri::command]
 #[specta::specta]
-pub async fn apply_patch(path: String, patch_file_path: String) -> ApplyPatchResult {
-    crate::blocking::run_blocking(move || apply_patch_sync(path, patch_file_path)).await
+pub async fn apply_patch(app: AppHandle<Wry>, path: String, patch_file_path: String) -> ApplyPatchResult {
+    crate::blocking::run_blocking(move || {
+        let label = String::new();
+        crate::jobs::run_job(&app, crate::jobs::JobKind::ApplyPatch, &path.clone(), &label, || apply_patch_core(path, patch_file_path))
+    })
+    .await
 }
 
-fn apply_patch_sync(path: String, patch_file_path: String) -> ApplyPatchResult {
+pub fn apply_patch_core(path: String, patch_file_path: String) -> ApplyPatchResult {
     if let Err(e) = validate_patch_file(&patch_file_path) {
         return ApplyPatchResult::error(e);
     }
@@ -646,10 +651,19 @@ fn apply_patch_sync(path: String, patch_file_path: String) -> ApplyPatchResult {
     // exported; a no-op for a patch that never needed escaping (an ordinary
     // external patch with no colliding body lines applies identically
     // either way — empirically verified).
-    // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
-    // Cancelled run cancel_cleanup::after_cancel.
-    let out = match git_am_stdin(&path, &["am", "--3way", "--patch-format=mboxrd"], &patch_bytes, None) {
+    let job = crate::cancel_cleanup::Cancellable::arm(&path);
+    let out = match git_am_stdin(&path, &["am", "--3way", "--patch-format=mboxrd"], &patch_bytes, job.token().as_ref()) {
         Ok(o) => o,
+        Err(e) if crate::procutil::is_cancelled_ierr(&e) => {
+            let message = job.finish(&path, "err_history.apply_patch_cancelled", true, Some(backup.as_str()));
+            return ApplyPatchResult {
+                ok: false,
+                state: "cancelled".into(),
+                conflicted_files: Vec::new(),
+                message,
+                backup_ref: Some(backup),
+            };
+        }
         Err(e) => {
             return ApplyPatchResult {
                 ok: false,

@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../legacy/bridge", () => ({
   CUR_REPO: "/repo",
   tama: { set: vi.fn(), say: vi.fn(), warn: vi.fn(), event: vi.fn() },
+  relayCancelled: vi.fn(),
   reloadGraph: vi.fn(async () => {}),
   armDanger: vi.fn(),
   requestRedraw: vi.fn(),
@@ -66,7 +67,7 @@ function err(error: string): { status: "error"; error: string } {
   return { status: "error", error };
 }
 function wres(partial: Partial<WorkdirResult>): WorkdirResult {
-  return { ok: true, message: "", conflictedFiles: [], backupRef: null, backupPatch: null, droppedStashRef: null, ...partial };
+  return { ok: true, message: "", conflictedFiles: [], backupRef: null, backupPatch: null, droppedStashRef: null, cancelled: false, ...partial };
 }
 
 const STATUS_DIRTY: WorkdirStatus = {
@@ -868,6 +869,20 @@ describe("stageLines / unstageLines / discardLines", () => {
 });
 
 describe("commit", () => {
+  it("cancelled (a stuck hook, from the jobs indicator): relays, keeps the message, no warning", async () => {
+    mockInTauri = true;
+    workdirCtrl.message = "fix bug";
+    workdirCtrl.amend = false;
+    vi.mocked(commands.commit).mockResolvedValueOnce(wres({ ok: false, cancelled: true, message: "i18n:err_history.commit_cancelled" }));
+    vi.mocked(commands.workdirStatus).mockResolvedValueOnce(ok(STATUS_DIRTY));
+
+    await workdirCtrl.commit("/repo");
+
+    expect(bridge.relayCancelled).toHaveBeenCalledWith("i18n:err_history.commit_cancelled");
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+    expect(workdirCtrl.message).toBe("fix bug");
+  });
+
   it("client-side empty-message guard short-circuits before any IPC call", async () => {
     mockInTauri = true;
     workdirCtrl.message = "   ";

@@ -19,7 +19,7 @@ mod common;
 use common::TempRepo;
 use git2::RepositoryState;
 use gitcat_lib::conflict::{conflict_status, resolve_conflict_file};
-use gitcat_lib::git_revert::{revert_abort, revert_continue, revert_start};
+use gitcat_lib::git_revert::{revert_abort, revert_continue, revert_start_core};
 
 /// Builds a repo where reverting `to_revert` (which changed `f.txt` from
 /// "base" to "A") conflicts with a later edit on the same line (`head_b`
@@ -39,7 +39,7 @@ fn revert_clean_produces_inverse_commit_with_revert_message() {
     let added = repo.commit("f.txt", "base\nline2\n", "add line2");
     let path = repo.path();
 
-    let result = tauri::async_runtime::block_on(revert_start(path.clone(), added.clone(), None));
+    let result = revert_start_core(path.clone(), added.clone(), None);
     assert!(result.ok, "expected a clean revert, got: {}", result.message);
     assert_eq!(result.state, "clean");
     assert!(result.conflicted_files.is_empty());
@@ -78,7 +78,7 @@ fn revert_of_change_not_present_is_empty_not_clean() {
     let head_before = repo.commit("f.txt", "base\n", "manually remove line2");
     let path = repo.path();
 
-    let result = tauri::async_runtime::block_on(revert_start(path.clone(), added, None));
+    let result = revert_start_core(path.clone(), added, None);
     assert_eq!(result.state, "empty", "expected a benign no-op, got: {}", result.message);
     assert!(!result.ok);
     assert!(result.conflicted_files.is_empty());
@@ -98,7 +98,7 @@ fn revert_conflict_resolve_theirs_then_continue() {
     let (repo, _head_b, to_revert) = build_conflicting_repo("revert_resolve");
     let path = repo.path();
 
-    let reverted = tauri::async_runtime::block_on(revert_start(path.clone(), to_revert.clone(), None));
+    let reverted = revert_start_core(path.clone(), to_revert.clone(), None);
     assert_eq!(reverted.state, "conflict", "expected a conflict, got: {}", reverted.message);
     assert!(!reverted.ok);
     assert_eq!(reverted.conflicted_files, vec!["f.txt".to_string()]);
@@ -144,7 +144,7 @@ fn revert_abort_restores_head() {
     let (repo, head_b, to_revert) = build_conflicting_repo("revert_abort");
     let path = repo.path();
 
-    let reverted = tauri::async_runtime::block_on(revert_start(path.clone(), to_revert, None));
+    let reverted = revert_start_core(path.clone(), to_revert, None);
     assert_eq!(reverted.state, "conflict", "expected a conflict, got: {}", reverted.message);
     assert_eq!(repo.open().state(), RepositoryState::Revert);
 
@@ -207,7 +207,7 @@ fn revert_empty_is_classified_correctly_under_a_non_english_locale() {
     let head_before = repo.commit("f.txt", "base\n", "manually remove line2");
     let path = repo.path();
 
-    let result = tauri::async_runtime::block_on(revert_start(path.clone(), added, None));
+    let result = revert_start_core(path.clone(), added, None);
     assert_eq!(
         result.state, "empty",
         "expected a benign no-op even under a French locale, got state={:?} message={:?}",
@@ -231,7 +231,7 @@ fn revert_blocked_by_dirty_tree_reports_blocked_by_local_changes() {
     std::fs::write(repo.dir.join("f.txt"), "dirty, uncommitted\n").unwrap();
     assert!(!repo.is_clean());
 
-    let reverted = tauri::async_runtime::block_on(revert_start(path.clone(), to_revert, None));
+    let reverted = revert_start_core(path.clone(), to_revert, None);
     assert!(!reverted.ok);
     assert_eq!(reverted.state, "error", "expected a dirty-tree refusal, got state {:?}: {}", reverted.state, reverted.message);
     assert!(reverted.blocked_by_local_changes, "expected blocked_by_local_changes=true: {}", reverted.message);
@@ -247,7 +247,7 @@ fn revert_bad_revision_is_not_reported_as_blocked_by_local_changes() {
     let _base = repo.commit("f.txt", "base\n", "base");
     let path = repo.path();
 
-    let reverted = tauri::async_runtime::block_on(revert_start(path, "not-a-real-sha".into(), None));
+    let reverted = revert_start_core(path, "not-a-real-sha".into(), None);
     assert!(!reverted.ok);
     assert_eq!(reverted.state, "error");
     assert!(!reverted.blocked_by_local_changes, "a bad revision must not be misclassified as a dirty-tree block: {}", reverted.message);

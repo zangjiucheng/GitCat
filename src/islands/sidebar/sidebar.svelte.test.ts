@@ -1521,7 +1521,7 @@ describe("stashSwitchReapply / stashSwitchLeaveStashed (#34 modes 1 & 2)", () =>
 
   it("stashSwitchLeaveStashed: stashes everything (incl. untracked), switches, and never reapplies", async () => {
     mockInTauri = true;
-    vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null });
+    vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null, cancelled: false });
     vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.stashSwitchLeaveStashed("feature", null);
     expect(commands.stashSave).toHaveBeenCalledWith("/repo", expect.stringContaining("feature"), true);
@@ -1534,7 +1534,7 @@ describe("stashSwitchReapply / stashSwitchLeaveStashed (#34 modes 1 & 2)", () =>
 
   it("with a startPoint, switches via create_branch (not plain checkout) — the checkoutRemote 'new branch' shape", async () => {
     mockInTauri = true;
-    vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null });
+    vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null, cancelled: false });
     vi.mocked(commands.createBranch).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.stashSwitchLeaveStashed("feature-x", "origin/feature-x");
     expect(commands.createBranch).toHaveBeenCalledWith("/repo", "feature-x", "origin/feature-x", true);
@@ -1543,10 +1543,10 @@ describe("stashSwitchReapply / stashSwitchLeaveStashed (#34 modes 1 & 2)", () =>
 
   it("stashSwitchReapply: pops stash@{0} back after a clean switch, using the freshly-stashed entry's own sha", async () => {
     mockInTauri = true;
-    vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null });
+    vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null, cancelled: false });
     vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false });
     vi.mocked(commands.stashList).mockResolvedValueOnce(ok([{ index: 0, sha: "abc1234", branch: null, message: "auto" }]));
-    vi.mocked(commands.stashPop).mockResolvedValueOnce({ ok: true, message: "popped", conflictedFiles: [], backupRef: null, backupPatch: null, droppedStashRef: null });
+    vi.mocked(commands.stashPop).mockResolvedValueOnce({ ok: true, message: "popped", conflictedFiles: [], backupRef: null, backupPatch: null, droppedStashRef: null, cancelled: false });
     await sidebarCtrl.stashSwitchReapply("feature", null);
     expect(commands.stashPop).toHaveBeenCalledWith("/repo", 0, "abc1234");
     expect(bridge.tama.set).toHaveBeenCalledWith("celebrate");
@@ -1554,10 +1554,10 @@ describe("stashSwitchReapply / stashSwitchLeaveStashed (#34 modes 1 & 2)", () =>
 
   it("stashSwitchReapply: a reapply conflict opens the SAME shared Resolver a stash-pop conflict already uses, not a new flow", async () => {
     mockInTauri = true;
-    vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null });
+    vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null, cancelled: false });
     vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: true, message: "", backupRef: null, conflictingFiles: [], cancelled: false });
     vi.mocked(commands.stashList).mockResolvedValueOnce(ok([{ index: 0, sha: "abc1234", branch: null, message: "auto" }]));
-    const conflictRes = { ok: false, message: "conflict", conflictedFiles: ["a.txt"], backupRef: "refs/gitgui/backup/1", backupPatch: null, droppedStashRef: null };
+    const conflictRes = { ok: false, message: "conflict", conflictedFiles: ["a.txt"], backupRef: "refs/gitgui/backup/1", backupPatch: null, droppedStashRef: null, cancelled: false };
     vi.mocked(commands.stashPop).mockResolvedValueOnce(conflictRes);
     await sidebarCtrl.stashSwitchReapply("feature", null);
     expect(resolver.openStashConflict).toHaveBeenCalledWith("/repo", conflictRes);
@@ -1566,7 +1566,7 @@ describe("stashSwitchReapply / stashSwitchLeaveStashed (#34 modes 1 & 2)", () =>
 
   it("aborts without switching if stash_save itself fails", async () => {
     mockInTauri = true;
-    vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: false, message: "nothing to stash", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null });
+    vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: false, message: "nothing to stash", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null, cancelled: false });
     await sidebarCtrl.stashSwitchReapply("feature", null);
     expect(commands.checkout).not.toHaveBeenCalled();
     expect(commands.createBranch).not.toHaveBeenCalled();
@@ -1575,7 +1575,7 @@ describe("stashSwitchReapply / stashSwitchLeaveStashed (#34 modes 1 & 2)", () =>
 
   it("if the switch fails after a successful stash, warns that the changes are safely stashed and never attempts to reapply", async () => {
     mockInTauri = true;
-    vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null });
+    vi.mocked(commands.stashSave).mockResolvedValueOnce({ ok: true, message: "stashed", backupRef: null, conflictedFiles: [], backupPatch: null, droppedStashRef: null, cancelled: false });
     vi.mocked(commands.checkout).mockResolvedValueOnce({ ok: false, message: "not a valid branch name", backupRef: null, conflictingFiles: [], cancelled: false });
     await sidebarCtrl.stashSwitchReapply("bad name", null);
     expect(commands.stashPop).not.toHaveBeenCalled();

@@ -492,7 +492,10 @@ if (IN_TAURI) {
     lastAutoFetchAt = Date.now();
     try {
       const res = await commands.fetch(path, null);
-      if (!res.ok) console.warn("auto-fetch:", res.message);
+      // Cancelled from the jobs indicator: say so, like every other job's
+      // caller (the indicator itself stays quiet).
+      if (res.cancelled) bridge.relayCancelled(res.message);
+      else if (!res.ok) console.warn("auto-fetch:", res.message);
     } catch (e) {
       console.error("auto-fetch failed unexpectedly", e);
     }
