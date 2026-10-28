@@ -60,8 +60,13 @@ export default {
   head_not_on_branch_push: "HEAD가 브랜치 위에 있지 않아요 — 푸시할 것이 없어요.",
   head_not_on_branch_force_push: "HEAD가 브랜치 위에 있지 않아요 — 강제 푸시할 것이 없어요.",
   no_upstream_use_push: "이 브랜치에는 아직 업스트림이 없어요 — 먼저 푸시로 게시해주세요.",
-  upstream_remote_not_utf8: "이 브랜치의 업스트림 원격 이름이 유효한 UTF-8이 아니에요.",
-  cannot_resolve_upstream_remote: "이 브랜치의 업스트림 원격을 확인하지 못했어요: {detail}",
+  // push_target(git_remote.rs): Push/강제 푸시의 대상. git이 브랜치 하나에 대해 정하는 방식대로 정한 뒤 명시적 refspec으로 푸시해요.
+  cannot_read_config: "이 저장소의 git 설정을 읽을 수 없어요: {detail}",
+  push_mirror_remote: "원격 \"{remote}\"이(가) 미러로 설정되어 있어서(remote.{remote}.mirror) 푸시하면 모든 참조가 전송돼요. GitCat은 브랜치 하나만 푸시해요 — 미러로는 터미널에서 푸시하세요.",
+  push_default_nothing: "push.default가 \"nothing\"이라서 명시적인 대상 없이는 git이 아무것도 푸시하지 않아요. 브랜치 메뉴의 \"푸시할 곳…\"으로 대상을 고르세요.",
+  push_upstream_not_push_remote: "push.default가 \"upstream\"인데 이 브랜치는 \"{remote}\"(으)로 푸시하고 업스트림은 \"{upstream}\"에 있어요. 브랜치 메뉴의 \"푸시할 곳…\"으로 대상을 고르세요.",
+  push_no_upstream_branch: "이 브랜치의 업스트림에 브랜치 이름이 없어요(branch.<name>.merge가 설정되지 않음).",
+  push_upstream_name_differs: "\"{branch}\"은(는) 이름이 다른 {upstream}을(를) 추적하고 있어서 Push로는 업데이트하지 않아요(git의 push.default=simple도 마찬가지예요). 브랜치 메뉴의 \"푸시할 곳…\"으로 대상을 고르세요.",
   no_such_local_branch: "그런 로컬 브랜치가 없어요: {branch}",
   // 서브모듈 경로 / 저장소 URL 검증.
   submodule_path_empty: "서브모듈 경로가 비어 있어요.",

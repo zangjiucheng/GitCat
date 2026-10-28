@@ -756,6 +756,72 @@ fn head_branch(repo: &Repository) -> Option<String> {
     repo.head().ok().filter(|h| h.is_branch()).and_then(|h| h.shorthand().map(|s| s.to_string()))
 }
 
+/// Where pushing the current branch goes, as an explicit refspec.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PushTarget {
+    pub remote: String,
+    /// `refs/heads/<branch>:<dest>`, both sides fully qualified.
+    pub refspec: String,
+}
+
+/// Resolve where `git push` (no arguments) would send `branch`, the way git
+/// resolves it for that single branch, and spell it out as `refs/heads/<b>:
+/// <dest>`. GitCat never runs a bare `git push`: `remote.<r>.push =
+/// refs/*:refs/*` or a mirror remote would carry its own `refs/gitgui/*`
+/// snapshots (and 2.0's `refs/gitcat/*` op log) to the server, and
+/// `push.default=matching` would push every same-named branch, not the one
+/// the UI said.
+///
+/// - remote: `branch.<b>.pushRemote`, else `remote.pushDefault`, else the
+///   upstream's remote;
+/// - destination, by `push.default` (unset = `simple`):
+///   - `simple`: the same-named branch; to the upstream's own remote it must
+///     also BE the upstream, else refuse (git's own guard against pushing a
+///     `feature` made from `origin/main` onto `main`);
+///   - `upstream`/`tracking`: the upstream branch; refused when pushing to a
+///     remote other than the upstream's;
+///   - `current`, and `matching`: the same-named branch (GitCat pushes the
+///     current branch only, whatever `matching` would add);
+///   - `nothing`: refused.
+///
+/// `Err` is an i18n string. `None` upstream (`branch.<b>.remote` unset) is the
+/// caller's "publish" case, not handled here.
+pub fn push_target(repo: &Repository, branch: &str) -> Result<Option<PushTarget>, String> {
+    let cfg = repo.config().map_err(|e| ierrp("err_remote.cannot_read_config", &[("detail", e.message())]))?;
+    let get = |key: &str| cfg.get_string(key).ok().filter(|v| !v.is_empty());
+    let Some(upstream_remote) = get(&format!("branch.{branch}.remote")) else {
+        return Ok(None);
+    };
+    let upstream_merge = get(&format!("branch.{branch}.merge"));
+    let remote = get(&format!("branch.{branch}.pushRemote")).or_else(|| get("remote.pushDefault")).unwrap_or(upstream_remote.clone());
+    if cfg.get_bool(&format!("remote.{remote}.mirror")).unwrap_or(false) {
+        return Err(ierrp("err_remote.push_mirror_remote", &[("remote", &remote)]));
+    }
+    let same_name = format!("refs/heads/{branch}");
+    let triangular = remote != upstream_remote;
+    let dest = match get("push.default").map(|m| m.to_ascii_lowercase()).as_deref() {
+        Some("nothing") => return Err(ierr("err_remote.push_default_nothing")),
+        Some("current") | Some("matching") => same_name.clone(),
+        Some("upstream") | Some("tracking") => {
+            if triangular {
+                return Err(ierrp("err_remote.push_upstream_not_push_remote", &[("remote", &remote), ("upstream", &upstream_remote)]));
+            }
+            upstream_merge.ok_or_else(|| ierr("err_remote.push_no_upstream_branch"))?
+        }
+        _ => {
+            if !triangular && upstream_merge.as_deref() != Some(same_name.as_str()) {
+                let upstream = upstream_merge.as_deref().unwrap_or("").trim_start_matches("refs/heads/");
+                return Err(ierrp(
+                    "err_remote.push_upstream_name_differs",
+                    &[("branch", branch), ("upstream", &format!("{upstream_remote}/{upstream}"))],
+                ));
+            }
+            same_name.clone()
+        }
+    };
+    Ok(Some(PushTarget { remote, refspec: format!("{same_name}:{dest}") }))
+}
+
 /// The job label for a push: the branch it will push, or "" if that can't be
 /// read (push_core then reports why).
 fn push_label(path: &str) -> String {
@@ -776,15 +842,22 @@ pub fn push_core(path: &str, progress: bool, ctx: OpCtx<'_>) -> RemoteResult {
         Some(b) => b,
         None => return RemoteResult::err(ierr("err_remote.head_not_on_branch_push")),
     };
-    let has_upstream = repo.find_branch(&branch, BranchType::Local).ok().and_then(|b| b.upstream().ok()).is_some();
+    let target = match push_target(&repo, &branch) {
+        Ok(t) => t,
+        Err(e) => return RemoteResult::err(e),
+    };
     drop(repo);
+    let has_upstream = target.is_some();
 
+    // Always an explicit refspec, never a bare `git push` (see push_target).
+    let publish = format!("refs/heads/{branch}:refs/heads/{branch}");
     let mut args = vec!["push"];
     if progress {
         args.push("--progress");
     }
-    if !has_upstream {
-        args.extend(["--set-upstream", "origin", "--end-of-options", &branch]);
+    match &target {
+        Some(t) => args.extend(["--end-of-options", t.remote.as_str(), t.refspec.as_str()]),
+        None => args.extend(["--set-upstream", "origin", "--end-of-options", publish.as_str()]),
     }
     let pre = pre_op_if_cancellable(path, &ctx);
     let skip = ctx.skip_lock_cleanup;
@@ -921,20 +994,16 @@ pub async fn force_push(path: String, lease: bool) -> RemoteResult {
             Some(b) => b,
             None => return RemoteResult::err(ierr("err_remote.head_not_on_branch_force_push")),
         };
-        let has_upstream = repo.find_branch(&branch, BranchType::Local).ok().and_then(|b| b.upstream().ok()).is_some();
-        if !has_upstream {
-            return RemoteResult::err(ierr("err_remote.no_upstream_use_push"));
-        }
-        let remote = match repo.branch_upstream_remote(&format!("refs/heads/{branch}")) {
-            Ok(buf) => match buf.as_str() {
-                Some(s) => s.to_string(),
-                None => return RemoteResult::err(ierr("err_remote.upstream_remote_not_utf8")),
-            },
-            Err(e) => return RemoteResult::err(ierrp("err_remote.cannot_resolve_upstream_remote", &[("detail", &e.to_string())])),
+        // The same destination a plain push would use (push_target), so a
+        // force-push can only ever rewrite the branch Push would update.
+        let target = match push_target(&repo, &branch) {
+            Ok(Some(t)) => t,
+            Ok(None) => return RemoteResult::err(ierr("err_remote.no_upstream_use_push")),
+            Err(e) => return RemoteResult::err(e),
         };
 
         let flag = if lease { "--force-with-lease" } else { "--force" };
-        let out = run_git(&path, &["push", flag, "--end-of-options", &remote, &branch]);
+        let out = run_git(&path, &["push", flag, "--end-of-options", &target.remote, &target.refspec]);
         match out {
             Ok(out) if out.ok => {
                 RemoteResult::ok(format!("Force-pushed {branch} ({}).", if lease { "lease" } else { "forced" }), None)
