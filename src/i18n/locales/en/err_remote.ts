@@ -63,8 +63,14 @@ export default {
   head_not_on_branch_push: "HEAD is not on a branch — nothing to push.",
   head_not_on_branch_force_push: "HEAD is not on a branch — nothing to force-push.",
   no_upstream_use_push: "This branch has no upstream yet — use Push to publish it first.",
-  upstream_remote_not_utf8: "This branch's upstream remote name isn't valid UTF-8.",
-  cannot_resolve_upstream_remote: "Could not resolve this branch's upstream remote: {detail}",
+  // push_target (git_remote.rs): where Push/Force push goes, resolved as git
+  // would for one branch, then pushed with an explicit refspec.
+  cannot_read_config: "Could not read this repository's git config: {detail}",
+  push_mirror_remote: "Remote \"{remote}\" is configured as a mirror (remote.{remote}.mirror), so a push there sends every ref. GitCat only pushes one branch — push to a mirror from a terminal.",
+  push_default_nothing: "push.default is \"nothing\", so git pushes nothing without an explicit destination. Use the branch menu’s “Push to…” to choose one.",
+  push_upstream_not_push_remote: "push.default is \"upstream\", but this branch pushes to \"{remote}\" while its upstream is on \"{upstream}\". Use the branch menu’s “Push to…” to choose a destination.",
+  push_no_upstream_branch: "This branch's upstream has no branch name (branch.<name>.merge is unset).",
+  push_upstream_name_differs: "\"{branch}\" tracks {upstream}, which has a different name, so Push won't update it (git's push.default=simple does the same). Use the branch menu’s “Push to…” to choose a destination.",
   no_such_local_branch: "No such local branch: {branch}",
   // Submodule path / repository-URL validation.
   submodule_path_empty: "Submodule path is empty.",

@@ -624,3 +624,107 @@ fn pre_cancelled_fetch_returns_cancelled_quickly_and_moves_no_refs() {
     assert!(start.elapsed() < Duration::from_secs(3), "a pre-cancelled fetch must return promptly");
     assert_eq!(local.rev("refs/remotes/origin/main"), tracking_before);
 }
+
+// ---- push uses an explicit refspec (push_target) ---------------------------
+
+fn remote_refs(origin: &TempRepo) -> String {
+    origin.must(&["for-each-ref", "--format=%(refname)"])
+}
+
+/// With `remote.origin.push = refs/*:refs/*`, a bare `git push` sends every
+/// ref, GitCat's own safety snapshots included.
+#[test]
+fn push_never_carries_gitcats_refs_even_with_a_push_everything_refspec() {
+    let (origin, local) = origin_and_clone("push_no_internal_refs");
+    let tip = local.commit("g.txt", "1\n", "c1");
+    local.must(&["update-ref", "refs/gitgui/backup/1-2-3", &tip]);
+    local.must(&["update-ref", "refs/gitcat/oplog", &tip]);
+    local.must(&["config", "remote.origin.push", "refs/*:refs/*"]);
+
+    let res = push_core(&local.path(), false, OpCtx::default());
+    assert!(res.ok, "push failed: {}", res.message);
+    assert_eq!(origin.rev("main"), Some(tip));
+    let refs = remote_refs(&origin);
+    assert!(!refs.contains("refs/gitgui") && !refs.contains("refs/gitcat"), "internal refs reached the remote: {refs}");
+}
+
+#[test]
+fn push_under_push_default_matching_pushes_only_the_current_branch() {
+    let (origin, local) = origin_and_clone("push_matching");
+    local.must(&["checkout", "-q", "-b", "feature"]);
+    local.commit("feat.txt", "0\n", "feature c0");
+    local.must(&["push", "-q", "-u", "origin", "feature"]);
+    let pushed_feature = origin.rev("feature");
+    local.commit("feat.txt", "1\n", "feature c1, not to be pushed");
+    local.must(&["checkout", "-q", "main"]);
+    let main_tip = local.commit("g.txt", "1\n", "main c1");
+    local.must(&["config", "push.default", "matching"]);
+
+    let res = push_core(&local.path(), false, OpCtx::default());
+    assert!(res.ok, "push failed: {}", res.message);
+    assert_eq!(origin.rev("main"), Some(main_tip));
+    assert_eq!(origin.rev("feature"), pushed_feature, "matching would also have pushed feature");
+}
+
+/// `git checkout -b feature origin/main` tracks main. git's default
+/// (`simple`) refuses to push it; an explicit refspec to the upstream would
+/// have put feature's commits on main.
+#[test]
+fn push_refuses_a_branch_whose_upstream_has_another_name_under_simple() {
+    let (origin, local) = origin_and_clone("push_simple_name");
+    let main_before = origin.rev("main");
+    local.must(&["checkout", "-q", "-b", "feature", "--track", "origin/main"]);
+    local.commit("feat.txt", "0\n", "feature work");
+
+    let res = push_core(&local.path(), false, OpCtx::default());
+    assert!(!res.ok, "simple must refuse a differently named upstream");
+    assert!(res.message.contains("push_upstream_name_differs"), "unexpected message: {}", res.message);
+    assert_eq!(origin.rev("main"), main_before, "main must be untouched");
+    assert!(origin.rev("feature").is_none());
+
+    let res = tauri::async_runtime::block_on(force_push(local.path(), true));
+    assert!(!res.ok, "force push resolves the same target, so it refuses too");
+    assert_eq!(origin.rev("main"), main_before);
+}
+
+#[test]
+fn push_default_upstream_pushes_to_a_differently_named_upstream() {
+    let (origin, local) = origin_and_clone("push_upstream_mode");
+    local.must(&["checkout", "-q", "-b", "feature", "--track", "origin/main"]);
+    let tip = local.commit("feat.txt", "0\n", "feature work");
+    local.must(&["config", "push.default", "upstream"]);
+
+    let res = push_core(&local.path(), false, OpCtx::default());
+    assert!(res.ok, "push failed: {}", res.message);
+    assert_eq!(origin.rev("main"), Some(tip), "upstream mode pushes to the upstream branch");
+    assert!(origin.rev("feature").is_none());
+}
+
+#[test]
+fn push_to_a_mirror_remote_is_refused() {
+    let (origin, local) = origin_and_clone("push_mirror");
+    let before = origin.rev("main");
+    local.commit("g.txt", "1\n", "c1");
+    local.must(&["config", "remote.origin.mirror", "true"]);
+
+    let res = push_core(&local.path(), false, OpCtx::default());
+    assert!(!res.ok);
+    assert!(res.message.contains("push_mirror_remote"), "unexpected message: {}", res.message);
+    assert_eq!(origin.rev("main"), before);
+}
+
+/// A triangular workflow: fetch from origin, push to a fork.
+#[test]
+fn push_honors_branch_push_remote() {
+    let (origin, local) = origin_and_clone("push_triangular");
+    let fork = TempRepo::init_bare("push_triangular-fork");
+    local.must(&["remote", "add", "fork", &fork.path()]);
+    local.must(&["config", "branch.main.pushRemote", "fork"]);
+    let before = origin.rev("main");
+    let tip = local.commit("g.txt", "1\n", "c1");
+
+    let res = push_core(&local.path(), false, OpCtx::default());
+    assert!(res.ok, "push failed: {}", res.message);
+    assert_eq!(fork.rev("main"), Some(tip), "pushRemote wins");
+    assert_eq!(origin.rev("main"), before, "the upstream remote is not pushed to");
+}
