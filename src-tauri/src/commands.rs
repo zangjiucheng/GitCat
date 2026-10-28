@@ -570,7 +570,7 @@ pub fn head_ancestor_flags_core(
     AncestorFlags { n: flags.len(), flags }
 }
 
-/// A 64-bit signature over the repo's ENTIRE ref set (every local/remote/tag
+/// A 64-bit signature over the repo's user-visible ref set (every local/remote/tag
 /// full refname + its target oid, plus HEAD's oid), order-independent. The
 /// frontend compares it to the last one: identical signature + unchanged HEAD
 /// means nothing ref-related moved, so a repo-changed event was a pure
@@ -584,6 +584,12 @@ fn ref_signature(repo: &git2::Repository) -> String {
     let mut acc: u64 = 0;
     if let Ok(refs) = repo.references() {
         for r in refs.flatten() {
+            // GitCat's own refs change on every operation and aren't in the
+            // graph; counting them made every snapshot read as "refs changed".
+            let name = r.name().unwrap_or("");
+            if crate::safety::INTERNAL_REF_PREFIXES.iter().any(|p| name.starts_with(p)) {
+                continue;
+            }
             let target = match r.peel_to_commit() {
                 Ok(c) => c.id(),
                 Err(_) => continue,

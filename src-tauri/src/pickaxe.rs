@@ -231,6 +231,8 @@ fn pickaxe_search_inner(
         args.push(a);
     }
     if all_refs {
+        // Not the 2.0 op log: its commits are op metadata, not history.
+        args.push(crate::safety::EXCLUDE_OPLOG_REFS);
         args.push("--all");
     }
     args.push("--end-of-options");

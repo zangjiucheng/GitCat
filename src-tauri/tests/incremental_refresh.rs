@@ -187,3 +187,19 @@ fn fast_refresh_ref_chips_match_the_streamed_per_row_chips() {
         }
     }
 }
+
+#[test]
+fn ref_signature_ignores_gitcats_own_refs() {
+    let (repo, [c0, _c1, c2, _c3]) = build_diverged();
+    let path = repo.path();
+    let sig = |p: &str| graph_fast_refresh_core(p, None, None).expect("fast refresh").ref_sig;
+    let before = sig(&path);
+
+    // A safety snapshot and an op-log head: GitCat's own, not in the graph.
+    repo.must(&["update-ref", "refs/gitgui/backup/1-2-3", &c2]);
+    repo.must(&["update-ref", "refs/gitcat/oplog", &c0]);
+    assert_eq!(sig(&path), before, "GitCat's own refs must not read as a ref change");
+
+    repo.must(&["branch", "fresh", &c0]);
+    assert_ne!(sig(&path), before, "a user branch still does");
+}

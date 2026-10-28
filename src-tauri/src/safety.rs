@@ -30,6 +30,19 @@ use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::{output_with_timeout, run_with, NoConsoleWindowExt, RunError, RunOptions, SUBPROCESS_TIMEOUT};
 
 const BACKUP_GLOB: &str = "refs/gitgui/backup/*";
+
+/// GitCat's own ref namespaces: `refs/gitgui/` (1.x safety snapshots and
+/// pins) and `refs/gitcat/` (the 2.0 op log). Neither is the user's history,
+/// both change on every GitCat operation, so nothing that reacts to "the refs
+/// changed" (the watcher, `ref_signature`) should count them.
+pub const INTERNAL_REF_PREFIXES: [&str; 2] = ["refs/gitgui/", "refs/gitcat/"];
+
+/// rev-list argument that keeps the op log's commits (2.0's `refs/gitcat/*`:
+/// op metadata and captured WIP, not user history) out of a following
+/// `--all`. Must come BEFORE `--all`; it only applies to the next ref option.
+/// `refs/gitgui/*` is deliberately left in: those pins are real user commits
+/// (undone or deleted history) that a search or a backup should still reach.
+pub const EXCLUDE_OPLOG_REFS: &str = "--exclude=refs/gitcat/*";
 const BACKUP_PREFIX: &str = "refs/gitgui/backup/";
 
 /// Process-wide monotonic tie-breaker: two snapshots taken in the same

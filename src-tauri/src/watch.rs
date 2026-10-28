@@ -25,52 +25,117 @@
 //!
 //! One repo watched at a time, tracked in Tauri-managed state
 //! (`app.manage(WatchState::default())` in lib.rs): watch_repo replaces
-//! whatever was previously watched (the old Debouncer's Drop impl stops it),
+//! whatever was previously watched (dropping the old RepoWatcher stops it),
 //! unwatch_repo clears it. Both called from the frontend around the same
 //! open/close points as Safety.refresh()/bootEmpty() — see legacy/main.ts.
 
 use std::path::Path;
+use std::sync::mpsc;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_mini::{new_debouncer, DebounceEventResult, Debouncer};
+use notify::event::EventKind;
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{AppHandle, State, Wry};
 
 const DEBOUNCE: Duration = Duration::from_millis(400);
+/// A steady stream of changes (a long rebase) still reloads this often.
+const DEBOUNCE_MAX: Duration = Duration::from_secs(2);
+
+/// A live watch on one repository. Dropping it stops the watch: the watcher
+/// goes, its event sender with it, and the debounce thread sees the channel
+/// close and exits.
+pub struct RepoWatcher {
+    _watcher: RecommendedWatcher,
+}
 
 #[derive(Default)]
-pub struct WatchState(Mutex<Option<Debouncer<RecommendedWatcher>>>);
+pub struct WatchState(Mutex<Option<RepoWatcher>>);
 
-fn is_relevant(path: &Path) -> bool {
-    // GitCat's own Safety-Manager snapshot refs (refs/gitgui/…) are NOT shown in
-    // the graph and are written by the app itself — notably the on-repo-open
-    // auto-prune (see pruneSnapshotsPerPolicy). Reacting to them would pointlessly
-    // reload the graph, and during a large repo's initial stream that RESTARTS the
-    // whole load. Ignore them; a real HEAD/refs change still fires.
-    if path.components().any(|c| c.as_os_str() == "gitgui") {
-        return false;
+/// Whether an event can mean something changed. On Linux, notify (8.x) watches
+/// IN_OPEN too, so merely READING `HEAD` or a ref is an event; with
+/// notify-debouncer-mini, which drops the kind, that read looked exactly like a
+/// change. GitCat's own refresh reads HEAD, so each refresh queued the next: a
+/// repo open on Linux re-ran the (cheap) fast refresh every ~400 ms forever.
+fn is_change(kind: &EventKind) -> bool {
+    !matches!(kind, EventKind::Access(_))
+}
+
+/// Whether a change at `rel` — a path RELATIVE to the git dir or the common
+/// dir — should reload the graph: `HEAD`, or anything under `refs/` except
+/// GitCat's own namespaces.
+///
+/// GitCat's own refs (`refs/gitgui/…` safety snapshots, `refs/gitcat/…` the
+/// 2.0 op log) are NOT shown in the graph and are written by the app itself —
+/// notably the on-repo-open auto-prune (see pruneSnapshotsPerPolicy). Reacting
+/// to them would pointlessly reload the graph, and during a large repo's
+/// initial stream that RESTARTS the whole load.
+///
+/// Relative, not absolute: matching on any path component named `gitgui` or
+/// `refs` meant a repo that merely LIVED under such a directory
+/// (`~/src/gitgui/app`) never refreshed, and one under a `refs` directory
+/// reloaded on every index write.
+fn is_relevant(rel: &Path) -> bool {
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    if rel == "HEAD" {
+        return true;
     }
-    path.file_name().is_some_and(|n| n == "HEAD") || path.components().any(|c| c.as_os_str() == "refs")
+    // The namespace directory itself counts too: creating `refs/gitcat/` is an
+    // event at `refs/gitcat`, with no trailing slash.
+    let internal = crate::safety::INTERNAL_REF_PREFIXES.iter().any(|p| rel.starts_with(p) || rel == p.trim_end_matches('/'));
+    rel.starts_with("refs/") && !internal
+}
+
+/// `path` relative to whichever of `roots` contains it.
+fn relative_to<'a>(path: &'a Path, roots: &[std::path::PathBuf]) -> Option<&'a Path> {
+    roots.iter().find_map(|r| path.strip_prefix(r).ok())
 }
 
 /// Core watcher setup, independent of any running Tauri app — `on_change` is
-/// called (from the debouncer's own background thread) whenever a relevant
-/// path changes. Split out from the `watch_repo` command so it's directly
+/// called (from the debounce thread) once per burst of relevant changes: after
+/// [`DEBOUNCE`] of quiet, or every [`DEBOUNCE_MAX`] while they keep coming. Split out from the `watch_repo` command so it's directly
 /// unit-testable (a `#[tauri::command]` needing a real `AppHandle`/`State`
 /// isn't callable from a plain integration test the way this codebase's
 /// other command functions are — see tests/watch.rs).
-pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Result<Debouncer<RecommendedWatcher>, String> {
+pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Result<RepoWatcher, String> {
     let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
     let git_dir = repo.path().to_path_buf();
+    // A linked worktree's git dir (`.git/worktrees/<name>`) holds only its own
+    // HEAD; the branches it shows live in the common dir's `refs/`.
+    let common_dir = repo.commondir().to_path_buf();
+    // Events may arrive with either spelling of a path (a canonicalized one on
+    // macOS's /private/var, a \\?\-prefixed one on Windows), so match against
+    // both forms of each root.
+    let mut roots = vec![git_dir.clone(), common_dir.clone()];
+    roots.extend([&git_dir, &common_dir].iter().filter_map(|p| std::fs::canonicalize(p).ok()));
+    // Longest first, so a worktree's git dir (inside the common dir) wins.
+    roots.sort_by_key(|r| std::cmp::Reverse(r.as_os_str().len()));
+    roots.dedup();
 
-    let mut debouncer = new_debouncer(DEBOUNCE, move |res: DebounceEventResult| {
-        let Ok(events) = res else { return };
-        if events.iter().any(|e| is_relevant(&e.path)) {
-            on_change();
+    let (tx, rx) = mpsc::channel::<()>();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        let Ok(event) = res else { return };
+        if is_change(&event.kind) && event.paths.iter().any(|p| relative_to(p, &roots).is_some_and(is_relevant)) {
+            let _ = tx.send(());
         }
     })
     .map_err(|e| e.to_string())?;
+
+    std::thread::spawn(move || {
+        // recv() fails once the watcher (and with it the sender) is dropped.
+        while rx.recv().is_ok() {
+            let burst = Instant::now();
+            loop {
+                let left = DEBOUNCE_MAX.saturating_sub(burst.elapsed());
+                match rx.recv_timeout(DEBOUNCE.min(left)) {
+                    Ok(()) if !left.is_zero() => continue,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    _ => break,
+                }
+            }
+            on_change();
+        }
+    });
 
     // ADVERSARIALLY-FOUND FIX: watch the git-dir ROOT non-recursively rather
     // than the exact `HEAD` file path. Git updates HEAD via the same
@@ -84,16 +149,18 @@ pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Resu
     // avoidance `is_relevant`'s filtering already relied on. Extra
     // non-matching events (e.g. `index`/`COMMIT_EDITMSG` touches) are
     // harmless: `is_relevant` below still only reacts to HEAD/refs.
-    debouncer
-        .watcher()
+    watcher
         .watch(&git_dir, RecursiveMode::NonRecursive)
         .map_err(|e| e.to_string())?;
     // refs/ always exists after `git init`, but don't fail watch_repo over a
     // missing/unusual layout — the git-dir root watch above still catches
     // checkouts/commits via HEAD either way.
-    let _ = debouncer.watcher().watch(&git_dir.join("refs"), RecursiveMode::Recursive);
+    let _ = watcher.watch(&git_dir.join("refs"), RecursiveMode::Recursive);
+    if common_dir != git_dir {
+        let _ = watcher.watch(&common_dir.join("refs"), RecursiveMode::Recursive);
+    }
 
-    Ok(debouncer)
+    Ok(RepoWatcher { _watcher: watcher })
 }
 
 /// BUG FIX: was a plain (non-async) `fn` — `start_watching` calls
@@ -111,14 +178,14 @@ pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Resu
 #[specta::specta]
 pub async fn watch_repo(app: AppHandle<Wry>, state: State<'_, WatchState>, path: String) -> Result<(), String> {
     let handle = app.clone();
-    let debouncer = crate::blocking::run_blocking(move || {
+    let watcher = crate::blocking::run_blocking(move || {
         start_watching(&path, move || {
             log::info!("[watch] relevant git-dir change → emit repo-changed");
             crate::event_util::emit_on_main(&handle, "repo-changed", ());
         })
     })
     .await?;
-    *state.0.lock().unwrap() = Some(debouncer);
+    *state.0.lock().unwrap() = Some(watcher);
     Ok(())
 }
 
@@ -135,21 +202,56 @@ mod is_relevant_tests {
 
     #[test]
     fn head_and_branch_refs_are_relevant() {
-        assert!(is_relevant(Path::new("/r/.git/HEAD")));
-        assert!(is_relevant(Path::new("/r/.git/refs/heads/main")));
-        assert!(is_relevant(Path::new("/r/.git/refs/remotes/origin/main")));
-        assert!(is_relevant(Path::new("/r/.git/refs/tags/v1")));
+        assert!(is_relevant(Path::new("HEAD")));
+        assert!(is_relevant(Path::new("refs/heads/main")));
+        assert!(is_relevant(Path::new("refs/remotes/origin/main")));
+        assert!(is_relevant(Path::new("refs/tags/v1")));
+        assert!(is_relevant(Path::new("refs\\heads\\main")), "Windows separators");
     }
 
     #[test]
-    fn snapshot_and_unrelated_paths_are_not() {
-        // GitCat's own Safety-Manager snapshot refs — must NOT trigger a reload
-        // (the on-open auto-prune writes these; reacting restarts a big load).
-        assert!(!is_relevant(Path::new("/r/.git/refs/gitgui/backup/2026-07-24T00-00")));
-        assert!(!is_relevant(Path::new("/r/.git/refs/gitgui/HEAD")));
+    fn gitcat_refs_and_unrelated_paths_are_not() {
+        // GitCat's own refs — must NOT trigger a reload (the on-open auto-prune
+        // writes these; reacting restarts a big load).
+        assert!(!is_relevant(Path::new("refs/gitgui/backup/2026-07-24T00-00")));
+        assert!(!is_relevant(Path::new("refs/gitgui/HEAD")));
+        assert!(!is_relevant(Path::new("refs/gitcat/oplog")));
+        assert!(!is_relevant(Path::new("refs/gitcat/pending/abc")));
+        assert!(!is_relevant(Path::new("refs/gitcat")), "creating the namespace directory");
+        assert!(!is_relevant(Path::new("refs/gitgui")));
+        assert!(is_relevant(Path::new("refs/gitcatalog/x")), "only the exact namespaces");
         // Neither do non-ref housekeeping files.
-        assert!(!is_relevant(Path::new("/r/.git/index")));
-        assert!(!is_relevant(Path::new("/r/.git/packed-refs")));
-        assert!(!is_relevant(Path::new("/r/.git/COMMIT_EDITMSG")));
+        assert!(!is_relevant(Path::new("index")));
+        assert!(!is_relevant(Path::new("packed-refs")));
+        assert!(!is_relevant(Path::new("COMMIT_EDITMSG")));
+        assert!(!is_relevant(Path::new("logs/HEAD")), "a reflog append is not a HEAD move by itself");
+    }
+
+    #[test]
+    fn paths_are_judged_relative_to_the_git_dir_not_absolutely() {
+        use super::relative_to;
+        // A repo living under directories named `gitgui` or `refs`.
+        let roots = vec![std::path::PathBuf::from("/home/me/gitgui/app/.git")];
+        let head = Path::new("/home/me/gitgui/app/.git/HEAD");
+        assert!(relative_to(head, &roots).is_some_and(is_relevant), "the old any-component check ignored this repo");
+        let roots = vec![std::path::PathBuf::from("/srv/refs/app/.git")];
+        let index = Path::new("/srv/refs/app/.git/index");
+        assert!(!relative_to(index, &roots).is_some_and(is_relevant), "the old check reloaded on every index write");
+        assert!(relative_to(Path::new("/elsewhere/HEAD"), &roots).is_none());
+    }
+}
+
+#[cfg(test)]
+mod is_change_tests {
+    use super::is_change;
+    use notify::event::{AccessKind, AccessMode, CreateKind, EventKind, ModifyKind};
+
+    #[test]
+    fn reads_are_not_changes_and_writes_are() {
+        assert!(!is_change(&EventKind::Access(AccessKind::Open(AccessMode::Read))));
+        assert!(!is_change(&EventKind::Access(AccessKind::Close(AccessMode::Read))));
+        assert!(is_change(&EventKind::Create(CreateKind::File)));
+        assert!(is_change(&EventKind::Modify(ModifyKind::Any)));
+        assert!(is_change(&EventKind::Any), "an unknown kind is treated as a change");
     }
 }
