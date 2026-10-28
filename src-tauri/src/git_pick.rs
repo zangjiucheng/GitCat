@@ -26,6 +26,7 @@ use std::process::Command;
 
 use git2::Repository;
 use serde::Serialize;
+use tauri::{AppHandle, Wry};
 
 use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions};
@@ -419,11 +420,15 @@ fn merge_parents_inner(path: String, sha: String) -> Result<Vec<MergeParent>, St
 /// that takes, not just the cherry-pick UI.
 #[tauri::command]
 #[specta::specta]
-pub async fn cherry_pick(path: String, sha: String, record_origin: Option<bool>, mainline: Option<u32>) -> PickResult {
-    crate::blocking::run_blocking(move || cherry_pick_inner(path, sha, record_origin, mainline)).await
+pub async fn cherry_pick(app: AppHandle<Wry>, path: String, sha: String, record_origin: Option<bool>, mainline: Option<u32>) -> PickResult {
+    crate::blocking::run_blocking(move || {
+        let label = sha.chars().take(7).collect::<String>();
+        crate::jobs::run_job(&app, crate::jobs::JobKind::CherryPick, &path.clone(), &label, || cherry_pick_core(path, sha, record_origin, mainline))
+    })
+    .await
 }
 
-fn cherry_pick_inner(path: String, sha: String, record_origin: Option<bool>, mainline: Option<u32>) -> PickResult {
+pub fn cherry_pick_core(path: String, sha: String, record_origin: Option<bool>, mainline: Option<u32>) -> PickResult {
     if let Err(e) = validate_sha(&sha) {
         return PickResult::error(e);
     }
@@ -459,11 +464,20 @@ fn cherry_pick_inner(path: String, sha: String, record_origin: Option<bool>, mai
     args.push("--no-edit");
     args.push("--end-of-options");
     args.push(&sha);
-
-    // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
-    // Cancelled run cancel_cleanup::after_cancel.
-    let out = match git_worktree_c(&path, &args, true, None) {
+    let job = crate::cancel_cleanup::Cancellable::arm_tree_op(&path);
+    let out = match git_worktree_c(&path, &args, true, job.token().as_ref()) {
         Ok(o) => o,
+        Err(e) if crate::procutil::is_cancelled_ierr(&e) => {
+            let message = job.finish(&path, "err_history.cherry_pick_cancelled", true, Some(backup.as_str()));
+            return PickResult {
+                ok: false,
+                state: "cancelled".into(),
+                conflicted_files: Vec::new(),
+                message,
+                backup_ref: Some(backup),
+                blocked_by_local_changes: false,
+            };
+        }
         Err(e) => {
             return PickResult {
                 ok: false,

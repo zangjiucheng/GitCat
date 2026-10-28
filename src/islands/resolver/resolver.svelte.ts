@@ -670,6 +670,18 @@ class ResolverState {
         // result type, hence the cast rather than a narrower parameter type.
         this.openEditing(res as RebaseResult, sha);
         break;
+      case "cancelled": {
+        // Cancelled from the jobs indicator. The backend already backed out
+        // what the killed git left (see cancel_cleanup.rs); the tree may have
+        // changed, so reload. A cancelled --continue leaves the user's own
+        // operation in progress: keep (or put back) its resolver for it. A
+        // queue step that was cancelled must not advance the queue later.
+        this.queueContinue = null;
+        await bridge.reloadGraph(true);
+        bridge.relayCancelled(res.message);
+        if (!(await this.openIfInProgress(this.repo))) this.close();
+        break;
+      }
       default: // "error"
         if (retry && "blockedByLocalChanges" in res && res.blockedByLocalChanges) {
           this.dirtyBlock = { message: be(res.message) || msg.couldNotStart, verb: msg.verb, retry };
@@ -961,7 +973,10 @@ class ResolverState {
     this.activeAction = "tool";
     try {
       const r = await commands.resolveConflictWithExternalTool(this.repo, f.path);
-      if (!r.ok) {
+      if (r.cancelled) {
+        // Only the wait on the tool was cancelled; the file is still unresolved.
+        bridge.relayCancelled(r.message);
+      } else if (!r.ok) {
         // "No external merge tool configured" is the one refusal worth
         // reframing rather than warning: an external tool is entirely OPTIONAL
         // — the built-in Take-ours/Take-theirs + per-hunk 3-way editor in THIS

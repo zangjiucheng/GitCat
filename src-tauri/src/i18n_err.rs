@@ -44,9 +44,26 @@ pub fn ierrp(key: &str, params: &[(&str, &str)]) -> String {
     s
 }
 
+/// Record Separator — matches `BE_JOIN` in `src/i18n/i18n.svelte.ts`.
+const JOIN: char = '';
+
+/// Several app-authored messages as ONE string: the frontend's `be()`
+/// translates each part and joins them with a space. For a message built from
+/// optional sentences (what was cleaned up, how to undo) without a key for
+/// every combination. Parts are `ierr`/`ierrp` strings.
+pub fn ijoin(parts: &[String]) -> String {
+    parts.iter().map(String::as_str).collect::<Vec<_>>().join(&JOIN.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ijoin_separates_parts_with_rs() {
+        assert_eq!(ijoin(&[ierr("a.b"), ierrp("c.d", &[("x", "1")])]), "i18n:a.bi18n:c.dx1");
+        assert_eq!(ijoin(&[ierr("a.b")]), "i18n:a.b");
+    }
 
     #[test]
     fn ierr_just_prefixes_the_key() {

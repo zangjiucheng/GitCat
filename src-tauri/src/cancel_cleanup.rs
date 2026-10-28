@@ -63,6 +63,9 @@ pub struct CleanupReport {
     pub removed_locks: Vec<String>,
     /// The op that was `--abort`ed: "merge" | "rebase" | "am" | "cherry-pick" | "revert".
     pub aborted: Option<&'static str>,
+    /// A half-applied merge/cherry-pick/revert (no MERGE_HEAD etc. to abort)
+    /// was put back with `git reset --merge HEAD` (see `Cancellable::arm_tree_op`).
+    pub reset_tree: bool,
 }
 
 /// Every lock file git may hold that we know how to look for. In the
@@ -115,6 +118,111 @@ fn walk_ref_locks(dir: &Path, depth: usize, budget: &mut usize, found: &mut Hash
         }
     }
     complete
+}
+
+/// A local history op (commit, merge, cherry-pick, revert, rebase, am, the
+/// merge tool) made cancellable through the current job (`jobs::current`).
+/// `arm` right before git runs — after the op's own safety snapshot, whose
+/// ref write must not count as the op's — and, if git came back cancelled,
+/// `finish` cleans up and builds the message. Outside a job it is inert: no
+/// token, no pre-op scan, nothing to clean.
+pub struct Cancellable {
+    job: Option<crate::jobs::CurrentJob>,
+    pre: Option<PreOp>,
+    /// `arm_tree_op` only: HEAD, and whether the index matched it.
+    tree_mark: Option<(git2::Oid, bool)>,
+}
+
+impl Cancellable {
+    pub fn arm(path: &str) -> Self {
+        let job = crate::jobs::current();
+        let pre = job.as_ref().and_then(|_| crate::trust::open_repo(path).ok()).map(|r| pre_op(&r));
+        Self { job, pre, tree_mark: None }
+    }
+
+    /// [`arm`](Self::arm) for `merge`/`cherry-pick`/`revert`, which also
+    /// records HEAD and whether the index matched it. These write their result
+    /// to the index and working tree before the commit, but MERGE_HEAD (and
+    /// CHERRY_PICK_HEAD, REVERT_HEAD) only when they stop on a conflict — so
+    /// one killed in between (e.g. while the pre-merge-commit hook runs) looks
+    /// like a clean repo with the other side's changes staged, and `--abort`
+    /// finds nothing. `finish` puts that back with `git reset --merge HEAD`,
+    /// which keeps unrelated local changes, like `--abort` does.
+    pub fn arm_tree_op(path: &str) -> Self {
+        let mut c = Self::arm(path);
+        if c.job.is_some() {
+            c.tree_mark = crate::trust::open_repo(path).ok().and_then(|r| {
+                let head = r.head().ok()?.peel_to_commit().ok()?;
+                let clean = index_matches(&r, &head)?;
+                Some((head.id(), clean))
+            });
+        }
+        c
+    }
+
+    pub fn token(&self) -> Option<crate::procutil::CancelToken> {
+        self.job.as_ref().map(crate::jobs::CurrentJob::token)
+    }
+
+    /// After a cancel: remove the lock files the killed git created and, when
+    /// `abort` and the op left a merge/rebase/am/cherry-pick/revert in a repo
+    /// that was clean before, run its `--abort` (a `--continue` started
+    /// mid-op, so it never aborts the user's own operation). Skipped while
+    /// another job is live on the repo. The message: `op_key`'s sentence,
+    /// then what was cleaned up, then how to undo when there is a snapshot
+    /// (`snapshot` is the backup ref; it is shown without its namespace).
+    pub fn finish(&self, path: &str, op_key: &str, abort: bool, snapshot: Option<&str>) -> String {
+        let skip = self.job.as_ref().is_some_and(crate::jobs::CurrentJob::others_on_repo);
+        let mut report = match &self.pre {
+            Some(pre) => after_cancel(path, pre, skip, abort),
+            None => CleanupReport::default(),
+        };
+        if abort && !skip && report.aborted.is_none() && self.reset_half_applied(path) {
+            report.reset_tree = true;
+        }
+        cancelled_message(op_key, &report, snapshot.map(|r| r.trim_start_matches("refs/gitgui/backup/")))
+    }
+
+    /// See [`arm_tree_op`](Self::arm_tree_op): only when HEAD hasn't moved, the
+    /// repo is not mid-op, the index matched HEAD before and doesn't now.
+    fn reset_half_applied(&self, path: &str) -> bool {
+        let Some((head_before, was_clean)) = self.tree_mark else { return false };
+        if !was_clean {
+            return false;
+        }
+        let Ok(repo) = crate::trust::open_repo(path) else { return false };
+        let Some(head) = repo.head().ok().and_then(|h| h.peel_to_commit().ok()) else { return false };
+        if head.id() != head_before || repo.state() != RepositoryState::Clean || index_matches(&repo, &head) != Some(false) {
+            return false;
+        }
+        crate::safety::run_git_worktree(path, &["reset", "--merge", "HEAD"]).is_ok_and(|o| o.ok)
+    }
+}
+
+/// Whether the index holds exactly `head`'s tree.
+fn index_matches(repo: &git2::Repository, head: &git2::Commit<'_>) -> Option<bool> {
+    let tree = head.tree().ok()?;
+    let diff = repo.diff_tree_to_index(Some(&tree), None, None).ok()?;
+    Some(diff.deltas().len() == 0)
+}
+
+/// `op_key`'s "X cancelled." plus the optional sentences, joined for `be()`.
+pub fn cancelled_message(op_key: &str, report: &CleanupReport, snapshot: Option<&str>) -> String {
+    use crate::i18n_err::{ierr, ierrp, ijoin};
+    let mut parts = vec![ierr(op_key)];
+    if !report.removed_locks.is_empty() {
+        parts.push(ierrp("err_history.cancel_removed_locks", &[("locks", &report.removed_locks.join(", "))]));
+    }
+    if let Some(op) = report.aborted {
+        parts.push(ierrp("err_history.cancel_aborted", &[("op", op)]));
+    }
+    if report.reset_tree {
+        parts.push(ierr("err_history.cancel_reset_tree"));
+    }
+    if let Some(snapshot) = snapshot {
+        parts.push(ierrp("err_history.cancel_undo", &[("snapshot", snapshot)]));
+    }
+    ijoin(&parts)
 }
 
 pub fn pre_op(repo: &git2::Repository) -> PreOp {

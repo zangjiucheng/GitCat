@@ -4061,7 +4061,7 @@ background: boolean; stalled: boolean; cancelling: boolean;
  * it has none — so the UI never hard-codes it.
  */
 stallSecs: number }
-export type JobKind = "fetch" | "pull" | "push" | "force_push" | "push_tag" | "push_branch" | "reset_to_upstream" | "submodule_update" | "submodule_add"
+export type JobKind = "fetch" | "pull" | "push" | "force_push" | "push_tag" | "push_branch" | "reset_to_upstream" | "submodule_update" | "submodule_add" | "commit" | "merge" | "cherry_pick" | "revert" | "rebase" | "apply_patch" | "mergetool"
 export type JobOutcome = "ok" | "failed" | "cancelled"
 /**
  * Emitted as `"job-progress"` when a job's stalled flag flips.
@@ -4889,7 +4889,12 @@ livePaths: RererePath[] }
  * Result of [`resolve_conflict_file`]. `remaining` is the count of files still
  * unmerged after this resolution (0 means the tree is ready to Continue).
  */
-export type ResolveResult = { ok: boolean; remaining: number; message: string }
+export type ResolveResult = { ok: boolean; remaining: number; message: string; 
+/**
+ * The user cancelled the wait on the external merge tool from the jobs
+ * indicator: not a failure, so the UI relays `message` without a warning.
+ */
+cancelled: boolean }
 /**
  * Result of any revert step (initial / continue / abort). Serializes
  * camelCase: `conflictedFiles`, `backupRef`.
@@ -5310,7 +5315,12 @@ backupPatch: string | null;
  * `pin_dropped_stash`). Recover with `git stash apply <this ref>` (or
  * `git branch <name> <this ref>` to just inspect it).
  */
-droppedStashRef: string | null }
+droppedStashRef: string | null; 
+/**
+ * The user cancelled the op from the jobs indicator (`commit` today): not
+ * a failure, so the UI relays `message` without a warning.
+ */
+cancelled: boolean }
 /**
  * Full working-tree snapshot backing the pinned "Uncommitted changes" row.
  */

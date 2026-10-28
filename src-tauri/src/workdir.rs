@@ -97,6 +97,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use git2::{Delta, DiffFindOptions, DiffOptions, FileMode, Patch, Repository, Status, StatusOptions};
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Wry};
 
 use crate::i18n_err::{ierr, ierrp};
 use crate::model::{DiffHunkRow, DiffLineRow, FileChange};
@@ -174,6 +175,9 @@ pub struct WorkdirResult {
     /// `pin_dropped_stash`). Recover with `git stash apply <this ref>` (or
     /// `git branch <name> <this ref>` to just inspect it).
     pub dropped_stash_ref: Option<String>,
+    /// The user cancelled the op from the jobs indicator (`commit` today): not
+    /// a failure, so the UI relays `message` without a warning.
+    pub cancelled: bool,
 }
 
 impl WorkdirResult {
@@ -185,6 +189,7 @@ impl WorkdirResult {
             backup_ref,
             backup_patch: None,
             dropped_stash_ref: None,
+            cancelled: false,
         }
     }
     /// A refusal BEFORE any snapshot was attempted (validation, precondition) —
@@ -199,6 +204,7 @@ impl WorkdirResult {
             backup_ref: None,
             backup_patch: None,
             dropped_stash_ref: None,
+            cancelled: false,
         }
     }
     /// A failure AFTER a snapshot was already sealed (the git command itself
@@ -213,6 +219,7 @@ impl WorkdirResult {
             backup_ref,
             backup_patch: None,
             dropped_stash_ref: None,
+            cancelled: false,
         }
     }
 }
@@ -1098,6 +1105,7 @@ fn discard_unstaged_rename(path: &str, repo: &Repository, old_path: &str, new_pa
                 backup_ref: None,
                 backup_patch: Some(backup_patch),
                 dropped_stash_ref: None,
+                cancelled: false,
             };
         }
     }
@@ -1115,6 +1123,7 @@ fn discard_unstaged_rename(path: &str, repo: &Repository, old_path: &str, new_pa
             backup_ref: None,
             backup_patch: Some(backup_patch),
             dropped_stash_ref: None,
+            cancelled: false,
         };
     }
 
@@ -1129,6 +1138,7 @@ fn discard_unstaged_rename(path: &str, repo: &Repository, old_path: &str, new_pa
             backup_ref: None,
             backup_patch: Some(backup_patch),
             dropped_stash_ref: None,
+            cancelled: false,
         },
         Ok(out) => WorkdirResult {
             ok: false,
@@ -1140,6 +1150,7 @@ fn discard_unstaged_rename(path: &str, repo: &Repository, old_path: &str, new_pa
             backup_ref: None,
             backup_patch: Some(backup_patch),
             dropped_stash_ref: None,
+            cancelled: false,
         },
         Err(e) => WorkdirResult {
             ok: false,
@@ -1151,6 +1162,7 @@ fn discard_unstaged_rename(path: &str, repo: &Repository, old_path: &str, new_pa
             backup_ref: None,
             backup_patch: Some(backup_patch),
             dropped_stash_ref: None,
+            cancelled: false,
         },
     }
 }
@@ -1234,6 +1246,7 @@ pub async fn discard_file(path: String, file: String, untracked: bool) -> Workdi
                 backup_ref: None,
                 backup_patch: Some(backup_patch),
                 dropped_stash_ref: None,
+                cancelled: false,
             },
             // The backup was already written even though the mutation itself
             // failed — keep pointing at it so nothing is orphaned/unexplained.
@@ -1244,6 +1257,7 @@ pub async fn discard_file(path: String, file: String, untracked: bool) -> Workdi
                 backup_ref: None,
                 backup_patch: Some(backup_patch),
                 dropped_stash_ref: None,
+                cancelled: false,
             },
             Err(e) => WorkdirResult {
                 ok: false,
@@ -1252,6 +1266,7 @@ pub async fn discard_file(path: String, file: String, untracked: bool) -> Workdi
                 backup_ref: None,
                 backup_patch: Some(backup_patch),
                 dropped_stash_ref: None,
+                cancelled: false,
             },
         }
     })
@@ -1939,6 +1954,7 @@ fn apply_selected_lines(path: &str, file: &str, hunks: &[HunkSelection], dir: Li
                     backup_ref: None,
                     backup_patch: Some(backup_patch),
                     dropped_stash_ref: None,
+                    cancelled: false,
                 },
                 // The backup was already written even though the mutation
                 // itself failed — keep pointing at it, same convention as
@@ -1950,6 +1966,7 @@ fn apply_selected_lines(path: &str, file: &str, hunks: &[HunkSelection], dir: Li
                     backup_ref: None,
                     backup_patch: Some(backup_patch),
                     dropped_stash_ref: None,
+                    cancelled: false,
                 },
                 Err(e) => WorkdirResult {
                     ok: false,
@@ -1958,6 +1975,7 @@ fn apply_selected_lines(path: &str, file: &str, hunks: &[HunkSelection], dir: Li
                     backup_ref: None,
                     backup_patch: Some(backup_patch),
                     dropped_stash_ref: None,
+                    cancelled: false,
                 },
             }
         }
@@ -1986,8 +2004,18 @@ fn apply_selected_lines(path: &str, file: &str, hunks: &[HunkSelection], dir: Li
 /// fix.
 #[tauri::command]
 #[specta::specta]
-pub async fn commit(path: String, message: Option<String>, amend: Option<bool>) -> WorkdirResult {
+pub async fn commit(app: AppHandle<Wry>, path: String, message: Option<String>, amend: Option<bool>) -> WorkdirResult {
     crate::blocking::run_blocking(move || {
+        crate::jobs::run_job(&app, crate::jobs::JobKind::Commit, &path.clone(), "", || commit_core(path, message, amend))
+    })
+    .await
+}
+
+/// The body of [`commit`]. Inside a job it is cancellable: a hook or gpg
+/// that never returns can be stopped from the jobs indicator, and the lock
+/// files the killed git left are removed.
+pub fn commit_core(path: String, message: Option<String>, amend: Option<bool>) -> WorkdirResult {
+    {
         let is_amend = amend.unwrap_or(false);
         let msg = message.unwrap_or_default();
         let msg_empty = msg.trim().is_empty();
@@ -2030,9 +2058,8 @@ pub async fn commit(path: String, message: Option<String>, amend: Option<bool>) 
 
         // GIT_EDITOR=true set defensively (mirrors git_merge.rs's `no_editor`)
         // even though -m/--no-edit should already avoid invoking one.
-        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
-        // Cancelled run cancel_cleanup::after_cancel.
-        match git_c(&path, &args, true, None) {
+        let job = crate::cancel_cleanup::Cancellable::arm(&path);
+        match git_c(&path, &args, true, job.token().as_ref()) {
             Ok(out) if out.ok => {
                 let verb = if is_amend { "Amended commit" } else { "Committed" };
                 let message = match &backup {
@@ -2042,10 +2069,13 @@ pub async fn commit(path: String, message: Option<String>, amend: Option<bool>) 
                 WorkdirResult::ok(message, backup)
             }
             Ok(out) => WorkdirResult::err_with_backup(git_msg(&out), backup),
+            Err(e) if crate::procutil::is_cancelled_ierr(&e) => {
+                let message = job.finish(&path, "err_history.commit_cancelled", true, backup.as_deref());
+                WorkdirResult { cancelled: true, ..WorkdirResult::err_with_backup(message, backup) }
+            }
             Err(e) => WorkdirResult::err_with_backup(e, backup),
         }
-    })
-    .await
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2285,6 +2315,7 @@ fn apply_or_pop(path: &str, index: usize, pop: bool, expected_sha: Option<String
             backup_ref: Some(backup),
             backup_patch: None,
             dropped_stash_ref: None,
+            cancelled: false,
         };
     }
 
@@ -2415,6 +2446,7 @@ pub async fn stash_drop(path: String, index: usize, expected_sha: Option<String>
                 backup_ref: Some(backup),
                 backup_patch: None,
                 dropped_stash_ref: Some(stash_pin),
+                cancelled: false,
             },
             Ok(out) => WorkdirResult::err_with_backup(git_msg(&out), Some(backup)),
             Err(e) => WorkdirResult::err_with_backup(e, Some(backup)),

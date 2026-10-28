@@ -285,6 +285,10 @@ class MultiMergeState {
   // since moved on to a different one.
   private async stepOutcome(repo: string, res: MergeResult, label: string) {
     switch (res.state) {
+      case "cancelled":
+        await bridge.reloadGraph(true);
+        bridge.relayCancelled(res.message);
+        break;
       case "clean":
       case "empty":
         // Recurses into the UNGUARDED core (see advanceOrFinish's own doc

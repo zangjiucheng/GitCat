@@ -72,6 +72,7 @@ use std::process::Command;
 
 use git2::Repository;
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Wry};
 
 use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions};
@@ -396,8 +397,18 @@ fn classify(
 /// took. `async fn` + `run_blocking` moves it to Tauri's blocking-task pool.
 #[tauri::command]
 #[specta::specta]
-pub async fn merge_start(path: String, sha: String, strategy: Option<String>) -> MergeResult {
+pub async fn merge_start(app: AppHandle<Wry>, path: String, sha: String, strategy: Option<String>) -> MergeResult {
     crate::blocking::run_blocking(move || {
+        let label = sha.chars().take(7).collect::<String>();
+        crate::jobs::run_job(&app, crate::jobs::JobKind::Merge, &path.clone(), &label, || merge_start_core(path, sha, strategy))
+    })
+    .await
+}
+
+/// The body of [`merge_start`], cancellable when run inside its job (see
+/// `cancel_cleanup::Cancellable`). Tests call it directly.
+pub fn merge_start_core(path: String, sha: String, strategy: Option<String>) -> MergeResult {
+    {
         if let Err(e) = validate_sha(&sha) {
             return MergeResult::error(e);
         }
@@ -416,8 +427,7 @@ pub async fn merge_start(path: String, sha: String, strategy: Option<String>) ->
         }
 
         merge_one(&repo, &path, &sha, extra_flag)
-    })
-    .await
+    }
 }
 
 /// `strategy` -> the extra CLI flag it maps to (or `None` for today's exact
@@ -474,11 +484,20 @@ fn merge_one(repo: &Repository, path: &str, sha: &str, extra_flag: Option<&str>)
     }
     args.push("--end-of-options");
     args.push(sha);
-
-    // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
-    // Cancelled run cancel_cleanup::after_cancel.
-    let out = match git_worktree_c(path, &args, true, None) {
+    let job = crate::cancel_cleanup::Cancellable::arm_tree_op(path);
+    let out = match git_worktree_c(path, &args, true, job.token().as_ref()) {
         Ok(o) => o,
+        Err(e) if crate::procutil::is_cancelled_ierr(&e) => {
+            let message = job.finish(path, "err_history.merge_cancelled", true, Some(backup.as_str()));
+            return MergeResult {
+                ok: false,
+                state: "cancelled".into(),
+                conflicted_files: Vec::new(),
+                message,
+                backup_ref: Some(backup),
+                blocked_by_local_changes: false,
+            };
+        }
         Err(e) => {
             return MergeResult {
                 ok: false,
@@ -1159,8 +1178,18 @@ fn validate_mode(mode: &str) -> Result<(), String> {
 /// freezing the whole window; `async fn` + `run_blocking` fixes that.
 #[tauri::command]
 #[specta::specta]
-pub async fn merge_start_multi(path: String, shas: Vec<String>, mode: String, strategy: Option<String>) -> MergeResult {
+pub async fn merge_start_multi(app: AppHandle<Wry>, path: String, shas: Vec<String>, mode: String, strategy: Option<String>) -> MergeResult {
     crate::blocking::run_blocking(move || {
+        let label = shas.iter().map(|s| s.chars().take(7).collect::<String>()).collect::<Vec<_>>().join(", ");
+        crate::jobs::run_job(&app, crate::jobs::JobKind::Merge, &path.clone(), &label, || merge_start_multi_core(path, shas, mode, strategy))
+    })
+    .await
+}
+
+/// The body of [`merge_start_multi`], cancellable when run inside its job (see
+/// `cancel_cleanup::Cancellable`). Tests call it directly.
+pub fn merge_start_multi_core(path: String, shas: Vec<String>, mode: String, strategy: Option<String>) -> MergeResult {
+    {
         if let Err(e) = validate_mode(&mode) {
             return MergeResult::error(e);
         }
@@ -1205,8 +1234,7 @@ pub async fn merge_start_multi(path: String, shas: Vec<String>, mode: String, st
         let result = merge_one(&repo, &path, &shas[0], extra_flag);
         settle_queue_step(&repo, &shas[0], &result);
         result
-    })
-    .await
+    }
 }
 
 /// One octopus attempt — see `merge_start_multi`'s own doc comment for the
@@ -1221,10 +1249,20 @@ fn merge_octopus(repo: &Repository, path: &str, shas: &[String]) -> MergeResult 
     for sha in shas {
         args.push(sha);
     }
-    // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
-    // Cancelled run cancel_cleanup::after_cancel.
-    let out = match git_worktree_c(path, &args, true, None) {
+    let job = crate::cancel_cleanup::Cancellable::arm_tree_op(path);
+    let out = match git_worktree_c(path, &args, true, job.token().as_ref()) {
         Ok(o) => o,
+        Err(e) if crate::procutil::is_cancelled_ierr(&e) => {
+            let message = job.finish(path, "err_history.merge_cancelled", true, Some(backup.as_str()));
+            return MergeResult {
+                ok: false,
+                state: "cancelled".into(),
+                conflicted_files: Vec::new(),
+                message,
+                backup_ref: Some(backup),
+                blocked_by_local_changes: false,
+            };
+        }
         Err(e) => {
             return MergeResult {
                 ok: false,
@@ -1343,8 +1381,18 @@ fn settle_queue_step(repo: &Repository, sha: &str, result: &MergeResult) {
 /// freezing the whole window; `async fn` + `run_blocking` fixes that.
 #[tauri::command]
 #[specta::specta]
-pub async fn merge_queue_continue(path: String) -> MergeResult {
+pub async fn merge_queue_continue(app: AppHandle<Wry>, path: String) -> MergeResult {
     crate::blocking::run_blocking(move || {
+        let label = String::new();
+        crate::jobs::run_job(&app, crate::jobs::JobKind::Merge, &path.clone(), &label, || merge_queue_continue_core(path))
+    })
+    .await
+}
+
+/// The body of [`merge_queue_continue`], cancellable when run inside its job (see
+/// `cancel_cleanup::Cancellable`). Tests call it directly.
+pub fn merge_queue_continue_core(path: String) -> MergeResult {
+    {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
             Err(e) => return MergeResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
@@ -1402,8 +1450,7 @@ pub async fn merge_queue_continue(path: String) -> MergeResult {
         let result = merge_one(&repo, &path, &next, extra_flag);
         settle_queue_step(&repo, &next, &result);
         result
-    })
-    .await
+    }
 }
 
 /// Cancel a sequential merge queue: best-effort abort any conflict on the

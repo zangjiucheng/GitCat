@@ -6,6 +6,21 @@
 // git_pick.rs verbatim. Raw git stderr is NEVER keyed here (these ops surface
 // a lot of it after a failed merge/rebase); it passes through unchanged.
 export default {
+  // A history op cancelled from the jobs indicator (#233). The backend joins
+  // the op's sentence with the optional ones below (Rust `ijoin`).
+  commit_cancelled: "Commit cancelled; your message and staged changes are kept.",
+  merge_cancelled: "Merge cancelled.",
+  cherry_pick_cancelled: "Cherry-pick cancelled.",
+  revert_cancelled: "Revert cancelled.",
+  rebase_cancelled: "Rebase cancelled.",
+  rebase_continue_cancelled: "Continue cancelled; the rebase is still in progress.",
+  apply_patch_cancelled: "Applying the patch was cancelled.",
+  mergetool_cancelled: "Stopped waiting for the merge tool; the file is still unresolved.",
+  cancel_removed_locks: "Removed the lock files the cancelled git left behind: {locks}.",
+  cancel_aborted: "Ran git {op} --abort to back out the half-finished {op}.",
+  cancel_reset_tree: "Put the index and working tree back as they were before.",
+  cancel_undo: "If anything still looks wrong, {undoKey} restores the snapshot {snapshot}.",
+
   // Shared git-runner / repo-open / snapshot / revision-validation failures.
   // ({detail} carries the raw io/git2 reason verbatim and is not localized.)
   could_not_run_git: "Could not run git: {detail}",

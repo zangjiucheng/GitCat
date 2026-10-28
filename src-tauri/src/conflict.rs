@@ -75,6 +75,9 @@ pub struct ResolveResult {
     pub ok: bool,
     pub remaining: usize,
     pub message: String,
+    /// The user cancelled the wait on the external merge tool from the jobs
+    /// indicator: not a failure, so the UI relays `message` without a warning.
+    pub cancelled: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -385,7 +388,7 @@ fn resolve_conflict_file_inner(path: String, file: String, side: String) -> Reso
     } else {
         format!("Kept {kept} for {file}. {remaining} file(s) still conflicted.")
     };
-    ResolveResult { ok: true, remaining, message }
+    ResolveResult { ok: true, remaining, message, cancelled: false }
 }
 
 /// Count files still unmerged (worktree vs index, filtered to Unmerged). Best
@@ -399,10 +402,10 @@ fn remaining_conflicts(path: &str) -> usize {
 
 impl ResolveResult {
     fn err(message: impl Into<String>) -> Self {
-        Self { ok: false, remaining: 0, message: message.into() }
+        Self { ok: false, remaining: 0, message: message.into(), cancelled: false }
     }
     fn fail(message: impl Into<String>, remaining: usize) -> Self {
-        Self { ok: false, remaining, message: message.into() }
+        Self { ok: false, remaining, message: message.into(), cancelled: false }
     }
 }
 
@@ -752,5 +755,5 @@ fn resolve_conflict_hunks_inner(path: String, file: String, resolved_content: St
     } else {
         format!("Saved your resolution for {file}. {remaining} file(s) still conflicted.")
     };
-    ResolveResult { ok: true, remaining, message }
+    ResolveResult { ok: true, remaining, message, cancelled: false }
 }

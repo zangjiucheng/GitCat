@@ -206,7 +206,7 @@ describe("events", () => {
 });
 
 describe("cancel", () => {
-  it("calls jobCancel and sets cancelling; a cancelled background job toasts", async () => {
+  it("calls jobCancel and sets cancelling; the chip itself never toasts", async () => {
     vi.mocked(commands.jobCancel).mockResolvedValue(true);
     jobsCtrl.onStarted(job({ id: 7, label: "origin", background: true }));
     const p = jobsCtrl.cancel(7);
@@ -216,15 +216,8 @@ describe("cancel", () => {
     await jobsCtrl.cancel(7); // already cancelling: no second call
     expect(commands.jobCancel).toHaveBeenCalledTimes(1);
     jobsCtrl.onFinished({ id: 7, outcome: "cancelled" });
-    expect(bridge.tama.say).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(bridge.tama.say).mock.calls[0][0]).toContain("origin");
-  });
-
-  it("a cancelled FOREGROUND job does not toast: its own caller relays the backend message", async () => {
-    vi.mocked(commands.jobCancel).mockResolvedValue(true);
-    jobsCtrl.onStarted(job({ id: 9, background: false }));
-    await jobsCtrl.cancel(9);
-    jobsCtrl.onFinished({ id: 9, outcome: "cancelled" });
+    // The job's own caller relays the backend's message; saying it here too
+    // would be the same news twice.
     expect(bridge.tama.say).not.toHaveBeenCalled();
   });
 
