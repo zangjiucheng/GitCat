@@ -386,20 +386,70 @@ export function saveSettings(partial: Partial<PersistedSettings>): PersistedSett
   return next;
 }
 
+// ── Backend-owned safety settings ───────────────────────────────────────────
+// The settings that decide what the Safety Manager keeps live in the backend's
+// safety-settings.json (safety_settings.rs), so a process with no webview —
+// 2.0's headless `gitcat --mcp` — applies the same policy. localStorage keeps
+// a copy so boot stays synchronous; the backend's file wins once it exists,
+// and the first run with this code migrates what localStorage already had.
+type SafetyKeys = Pick<PersistedSettings, "snapshotRetentionMode" | "snapshotRetentionCount" | "snapshotRetentionDays">;
+
+function safetyOf(s: PersistedSettings): SafetyKeys {
+  return {
+    snapshotRetentionMode: s.snapshotRetentionMode,
+    snapshotRetentionCount: s.snapshotRetentionCount,
+    snapshotRetentionDays: s.snapshotRetentionDays,
+  };
+}
+
+// Write the current safety keys through to the backend. Fire-and-forget, like
+// every other settings write: a failure leaves the local copy, and the next
+// change (or the next boot's sync) tries again.
+async function pushSafetySettings(): Promise<void> {
+  if (!IN_TAURI) return;
+  try {
+    const r = await commands.safetySettingsSet(safetyOf(loadSettings()));
+    if (r?.status === "error") console.error("saving safety settings failed", r.error);
+  } catch (e) {
+    console.error("saving safety settings failed", e);
+  }
+}
+
+// Run once at boot (main.ts). Never throws.
+export async function syncSafetySettings(): Promise<void> {
+  if (!IN_TAURI) return;
+  try {
+    const state = await commands.safetySettingsGet();
+    if (!state.stored) {
+      await commands.safetySettingsSet(safetyOf(loadSettings()));
+      return;
+    }
+    const b = state.settings;
+    const keys: SafetyKeys = {
+      snapshotRetentionMode: b.snapshotRetentionMode as SnapshotRetentionMode,
+      snapshotRetentionCount: b.snapshotRetentionCount,
+      snapshotRetentionDays: b.snapshotRetentionDays,
+    };
+    saveSettings(keys);
+    Object.assign(settingsCtrl, keys);
+  } catch (e) {
+    console.error("safety settings sync failed", e);
+  }
+}
+
 // Prune Safety-Manager snapshots per the user's configured retention policy.
 // Called from legacy/main.ts's openRepo (once per repo-open), the same
-// "read settings fresh, IN_TAURI-gated, fire-and-forget" model main.ts's
-// auto-fetch loop uses — so flipping the policy in Settings takes effect on the
-// next repo-open with no extra wiring. Deliberately silent and best-effort:
-// cleaning stale backup refs is background upkeep, never worth a toast or
-// blocking the open, and a failure just retries next time. A no-op (one
-// localStorage read) when the mode is "off".
+// "IN_TAURI-gated, fire-and-forget" model main.ts's auto-fetch loop uses — so
+// flipping the policy in Settings takes effect on the next repo-open with no
+// extra wiring. The backend reads the policy from its own store (see above),
+// so it is right even before this window's boot sync has finished, and "off"
+// prunes nothing there. Deliberately silent and best-effort: cleaning stale
+// backup refs is background upkeep, never worth a toast or blocking the open,
+// and a failure just retries next time.
 export async function pruneSnapshotsPerPolicy(repo: string): Promise<void> {
   if (!IN_TAURI || !repo) return;
-  const s = loadSettings();
-  if (s.snapshotRetentionMode === "off") return;
   try {
-    await commands.pruneSnapshots(repo, s.snapshotRetentionMode, s.snapshotRetentionCount, s.snapshotRetentionDays);
+    await commands.pruneSnapshotsPerPolicy(repo);
   } catch (e) {
     console.error("snapshot prune failed", e);
   }
@@ -996,6 +1046,7 @@ class SettingsState {
   setSnapshotRetentionMode(v: SnapshotRetentionMode): void {
     this.snapshotRetentionMode = v;
     saveSettings({ snapshotRetentionMode: v });
+    void pushSafetySettings();
   }
 
   // Count/days are clamped to a whole number >= 1 here (not just via the
@@ -1007,12 +1058,14 @@ class SettingsState {
     const n = Number.isFinite(v) ? Math.max(1, Math.floor(v)) : 1;
     this.snapshotRetentionCount = n;
     saveSettings({ snapshotRetentionCount: n });
+    void pushSafetySettings();
   }
 
   setSnapshotRetentionDays(v: number): void {
     const n = Number.isFinite(v) ? Math.max(1, Math.floor(v)) : 1;
     this.snapshotRetentionDays = n;
     saveSettings({ snapshotRetentionDays: n });
+    void pushSafetySettings();
   }
 
   setTamaEnabled(v: boolean): void {

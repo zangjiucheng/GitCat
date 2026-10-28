@@ -45,6 +45,7 @@ pub mod repo_summary; // Repository Summary: git-log-derived churn/contributor/a
 pub mod rerere; // M5a: git-rerere status/toggle panel
 pub mod signature; // commit signature verdict (git's own %G? — gpg/ssh/x509) for the detail panel's badge, fetched lazily per selected commit
 pub mod safety; // provided by the Safety-Manager component (exposes snapshot(&Repository))
+pub mod safety_settings; // M0: backend-owned safety settings (<config>/com.jiucheng.gitcat/safety-settings.json), readable without a webview
 pub mod submodule; // M1 status (read-only) + M2 init/update + M3 add/sync + M4 deinit/remove
 pub mod terminal; // "Open Terminal": a real PTY-backed shell embedded in GitCat's own UI
 pub mod plugin_exec; // PER-40: plugin command executor + placeholder grammar (declarative, external-process plugins)
@@ -98,6 +99,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         safety::undo_last,
         safety::undo_last_stashing,
         safety::prune_snapshots,
+        safety_settings::safety_settings_get,
+        safety_settings::safety_settings_set,
+        safety_settings::prune_snapshots_per_policy,
         // Branch ops
         git_write::list_refs,
         // Backs the sidebar's "Auto" branch-visibility mode — which local

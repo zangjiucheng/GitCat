@@ -45,7 +45,7 @@ import { bisectDrawerCtrl } from "./islands/bisectdrawer/bisectdrawer.svelte.ts"
 import { pluginPanelsCtrl } from "./islands/pluginpanels/pluginpanels.svelte.ts";
 import { mountOnFirstOpen } from "./lazyisland.svelte.ts";
 import { pluginsCtrl } from "./islands/plugins/plugins.svelte.ts";
-import { settingsCtrl, loadSettings } from "./islands/settings/settings.svelte.ts";
+import { settingsCtrl, loadSettings, syncSafetySettings } from "./islands/settings/settings.svelte.ts";
 import DanglingRecovery from "./islands/danglingrecovery/DanglingRecovery.svelte";
 import { danglingRecoveryCtrl } from "./islands/danglingrecovery/danglingrecovery.svelte.ts";
 import RepoFiles from "./islands/repofiles/RepoFiles.svelte";
@@ -196,6 +196,8 @@ submoduleNavCtrl.refresh(bridge.CUR_REPO);
 // init() never throws (it warns), so it is fire-and-forget.
 mount(Jobs, { target: document.getElementById("jobsMount")! });
 void jobsCtrl.init();
+// Backend-owned safety settings: migrate on first run, else adopt the backend's.
+void syncSafetySettings();
 
 // Reflog/Rerere/Plumbing: on-demand modals now (Tools menu / ⌘K — see
 // menu.rs / cmdk.svelte.ts), each opened via its own controller's show()

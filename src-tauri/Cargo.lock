@@ -1713,6 +1713,7 @@ version = "1.5.1"
 dependencies = [
  "base64 0.22.1",
  "console-subscriber",
+ "dirs",
  "git2",
  "image",
  "libc",
