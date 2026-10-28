@@ -10,4 +10,12 @@ overrides:
   vite: "^6.4.3"
   esbuild: "^0.25.0"
   postcss: "^8.5.23"
-  undici: "^7.29.0"
+  undici: "^7.30.1"
+  # Dependabot batch, 2026-10. source-map-js comes in via jsdom (css-tree), vue
+  # via vitepress (@vue/server-renderer). devalue is svelte's own dependency and
+  # the one runtime-scoped alert, but svelte uses it only to serialize data for
+  # server rendering, which GitCat (client-only) never does; bumped anyway.
+  # No patched deepmerge exists yet (via the svelte vite plugin, build-only).
+  devalue: "^5.9.3"
+  source-map-js: "^1.2.2"
+  vue: "^3.5.42"
