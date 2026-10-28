@@ -456,7 +456,24 @@ fn screen_args(sub: &str, rest: &[String]) -> Result<(), String> {
 #[cfg(windows)]
 const NO_HOOKS_DIR: &str = "NUL";
 #[cfg(not(windows))]
-const NO_HOOKS_DIR: &str = "/dev/null";
+const NO_HOOKS_DIR: &str = LINUX_NO_HOOKS_DIR;
+
+/// [`NO_HOOKS_DIR`] for a git running in a WSL distro, whatever GitCat itself
+/// runs on. It must NOT be the Windows `NUL`: to Linux git that is an ordinary
+/// relative directory, so a `mutates` plugin could check out `NUL/pre-commit`
+/// and have it run.
+pub const LINUX_NO_HOOKS_DIR: &str = "/dev/null";
+
+/// The git-level options [`harden_command`] puts before the subcommand, for a
+/// git whose "no hooks" directory is `no_hooks_dir`. Exposed so a command that
+/// isn't a plain local `Command` (a WSL-routed one) gets exactly the same.
+pub fn harden_args(no_hooks_dir: &str) -> [String; 5] {
+    ["--no-pager".into(), "-c".into(), "core.fsmonitor=false".into(), "-c".into(), format!("core.hooksPath={no_hooks_dir}")]
+}
+
+/// The environment [`harden_command`] sets (see its doc for each).
+pub const HARDEN_ENVS: [(&str, &str); 4] =
+    [("GIT_PAGER", "cat"), ("GIT_EDITOR", ":"), ("GIT_SEQUENCE_EDITOR", ":"), ("GIT_TERMINAL_PROMPT", "0")];
 
 /// Apply the invocation-time hardening every sandboxed `git()` call gets, on top
 /// of the argument policy. Nothing here changes what a legitimate read or
@@ -483,12 +500,10 @@ const NO_HOOKS_DIR: &str = "/dev/null";
 /// `filter.*` (git-lfs), signing, and textconv drivers come from the user's own
 /// config and are left alone (see the module doc).
 pub fn harden_command(cmd: &mut Command) {
-    cmd.arg("--no-pager").arg("-c").arg("core.fsmonitor=false");
-    cmd.arg("-c").arg(format!("core.hooksPath={NO_HOOKS_DIR}"));
-    cmd.env("GIT_PAGER", "cat")
-        .env("GIT_EDITOR", ":")
-        .env("GIT_SEQUENCE_EDITOR", ":")
-        .env("GIT_TERMINAL_PROMPT", "0");
+    cmd.args(harden_args(NO_HOOKS_DIR));
+    for (k, v) in HARDEN_ENVS {
+        cmd.env(k, v);
+    }
     for var in [
         "GIT_DIR",
         "GIT_WORK_TREE",

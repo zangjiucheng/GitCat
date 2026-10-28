@@ -284,6 +284,33 @@ fn strip_dangerous_globals(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
+/// Run one policy-checked `git()` call in `repo` with the sandbox hardening.
+///
+/// A `\\wsl.localhost\` repo runs the distro's own git, like every other
+/// GitCat git call there: Windows git over the bridge is slow, reports every
+/// +x file as modified, and a `mutates` plugin's checkout or reset would
+/// rewrite the tree as CRLF and drop exec bits. The hardening crosses into the
+/// distro as git options and `env` assignments (a plain environment variable
+/// on `wsl.exe` doesn't), with the Linux "no hooks" directory. The inherited
+/// variables `harden_command` removes don't need removing there: `wsl.exe -e`
+/// starts git with no login environment, only what WSLENV forwards.
+fn run_sandboxed_git(repo: &str, argv: &[String]) -> std::io::Result<std::process::Output> {
+    use crate::plugin_git_policy::{harden_args, HARDEN_ENVS, LINUX_NO_HOOKS_DIR};
+    use crate::procutil::{run_with, RunError, RunOptions, SUBPROCESS_TIMEOUT};
+    if crate::wsl::wsl_target(repo).is_some() {
+        let hardening = harden_args(LINUX_NO_HOOKS_DIR);
+        let args: Vec<&str> = hardening.iter().map(String::as_str).chain(argv.iter().map(String::as_str)).collect();
+        let (cmd, tag) = crate::wsl::git_command_tagged(repo, &args, &HARDEN_ENVS);
+        return run_with(cmd, RunOptions { timeout: Some(SUBPROCESS_TIMEOUT), wsl: tag, ..Default::default() })
+            .map_err(RunError::into_io);
+    }
+    let mut cmd = Command::new("git");
+    cmd.no_console_window();
+    crate::plugin_git_policy::harden_command(&mut cmd);
+    cmd.arg("-C").arg(repo).args(argv);
+    crate::procutil::output_with_timeout(cmd, SUBPROCESS_TIMEOUT)
+}
+
 /// Bind `ctx`, `git`, `tama`, and `print` into `lua`'s sandbox globals and
 /// return the `ctx` table handle (so the caller can pass the very same table to
 /// the handler). Called AFTER `sandbox(true)`, so these land in the writable
@@ -315,11 +342,7 @@ fn install_host_api(
         // plugin_git_policy's module doc for the vectors this closes (aliases,
         // config writes, --upload-pack, rebase --exec, --output, …).
         crate::plugin_git_policy::check_git_args(&argv, mutates).map_err(mlua::Error::runtime)?;
-        let mut cmd = Command::new("git");
-        cmd.no_console_window();
-        crate::plugin_git_policy::harden_command(&mut cmd);
-        cmd.arg("-C").arg(&repo).args(&argv);
-        let out = crate::procutil::output_with_timeout(cmd, crate::procutil::SUBPROCESS_TIMEOUT)
+        let out = run_sandboxed_git(&repo, &argv)
             .map_err(|e| mlua::Error::runtime(format!("git could not run (or timed out): {e}")))?;
         let result = lua.create_table()?;
         result.set("stdout", String::from_utf8_lossy(&out.stdout).into_owned())?;

@@ -461,3 +461,49 @@ fn run_with_cancel_kills_the_in_distro_git_by_its_tag() {
     let left = String::from_utf8_lossy(&out.stdout);
     assert!(left.trim().is_empty(), "processes still carrying GITCAT_OP={} after cancel: {left}", tag.token);
 }
+
+// A Luau plugin's git() on a WSL repo runs the distro's git, keeping the
+// sandbox hardening (no hooks) with the Linux "no hooks" directory.
+#[test]
+#[ignore]
+fn plugin_git_runs_in_the_distro_and_keeps_its_sandbox() {
+    use gitcat_lib::plugin_exec::PlaceholderCtx;
+    use gitcat_lib::plugin_lua::run_lua_handler;
+
+    let distro = skip_without_wsl!();
+    let repo = WslTempRepo::init(&distro, "plugin_git");
+    WslTempRepo::wsl_setup(
+        &distro,
+        &format!(
+            "set -e; cd '{p}'; printf '#!/bin/sh\necho one\n' > run.sh; chmod +x run.sh; git add run.sh; \
+             git commit -q -m c1; printf '#!/bin/sh\necho two\n' > run.sh; git commit -q -am c2; \
+             printf '#!/bin/sh\ntouch hook-ran\n' > .git/hooks/post-checkout; chmod +x .git/hooks/post-checkout",
+            p = repo.linux_path
+        ),
+    );
+    let path = repo.unc_path();
+    trust::open_repo(&path).expect("trust::open_repo should succeed on a fresh wsl repo");
+    let ctx = PlaceholderCtx::default();
+
+    let read = "local M={} function M.run() return git({'rev-parse','HEAD'}).stdout end return M";
+    let head = run_lua_handler(read, "run", &ctx, &path, false).expect("read runs").stdout;
+    assert_eq!(head.trim(), repo.wsl_git(&["rev-parse", "HEAD"]).1);
+
+    let write = "local M={} function M.run() local r = git({'checkout','-q','HEAD~1','--','run.sh'}) \
+                 return tostring(r.ok) .. r.stderr end return M";
+    let out = run_lua_handler(write, "run", &ctx, &path, true).expect("mutating handler runs").stdout;
+    assert_eq!(out, "true", "checkout failed: {out}");
+    // +x and LF survived, the hook did not fire for the plugin; then the
+    // control: the same hook DOES fire for a plain checkout, so "it did not
+    // fire" means something.
+    WslTempRepo::wsl_setup(
+        &distro,
+        &format!(
+            "set -e; cd '{p}'; test -x run.sh; ! grep -q $'\\r' run.sh; grep -q one run.sh; test ! -e hook-ran; \
+             git checkout -q HEAD -- run.sh; test -e hook-ran",
+            p = repo.linux_path
+        ),
+    );
+
+    untrust(&path);
+}
