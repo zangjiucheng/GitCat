@@ -25,22 +25,41 @@
 //!
 //! One repo watched at a time, tracked in Tauri-managed state
 //! (`app.manage(WatchState::default())` in lib.rs): watch_repo replaces
-//! whatever was previously watched (the old Debouncer's Drop impl stops it),
+//! whatever was previously watched (dropping the old RepoWatcher stops it),
 //! unwatch_repo clears it. Both called from the frontend around the same
 //! open/close points as Safety.refresh()/bootEmpty() — see legacy/main.ts.
 
 use std::path::Path;
+use std::sync::mpsc;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_mini::{new_debouncer, DebounceEventResult, Debouncer};
+use notify::event::EventKind;
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{AppHandle, State, Wry};
 
 const DEBOUNCE: Duration = Duration::from_millis(400);
+/// A steady stream of changes (a long rebase) still reloads this often.
+const DEBOUNCE_MAX: Duration = Duration::from_secs(2);
+
+/// A live watch on one repository. Dropping it stops the watch: the watcher
+/// goes, its event sender with it, and the debounce thread sees the channel
+/// close and exits.
+pub struct RepoWatcher {
+    _watcher: RecommendedWatcher,
+}
 
 #[derive(Default)]
-pub struct WatchState(Mutex<Option<Debouncer<RecommendedWatcher>>>);
+pub struct WatchState(Mutex<Option<RepoWatcher>>);
+
+/// Whether an event can mean something changed. On Linux, notify (8.x) watches
+/// IN_OPEN too, so merely READING `HEAD` or a ref is an event; with
+/// notify-debouncer-mini, which drops the kind, that read looked exactly like a
+/// change. GitCat's own refresh reads HEAD, so each refresh queued the next: a
+/// repo open on Linux re-ran the (cheap) fast refresh every ~400 ms forever.
+fn is_change(kind: &EventKind) -> bool {
+    !matches!(kind, EventKind::Access(_))
+}
 
 /// Whether a change at `rel` — a path RELATIVE to the git dir or the common
 /// dir — should reload the graph: `HEAD`, or anything under `refs/` except
@@ -73,12 +92,12 @@ fn relative_to<'a>(path: &'a Path, roots: &[std::path::PathBuf]) -> Option<&'a P
 }
 
 /// Core watcher setup, independent of any running Tauri app — `on_change` is
-/// called (from the debouncer's own background thread) whenever a relevant
-/// path changes. Split out from the `watch_repo` command so it's directly
+/// called (from the debounce thread) once per burst of relevant changes: after
+/// [`DEBOUNCE`] of quiet, or every [`DEBOUNCE_MAX`] while they keep coming. Split out from the `watch_repo` command so it's directly
 /// unit-testable (a `#[tauri::command]` needing a real `AppHandle`/`State`
 /// isn't callable from a plain integration test the way this codebase's
 /// other command functions are — see tests/watch.rs).
-pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Result<Debouncer<RecommendedWatcher>, String> {
+pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Result<RepoWatcher, String> {
     let repo = crate::trust::open_repo(path).map_err(|e| format!("cannot open repository: {}", e.message()))?;
     let git_dir = repo.path().to_path_buf();
     // A linked worktree's git dir (`.git/worktrees/<name>`) holds only its own
@@ -93,13 +112,30 @@ pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Resu
     roots.sort_by_key(|r| std::cmp::Reverse(r.as_os_str().len()));
     roots.dedup();
 
-    let mut debouncer = new_debouncer(DEBOUNCE, move |res: DebounceEventResult| {
-        let Ok(events) = res else { return };
-        if events.iter().any(|e| relative_to(&e.path, &roots).is_some_and(is_relevant)) {
-            on_change();
+    let (tx, rx) = mpsc::channel::<()>();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        let Ok(event) = res else { return };
+        if is_change(&event.kind) && event.paths.iter().any(|p| relative_to(p, &roots).is_some_and(is_relevant)) {
+            let _ = tx.send(());
         }
     })
     .map_err(|e| e.to_string())?;
+
+    std::thread::spawn(move || {
+        // recv() fails once the watcher (and with it the sender) is dropped.
+        while rx.recv().is_ok() {
+            let burst = Instant::now();
+            loop {
+                let left = DEBOUNCE_MAX.saturating_sub(burst.elapsed());
+                match rx.recv_timeout(DEBOUNCE.min(left)) {
+                    Ok(()) if !left.is_zero() => continue,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    _ => break,
+                }
+            }
+            on_change();
+        }
+    });
 
     // ADVERSARIALLY-FOUND FIX: watch the git-dir ROOT non-recursively rather
     // than the exact `HEAD` file path. Git updates HEAD via the same
@@ -113,19 +149,18 @@ pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Resu
     // avoidance `is_relevant`'s filtering already relied on. Extra
     // non-matching events (e.g. `index`/`COMMIT_EDITMSG` touches) are
     // harmless: `is_relevant` below still only reacts to HEAD/refs.
-    debouncer
-        .watcher()
+    watcher
         .watch(&git_dir, RecursiveMode::NonRecursive)
         .map_err(|e| e.to_string())?;
     // refs/ always exists after `git init`, but don't fail watch_repo over a
     // missing/unusual layout — the git-dir root watch above still catches
     // checkouts/commits via HEAD either way.
-    let _ = debouncer.watcher().watch(&git_dir.join("refs"), RecursiveMode::Recursive);
+    let _ = watcher.watch(&git_dir.join("refs"), RecursiveMode::Recursive);
     if common_dir != git_dir {
-        let _ = debouncer.watcher().watch(&common_dir.join("refs"), RecursiveMode::Recursive);
+        let _ = watcher.watch(&common_dir.join("refs"), RecursiveMode::Recursive);
     }
 
-    Ok(debouncer)
+    Ok(RepoWatcher { _watcher: watcher })
 }
 
 /// BUG FIX: was a plain (non-async) `fn` — `start_watching` calls
@@ -143,14 +178,14 @@ pub fn start_watching(path: &str, on_change: impl Fn() + Send + 'static) -> Resu
 #[specta::specta]
 pub async fn watch_repo(app: AppHandle<Wry>, state: State<'_, WatchState>, path: String) -> Result<(), String> {
     let handle = app.clone();
-    let debouncer = crate::blocking::run_blocking(move || {
+    let watcher = crate::blocking::run_blocking(move || {
         start_watching(&path, move || {
             log::info!("[watch] relevant git-dir change → emit repo-changed");
             crate::event_util::emit_on_main(&handle, "repo-changed", ());
         })
     })
     .await?;
-    *state.0.lock().unwrap() = Some(debouncer);
+    *state.0.lock().unwrap() = Some(watcher);
     Ok(())
 }
 
@@ -203,5 +238,20 @@ mod is_relevant_tests {
         let index = Path::new("/srv/refs/app/.git/index");
         assert!(!relative_to(index, &roots).is_some_and(is_relevant), "the old check reloaded on every index write");
         assert!(relative_to(Path::new("/elsewhere/HEAD"), &roots).is_none());
+    }
+}
+
+#[cfg(test)]
+mod is_change_tests {
+    use super::is_change;
+    use notify::event::{AccessKind, AccessMode, CreateKind, EventKind, ModifyKind};
+
+    #[test]
+    fn reads_are_not_changes_and_writes_are() {
+        assert!(!is_change(&EventKind::Access(AccessKind::Open(AccessMode::Read))));
+        assert!(!is_change(&EventKind::Access(AccessKind::Close(AccessMode::Read))));
+        assert!(is_change(&EventKind::Create(CreateKind::File)));
+        assert!(is_change(&EventKind::Modify(ModifyKind::Any)));
+        assert!(is_change(&EventKind::Any), "an unknown kind is treated as a change");
     }
 }

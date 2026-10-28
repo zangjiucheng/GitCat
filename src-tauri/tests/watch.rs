@@ -36,12 +36,12 @@ fn wait_until(flag: &AtomicBool, timeout: Duration) -> bool {
 // failed once with no code change and no local reproduction across 5 retries
 // — exactly the signature of a historical-replay race, not a real bug in
 // is_relevant()'s filtering.)
-fn arm_and_settle(path: &str, fired: &Arc<AtomicBool>) -> notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher> {
+fn arm_and_settle(path: &str, fired: &Arc<AtomicBool>) -> gitcat_lib::watch::RepoWatcher {
     let fired2 = fired.clone();
-    let debouncer = start_watching(path, move || fired2.store(true, Ordering::SeqCst)).expect("start_watching failed");
+    let watcher = start_watching(path, move || fired2.store(true, Ordering::SeqCst)).expect("start_watching failed");
     std::thread::sleep(Duration::from_millis(600));
     fired.store(false, Ordering::SeqCst);
-    debouncer
+    watcher
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn fires_on_a_commit_made_outside_the_watcher() {
     repo.commit("f.txt", "0\n", "c0");
 
     let fired = Arc::new(AtomicBool::new(false));
-    let _debouncer = arm_and_settle(&repo.path(), &fired);
+    let _watcher = arm_and_settle(&repo.path(), &fired);
 
     repo.commit("g.txt", "1\n", "c1"); // simulates "someone committed outside GitCat"
 
@@ -63,7 +63,7 @@ fn fires_on_a_branch_created_outside_the_watcher() {
     repo.commit("f.txt", "0\n", "c0");
 
     let fired = Arc::new(AtomicBool::new(false));
-    let _debouncer = arm_and_settle(&repo.path(), &fired);
+    let _watcher = arm_and_settle(&repo.path(), &fired);
 
     repo.must(&["branch", "feature-x"]); // touches refs/heads/feature-x, not HEAD
 
@@ -85,7 +85,7 @@ fn fires_on_a_checkout_that_only_changes_head_not_refs() {
     repo.must(&["branch", "other"]); // exists before the watcher arms, so checkout below touches ONLY HEAD
 
     let fired = Arc::new(AtomicBool::new(false));
-    let _debouncer = arm_and_settle(&repo.path(), &fired);
+    let _watcher = arm_and_settle(&repo.path(), &fired);
 
     repo.must(&["checkout", "-q", "other"]); // rewrites .git/HEAD's symref target only
 
@@ -98,7 +98,7 @@ fn does_not_fire_on_an_unrelated_working_tree_file_change() {
     repo.commit("f.txt", "0\n", "c0");
 
     let fired = Arc::new(AtomicBool::new(false));
-    let _debouncer = arm_and_settle(&repo.path(), &fired);
+    let _watcher = arm_and_settle(&repo.path(), &fired);
 
     std::fs::write(repo.dir.join("unrelated.txt"), "not a git change\n").expect("write unrelated file");
 
@@ -113,7 +113,7 @@ fn does_not_fire_on_gitcats_own_refs() {
     let c0 = repo.commit("f.txt", "0\n", "c0");
 
     let fired = Arc::new(AtomicBool::new(false));
-    let _debouncer = arm_and_settle(&repo.path(), &fired);
+    let _watcher = arm_and_settle(&repo.path(), &fired);
 
     repo.must(&["update-ref", "refs/gitgui/backup/1-2-3", &c0]);
     repo.must(&["update-ref", "refs/gitcat/oplog", &c0]);
@@ -137,7 +137,7 @@ fn fires_for_a_repo_living_under_a_directory_named_gitgui() {
     git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "c0"]);
 
     let fired = Arc::new(AtomicBool::new(false));
-    let _debouncer = arm_and_settle(dir.to_str().unwrap(), &fired);
+    let _watcher = arm_and_settle(dir.to_str().unwrap(), &fired);
 
     git(&["branch", "feature"]);
     assert!(wait_until(&fired, Duration::from_secs(3)), "a branch created in a repo under .../gitgui/... must still fire");
@@ -153,10 +153,34 @@ fn a_linked_worktree_fires_on_a_branch_created_in_the_main_checkout() {
     repo.must(&["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()]);
 
     let fired = Arc::new(AtomicBool::new(false));
-    let _debouncer = arm_and_settle(wt.to_str().unwrap(), &fired);
+    let _watcher = arm_and_settle(wt.to_str().unwrap(), &fired);
 
     repo.must(&["branch", "from-main-checkout"]);
     let ok = wait_until(&fired, Duration::from_secs(3));
     let _ = std::fs::remove_dir_all(&wt);
     assert!(ok, "the worktree's watcher should see refs/ in the common dir");
+}
+
+/// On Linux, notify watches IN_OPEN, so merely READING HEAD or a ref is an
+/// event. Treated as a change, GitCat's own refresh (which reads HEAD) queued
+/// the next refresh, forever. Windows reports no reads, so this only ever bit
+/// on Linux; it runs everywhere so it can't regress there.
+#[test]
+fn does_not_fire_when_head_and_refs_are_only_read() {
+    let repo = TempRepo::init("watch_reads");
+    repo.commit("f.txt", "0\n", "c0");
+    repo.must(&["branch", "other"]);
+
+    let fired = Arc::new(AtomicBool::new(false));
+    let _watcher = arm_and_settle(&repo.path(), &fired);
+
+    for _ in 0..3 {
+        repo.must(&["rev-parse", "HEAD"]);
+        repo.must(&["for-each-ref"]);
+        repo.must(&["log", "-1", "--all"]);
+        let _ = gitcat_lib::trust::open_repo(&repo.path()).unwrap().head().unwrap();
+    }
+
+    std::thread::sleep(Duration::from_millis(900));
+    assert!(!fired.load(Ordering::SeqCst), "reading HEAD/refs is not a change");
 }
