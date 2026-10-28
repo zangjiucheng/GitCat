@@ -37,6 +37,11 @@ fn maintenance_options(cancel: Option<&CancelToken>, tag: Option<WslTag>) -> Run
 }
 
 fn maintenance_run(path: &str, cancel: Option<&CancelToken>) -> Result<(), String> {
+    // An older git (or one whose version can't be read) has no `maintenance
+    // run --auto`; skip quietly rather than fail on every idle tick.
+    if !crate::git_version::repo_git_has(path, crate::git_version::GitVersion::has_maintenance) {
+        return Ok(());
+    }
     // Tagged, so a timeout or cancel also kills the git inside a WSL distro.
     let (cmd, tag) = crate::wsl::git_command_tagged(path, &["maintenance", "run", "--auto"], &[]);
     let out = run_with(cmd, maintenance_options(cancel, tag)).map_err(|e| format!("could not run git maintenance: {e}"))?;

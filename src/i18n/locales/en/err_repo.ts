@@ -4,6 +4,12 @@
 // (see src/i18n/i18n.svelte.ts) from the `i18n:err_repo.<key>` strings the Rust
 // side returns via `ierr`/`ierrp`. English is the SOURCE OF TRUTH.
 export default {
+  // commands.rs (graph load): a repository in a format GitCat can't read yet.
+  // {names} travels verbatim (extension names from the repo's config).
+  unsupported_sha256: "This repository uses SHA-256 object names, which GitCat can't read yet. Git itself works with it as usual.",
+  unsupported_reftable: "This repository stores its refs in the reftable format, which GitCat can't read yet. Git itself works with it as usual, and `git refs migrate --ref-format=files` converts it back.",
+  unsupported_format_version: "This repository uses repository format version {version}, which GitCat doesn't understand.",
+  unsupported_extensions: "This repository uses git extensions GitCat can't read yet: {names}.",
   // Shared across repo_files.rs / repo_summary.rs / commands.rs (graph load)
   cannot_open_repo: "cannot open repository: {detail}",
   // identity.rs (set_git_identity)

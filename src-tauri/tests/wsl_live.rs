@@ -574,3 +574,15 @@ fn run_with_cancel_kills_the_in_distro_git_by_its_tag() {
     let left = String::from_utf8_lossy(&out.stdout);
     assert!(left.trim().is_empty(), "processes still carrying GITCAT_OP={} after cancel: {left}", tag.token);
 }
+
+// git_version keys the cache per executable: a WSL repo gets its distro's git
+// version, not Windows git's.
+#[test]
+#[ignore]
+fn git_version_reads_the_distros_own_git() {
+    let distro = skip_without_wsl!();
+    let repo = WslTempRepo::init(&distro, "git_version");
+    let out = Command::new("wsl.exe").args(["-d", &distro, "-e", "git", "--version"]).output().expect("wsl.exe");
+    let want = gitcat_lib::git_version::parse(&String::from_utf8_lossy(&out.stdout)).expect("the distro's git version parses");
+    assert_eq!(gitcat_lib::git_version::for_repo(&repo.unc_path()), Some(want));
+}

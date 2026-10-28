@@ -4,6 +4,11 @@
 // `ierr`/`ierrp`로 반환하는 `i18n:err_repo.<key>` 문자열로부터 조회해요. 영어가
 // SOURCE OF TRUTH예요.
 export default {
+  // commands.rs(그래프 로드): GitCat이 아직 읽을 수 없는 형식의 저장소. {names}(저장소 설정의 확장 이름)는 그대로 전달돼요.
+  unsupported_sha256: "이 저장소는 SHA-256 객체 이름을 사용해서 GitCat이 아직 읽을 수 없어요. git 자체로는 평소처럼 쓸 수 있어요.",
+  unsupported_reftable: "이 저장소는 참조를 reftable 형식으로 저장해서 GitCat이 아직 읽을 수 없어요. git 자체로는 평소처럼 쓸 수 있고, `git refs migrate --ref-format=files`로 되돌릴 수 있어요.",
+  unsupported_format_version: "이 저장소는 GitCat이 이해하지 못하는 저장소 형식 버전 {version}을(를) 사용해요.",
+  unsupported_extensions: "이 저장소는 GitCat이 아직 읽을 수 없는 git 확장을 사용해요: {names}.",
   // repo_files.rs / repo_summary.rs / commands.rs(그래프 로드) 공용
   cannot_open_repo: "저장소를 열 수 없어요: {detail}",
   // identity.rs (set_git_identity)
