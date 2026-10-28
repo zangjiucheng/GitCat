@@ -357,6 +357,38 @@ async pruneSnapshots(path: string, mode: string, count: number, days: number) : 
 }
 },
 /**
+ * JS: `commands.safetySettingsGet()`.
+ */
+async safetySettingsGet() : Promise<SafetySettingsState> {
+    return await TAURI_INVOKE("safety_settings_get");
+},
+/**
+ * Store `settings` (normalized) and return what was stored.
+ * JS: `commands.safetySettingsSet(settings)`.
+ */
+async safetySettingsSet(settings: SafetySettings) : Promise<Result<SafetySettings, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("safety_settings_set", { settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Prune `path`'s safety snapshots by the STORED retention policy — the
+ * backend reads the policy itself rather than taking it from the caller, as
+ * a headless process will. "off" prunes nothing.
+ * JS: `commands.pruneSnapshotsPerPolicy(path)`.
+ */
+async pruneSnapshotsPerPolicy(path: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("prune_snapshots_per_policy", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: list local branches (+ ahead/behind vs upstream), remote
  * branches, and tags, plus the current branch shorthand. Read-only (git2).
  */
@@ -4881,6 +4913,17 @@ backupRef: string | null;
  * `WriteResult.conflicting_files`.
  */
 blockedByLocalChanges: boolean }
+export type SafetySettings = { 
+/**
+ * "off" | "count" | "age" | "hybrid" — see `safety::prune_backups`.
+ */
+snapshotRetentionMode: string; snapshotRetentionCount: number; snapshotRetentionDays: number }
+export type SafetySettingsState = { settings: SafetySettings; 
+/**
+ * `false` until the file has been written once — the frontend's cue to
+ * migrate the values it has in localStorage.
+ */
+stored: boolean }
 /**
  * One selected "+"/"-" row, identified the SAME way `DiffLineRow` already
  * describes it to the frontend (`model.rs`) — `kind`/`old_no`/`new_no`. A

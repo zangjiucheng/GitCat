@@ -50,6 +50,9 @@ vi.mock("../../ipc/bindings", () => ({
     getGitIdentity: vi.fn(),
     setGitIdentity: vi.fn(),
     pruneSnapshots: vi.fn(),
+    pruneSnapshotsPerPolicy: vi.fn(),
+    safetySettingsGet: vi.fn(),
+    safetySettingsSet: vi.fn(),
     listPlugins: vi.fn(),
     setPluginEnabled: vi.fn(),
     removePlugin: vi.fn(),
@@ -93,6 +96,7 @@ import {
   saveSettings,
   settingsCtrl,
   pruneSnapshotsPerPolicy,
+  syncSafetySettings,
   applyPersistedTamaSkin,
   applyPersistedTamaMotion,
   hasTamaSkin,
@@ -205,32 +209,66 @@ describe("snapshot retention settings", () => {
 });
 
 describe("pruneSnapshotsPerPolicy", () => {
-  it("no-ops without touching the backend when the mode is off", async () => {
-    saveSettings({ snapshotRetentionMode: "off" });
+  it("asks the backend, which reads the stored policy itself", async () => {
     await pruneSnapshotsPerPolicy("/repo");
+    expect(commands.pruneSnapshotsPerPolicy).toHaveBeenCalledWith("/repo");
     expect(commands.pruneSnapshots).not.toHaveBeenCalled();
-  });
-
-  it("calls prune_snapshots with the configured mode/count/days when not off", async () => {
-    saveSettings({ snapshotRetentionMode: "hybrid", snapshotRetentionCount: 10, snapshotRetentionDays: 7 });
-    await pruneSnapshotsPerPolicy("/repo");
-    expect(commands.pruneSnapshots).toHaveBeenCalledWith("/repo", "hybrid", 10, 7);
   });
 
   it("no-ops with no repo, and outside Tauri", async () => {
-    saveSettings({ snapshotRetentionMode: "count" });
     await pruneSnapshotsPerPolicy("");
-    expect(commands.pruneSnapshots).not.toHaveBeenCalled();
+    expect(commands.pruneSnapshotsPerPolicy).not.toHaveBeenCalled();
 
     mockInTauri = false;
     await pruneSnapshotsPerPolicy("/repo");
-    expect(commands.pruneSnapshots).not.toHaveBeenCalled();
+    expect(commands.pruneSnapshotsPerPolicy).not.toHaveBeenCalled();
   });
 
   it("swallows a backend rejection — fire-and-forget never rejects", async () => {
-    saveSettings({ snapshotRetentionMode: "age", snapshotRetentionDays: 14 });
-    vi.mocked(commands.pruneSnapshots).mockRejectedValueOnce(new Error("boom"));
+    vi.mocked(commands.pruneSnapshotsPerPolicy).mockRejectedValueOnce(new Error("boom"));
     await expect(pruneSnapshotsPerPolicy("/repo")).resolves.toBeUndefined();
+  });
+});
+
+describe("backend-owned safety settings", () => {
+  const stored = { snapshotRetentionMode: "count", snapshotRetentionCount: 7, snapshotRetentionDays: 3 };
+
+  it("migrates localStorage's values on the first run (nothing stored yet)", async () => {
+    saveSettings({ snapshotRetentionMode: "hybrid", snapshotRetentionCount: 10, snapshotRetentionDays: 7 });
+    vi.mocked(commands.safetySettingsGet).mockResolvedValueOnce({ settings: { ...stored }, stored: false });
+    vi.mocked(commands.safetySettingsSet).mockResolvedValueOnce(ok({ ...stored }));
+    await syncSafetySettings();
+    expect(commands.safetySettingsSet).toHaveBeenCalledWith({ snapshotRetentionMode: "hybrid", snapshotRetentionCount: 10, snapshotRetentionDays: 7 });
+    expect(loadSettings().snapshotRetentionMode).toBe("hybrid");
+  });
+
+  it("adopts the backend's values once it has a file", async () => {
+    saveSettings({ snapshotRetentionMode: "off", snapshotRetentionCount: 25, snapshotRetentionDays: 14 });
+    vi.mocked(commands.safetySettingsGet).mockResolvedValueOnce({ settings: { ...stored }, stored: true });
+    await syncSafetySettings();
+    expect(commands.safetySettingsSet).not.toHaveBeenCalled();
+    expect(loadSettings()).toMatchObject(stored);
+    expect(settingsCtrl.snapshotRetentionMode).toBe("count");
+    expect(settingsCtrl.snapshotRetentionCount).toBe(7);
+  });
+
+  it("writes every retention change through to the backend", () => {
+    vi.mocked(commands.safetySettingsSet).mockResolvedValue(ok({ ...stored }));
+    settingsCtrl.setSnapshotRetentionMode("age");
+    settingsCtrl.setSnapshotRetentionDays(30);
+    expect(commands.safetySettingsSet).toHaveBeenLastCalledWith(expect.objectContaining({ snapshotRetentionMode: "age", snapshotRetentionDays: 30 }));
+  });
+
+  it("does nothing outside Tauri and never throws", async () => {
+    mockInTauri = false;
+    await syncSafetySettings();
+    settingsCtrl.setSnapshotRetentionMode("count");
+    expect(commands.safetySettingsGet).not.toHaveBeenCalled();
+    expect(commands.safetySettingsSet).not.toHaveBeenCalled();
+
+    mockInTauri = true;
+    vi.mocked(commands.safetySettingsGet).mockRejectedValueOnce(new Error("boom"));
+    await expect(syncSafetySettings()).resolves.toBeUndefined();
   });
 });
 

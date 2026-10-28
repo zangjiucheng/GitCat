@@ -615,6 +615,15 @@ function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[], sync: PendingS
       }
       case "jobs_list":
         return [];
+      // Backend-owned safety settings (safety_settings.rs): already stored, at
+      // the defaults, so boot adopts them and changes nothing; pruning by that
+      // ("off") policy removes nothing.
+      case "safety_settings_get":
+        return { settings: { snapshotRetentionMode: "off", snapshotRetentionCount: 25, snapshotRetentionDays: 14 }, stored: true };
+      case "safety_settings_set":
+        return (args as { settings: unknown }).settings;
+      case "prune_snapshots_per_policy":
+        return 0;
       case "job_cancel": {
         calls.push({ cmd, args });
         const p = sync.pending;
