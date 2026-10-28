@@ -489,6 +489,21 @@ pub fn wsl_create_ref(path: &str, ref_name: &str, oid: &str, reason: &str) -> Op
     })
 }
 
+/// [`wsl_create_ref`]'s counterpart for deleting: `update-ref -d <ref> <old>`
+/// inside the distro, for the same reason (libgit2's `<ref>.lock` over the
+/// `\\wsl.localhost\` bridge can fail with "Access is denied"). `old` is the
+/// compare-and-swap guard: a ref that moved since it was read is left alone.
+/// `None` for a non-WSL path, so the caller falls back to git2.
+pub fn wsl_delete_ref(path: &str, ref_name: &str, old: &str) -> Option<Result<(), String>> {
+    wsl_target(path)?;
+    let (cmd, tag) = git_command_tagged(path, &["update-ref", "-d", ref_name, old], &[]);
+    Some(match run_with(cmd, RunOptions { timeout: Some(SUBPROCESS_TIMEOUT), wsl: tag, ..Default::default() }) {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        Err(e) => Err(e.to_string()),
+    })
+}
+
 /// `git rev-list --left-right --count A...B`'s stdout is two whitespace-
 /// separated integers ("<commits only in A>\t<commits only in B>\n") — `A`
 /// being the local branch, `B` its upstream, in `wsl_ahead_behind`'s own

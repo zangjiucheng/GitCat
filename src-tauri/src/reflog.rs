@@ -128,7 +128,9 @@ fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
     };
 
     // (1) Dirty-tree fail-closed guard — same as undo(): never force.
-    let dirty = match safety::run_git(&workdir, &["status", "--porcelain"]) {
+    // run_git_worktree for the same reason as the reset below: Windows git
+    // reports every +x file in a WSL repo as modified, refusing a clean tree.
+    let dirty = match safety::run_git_worktree(&workdir, &["status", "--porcelain"]) {
         Ok(o) => o,
         Err(e) => return fail(UndoRefusal::CannotVerifyClean, ierrp("err_misc.cannot_verify_clean_refusing_restore", &[("detail", e.as_str())])),
     };
@@ -170,7 +172,9 @@ fn reflog_restore_inner(path: &str, index: usize) -> UndoResult {
     // The actual mutation: move HEAD/current branch to the historical sha.
     // Exactly `git reset --hard <sha>` — there is no branch-topology map to
     // reconcile here (see module doc), just "HEAD used to point here".
-    let reset = match safety::run_git(&workdir, &["reset", "--hard", &target_sha]) {
+    // run_git_worktree, as undo() does for the same step: on a WSL repo,
+    // Windows git would rewrite the restored tree as CRLF and drop +x bits.
+    let reset = match safety::run_git_worktree(&workdir, &["reset", "--hard", &target_sha]) {
         Ok(o) => o,
         Err(e) => {
             return UndoResult {

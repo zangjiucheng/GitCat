@@ -143,3 +143,22 @@ fn undo_stashing_keeps_uncommitted_changes_across_the_undo() {
     assert_eq!(repo.read("notes.txt"), "my uncommitted work\n", "uncommitted change must be re-applied, not lost");
     assert!(repo.must(&["stash", "list"]).is_empty(), "stash should have been popped, not left behind");
 }
+
+// B6: the undo line's headBefore held the seal's REF NAME, while every other
+// line (and the 2.0 importer) expects the sha HEAD was at.
+#[test]
+fn undo_oplog_line_records_head_before_as_a_sha() {
+    let (repo, [_c0, c1, c2]) = setup("safety_undo_head_before");
+    snapshot(&repo.open()).expect("snapshot"); // pins c2
+    repo.must(&["reset", "--hard", &c1]);
+
+    let u = undo(&repo.open()).expect("undo");
+    assert!(u.ok, "undo failed: {}", u.message);
+
+    let log = std::fs::read_to_string(repo.open().path().join("gitgui").join("oplog.jsonl")).expect("oplog");
+    let line = log.lines().rev().find(|l| l.contains("\"op\":\"undo\"")).expect("an undo line");
+    let v: serde_json::Value = serde_json::from_str(line).unwrap();
+    assert_eq!(v["headBefore"].as_str(), Some(c1.as_str()), "headBefore must be the sha HEAD was at");
+    assert_eq!(v["headAfter"].as_str(), Some(c2.as_str()));
+    assert!(v["backupRef"].as_str().unwrap_or("").starts_with("refs/gitgui/backup/"));
+}

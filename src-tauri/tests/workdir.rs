@@ -226,6 +226,35 @@ fn commit_creates_a_real_commit_and_snapshots_first() {
     assert!(repo.is_clean());
 }
 
+// B2: an unborn HEAD has nothing to snapshot, which used to fail the whole
+// commit with safety_snapshot_failed, so a new repo could never get its first
+// commit from GitCat.
+#[test]
+fn first_commit_in_an_empty_repo_succeeds_without_a_snapshot() {
+    let repo = TempRepo::init("workdir_commit_unborn");
+    let path = repo.path();
+    std::fs::write(repo.dir.join("f.txt"), "0\n").unwrap();
+    repo.must(&["add", "-A"]);
+
+    let res = tauri::async_runtime::block_on(commit(path.clone(), Some("root".into()), None));
+    assert!(res.ok, "first commit failed: {}", res.message);
+    assert!(res.backup_ref.is_none(), "an unborn HEAD has nothing to snapshot");
+    assert_eq!(repo.must(&["log", "-1", "--format=%s"]), "root");
+    assert!(repo.is_clean());
+}
+
+#[test]
+fn amending_with_an_unborn_head_is_still_refused() {
+    let repo = TempRepo::init("workdir_amend_unborn");
+    let path = repo.path();
+    std::fs::write(repo.dir.join("f.txt"), "0\n").unwrap();
+    repo.must(&["add", "-A"]);
+
+    let res = tauri::async_runtime::block_on(commit(path.clone(), Some("x".into()), Some(true)));
+    assert!(!res.ok, "there is no commit to amend");
+    assert!(repo.rev("HEAD").is_none());
+}
+
 #[test]
 fn commit_amend_without_message_keeps_prior_message_and_rewrites_sha() {
     let repo = TempRepo::init("workdir_commit_amend");
