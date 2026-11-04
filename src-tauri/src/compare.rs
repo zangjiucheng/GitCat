@@ -23,6 +23,17 @@
 //! repo; the popup that renders it cannot be. The walk stops at
 //! [`MAX_RANGE_COMMITS`] + 1 so the caller can be told it was trimmed rather
 //! than silently shown a partial chain.
+//!
+//! ENDPOINTS ARE ANY REVISION, not just a commit oid: the graph passes full
+//! oids, while the sidebar's "Compare with current branch" passes `HEAD` and
+//! a fully qualified ref (`refs/heads/x`, `refs/tags/v1`), so a branch or tag
+//! name that happens to look like a sha prefix can't be misread as one.
+//!
+//! TWO KINDS OF DIFF for a diverged pair (`RangeDiff::since_fork`): the
+//! direct one between the two tips (`git diff A B`), and "what `to` did since
+//! the fork" (`git diff A...B`, i.e. merge base → `to`). The second is the
+//! one a reviewer wants for "what would merging this branch bring in": the
+//! direct diff also shows everything `from` did since the fork, reversed.
 
 use crate::i18n_err::ierrp;
 use serde::Serialize;
@@ -93,18 +104,33 @@ pub async fn commit_range_summary(path: String, a: String, b: String) -> Result<
     crate::blocking::run_blocking(move || commit_range_summary_inner(&path, &a, &b)).await
 }
 
-/// `pub` so the integration suite drives the real logic against a real repo
-/// without an async runtime or an `AppHandle` — same reason
-/// `plugin_registry::install_from` and `repo_registry::load_from` are `pub`.
-pub fn commit_range_summary_inner(path: &str, a: &str, b: &str) -> Result<RangeSummary, String> {
-    let repo = crate::trust::open_repo(path)
-        .map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))?;
-    let find = |rev: &str| {
-        repo.find_commit_by_prefix(rev)
-            .map_err(|e| ierrp("err_misc.not_a_valid_commit", &[("rev", &format!("{rev:?}")), ("detail", e.message())]))
-    };
-    let ca = find(a)?;
-    let cb = find(b)?;
+/// Resolve one endpoint to its commit. Any revision git understands — see
+/// the module doc.
+fn resolve<'r>(repo: &'r git2::Repository, rev: &str) -> Result<git2::Commit<'r>, String> {
+    repo.revparse_single(rev)
+        .and_then(|o| o.peel_to_commit())
+        .map_err(|e| ierrp("err_misc.not_a_valid_commit", &[("rev", &format!("{rev:?}")), ("detail", e.message())]))
+}
+
+/// The two endpoints in reading order, and how they relate. The ONE place
+/// the pair is ordered: the summary and the diff each ordered it themselves
+/// once, and drifted — for a diverged pair the summary kept the caller's
+/// order while the diff swapped it, so the popover's "+12 −3" described a
+/// diff that then opened the other way round.
+struct Ordered<'r> {
+    from: git2::Commit<'r>,
+    to: git2::Commit<'r>,
+    /// Commits on `to` but not `from`, and the reverse.
+    ahead: usize,
+    behind: usize,
+    linear: bool,
+    /// `None` for unrelated histories, which have no common ancestor.
+    merge_base: Option<git2::Oid>,
+}
+
+fn order<'r>(repo: &'r git2::Repository, a: &str, b: &str) -> Result<Ordered<'r>, String> {
+    let ca = resolve(repo, a)?;
+    let cb = resolve(repo, b)?;
 
     // One call, no walk. `Err` here is the unrelated-histories case, not a
     // failure — two roots genuinely have no common ancestor.
@@ -120,19 +146,37 @@ pub fn commit_range_summary_inner(path: &str, a: &str, b: &str) -> Result<RangeS
     // Order by ancestry when there is one, so the delta always reads forwards
     // in time regardless of which endpoint the user right-clicked. `ahead_a ==
     // 0` means nothing is reachable from `a` that is not reachable from `b`,
-    // i.e. `a` is an ancestor of `b`.
+    // i.e. `a` is an ancestor of `b`. A diverged pair keeps the caller's
+    // order: `a` is the anchor (the selected commit, or HEAD from the
+    // sidebar), so "since the fork" means what `b` did.
     //
     // `ahead`/`behind` are bound to the ORDERING in the same expression on
     // purpose: computed separately they are trivially mismatched (`ahead` must
     // always mean "on `to`, not on `from`", which flips with the pair).
     let linear = ahead_a == 0 || ahead_b == 0;
     let (from, to, ahead, behind) = if ahead_a == 0 {
-        (&ca, &cb, ahead_b, ahead_a) // a is an ancestor of b
+        (ca, cb, ahead_b, ahead_a) // a is an ancestor of b
     } else if ahead_b == 0 {
-        (&cb, &ca, ahead_a, ahead_b) // b is an ancestor of a
+        (cb, ca, ahead_a, ahead_b) // b is an ancestor of a
     } else {
-        (&ca, &cb, ahead_b, ahead_a) // diverged — keep the caller's order
+        (ca, cb, ahead_b, ahead_a) // diverged — keep the caller's order
     };
+    Ok(Ordered { from, to, ahead, behind, linear, merge_base })
+}
+
+fn short_oid(o: git2::Oid) -> String {
+    let s = o.to_string();
+    s[..7.min(s.len())].to_string()
+}
+
+/// `pub` so the integration suite drives the real logic against a real repo
+/// without an async runtime or an `AppHandle` — same reason
+/// `plugin_registry::install_from` and `repo_registry::load_from` are `pub`.
+pub fn commit_range_summary_inner(path: &str, a: &str, b: &str) -> Result<RangeSummary, String> {
+    let repo = crate::trust::open_repo(path)
+        .map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))?;
+    let Ordered { from, to, ahead, behind, linear, merge_base } = order(&repo, a, b)?;
+    let (from, to) = (&from, &to);
 
     let from_tree = from.tree().map_err(|e| e.message().to_string())?;
     let to_tree = to.tree().map_err(|e| e.message().to_string())?;
@@ -168,25 +212,14 @@ pub fn commit_range_summary_inner(path: &str, a: &str, b: &str) -> Result<RangeS
                 break;
             }
             let c = repo.find_commit(oid).map_err(|e| e.message().to_string())?;
-            let full = oid.to_string();
-            commits.push(RangeCommit {
-                sha: full[..7.min(full.len())].to_string(),
-                subject: c.summary().unwrap_or("").to_string(),
-            });
+            commits.push(RangeCommit { sha: short_oid(oid), subject: c.summary().unwrap_or("").to_string() });
         }
     }
 
-    let short = |c: &git2::Commit| {
-        let s = c.id().to_string();
-        s[..7.min(s.len())].to_string()
-    };
     Ok(RangeSummary {
-        from: short(from),
-        to: short(to),
-        merge_base: merge_base.map(|o| {
-            let s = o.to_string();
-            s[..7.min(s.len())].to_string()
-        }),
+        from: short_oid(from.id()),
+        to: short_oid(to.id()),
+        merge_base: merge_base.map(short_oid),
         linear,
         ahead: ahead as u32,
         behind: behind as u32,
@@ -210,8 +243,19 @@ pub fn commit_range_summary_inner(path: &str, a: &str, b: &str) -> Result<RangeS
 pub struct RangeDiff {
     /// Short shas, ORDERED the same way [`RangeSummary`] orders them, so the
     /// diff reads forwards in time regardless of which endpoint was clicked.
+    /// With `since_fork`, `from` is the merge base.
     pub from: String,
     pub to: String,
+    /// Full oids of the same two trees, for opening one file of this diff in
+    /// the external diff tool (`open_diff_tool`'s `from_rev`/`to_rev`).
+    pub from_oid: String,
+    pub to_oid: String,
+    /// The pair diverged and shares a merge base, so a since-the-fork diff
+    /// exists and differs from the direct one. The modal offers the toggle
+    /// only then.
+    pub can_since_fork: bool,
+    /// This diff is merge base → `to` (`git diff A...B`), not tip to tip.
+    pub since_fork: bool,
     pub files_changed: u32,
     pub additions: u32,
     pub deletions: u32,
@@ -227,43 +271,47 @@ pub struct RangeDiff {
 /// no per-file patches), while this builds a `Patch` per file and is only
 /// asked for when the user actually opens the diff.
 ///
-/// JS: `commands.commitRangeDiff(path, a, b)` -> `Result<RangeDiff, string>`.
+/// JS: `commands.commitRangeDiff(path, a, b, sinceFork)` -> `Result<RangeDiff, string>`.
+///
+/// `since_fork` asks for merge base → `to` instead of tip to tip. It is
+/// ignored where it would mean nothing: a linear pair (the merge base IS
+/// `from`) and unrelated histories (there is no merge base).
 #[tauri::command]
 #[specta::specta]
-pub async fn commit_range_diff(path: String, a: String, b: String) -> Result<RangeDiff, String> {
-    crate::blocking::run_blocking(move || commit_range_diff_inner(&path, &a, &b)).await
+pub async fn commit_range_diff(path: String, a: String, b: String, since_fork: bool) -> Result<RangeDiff, String> {
+    crate::blocking::run_blocking(move || commit_range_diff_inner(&path, &a, &b, since_fork)).await
 }
 
 /// `pub` for the integration suite, same reason as [`commit_range_summary_inner`].
-pub fn commit_range_diff_inner(path: &str, a: &str, b: &str) -> Result<RangeDiff, String> {
+pub fn commit_range_diff_inner(path: &str, a: &str, b: &str, since_fork: bool) -> Result<RangeDiff, String> {
     let repo = crate::trust::open_repo(path)
         .map_err(|e| ierrp("err_misc.cannot_open_repo", &[("detail", e.message())]))?;
-    let find = |rev: &str| {
-        repo.find_commit_by_prefix(rev)
-            .map_err(|e| ierrp("err_misc.not_a_valid_commit", &[("rev", &format!("{rev:?}")), ("detail", e.message())]))
-    };
-    let ca = find(a)?;
-    let cb = find(b)?;
-
-    // The SAME ordering rule as the summary, so the popover's "+12 −3" and the
+    // The SAME ordering as the summary, so the popover's "+12 −3" and the
     // diff the user then opens can never disagree about which way round it is.
-    let (ahead_a, _) = repo
-        .graph_ahead_behind(ca.id(), cb.id())
-        .map_err(|e| e.message().to_string())?;
-    let (from, to) = if ahead_a == 0 { (&ca, &cb) } else { (&cb, &ca) };
+    let o = order(&repo, a, b)?;
+    let can_since_fork = !o.linear && o.merge_base.is_some();
+    let since_fork = since_fork && can_since_fork;
+    let base;
+    let (from, to) = match o.merge_base {
+        Some(mb) if since_fork => {
+            base = repo.find_commit(mb).map_err(|e| e.message().to_string())?;
+            (&base, &o.to)
+        }
+        _ => (&o.from, &o.to),
+    };
 
     let from_tree = from.tree().map_err(|e| e.message().to_string())?;
     let to_tree = to.tree().map_err(|e| e.message().to_string())?;
     let d = crate::commands::diff_trees(&repo, Some(&from_tree), Some(&to_tree))
         .map_err(|e| e.message().to_string())?;
 
-    let short = |c: &git2::Commit| {
-        let s = c.id().to_string();
-        s[..7.min(s.len())].to_string()
-    };
     Ok(RangeDiff {
-        from: short(from),
-        to: short(to),
+        from: short_oid(from.id()),
+        to: short_oid(to.id()),
+        from_oid: from.id().to_string(),
+        to_oid: to.id().to_string(),
+        can_since_fork,
+        since_fork,
         files_changed: d.file_tree.len() as u32,
         additions: d.additions as u32,
         deletions: d.deletions as u32,

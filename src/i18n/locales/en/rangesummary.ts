@@ -1,6 +1,10 @@
 // Compare-two-commits popover (#49). Keys become `rangesummary.<key>`.
 export default {
   view_diff: "View diff…",
+  view_since_fork: "Only {to}'s changes…",
+  mode_label: "Which changes",
+  mode_direct: "Tip to tip",
+  mode_since_fork: "Since the fork",
   diff_title: "Changes between",
   diff_truncated: "Diff truncated — too many files to show.",
   title: "Compare",

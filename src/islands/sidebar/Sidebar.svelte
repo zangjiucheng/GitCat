@@ -944,6 +944,7 @@
       <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.openMergeMenu(name, x, y); }}>{t("sidebar.merge_into_current")}</button>
       <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.rebaseOnto(name); }}>{t("sidebar.rebase_onto")}</button>
       <button onclick={() => { const name = menu.name; sidebarCtrl.closeMenu(); sidebarCtrl.interactiveRebaseOnto(name); }}>{t("sidebar.interactive_rebase_onto")}</button>
+      <button onclick={() => { const name = menu.name; const x = menu.x, y = menu.y; sidebarCtrl.closeMenu(); sidebarCtrl.compareWithHead("branch", name, x, y); }}>{t("sidebar.compare_with_current")}</button>
     {/if}
     {#if menu.upstream}
       <button class="danger" onclick={() => { const name = menu.name; const upstream = menu.upstream as string; sidebarCtrl.closeMenu(); sidebarCtrl.resetToUpstream(name, upstream); }}>{t("sidebar.reset_to_upstream", { upstream: menu.upstream })}</button>
@@ -1092,6 +1093,7 @@
   <div class="ref-pop" bind:this={tagMenuEl} style="left:{tm.x}px;top:{tm.y}px">
     <!-- Same capture-before-close rationale as the branch menu above. -->
     <button onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.pushTag(name); }}>{t("sidebar.push_to_origin")}</button>
+    <button onclick={() => { const name = tm.name; const x = tm.x, y = tm.y; sidebarCtrl.closeTagMenu(); sidebarCtrl.compareWithHead("tag", name, x, y); }}>{t("sidebar.compare_with_current")}</button>
     <button class="danger" onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.deleteTag(name); }}>{t("sidebar.delete")}</button>
   </div>
 {/if}

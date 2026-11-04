@@ -1,6 +1,10 @@
 // 두 커밋 비교 팝오버(#49). 키는 `rangesummary.<key>`가 돼요.
 export default {
   view_diff: "diff 보기…",
+  view_since_fork: "{to}의 변경만 보기…",
+  mode_label: "어떤 변경을 볼지",
+  mode_direct: "끝과 끝 비교",
+  mode_since_fork: "갈라진 지점부터",
   diff_title: "두 커밋 사이의 변경",
   diff_truncated: "diff가 잘렸어요 — 파일이 너무 많아요.",
   title: "비교",
