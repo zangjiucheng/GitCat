@@ -46,6 +46,19 @@ export default {
   // Ref + 스냅샷 커버리지.
   refs_pointing_here: "여기를 가리키는 ref",
   no_refs: "여기를 가리키는 ref가 없어요",
+  contain_title: "포함한 브랜치",
+  contain_checking: "이 커밋을 포함한 브랜치를 확인하는 중…",
+  contain_on: "✓ {head}에 있어요",
+  contain_on_detached: "✓ HEAD의 히스토리에 있어요",
+  contain_off: "✗ {head}에 없어요",
+  contain_off_detached: "✗ HEAD의 히스토리에 없어요",
+  contain_copy_picked: "…하지만 체리픽되어 들어가 있어요:",
+  contain_copy_patch: "…하지만 같은 변경이 들어가 있어요:",
+  contain_copy_not_loaded: "{sha}는 불러온 그래프에 없어요.",
+  contain_scan_capped: "최근 커밋 2000개 안에서는 복사본을 찾지 못했어요.",
+  contain_patch_skipped: "부분 클론이라 cherry-pick -x 표시만으로 복사본을 찾았어요.",
+  contain_more: "+{n}개 더",
+  contain_no_refs: "이 커밋을 포함한 브랜치나 태그가 없어요.",
   covered:
     '<b>backup/…{ago} 전</b> 스냅샷이 이 커밋을 보호하고 있어요<br /><span class="mut">Safety Manager 백업 ref로 도달할 수 있어요 — {undoKey}로 여기까지 되돌릴 수 있어요.</span>',
   // 변경사항 / diffstat / 파일 트리.

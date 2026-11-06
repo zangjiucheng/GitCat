@@ -84,6 +84,17 @@ async commitRangeDiff(path: string, a: string, b: string, sinceFork: boolean) : 
 }
 },
 /**
+ * JS: `commands.commitContainment(path, sha)` -> `Result<Containment, string>`.
+ */
+async commitContainment(path: string, sha: string) : Promise<Result<Containment, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("commit_containment", { path, sha }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * JS: `commands.graphFastRefresh(path)`. The cheap snapshot the frontend's
  * `reloadGraph` uses to decide whether a change can skip the full history
  * re-walk — seed tips + HEAD (full oids, for collision-free "already loaded?"
@@ -3809,6 +3820,43 @@ export type ConflictHunk = { kind: string; context: string | null; ours: string 
  * UI can offer Continue.
  */
 export type ConflictStatus = { inProgress: boolean; op: string; files: ConflictFile[] }
+export type ContainRef = { 
+/**
+ * Short name: `main`, `origin/main`, `v1.0`.
+ */
+name: string; 
+/**
+ * "local" | "remote" | "tag".
+ */
+kind: string }
+export type Containment = { 
+/**
+ * HEAD contains the commit (or is it).
+ */
+onHead: boolean; 
+/**
+ * The current branch's name; `None` when HEAD is detached or unborn.
+ */
+head: string | null; 
+/**
+ * Local branches, then remote ones, then tags, each A-Z; at most
+ * [`MAX_REFS`].
+ */
+refs: ContainRef[]; totalRefs: number; 
+/**
+ * Only looked for when `on_head` is false.
+ */
+equivalent: EquivalentCommit | null; 
+/**
+ * HEAD had more commits to check than [`MAX_SCAN`] and none of the
+ * checked ones matched, so "no copy" is not a definite answer.
+ */
+scanCapped: boolean; 
+/**
+ * The patch comparison was skipped (partial clone); only trailers were
+ * checked.
+ */
+patchSkipped: boolean }
 export type Contributor = { name: string; email: string; commits: number }
 /**
  * One dangling commit found via `git fsck --dangling --no-reflogs` — a real
@@ -3828,6 +3876,12 @@ export type DiffHunkRow = { header: string; lines: DiffLineRow[] }
  * with any trailing CR/LF stripped — the frontend HTML-escapes it.
  */
 export type DiffLineRow = { kind: string; oldNo: number | null; newNo: number | null; text: string }
+export type EquivalentCommit = { sha: string; subject: string; 
+/**
+ * "trailer": a `(cherry picked from commit …)` line links the two.
+ * "patch": no link, but the change is identical.
+ */
+how: string }
 /**
  * Result of [`export_patch`]. Never mutates the repo (nothing git-observable
  * changes — only an external file is written), so there is no `backupRef`:

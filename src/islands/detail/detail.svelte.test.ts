@@ -21,6 +21,7 @@ vi.mock("../../legacy/bridge", () => ({
   TAMA_IMG: { hero: "hero.png" },
   pickRepo: vi.fn(),
   tama: { warn: vi.fn() },
+  goToOid: vi.fn(() => true),
 }));
 
 vi.mock("../blame/blame.svelte.ts", () => ({
@@ -62,6 +63,7 @@ vi.mock("../../ipc/bindings", () => ({
   commands: {
     commitDetail: vi.fn(),
     commitSignature: vi.fn(async () => ({ status: "ok", data: { sha: "", status: "none", code: "N", signer: "", key: "", fingerprint: "", detail: "" } })),
+    commitContainment: vi.fn(async () => ({ status: "ok", data: { onHead: true, head: "main", refs: [], totalRefs: 0, equivalent: null, scanCapped: false, patchSkipped: false } })),
     plumbingInspect: vi.fn(),
     revealPathInFileManager: vi.fn(async () => ({ status: "ok", data: null })),
   },
@@ -1003,5 +1005,67 @@ describe("signature badge", () => {
     expect(commands.commitSignature).not.toHaveBeenCalled();
     expect(["good", "bad", "none"]).toContain(detailCtrl.gpgBadge[0]);
     expect(detailCtrl.gpgBadge[2]).toMatch(/demo/i);
+  });
+});
+
+describe("containment", () => {
+  const LIVE_ROW = (sha: string) => ({ sha, subject: "s", an: { n: "Dev", e: "d@x.dev", t: 100 }, cm: { n: "Dev", e: "d@x.dev", t: 100 }, refs: [] });
+  const ANSWER = (extra: Record<string, unknown> = {}) =>
+    ok({ onHead: false, head: "main", refs: [{ name: "feature", kind: "local" }], totalRefs: 1, equivalent: null, scanCapped: false, patchSkipped: false, ...extra }) as any;
+
+  beforeEach(() => {
+    detailCtrl.contain = null;
+    vi.mocked(commands.commitDetail).mockReturnValue(new Promise(() => {}) as any); // the section must not need the diff
+  });
+
+  it("is pending until git answers, then shows the answer for the selected commit", async () => {
+    setBackendGraph([LIVE_ROW("aaa1111")]);
+    let resolve: (v: any) => void;
+    vi.mocked(commands.commitContainment).mockReturnValueOnce(new Promise((r) => (resolve = r)) as any);
+    detailCtrl.select(0);
+    expect(detailCtrl.containment).toBeNull();
+    await vi.waitFor(() => expect(commands.commitContainment).toHaveBeenCalledWith("/repo", "aaa1111"));
+    resolve!(ANSWER());
+    await vi.waitFor(() => expect(detailCtrl.containment?.data?.onHead).toBe(false));
+    expect(detailCtrl.containment?.data?.refs).toEqual([{ name: "feature", kind: "local" }]);
+  });
+
+  it("a slow answer for a previously selected commit never lands on the current one", async () => {
+    setBackendGraph([LIVE_ROW("aaa1111"), LIVE_ROW("bbb2222")]);
+    let resolveFirst: (v: any) => void;
+    vi.mocked(commands.commitContainment)
+      .mockReturnValueOnce(new Promise((r) => (resolveFirst = r)) as any)
+      .mockResolvedValueOnce(ANSWER({ onHead: true }));
+    detailCtrl.select(0);
+    await vi.waitFor(() => expect(commands.commitContainment).toHaveBeenCalledTimes(1));
+    detailCtrl.select(1);
+    await vi.waitFor(() => expect(detailCtrl.containment?.data?.onHead).toBe(true));
+    resolveFirst!(ANSWER({ onHead: false }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(detailCtrl.containment?.data?.onHead).toBe(true);
+  });
+
+  it("an error is shown, not mistaken for an answer", async () => {
+    setBackendGraph([LIVE_ROW("aaa1111")]);
+    vi.mocked(commands.commitContainment).mockResolvedValueOnce(err("boom") as any);
+    detailCtrl.select(0);
+    await vi.waitFor(() => expect(detailCtrl.containment?.error).toBe("boom"));
+    expect(detailCtrl.containment?.data).toBeNull();
+  });
+
+  it("jumps to the copy on HEAD, and says so when it isn't loaded", async () => {
+    setBackendGraph([LIVE_ROW("aaa1111")]);
+    const sha = "c".repeat(40);
+    vi.mocked(commands.commitContainment).mockResolvedValueOnce(ANSWER({ equivalent: { sha, subject: "x", how: "patch" } }));
+    detailCtrl.select(0);
+    await vi.waitFor(() => expect(detailCtrl.containment?.data?.equivalent?.sha).toBe(sha));
+
+    detailCtrl.goToEquivalent();
+    expect(bridge.goToOid).toHaveBeenCalledWith(sha);
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+
+    vi.mocked(bridge.goToOid).mockReturnValueOnce(false);
+    detailCtrl.goToEquivalent();
+    expect(bridge.tama.warn).toHaveBeenCalledWith(expect.stringContaining("ccccccc"));
   });
 });

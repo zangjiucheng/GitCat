@@ -12,7 +12,7 @@
 // (G/BACKEND/AUTHORS/hhex/msgOf/fakeAgo/relTime) is shared with other
 // not-yet-migrated legacy code, so those stay bridged from legacy/main.ts.
 
-import { commands } from "../../ipc/bindings";
+import { commands, type Containment } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { t, be } from "@/i18n/i18n.svelte.ts";
 import type { CommitDetail, CommitSignature, SigStatus } from "../../ipc/bindings";
@@ -33,6 +33,20 @@ import { buildDiffRows } from "./diffrows.ts";
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
+}
+
+/** Design mode: a stable pseudo-answer per row, so the section shows each case. */
+function demoContainment(r: number): Containment {
+  const onHead = r % 5 !== 3;
+  return {
+    onHead,
+    head: "main",
+    refs: onHead ? [{ name: "main", kind: "local" }, { name: "origin/main", kind: "remote" }] : [{ name: "feat/inline-diff", kind: "local" }],
+    totalRefs: onHead ? 2 : 1,
+    equivalent: !onHead && r % 10 === 3 ? { sha: "c0ffee0000000000000000000000000000000000", subject: "The same fix, picked onto main", how: "trailer" } : null,
+    scanCapped: false,
+    patchSkipped: false,
+  };
 }
 
 // Signature badge: [css class, label, tooltip]. "checking" is the transient
@@ -179,6 +193,11 @@ class DetailState {
   // selected commit.
   sig = $state<{ forSha: string; badge: SigBadge } | null>(null);
   private sigSeq = 0;
+  // Where the selected live commit is (see loadContainment): on the current
+  // branch or not, the refs that contain it, a copy of it on HEAD. Same
+  // forSha guard as `sig`.
+  contain = $state<{ forSha: string; data: Containment | null; error: string | null } | null>(null);
+  private containSeq = 0;
 
   // $state (not a plain field): `tree` below is a getter over this, and it's
   // now read from TWO template call sites (the embedded file list and the
@@ -303,6 +322,41 @@ class DetailState {
     }
     if (myReq !== this.sigSeq) return; // a newer selection superseded this one
     this.sig = { forSha: sha, badge };
+  }
+
+  /**
+   * Ask where the selected commit is. Separate from loadCommitDetail for the
+   * same reason as the signature: `for-each-ref --contains` and the copy scan
+   * walk history, and the diff never waits on them. Debounced and
+   * race-guarded the same way.
+   */
+  private async loadContainment(sha: string) {
+    const myReq = ++this.containSeq;
+    this.contain = null;
+    await new Promise((r) => setTimeout(r, SIG_DEBOUNCE_MS));
+    if (myReq !== this.containSeq) return;
+    let next: { forSha: string; data: Containment | null; error: string | null };
+    try {
+      const r = await commands.commitContainment(bridge.CUR_REPO as unknown as string, sha);
+      next = r.status === "ok" ? { forSha: sha, data: r.data, error: null } : { forSha: sha, data: null, error: be(r.error) };
+    } catch (e) {
+      next = { forSha: sha, data: null, error: String(e) };
+    }
+    if (myReq !== this.containSeq) return; // a newer selection superseded this one
+    this.contain = next;
+  }
+
+  /** The containment answer for the commit on screen, or null while it's being asked. */
+  get containment(): { data: Containment | null; error: string | null } | null {
+    const c = this.commit;
+    return c && this.contain && this.contain.forSha === c.sha ? this.contain : null;
+  }
+
+  /** Select the copy of this commit that is on HEAD. */
+  goToEquivalent() {
+    const eq = this.containment?.data?.equivalent;
+    if (!eq) return;
+    if (!bridge.goToOid(eq.sha)) bridge.tama.warn(t("detail.contain_copy_not_loaded", { sha: eq.sha.slice(0, 7) }));
   }
 
   // Whether the "Revert commit" button should be disabled: the existing
@@ -454,7 +508,9 @@ class DetailState {
       this.diffRows = [];
       this.loadCommitDetail(row);
       void this.loadSignature(c.sha); // in parallel — never gates the diff
+      void this.loadContainment(c.sha); // likewise
     } else {
+      this.contain = { forSha: c.sha, data: demoContainment(row), error: null };
       this.bodyText = c.merge
         ? "Merge commit — reconciles two lines of history."
         : "Part of the feature/login work. Signed-off and covered by an auto-snapshot.";

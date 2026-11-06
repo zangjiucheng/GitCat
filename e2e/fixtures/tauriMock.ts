@@ -682,6 +682,44 @@ function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[], sync: PendingS
           fileTree,
         };
       }
+      // Where a commit is (containment.rs), from real git. The copy search
+      // only follows `cherry-pick -x` trailers; the patch-id half is the
+      // backend's own (src-tauri/tests/containment.rs).
+      case "commit_containment": {
+        const sha = repo.git("rev-parse", args.sha + "^{commit}");
+        let onHead = true;
+        try {
+          repo.git("merge-base", "--is-ancestor", sha, "HEAD");
+        } catch {
+          onHead = false;
+        }
+        let head: string | null = null;
+        try {
+          head = repo.git("symbolic-ref", "--short", "-q", "HEAD") || null;
+        } catch {
+          head = null;
+        }
+        const refs = repo
+          .git("for-each-ref", "--contains=" + sha, "--format=%(refname)", "refs/heads", "refs/remotes", "refs/tags")
+          .split("\n")
+          .filter(Boolean)
+          .map((r) =>
+            r.startsWith("refs/heads/")
+              ? { name: r.slice(11), kind: "local" }
+              : r.startsWith("refs/remotes/")
+                ? { name: r.slice(13), kind: "remote" }
+                : { name: r.slice(10), kind: "tag" },
+          );
+        let equivalent = null;
+        if (!onHead) {
+          const hit = repo.git("log", "--format=%H%x09%s", "--fixed-strings", "--grep=cherry picked from commit " + sha, "HEAD").split("\n")[0];
+          if (hit) {
+            const [h, subject] = hit.split("\t");
+            equivalent = { sha: h, subject, how: "trailer" };
+          }
+        }
+        return { onHead, head, refs, totalRefs: refs.length, equivalent, scanCapped: false, patchSkipped: false };
+      }
       case "open_diff_tool":
         calls.push({ cmd, args });
         return null;
