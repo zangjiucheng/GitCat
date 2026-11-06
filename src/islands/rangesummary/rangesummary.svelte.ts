@@ -1,10 +1,14 @@
 // Compare two commits (#49) — controller.
 //
-// Opened from the commit context menu's "Compare with <sha>…", which is the
-// ONE entry point: the anchor is whatever commit is currently selected, and
-// the right-clicked commit is the other endpoint. Shift+click was the other
-// candidate and is deliberately not wired — a gesture nobody can discover is
-// not a feature, and the menu item says what it will do before you commit to it.
+// Two entry points:
+//   * the commit context menu's "Compare with <sha>…": the anchor is whatever
+//     commit is currently selected, and the right-clicked commit is the other
+//     endpoint. Shift+click was the other candidate and is deliberately not
+//     wired — a gesture nobody can discover is not a feature, and the menu
+//     item says what it will do before you commit to it;
+//   * the sidebar's branch and tag menus, "Compare with current branch": the
+//     anchor is HEAD and the endpoints are revisions, not oids (see
+//     compare.rs's module doc).
 //
 // All the work is in the backend (`commit_range_summary`): merge-base,
 // ahead/behind, one tree-to-tree diff, and a capped chain. This holds the
@@ -16,6 +20,7 @@ import type { DiffRow } from "../detail/detail.svelte.ts";
 import * as bridge from "@/legacy/bridge";
 import { be } from "@/i18n/i18n.svelte.ts";
 import { IN_TAURI } from "@/ipc/env";
+import { externalToolsCtrl } from "../externaltools/externaltools.svelte.ts";
 import { pluginLanguagesCtrl } from "../pluginlanguages/pluginlanguages.svelte.ts";
 
 /** Demo-mode stand-in, same convention as the other islands' DEMO_* data. */
@@ -40,6 +45,10 @@ const DEMO: RangeSummary = {
 const DEMO_DIFF: RangeDiff = {
   from: "a1b2c3d",
   to: "9f8e7d6",
+  fromOid: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+  toOid: "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+  canSinceFork: false,
+  sinceFork: false,
   filesChanged: 1,
   additions: 2,
   deletions: 1,
@@ -92,15 +101,18 @@ class RangeSummaryState {
   #seq = 0;
 
   /**
-   * Open at the cursor and fetch. `a` is the anchor (the selected commit), `b`
-   * the right-clicked one; both are FULL oids resolved by the caller, the same
-   * way commitMenuCtrl.openAt's are — this does no BACKEND/G lookups of its own.
+   * Open at the cursor and fetch. `a` is the anchor (the selected commit, or
+   * HEAD), `b` the other endpoint. Either is a FULL oid resolved by the
+   * caller, the same way commitMenuCtrl.openAt's are, or a revision the
+   * backend resolves (`HEAD`, `refs/heads/x`) — this does no BACKEND/G
+   * lookups of its own. `labels` name a revision for the header; an oid
+   * needs none, it shows as its short sha.
    */
   #repo = "";
   #aFull = "";
   #bFull = "";
 
-  async openAt(repo: string, a: string, b: string, x: number, y: number) {
+  async openAt(repo: string, a: string, b: string, x: number, y: number, labels: { a?: string; b?: string } = {}) {
     void pluginLanguagesCtrl.ensureLoaded(); // see detail.svelte.ts's select() for why this fires here too
     const mine = ++this.#seq;
     this.#repo = repo;
@@ -108,8 +120,8 @@ class RangeSummaryState {
     this.#bFull = b;
     this.x = x;
     this.y = y;
-    this.aShort = a.slice(0, 7);
-    this.bShort = b.slice(0, 7);
+    this.aShort = labels.a ?? a.slice(0, 7);
+    this.bShort = labels.b ?? b.slice(0, 7);
     this.summary = null;
     this.error = null;
     this.loading = true;
@@ -166,29 +178,48 @@ class RangeSummaryState {
   diffB = $state("");
 
   #diffSeq = 0;
+  #diffRepo = "";
 
-  async openDiff() {
+  /**
+   * `sinceFork`: for a diverged pair, only what `b` did since the fork
+   * (`git diff a...b`) instead of tip to tip. The backend ignores it where it
+   * means nothing and says so in the result (`canSinceFork`), which is what
+   * the modal's toggle keys off.
+   */
+  async openDiff(sinceFork = false) {
     const a = this.aShort, b = this.bShort;
-    const repo = this.#repo;
-    const mine = ++this.#diffSeq;
     this.diffA = a;
     this.diffB = b;
+    this.#diffRepo = this.#repo;
+    this.open = false; // the popover steps aside; the modal is the surface now
+    await this.#loadDiff(sinceFork);
+  }
+
+  /** Switch the open diff between tip-to-tip and since-the-fork. */
+  setSinceFork(on: boolean) {
+    if (!this.diff || this.diff.sinceFork === on) return;
+    void this.#loadDiff(on);
+  }
+
+  async #loadDiff(sinceFork: boolean) {
+    const repo = this.#diffRepo;
+    const mine = ++this.#diffSeq;
     this.diff = null;
     this.rows = [];
     this.selectedFile = null;
     this.diffError = null;
     this.diffLoading = true;
     this.diffOpen = true;
-    this.open = false; // the popover steps aside; the modal is the surface now
 
     if (!IN_TAURI) {
-      this.diff = DEMO_DIFF;
+      // Named after the picked endpoints, so the header reads like the real thing.
+      this.diff = { ...DEMO_DIFF, from: this.diffA, to: this.diffB };
       this.diffLoading = false;
       this.selectFile(DEMO_DIFF.fileTree[0]?.path ?? null);
       return;
     }
     try {
-      const r = await commands.commitRangeDiff(repo, this.#aFull, this.#bFull);
+      const r = await commands.commitRangeDiff(repo, this.#aFull, this.#bFull, sinceFork);
       if (mine !== this.#diffSeq) return;
       if (r.status === "ok") {
         this.diff = r.data;
@@ -224,6 +255,17 @@ class RangeSummaryState {
       for (const l of h.lines ?? []) lines.push([l.kind, l.text]);
     }
     this.rows = buildDiffRows({ lang: bridge.resolveLang(f.path), lines, truncated: !!f.truncated });
+  }
+
+  /**
+   * One file of the open diff in the user's external diff tool. The two full
+   * oids come from the diff itself, so the tool shows exactly these two trees
+   * — the merge base included when the diff is since the fork.
+   */
+  openExternalDiff(path: string) {
+    const d = this.diff;
+    if (!d) return;
+    void externalToolsCtrl.openDiff(this.#diffRepo, path, false, d.fromOid, d.toOid);
   }
 
   closeDiff() {

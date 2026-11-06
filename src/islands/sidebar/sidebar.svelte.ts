@@ -91,6 +91,7 @@ import { shortcutLabel } from "@/keymap/label.ts";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { rebasePlanCtrl } from "../rebaseplan/rebaseplan.svelte.ts";
+import { rangeSummaryCtrl } from "../rangesummary/rangesummary.svelte.ts";
 import { IN_TAURI } from "../../ipc/env";
 import { ICON_BACKUP, ICON_WARNING } from "../../legacy/icons";
 import { copyToClipboard } from "../../legacy/clipboard.ts";
@@ -2563,6 +2564,16 @@ class SidebarState {
 
   closeTagMenu() {
     this.tagMenu = null;
+  }
+
+  // "Compare with current branch" from a branch or tag menu: the same popover
+  // as comparing two commits on the graph, anchored at HEAD. Fully qualified
+  // refs, so a name that looks like a sha prefix can't be misread as one.
+  // Read-only, so no `busy` guard.
+  compareWithHead(kind: "branch" | "tag", name: string, x: number, y: number) {
+    const repo = bridge.CUR_REPO as unknown as string;
+    const ref = (kind === "branch" ? "refs/heads/" : "refs/tags/") + name;
+    void rangeSummaryCtrl.openAt(repo, "HEAD", ref, x, y, { a: this.head ?? "HEAD", b: name });
   }
 
   openSubmoduleMenu(path: string, status: string, absolutePath: string, anchor: HTMLElement) {

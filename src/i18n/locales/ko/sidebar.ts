@@ -82,6 +82,7 @@ export default {
   force_push_lease: "강제 푸시(lease 사용)…",
   force_push_override: "강제 푸시 — 원격 덮어쓰기…",
   merge_into_current: "현재 브랜치로 병합…",
+  compare_with_current: "현재 브랜치와 비교",
   rebase_onto: "현재 브랜치를 여기로 리베이스",
   interactive_rebase_onto: "여기로 인터랙티브 리베이스…",
   reset_to_upstream: "{upstream}(으)로 리셋…",

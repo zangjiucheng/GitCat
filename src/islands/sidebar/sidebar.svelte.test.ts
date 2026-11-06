@@ -78,9 +78,14 @@ vi.mock("../resolver/resolver.svelte.ts", () => ({
   },
 }));
 
+vi.mock("../rangesummary/rangesummary.svelte.ts", () => ({
+  rangeSummaryCtrl: { openAt: vi.fn(async () => {}) },
+}));
+
 import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
 import { resolver } from "../resolver/resolver.svelte.ts";
+import { rangeSummaryCtrl } from "../rangesummary/rangesummary.svelte.ts";
 import {
   sidebarCtrl,
   submoduleAction,
@@ -2204,6 +2209,22 @@ describe("push-to popover (openPushMenu / confirmPushMenu / cancelPushMenu)", ()
     sidebarCtrl.pushMenu = null;
     await sidebarCtrl.confirmPushMenu();
     expect(commands.pushBranch).not.toHaveBeenCalled();
+  });
+});
+
+describe("compareWithHead", () => {
+  it("compares HEAD with the fully qualified ref, labelled by name", () => {
+    sidebarCtrl.head = "main";
+    sidebarCtrl.compareWithHead("branch", "feat/x", 10, 20);
+    expect(rangeSummaryCtrl.openAt).toHaveBeenLastCalledWith("/repo", "HEAD", "refs/heads/feat/x", 10, 20, { a: "main", b: "feat/x" });
+    sidebarCtrl.compareWithHead("tag", "v1.0", 1, 2);
+    expect(rangeSummaryCtrl.openAt).toHaveBeenLastCalledWith("/repo", "HEAD", "refs/tags/v1.0", 1, 2, { a: "main", b: "v1.0" });
+  });
+
+  it("labels a detached HEAD as HEAD", () => {
+    sidebarCtrl.head = null;
+    sidebarCtrl.compareWithHead("tag", "v1.0", 0, 0);
+    expect(rangeSummaryCtrl.openAt).toHaveBeenLastCalledWith("/repo", "HEAD", "refs/tags/v1.0", 0, 0, { a: "HEAD", b: "v1.0" });
   });
 });
 

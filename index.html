@@ -590,6 +590,8 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 .rs-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--accent)}
 .rs-commit .sha{flex:none;color:var(--muted)}
 .rs-subject{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rs-mode{display:flex;gap:4px;flex:none;align-self:center}
+.rs-mode .btn.on{background:color-mix(in srgb,var(--accent) 18%,transparent);border-color:var(--accent);color:var(--accent)}
 /* cherryPick/merge/revert's loading row — .nb-row's own flex/gap styling is
    scoped to `.nb-form .nb-row` (it always sits under an input in the New
    Branch/Tag forms); this one sits directly in the popover with no input

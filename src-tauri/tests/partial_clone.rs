@@ -125,7 +125,7 @@ fn a_root_commit_and_a_range_diff_also_work() {
         .expect("root commit detail");
     assert_eq!(root.additions, 3);
 
-    let r = commit_range_diff_inner(&fx.clone_path(), &fx.shas[0], &fx.shas[2]).expect("range diff");
+    let r = commit_range_diff_inner(&fx.clone_path(), &fx.shas[0], &fx.shas[2], false).expect("range diff");
     assert_eq!(r.files_changed, 2);
     let summary =
         gitcat_lib::compare::commit_range_summary_inner(&fx.clone_path(), &fx.shas[0], &fx.shas[2]).expect("summary");
@@ -183,7 +183,7 @@ fn an_unreachable_promisor_remote_gives_a_clear_message_not_object_not_found() {
     assert!(!e.contains("object not found"), "never libgit2's raw error: {e}");
 
     // A diff that needs no missing blob never tries the network at all.
-    let same = commit_range_diff_inner(&fx.clone_path(), &fx.shas[2], &fx.shas[2]).expect("no blobs needed");
+    let same = commit_range_diff_inner(&fx.clone_path(), &fx.shas[2], &fx.shas[2], false).expect("no blobs needed");
     assert_eq!(same.files_changed, 0);
 }
 

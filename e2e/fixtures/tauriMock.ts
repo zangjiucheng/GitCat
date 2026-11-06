@@ -374,6 +374,24 @@ function dashboardRepoStatus(repo: TempRepo) {
   };
 }
 
+/** compare.rs's endpoint ordering and counts, from real git. */
+function rangeOf(repo: TempRepo, a: string, b: string) {
+  const ca = repo.git("rev-parse", a + "^{commit}").trim();
+  const cb = repo.git("rev-parse", b + "^{commit}").trim();
+  let base: string | null = null;
+  try {
+    base = repo.git("merge-base", ca, cb).trim();
+  } catch {
+    base = null; // unrelated histories
+  }
+  const count = (x: string, y: string) => Number(repo.git("rev-list", "--count", x, "^" + y).trim());
+  const aheadA = count(ca, cb);
+  const aheadB = count(cb, ca);
+  const linear = aheadA === 0 || aheadB === 0;
+  const [from, to] = aheadA === 0 ? [ca, cb] : aheadB === 0 ? [cb, ca] : [ca, cb];
+  return { from, to, base, linear, ahead: count(to, from), behind: count(from, to) };
+}
+
 function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[], sync: PendingSync) {
   // Starts EMPTY on purpose: a test that means to open a repo has to go through
   // the picker like a user does, rather than finding its repo pre-tracked.
@@ -615,6 +633,58 @@ function makeInvokeHandler(repo: TempRepo, calls: RecordedCall[], sync: PendingS
       }
       case "jobs_list":
         return [];
+      // ── compare (#49) ───────────────────────────────────────────────────
+      // Answered with real git against the fixture, in compare.rs's shape and
+      // ordering (an ancestor first; a diverged pair in the caller's order).
+      // Recorded too, so a spec can assert what the UI asked for. No hunks or
+      // line counts: the file list and the endpoints are what specs look at.
+      case "commit_range_summary":
+      case "commit_range_diff": {
+        calls.push({ cmd, args });
+        const r = rangeOf(repo, args.a, args.b);
+        if (cmd === "commit_range_summary") {
+          return {
+            from: r.from.slice(0, 7),
+            to: r.to.slice(0, 7),
+            mergeBase: r.base ? r.base.slice(0, 7) : null,
+            linear: r.linear,
+            ahead: r.ahead,
+            behind: r.behind,
+            filesChanged: 0,
+            additions: 0,
+            deletions: 0,
+            commits: [],
+            truncated: false,
+          };
+        }
+        const canSinceFork = !r.linear && !!r.base;
+        const sinceFork = !!args.sinceFork && canSinceFork;
+        const from = sinceFork ? (r.base as string) : r.from;
+        const fileTree = repo
+          .git("diff", "--name-status", from, r.to)
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => {
+            const [status, path] = l.split("\t");
+            return { path, oldPath: null, status, additions: 0, deletions: 0, binary: false, truncated: false, lang: null, hunks: [] };
+          });
+        return {
+          from: from.slice(0, 7),
+          to: r.to.slice(0, 7),
+          fromOid: from,
+          toOid: r.to,
+          canSinceFork,
+          sinceFork,
+          filesChanged: fileTree.length,
+          additions: 0,
+          deletions: 0,
+          truncated: false,
+          fileTree,
+        };
+      }
+      case "open_diff_tool":
+        calls.push({ cmd, args });
+        return null;
       // Backend-owned safety settings (safety_settings.rs): already stored, at
       // the defaults, so boot adopts them and changes nothing; pruning by that
       // ("off") policy removes nothing.

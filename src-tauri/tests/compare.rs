@@ -150,7 +150,7 @@ fn the_range_diff_returns_the_files_and_their_hunks() {
     repo.commit("added.txt", "brand new\n", "add a file");
     let b = repo.commit("keep.txt", "untouched\nand a second line\n", "edit a file");
 
-    let d = commit_range_diff_inner(&repo.path(), &a, &b).expect("must diff");
+    let d = commit_range_diff_inner(&repo.path(), &a, &b, false).expect("must diff");
     assert_eq!(d.files_changed, 2, "one added, one edited");
     let paths: Vec<&str> = d.file_tree.iter().map(|f| f.path.as_str()).collect();
     assert!(paths.contains(&"added.txt") && paths.contains(&"keep.txt"), "got {paths:?}");
@@ -174,7 +174,7 @@ fn the_diff_and_the_summary_agree_on_direction() {
 
     for (x, y) in [(&a, &b), (&b, &a)] {
         let s = commit_range_summary_inner(&repo.path(), x, y).unwrap();
-        let d = commit_range_diff_inner(&repo.path(), x, y).unwrap();
+        let d = commit_range_diff_inner(&repo.path(), x, y, false).unwrap();
         assert_eq!((s.from.as_str(), s.to.as_str()), (d.from.as_str(), d.to.as_str()), "endpoints disagree");
         assert_eq!(s.additions, d.additions, "additions disagree");
         assert_eq!(s.deletions, d.deletions, "deletions disagree");
@@ -190,6 +190,76 @@ fn the_range_diff_still_answers_for_unrelated_roots() {
     repo.must(&["rm", "-rf", "--cached", "."]);
     let b = repo.commit("b.txt", "b\n", "on the orphan");
 
-    let d = commit_range_diff_inner(&repo.path(), &a, &b).expect("must not error");
+    let d = commit_range_diff_inner(&repo.path(), &a, &b, false).expect("must not error");
     assert!(d.files_changed > 0);
+}
+
+/// main and side forked at `base`; main changed `shared.txt` and added
+/// `main.txt`, side added `side.txt`. Returns (repo, base, main tip, side tip).
+fn forked(tag: &str) -> (TempRepo, String, String, String) {
+    let repo = TempRepo::init(tag);
+    let base = repo.commit("shared.txt", "base\n", "base");
+    repo.must(&["checkout", "-q", "-b", "side"]);
+    let side = repo.commit("side.txt", "side\n", "side only");
+    repo.must(&["checkout", "-q", "main"]);
+    repo.commit("shared.txt", "base\nmain\n", "main edits shared");
+    let main_tip = repo.commit("main.txt", "m\n", "main adds a file");
+    (repo, base, main_tip, side)
+}
+
+#[test]
+fn a_diverged_pair_diffs_in_the_order_the_summary_reports() {
+    // The regression: the summary kept the caller's order for a diverged pair
+    // while the diff swapped it, so "+N" in the popover opened as "-N".
+    let (repo, _, main_tip, side) = forked("cmpd-fork-dir");
+    for (x, y) in [(&main_tip, &side), (&side, &main_tip)] {
+        let s = commit_range_summary_inner(&repo.path(), x, y).unwrap();
+        let d = commit_range_diff_inner(&repo.path(), x, y, false).unwrap();
+        assert_eq!((s.from.as_str(), s.to.as_str()), (d.from.as_str(), d.to.as_str()), "endpoints disagree");
+        assert_eq!((s.additions, s.deletions), (d.additions, d.deletions), "totals disagree");
+        assert_eq!(d.from, common::short(x), "a diverged pair keeps the caller's order");
+    }
+}
+
+#[test]
+fn since_the_fork_shows_only_what_the_other_side_did() {
+    let (repo, base, main_tip, side) = forked("cmpd-since-fork");
+
+    let direct = commit_range_diff_inner(&repo.path(), &main_tip, &side, false).unwrap();
+    assert!(direct.can_since_fork && !direct.since_fork);
+    let mut paths: Vec<_> = direct.file_tree.iter().map(|f| f.path.as_str()).collect();
+    paths.sort();
+    assert_eq!(paths, ["main.txt", "shared.txt", "side.txt"], "tip to tip also shows main's own work, reversed");
+
+    let fork = commit_range_diff_inner(&repo.path(), &main_tip, &side, true).unwrap();
+    assert!(fork.since_fork);
+    assert_eq!(fork.from, common::short(&base), "from is the merge base");
+    assert_eq!(fork.from_oid, base);
+    assert_eq!(fork.to_oid, side);
+    let paths: Vec<_> = fork.file_tree.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["side.txt"], "only side's own change");
+}
+
+#[test]
+fn since_the_fork_is_ignored_where_it_means_nothing() {
+    let (repo, _, main_tip, _) = forked("cmpd-since-fork-linear");
+    let base = repo.rev("HEAD~2").unwrap();
+    let d = commit_range_diff_inner(&repo.path(), &base, &main_tip, true).unwrap();
+    assert!(!d.can_since_fork && !d.since_fork, "a linear pair's merge base is its own start");
+    assert_eq!(d.from_oid, base);
+}
+
+#[test]
+fn endpoints_can_be_head_and_fully_qualified_refs() {
+    let (repo, _, main_tip, side) = forked("cmp-refs");
+    repo.must(&["tag", "-a", "-m", "annotated", "v1", &side]);
+    // A branch whose name looks like a sha prefix: qualified, it can't be misread.
+    repo.must(&["branch", "abc1234", &side]);
+
+    let s = commit_range_summary_inner(&repo.path(), "HEAD", "refs/heads/side").unwrap();
+    assert_eq!((s.from.clone(), s.to.clone()), (common::short(&main_tip), common::short(&side)));
+    let t = commit_range_summary_inner(&repo.path(), "HEAD", "refs/tags/v1").unwrap();
+    assert_eq!(t.to, common::short(&side), "an annotated tag peels to its commit");
+    let q = commit_range_diff_inner(&repo.path(), "HEAD", "refs/heads/abc1234", true).unwrap();
+    assert_eq!(q.to_oid, side);
 }

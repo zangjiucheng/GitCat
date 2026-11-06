@@ -8,6 +8,7 @@
 <script lang="ts">
   import { rangeSummaryCtrl } from "./rangesummary.svelte.ts";
   import { t } from "@/i18n/i18n.svelte.ts";
+  import ExternalLink from "@lucide/svelte/icons/external-link";
 
   let popEl: HTMLDivElement | undefined = $state();
 
@@ -78,6 +79,12 @@
            actually asked for — see rangesummary.svelte.ts's own note. -->
       <div class="rs-row">
         <button class="btn" onclick={() => rangeSummaryCtrl.openDiff()}>{t("rangesummary.view_diff")}</button>
+        <!-- Diverged: "what would merging this bring in" is merge base → the
+             other side, which the tip-to-tip diff buries under this side's
+             own work shown in reverse. -->
+        {#if !s.linear && s.mergeBase}
+          <button class="btn" onclick={() => rangeSummaryCtrl.openDiff(true)}>{t("rangesummary.view_since_fork", { to: rangeSummaryCtrl.bShort })}</button>
+        {/if}
       </div>
 
       {#if s.commits.length}
@@ -108,9 +115,18 @@
         <div class="diffx-head-main">
           <h3>{t("rangesummary.diff_title")}</h3>
           <p>
-            <span class="mono">{rangeSummaryCtrl.diffA}</span>
-            &nbsp;&rarr;&nbsp;
-            <span class="mono">{rangeSummaryCtrl.diffB}</span>
+            <!-- The labels the user picked; once loaded, the two trees the
+                 diff actually is (ordered, and the merge base when since the
+                 fork). -->
+            {#if rangeSummaryCtrl.diff}
+              <span class="mono">{rangeSummaryCtrl.diff.from}</span>
+              &nbsp;&rarr;&nbsp;
+              <span class="mono">{rangeSummaryCtrl.diff.to}</span>
+            {:else}
+              <span class="mono">{rangeSummaryCtrl.diffA}</span>
+              &nbsp;&rarr;&nbsp;
+              <span class="mono">{rangeSummaryCtrl.diffB}</span>
+            {/if}
             {#if rangeSummaryCtrl.diff}
               &nbsp;&middot;&nbsp;{t("rangesummary.files_changed", { n: rangeSummaryCtrl.diff.filesChanged })}
               <span class="rs-add">+{rangeSummaryCtrl.diff.additions}</span>
@@ -118,6 +134,17 @@
             {/if}
           </p>
         </div>
+        {#if rangeSummaryCtrl.diff?.canSinceFork}
+          {@const fork = rangeSummaryCtrl.diff.sinceFork}
+          <div class="rs-mode" role="group" aria-label={t("rangesummary.mode_label")}>
+            <button class="btn" class:on={!fork} aria-pressed={!fork} onclick={() => rangeSummaryCtrl.setSinceFork(false)}
+              >{t("rangesummary.mode_direct")}</button
+            >
+            <button class="btn" class:on={fork} aria-pressed={fork} onclick={() => rangeSummaryCtrl.setSinceFork(true)}
+              >{t("rangesummary.mode_since_fork")}</button
+            >
+          </div>
+        {/if}
       </div>
 
       <div class="modal-body diffx-body">
@@ -147,6 +174,15 @@
                   <span class="fname">{f.path}</span>
                   <span class="rs-add">+{f.additions}</span>
                   <span class="rs-del">&minus;{f.deletions}</span>
+                  <button
+                    class="wd-act"
+                    title={t("detail.open_external_diff")}
+                    aria-label={t("detail.open_external_diff_for", { path: f.path })}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      rangeSummaryCtrl.openExternalDiff(f.path);
+                    }}><ExternalLink class="ico" size={14} aria-hidden="true" /></button
+                  >
                 </div>
               {/each}
             {/if}

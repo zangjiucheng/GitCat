@@ -85,6 +85,7 @@ export default {
   force_push_lease: "Force push (with lease)…",
   force_push_override: "Force push — override remote…",
   merge_into_current: "Merge into current…",
+  compare_with_current: "Compare with current branch",
   rebase_onto: "Rebase current branch onto here",
   interactive_rebase_onto: "Interactive rebase onto here…",
   reset_to_upstream: "Reset to {upstream}…",

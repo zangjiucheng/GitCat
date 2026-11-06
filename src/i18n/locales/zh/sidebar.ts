@@ -83,6 +83,7 @@ export default {
   force_push_lease: "强制推送(带 lease)…",
   force_push_override: "强制推送 —— 覆盖远程…",
   merge_into_current: "合并到当前分支…",
+  compare_with_current: "与当前分支对比",
   rebase_onto: "将当前分支变基到此处",
   interactive_rebase_onto: "交互式变基到此处…",
   reset_to_upstream: "重置到 {upstream}…",

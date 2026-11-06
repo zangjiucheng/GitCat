@@ -69,11 +69,15 @@ async commitRangeSummary(path: string, a: string, b: string) : Promise<Result<Ra
  * no per-file patches), while this builds a `Patch` per file and is only
  * asked for when the user actually opens the diff.
  * 
- * JS: `commands.commitRangeDiff(path, a, b)` -> `Result<RangeDiff, string>`.
+ * JS: `commands.commitRangeDiff(path, a, b, sinceFork)` -> `Result<RangeDiff, string>`.
+ * 
+ * `since_fork` asks for merge base → `to` instead of tip to tip. It is
+ * ignored where it would mean nothing: a linear pair (the merge base IS
+ * `from`) and unrelated histories (there is no merge base).
  */
-async commitRangeDiff(path: string, a: string, b: string) : Promise<Result<RangeDiff, string>> {
+async commitRangeDiff(path: string, a: string, b: string, sinceFork: boolean) : Promise<Result<RangeDiff, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("commit_range_diff", { path, a, b }) };
+    return { status: "ok", data: await TAURI_INVOKE("commit_range_diff", { path, a, b, sinceFork }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4696,8 +4700,24 @@ export type RangeDiff = {
 /**
  * Short shas, ORDERED the same way [`RangeSummary`] orders them, so the
  * diff reads forwards in time regardless of which endpoint was clicked.
+ * With `since_fork`, `from` is the merge base.
  */
-from: string; to: string; filesChanged: number; additions: number; deletions: number; 
+from: string; to: string; 
+/**
+ * Full oids of the same two trees, for opening one file of this diff in
+ * the external diff tool (`open_diff_tool`'s `from_rev`/`to_rev`).
+ */
+fromOid: string; toOid: string; 
+/**
+ * The pair diverged and shares a merge base, so a since-the-fork diff
+ * exists and differs from the direct one. The modal offers the toggle
+ * only then.
+ */
+canSinceFork: boolean; 
+/**
+ * This diff is merge base → `to` (`git diff A...B`), not tip to tip.
+ */
+sinceFork: boolean; filesChanged: number; additions: number; deletions: number; 
 /**
  * Capped like a commit's own detail is; the frontend says so when set.
  */
