@@ -46,6 +46,19 @@ export default {
   // 引用 + 快照覆盖。
   refs_pointing_here: "指向此处的引用",
   no_refs: "没有引用指向此处",
+  contain_title: "所在分支",
+  contain_checking: "正在检查哪些分支包含这个提交…",
+  contain_on: "✓ 在 {head} 上",
+  contain_on_detached: "✓ 在 HEAD 的历史里",
+  contain_off: "✗ 不在 {head} 上",
+  contain_off_detached: "✗ 不在 HEAD 的历史里",
+  contain_copy_picked: "…但已经被拣选过去，对应提交是",
+  contain_copy_patch: "…但同样的改动已经在那里，对应提交是",
+  contain_copy_not_loaded: "{sha} 不在已加载的提交图里。",
+  contain_scan_capped: "在它最近的 2000 个提交里没有找到副本。",
+  contain_patch_skipped: "部分克隆：只按 cherry-pick -x 的标记查找了副本。",
+  contain_more: "还有 {n} 个",
+  contain_no_refs: "没有任何分支或标签包含这个提交。",
   covered:
     '已由快照覆盖 <b>backup/…{ago} 前</b><br /><span class="mut">可经安全管理员备份引用到达 —— {undoKey} 可回退到这里。</span>',
   // 更改 / 差异统计 / 文件树。

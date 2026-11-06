@@ -47,6 +47,19 @@ export default {
   // Refs + snapshot coverage.
   refs_pointing_here: "Refs pointing here",
   no_refs: "no refs point here",
+  contain_title: "On branches",
+  contain_checking: "Checking which branches contain this…",
+  contain_on: "✓ On {head}",
+  contain_on_detached: "✓ In HEAD's history",
+  contain_off: "✗ Not on {head}",
+  contain_off_detached: "✗ Not in HEAD's history",
+  contain_copy_picked: "…but it was cherry-picked there as",
+  contain_copy_patch: "…but the same change is there as",
+  contain_copy_not_loaded: "{sha} isn't in the loaded graph.",
+  contain_scan_capped: "No copy among the most recent 2000 commits on it.",
+  contain_patch_skipped: "Partial clone: only cherry-pick -x trailers were checked for a copy.",
+  contain_more: "+{n} more",
+  contain_no_refs: "No branch or tag contains this commit.",
   covered:
     'Covered by snapshot <b>backup/…{ago} ago</b><br /><span class="mut">reachable via a Safety-Manager backup ref — {undoKey} can rewind here.</span>',
   // Changes / diffstat / tree.

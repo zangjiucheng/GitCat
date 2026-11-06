@@ -1009,6 +1009,14 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
   background:color-mix(in srgb,var(--accent) 8%,var(--bg));font-size:11.5px;display:flex;gap:9px;align-items:flex-start;margin-top:10px}
 .covered .ck{width:8px;height:8px;border-radius:2px;background:var(--accent);margin-top:3px;flex:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
 .covered b{color:var(--accent)}
+.contain-head{font-size:12px;font-weight:600;color:var(--warn,#d29922)}
+.contain-head.on{color:var(--ok,#3fb950)}
+.contain-copy{font-size:12px;margin-top:4px;display:flex;align-items:baseline;gap:6px;min-width:0}
+.contain-copy .linkish{background:none;border:0;padding:0;color:var(--accent);cursor:pointer;font-size:11.5px}
+.contain-copy .linkish:hover{text-decoration:underline}
+.contain-subj{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.contain-note{font-size:11px;margin-top:4px}
+.contain-refs{margin-top:6px}
 .diffstat{display:flex;align-items:center;gap:10px;margin-top:2px}
 .diffstat .nums{font-family:var(--mono);font-size:11px}
 .diffstat .nums .add{color:var(--success)} .diffstat .nums .del{color:var(--danger)}

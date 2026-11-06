@@ -124,6 +124,7 @@
 {:else if detailCtrl.commit}
   {@const c = detailCtrl.commit}
   {@const gpg = detailCtrl.gpgBadge}
+  {@const cont = detailCtrl.containment}
   {@const cov = detailCtrl.coverage}
   <!-- The commit view's two tabs: the message and the diff stop
        competing for the same room, each getting the panel's full width in
@@ -218,6 +219,46 @@
           <!-- eslint-disable-next-line svelte/no-at-html-tags -->
           {@html t("detail.covered", { ago: cov.ago })}
         </div>
+      </div>
+    {/if}
+  </section>
+  <!-- Where this commit is. "Not on main" with no copy is the answer to "did
+       this fix make it into my branch?"; the copy line catches the cherry-pick
+       that would otherwise look like a no. -->
+  <section>
+    <h4 class="d-lab">{t("detail.contain_title")}</h4>
+    {#if !cont}
+      <div class="mut"><span class="spinner"></span> {t("detail.contain_checking")}</div>
+    {:else if cont.error}
+      <div class="mut">{cont.error}</div>
+    {:else if cont.data}
+      {@const d = cont.data}
+      <div class="contain-head" class:on={d.onHead}>
+        {#if d.onHead}
+          {d.head ? t("detail.contain_on", { head: d.head }) : t("detail.contain_on_detached")}
+        {:else}
+          {d.head ? t("detail.contain_off", { head: d.head }) : t("detail.contain_off_detached")}
+        {/if}
+      </div>
+      {#if d.equivalent}
+        {@const eq = d.equivalent}
+        <div class="contain-copy">
+          {eq.how === "trailer" ? t("detail.contain_copy_picked") : t("detail.contain_copy_patch")}
+          <button class="linkish mono" title={eq.subject} onclick={() => detailCtrl.goToEquivalent()}>{eq.sha.slice(0, 7)}</button>
+          <span class="mut contain-subj">{eq.subject}</span>
+        </div>
+      {:else if !d.onHead && d.scanCapped}
+        <div class="mut contain-note">{t("detail.contain_scan_capped")}</div>
+      {:else if !d.onHead && d.patchSkipped}
+        <div class="mut contain-note">{t("detail.contain_patch_skipped")}</div>
+      {/if}
+      <div class="refs-here contain-refs">
+        {#if d.refs.length}
+          {#each d.refs as r (r.kind + r.name)}<span class="row-chip {r.kind === 'tag' ? 'tag' : r.kind === 'remote' ? 'remote' : 'head'}">{r.name}</span>{/each}
+          {#if d.totalRefs > d.refs.length}<span class="mut">{t("detail.contain_more", { n: d.totalRefs - d.refs.length })}</span>{/if}
+        {:else}
+          <span class="mut">{t("detail.contain_no_refs")}</span>
+        {/if}
       </div>
     {/if}
   </section>
