@@ -11,7 +11,7 @@ mod common;
 use common::TempRepo;
 use git2::RepositoryState;
 use gitcat_lib::conflict::{conflict_status, resolve_conflict_file};
-use gitcat_lib::git_pick::{cherry_pick, cherry_pick_abort, cherry_pick_continue, merge_parents};
+use gitcat_lib::git_pick::{cherry_pick_core, cherry_pick_abort, cherry_pick_continue, merge_parents};
 
 /// Builds a repo where cherry-picking `feature`'s tip onto `main` conflicts:
 /// both branches edit the same line of the same file after a common base.
@@ -37,7 +37,7 @@ fn cherry_pick_conflict_resolve_theirs_then_continue() {
     let (repo, _main_head, feature_tip) = build_conflicting_repo("pick_resolve");
     let path = repo.path();
 
-    let picked = tauri::async_runtime::block_on(cherry_pick(path.clone(), feature_tip.clone(), Some(true), None));
+    let picked = cherry_pick_core(path.clone(), feature_tip.clone(), Some(true), None);
     assert_eq!(picked.state, "conflict", "expected a conflict, got: {}", picked.message);
     assert!(!picked.ok);
     assert_eq!(picked.conflicted_files, vec!["shared.txt".to_string()]);
@@ -83,7 +83,7 @@ fn cherry_pick_resolve_to_ours_is_empty_and_stays_in_progress() {
     let (repo, main_head, feature_tip) = build_conflicting_repo("pick_empty_ours");
     let path = repo.path();
 
-    let picked = tauri::async_runtime::block_on(cherry_pick(path.clone(), feature_tip, Some(true), None));
+    let picked = cherry_pick_core(path.clone(), feature_tip, Some(true), None);
     assert_eq!(picked.state, "conflict", "expected a conflict, got: {}", picked.message);
 
     let resolved = tauri::async_runtime::block_on(resolve_conflict_file(path.clone(), "shared.txt".into(), "ours".into()));
@@ -118,7 +118,7 @@ fn cherry_pick_abort_restores_head() {
     let (repo, main_head, feature_tip) = build_conflicting_repo("pick_abort");
     let path = repo.path();
 
-    let picked = tauri::async_runtime::block_on(cherry_pick(path.clone(), feature_tip, Some(true), None));
+    let picked = cherry_pick_core(path.clone(), feature_tip, Some(true), None);
     assert_eq!(picked.state, "conflict", "expected a conflict, got: {}", picked.message);
     assert_eq!(repo.open().state(), RepositoryState::CherryPick);
 
@@ -152,7 +152,7 @@ fn cherry_pick_blocked_by_dirty_tree_reports_blocked_by_local_changes() {
     std::fs::write(repo.dir.join("a.txt"), "dirty-a\n").unwrap();
     assert!(!repo.is_clean());
 
-    let picked = tauri::async_runtime::block_on(cherry_pick(path.clone(), feature_tip, Some(true), None));
+    let picked = cherry_pick_core(path.clone(), feature_tip, Some(true), None);
     assert!(!picked.ok);
     assert_eq!(picked.state, "error", "expected a dirty-tree refusal, got state {:?}: {}", picked.state, picked.message);
     assert!(picked.blocked_by_local_changes, "expected blocked_by_local_changes=true: {}", picked.message);
@@ -169,7 +169,7 @@ fn cherry_pick_bad_revision_is_not_reported_as_blocked_by_local_changes() {
     let _c0 = repo.commit("a.txt", "base\n", "c0");
     let path = repo.path();
 
-    let picked = tauri::async_runtime::block_on(cherry_pick(path, "not-a-real-sha".into(), Some(true), None));
+    let picked = cherry_pick_core(path, "not-a-real-sha".into(), Some(true), None);
     assert!(!picked.ok);
     assert_eq!(picked.state, "error");
     assert!(!picked.blocked_by_local_changes, "a bad revision must not be misclassified as a dirty-tree block: {}", picked.message);
@@ -224,7 +224,7 @@ fn cherry_pick_a_merge_with_mainline_1_applies_the_merged_in_change() {
 
     // Without -m git refuses a merge; with mainline=1 it applies (M - parent1),
     // i.e. the change the merge brought in from feature.
-    let picked = tauri::async_runtime::block_on(cherry_pick(path.clone(), merge.clone(), Some(false), Some(1)));
+    let picked = cherry_pick_core(path.clone(), merge.clone(), Some(false), Some(1));
     assert!(picked.ok, "merge cherry-pick with mainline 1 should be clean, got {}: {}", picked.state, picked.message);
     assert_eq!(picked.state, "clean");
     assert_eq!(repo.read("feature.txt"), "f\n", "the merged-in file must land on target");
@@ -232,7 +232,7 @@ fn cherry_pick_a_merge_with_mainline_1_applies_the_merged_in_change() {
 
     // Sanity: the SAME merge without a mainline is refused (git's own message).
     repo.must(&["checkout", "-q", "target"]);
-    let no_mainline = tauri::async_runtime::block_on(cherry_pick(path, merge, Some(false), None));
+    let no_mainline = cherry_pick_core(path, merge, Some(false), None);
     assert!(!no_mainline.ok, "a merge cherry-pick with no mainline must be refused");
     assert_eq!(no_mainline.state, "error");
 }

@@ -3,7 +3,7 @@
 // the pickers (they render straight off this array), and that an untranslated
 // key falls back to English rather than rendering the raw key at a user.
 import { describe, expect, it } from "vitest";
-import { LOCALES, setLocale, t, locale, beReject } from "./i18n.svelte.ts";
+import { LOCALES, setLocale, t, locale, be, beReject } from "./i18n.svelte.ts";
 
 describe("locale registry", () => {
   it("offers Korean", () => {
@@ -77,5 +77,25 @@ describe("beReject", () => {
     expect(beReject(weird)).toBe(weird);
     expect(beReject(undefined)).toBe(undefined);
     expect(beReject(null)).toBe(null);
+  });
+});
+
+// -- be: joined messages ----------------------------------------------------
+//
+// A backend message built from optional sentences (Rust `ijoin`): each part
+// is translated on its own and the results joined with a space.
+describe("be (joined)", () => {
+  const SEP = "\u001f";
+  const JOIN = "\u001e";
+
+  it("translates every part and joins them", () => {
+    const wire = `i18n:err_repo.cannot_open_repo${SEP}detail${SEP}A${JOIN}i18n:err_repo.cannot_open_repo${SEP}detail${SEP}B`;
+    const out = be(wire);
+    expect(out).toBe(`${t("err_repo.cannot_open_repo", { detail: "A" })} ${t("err_repo.cannot_open_repo", { detail: "B" })}`);
+    expect(out).not.toContain(JOIN);
+  });
+
+  it("a single message is unchanged", () => {
+    expect(be(`i18n:err_repo.cannot_open_repo${SEP}detail${SEP}x`)).toBe(t("err_repo.cannot_open_repo", { detail: "x" }));
   });
 });

@@ -11,7 +11,7 @@ use gitcat_lib::git_write::checkout;
 use gitcat_lib::model::DiffHunkRow;
 use gitcat_lib::safety::{list_snapshots, undo, UndoRefusal};
 use gitcat_lib::workdir::{
-    commit, discard_file, discard_lines, stage_all, stage_file, stage_lines, stash_apply, unstage_all,
+    commit_core, discard_file, discard_lines, stage_all, stage_file, stage_lines, stash_apply, unstage_all,
     stash_conflict_abort, stash_conflict_continue, stash_drop, stash_list, stash_pop, stash_save,
     stash_undo_apply, unstage_file, unstage_lines, workdir_file_diff, workdir_status, HunkSelection,
     SelectedLine,
@@ -215,7 +215,7 @@ fn commit_creates_a_real_commit_and_snapshots_first() {
     std::fs::write(repo.dir.join("f.txt"), "1\n").unwrap();
     repo.must(&["add", "-A"]);
 
-    let res = tauri::async_runtime::block_on(commit(path.clone(), Some("my commit message".into()), None));
+    let res = commit_core(path.clone(), Some("my commit message".into()), None);
     assert!(res.ok, "commit failed: {}", res.message);
     assert!(res.backup_ref.is_some(), "commit should snapshot first");
 
@@ -236,7 +236,7 @@ fn first_commit_in_an_empty_repo_succeeds_without_a_snapshot() {
     std::fs::write(repo.dir.join("f.txt"), "0\n").unwrap();
     repo.must(&["add", "-A"]);
 
-    let res = tauri::async_runtime::block_on(commit(path.clone(), Some("root".into()), None));
+    let res = commit_core(path.clone(), Some("root".into()), None);
     assert!(res.ok, "first commit failed: {}", res.message);
     assert!(res.backup_ref.is_none(), "an unborn HEAD has nothing to snapshot");
     assert_eq!(repo.must(&["log", "-1", "--format=%s"]), "root");
@@ -250,7 +250,7 @@ fn amending_with_an_unborn_head_is_still_refused() {
     std::fs::write(repo.dir.join("f.txt"), "0\n").unwrap();
     repo.must(&["add", "-A"]);
 
-    let res = tauri::async_runtime::block_on(commit(path.clone(), Some("x".into()), Some(true)));
+    let res = commit_core(path.clone(), Some("x".into()), Some(true));
     assert!(!res.ok, "there is no commit to amend");
     assert!(repo.rev("HEAD").is_none());
 }
@@ -265,7 +265,7 @@ fn commit_amend_without_message_keeps_prior_message_and_rewrites_sha() {
     std::fs::write(repo.dir.join("f.txt"), "2\n").unwrap();
     repo.must(&["add", "-A"]);
 
-    let res = tauri::async_runtime::block_on(commit(path.clone(), None, Some(true)));
+    let res = commit_core(path.clone(), None, Some(true));
     assert!(res.ok, "amend failed: {}", res.message);
     assert!(res.backup_ref.is_some(), "amend should snapshot first");
 
@@ -283,7 +283,7 @@ fn commit_refuses_with_empty_message_and_not_amending() {
     std::fs::write(repo.dir.join("f.txt"), "1\n").unwrap();
     repo.must(&["add", "-A"]);
 
-    let res = tauri::async_runtime::block_on(commit(path.clone(), Some("   ".into()), None));
+    let res = commit_core(path.clone(), Some("   ".into()), None);
     assert!(!res.ok, "commit with an empty message should be refused");
     assert!(res.message.contains("err_workdir.commit_message_empty"), "unexpected message: {}", res.message);
     assert!(res.backup_ref.is_none(), "a refused, never-attempted commit must not have snapshotted");

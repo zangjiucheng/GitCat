@@ -30,10 +30,10 @@ use common::TempRepo;
 use git2::RepositoryState;
 use gitcat_lib::conflict::{conflict_status, resolve_conflict_file};
 use gitcat_lib::git_rebase::{
-    rebase_abort, rebase_continue, rebase_interactive_plan, rebase_interactive_start, rebase_skip,
-    rebase_start, TodoItem,
+    rebase_abort, rebase_continue_core, rebase_interactive_plan, rebase_interactive_start_core, rebase_skip,
+    rebase_start_core, TodoItem,
 };
-use gitcat_lib::workdir::commit as workdir_commit;
+use gitcat_lib::workdir::commit_core as workdir_commit;
 
 /// Build a `TodoItem` list from a slice of `(sha, action)` pairs — a terser
 /// spelling for tests than repeating the struct literal every time.
@@ -177,7 +177,7 @@ fn rebase_clean_no_conflicts() {
     let path = repo.path();
 
     repo.must(&["checkout", "-q", "feature"]);
-    let out = tauri::async_runtime::block_on(rebase_start(path.clone(), "main".into()));
+    let out = rebase_start_core(path.clone(), "main".into());
     assert!(out.ok, "expected a clean rebase, got: {}", out.message);
     assert_eq!(out.state, "clean");
     assert!(out.backup_ref.is_some(), "rebase_start should snapshot before mutating");
@@ -202,7 +202,7 @@ fn rebase_already_up_to_date_is_empty_not_clean() {
     let path = repo.path();
 
     // Rebasing HEAD onto itself is the simplest "nothing to do" case.
-    let out = tauri::async_runtime::block_on(rebase_start(path.clone(), head.clone()));
+    let out = rebase_start_core(path.clone(), head.clone());
     assert_eq!(out.state, "empty", "expected a benign no-op, got: {}", out.message);
     assert!(!out.ok);
     assert_eq!(repo.rev("HEAD").as_deref(), Some(head.as_str()));
@@ -238,7 +238,7 @@ fn rebase_refuses_a_dirty_tree_even_when_autostash_is_configured() {
     // rebase outright unless autostash silently intervenes.
     std::fs::write(std::path::Path::new(&path).join("g.txt"), "dirty local edit\n").expect("write dirty file");
 
-    let out = tauri::async_runtime::block_on(rebase_start(path.clone(), "main".into()));
+    let out = rebase_start_core(path.clone(), "main".into());
     assert_eq!(out.state, "error", "expected an upfront refusal, got state {:?}: {}", out.state, out.message);
     assert!(!out.ok);
     assert!(out.blocked_by_local_changes, "expected blocked_by_local_changes=true: {}", out.message);
@@ -257,7 +257,7 @@ fn rebase_one_conflict_resolve_theirs_then_continue() {
     let (repo, main_head, _feature_tip) = build_one_conflict_repo("rebase_one_conflict");
     let path = repo.path();
 
-    let out = tauri::async_runtime::block_on(rebase_start(path.clone(), "main".into()));
+    let out = rebase_start_core(path.clone(), "main".into());
     assert_eq!(out.state, "conflict", "expected a conflict, got: {}", out.message);
     assert!(!out.ok);
     assert_eq!(out.conflicted_files, vec!["shared.txt".to_string()]);
@@ -278,7 +278,7 @@ fn rebase_one_conflict_resolve_theirs_then_continue() {
     assert!(resolved.ok, "resolve_conflict_file failed: {}", resolved.message);
     assert_eq!(resolved.remaining, 0);
 
-    let cont = tauri::async_runtime::block_on(rebase_continue(path.clone()));
+    let cont = rebase_continue_core(path.clone());
     assert!(cont.ok, "rebase_continue failed: {}", cont.message);
     assert_eq!(cont.state, "clean");
 
@@ -304,7 +304,7 @@ fn rebase_two_conflicts_in_sequence_continue_reports_conflict_then_clean() {
     let (repo, main_head) = build_two_conflict_repo("rebase_two_conflicts");
     let path = repo.path();
 
-    let out = tauri::async_runtime::block_on(rebase_start(path.clone(), "main".into()));
+    let out = rebase_start_core(path.clone(), "main".into());
     assert_eq!(out.state, "conflict", "expected first conflict, got: {}", out.message);
     assert_eq!(out.conflicted_files, vec!["a.txt".to_string()]);
     assert_eq!(repo.open().state(), RepositoryState::RebaseInteractive);
@@ -316,7 +316,7 @@ fn rebase_two_conflicts_in_sequence_continue_reports_conflict_then_clean() {
 
     // Continue past it — this MUST land on the SECOND conflicting commit
     // (b.txt), reporting "conflict" again, not "clean".
-    let cont1 = tauri::async_runtime::block_on(rebase_continue(path.clone()));
+    let cont1 = rebase_continue_core(path.clone());
     assert_eq!(
         cont1.state, "conflict",
         "continuing past the first conflict should hit the SECOND conflicting commit, not report clean; message: {}",
@@ -341,7 +341,7 @@ fn rebase_two_conflicts_in_sequence_continue_reports_conflict_then_clean() {
     assert!(resolved2.ok, "second resolve failed: {}", resolved2.message);
     assert_eq!(resolved2.remaining, 0);
 
-    let cont2 = tauri::async_runtime::block_on(rebase_continue(path.clone()));
+    let cont2 = rebase_continue_core(path.clone());
     assert!(cont2.ok, "final rebase_continue failed: {}", cont2.message);
     assert_eq!(cont2.state, "clean");
     assert_eq!(repo.open().state(), RepositoryState::Clean);
@@ -364,7 +364,7 @@ fn rebase_abort_restores_head_and_is_idempotent() {
     let (repo, _main_head, feature_tip) = build_one_conflict_repo("rebase_abort");
     let path = repo.path();
 
-    let out = tauri::async_runtime::block_on(rebase_start(path.clone(), "main".into()));
+    let out = rebase_start_core(path.clone(), "main".into());
     assert_eq!(out.state, "conflict", "expected a conflict, got: {}", out.message);
     assert_eq!(repo.open().state(), RepositoryState::RebaseInteractive);
 
@@ -390,7 +390,7 @@ fn rebase_skip_drops_the_conflicting_commit_and_proceeds() {
     let (repo, main_head) = build_two_conflict_repo("rebase_skip");
     let path = repo.path();
 
-    let out = tauri::async_runtime::block_on(rebase_start(path.clone(), "main".into()));
+    let out = rebase_start_core(path.clone(), "main".into());
     assert_eq!(out.state, "conflict", "expected first conflict, got: {}", out.message);
     assert_eq!(out.conflicted_files, vec!["a.txt".to_string()]);
 
@@ -408,7 +408,7 @@ fn rebase_skip_drops_the_conflicting_commit_and_proceeds() {
     // Resolve + continue the second, finishing the rebase.
     let resolved = tauri::async_runtime::block_on(resolve_conflict_file(path.clone(), "b.txt".into(), "theirs".into()));
     assert!(resolved.ok, "resolve failed: {}", resolved.message);
-    let cont = tauri::async_runtime::block_on(rebase_continue(path.clone()));
+    let cont = rebase_continue_core(path.clone());
     assert!(cont.ok, "rebase_continue failed: {}", cont.message);
     assert_eq!(cont.state, "clean");
     assert_eq!(repo.open().state(), RepositoryState::Clean);
@@ -476,7 +476,7 @@ fn rebase_interactive_reorders_two_independent_commits() {
     let path = repo.path();
 
     // Swap the order: c2 first, c1 second.
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), todo(&[(&c2, "pick"), (&c1, "pick")])));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), todo(&[(&c2, "pick"), (&c1, "pick")]));
     assert!(out.ok, "expected a clean reorder, got: {}", out.message);
     assert_eq!(out.state, "clean");
     assert_eq!(repo.open().state(), RepositoryState::Clean);
@@ -496,7 +496,7 @@ fn rebase_interactive_drop_removes_a_commit() {
     let (repo, main_head, c1, c2) = build_two_commit_feature("interactive_drop_one");
     let path = repo.path();
 
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), todo(&[(&c1, "drop"), (&c2, "pick")])));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), todo(&[(&c1, "drop"), (&c2, "pick")]));
     assert!(out.ok, "expected a clean drop, got: {}", out.message);
     assert_eq!(out.state, "clean");
     assert_eq!(repo.open().state(), RepositoryState::Clean);
@@ -518,7 +518,7 @@ fn rebase_interactive_drop_every_commit_in_range_leaves_head_at_onto() {
     let (repo, main_head, c1, c2) = build_two_commit_feature("interactive_drop_all");
     let path = repo.path();
 
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), todo(&[(&c1, "drop"), (&c2, "drop")])));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), todo(&[(&c1, "drop"), (&c2, "drop")]));
     assert!(out.ok, "expected a clean drop-all, got: {}", out.message);
     assert_eq!(out.state, "clean");
     assert_eq!(
@@ -534,7 +534,7 @@ fn rebase_interactive_squash_combines_with_concatenated_message() {
     let (repo, main_head, c1, c2) = build_two_commit_feature("interactive_squash");
     let path = repo.path();
 
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), todo(&[(&c1, "pick"), (&c2, "squash")])));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), todo(&[(&c1, "pick"), (&c2, "squash")]));
     assert!(out.ok, "expected a clean squash, got: {}", out.message);
     assert_eq!(out.state, "clean");
 
@@ -558,7 +558,7 @@ fn rebase_interactive_fixup_discards_message() {
     let (repo, main_head, c1, c2) = build_two_commit_feature("interactive_fixup");
     let path = repo.path();
 
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), todo(&[(&c1, "pick"), (&c2, "fixup")])));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), todo(&[(&c1, "pick"), (&c2, "fixup")]));
     assert!(out.ok, "expected a clean fixup, got: {}", out.message);
     assert_eq!(out.state, "clean");
 
@@ -577,7 +577,7 @@ fn rebase_interactive_edit_pauses_cleanly_state_is_editing() {
     let (repo, main_head, c1, c2) = build_two_commit_feature("interactive_edit_pause");
     let path = repo.path();
 
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), todo(&[(&c1, "edit"), (&c2, "pick")])));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), todo(&[(&c1, "edit"), (&c2, "pick")]));
     assert_eq!(out.state, "editing", "expected a clean edit-pause, got: {}", out.message);
     assert!(!out.ok);
     assert!(out.conflicted_files.is_empty());
@@ -598,7 +598,7 @@ fn rebase_interactive_edit_amend_via_workdir_commit_then_continue() {
     let (repo, main_head, c1, c2) = build_two_commit_feature("interactive_edit_amend");
     let path = repo.path();
 
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), todo(&[(&c1, "edit"), (&c2, "pick")])));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), todo(&[(&c1, "edit"), (&c2, "pick")]));
     assert_eq!(out.state, "editing", "expected a clean edit-pause, got: {}", out.message);
 
     // Amend the paused commit via the SAME `workdir::commit(amend: true)` the
@@ -606,10 +606,10 @@ fn rebase_interactive_edit_amend_via_workdir_commit_then_continue() {
     std::fs::write(repo.dir.join("one.txt"), "one (amended)\n").expect("write one.txt");
     repo.must(&["add", "-A"]);
     let amend_res =
-        tauri::async_runtime::block_on(workdir_commit(path.clone(), Some("add one.txt (amended)".into()), Some(true)));
+        workdir_commit(path.clone(), Some("add one.txt (amended)".into()), Some(true));
     assert!(amend_res.ok, "amend failed: {}", amend_res.message);
 
-    let cont = tauri::async_runtime::block_on(rebase_continue(path.clone()));
+    let cont = rebase_continue_core(path.clone());
     assert!(cont.ok, "rebase_continue after amend failed: {}", cont.message);
     assert_eq!(cont.state, "clean");
     assert_eq!(repo.open().state(), RepositoryState::Clean);
@@ -630,7 +630,7 @@ fn rebase_interactive_edit_pause_then_abort_restores_original_state() {
     let path = repo.path();
     let original_head = repo.rev("HEAD").unwrap();
 
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), todo(&[(&c1, "edit"), (&c2, "pick")])));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), todo(&[(&c1, "edit"), (&c2, "pick")]));
     assert_eq!(out.state, "editing", "expected a clean edit-pause, got: {}", out.message);
 
     let aborted = tauri::async_runtime::block_on(rebase_abort(path.clone()));
@@ -651,7 +651,7 @@ fn rebase_interactive_squash_that_conflicts_is_distinguishable_from_clean_squash
     let (repo, _main_head, c1, c2) = build_squash_conflict_feature("interactive_squash_conflict");
     let path = repo.path();
 
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), todo(&[(&c1, "pick"), (&c2, "squash")])));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), todo(&[(&c1, "pick"), (&c2, "squash")]));
     assert_eq!(
         out.state, "conflict",
         "the squash step's own internal cherry-pick should conflict, got: {}",
@@ -664,7 +664,7 @@ fn rebase_interactive_squash_that_conflicts_is_distinguishable_from_clean_squash
     let resolved = tauri::async_runtime::block_on(resolve_conflict_file(path.clone(), "shared.txt".into(), "theirs".into()));
     assert!(resolved.ok, "resolve failed: {}", resolved.message);
 
-    let cont = tauri::async_runtime::block_on(rebase_continue(path.clone()));
+    let cont = rebase_continue_core(path.clone());
     assert!(cont.ok, "rebase_continue failed: {}", cont.message);
     assert_eq!(cont.state, "clean");
     assert_eq!(repo.open().state(), RepositoryState::Clean);
@@ -681,7 +681,7 @@ fn rebase_interactive_plain_pick_conflict_matches_existing_linear_behavior() {
     let (repo, main_head, feature_tip) = build_one_conflict_repo("interactive_plain_conflict");
     let path = repo.path();
 
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), todo(&[(&feature_tip, "pick")])));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), todo(&[(&feature_tip, "pick")]));
     assert_eq!(out.state, "conflict", "expected a conflict, got: {}", out.message);
     assert!(!out.ok);
     assert_eq!(out.conflicted_files, vec!["shared.txt".to_string()]);
@@ -689,7 +689,7 @@ fn rebase_interactive_plain_pick_conflict_matches_existing_linear_behavior() {
 
     let resolved = tauri::async_runtime::block_on(resolve_conflict_file(path.clone(), "shared.txt".into(), "theirs".into()));
     assert!(resolved.ok, "resolve failed: {}", resolved.message);
-    let cont = tauri::async_runtime::block_on(rebase_continue(path.clone()));
+    let cont = rebase_continue_core(path.clone());
     assert!(cont.ok, "rebase_continue failed: {}", cont.message);
     assert_eq!(cont.state, "clean");
     assert_eq!(repo.open().state(), RepositoryState::Clean);
@@ -708,7 +708,7 @@ fn rebase_interactive_start_rejects_stale_or_mismatched_todo() {
     // Simulate a stale frontend: swap in a valid-but-out-of-range commit
     // (main's own tip) in place of the real c2.
     let stale = todo(&[(&c1, "pick"), (&main_head, "pick")]);
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), stale));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), stale);
     assert_eq!(
         out.state, "error",
         "a stale/mismatched todo must be refused outright, not silently rebase the wrong commits"
@@ -738,7 +738,7 @@ fn rebase_interactive_start_rejects_duplicate_sha_with_extra_row_even_though_the
     let original_head = repo.rev("HEAD").unwrap();
 
     let dup = todo(&[(&c1, "pick"), (&c2, "pick"), (&c2, "squash"), (&c3, "pick")]);
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), dup));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), dup);
     assert_eq!(
         out.state, "error",
         "a duplicate-sha todo with a matching SET but wrong row count must be refused, got: {}",
@@ -758,7 +758,7 @@ fn rebase_interactive_rejects_squash_as_first_row() {
     let original_head = repo.rev("HEAD").unwrap();
 
     let bad = todo(&[(&c1, "squash"), (&c2, "pick")]);
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), bad));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), bad);
     assert_eq!(out.state, "error");
     assert!(
         out.message.contains("err_history.first_commit_squash"),
@@ -796,7 +796,7 @@ fn rebase_interactive_start_bases_on_ontos_resolved_oid_at_call_time_not_a_stale
     let main_v2 = repo.commit("main.txt", "v2\n", "main v2");
     repo.must(&["checkout", "-q", "feature"]);
 
-    let out = tauri::async_runtime::block_on(rebase_interactive_start(path.clone(), "main".into(), todo(&[(&c1, "pick")])));
+    let out = rebase_interactive_start_core(path.clone(), "main".into(), todo(&[(&c1, "pick")]));
     assert!(out.ok, "expected a clean rebase, got: {}", out.message);
     assert_eq!(out.state, "clean");
 

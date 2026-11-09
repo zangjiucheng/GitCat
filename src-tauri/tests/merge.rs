@@ -20,8 +20,8 @@ use common::TempRepo;
 use git2::RepositoryState;
 use gitcat_lib::conflict::{conflict_file_hunks, conflict_status, resolve_conflict_file, resolve_conflict_hunks};
 use gitcat_lib::git_merge::{
-    merge_abort, merge_continue, merge_queue_abort, merge_queue_continue, merge_queue_status, merge_squash,
-    merge_squash_abort, merge_squash_continue, merge_start, merge_start_multi,
+    merge_abort, merge_continue, merge_queue_abort, merge_queue_continue_core, merge_queue_status, merge_squash,
+    merge_squash_abort, merge_squash_continue, merge_start_core, merge_start_multi_core,
 };
 
 /// Builds a repo where merging `feature` into `main` conflicts: both branches
@@ -48,7 +48,7 @@ fn merge_conflict_resolve_theirs_then_continue() {
     let (repo, _main_head, feature_tip) = build_conflicting_repo("merge_resolve");
     let path = repo.path();
 
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), feature_tip.clone(), None));
+    let merged = merge_start_core(path.clone(), feature_tip.clone(), None);
     assert_eq!(merged.state, "conflict", "expected a conflict, got: {}", merged.message);
     assert!(!merged.ok);
     assert_eq!(merged.conflicted_files, vec!["shared.txt".to_string()]);
@@ -91,7 +91,7 @@ fn merge_abort_restores_head() {
     let (repo, main_head, feature_tip) = build_conflicting_repo("merge_abort");
     let path = repo.path();
 
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), feature_tip, None));
+    let merged = merge_start_core(path.clone(), feature_tip, None);
     assert_eq!(merged.state, "conflict", "expected a conflict, got: {}", merged.message);
     assert_eq!(repo.open().state(), RepositoryState::Merge);
 
@@ -121,7 +121,7 @@ fn merge_fast_forward_is_clean_and_moves_head() {
     repo.must(&["checkout", "-q", "main"]);
     let path = repo.path();
 
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), tip.clone(), None));
+    let merged = merge_start_core(path.clone(), tip.clone(), None);
     assert!(merged.ok, "expected a clean fast-forward, got: {}", merged.message);
     assert_eq!(merged.state, "clean");
     assert!(merged.backup_ref.is_some());
@@ -153,7 +153,7 @@ fn merge_refuses_a_dirty_conflicting_tree_even_when_autostash_is_configured() {
     std::fs::write(std::path::Path::new(&path).join("shared.txt"), "dirty uncommitted edit\n")
         .expect("write dirty file");
 
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), feature_tip.clone(), None));
+    let merged = merge_start_core(path.clone(), feature_tip.clone(), None);
     assert_eq!(merged.state, "error", "expected an upfront refusal, got state {:?}: {}", merged.state, merged.message);
     assert!(!merged.ok);
     assert!(merged.blocked_by_local_changes, "expected blocked_by_local_changes=true: {}", merged.message);
@@ -175,7 +175,7 @@ fn merge_already_up_to_date_is_empty_not_clean() {
     let path = repo.path();
 
     // Merging HEAD into itself is the simplest "nothing to do" case.
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), head.clone(), None));
+    let merged = merge_start_core(path.clone(), head.clone(), None);
     assert_eq!(merged.state, "empty", "expected a benign no-op, got: {}", merged.message);
     assert!(!merged.ok);
     // Nothing was mutated: no snapshot side-effect surfaced to the user as a
@@ -198,7 +198,7 @@ fn merge_no_ff_forces_a_merge_commit_even_when_a_fast_forward_is_possible() {
     repo.must(&["checkout", "-q", "main"]);
     let path = repo.path();
 
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), tip.clone(), Some("no-ff".into())));
+    let merged = merge_start_core(path.clone(), tip.clone(), Some("no-ff".into()));
     assert!(merged.ok, "expected a clean merge, got: {}", merged.message);
     assert_eq!(merged.state, "clean");
 
@@ -221,7 +221,7 @@ fn merge_ff_only_refuses_when_diverged_and_succeeds_when_ff_is_possible() {
     let (repo, main_head, feature_tip) = build_conflicting_repo("merge_ff_only_diverged");
     let path = repo.path();
 
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), feature_tip.clone(), Some("ff-only".into())));
+    let merged = merge_start_core(path.clone(), feature_tip.clone(), Some("ff-only".into()));
     assert_eq!(merged.state, "error", "expected a clean refusal, got: {}", merged.message);
     assert!(!merged.ok);
     assert!(!merged.blocked_by_local_changes, "an --ff-only refusal must not be misclassified as a dirty-tree block: {}", merged.message);
@@ -238,7 +238,7 @@ fn merge_ff_only_refuses_when_diverged_and_succeeds_when_ff_is_possible() {
     repo2.must(&["checkout", "-q", "main"]);
     let path2 = repo2.path();
 
-    let merged2 = tauri::async_runtime::block_on(merge_start(path2.clone(), tip2.clone(), Some("ff-only".into())));
+    let merged2 = merge_start_core(path2.clone(), tip2.clone(), Some("ff-only".into()));
     assert!(merged2.ok, "expected a clean fast-forward, got: {}", merged2.message);
     assert_eq!(merged2.state, "clean");
     assert_eq!(repo2.rev("HEAD").as_deref(), Some(tip2.as_str()));
@@ -251,7 +251,7 @@ fn merge_start_rejects_an_unknown_strategy() {
     let head = repo.rev("HEAD").unwrap();
     let path = repo.path();
 
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), head.clone(), Some("squash".into())));
+    let merged = merge_start_core(path.clone(), head.clone(), Some("squash".into()));
     assert_eq!(merged.state, "error");
     assert!(!merged.ok);
     assert!(merged.message.contains("err_history.unknown_merge_strategy"), "message: {}", merged.message);
@@ -565,7 +565,7 @@ fn conflict_file_hunks_splits_context_from_the_conflicting_region() {
     let (repo, feature_tip) = build_multiline_conflicting_repo("hunks_split");
     let path = repo.path();
 
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), feature_tip, None));
+    let merged = merge_start_core(path.clone(), feature_tip, None);
     assert_eq!(merged.state, "conflict", "expected a conflict, got: {}", merged.message);
 
     let result = tauri::async_runtime::block_on(conflict_file_hunks(path, "shared.txt".into())).expect("conflict_file_hunks failed");
@@ -616,7 +616,7 @@ fn conflict_file_hunks_reports_binary_and_no_hunks_for_a_binary_conflict() {
     repo.must(&["checkout", "-q", "main"]);
 
     let path = repo.path();
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), feature_tip, None));
+    let merged = merge_start_core(path.clone(), feature_tip, None);
     assert_eq!(merged.state, "conflict", "expected a conflict, got: {}", merged.message);
 
     let result = tauri::async_runtime::block_on(conflict_file_hunks(path, "bin.dat".into())).expect("conflict_file_hunks failed");
@@ -629,7 +629,7 @@ fn resolve_conflict_hunks_writes_stages_and_lets_merge_continue_succeed() {
     let (repo, feature_tip) = build_multiline_conflicting_repo("hunks_resolve");
     let path = repo.path();
 
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), feature_tip, None));
+    let merged = merge_start_core(path.clone(), feature_tip, None);
     assert_eq!(merged.state, "conflict", "expected a conflict, got: {}", merged.message);
 
     // Simulate the frontend joining its hunk choices (here: a hand-edited
@@ -725,7 +725,7 @@ fn merge_start_multi_octopus_clean_creates_one_commit_with_every_branch_as_a_par
     repo.must(&["checkout", "-q", "main"]);
     let path = repo.path();
 
-    let result = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_b, tip_c, tip_d], "octopus".into(), None));
+    let result = merge_start_multi_core(path.clone(), vec![tip_b, tip_c, tip_d], "octopus".into(), None);
     assert!(result.ok, "expected a clean octopus merge, got: {}", result.message);
     assert_eq!(result.state, "clean");
     assert!(result.backup_ref.is_some(), "merge_start_multi should snapshot before mutating");
@@ -744,7 +744,7 @@ fn merge_start_multi_octopus_conflict_aborts_outright_and_reports_a_distinct_sta
     let (repo, head_before, tip_b, tip_c) = build_octopus_conflicting_repo("octopus_conflict");
     let path = repo.path();
 
-    let result = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_b, tip_c], "octopus".into(), None));
+    let result = merge_start_multi_core(path.clone(), vec![tip_b, tip_c], "octopus".into(), None);
     assert!(!result.ok);
     assert_eq!(
         result.state, "octopus-conflict-unsupported",
@@ -769,13 +769,13 @@ fn merge_start_multi_rejects_fewer_than_two_shas() {
     let head = repo.commit("f.txt", "base\n", "base");
     let path = repo.path();
 
-    let one = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![head], "octopus".into(), None));
+    let one = merge_start_multi_core(path.clone(), vec![head], "octopus".into(), None);
     assert!(!one.ok);
     assert_eq!(one.state, "error");
     assert!(one.message.contains("err_history.pick_at_least_two"), "message: {}", one.message);
     assert_eq!(repo.open().state(), RepositoryState::Clean);
 
-    let none = tauri::async_runtime::block_on(merge_start_multi(path, vec![], "sequential".into(), None));
+    let none = merge_start_multi_core(path, vec![], "sequential".into(), None);
     assert!(!none.ok);
     assert!(none.message.contains("err_history.pick_at_least_two"), "message: {}", none.message);
 }
@@ -786,7 +786,7 @@ fn merge_start_multi_rejects_an_unknown_mode() {
     let head = repo.commit("f.txt", "base\n", "base");
     let path = repo.path();
 
-    let result = tauri::async_runtime::block_on(merge_start_multi(path, vec![head.clone(), head], "bogus".into(), None));
+    let result = merge_start_multi_core(path, vec![head.clone(), head], "bogus".into(), None);
     assert!(!result.ok);
     assert_eq!(result.state, "error");
     assert!(result.message.contains("err_history.unknown_merge_mode"), "message: {}", result.message);
@@ -797,7 +797,7 @@ fn merge_start_multi_sequential_first_step_conflict_is_resolved_via_the_normal_f
     let (repo, _main_head, tip_a, tip_b) = build_sequential_repo("seq_first_conflict");
     let path = repo.path();
 
-    let started = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_a.clone(), tip_b.clone()], "sequential".into(), None));
+    let started = merge_start_multi_core(path.clone(), vec![tip_a.clone(), tip_b.clone()], "sequential".into(), None);
     assert_eq!(started.state, "conflict", "expected the first step to conflict, got: {}", started.message);
     assert_eq!(started.conflicted_files, vec!["shared.txt".to_string()]);
     assert_eq!(repo.open().state(), RepositoryState::Merge);
@@ -820,7 +820,7 @@ fn merge_start_multi_sequential_first_step_conflict_is_resolved_via_the_normal_f
     let mid_status = tauri::async_runtime::block_on(merge_queue_status(path.clone()));
     assert!(mid_status.in_progress, "sidecar should still show the queue in progress until continue is called");
 
-    let advanced = tauri::async_runtime::block_on(merge_queue_continue(path.clone()));
+    let advanced = merge_queue_continue_core(path.clone());
     assert!(advanced.ok, "merge_queue_continue failed: {}", advanced.message);
     assert_eq!(advanced.state, "clean", "second step (no conflict) should merge cleanly");
 
@@ -856,7 +856,7 @@ fn merge_queue_continue_advances_through_a_fully_clean_sequential_queue() {
     repo.must(&["checkout", "-q", "main"]);
     let path = repo.path();
 
-    let started = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_b, tip_c], "sequential".into(), None));
+    let started = merge_start_multi_core(path.clone(), vec![tip_b, tip_c], "sequential".into(), None);
     assert!(started.ok, "expected the first step to merge cleanly, got: {}", started.message);
     assert_eq!(started.state, "clean");
 
@@ -865,7 +865,7 @@ fn merge_queue_continue_advances_through_a_fully_clean_sequential_queue() {
     assert_eq!(status.remaining.len(), 1);
     assert_eq!(status.done.len(), 1);
 
-    let advanced = tauri::async_runtime::block_on(merge_queue_continue(path.clone()));
+    let advanced = merge_queue_continue_core(path.clone());
     assert!(advanced.ok, "merge_queue_continue failed: {}", advanced.message);
     assert_eq!(advanced.state, "clean");
 
@@ -892,7 +892,7 @@ fn merge_start_multi_sequential_applies_the_chosen_strategy_to_every_step() {
     repo.must(&["checkout", "-q", "main"]);
     let path = repo.path();
 
-    let started = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_b, tip_c], "sequential".into(), Some("no-ff".into())));
+    let started = merge_start_multi_core(path.clone(), vec![tip_b, tip_c], "sequential".into(), Some("no-ff".into()));
     assert!(started.ok, "expected a clean merge, got: {}", started.message);
     // --no-ff must force a real merge commit for EVERY step, even though
     // branchB's own merge into main would otherwise fast-forward cleanly
@@ -901,7 +901,7 @@ fn merge_start_multi_sequential_applies_the_chosen_strategy_to_every_step() {
     let head_after_first = git2repo.head().unwrap().peel_to_commit().unwrap();
     assert_eq!(head_after_first.parent_count(), 2, "first step should be a real merge commit under --no-ff, not a fast-forward");
 
-    let advanced = tauri::async_runtime::block_on(merge_queue_continue(path.clone()));
+    let advanced = merge_queue_continue_core(path.clone());
     assert!(advanced.ok, "merge_queue_continue failed: {}", advanced.message);
     let git2repo2 = repo.open();
     let head_after_second = git2repo2.head().unwrap().peel_to_commit().unwrap();
@@ -913,12 +913,12 @@ fn merge_queue_continue_refuses_while_the_current_step_is_still_conflicted() {
     let (repo, _main_head, tip_a, tip_b) = build_sequential_repo("seq_refuse_mid_conflict");
     let path = repo.path();
 
-    let started = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_a, tip_b], "sequential".into(), None));
+    let started = merge_start_multi_core(path.clone(), vec![tip_a, tip_b], "sequential".into(), None);
     assert_eq!(started.state, "conflict");
 
     // Calling continue BEFORE resolving anything must refuse, not silently
     // skip ahead or corrupt the queue.
-    let advanced = tauri::async_runtime::block_on(merge_queue_continue(path.clone()));
+    let advanced = merge_queue_continue_core(path.clone());
     assert!(!advanced.ok);
     assert_eq!(advanced.state, "error");
     assert!(advanced.message.contains("err_history.finish_resolving_first"), "message: {}", advanced.message);
@@ -946,12 +946,12 @@ fn merge_queue_abort_cancels_remaining_branches_but_keeps_already_merged_steps()
     repo.commit("shared.txt", "main edit\n", "main edits shared.txt (will conflict with C later)");
     let path = repo.path();
 
-    let started = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_b, tip_c], "sequential".into(), None));
+    let started = merge_start_multi_core(path.clone(), vec![tip_b, tip_c], "sequential".into(), None);
     assert!(started.ok, "expected the first step (B) to merge cleanly, got: {}", started.message);
     assert_eq!(started.state, "clean");
     assert_eq!(repo.read("b.txt"), "b content\n", "B's own change must already be committed");
 
-    let advanced = tauri::async_runtime::block_on(merge_queue_continue(path.clone()));
+    let advanced = merge_queue_continue_core(path.clone());
     assert_eq!(advanced.state, "conflict", "expected the second step (C) to conflict with main's own edit, got: {}", advanced.message);
     assert_eq!(repo.open().state(), RepositoryState::Merge);
 
@@ -976,11 +976,11 @@ fn merge_start_multi_refuses_to_stack_on_an_existing_merge_or_queue() {
     let (repo, _main_head, tip_a, tip_b) = build_sequential_repo("multi_refuses_stacking");
     let path = repo.path();
 
-    let started = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_a.clone(), tip_b.clone()], "sequential".into(), None));
+    let started = merge_start_multi_core(path.clone(), vec![tip_a.clone(), tip_b.clone()], "sequential".into(), None);
     assert_eq!(started.state, "conflict");
 
     // A live merge conflict (MERGE_HEAD present) must refuse a fresh multi-merge outright.
-    let blocked = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_a.clone(), tip_b.clone()], "octopus".into(), None));
+    let blocked = merge_start_multi_core(path.clone(), vec![tip_a.clone(), tip_b.clone()], "octopus".into(), None);
     assert!(!blocked.ok);
     assert_eq!(blocked.state, "error");
     assert!(blocked.message.contains("err_history.merge_in_progress"), "message: {}", blocked.message);
@@ -994,7 +994,7 @@ fn merge_start_multi_refuses_to_stack_on_an_existing_merge_or_queue() {
     assert!(cont.ok, "merge_continue failed: {}", cont.message);
     assert_eq!(cont.state, "clean");
 
-    let blocked2 = tauri::async_runtime::block_on(merge_start_multi(path, vec![tip_a, tip_b], "octopus".into(), None));
+    let blocked2 = merge_start_multi_core(path, vec![tip_a, tip_b], "octopus".into(), None);
     assert!(!blocked2.ok);
     assert_eq!(blocked2.state, "error");
     assert!(blocked2.message.contains("err_history.sequential_queue_in_progress"), "message: {}", blocked2.message);
@@ -1037,7 +1037,7 @@ fn conflict_file_hunks_and_resolve_hunks_never_truncate_a_file_past_the_old_400_
     repo.must(&["checkout", "-q", "main"]);
     let path = repo.path();
 
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), feature_tip, None));
+    let merged = merge_start_core(path.clone(), feature_tip, None);
     assert_eq!(merged.state, "conflict", "expected a conflict, got: {}", merged.message);
 
     let result = tauri::async_runtime::block_on(conflict_file_hunks(path.clone(), "shared.txt".into())).expect("conflict_file_hunks failed");
@@ -1087,7 +1087,7 @@ fn conflict_file_hunks_preserves_content_that_looks_like_a_conflict_marker() {
     repo.must(&["checkout", "-q", "main"]);
     let path = repo.path();
 
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), feature_tip, None));
+    let merged = merge_start_core(path.clone(), feature_tip, None);
     assert_eq!(merged.state, "conflict", "expected a conflict, got: {}", merged.message);
 
     let result = tauri::async_runtime::block_on(conflict_file_hunks(path, "shared.txt".into())).expect("conflict_file_hunks failed");
@@ -1114,7 +1114,7 @@ fn conflict_file_hunks_preserves_content_that_looks_like_a_conflict_marker() {
 fn resolve_conflict_hunks_refuses_an_absolute_or_parent_escaping_path() {
     let (repo, _main_head, feature_tip) = build_conflicting_repo("hunks_path_traversal");
     let path = repo.path();
-    let merged = tauri::async_runtime::block_on(merge_start(path.clone(), feature_tip, None));
+    let merged = merge_start_core(path.clone(), feature_tip, None);
     assert_eq!(merged.state, "conflict");
 
     let outside = std::env::temp_dir().join("gitcat-path-traversal-should-never-be-written.txt");
@@ -1141,7 +1141,7 @@ fn merge_queue_continue_does_not_silently_mark_an_aborted_step_as_done() {
     let (repo, _main_head, tip_a, tip_b) = build_sequential_repo("seq_abort_via_plain_button");
     let path = repo.path();
 
-    let started = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_a.clone(), tip_b.clone()], "sequential".into(), None));
+    let started = merge_start_multi_core(path.clone(), vec![tip_a.clone(), tip_b.clone()], "sequential".into(), None);
     assert_eq!(started.state, "conflict");
 
     // Abort through the ORDINARY, queue-unaware command — exactly what the
@@ -1157,7 +1157,7 @@ fn merge_queue_continue_does_not_silently_mark_an_aborted_step_as_done() {
 
     // Continuing must NOT silently report tip_a as done and skip to tip_b —
     // it was never actually merged.
-    let advanced = tauri::async_runtime::block_on(merge_queue_continue(path.clone()));
+    let advanced = merge_queue_continue_core(path.clone());
     assert_ne!(advanced.state, "clean", "the aborted branch must never be silently reported as merged");
     assert_eq!(
         advanced.state, "conflict",
@@ -1197,7 +1197,7 @@ fn merge_queue_continue_retries_current_after_an_outright_error_instead_of_marki
     repo.commit("other.txt", "main-only\n", "main advances (breaks ff for branchA)");
     let path = repo.path();
 
-    let started = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_a.clone(), tip_b.clone()], "sequential".into(), Some("ff-only".into())));
+    let started = merge_start_multi_core(path.clone(), vec![tip_a.clone(), tip_b.clone()], "sequential".into(), Some("ff-only".into()));
     assert_eq!(started.state, "error", "expected an outright ff-only refusal, got: {}", started.message);
     assert_eq!(repo.open().state(), RepositoryState::Clean, "an error must never leave a real conflict/MERGE_HEAD behind");
 
@@ -1205,7 +1205,7 @@ fn merge_queue_continue_retries_current_after_an_outright_error_instead_of_marki
     assert!(status.in_progress, "the queue sidecar should still show tip_a as the (never-merged) current step");
     assert_eq!(status.current.as_deref(), Some(tip_a.as_str()));
 
-    let advanced = tauri::async_runtime::block_on(merge_queue_continue(path.clone()));
+    let advanced = merge_queue_continue_core(path.clone());
     assert_eq!(advanced.state, "error", "retrying should hit the SAME ff-only refusal again, got: {}", advanced.message);
 
     let status_after = tauri::async_runtime::block_on(merge_queue_status(path.clone()));
@@ -1240,7 +1240,7 @@ fn merge_octopus_reports_a_dirty_tree_refusal_honestly_not_as_unsupported() {
     // Uncommitted local edit to the exact file branchB's merge would touch.
     std::fs::write(repo.dir.join("shared.txt"), "dirty uncommitted edit\n").expect("write dirty file");
 
-    let result = tauri::async_runtime::block_on(merge_start_multi(path.clone(), vec![tip_b, tip_c], "octopus".into(), None));
+    let result = merge_start_multi_core(path.clone(), vec![tip_b, tip_c], "octopus".into(), None);
     assert!(!result.ok);
     assert_eq!(result.state, "error", "a dirty-tree refusal must be reported as an ordinary error, not octopus-conflict-unsupported: {}", result.message);
     assert!(result.blocked_by_local_changes, "blocked_by_local_changes must be set, exactly like merge_start's own dirty-tree case: {}", result.message);

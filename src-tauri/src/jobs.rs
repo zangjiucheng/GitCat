@@ -19,7 +19,9 @@
 //! Each GitCat window is its own process with its own registry, so ids only
 //! need to be unique per process.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -47,6 +49,13 @@ pub enum JobKind {
     ResetToUpstream,
     SubmoduleUpdate,
     SubmoduleAdd,
+    Commit,
+    Merge,
+    CherryPick,
+    Revert,
+    Rebase,
+    ApplyPatch,
+    Mergetool,
 }
 
 impl JobKind {
@@ -54,7 +63,16 @@ impl JobKind {
     /// `None` for a local op that has no output to go quiet on.
     pub fn stall_after(self) -> Option<Duration> {
         match self {
-            JobKind::ResetToUpstream => None,
+            // Local: git prints little or nothing while it works (or while a
+            // hook, gpg or a merge tool runs), so silence says nothing.
+            JobKind::ResetToUpstream
+            | JobKind::Commit
+            | JobKind::Merge
+            | JobKind::CherryPick
+            | JobKind::Revert
+            | JobKind::Rebase
+            | JobKind::ApplyPatch
+            | JobKind::Mergetool => None,
             _ => Some(NETWORK_STALL),
         }
     }
@@ -228,6 +246,83 @@ impl JobRegistry {
     }
 }
 
+/// The job the current thread is running, if any — so a deep helper (the one
+/// that finally runs git) can pick up the cancel token without every layer in
+/// between growing a parameter. Set by [`with_current`] for exactly the
+/// duration of a command's body, which runs synchronously on one blocking
+/// thread; outside a job (tests, untracked callers) it is `None` and the
+/// helpers behave as before.
+#[derive(Clone)]
+pub struct CurrentJob {
+    token: CancelToken,
+    others_on_repo: Rc<dyn Fn() -> bool>,
+}
+
+impl CurrentJob {
+    /// A current job that isn't in a registry — for tests, which drive a
+    /// command's core with their own token through [`with_current`].
+    pub fn new(token: CancelToken, others_on_repo: impl Fn() -> bool + 'static) -> Self {
+        Self { token, others_on_repo: Rc::new(others_on_repo) }
+    }
+
+    pub fn token(&self) -> CancelToken {
+        self.token.clone()
+    }
+
+    /// See `JobRegistry::others_on_repo`; asked when called.
+    pub fn others_on_repo(&self) -> bool {
+        (self.others_on_repo)()
+    }
+}
+
+thread_local! {
+    static CURRENT: RefCell<Option<CurrentJob>> = const { RefCell::new(None) };
+}
+
+/// The job this thread is running, if any.
+pub fn current() -> Option<CurrentJob> {
+    CURRENT.with(|c| c.borrow().clone())
+}
+
+/// Run `body` with `job` as this thread's current job, restoring whatever
+/// was current before (also on panic).
+pub fn with_current<R>(job: CurrentJob, body: impl FnOnce() -> R) -> R {
+    struct Restore(Option<CurrentJob>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let prev = self.0.take();
+            CURRENT.with(|c| *c.borrow_mut() = prev);
+        }
+    }
+    let _restore = Restore(CURRENT.with(|c| c.borrow_mut().replace(job)));
+    body()
+}
+
+/// Register a job around a command body that runs synchronously on this
+/// (blocking) thread: begin, make it the current job for the body, finish
+/// with the result's outcome. For ops whose cancel token is picked up deep
+/// inside via [`current`] rather than passed down.
+pub fn run_job<R: JobResult>(
+    app: &AppHandle<Wry>,
+    kind: JobKind,
+    repo: &str,
+    label: &str,
+    body: impl FnOnce() -> R,
+) -> R {
+    let job = begin(app, kind, repo, label, true);
+    let current = {
+        let app = job.app.clone();
+        let (id, repo) = (job.info.id, job.info.repo.clone());
+        CurrentJob {
+            token: job.token(),
+            others_on_repo: Rc::new(move || app.state::<JobRegistry>().others_on_repo(id, &repo)),
+        }
+    };
+    let res = with_current(current, body);
+    job.finish(res.outcome());
+    res
+}
+
 /// What a job's command returns, read for the `"job-finished"` outcome.
 pub trait JobResult {
     fn outcome(&self) -> JobOutcome;
@@ -244,6 +339,47 @@ impl JobResult for crate::git_write::WriteResult {
         }
     }
 }
+
+fn outcome_of(ok: bool, cancelled: bool) -> JobOutcome {
+    if cancelled {
+        JobOutcome::Cancelled
+    } else if ok {
+        JobOutcome::Ok
+    } else {
+        JobOutcome::Failed
+    }
+}
+
+impl JobResult for crate::workdir::WorkdirResult {
+    fn outcome(&self) -> JobOutcome {
+        outcome_of(self.ok, self.cancelled)
+    }
+}
+
+impl JobResult for crate::conflict::ResolveResult {
+    fn outcome(&self) -> JobOutcome {
+        outcome_of(self.ok, self.cancelled)
+    }
+}
+
+/// The history ops report a cancel as `state: "cancelled"` (their results
+/// already carry a state string the UI switches on).
+macro_rules! state_job_result {
+    ($($t:ty),*) => {$(
+        impl JobResult for $t {
+            fn outcome(&self) -> JobOutcome {
+                outcome_of(self.ok, self.state == "cancelled")
+            }
+        }
+    )*};
+}
+state_job_result!(
+    crate::git_merge::MergeResult,
+    crate::git_pick::PickResult,
+    crate::git_revert::RevertResult,
+    crate::git_rebase::RebaseResult,
+    crate::patch::ApplyPatchResult
+);
 
 /// RAII handle for one registered job: `begin` registers it and emits
 /// `"job-started"`; `finish` (or, on a panic path, drop) removes it and emits
@@ -423,6 +559,33 @@ mod tests {
         worker.join().unwrap();
         let (_, _stuck) = r.register(JobKind::Push, "/r", "main", true);
         assert!(!r.cancel_all_and_wait(Duration::from_millis(100)), "a job that never finishes times the wait out");
+    }
+
+    #[test]
+    fn current_is_set_only_inside_with_current_and_restored_after() {
+        assert!(current().is_none());
+        let token = CancelToken::new();
+        let job = CurrentJob { token: token.clone(), others_on_repo: Rc::new(|| true) };
+        let seen = with_current(job, || {
+            let c = current().expect("set inside");
+            token.cancel();
+            (c.token().is_cancelled(), c.others_on_repo())
+        });
+        assert_eq!(seen, (true, true));
+        assert!(current().is_none(), "restored after");
+        let r = std::panic::catch_unwind(|| {
+            with_current(CurrentJob { token: CancelToken::new(), others_on_repo: Rc::new(|| false) }, || panic!("boom"))
+        });
+        assert!(r.is_err());
+        assert!(current().is_none(), "restored after a panic too");
+    }
+
+    #[test]
+    fn current_is_per_thread() {
+        let job = CurrentJob { token: CancelToken::new(), others_on_repo: Rc::new(|| false) };
+        with_current(job, || {
+            assert!(std::thread::spawn(|| current().is_none()).join().unwrap());
+        });
     }
 
     #[test]

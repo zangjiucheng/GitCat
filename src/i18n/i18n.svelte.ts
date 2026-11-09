@@ -118,6 +118,8 @@ export function t(key: string, params?: Record<string, string | number | null | 
 // key and its params, and between each param name and value. Never occurs in
 // real message text.
 const BE_SEP = "\u001f";
+// Record Separator between joined messages — matches `JOIN` in i18n_err.rs.
+const BE_JOIN = "\u001e";
 
 /**
  * Translate a BACKEND error string for display. App-authored Rust errors are
@@ -153,6 +155,9 @@ export function beReject(err: unknown): unknown {
 export function be(err: unknown): string {
   if (err == null) return "";
   const s = String(err);
+  // Several app-authored messages in one (Rust `ijoin`): translate each, join
+  // with a space.
+  if (s.includes(BE_JOIN)) return s.split(BE_JOIN).map(be).filter(Boolean).join(" ");
   if (!s.startsWith("i18n:")) return s; // git stderr / not-yet-keyed passthrough
   const parts = s.slice(5).split(BE_SEP);
   const key = parts[0];

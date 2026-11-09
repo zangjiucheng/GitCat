@@ -21,7 +21,7 @@ mod common;
 use common::TempRepo;
 use git2::RepositoryState;
 use gitcat_lib::conflict::{conflict_status, resolve_conflict_file};
-use gitcat_lib::patch::{am_abort, am_continue, am_skip, apply_patch, export_patch};
+use gitcat_lib::patch::{am_abort, am_continue, am_skip, apply_patch_core, export_patch};
 
 /// A second throwaway repo used as the "apply into" side, cloned from `src`'s
 /// current HEAD via a plain filesystem clone (no network needed).
@@ -172,7 +172,7 @@ fn export_then_apply_survives_a_commit_body_that_looks_like_a_real_mbox_boundary
     // path that must pass --patch-format=mboxrd to correctly unescape.
     let target = clone_of(&repo, "patch_mbox_lookalike");
     target.must(&["reset", "--hard", &base]);
-    let applied = tauri::async_runtime::block_on(apply_patch(target.path(), dest_str.clone()));
+    let applied = apply_patch_core(target.path(), dest_str.clone());
     assert!(applied.ok, "apply_patch failed on a lookalike-body patch: {}", applied.message);
     assert_eq!(applied.state, "clean");
 
@@ -266,7 +266,7 @@ fn apply_patch_clean_multi_commit_message_reports_real_count() {
     let _base2 = target.commit("f.txt", "base\n", "base");
     let path = target.path();
 
-    let applied = tauri::async_runtime::block_on(apply_patch(path, dest_str));
+    let applied = apply_patch_core(path, dest_str);
     assert!(applied.ok, "expected a clean apply, got: {}", applied.message);
     assert_eq!(applied.state, "clean");
     assert!(
@@ -288,7 +288,7 @@ fn apply_patch_conflict_is_detected_with_op_am_then_resolved_via_continue() {
     let (repo, patch_path) = build_conflicting_apply_scenario("patch_apply_conflict");
     let path = repo.path();
 
-    let applied = tauri::async_runtime::block_on(apply_patch(path.clone(), patch_path.clone()));
+    let applied = apply_patch_core(path.clone(), patch_path.clone());
     assert_eq!(applied.state, "conflict", "expected a conflict, got: {}", applied.message);
     assert!(!applied.ok);
     assert!(!applied.conflicted_files.is_empty(), "expected real conflicted files");
@@ -341,7 +341,7 @@ fn apply_patch_am_skip_reclassifies_and_am_abort_restores_pre_apply_state() {
     let pre_apply_head = target.commit("f.txt", "B\n", "edit to B");
     let path = target.path();
 
-    let applied = tauri::async_runtime::block_on(apply_patch(path.clone(), dest_str));
+    let applied = apply_patch_core(path.clone(), dest_str);
     assert_eq!(applied.state, "conflict", "expected a conflict, got: {}", applied.message);
     assert_eq!(target.open().state(), RepositoryState::ApplyMailbox);
 

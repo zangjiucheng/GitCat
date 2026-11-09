@@ -122,6 +122,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use git2::{Oid, Repository, Sort};
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Wry};
 
 use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions, LOCAL_OP_TIMEOUT};
@@ -691,8 +692,18 @@ fn classify(
 /// it onto Tauri's blocking-task thread pool instead.
 #[tauri::command]
 #[specta::specta]
-pub async fn rebase_start(path: String, onto: String) -> RebaseResult {
+pub async fn rebase_start(app: AppHandle<Wry>, path: String, onto: String) -> RebaseResult {
     crate::blocking::run_blocking(move || {
+        let label = onto.clone();
+        crate::jobs::run_job(&app, crate::jobs::JobKind::Rebase, &path.clone(), &label, || rebase_start_core(path, onto))
+    })
+    .await
+}
+
+/// The body of [`rebase_start`], cancellable when run inside its job (see
+/// `cancel_cleanup::Cancellable`). Tests call it directly.
+pub fn rebase_start_core(path: String, onto: String) -> RebaseResult {
+    {
         if let Err(e) = validate_rev(&onto) {
             return RebaseResult::error(e);
         }
@@ -731,11 +742,20 @@ pub async fn rebase_start(path: String, onto: String) -> RebaseResult {
         // own "never leave the tree in a misleading state" contract —
         // independent of what the user's global gitconfig happens to set.
         let args: Vec<&str> = vec!["rebase", "--no-autostash", "--end-of-options", &onto];
-
-        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
-        // Cancelled run cancel_cleanup::after_cancel.
-        let out = match git_worktree_c(&path, &args, true, None) {
+        let job = crate::cancel_cleanup::Cancellable::arm(&path);
+        let out = match git_worktree_c(&path, &args, true, job.token().as_ref()) {
             Ok(o) => o,
+            Err(e) if crate::procutil::is_cancelled_ierr(&e) => {
+                let message = job.finish(&path, "err_history.rebase_cancelled", true, Some(backup.as_str()));
+                return RebaseResult {
+                    ok: false,
+                    state: "cancelled".into(),
+                    conflicted_files: Vec::new(),
+                    message,
+                    backup_ref: Some(backup),
+                    blocked_by_local_changes: false,
+                };
+            }
             Err(e) => {
                 return RebaseResult {
                     ok: false,
@@ -749,8 +769,7 @@ pub async fn rebase_start(path: String, onto: String) -> RebaseResult {
         };
 
         classify(&repo, &path, &out, Some(backup), &onto)
-    })
-    .await
+    }
 }
 
 /// Continue an in-progress rebase after the user resolved the conflict (files
@@ -772,8 +791,18 @@ pub async fn rebase_start(path: String, onto: String) -> RebaseResult {
 /// long as that replay took; `run_blocking` moves it off the main thread.
 #[tauri::command]
 #[specta::specta]
-pub async fn rebase_continue(path: String) -> RebaseResult {
+pub async fn rebase_continue(app: AppHandle<Wry>, path: String) -> RebaseResult {
     crate::blocking::run_blocking(move || {
+        let label = String::new();
+        crate::jobs::run_job(&app, crate::jobs::JobKind::Rebase, &path.clone(), &label, || rebase_continue_core(path))
+    })
+    .await
+}
+
+/// The body of [`rebase_continue`], cancellable when run inside its job (see
+/// `cancel_cleanup::Cancellable`). Tests call it directly.
+pub fn rebase_continue_core(path: String) -> RebaseResult {
+    {
         let repo = match crate::trust::open_repo(&path) {
             Ok(r) => r,
             Err(e) => return RebaseResult::error(ierrp("err_history.cannot_open", &[("detail", e.message())])),
@@ -788,11 +817,20 @@ pub async fn rebase_continue(path: String) -> RebaseResult {
         // Snapshot the pre-commit state. Best-effort: continue must remain
         // possible even if it can't run.
         let backup = crate::safety::snapshot(&repo).ok();
-
-        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
-        // Cancelled run cancel_cleanup::after_cancel.
-        let out = match git_worktree_c(&path, &["rebase", "--continue"], true, None) {
+        let job = crate::cancel_cleanup::Cancellable::arm(&path);
+        let out = match git_worktree_c(&path, &["rebase", "--continue"], true, job.token().as_ref()) {
             Ok(o) => o,
+            Err(e) if crate::procutil::is_cancelled_ierr(&e) => {
+                let message = job.finish(&path, "err_history.rebase_continue_cancelled", false, backup.as_deref());
+                return RebaseResult {
+                    ok: false,
+                    state: "cancelled".into(),
+                    conflicted_files: Vec::new(),
+                    message,
+                    backup_ref: backup,
+                    blocked_by_local_changes: false,
+                };
+            }
             Err(e) => {
                 return RebaseResult {
                     ok: false,
@@ -806,8 +844,7 @@ pub async fn rebase_continue(path: String) -> RebaseResult {
         };
 
         classify(&repo, &path, &out, backup, &label)
-    })
-    .await
+    }
 }
 
 /// Skip the commit the rebase is currently stopped on — DROPS it from the
@@ -979,8 +1016,18 @@ pub async fn rebase_interactive_plan(path: String, onto: String) -> Result<Vec<P
 /// window for as long as the replay took; `run_blocking` moves it off.
 #[tauri::command]
 #[specta::specta]
-pub async fn rebase_interactive_start(path: String, onto: String, todo: Vec<TodoItem>) -> RebaseResult {
+pub async fn rebase_interactive_start(app: AppHandle<Wry>, path: String, onto: String, todo: Vec<TodoItem>) -> RebaseResult {
     crate::blocking::run_blocking(move || {
+        let label = onto.clone();
+        crate::jobs::run_job(&app, crate::jobs::JobKind::Rebase, &path.clone(), &label, || rebase_interactive_start_core(path, onto, todo))
+    })
+    .await
+}
+
+/// The body of [`rebase_interactive_start`], cancellable when run inside its job (see
+/// `cancel_cleanup::Cancellable`). Tests call it directly.
+pub fn rebase_interactive_start_core(path: String, onto: String, todo: Vec<TodoItem>) -> RebaseResult {
+    {
         if let Err(e) = validate_rev(&onto) {
             return RebaseResult::error(e);
         }
@@ -1083,13 +1130,12 @@ pub async fn rebase_interactive_start(path: String, onto: String, todo: Vec<Todo
         // position; there is nothing branch-name-specific about how `-i` uses it).
         let onto_oid_str = onto_oid.to_string();
         let seq_editor = format!("cp {}", shell_single_quote(&todo_path.to_string_lossy()));
-        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
-        // Cancelled run cancel_cleanup::after_cancel.
+        let job = crate::cancel_cleanup::Cancellable::arm(&path);
         let out = git_with_env(
             &path,
             &["rebase", "-i", "--end-of-options", &onto_oid_str],
             &[("GIT_SEQUENCE_EDITOR", seq_editor.as_str()), ("GIT_EDITOR", "true")],
-            None,
+            job.token().as_ref(),
         );
         // Best-effort cleanup, always — git has already copied the content into
         // .git/rebase-merge/git-rebase-todo by the time this invocation returns.
@@ -1097,6 +1143,17 @@ pub async fn rebase_interactive_start(path: String, onto: String, todo: Vec<Todo
 
         let out = match out {
             Ok(o) => o,
+            Err(e) if crate::procutil::is_cancelled_ierr(&e) => {
+                let message = job.finish(&path, "err_history.rebase_cancelled", true, Some(backup.as_str()));
+                return RebaseResult {
+                    ok: false,
+                    state: "cancelled".into(),
+                    conflicted_files: Vec::new(),
+                    message,
+                    backup_ref: Some(backup),
+                    blocked_by_local_changes: false,
+                };
+            }
             Err(e) => {
                 return RebaseResult {
                     ok: false,
@@ -1110,8 +1167,7 @@ pub async fn rebase_interactive_start(path: String, onto: String, todo: Vec<Todo
         };
 
         classify(&repo, &path, &out, Some(backup), &onto)
-    })
-    .await
+    }
 }
 
 /// A short, human label for the rebase target (read from

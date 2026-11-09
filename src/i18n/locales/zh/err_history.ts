@@ -1,6 +1,20 @@
 // err_history 的简体中文翻译（PER-82）。英文为准；此处缺失的键会自动回退到英文。
 // {detail}/{ref} 等占位符承载的是逐字透传的 git stderr 或 io/git2 细节，本身不翻译。
 export default {
+  // 从任务指示器取消的历史操作（#233）。后端会把操作那一句和下面可选的几句拼在一起（Rust `ijoin`）。
+  commit_cancelled: "已取消提交；提交说明和已暂存的改动都还在。",
+  merge_cancelled: "已取消合并。",
+  cherry_pick_cancelled: "已取消拣选。",
+  revert_cancelled: "已取消撤销提交。",
+  rebase_cancelled: "已取消变基。",
+  rebase_continue_cancelled: "已取消继续；变基仍在进行中。",
+  apply_patch_cancelled: "已取消应用补丁。",
+  mergetool_cancelled: "已停止等待合并工具；文件仍未解决。",
+  cancel_removed_locks: "已删除被取消的 git 留下的锁文件：{locks}。",
+  cancel_aborted: "已运行 git {op} --abort，退出了做到一半的 {op}。",
+  cancel_reset_tree: "已把索引和工作区恢复到操作之前的样子。",
+  cancel_undo: "如果还有异常，{undoKey} 可以恢复快照 {snapshot}。",
+
   // 共用的 git 运行 / 打开仓库 / 快照 / 版本校验失败。
   could_not_run_git: "无法运行 git：{detail}",
   cannot_open: "无法打开仓库：{detail}",

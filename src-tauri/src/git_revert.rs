@@ -67,6 +67,7 @@ use std::process::Command;
 
 use git2::Repository;
 use serde::Serialize;
+use tauri::{AppHandle, Wry};
 
 use crate::i18n_err::{ierr, ierrp};
 use crate::procutil::{git_timeout, run_with, CancelToken, NoConsoleWindowExt, RunOptions};
@@ -391,8 +392,18 @@ fn classify(
 /// `workdir_status`'s established fix.
 #[tauri::command]
 #[specta::specta]
-pub async fn revert_start(path: String, sha: String, signoff: Option<bool>) -> RevertResult {
+pub async fn revert_start(app: AppHandle<Wry>, path: String, sha: String, signoff: Option<bool>) -> RevertResult {
     crate::blocking::run_blocking(move || {
+        let label = sha.chars().take(7).collect::<String>();
+        crate::jobs::run_job(&app, crate::jobs::JobKind::Revert, &path.clone(), &label, || revert_start_core(path, sha, signoff))
+    })
+    .await
+}
+
+/// The body of [`revert_start`], cancellable when run inside its job (see
+/// `cancel_cleanup::Cancellable`). Tests call it directly.
+pub fn revert_start_core(path: String, sha: String, signoff: Option<bool>) -> RevertResult {
+    {
         if let Err(e) = validate_sha(&sha) {
             return RevertResult::error(e);
         }
@@ -420,11 +431,20 @@ pub async fn revert_start(path: String, sha: String, signoff: Option<bool>) -> R
         args.push("--no-edit");
         args.push("--end-of-options");
         args.push(&sha);
-
-        // FOLLOW-UP(jobs): register in JobRegistry and pass job.token(); on
-        // Cancelled run cancel_cleanup::after_cancel.
-        let out = match git_worktree_c(&path, &args, true, None) {
+        let job = crate::cancel_cleanup::Cancellable::arm_tree_op(&path);
+        let out = match git_worktree_c(&path, &args, true, job.token().as_ref()) {
             Ok(o) => o,
+            Err(e) if crate::procutil::is_cancelled_ierr(&e) => {
+                let message = job.finish(&path, "err_history.revert_cancelled", true, Some(backup.as_str()));
+                return RevertResult {
+                    ok: false,
+                    state: "cancelled".into(),
+                    conflicted_files: Vec::new(),
+                    message,
+                    backup_ref: Some(backup),
+                    blocked_by_local_changes: false,
+                };
+            }
             Err(e) => {
                 return RevertResult {
                     ok: false,
@@ -438,8 +458,7 @@ pub async fn revert_start(path: String, sha: String, signoff: Option<bool>) -> R
         };
 
         classify(&repo, &path, &out, Some(backup), &sha)
-    })
-    .await
+    }
 }
 
 /// Continue an in-progress revert after the user resolved the conflict (files

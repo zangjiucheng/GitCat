@@ -12,6 +12,7 @@ vi.mock("../../legacy/bridge", () => ({
   cheer: vi.fn(),
   highlight: vi.fn(),
   tama: { set: vi.fn(), say: vi.fn(), warn: vi.fn(), event: vi.fn() },
+  relayCancelled: vi.fn(),
   TAMA_IMG: { alarm: "alarm.png", happy: "happy.png", thinking: "thinking.png" },
   requestRedraw: vi.fn(),
   syncBisectMarks: vi.fn(),
@@ -126,7 +127,7 @@ function mergeSquashResult(partial: Partial<MergeSquashResult>): MergeSquashResu
 }
 
 function workdirResult(partial: Partial<WorkdirResult>): WorkdirResult {
-  return { ok: false, message: "", conflictedFiles: [], backupRef: null, backupPatch: null, droppedStashRef: null, ...partial };
+  return { ok: false, message: "", conflictedFiles: [], backupRef: null, backupPatch: null, droppedStashRef: null, cancelled: false, ...partial };
 }
 
 function conflictStatus(files: ConflictFile[], inProgress = true, op = "cherry-pick"): ConflictStatus {
@@ -337,6 +338,20 @@ describe("openIfInProgress (resume a pre-existing conflict)", () => {
 });
 
 describe("startMerge", () => {
+  it("cancelled result: relays the backend's message, reloads, no warning, modal stays closed", async () => {
+    vi.mocked(commands.mergeStart).mockResolvedValueOnce(
+      mergeResult({ ok: false, state: "cancelled", message: "i18n:err_history.merge_cancelled" }),
+    );
+    vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([], false, "")));
+
+    await resolver.startMerge("repo1", "sha1");
+
+    expect(bridge.relayCancelled).toHaveBeenCalledWith("i18n:err_history.merge_cancelled");
+    expect(bridge.tama.warn).not.toHaveBeenCalled();
+    expect(bridge.reloadGraph).toHaveBeenCalledWith(true);
+    expect(resolver.open).toBe(false);
+  });
+
   it("clean result: reloads the graph and closes the modal", async () => {
     vi.mocked(commands.mergeStart).mockResolvedValueOnce(
       mergeResult({ state: "clean", message: "Merged." }),
@@ -1186,6 +1201,7 @@ describe("op-dispatch (abort/continue resolve to the op reported by conflict_sta
       ok: true,
       remaining: 0,
       message: "",
+      cancelled: false,
     } satisfies ResolveResult);
     vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([], true, "merge")));
 
@@ -1208,6 +1224,7 @@ describe("op-dispatch (abort/continue resolve to the op reported by conflict_sta
       ok: true,
       remaining: 0,
       message: "",
+      cancelled: false,
     } satisfies ResolveResult);
     vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([], true, "revert")));
 
@@ -1229,6 +1246,7 @@ describe("take", () => {
       ok: true,
       remaining: 0,
       message: "",
+      cancelled: false,
     } satisfies ResolveResult);
     vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([])));
 
@@ -1264,6 +1282,7 @@ describe("resolveWithExternalTool (backlog #12)", () => {
       ok: true,
       remaining: 1,
       message: "Resolved a.ts with the external tool. 1 file(s) still conflicted.",
+      cancelled: false,
     } satisfies ResolveResult);
     vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_B])));
 
@@ -1289,6 +1308,7 @@ describe("resolveWithExternalTool (backlog #12)", () => {
       ok: true,
       remaining: 0,
       message: "",
+      cancelled: false,
     } satisfies ResolveResult);
     vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([])));
 
@@ -1310,6 +1330,7 @@ describe("resolveWithExternalTool (backlog #12)", () => {
       ok: false,
       remaining: 1,
       message: "The external tool did not report a successful resolution for a.ts.",
+      cancelled: false,
     } satisfies ResolveResult);
     vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A])));
 
@@ -1331,6 +1352,7 @@ describe("resolveWithExternalTool (backlog #12)", () => {
       remaining: 1,
       // The real wire format: tool_settings.rs returns ierr("err_tools.no_merge_tool").
       message: "i18n:err_tools.no_merge_tool",
+      cancelled: false,
     } satisfies ResolveResult);
     vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A])));
 
@@ -1576,6 +1598,7 @@ describe("in-app hunk-level resolution editor", () => {
         ok: true,
         remaining: 1,
         message: "Saved.",
+        cancelled: false,
       } satisfies ResolveResult);
       vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_B])));
 
@@ -1598,6 +1621,7 @@ describe("in-app hunk-level resolution editor", () => {
         ok: false,
         remaining: 1,
         message: "cannot write a.ts: permission denied",
+        cancelled: false,
       } satisfies ResolveResult);
       vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([FILE_A])));
 
@@ -2007,7 +2031,7 @@ describe("openStashConflict (stash-apply/pop conflict, #7)", () => {
     resolver.selected = FILE_A.path;
     resolver.remaining = new Set([FILE_A.path]);
 
-    vi.mocked(commands.resolveConflictFile).mockResolvedValueOnce({ ok: true, remaining: 0, message: "" } satisfies ResolveResult);
+    vi.mocked(commands.resolveConflictFile).mockResolvedValueOnce({ ok: true, remaining: 0, message: "", cancelled: false } satisfies ResolveResult);
     vi.mocked(commands.conflictStatus).mockResolvedValueOnce(ok(conflictStatus([], true, "stash")));
 
     await resolver.take("theirs");

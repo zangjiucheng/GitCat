@@ -239,6 +239,13 @@ impl RunError {
     }
 }
 
+/// Whether a runner's `Err(String)` (made by [`RunError::to_ierr`]) is a
+/// cancel rather than a failure: `to_ierr` turns `Cancelled` into this exact
+/// key whatever the caller's own io key is.
+pub fn is_cancelled_ierr(err: &str) -> bool {
+    err == ierr("err_misc.cancelled")
+}
+
 /// Run `cmd` to completion and collect its output. stdout/stderr are piped and
 /// fully collected into `Output` unless `discard_output` (the line callbacks
 /// are additive — they see the same bytes the buffers get).

@@ -81,8 +81,6 @@ class JobsState {
   private gone = new Set<number>();
   // Ids whose stall has already been prompted for; one warning per job.
   private prompted = new Set<number>();
-  // Ids this indicator cancelled, so their "job-finished" can say so.
-  private cancelledHere = new Set<number>();
   private inited = false;
   private ticker: ReturnType<typeof setInterval> | null = null;
   // The popover's keyboard scope (Escape + focus restore), pushed by
@@ -152,13 +150,8 @@ class JobsState {
     this.gone.add(f.id);
     const j = this.jobs.find((x) => x.id === f.id);
     this.prompted.delete(f.id);
-    const ours = this.cancelledHere.delete(f.id);
     if (!j) return;
     this.jobs = this.jobs.filter((x) => x.id !== f.id);
-    // Only for a background job: a foreground one's own caller (doFetch/doPull/
-    // doPush) relays the backend's fuller message, and two in a row read as
-    // noise. Every other job here is background.
-    if (ours && j.background && f.outcome === "cancelled") bridge.tama.say(t("jobs.cancelled_toast", { label: jobLabel(j) }));
     this.syncTicker();
     if (this.open && this.count === 0) this.close();
   }
@@ -169,7 +162,6 @@ class JobsState {
     const j = this.jobs.find((x) => x.id === id);
     if (!j || j.cancelling) return;
     this.patch(id, { cancelling: true });
-    this.cancelledHere.add(id);
     if (id === DEMO_JOB_ID) {
       void syncProgressCtrl.cancel();
       return;
@@ -177,7 +169,6 @@ class JobsState {
     try {
       await commands.jobCancel(id);
     } catch (e) {
-      this.cancelledHere.delete(id);
       this.patch(id, { cancelling: false });
       bridge.tama.warn(be(String(e)));
     }

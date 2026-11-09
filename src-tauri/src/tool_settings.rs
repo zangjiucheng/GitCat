@@ -86,7 +86,7 @@ use tauri::{AppHandle, Manager, Wry};
 
 use crate::conflict;
 use crate::i18n_err::{ierr, ierrp};
-use crate::procutil::{run_with, NoConsoleWindowExt, RunOptions};
+use crate::procutil::{run_with, CancelToken, NoConsoleWindowExt, RunError, RunOptions};
 use crate::safety::{self, GitOut};
 
 const FILE_NAME: &str = "external_tools.json";
@@ -587,11 +587,15 @@ fn mergetool_options() -> RunOptions<'static> {
 /// same [`GitOut`] shape (and the same `"failed to run git: {e}"` spawn-error
 /// text) `safety::run_git` produces, but under [`mergetool_options`] instead of
 /// `safety::run_git`'s fixed `SUBPROCESS_TIMEOUT`.
-fn run_mergetool(path: &str, args: &[&str]) -> Result<GitOut, String> {
+fn run_mergetool(path: &str, args: &[&str], cancel: Option<CancelToken>) -> Result<GitOut, String> {
     let mut cmd = std::process::Command::new("git");
     cmd.no_console_window().arg("-C").arg(path).args(args);
-    // With no timeout and no cancel token, the only error left is Io.
-    let out = run_with(cmd, mergetool_options()).map_err(|e| format!("failed to run git: {}", e.into_io()))?;
+    // No timeout, so the errors left are Io and a cancel (the job's), which
+    // keeps the shared `err_misc.cancelled` key so the caller can tell.
+    let out = run_with(cmd, RunOptions { cancel, ..mergetool_options() }).map_err(|e| match e {
+        RunError::Cancelled => e.to_ierr("err_misc.cancelled"),
+        e => format!("failed to run git: {}", e.into_io()),
+    })?;
     Ok(GitOut {
         ok: out.status.success(),
         stdout: String::from_utf8_lossy(&out.stdout).trim_end().to_string(),
@@ -1137,15 +1141,19 @@ pub async fn resolve_conflict_with_external_tool(app: AppHandle<Wry>, path: Stri
     crate::blocking::run_blocking(move || {
         let settings_path = match settings_path(&app) {
             Ok(p) => p,
-            Err(e) => return conflict::ResolveResult { ok: false, remaining: 0, message: e },
+            Err(e) => return conflict::ResolveResult { ok: false, remaining: 0, message: e, cancelled: false },
         };
         let settings = match load_from(&settings_path) {
             Ok(s) => s,
-            Err(e) => return conflict::ResolveResult { ok: false, remaining: 0, message: e },
+            Err(e) => return conflict::ResolveResult { ok: false, remaining: 0, message: e, cancelled: false },
         };
         // ACTIVE named merge tool > singleton `merge_tool` (then, inside the
         // inner, > git config merge.tool) — see `configured_merge_tool`.
-        resolve_conflict_with_external_tool_inner(configured_merge_tool(&settings), &path, &file)
+        // A job, so waiting on a tool that never returns can be cancelled.
+        let tool = configured_merge_tool(&settings);
+        crate::jobs::run_job(&app, crate::jobs::JobKind::Mergetool, &path, &file, || {
+            resolve_conflict_with_external_tool_inner(tool, &path, &file)
+        })
     })
     .await
 }
@@ -1153,7 +1161,7 @@ pub async fn resolve_conflict_with_external_tool(app: AppHandle<Wry>, path: Stri
 /// Plain, `AppHandle`-free inner — same rationale as [`open_diff_tool_inner`].
 pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool>, path: &str, file: &str) -> conflict::ResolveResult {
     if let Err(e) = validate_arg(file) {
-        return conflict::ResolveResult { ok: false, remaining: 0, message: e };
+        return conflict::ResolveResult { ok: false, remaining: 0, message: e, cancelled: false };
     }
     // A double-quote in the filename makes real `git mergetool` fail with a
     // confusing, unexplained "file not found" (an adversarial review
@@ -1167,6 +1175,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
             ok: false,
             remaining: remaining_conflicts(path),
             message: ierrp("err_tools.filename_double_quote", &[("file", &format!("{file:?}"))]),
+            cancelled: false,
         };
     }
     let repo = match crate::trust::open_repo(path) {
@@ -1176,6 +1185,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
                 ok: false,
                 remaining: 0,
                 message: ierrp("err_tools.cannot_open_repo_cap", &[("detail", e.message())]),
+                cancelled: false,
             }
         }
     };
@@ -1189,6 +1199,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
                 ok: false,
                 remaining: 0,
                 message: ierrp("err_tools.cannot_inspect_repo_state", &[("detail", e.message())]),
+                cancelled: false,
             }
         }
     };
@@ -1197,6 +1208,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
             ok: false,
             remaining: 0,
             message: ierrp("err_tools.not_in_conflict_op", &[("op", op)]),
+            cancelled: false,
         };
     }
     let tool = match resolve_merge_tool(path, configured) {
@@ -1206,6 +1218,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
                 ok: false,
                 remaining: 0,
                 message: ierr("err_tools.no_merge_tool"),
+                cancelled: false,
             }
         }
     };
@@ -1217,14 +1230,24 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     // Not `safety::run_git`: that runs under SUBPROCESS_TIMEOUT (20 s), which
     // killed the tool while the user was still resolving in it.
-    // FOLLOW-UP(jobs): register the mergetool wait as a job so it can be cancelled.
-    let out = match run_mergetool(path, &arg_refs) {
+    let job = crate::cancel_cleanup::Cancellable::arm(path);
+    let out = match run_mergetool(path, &arg_refs, job.token()) {
         Ok(o) => o,
+        // The tool is gone, not the conflict: the file is still unresolved.
+        Err(e) if crate::procutil::is_cancelled_ierr(&e) => {
+            return conflict::ResolveResult {
+                ok: false,
+                remaining: remaining_conflicts(path),
+                message: job.finish(path, "err_history.mergetool_cancelled", false, None),
+                cancelled: true,
+            }
+        }
         Err(e) => {
             return conflict::ResolveResult {
                 ok: false,
                 remaining: remaining_conflicts(path),
                 message: ierrp("err_tools.could_not_run_mergetool", &[("detail", &e)]),
+                cancelled: false,
             }
         }
     };
@@ -1253,6 +1276,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
                 ok: false,
                 remaining,
                 message: ierrp("err_tools.tool_changed_nothing", &[("file", file)]),
+                cancelled: false,
             };
         }
         let message = if remaining == 0 {
@@ -1260,7 +1284,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
         } else {
             ierrp("err_tools.resolved_some_remaining", &[("file", file), ("remaining", &remaining.to_string())])
         };
-        conflict::ResolveResult { ok: true, remaining, message }
+        conflict::ResolveResult { ok: true, remaining, message, cancelled: false }
     } else {
         let stderr = err_msg(&out);
         let message = if !stderr.is_empty() {
@@ -1268,7 +1292,7 @@ pub fn resolve_conflict_with_external_tool_inner(configured: Option<ExternalTool
         } else {
             ierrp("err_tools.tool_no_success", &[("file", file)])
         };
-        conflict::ResolveResult { ok: false, remaining, message }
+        conflict::ResolveResult { ok: false, remaining, message, cancelled: false }
     }
 }
 
