@@ -39,18 +39,20 @@ fn short(oid: Oid) -> String {
 /// own header.
 ///
 /// Found relative to this test binary rather than by guessing a target dir:
-/// `cargo test` builds examples, and `target/<profile>/examples/` is a
-/// sibling of the `deps/` this binary lives in — which stays correct under
-/// CARGO_TARGET_DIR, `--release`, and cross-compilation alike.
+/// `cargo test` builds examples into `target/<profile>/examples/`, an
+/// ancestor's child of this binary — correct under CARGO_TARGET_DIR,
+/// `--release`, and cross-compilation alike. Searched upward, not at a fixed
+/// depth: cargo used to put test binaries in `target/<profile>/deps/`, and
+/// since 1.100 puts them in `target/<profile>/build/<pkg>/<hash>/out/`.
 fn judge_exe() -> String {
-    let mut p = std::env::current_exe().expect("the test binary knows its own path");
-    p.pop();
-    if p.file_name().and_then(|n| n.to_str()) == Some("deps") {
-        p.pop();
-    }
-    p.push("examples");
-    p.push(if cfg!(windows) { "bisect_judge.exe" } else { "bisect_judge" });
-    assert!(p.exists(), "bisect_judge example not built at {p:?} — `cargo test` should have built it");
+    let name = if cfg!(windows) { "bisect_judge.exe" } else { "bisect_judge" };
+    let exe = std::env::current_exe().expect("the test binary knows its own path");
+    let p = exe
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join("examples").join(name))
+        .find(|p| p.exists())
+        .unwrap_or_else(|| panic!("bisect_judge example not found above {exe:?} — `cargo test` should have built it"));
     // Quoted: a checkout can sit under a path with spaces, and both shells
     // read a double-quoted first token as one program name.
     format!("\"{}\"", p.display())
