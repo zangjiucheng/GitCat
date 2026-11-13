@@ -16,6 +16,7 @@ const ctrl = vi.hoisted(() => ({
   openMenuAt: vi.fn(),
   openTagMenu: vi.fn(),
   openCheckoutConfirm: vi.fn(),
+  openRemoteMenuAt: vi.fn(),
   checkout: vi.fn(),
 }));
 vi.mock("@/islands/sidebar/sidebar.svelte.ts", () => ({ sidebarCtrl: ctrl }));
@@ -89,10 +90,11 @@ describe("openMenu", () => {
     expect(ctrl.openMenuAt).toHaveBeenLastCalledWith("feat/x", false, null, expect.any(Number), expect.any(Number));
   });
 
-  it("opens the checkout confirm for a remote, which has no management menu", () => {
+  it("opens the remote-branch menu for a remote", () => {
     document.getElementById("rem")!.focus();
     sidebarKeys.openMenu();
-    expect(ctrl.openCheckoutConfirm).toHaveBeenCalledWith("origin/dev", true, expect.any(Number), expect.any(Number));
+    expect(ctrl.openRemoteMenuAt).toHaveBeenCalledWith("origin/dev", expect.any(Number), expect.any(Number));
+    expect(ctrl.openCheckoutConfirm).not.toHaveBeenCalled();
     expect(ctrl.openMenuAt).not.toHaveBeenCalled();
   });
 

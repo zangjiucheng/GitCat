@@ -207,6 +207,9 @@ export type BranchMenu = { name: string; isCurrent: boolean; upstream: string | 
 // app — see sidebarCtrl.deleteTag's own doc comment), so this is intentionally
 // a separate, smaller shape rather than reusing BranchMenu with a dummy field.
 export type TagMenu = { name: string; x: number; y: number };
+// A remote-tracking branch's menu (origin/main, …): what the branch menu offers
+// minus everything that writes to the ref itself, which belongs to the remote.
+export type RemoteMenu = { name: string; x: number; y: number };
 // A submodule row used to render up to 5 always-visible inline buttons
 // (Open/Sync/Init+update-or-Update/Deinit/Remove) plus its status chip and
 // path — at the sidebar's normal width these simply don't fit and got
@@ -676,6 +679,8 @@ class SidebarState {
   // `menu`/`tagMenu` is ever non-null at a time — opening either closes the
   // other (see openMenu/openTagMenu).
   tagMenu = $state<TagMenu | null>(null);
+  // Remote-tracking branch menu — same one-popover-at-a-time rule.
+  remoteMenu = $state<RemoteMenu | null>(null);
   // Submodule row "⋮" popover — same "only one of menu/tagMenu/submoduleMenu
   // is ever non-null at a time" rule as tagMenu above (see openMenu/
   // openTagMenu/openSubmoduleMenu, which each null the other two).
@@ -1629,6 +1634,7 @@ class SidebarState {
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
+    this.remoteMenu = null;
     this.pushMenu = null;
     this.hasRepo = false;
     // A held jump warning names a ref by name (see warnJumpFailed) — firing it
@@ -2133,6 +2139,7 @@ class SidebarState {
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
+    this.remoteMenu = null;
     this.pushMenu = null;
     this.renameMenu = null;
     this.menu = { name, isCurrent, upstream, x: Math.min(x, window.innerWidth - 168), y };
@@ -2157,6 +2164,7 @@ class SidebarState {
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
+    this.remoteMenu = null;
     this.pushBranchInput = "";
     this.pushMenu = { name, x: Math.min(x, window.innerWidth - 220), y };
   }
@@ -2252,6 +2260,7 @@ class SidebarState {
     this.pushMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
+    this.remoteMenu = null;
     this.renameInput = name;
     this.renameMenu = { name, x: Math.min(x, window.innerWidth - 240), y };
   }
@@ -2331,6 +2340,7 @@ class SidebarState {
     this.submoduleMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
+    this.remoteMenu = null;
     this.pushMenu = null;
     this.mergeMenu = { name, x: Math.min(x, window.innerWidth - 220), y };
   }
@@ -2353,6 +2363,7 @@ class SidebarState {
     this.submoduleMenu = null;
     this.mergeMenu = null;
     this.checkoutConfirm = null;
+    this.remoteMenu = null;
     this.pushMenu = null;
     this.dirtyCheckoutMenu = { name, startPoint, files, x: Math.min(x, window.innerWidth - 260), y };
   }
@@ -2374,6 +2385,7 @@ class SidebarState {
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
     this.pushMenu = null;
+    this.remoteMenu = null;
     this.checkoutConfirm = { name, remote, x: Math.min(x, window.innerWidth - 200), y };
   }
 
@@ -2552,27 +2564,55 @@ class SidebarState {
   }
 
   openTagMenu(name: string, anchor: HTMLElement) {
+    const r = anchor.getBoundingClientRect();
+    this.openTagMenuAt(name, r.left, r.bottom + 4);
+  }
+  // At a point, for the graph's right-click on a tag chip (see openMenuAt).
+  openTagMenuAt(name: string, x: number, y: number) {
     this.menu = null; // only one popover open at a time
     this.submoduleMenu = null;
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
+    this.remoteMenu = null;
     this.pushMenu = null;
-    const r = anchor.getBoundingClientRect();
-    this.tagMenu = { name, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };
+    this.renameMenu = null;
+    this.tagMenu = { name, x: Math.min(x, window.innerWidth - 168), y };
   }
 
   closeTagMenu() {
     this.tagMenu = null;
   }
 
+  // A remote-tracking branch's own menu, from its sidebar row (right-click/⋮)
+  // or its chip on the graph. It used to have only the checkout confirm.
+  openRemoteMenu(name: string, anchor: HTMLElement) {
+    const r = anchor.getBoundingClientRect();
+    this.openRemoteMenuAt(name, r.left, r.bottom + 4);
+  }
+  openRemoteMenuAt(name: string, x: number, y: number) {
+    this.menu = null; // only one popover open at a time
+    this.tagMenu = null;
+    this.submoduleMenu = null;
+    this.mergeMenu = null;
+    this.dirtyCheckoutMenu = null;
+    this.checkoutConfirm = null;
+    this.pushMenu = null;
+    this.renameMenu = null;
+    this.remoteMenu = { name, x: Math.min(x, window.innerWidth - 168), y };
+  }
+
+  closeRemoteMenu() {
+    this.remoteMenu = null;
+  }
+
   // "Compare with current branch" from a branch or tag menu: the same popover
   // as comparing two commits on the graph, anchored at HEAD. Fully qualified
   // refs, so a name that looks like a sha prefix can't be misread as one.
   // Read-only, so no `busy` guard.
-  compareWithHead(kind: "branch" | "tag", name: string, x: number, y: number) {
+  compareWithHead(kind: "branch" | "remote" | "tag", name: string, x: number, y: number) {
     const repo = bridge.CUR_REPO as unknown as string;
-    const ref = (kind === "branch" ? "refs/heads/" : "refs/tags/") + name;
+    const ref = { branch: "refs/heads/", remote: "refs/remotes/", tag: "refs/tags/" }[kind] + name;
     void rangeSummaryCtrl.openAt(repo, "HEAD", ref, x, y, { a: this.head ?? "HEAD", b: name });
   }
 
@@ -2582,6 +2622,7 @@ class SidebarState {
     this.mergeMenu = null;
     this.dirtyCheckoutMenu = null;
     this.checkoutConfirm = null;
+    this.remoteMenu = null;
     this.pushMenu = null;
     const r = anchor.getBoundingClientRect();
     this.submoduleMenu = { path, status, absolutePath, x: Math.min(r.left, window.innerWidth - 168), y: r.bottom + 4 };

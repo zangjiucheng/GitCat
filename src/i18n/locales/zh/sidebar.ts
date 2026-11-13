@@ -42,6 +42,8 @@ export default {
   manage_remotes_aria: "管理远程",
   // 标签区块。
   tag_actions: "标签操作",
+  remote_actions: "远程分支操作",
+  remote_actions_named: "{name} 的操作",
   tag_name_placeholder: "标签名…",
   tag_message_placeholder: "信息(可选 —— 附注标签)…",
   tag_target: "打标签的目标",
