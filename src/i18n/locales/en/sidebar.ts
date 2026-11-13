@@ -44,6 +44,8 @@ export default {
   manage_remotes_aria: "Manage remotes",
   // Tags section.
   tag_actions: "Tag actions",
+  remote_actions: "Remote branch actions",
+  remote_actions_named: "Actions for {name}",
   tag_name_placeholder: "tag name…",
   tag_message_placeholder: "message (optional — annotated tag)…",
   tag_target: "Tag target",

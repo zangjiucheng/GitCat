@@ -39,6 +39,8 @@ export default {
   manage_remotes_aria: "원격 관리",
   // 태그 섹션.
   tag_actions: "태그 작업",
+  remote_actions: "원격 브랜치 작업",
+  remote_actions_named: "{name} 작업",
   tag_name_placeholder: "태그 이름…",
   tag_message_placeholder: "메시지(선택 사항 — 주석 태그)…",
   tag_target: "태그 대상",

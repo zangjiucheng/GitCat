@@ -19,6 +19,7 @@
   let newBranchEl: HTMLInputElement | undefined = $state();
   let newBranchFormEl: HTMLDivElement | undefined = $state();
   let tagMenuEl: HTMLDivElement | undefined = $state();
+  let remoteMenuEl: HTMLDivElement | undefined = $state();
   let newTagEl: HTMLInputElement | undefined = $state();
   let newTagFormEl: HTMLDivElement | undefined = $state();
   let newSubmoduleEl: HTMLInputElement | undefined = $state();
@@ -71,6 +72,7 @@
     // out from under a request that's already been sent.
     if (sidebarCtrl.newBranchOpen && !sidebarCtrl.busy && newBranchFormEl && !newBranchFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewBranch();
     if (sidebarCtrl.tagMenu && tagMenuEl && !tagMenuEl.contains(e.target as Node)) sidebarCtrl.closeTagMenu();
+    if (sidebarCtrl.remoteMenu && remoteMenuEl && !remoteMenuEl.contains(e.target as Node)) sidebarCtrl.closeRemoteMenu();
     if (sidebarCtrl.newTagOpen && !sidebarCtrl.busy && newTagFormEl && !newTagFormEl.contains(e.target as Node)) sidebarCtrl.cancelNewTag();
     // Outside-click cancels the Add Submodule form — same busy-blocked
     // rationale as the New Branch/New Tag forms above.
@@ -544,8 +546,7 @@
               e.preventDefault();
               if (!sidebarCtrl.busy) {
                 sidebarCtrl.cancelJumpWarning(); // see the local row's oncontextmenu
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
+                sidebarCtrl.openRemoteMenu(r.name, e.currentTarget as HTMLElement);
               }
             }}
           >
@@ -570,19 +571,14 @@
               }}>{#if sidebarCtrl.copiedBranch === r.name}✓{:else}<Clipboard class="ico" size={12} aria-hidden="true" />{/if}</button
             >
             {#if sidebarCtrl.busyTarget === r.name}<span class="spinner"></span>{/if}
-            <!-- A remote row's only action is checkout (there's no remote "branch
-                 actions" menu to open), so its ⋮ opens the checkout confirm
-                 directly instead of a menu — this keeps that action reachable
-                 without a mouse. -->
             <button
               class="ref-menu"
-              title={t("sidebar.checkout_remote")}
-              aria-label={t("sidebar.checkout_named", { name: r.name })}
+              title={t("sidebar.remote_actions")}
+              aria-label={t("sidebar.remote_actions_named", { name: r.name })}
               disabled={sidebarCtrl.busy}
               onclick={(e) => {
                 e.stopPropagation();
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                sidebarCtrl.openCheckoutConfirm(r.name, true, rect.left, rect.bottom + 4);
+                sidebarCtrl.openRemoteMenu(r.name, e.currentTarget as HTMLElement);
               }}>&#8942;</button
             >
           </div>
@@ -1094,7 +1090,23 @@
     <!-- Same capture-before-close rationale as the branch menu above. -->
     <button onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.pushTag(name); }}>{t("sidebar.push_to_origin")}</button>
     <button onclick={() => { const name = tm.name; const x = tm.x, y = tm.y; sidebarCtrl.closeTagMenu(); sidebarCtrl.compareWithHead("tag", name, x, y); }}>{t("sidebar.compare_with_current")}</button>
+    <button onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.copyBranchName(name); }}>{t("sidebar.copy_name")}</button>
     <button class="danger" onclick={() => { const name = tm.name; sidebarCtrl.closeTagMenu(); sidebarCtrl.deleteTag(name); }}>{t("sidebar.delete")}</button>
+  </div>
+{/if}
+
+<!-- A remote-tracking branch: the branch menu's read and merge actions. No
+     push, rename, delete or reset — those would act on the remote's ref. -->
+{#if sidebarCtrl.remoteMenu}
+  {@const rm = sidebarCtrl.remoteMenu}
+  <div class="ref-pop" bind:this={remoteMenuEl} style="left:{rm.x}px;top:{rm.y}px">
+    <!-- Same capture-before-close rationale as the branch menu above. -->
+    <button title={t("sidebar.checkout_remote")} onclick={() => { const name = rm.name, pos = { x: rm.x, y: rm.y }; sidebarCtrl.closeRemoteMenu(); sidebarCtrl.checkoutRemote(name, pos); }}>{t("sidebar.checkout")}</button>
+    <button onclick={() => { const name = rm.name; const x = rm.x, y = rm.y; sidebarCtrl.closeRemoteMenu(); sidebarCtrl.openMergeMenu(name, x, y); }}>{t("sidebar.merge_into_current")}</button>
+    <button onclick={() => { const name = rm.name; sidebarCtrl.closeRemoteMenu(); sidebarCtrl.rebaseOnto(name); }}>{t("sidebar.rebase_onto")}</button>
+    <button onclick={() => { const name = rm.name; sidebarCtrl.closeRemoteMenu(); sidebarCtrl.interactiveRebaseOnto(name); }}>{t("sidebar.interactive_rebase_onto")}</button>
+    <button onclick={() => { const name = rm.name; const x = rm.x, y = rm.y; sidebarCtrl.closeRemoteMenu(); sidebarCtrl.compareWithHead("remote", name, x, y); }}>{t("sidebar.compare_with_current")}</button>
+    <button onclick={() => { const name = rm.name; sidebarCtrl.closeRemoteMenu(); sidebarCtrl.copyBranchName(name); }}>{t("sidebar.copy_name")}</button>
   </div>
 {/if}
 

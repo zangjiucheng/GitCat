@@ -91,9 +91,8 @@ export const sidebarKeys = {
       return;
     }
     if (ref.kind === "remote") {
-      // A remote row has no management menu; its one action is the checkout
-      // confirm, which is what double-clicking it opens.
-      sidebarCtrl.openCheckoutConfirm(ref.name, true, x, y);
+      // The same menu the ⋮ button and right-click open.
+      sidebarCtrl.openRemoteMenuAt(ref.name, x, y);
       return;
     }
     // Tags DO have a popover — openTagMenu, the same one the ⋮ button and

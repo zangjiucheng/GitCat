@@ -11,6 +11,7 @@ import { commitMenuCtrl } from "../islands/commitmenu/commitmenu.svelte.ts";
 import { snapshotPreviewCtrl } from "../islands/snapshotpreview/snapshotpreview.svelte.ts";
 import { submoduleNavCtrl } from "../islands/submodulenav/submodulenav.svelte.ts";
 import { ribbonTickFracs, RIBBON_TOP_FRAC, RIBBON_BOT_FRAC, RIBBON_MIN_TICK_PX } from "./ribbon.ts";
+import { BranchTrace } from "./branchtrace.ts";
 import { displayChips } from "./reforder.ts";
 import { shouldOfferStashUndo } from "./undoflow.ts";
 import { LruCache } from "./graphcache.ts";
@@ -137,6 +138,10 @@ const LABEL_MAX=220, HIGHLIGHT_MAX=4000;
 // rows, so un-merged work stands out. Gentle enough to keep the faded history
 // readable.
 const ANCESTOR_DIM_ALPHA=0.34;
+// While a branch/tag label is hovered, rows NOT in that branch's history get a
+// stronger wash than the ancestor dim, so the branch reads as one lit path.
+// BRANCH_HI_DELAY_MS keeps a pointer just passing over labels from flashing it.
+const BRANCH_HI_DIM_ALPHA=0.62, BRANCH_HI_DELAY_MS=140;
 // Right-edge gutter reserved for the sha (was the ONLY thing living there —
 // hence the old bare "96") plus the author-name preview added alongside it
 // (see draw()'s row loop / authorOf() above): 96 for the sha itself, 8px gap,
@@ -188,7 +193,7 @@ let pendingReselect=null;
 let heldRows=null;
 function setGraphStale(on){
   cv.classList.toggle("graph-stale", on);
-  if(on){ state.hoverRow=-1; showLabelTip(null); dirty=true; }
+  if(on){ state.hoverRow=-1; showLabelTip(null); setBranchHi(-1); dirty=true; }
 }
 // Forget a held swap without applying it — openRepo()/bootEmpty() replace the
 // graph wholesale themselves, so a pending same-repo swap must not outlive them.
@@ -714,7 +719,17 @@ function renderContent(st, rowLo, rowHi, strip){
   // un-merged work stands out. Skip the selected/hovered row (keep it crisp) and
   // skip entirely during bisect/drag, which own their own dimming. Absent flag
   // (demo mode / non-streaming) => nothing dimmed.
-  if(!B && !DR && BACKEND && BACKEND.rows){
+  const BH=(!B&&!DR)?branchHiNow():null;
+  if(BH){
+    const gg = rowH>=20 ? BRANCH_ROW_GAP : rowH>=13 ? 2 : rowH>=11 ? 1 : 0, bh2=Math.max(1,rowH-2*gg);
+    let hp=null;
+    for(let r=first;r<=last;r++){
+      if(BH.has(r)) continue;
+      (hp||(hp=new Path2D())).rect(0, r*rowH-st+bh+gg, W, bh2);
+    }
+    if(hp){ ctx.fillStyle=theme.bg; ctx.globalAlpha=BRANCH_HI_DIM_ALPHA; ctx.fill(hp); ctx.globalAlpha=1; }
+  }
+  else if(!B && !DR && BACKEND && BACKEND.rows){
     const gg = rowH>=20 ? BRANCH_ROW_GAP : rowH>=13 ? 2 : rowH>=11 ? 1 : 0, bh2=Math.max(1,rowH-2*gg);
     let ap=null;
     for(let r=first;r<=last;r++){
@@ -788,7 +803,7 @@ function draw(){
 // tick() forces a FULL. `bufferG` (G's object identity, reassigned on every data
 // change) is compared separately in tick().
 function bufferKeyNow(){
-  return view.renderDpr+"|"+Math.round(state.panX*100)+"|"+layout.zoom+"|"+cv.width+"|"+cv.height+"|"+bandH()+"|"+colW.graph+"|"+colW.branch+"|"+(showAllTags?1:0)+"|"+(graphTagsFirst?1:0)+"|"+graphLabelInline+"|"+refRotEpoch+"|"+themeEpoch+"|"+(bisectDrawerCtrl.active()?1:0)+"|"+bisectDrawerCtrl.cur+"|"+(state.drag?1:0)+"|"+state.selectedRow+"|"+state.hoverRow;
+  return view.renderDpr+"|"+Math.round(state.panX*100)+"|"+layout.zoom+"|"+cv.width+"|"+cv.height+"|"+bandH()+"|"+colW.graph+"|"+colW.branch+"|"+(showAllTags?1:0)+"|"+(graphTagsFirst?1:0)+"|"+graphLabelInline+"|"+refRotEpoch+"|"+themeEpoch+"|"+(bisectDrawerCtrl.active()?1:0)+"|"+bisectDrawerCtrl.cur+"|"+(state.drag?1:0)+"|"+state.selectedRow+"|"+state.hoverRow+"|"+(branchHi?branchHi.from:-1);
 }
 // True when the row-highlight fades have reached their targets — a blit copies
 // baked pixels, so a mid-animation alpha (fading a selection/hover tint in/out)
@@ -1296,6 +1311,28 @@ function showLabelTip(refs,cx,cy){ const t=$("#graphLabelTip"); if(!t) return;
     t.style.left=(cx+13)+"px"; t.style.top=(cy+15)+"px"; t.style.display="block";
   } else { t.style.display="none"; t.dataset.sig=""; }
 }
+// The hovered label's branch history (see BranchTrace): the row whose labels
+// are hovered, traced lazily as draw() asks about visible rows. Every label on a
+// row points at that row's commit, so the row is the whole key. Turning it on
+// waits BRANCH_HI_DELAY_MS; turning it off is immediate.
+let branchHi=null, branchHiSha="", branchHiTimer=0, branchHiPending=-1;
+function setBranchHi(row){
+  if(row>=0&&row===branchHiPending) return; // already waiting on this row: pointermove fires every frame
+  clearTimeout(branchHiTimer); branchHiPending=-1;
+  if(row<0){ if(branchHi){ branchHi=null; dirty=true; } return; }
+  if(branchHi&&branchHi.from===row&&branchHi.g===G) return;
+  branchHiPending=row;
+  branchHiTimer=setTimeout(()=>{ branchHiPending=-1;
+    if(G&&row<G.N&&state.hoverRow===row){ branchHi=new BranchTrace(G,row); branchHiSha=hhex(row); dirty=true; } },BRANCH_HI_DELAY_MS);
+}
+// The trace for the graph on screen — a new G (a streamed batch, a reload) is
+// re-traced from the same row while that row is still the same commit (a
+// streamed batch only appends), and dropped otherwise.
+function branchHiNow(){
+  if(!branchHi||!G) return null;
+  if(branchHi.g!==G) branchHi=(branchHi.from<G.N&&hhex(branchHi.from)===branchHiSha)?new BranchTrace(G,branchHi.from):null;
+  return branchHi;
+}
 cv.addEventListener("pointerdown",(e)=>{
   // Primary (left) button only — a right-click (button 2, or a middle-click)
   // must never arm `down`/a potential drag. Without this, right-clicking
@@ -1310,6 +1347,7 @@ cv.addEventListener("pointerdown",(e)=>{
   cv.focus(); cv.setPointerCapture(e.pointerId); const p=rel(e), g=scrollbarGeom(view.cssH,view.cssW);
   state.pointerActive=true;
   showLabelTip(null);   // a press starts a drag/select — drop the hover tooltip
+  setBranchHi(-1);
   if(g&&p.x>=g.x-4){sbDrag={grab:p.y-g.thumbY,thumbH:g.thumbH};return;}
   // Column resize: a grab on a divider begins a width drag (never a row-select /
   // scroll / cherry-pick), captured before `down` is armed below.
@@ -1351,6 +1389,7 @@ cv.addEventListener("pointermove",(e)=>{
   // pointer cursor there to hint it's clickable (right-click = checkout).
   const lbl = h ? labelAt(p.x, h.row) : null;
   showLabelTip(lbl, e.clientX, e.clientY);
+  setBranchHi(lbl ? h.row : -1);
   cv.style.cursor=dividerAt(p.x)?"col-resize":(lbl?"pointer":(h&&h.onDot?"grab":"default"));
 });
 function endPointer(e){
@@ -1386,7 +1425,7 @@ function endPointer(e){
   removeGhost(); state.drag=null; down=null; state.pointerActive=false; dirty=true;
 }
 cv.addEventListener("pointerup",endPointer); cv.addEventListener("pointercancel",endPointer);
-cv.addEventListener("pointerleave",()=>showLabelTip(null));
+cv.addEventListener("pointerleave",()=>{ showLabelTip(null); setBranchHi(-1); });
 // Double-click a commit row -> jump straight to the full-page diff popup
 // (detailCtrl.expandDiff(), the same modal .diff-file-h's own "Expand diff"
 // button already opens) instead of making that a separate, required second
@@ -1441,9 +1480,9 @@ cv.addEventListener("contextmenu",(e)=>{
   // label (kind "head" = the current branch (isCurrent), "branch" = another
   // local branch) opens the sidebar's full branch-management menu (checkout /
   // push / merge / rebase / reset / delete) at the cursor, reusing it verbatim;
-  // a REMOTE label opens the sidebar's checkout-confirm instead (see below);
-  // tags fall through, same as anywhere else on the row (the commit dot or
-  // message) → the commit menu below, unchanged.
+  // a REMOTE label opens the sidebar's remote-branch menu and a TAG label its
+  // tag menu (see below). Anywhere else on the row (the commit dot or message)
+  // → the commit menu below.
   const inGutter=layout.branchColW>0&&p.x<layout.branchColW;
   const chip=layout.branchColW>0?null:chipEntryAt(p.x,row);
   // The inline "+N" pill counts as a label surface here too — it already grows
@@ -1469,11 +1508,13 @@ cv.addEventListener("contextmenu",(e)=>{
     const br=pool.find(r=>r&&(r.kind==="branch"||r.kind==="head"));
     if(br){ sidebarCtrl.openMenuAt(br.label, br.kind==="head", null, e.clientX, e.clientY); return; }
     // A remote-tracking branch label (e.g. origin/main, upstream/3.13) → the
-    // sidebar's checkout-confirm, which creates a local branch tracking it —
-    // the same popover double-clicking (or right-clicking, or the ⋮ button
-    // on) that remote in the sidebar opens.
+    // sidebar's remote-branch menu (checkout / merge / rebase / compare /
+    // copy name), the one right-clicking that remote in the sidebar opens.
     const rem=pool.find(r=>r&&r.kind==="remote");
-    if(rem){ sidebarCtrl.openCheckoutConfirm(rem.label, true, e.clientX, e.clientY); return; }
+    if(rem){ sidebarCtrl.openRemoteMenuAt(rem.label, e.clientX, e.clientY); return; }
+    // A tag label → the sidebar's tag menu, likewise.
+    const tag=pool.find(r=>r&&r.kind==="tag");
+    if(tag){ sidebarCtrl.openTagMenuAt(tag.label, e.clientX, e.clientY); return; }
   }
   // Full oid (BACKEND.oids[row]), not the short display sha, so the menu's
   // "Copy full SHA" really copies the full hash and git ops get an unambiguous

@@ -140,7 +140,7 @@ test("Enter on a branch row itself still jumps to its tip", async ({ page, repo 
   await expect(page.locator("#detail")).toContainText("Add the widget");
 });
 
-test("a remote row's own ⋮ button opens the checkout confirm", async ({ page, repo }) => {
+test("a remote row's own ⋮ button opens the remote-branch menu", async ({ page, repo }) => {
   repo.writeFile("README.md", "# fixture\n");
   repo.commit("Initial commit");
   // The fixture's only remote branch — a plain ref write is enough, since
@@ -162,10 +162,10 @@ test("a remote row's own ⋮ button opens the checkout confirm", async ({ page, 
 
   await page.locator("#refRemote .ref-item .ref-menu").click();
 
-  // Same pinning rationale as the double-click case above: `.ref-pop` is
-  // shared by eight popovers, and only checkoutConfirm's own heading reads
-  // "Switch to <name>?".
-  await expect(page.locator(".ref-pop")).toContainText("Switch to origin/main?");
+  // The remote-branch menu (see Sidebar.svelte); the checkout confirm is
+  // still what double-clicking the row opens.
+  await expect(page.locator(".ref-pop button").first()).toHaveText("Checkout");
+  await expect(page.locator(".ref-pop")).toContainText("Copy name");
 });
 
 test("Enter on a tag row's own ⋮ button opens the tag menu, not a graph jump", async ({ page, repo }) => {
