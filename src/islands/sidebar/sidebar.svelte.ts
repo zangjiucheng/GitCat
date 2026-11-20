@@ -87,7 +87,6 @@
 
 import { commands } from "../../ipc/bindings";
 import { be, t } from "@/i18n/i18n.svelte.ts";
-import { shortcutLabel } from "@/keymap/label.ts";
 import * as bridge from "../../legacy/bridge";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { rebasePlanCtrl } from "../rebaseplan/rebaseplan.svelte.ts";
@@ -1456,23 +1455,13 @@ class SidebarState {
     bridge.tama.set("danger");
     bridge.tama.say(t("sidebar.deinit_arm", { path }), 6000);
     bridge.armDanger({
-      title: "Deinit submodule — " + path,
+      title: t("sidebar.deinit_title", { path }),
       steps: false,
-      desc:
-        "This clears the submodule's own checked-out files and unregisters it locally. Its committed history is NOT deleted — it stays in .git/modules and can be restored instantly (no re-clone) with Init + update. Only its UNCOMMITTED changes are at risk.",
-      lose:
-        "<h5>What happens</h5><ul><li>Clears <code>" +
-        esc(path) +
-        "</code>'s working tree</li><li>Unregisters it from this repo's local config</li><li>Its own uncommitted changes are backed up first, under <code>gitgui/submodule-backup/&#8230;</code></li></ul>",
-      note:
-        ICON_BACKUP +
-        " I back up " +
-        esc(path) +
-        "'s own uncommitted changes before clearing it — its committed history is untouched and restorable via Init + update. This is NOT the global Undo (" +
-        shortcutLabel("undo") +
-        ") — that only ever rewinds THIS repo's own branches/HEAD.",
+      desc: t("sidebar.deinit_desc"),
+      lose: t("sidebar.deinit_lose", { path: esc(path) }),
+      note: ICON_BACKUP + " " + t("sidebar.deinit_note", { path: esc(path) }),
       name: path,
-      confirmLabel: "Deinit submodule",
+      confirmLabel: t("sidebar.deinit_confirm"),
       onConfirm: async () => {
         await this.doDeinitSubmodule(path, true);
       },
@@ -1536,25 +1525,13 @@ class SidebarState {
     bridge.tama.set("danger");
     bridge.tama.say(t("sidebar.remove_arm", { path }), 6000);
     bridge.armDanger({
-      title: "Remove submodule — " + path,
+      title: t("sidebar.remove_title", { path }),
       steps: false,
-      desc:
-        "This removes " +
-        path +
-        " from this repository entirely: its checked-out files, its .gitmodules entry, and its tracked reference. This is staged, not committed — you'll still need to commit it. Its committed history is NOT deleted (it stays in .git/modules), and any of its own uncommitted changes are backed up first.",
-      lose:
-        "<h5>What happens</h5><ul><li>Clears and unregisters <code>" +
-        esc(path) +
-        "</code> (same as Deinit)</li><li>Stages its removal from the index (<code>git rm</code>)</li><li>Removes and stages its <code>[submodule]</code> entry from <code>.gitmodules</code></li><li>Nothing is committed — review and commit when ready</li></ul>",
-      note:
-        ICON_BACKUP +
-        " If " +
-        esc(path) +
-        " had uncommitted changes, they're backed up first. This only STAGES the removal — Undo/discard the staged .gitmodules + " +
-        esc(path) +
-        " changes the normal way if you change your mind before committing.",
+      desc: t("sidebar.remove_desc", { path }),
+      lose: t("sidebar.remove_lose", { path: esc(path) }),
+      note: ICON_BACKUP + " " + t("sidebar.remove_note", { path: esc(path) }),
       name: path,
-      confirmLabel: "Remove submodule",
+      confirmLabel: t("sidebar.remove_confirm"),
       onConfirm: async () => {
         await this.doRemoveSubmodule(path);
       },
@@ -1863,31 +1840,17 @@ class SidebarState {
   // `fileCount` files; it names them for context, then separately and
   // unconditionally warns about the whole tree.
   forceDiscardCheckout(name: string, startPoint: string | null, fileCount: number) {
-    const n = fileCount + " file" + (fileCount === 1 ? "" : "s");
+    const n = t(fileCount === 1 ? "sidebar.force_switch_files_one" : "sidebar.force_switch_files_other", { n: fileCount });
     bridge.tama.set("danger");
     bridge.tama.say(t("sidebar.force_switch_arm", { name, n }), 6000);
     bridge.armDanger({
-      title: "Force switch — discard changes — " + name,
+      title: t("sidebar.force_switch_title", { name }),
       steps: false,
-      desc:
-        "This discards ALL of your uncommitted tracked changes — not just the " +
-        n +
-        " blocking this switch, but anywhere else in the working tree too — and switches to " +
-        name +
-        ", no matter what. Prefer Stash, switch, then reapply (or leave stashed) unless you're certain you don't need any of these changes.",
-      lose:
-        "<h5>What happens</h5><ul><li>Permanently discards ALL of your uncommitted tracked/staged changes across the whole working tree — not just the " +
-        n +
-        " that blocked this switch</li><li>Switches to <code>" +
-        esc(name) +
-        "</code></li></ul>",
-      note:
-        ICON_WARNING +
-        " This is NOT recoverable, and it is NOT limited to the " +
-        n +
-        " named above — every uncommitted tracked/staged change in the repository is gone the instant you confirm. Safety Manager/Undo only ever protects committed history, never uncommitted content.",
+      desc: t("sidebar.force_switch_desc", { name, n }),
+      lose: t("sidebar.force_switch_lose", { name: esc(name), n }),
+      note: ICON_WARNING + " " + t("sidebar.force_switch_note", { n }),
       name,
-      confirmLabel: "Discard & switch",
+      confirmLabel: t("sidebar.force_switch_confirm"),
       onConfirm: async () => {
         await this.doForceDiscardCheckout(name, startPoint);
       },
@@ -2005,16 +1968,13 @@ class SidebarState {
     bridge.tama.set("danger");
     bridge.tama.say(t("sidebar.delete_branch_arm", { name }), 6000);
     bridge.armDanger({
-      title: "Delete branch — " + name,
+      title: t("sidebar.delete_branch_title", { name }),
       steps: false,
-      desc: "This removes the local branch ref. Its tip is pinned to a backup first, so the commits stay recoverable by sha.",
-      lose:
-        '<h5>What happens</h5><ul><li>Removes local branch <code>' +
-        esc(name) +
-        "</code></li><li>Its tip is pinned under <code>refs/gitgui/deleted/…</code> — recover with ＋ New branch → the printed sha</li></ul>",
-      note: ICON_BACKUP + " I pin the branch tip before deleting; " + shortcutLabel("undo") + " restores your CURRENT branch position (not the deleted branch).",
+      desc: t("sidebar.delete_branch_desc"),
+      lose: t("sidebar.delete_branch_lose", { name: esc(name) }),
+      note: ICON_BACKUP + " " + t("sidebar.delete_branch_note"),
       name,
-      confirmLabel: "Delete branch",
+      confirmLabel: t("sidebar.delete_branch_confirm"),
       onConfirm: async () => {
         await this.doDeleteBranch(name, false);
       },
@@ -2062,30 +2022,13 @@ class SidebarState {
     bridge.tama.set("danger");
     bridge.tama.say(t("sidebar.reset_arm", { name, upstream }), 6000);
     bridge.armDanger({
-      title: "Reset " + name + " to " + upstream,
+      title: t("sidebar.reset_title", { name, upstream }),
       steps: false,
-      desc: "This hard-resets the branch to match its upstream — any local commits or uncommitted changes on it are discarded. Its tip is pinned to a backup first, so the commits stay recoverable.",
-      lose:
-        "<h5>What happens</h5><ul><li>Moves local branch <code>" +
-        esc(name) +
-        "</code> to match <code>" +
-        esc(upstream) +
-        "</code></li><li>Discards any local-only commits" +
-        (name === this.head ? " AND uncommitted working-tree changes" : "") +
-        " on <code>" +
-        esc(name) +
-        "</code></li></ul>",
-      note:
-        ICON_BACKUP +
-        " I pin " +
-        name +
-        "'s current tip before resetting; " +
-        shortcutLabel("undo") +
-        " restores it" +
-        (name === this.head ? "" : " (checking " + name + " back out first, since it may no longer be the current branch)") +
-        ".",
+      desc: t("sidebar.reset_desc"),
+      lose: t(name === this.head ? "sidebar.reset_lose_head" : "sidebar.reset_lose", { name: esc(name), upstream: esc(upstream) }),
+      note: ICON_BACKUP + " " + t(name === this.head ? "sidebar.reset_note_head" : "sidebar.reset_note", { name: esc(name) }),
       name,
-      confirmLabel: "Reset branch",
+      confirmLabel: t("sidebar.reset_confirm"),
       onConfirm: async () => {
         await this.doResetToUpstream(name, upstream);
       },
@@ -2486,18 +2429,13 @@ class SidebarState {
     bridge.tama.set("danger");
     bridge.tama.say(t("sidebar.delete_tag_arm", { name }), 6000);
     bridge.armDanger({
-      title: "Delete tag — " + name,
+      title: t("sidebar.delete_tag_title", { name }),
       steps: false,
-      desc: "This removes the tag ref. Its target is pinned to a backup first, so it stays recoverable.",
-      lose:
-        "<h5>What happens</h5><ul><li>Removes tag <code>" +
-        esc(name) +
-        "</code></li><li>Its target is pinned under <code>refs/gitgui/deleted-tag/…</code> — recover with <code>git tag " +
-        esc(name) +
-        " &lt;pinned ref&gt;</code></li></ul>",
-      note: ICON_BACKUP + " I pin the tag's target before deleting; this is NOT restorable via the global Undo (" + shortcutLabel("undo") + ") — that only rewinds branches, never tags.",
+      desc: t("sidebar.delete_tag_desc"),
+      lose: t("sidebar.delete_tag_lose", { name: esc(name) }),
+      note: ICON_BACKUP + " " + t("sidebar.delete_tag_note"),
       name,
-      confirmLabel: "Delete tag",
+      confirmLabel: t("sidebar.delete_tag_confirm"),
       onConfirm: async () => {
         await this.doDeleteTag(name);
       },

@@ -175,6 +175,14 @@ export default {
   submodules_synced: "Submodules synced.",
   couldnt_sync_submodules: "Couldn't sync submodules.",
   deinit_arm: "Deinitializing {path} — type the path to arm it. I back up its uncommitted changes first.",
+  deinit_title: "Deinit submodule — {path}",
+  deinit_desc:
+    "This clears the submodule's own checked-out files and unregisters it locally. Its committed history is NOT deleted — it stays in .git/modules and can be restored instantly (no re-clone) with Init + update. Only its UNCOMMITTED changes are at risk.",
+  deinit_lose:
+    "<h5>What happens</h5><ul><li>Clears <code>{path}</code>'s working tree</li><li>Unregisters it from this repo's local config</li><li>Its own uncommitted changes are backed up first, under <code>gitgui/submodule-backup/&#8230;</code></li></ul>",
+  deinit_note:
+    "I back up {path}'s own uncommitted changes before clearing it — its committed history is untouched and restorable via Init + update. This is NOT the global Undo ({undoKey}) — that only ever rewinds THIS repo's own branches/HEAD.",
+  deinit_confirm: "Deinit submodule",
   deinitialized_demo: "Deinitialized {path} (demo).",
   deinitializing: "Deinitializing {path}…",
   kept_deinit_cancelled: "Kept {path} — deinit cancelled.",
@@ -182,6 +190,14 @@ export default {
   couldnt_deinit: "Couldn't deinit {path}.",
   deinit_failed: "Deinit failed — {error}",
   remove_arm: "Removing {path} — type the path to arm it. I back up any uncommitted changes first.",
+  remove_title: "Remove submodule — {path}",
+  remove_desc:
+    "This removes {path} from this repository entirely: its checked-out files, its .gitmodules entry, and its tracked reference. This is staged, not committed — you'll still need to commit it. Its committed history is NOT deleted (it stays in .git/modules), and any of its own uncommitted changes are backed up first.",
+  remove_lose:
+    "<h5>What happens</h5><ul><li>Clears and unregisters <code>{path}</code> (same as Deinit)</li><li>Stages its removal from the index (<code>git rm</code>)</li><li>Removes and stages its <code>[submodule]</code> entry from <code>.gitmodules</code></li><li>Nothing is committed — review and commit when ready</li></ul>",
+  remove_note:
+    "If {path} had uncommitted changes, they're backed up first. This only STAGES the removal — Undo/discard the staged .gitmodules + {path} changes the normal way if you change your mind before committing.",
+  remove_confirm: "Remove submodule",
   removed_demo: "Removed {path} (demo).",
   removing: "Removing {path}…",
   removed: "Removed {path}.",
@@ -209,6 +225,16 @@ export default {
   reapplying_changes: "Reapplying your changes…",
   couldnt_reapply: "Couldn't reapply your stashed changes — they're kept in the stash list.",
   force_switch_arm: "Switching to {name} will DISCARD ALL your uncommitted changes, not just the {n} blocking this switch — type the branch name to arm it.",
+  force_switch_files_one: "{n} file",
+  force_switch_files_other: "{n} files",
+  force_switch_title: "Force switch — discard changes — {name}",
+  force_switch_desc:
+    "This discards ALL of your uncommitted tracked changes — not just the {n} blocking this switch, but anywhere else in the working tree too — and switches to {name}, no matter what. Prefer Stash, switch, then reapply (or leave stashed) unless you're certain you don't need any of these changes.",
+  force_switch_lose:
+    "<h5>What happens</h5><ul><li>Permanently discards ALL of your uncommitted tracked/staged changes across the whole working tree — not just the {n} that blocked this switch</li><li>Switches to <code>{name}</code></li></ul>",
+  force_switch_note:
+    "This is NOT recoverable, and it is NOT limited to the {n} named above — every uncommitted tracked/staged change in the repository is gone the instant you confirm. Safety Manager/Undo only ever protects committed history, never uncommitted content.",
+  force_switch_confirm: "Discard & switch",
   force_switched_demo: "Force-switched to {name} (demo).",
   force_switching: "Force-switching to {name}…",
   on_branch_now_plain: "On {name} now.",
@@ -221,6 +247,12 @@ export default {
   create_failed: "Create failed — {error}",
   // Delete branch.
   delete_branch_arm: "Deleting {name} — type the branch name to arm it. I pin its tip first.",
+  delete_branch_title: "Delete branch — {name}",
+  delete_branch_desc: "This removes the local branch ref. Its tip is pinned to a backup first, so the commits stay recoverable by sha.",
+  delete_branch_lose:
+    "<h5>What happens</h5><ul><li>Removes local branch <code>{name}</code></li><li>Its tip is pinned under <code>refs/gitgui/deleted/…</code> — recover with ＋ New branch → the printed sha</li></ul>",
+  delete_branch_note: "I pin the branch tip before deleting; {undoKey} restores your CURRENT branch position (not the deleted branch).",
+  delete_branch_confirm: "Delete branch",
   deleted_demo: "Deleted {name} (demo).",
   deleting: "Deleting {name}…",
   kept_delete_cancelled: "Kept {name} — delete cancelled.",
@@ -229,6 +261,18 @@ export default {
   delete_failed: "Delete failed — {error}",
   // Reset to upstream.
   reset_arm: "Resetting {name} to {upstream} — type the branch name to arm it. I pin its tip first.",
+  reset_title: "Reset {name} to {upstream}",
+  reset_desc:
+    "This hard-resets the branch to match its upstream — any local commits or uncommitted changes on it are discarded. Its tip is pinned to a backup first, so the commits stay recoverable.",
+  // _head: {name} is the checked-out branch, so its working tree goes too.
+  reset_lose_head:
+    "<h5>What happens</h5><ul><li>Moves local branch <code>{name}</code> to match <code>{upstream}</code></li><li>Discards any local-only commits AND uncommitted working-tree changes on <code>{name}</code></li></ul>",
+  reset_lose:
+    "<h5>What happens</h5><ul><li>Moves local branch <code>{name}</code> to match <code>{upstream}</code></li><li>Discards any local-only commits on <code>{name}</code></li></ul>",
+  reset_note_head: "I pin {name}'s current tip before resetting; {undoKey} restores it.",
+  reset_note:
+    "I pin {name}'s current tip before resetting; {undoKey} restores it (checking {name} back out first, since it may no longer be the current branch).",
+  reset_confirm: "Reset branch",
   reset_demo: "Reset {name} to {upstream} (demo).",
   resetting: "Resetting {name} to {upstream}…",
   reset_done: "Reset {name} to {upstream}.",
@@ -254,6 +298,13 @@ export default {
   couldnt_create_tag: "Couldn't create tag {name}.",
   // Delete tag.
   delete_tag_arm: "Deleting tag {name} — type the tag name to arm it. I pin its target first.",
+  delete_tag_title: "Delete tag — {name}",
+  delete_tag_desc: "This removes the tag ref. Its target is pinned to a backup first, so it stays recoverable.",
+  delete_tag_lose:
+    "<h5>What happens</h5><ul><li>Removes tag <code>{name}</code></li><li>Its target is pinned under <code>refs/gitgui/deleted-tag/…</code> — recover with <code>git tag {name} &lt;pinned ref&gt;</code></li></ul>",
+  delete_tag_note:
+    "I pin the tag's target before deleting; this is NOT restorable via the global Undo ({undoKey}) — that only rewinds branches, never tags.",
+  delete_tag_confirm: "Delete tag",
   deleted_tag_demo: "Deleted tag {name} (demo).",
   deleting_tag: "Deleting tag {name}…",
   deleted_tag: "Deleted tag {name}.",

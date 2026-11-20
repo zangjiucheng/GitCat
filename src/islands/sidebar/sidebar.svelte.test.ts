@@ -84,6 +84,7 @@ vi.mock("../rangesummary/rangesummary.svelte.ts", () => ({
 
 import * as bridge from "../../legacy/bridge";
 import { commands } from "../../ipc/bindings";
+import { t } from "@/i18n/i18n.svelte.ts";
 import { resolver } from "../resolver/resolver.svelte.ts";
 import { rangeSummaryCtrl } from "../rangesummary/rangesummary.svelte.ts";
 import {
@@ -1789,6 +1790,16 @@ describe("resetToUpstream", () => {
     expect(bridge.armDanger).toHaveBeenCalledWith(
       expect.objectContaining({ name: "feature", confirmLabel: "Reset branch", onConfirm: expect.any(Function) }),
     );
+  });
+
+  it("takes the dialog copy from the sidebar locale strings, with the checked-out variant for HEAD (#90)", () => {
+    sidebarCtrl.head = "feature";
+    sidebarCtrl.resetToUpstream("feature", "origin/feature");
+    const ctx = vi.mocked(bridge.armDanger).mock.calls[0][0] as any;
+    expect(ctx.title).toBe(t("sidebar.reset_title", { name: "feature", upstream: "origin/feature" }));
+    expect(ctx.lose).toBe(t("sidebar.reset_lose_head", { name: "feature", upstream: "origin/feature" }));
+    expect(ctx.lose).toContain("uncommitted working-tree changes");
+    expect(ctx.confirmLabel).toBe(t("sidebar.reset_confirm"));
   });
 
   it("onConfirm calls reset_branch_to_upstream and reloads on success", async () => {

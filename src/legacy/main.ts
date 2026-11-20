@@ -2742,12 +2742,12 @@ function armDanger(ctx){
   // nothing about WHICH one you meant. Callers can now demand "<verb> <name>".
   const phrase=ctx.phrase||ctx.name;
   const typeLabel=$("#dangerTypeLabel");
-  typeLabel.textContent="Type the "+(ctx.typeNoun||"branch name")+" ";
+  typeLabel.textContent=t("filterrepo.danger_type_prefix",{noun:ctx.typeNoun||t("filterrepo.danger_type_noun")});
   const tn=document.createElement("b"); tn.className="mono"; tn.id="dangerTypeName"; tn.textContent=phrase;
   typeLabel.appendChild(tn);
-  typeLabel.appendChild(document.createTextNode(" to "+(ctx.typeVerb||"arm the rewrite")+":"));
+  typeLabel.appendChild(document.createTextNode(t("filterrepo.danger_type_suffix",{verb:ctx.typeVerb||t("filterrepo.danger_type_verb")})));
   const inp=$("#confirmInput"); inp.placeholder=phrase; inp.value="";
-  $("#dangerGo").textContent=ctx.confirmLabel||"Confirm"; $("#dangerGo").disabled=true;
+  $("#dangerGo").textContent=ctx.confirmLabel||t("filterrepo.danger_confirm"); $("#dangerGo").disabled=true;
   openScrim("#dangerScrim"); setTimeout(()=>inp.focus(),30);
 }
 function disarmDanger(){ closeScrim("#dangerScrim"); const ci=$("#confirmInput"); if(ci) ci.value=""; const gg=$("#dangerGo"); if(gg) gg.disabled=true; dangerCtx=null; }
@@ -2761,7 +2761,7 @@ $("#dangerGo").addEventListener("click",async ()=>{
   dangerBusy=true;
   const go=$("#dangerGo"), cancel=$("#dangerCancel"), inp=$("#confirmInput");
   const label=go.textContent;
-  go.disabled=true; go.innerHTML='<span class="spinner"></span> Working…';
+  go.disabled=true; go.innerHTML='<span class="spinner"></span> '+t("filterrepo.danger_working");
   cancel.disabled=true; if(inp) inp.disabled=true;
   try{ await ctx.onConfirm(); }
   finally{

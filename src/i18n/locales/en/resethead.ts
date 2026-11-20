@@ -15,6 +15,11 @@ export default {
   desc_known:
     "Moves the current branch (HEAD) to {sha}{subject}. Any commits currently ahead of it stop being on your branch (they stay recoverable until git eventually prunes them). Pick how much of your working state to keep below.",
   confirm: "Reset HEAD",
+  // Fill "Type the {noun} … to {verb}:" (filterrepo.danger_type_prefix/suffix).
+  type_noun_sha: "short SHA",
+  type_verb_known: "confirm the reset",
+  type_noun_word: "word",
+  type_verb_hash: "confirm",
   arm_say_hash: 'Reset HEAD to any commit — paste a hash, pick a mode, type "reset" to arm.',
   title_hash: "Reset HEAD to a commit",
   desc_hash:
