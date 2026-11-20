@@ -76,4 +76,14 @@ export default {
     '<svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Pre-op backup pinned first → full pre-rewrite state stays recoverable.',
   danger_type_label:
     'Type the branch name <b class="mono" id="dangerTypeName">main</b> to arm the rewrite:',
+  // Runtime frame of the same modal, rebuilt by legacy/main.ts's armDanger on
+  // every open. The name/sha to type goes between prefix and suffix as its own
+  // <b class="mono"> node. noun/verb/confirm are the defaults for callers that
+  // don't pass their own (already translated) typeNoun/typeVerb/confirmLabel.
+  danger_type_prefix: "Type the {noun} ",
+  danger_type_suffix: " to {verb}:",
+  danger_type_noun: "branch name",
+  danger_type_verb: "arm the rewrite",
+  danger_confirm: "Confirm",
+  danger_working: "Working…",
 };
