@@ -12,4 +12,5 @@ export default {
   exited: "Exited {code}.",
   on_a_signal: "on a signal",
   err_command_failed_detail: "Command failed — {err}",
+  cmdk_hint: "Plugin panel · {name}",
 };

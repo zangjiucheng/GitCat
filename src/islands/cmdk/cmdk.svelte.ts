@@ -274,6 +274,66 @@ function buildActions(): ActionItem[] {
     hint: t("cmdk.pull_rebase_h"),
     run: () => resolver.pullRebase(bridge.CUR_REPO as unknown as string),
   },
+  // The rest of the menu bar's repo actions (#140). Each runs exactly what
+  // src/main.ts's "menu-action" case for the same id runs, so the palette,
+  // the menu and the accelerator can never disagree. pull-ff is the plain
+  // toolbar Pull — the one ⌘⇧L owns — next to the merge/rebase variants.
+  {
+    type: "action",
+    id: "pull-ff",
+    label: t("cmdk.pull_ff"),
+    hint: t("cmdk.pull_ff_h"),
+    run: () => bridge.doPull(),
+  },
+  {
+    type: "action",
+    id: "fetch",
+    label: t("cmdk.fetch"),
+    hint: t("cmdk.fetch_h"),
+    run: () => bridge.doFetch(),
+  },
+  {
+    type: "action",
+    id: "push",
+    label: t("cmdk.push"),
+    hint: t("cmdk.push_h"),
+    run: () => bridge.doPush(),
+  },
+  {
+    type: "action",
+    id: "new-branch",
+    label: t("cmdk.new_branch"),
+    hint: t("cmdk.new_branch_h"),
+    run: () => sidebarCtrl.startNewBranch(),
+  },
+  {
+    type: "action",
+    id: "refresh",
+    label: t("cmdk.refresh"),
+    hint: t("cmdk.refresh_h"),
+    run: () => document.getElementById("refreshBtn")?.dispatchEvent(new MouseEvent("click")),
+  },
+  {
+    type: "action",
+    id: "close-repo",
+    label: t("cmdk.close_repo"),
+    hint: t("cmdk.close_repo_h"),
+    run: () => bridge.closeRepo(),
+  },
+  {
+    type: "action",
+    id: "toggle-theme",
+    label: t("cmdk.toggle_theme"),
+    hint: t("cmdk.toggle_theme_h"),
+    run: () => document.getElementById("themeBtn")?.dispatchEvent(new MouseEvent("click")),
+  },
+  {
+    type: "action",
+    id: "about",
+    label: t("cmdk.about"),
+    hint: t("cmdk.about_h"),
+    run: () => aboutCtrl.show(),
+  },
   {
     type: "action",
     id: "open-terminal",
