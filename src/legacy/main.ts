@@ -1976,6 +1976,8 @@ export function setTamaPoseOverrides(overrides){
 // stray clicks on the toast/telemetry text too), no cursor hint, no menu/
 // ⌘K entry anywhere else. Resets on its own after 2.5s of no further
 // clicks, so an idle stray double-click can't silently half-arm it.
+// The one recorded exception to "everything is keyboard-reachable": see
+// docs/guide/keyboard.md, "What isn't on the keyboard" (#143).
 (function () {
   let n = 0,
     t = null;
