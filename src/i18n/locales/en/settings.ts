@@ -6,6 +6,7 @@ export default {
   tab_tama: "Tama",
   tab_identity: "Git Identity",
   tab_gitconfig: "Git Config",
+  tab_ai: "AI",
   language: "Language",
   language_hint: "The app's display language. Applies immediately.",
   cli_h4: "Command line",

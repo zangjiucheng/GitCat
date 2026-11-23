@@ -207,4 +207,13 @@ export default {
   abort_squash: "스쿼시 중단",
   abort_am: "패치 적용 중단",
   abort_pick: "체리픽 중단",
+  // LLM Resolver (Settings → AI).
+  ai_suggest: "제안",
+  ai_suggesting: "생각 중…",
+  ai_suggest_title: "설정 → AI의 모델에게 이 충돌의 양쪽을 합쳐 달라고 요청해요. 저장 전에 직접 검토해요.",
+  ai_undo: "제안 되돌리기",
+  ai_failed: "제안을 받지 못했어요.",
+  ai_failed_e: "제안을 받지 못했어요 — {error}",
+  ai_no_note: "모델이 제안한 내용이에요 — 저장 전에 검토하세요.",
+  ai_demo_note: "데모: 실제 제안이라면 여기서 양쪽을 합쳐요.",
 };

@@ -757,3 +757,20 @@ fn resolve_conflict_hunks_inner(path: String, file: String, resolved_content: St
     };
     ResolveResult { ok: true, remaining, message, cancelled: false }
 }
+
+/// The conflict hunks of `file`, for `ai_resolve` — the same read the hunk
+/// editor does, so the model sees exactly what the user is editing. A binary
+/// file has no hunks to suggest for.
+pub(crate) fn conflict_file_hunks_for_ai(path: &str, file: &str) -> Result<Vec<ConflictHunk>, String> {
+    let r = conflict_file_hunks_inner(path.to_string(), file.to_string())?;
+    if r.binary {
+        return Err(ierr("err_ai.binary_file"));
+    }
+    Ok(r.hunks)
+}
+
+/// The in-progress operation ("merge", "rebase", "cherry-pick", …) for the
+/// model's context; "merge" when it can't be read.
+pub(crate) fn conflict_op_for_ai(path: &str) -> String {
+    conflict_status_inner(path).map(|s| s.op).ok().filter(|o| !o.is_empty()).unwrap_or_else(|| "merge".to_string())
+}

@@ -205,4 +205,13 @@ export default {
   abort_squash: "中止 squash",
   abort_am: "中止打补丁",
   abort_pick: "中止 pick",
+  // LLM Resolver (Settings → AI).
+  ai_suggest: "建议",
+  ai_suggesting: "思考中…",
+  ai_suggest_title: "让 设置 → AI 中的模型合并这个冲突的两边。保存前由你审阅。",
+  ai_undo: "撤销建议",
+  ai_failed: "没能获得建议。",
+  ai_failed_e: "没能获得建议 — {error}",
+  ai_no_note: "模型给出的建议 — 保存前请审阅。",
+  ai_demo_note: "演示:真实的建议会在这里合并两边的内容。",
 };

@@ -4,6 +4,14 @@
   import { IN_TAURI } from "../../ipc/env";
   import { t } from "@/i18n/i18n.svelte.ts";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
+  import { onMount } from "svelte";
+  import { aiSettingsCtrl } from "../aisettings/aisettings.svelte.ts";
+
+  // The Suggest button follows Settings → AI; read it whenever the resolver
+  // mounts so a change made there shows up here.
+  onMount(() => {
+    void aiSettingsCtrl.load();
+  });
 
   const lines = (txt: string) => (txt || "").split("\n");
 
@@ -119,6 +127,15 @@
                             <div class="cf-edit-conflict-actions">
                               <button class="btn ghost" onclick={() => resolver.useSide(i, "ours")}>{t("resolver.use_ours")}</button>
                               <button class="btn ghost" onclick={() => resolver.useSide(i, "theirs")}>{t("resolver.use_theirs")}</button>
+                              {#if aiSettingsCtrl.ready}
+                                <button
+                                  class="btn ghost cf-ai-suggest"
+                                  disabled={resolver.aiBusy[i]}
+                                  title={t("resolver.ai_suggest_title")}
+                                  onclick={() => resolver.suggest(i)}
+                                  >{#if resolver.aiBusy[i]}<span class="spinner"></span> {t("resolver.ai_suggesting")}{:else}✨ {t("resolver.ai_suggest")}{/if}</button
+                                >
+                              {/if}
                             </div>
                             <textarea
                               class="cf-edit-textarea"
@@ -126,6 +143,12 @@
                               value={resolver.editValues[i]}
                               oninput={(e) => resolver.setEditValue(i, (e.target as HTMLTextAreaElement).value)}
                             ></textarea>
+                            {#if resolver.aiNotes[i]}
+                              <div class="cf-ai-note">
+                                <span class="mut">✨ {resolver.aiNotes[i]}</span>
+                                <button class="btn ghost" onclick={() => resolver.undoSuggestion(i)}>{t("resolver.ai_undo")}</button>
+                              </div>
+                            {/if}
                           </div>
                         {/if}
                       {/each}

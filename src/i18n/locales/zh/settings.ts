@@ -6,6 +6,7 @@ export default {
   tab_tama: "Tama",
   tab_identity: "Git 身份",
   tab_gitconfig: "Git 配置",
+  tab_ai: "AI",
   language: "语言",
   language_hint: "应用的显示语言,切换后立即生效。",
   cli_h4: "命令行",

@@ -3117,6 +3117,39 @@ async resolveConflictWithExternalTool(path: string, file: string) : Promise<Reso
     return await TAURI_INVOKE("resolve_conflict_with_external_tool", { path, file });
 },
 /**
+ * JS: `commands.getAiSettings()`.
+ */
+async getAiSettings() : Promise<Result<AiSettingsView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_ai_settings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.setAiSettings(enabled, provider, model, baseUrl, apiKey)`.
+ */
+async setAiSettings(enabled: boolean, provider: AiProvider, model: string, baseUrl: string, apiKey: string | null) : Promise<Result<AiSettingsView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_ai_settings", { enabled, provider, model, baseUrl, apiKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * JS: `commands.aiSuggestHunk(path, file, hunkIndex, locale)`.
+ */
+async aiSuggestHunk(path: string, file: string, hunkIndex: number, locale: string) : Promise<Result<AiSuggestion, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ai_suggest_hunk", { path, file, hunkIndex, locale }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Add a new named tool, or update an existing one with the same `id` (upsert).
  * JS: `commands.saveNamedTool(tool)`.
  */
@@ -3616,6 +3649,33 @@ async installCliShim() : Promise<Result<string, string>> {
 
 /** user-defined types **/
 
+export type AiProvider = "anthropic" | "openai_compatible"
+/**
+ * What the webview sees.
+ */
+export type AiSettingsView = { enabled: boolean; provider: AiProvider; model: string; baseUrl: string; 
+/**
+ * A key is stored in the settings file.
+ */
+hasApiKey: boolean; 
+/**
+ * No stored key, but the provider's environment variable is set.
+ */
+envApiKey: boolean }
+export type AiSuggestion = { 
+/**
+ * Replacement text for the conflict region, ready to drop into the
+ * hunk's textarea.
+ */
+resolution: string; 
+/**
+ * One or two sentences on what was combined, in the UI language.
+ */
+explanation: string; 
+/**
+ * The model that actually answered (a fallback may have stepped in).
+ */
+model: string }
 /**
  * Result of `commands::head_ancestor_flags` — a positional recompute of the
  * per-row `ancestor` (dimming) bit for the CURRENTLY-LOADED graph, without
