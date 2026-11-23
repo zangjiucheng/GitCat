@@ -100,8 +100,8 @@ class ResetHeadState {
       lose: modeRadios(),
       note: resetNote(),
       name: shortSha,
-      typeNoun: "short SHA",
-      typeVerb: "confirm the reset",
+      typeNoun: t("resethead.type_noun_sha"),
+      typeVerb: t("resethead.type_verb_known"),
       confirmLabel: t("resethead.confirm"),
       onConfirm: async () => {
         await this.doReset(repo, sha, selectedMode(), shortSha);
@@ -130,8 +130,8 @@ class ResetHeadState {
         modeRadios(),
       note: resetNote(),
       name: "reset",
-      typeNoun: "word",
-      typeVerb: "confirm",
+      typeNoun: t("resethead.type_noun_word"),
+      typeVerb: t("resethead.type_verb_hash"),
       confirmLabel: t("resethead.confirm"),
       onConfirm: async () => {
         const target = typedHash();
