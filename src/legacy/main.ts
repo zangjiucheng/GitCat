@@ -1771,7 +1771,7 @@ class TamaMascot{
   // intentionally share one).
   static POSE={idle:"curious",sleep:"sleep",hint:"curious",thinking:"thinking",warn:"shocked",danger:"alarm",celebrate:"happy",rescue:"confident",confused:"shocked",curious:"curious",syncing:"thinking",greeting:"hero"};
   constructor(el){this.nook=el.nook;this.sprite=el.sprite;this.spriteWrap=el.spriteWrap;this.line=el.line;this.tele=el.tele;this.topToast=el.topToast;
-    this.sticky=null;this.toastT=null;this.topToastT=null;this.dwellT=null;this._animT=null;this._animDirty=false;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
+    this.sticky=null;this.toastT=null;this.topToastT=null;this.topToastObs=null;this.dwellT=null;this._animT=null;this._animDirty=false;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
   // Only touches the portrait's `src` when the resolved pose actually
   // changed (several states share one pose — see POSE above) — a real
   // "pop" (shrink+fade out via .swap, swap src, overshoot back in via
@@ -1838,12 +1838,33 @@ class TamaMascot{
   // is actually up, mirror the message to a toast pinned top-right ABOVE
   // everything, tinted by the current pose (failure / caution / celebrate). No
   // scrim open => the nook itself is visible, so this stays out of the way.
+  //
+  // Screen readers (#139): exactly ONE live region speaks each message. With
+  // no scrim up that's the nook (role=status). With one up, an aria-modal
+  // dialog hides the nook from assistive tech, so the toast (also role=status)
+  // takes over and the nook goes aria-live=off until the toast is gone —
+  // otherwise a reader that doesn't honour aria-modal would say it twice.
+  //
+  // Dismissal: the toast belongs to the scrim it was raised over, so closing
+  // that scrim — Escape, Cancel, a click outside — takes the toast with it,
+  // instead of leaving it floating over the now-visible nook for the rest of
+  // its dwell. A MutationObserver on just the open scrims' class attribute,
+  // live only while the toast is showing, means no extra key handler.
   _topToast(t,dwell){const el=this.topToast;if(!el)return;
-    if(!t||!document.querySelector(".scrim.on")){el.classList.remove("show");return;}
+    if(!t||!document.querySelector(".scrim.on")){this._hideTopToast();return;}
     const st=this.nook.dataset.state;
     const kind=(st==="confused"||st==="danger")?" k-warn":st==="warn"?" k-caution":st==="celebrate"?" k-good":"";
+    this.nook.setAttribute("aria-live","off");
     el.className="top-toast"+kind;el.textContent=t;el.classList.add("show");
-    clearTimeout(this.topToastT);this.topToastT=setTimeout(()=>el.classList.remove("show"),Math.max(2800,dwell||0));}
+    if(this.topToastObs) this.topToastObs.disconnect();
+    this.topToastObs=new MutationObserver(()=>{ if(!document.querySelector(".scrim.on")) this._hideTopToast(); });
+    for(const sc of document.querySelectorAll(".scrim.on")) this.topToastObs.observe(sc,{attributes:true,attributeFilter:["class"]});
+    clearTimeout(this.topToastT);this.topToastT=setTimeout(()=>this._hideTopToast(),Math.max(2800,dwell||0));}
+  _hideTopToast(){const el=this.topToast;if(!el)return;
+    clearTimeout(this.topToastT);
+    if(this.topToastObs){this.topToastObs.disconnect();this.topToastObs=null;}
+    el.classList.remove("show");
+    this.nook.setAttribute("aria-live","polite");}
   // "confused", not "warn" — this is a real operation FAILURE (every
   // call site across the app), distinct from mutation.caution's own
   // pre-mutation "warn" pose (which still calls set("warn") directly, not
