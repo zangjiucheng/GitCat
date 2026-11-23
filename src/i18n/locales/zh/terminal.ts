@@ -3,6 +3,7 @@ export default {
   title: "终端",
   focus_out: "把焦点交还给应用",
   focus_out_hint: "回到应用",
+  resize_label: "调整终端高度",
   aria_close: "关闭终端",
   demo_pre: "真实的 shell 会在这里运行,位于 ",
   demo_post: " (演示)。",

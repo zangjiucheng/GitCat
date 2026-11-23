@@ -20,6 +20,7 @@ const GUARDS: GuardTable = {
   noScrimOpen: () => true,
   noPopoverOpen: () => true,
   notInTerminal: () => true,
+  notOnSplitter: () => true,
   graphHasRows: () => false,
   inTauri: () => true,
 };

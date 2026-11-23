@@ -2345,21 +2345,49 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
     document.addEventListener("pointerup",onUp);
   }
   handle.addEventListener("pointerdown",e=>{ e.preventDefault(); beginDrag(vert?e.clientY:e.clientX); });
-  // Keyboard equivalent of the reopen-by-click path above — the handle is a
-  // real (tabindex="0" role="button") focusable control (see index.html),
-  // not just a drag target, so Enter/Space should work exactly like a plain
-  // click: reopen if collapsed, no-op otherwise. Never generates a live
-  // resize — dragged stays true so onUp's resize branch is never entered.
-  handle.addEventListener("keydown",e=>{
-    if(e.key!=="Enter"&&e.key!==" ") return;
-    e.preventDefault();
-    if(isCollapsed()){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedSize+"px"); }
-  });
-  // Programmatic collapse/expand, so the focus-mode shortcut (below) can drive
-  // the panel exactly like a drag-past-edge / click-to-reopen would.
+  // Programmatic collapse/expand, so the focus-mode shortcut (below) and the
+  // keyboard path can drive the panel exactly like a drag-past-edge /
+  // click-to-reopen would.
   function collapse(){ if(isCollapsed()) return; setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
   function expand(){ if(!isCollapsed()) return; setCollapsed(false); root.style.setProperty(cssVar, lastExpandedSize+"px"); }
-  return { isCollapsed, collapse, expand };
+  function toggle(){ if(isCollapsed()) expand(); else collapse(); }
+  // A keyboard size change commits at once — there is no guide line to park,
+  // since each step is small — under the same rules a drag ends with.
+  function commitSize(px){
+    if(px<min){ collapse(); return; }
+    setCollapsed(false); root.style.setProperty(cssVar, px+"px"); lastExpandedSize=px;
+  }
+  // The keyboard equivalent of everything the pointer does here (#136),
+  // matching the inner Splitter.svelte's steps:
+  //   Enter/Space  toggle collapsed ↔ expanded (it used to only ever expand)
+  //   arrows       move the edge 8px (32px with Shift) along this handle's
+  //                axis, so the key points where the edge goes — ← widens the
+  //                right-hand detail panel, → widens the sidebar. Shrinking
+  //                below `min` collapses, like dragging past the edge.
+  //   Home         back to the default size (the stylesheet's value, which
+  //                its media queries already fit to the window)
+  //   End          the largest size a drag could reach
+  handle.addEventListener("keydown",e=>{
+    const back=vert?"ArrowUp":"ArrowLeft", fwd=vert?"ArrowDown":"ArrowRight";
+    if(e.key==="Enter"||e.key===" "){ e.preventDefault(); toggle(); return; }
+    if(e.key===back||e.key===fwd){
+      e.preventDefault();
+      const d=(e.key===fwd?1:-1)*(e.shiftKey?32:8);
+      const grows=fromFarEdge?d<0:d>0;
+      if(isCollapsed()){ if(grows) expand(); return; }
+      const cur=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||lastExpandedSize;
+      commitSize(clampResize(cur,d,fromFarEdge,railW,dragMax()));
+      return;
+    }
+    if(e.key==="Home"){
+      e.preventDefault();
+      root.style.removeProperty(cssVar);
+      commitSize(Math.max(min,parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||min));
+      return;
+    }
+    if(e.key==="End"){ e.preventDefault(); commitSize(dragMax()); }
+  });
+  return { isCollapsed, collapse, expand, toggle };
 }
 const sidebarHandle=wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28);
 const detailRightHandle=wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true,28);
@@ -2371,6 +2399,13 @@ const detailBottomHandle=wireResizeHandle($("#resizeDetailBottom"),"--detail-h",
 // it for the same reason the deleted focusRefFilter did: focusing an input
 // inside a collapsed panel moves focus somewhere the user cannot see.
 function expandSidebar(){ sidebarHandle?.expand?.(); }
+// The keymap/palette entry points for one panel at a time (#136) —
+// toggleFocusMode below moves both together.
+function toggleSidebar(){ sidebarHandle?.toggle?.(); }
+function toggleDetailPanel(){
+  const bottom=document.documentElement.getAttribute("data-detail-placement")==="bottom";
+  (bottom?detailBottomHandle:detailRightHandle)?.toggle?.();
+}
 function activePanelHandles(){
   const bottom=document.documentElement.getAttribute("data-detail-placement")==="bottom";
   return [sidebarHandle,bottom?detailBottomHandle:detailRightHandle].filter(Boolean);
@@ -4049,7 +4084,7 @@ i18nEvents.addEventListener("change",()=>{
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, resolveLang, registerPluginLanguages, Tama, TAMA_IMG, requestRedraw,
-  G, BACKEND, state, layout, view, cv, clampScroll, select, deselect, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, deselect, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, toggleSidebar, toggleDetailPanel, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, applyDetailPlacement, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section

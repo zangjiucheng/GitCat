@@ -132,6 +132,21 @@ function buildActions(): ActionItem[] {
     hint: t("cmdk.focus_mode_h"),
     run: () => bridge.toggleFocusMode(),
   },
+  // Each side panel on its own (#136); focus-mode above moves both at once.
+  {
+    type: "action",
+    id: "toggle-sidebar",
+    label: t("cmdk.toggle_sidebar"),
+    hint: t("cmdk.toggle_sidebar_h"),
+    run: () => bridge.toggleSidebar(),
+  },
+  {
+    type: "action",
+    id: "toggle-detail",
+    label: t("cmdk.toggle_detail"),
+    hint: t("cmdk.toggle_detail_h"),
+    run: () => bridge.toggleDetailPanel(),
+  },
   {
     type: "action",
     id: "shortcuts",

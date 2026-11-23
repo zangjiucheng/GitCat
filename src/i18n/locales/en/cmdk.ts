@@ -96,4 +96,8 @@ export default {
   toggle_theme_h: "Switch between light and dark",
   about: "About GitCat",
   about_h: "Version, credits and update status",
+  toggle_sidebar: "Toggle Sidebar",
+  toggle_sidebar_h: "Collapse or expand the left panel (branches, tags, stashes)",
+  toggle_detail: "Toggle Detail Panel",
+  toggle_detail_h: "Collapse or expand the commit detail panel",
 };

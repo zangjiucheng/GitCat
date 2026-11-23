@@ -96,4 +96,8 @@ export default {
   toggle_theme_h: "在浅色和深色之间切换",
   about: "关于 GitCat",
   about_h: "版本、致谢和更新状态",
+  toggle_sidebar: "切换侧栏",
+  toggle_sidebar_h: "折叠或展开左侧面板(分支、标签、stash)",
+  toggle_detail: "切换详情面板",
+  toggle_detail_h: "折叠或展开提交详情面板",
 };

@@ -102,6 +102,9 @@ export {
   openHelpPage,
   // Focus mode — collapse/restore both side panels (⌘\); a hoisted function too.
   toggleFocusMode,
+  // One panel at a time (#136) — hoisted functions too.
+  toggleSidebar,
+  toggleDetailPanel,
   // design-mode (plain-browser) synthetic data helpers, shared by generateGraph
   // and ⌘K's fallback index when no real repo/BACKEND is loaded.
   hhex,

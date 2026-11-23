@@ -96,4 +96,8 @@ export default {
   toggle_theme_h: "밝은 테마와 어두운 테마를 전환해요",
   about: "GitCat 정보",
   about_h: "버전, 크레딧, 업데이트 상태",
+  toggle_sidebar: "사이드바 전환",
+  toggle_sidebar_h: "왼쪽 패널(브랜치, 태그, 스태시)을 접거나 펼쳐요",
+  toggle_detail: "상세 패널 전환",
+  toggle_detail_h: "커밋 상세 패널을 접거나 펼쳐요",
 };
