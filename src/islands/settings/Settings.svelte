@@ -143,11 +143,16 @@
         {t("settings.show_all_tags")}
       </label>
 
+      <!-- Each graph dropdown gets its own <label> (same pattern as
+           detailPlacement below), so two stacked selects under one "Graph"
+           heading are scannable and have accessible names (#31). -->
+      <label class="d-lab" for="graphLabelPriority" style="display:block">{t("settings.label_priority")}</label>
       <p class="mut" style="font-size:11.5px;margin:0 0 8px">
         {@html t("settings.label_priority_desc")}
       </p>
       <div class="rm-form" style="margin-bottom:14px;max-width:220px">
         <select
+          id="graphLabelPriority"
           value={settingsCtrl.graphLabelPriority}
           onchange={(e) => settingsCtrl.setGraphLabelPriority((e.target as HTMLSelectElement).value as GraphLabelPriority)}
         >
@@ -156,11 +161,13 @@
         </select>
       </div>
 
+      <label class="d-lab" for="graphLabelLayout" style="display:block">{t("settings.label_layout")}</label>
       <p class="mut" style="font-size:11.5px;margin:0 0 8px">
         {t("settings.label_layout_desc")}
       </p>
       <div class="rm-form" style="margin-bottom:14px;max-width:220px">
         <select
+          id="graphLabelLayout"
           value={settingsCtrl.graphLabelLayout}
           onchange={(e) => settingsCtrl.setGraphLabelLayout((e.target as HTMLSelectElement).value as GraphLabelLayout)}
         >
