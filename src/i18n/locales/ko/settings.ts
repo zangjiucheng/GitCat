@@ -27,10 +27,12 @@ export default {
   graph: "그래프",
   show_all_tags_hint: "커밋에 태그가 여러 개 있을 때 첫 번째 것만이 아니라 전부 표시해요",
   show_all_tags: "커밋의 모든 태그 표시",
+  label_priority: "라벨 우선순위",
   label_priority_desc:
     "커밋의 레이블이 모두 들어가지 않을 때 이 종류를 먼저 보여줘요. 행의 <b>+N</b> 칩을 클릭하면 나머지를 순서대로 볼 수 있어요.",
   label_priority_tags: "태그 우선",
   label_priority_branches: "브랜치 우선",
+  label_layout: "라벨 위치",
   label_layout_desc:
     "인라인은 커밋의 ref 칩을 제목 텍스트 바로 앞에 표시하고, 왼쪽 열은 크기를 조절할 수 있는 별도의 열에 따로 모아서 표시해요.",
   label_layout_inline: "인라인(제목 앞)",

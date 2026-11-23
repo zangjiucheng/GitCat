@@ -12,4 +12,5 @@ export default {
   exited: "已退出:{code}。",
   on_a_signal: "因信号中断",
   err_command_failed_detail: "命令失败 — {err}",
+  cmdk_hint: "插件面板 · {name}",
 };

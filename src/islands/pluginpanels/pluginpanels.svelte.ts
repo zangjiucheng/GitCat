@@ -156,7 +156,7 @@ class PluginPanelsState {
           type: "action",
           id: `plugin-panel:${p.id}:${panel.id}`,
           label: panel.title,
-          hint: `Plugin panel · ${p.name}`,
+          hint: t("pluginpanels.cmdk_hint", { name: p.name }),
           run: () => this.openPanel(p.id, panel.id),
         });
       }

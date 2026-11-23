@@ -27,10 +27,12 @@ export default {
   graph: "提交图",
   show_all_tags_hint: "当一个 commit 有多个标签时,全部显示,而不只是第一个",
   show_all_tags: "显示 commit 上的所有标签",
+  label_priority: "标签优先级",
   label_priority_desc:
     "当一个 commit 的标签放不下时,优先显示这一类。点击某一行的 <b>+N</b> 标记可循环查看其余标签。",
   label_priority_tags: "标签优先",
   label_priority_branches: "分支优先",
+  label_layout: "标签位置",
   label_layout_desc:
     "「行内」把 commit 的引用标记画在其标题文字前面;「左侧列」把它们放在一个独立、可调整宽度的列里。",
   label_layout_inline: "行内(标题前)",

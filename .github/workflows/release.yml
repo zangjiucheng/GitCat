@@ -30,6 +30,7 @@ jobs:
     name: Create draft release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # create draft
     outputs:
       release_id: ${{ steps.create-release.outputs.result }}
     steps:
@@ -76,6 +77,7 @@ jobs:
     # there's no release to upload into.
     if: ${{ !cancelled() && needs.create-release.result != 'failure' }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90 # slowest leg (macOS Intel) ~25 min
     # Empty for every non-Linux leg, which is how Actions is told "no container".
     # The Linux legs set it to pin the glibc the bundle links against — see the
     # matrix comment below.
@@ -501,6 +503,7 @@ jobs:
     needs: [create-release, build]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # repack AppImages
     steps:
       - uses: actions/checkout@v5
 
@@ -628,6 +631,7 @@ jobs:
     needs: [create-release, build]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # finalize
     steps:
       # The release is now created by the create-release job with
       # prerelease:false, so the flag is reliable at the source. Historically

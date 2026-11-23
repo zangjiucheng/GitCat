@@ -20,6 +20,10 @@ vi.mock("../../legacy/bridge", () => ({
   select: vi.fn(),
   goToUncommitted: vi.fn(),
   toggleFocusMode: vi.fn(),
+  doFetch: vi.fn(),
+  doPull: vi.fn(),
+  doPush: vi.fn(),
+  closeRepo: vi.fn(),
   hhex: (r: number) => "hex" + r,
   msgOf: (r: number) => "demo message " + r,
   AUTHORS: [{ n: "Demo Author", e: "demo@gitcat.dev" }],
@@ -95,7 +99,7 @@ describe("filter", () => {
     setBackendGraph([{ sha: "aaa1111", subject: "Add feature", an: { n: "Dev" }, refs: [] }]);
     cmdkCtrl.show();
     const kinds = cmdkCtrl.results.map((r: any) => r.type);
-    expect(kinds.filter((t) => t === "action").length).toBe(31);
+    expect(kinds.filter((t) => t === "action").length).toBe(41);
     expect(kinds.filter((t) => t === "commit").length).toBe(1);
   });
 
@@ -106,6 +110,36 @@ describe("filter", () => {
     expect(cmdkCtrl.results.length).toBe(1);
     expect((cmdkCtrl.results[0] as any).type).toBe("action");
     expect((cmdkCtrl.results[0] as any).id).toBe("bisect");
+  });
+
+  it("lists the menu bar's repo actions (#140)", () => {
+    setBackendGraph([]);
+    cmdkCtrl.show();
+    const ids = cmdkCtrl.results.map((r: any) => r.id);
+    for (const id of ["new-branch", "fetch", "push", "pull-ff", "refresh", "close-repo", "about", "toggle-theme"]) {
+      expect(ids).toContain(id);
+    }
+  });
+
+  it("runs the same bridge calls as the menu for fetch / pull / push / close (#140)", () => {
+    setBackendGraph([]);
+    cmdkCtrl.show();
+    const run = (id: string) => (cmdkCtrl.results.find((r: any) => r.id === id) as any).run();
+    run("fetch");
+    run("pull-ff");
+    run("push");
+    run("close-repo");
+    expect(bridge.doFetch).toHaveBeenCalledTimes(1);
+    expect(bridge.doPull).toHaveBeenCalledTimes(1);
+    expect(bridge.doPush).toHaveBeenCalledTimes(1);
+    expect(bridge.closeRepo).toHaveBeenCalledTimes(1);
+  });
+
+  it("finds Repositories by the word 'open' (#140)", () => {
+    setBackendGraph([]);
+    cmdkCtrl.show();
+    cmdkCtrl.filter("open repo");
+    expect((cmdkCtrl.results as any[]).map((r) => r.id)).toContain("repositories");
   });
 
   it("matches an action by hint text too", () => {

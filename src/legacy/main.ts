@@ -1771,7 +1771,7 @@ class TamaMascot{
   // intentionally share one).
   static POSE={idle:"curious",sleep:"sleep",hint:"curious",thinking:"thinking",warn:"shocked",danger:"alarm",celebrate:"happy",rescue:"confident",confused:"shocked",curious:"curious",syncing:"thinking",greeting:"hero"};
   constructor(el){this.nook=el.nook;this.sprite=el.sprite;this.spriteWrap=el.spriteWrap;this.line=el.line;this.tele=el.tele;this.topToast=el.topToast;
-    this.sticky=null;this.toastT=null;this.topToastT=null;this.dwellT=null;this._animT=null;this._animDirty=false;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
+    this.sticky=null;this.toastT=null;this.topToastT=null;this.topToastObs=null;this.dwellT=null;this._animT=null;this._animDirty=false;this.reduced=matchMedia("(prefers-reduced-motion:reduce)").matches;this.set("idle");this._teleLoop();}
   // Only touches the portrait's `src` when the resolved pose actually
   // changed (several states share one pose — see POSE above) — a real
   // "pop" (shrink+fade out via .swap, swap src, overshoot back in via
@@ -1838,12 +1838,33 @@ class TamaMascot{
   // is actually up, mirror the message to a toast pinned top-right ABOVE
   // everything, tinted by the current pose (failure / caution / celebrate). No
   // scrim open => the nook itself is visible, so this stays out of the way.
+  //
+  // Screen readers (#139): exactly ONE live region speaks each message. With
+  // no scrim up that's the nook (role=status). With one up, an aria-modal
+  // dialog hides the nook from assistive tech, so the toast (also role=status)
+  // takes over and the nook goes aria-live=off until the toast is gone —
+  // otherwise a reader that doesn't honour aria-modal would say it twice.
+  //
+  // Dismissal: the toast belongs to the scrim it was raised over, so closing
+  // that scrim — Escape, Cancel, a click outside — takes the toast with it,
+  // instead of leaving it floating over the now-visible nook for the rest of
+  // its dwell. A MutationObserver on just the open scrims' class attribute,
+  // live only while the toast is showing, means no extra key handler.
   _topToast(t,dwell){const el=this.topToast;if(!el)return;
-    if(!t||!document.querySelector(".scrim.on")){el.classList.remove("show");return;}
+    if(!t||!document.querySelector(".scrim.on")){this._hideTopToast();return;}
     const st=this.nook.dataset.state;
     const kind=(st==="confused"||st==="danger")?" k-warn":st==="warn"?" k-caution":st==="celebrate"?" k-good":"";
+    this.nook.setAttribute("aria-live","off");
     el.className="top-toast"+kind;el.textContent=t;el.classList.add("show");
-    clearTimeout(this.topToastT);this.topToastT=setTimeout(()=>el.classList.remove("show"),Math.max(2800,dwell||0));}
+    if(this.topToastObs) this.topToastObs.disconnect();
+    this.topToastObs=new MutationObserver(()=>{ if(!document.querySelector(".scrim.on")) this._hideTopToast(); });
+    for(const sc of document.querySelectorAll(".scrim.on")) this.topToastObs.observe(sc,{attributes:true,attributeFilter:["class"]});
+    clearTimeout(this.topToastT);this.topToastT=setTimeout(()=>this._hideTopToast(),Math.max(2800,dwell||0));}
+  _hideTopToast(){const el=this.topToast;if(!el)return;
+    clearTimeout(this.topToastT);
+    if(this.topToastObs){this.topToastObs.disconnect();this.topToastObs=null;}
+    el.classList.remove("show");
+    this.nook.setAttribute("aria-live","polite");}
   // "confused", not "warn" — this is a real operation FAILURE (every
   // call site across the app), distinct from mutation.caution's own
   // pre-mutation "warn" pose (which still calls set("warn") directly, not
@@ -1976,6 +1997,8 @@ export function setTamaPoseOverrides(overrides){
 // stray clicks on the toast/telemetry text too), no cursor hint, no menu/
 // ⌘K entry anywhere else. Resets on its own after 2.5s of no further
 // clicks, so an idle stray double-click can't silently half-arm it.
+// The one recorded exception to "everything is keyboard-reachable": see
+// docs/guide/keyboard.md, "What isn't on the keyboard" (#143).
 (function () {
   let n = 0,
     t = null;
@@ -2322,21 +2345,49 @@ function wireResizeHandle(handle,cssVar,min,max,fromFarEdge,railW,axis="x"){
     document.addEventListener("pointerup",onUp);
   }
   handle.addEventListener("pointerdown",e=>{ e.preventDefault(); beginDrag(vert?e.clientY:e.clientX); });
-  // Keyboard equivalent of the reopen-by-click path above — the handle is a
-  // real (tabindex="0" role="button") focusable control (see index.html),
-  // not just a drag target, so Enter/Space should work exactly like a plain
-  // click: reopen if collapsed, no-op otherwise. Never generates a live
-  // resize — dragged stays true so onUp's resize branch is never entered.
-  handle.addEventListener("keydown",e=>{
-    if(e.key!=="Enter"&&e.key!==" ") return;
-    e.preventDefault();
-    if(isCollapsed()){ setCollapsed(false); root.style.setProperty(cssVar, lastExpandedSize+"px"); }
-  });
-  // Programmatic collapse/expand, so the focus-mode shortcut (below) can drive
-  // the panel exactly like a drag-past-edge / click-to-reopen would.
+  // Programmatic collapse/expand, so the focus-mode shortcut (below) and the
+  // keyboard path can drive the panel exactly like a drag-past-edge /
+  // click-to-reopen would.
   function collapse(){ if(isCollapsed()) return; setCollapsed(true); root.style.setProperty(cssVar, railW+"px"); }
   function expand(){ if(!isCollapsed()) return; setCollapsed(false); root.style.setProperty(cssVar, lastExpandedSize+"px"); }
-  return { isCollapsed, collapse, expand };
+  function toggle(){ if(isCollapsed()) expand(); else collapse(); }
+  // A keyboard size change commits at once — there is no guide line to park,
+  // since each step is small — under the same rules a drag ends with.
+  function commitSize(px){
+    if(px<min){ collapse(); return; }
+    setCollapsed(false); root.style.setProperty(cssVar, px+"px"); lastExpandedSize=px;
+  }
+  // The keyboard equivalent of everything the pointer does here (#136),
+  // matching the inner Splitter.svelte's steps:
+  //   Enter/Space  toggle collapsed ↔ expanded (it used to only ever expand)
+  //   arrows       move the edge 8px (32px with Shift) along this handle's
+  //                axis, so the key points where the edge goes — ← widens the
+  //                right-hand detail panel, → widens the sidebar. Shrinking
+  //                below `min` collapses, like dragging past the edge.
+  //   Home         back to the default size (the stylesheet's value, which
+  //                its media queries already fit to the window)
+  //   End          the largest size a drag could reach
+  handle.addEventListener("keydown",e=>{
+    const back=vert?"ArrowUp":"ArrowLeft", fwd=vert?"ArrowDown":"ArrowRight";
+    if(e.key==="Enter"||e.key===" "){ e.preventDefault(); toggle(); return; }
+    if(e.key===back||e.key===fwd){
+      e.preventDefault();
+      const d=(e.key===fwd?1:-1)*(e.shiftKey?32:8);
+      const grows=fromFarEdge?d<0:d>0;
+      if(isCollapsed()){ if(grows) expand(); return; }
+      const cur=parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||lastExpandedSize;
+      commitSize(clampResize(cur,d,fromFarEdge,railW,dragMax()));
+      return;
+    }
+    if(e.key==="Home"){
+      e.preventDefault();
+      root.style.removeProperty(cssVar);
+      commitSize(Math.max(min,parseFloat(getComputedStyle(root).getPropertyValue(cssVar))||min));
+      return;
+    }
+    if(e.key==="End"){ e.preventDefault(); commitSize(dragMax()); }
+  });
+  return { isCollapsed, collapse, expand, toggle };
 }
 const sidebarHandle=wireResizeHandle($("#resizeSidebar"),"--sidebar-w",180,480,false,28);
 const detailRightHandle=wireResizeHandle($("#resizeDetail"),"--detail-w",240,560,true,28);
@@ -2348,6 +2399,13 @@ const detailBottomHandle=wireResizeHandle($("#resizeDetailBottom"),"--detail-h",
 // it for the same reason the deleted focusRefFilter did: focusing an input
 // inside a collapsed panel moves focus somewhere the user cannot see.
 function expandSidebar(){ sidebarHandle?.expand?.(); }
+// The keymap/palette entry points for one panel at a time (#136) —
+// toggleFocusMode below moves both together.
+function toggleSidebar(){ sidebarHandle?.toggle?.(); }
+function toggleDetailPanel(){
+  const bottom=document.documentElement.getAttribute("data-detail-placement")==="bottom";
+  (bottom?detailBottomHandle:detailRightHandle)?.toggle?.();
+}
 function activePanelHandles(){
   const bottom=document.documentElement.getAttribute("data-detail-placement")==="bottom";
   return [sidebarHandle,bottom?detailBottomHandle:detailRightHandle].filter(Boolean);
@@ -4026,7 +4084,7 @@ i18nEvents.addEventListener("change",()=>{
 
 function requestRedraw(){ dirty=true; }
 export { reloadGraph, cheer, highlight, resolveLang, registerPluginLanguages, Tama, TAMA_IMG, requestRedraw,
-  G, BACKEND, state, layout, view, cv, clampScroll, select, deselect, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, hhex, msgOf, AUTHORS,
+  G, BACKEND, state, layout, view, cv, clampScroll, select, deselect, selectWorkdir, goToUncommitted, goToHead, goToOid, goToRefLabel, openHelpPage, toggleFocusMode, toggleSidebar, toggleDetailPanel, hhex, msgOf, AUTHORS,
   fakeAgo, relTime, absTime, pickRepo, closeRepo, armDanger, updateBranchPill,
   openRepo, doFetch, doPull, doPush, bandH, applyThemeMode, setGraphShowAllTags, setGraphLabelPriority, setGraphLabelLayout, applyDetailPlacement, setTamaEnabled, onGraphBatch,
   // submodule navigation (see the "12a) SUBMODULE NAVIGATION STACK" section

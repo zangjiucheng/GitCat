@@ -12,4 +12,5 @@ export default {
   exited: "{code}(으)로 종료됐어요.",
   on_a_signal: "신호",
   err_command_failed_detail: "명령이 실패했어요 — {err}",
+  cmdk_hint: "플러그인 패널 · {name}",
 };

@@ -63,6 +63,7 @@ jobs:
   rust:
     name: Rust (build + test)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30 # healthy ~7-12 min
     defaults:
       run:
         working-directory: src-tauri
@@ -240,6 +241,7 @@ jobs:
   rust-windows:
     name: Rust (Windows build)
     runs-on: windows-latest
+    timeout-minutes: 30 # healthy ~10 min
     defaults:
       run:
         working-directory: src-tauri
@@ -284,6 +286,7 @@ jobs:
     name: AppImage permission scripts (tests)
     # Pinned for the reason spelled out on the `rust` job above.
     runs-on: ubuntu-24.04
+    timeout-minutes: 10 # healthy <1 min
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -309,6 +312,7 @@ jobs:
     name: Frontend (check + build + test)
     # Pinned for the reason spelled out on the `rust` job above.
     runs-on: ubuntu-24.04
+    timeout-minutes: 15 # healthy ~2 min
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -360,6 +364,7 @@ jobs:
     name: E2E (Playwright)
     # Pinned for the reason spelled out on the `rust` job above.
     runs-on: ubuntu-24.04
+    timeout-minutes: 20 # healthy ~5 min
     steps:
       - name: Checkout
         uses: actions/checkout@v7

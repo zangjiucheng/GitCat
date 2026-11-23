@@ -184,10 +184,25 @@
     document.addEventListener("pointermove", onDragMove);
     document.addEventListener("pointerup", onDragEnd);
   }
+  function setTermHeight(h: number) {
+    document.documentElement.style.setProperty("--term-h", Math.max(140, Math.min(window.innerHeight * 0.8, h)) + "px");
+  }
   function onDragMove(e: PointerEvent) {
-    const dy = dragStartY - e.clientY;
-    const h = Math.max(140, Math.min(window.innerHeight * 0.8, dragStartH + dy));
-    document.documentElement.style.setProperty("--term-h", h + "px");
+    setTermHeight(dragStartH + (dragStartY - e.clientY));
+  }
+  // Keyboard resize (#136), the same steps as Splitter.svelte and the panel
+  // edges: ↑ grows the drawer, ↓ shrinks it, 8px a press or 32px with Shift;
+  // Home goes back to the stylesheet's default height.
+  function onDragKey(e: KeyboardEvent) {
+    const root = document.documentElement;
+    if (e.key === "Home") {
+      root.style.removeProperty("--term-h");
+    } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      const cur = parseFloat(getComputedStyle(root).getPropertyValue("--term-h")) || 280;
+      const step = e.shiftKey ? 32 : 8;
+      setTermHeight(cur + (e.key === "ArrowUp" ? step : -step));
+    } else return;
+    e.preventDefault();
   }
   function onDragEnd() {
     document.removeEventListener("pointermove", onDragMove);
@@ -196,7 +211,17 @@
 </script>
 
 <div class="term-drawer" class:on={terminalCtrl.open}>
-  <div class="term-drag" role="separator" aria-orientation="horizontal" onpointerdown={onDragStart}></div>
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="term-drag"
+    role="separator"
+    aria-orientation="horizontal"
+    aria-label={t("terminal.resize_label")}
+    tabindex="0"
+    onpointerdown={onDragStart}
+    onkeydown={onDragKey}
+  ></div>
   <div class="term-head">
     <span class="term-title"><span class="term-ic" aria-hidden="true">&gt;_</span> {t("terminal.title")}</span>
     <!-- #142 asked for a way out that is "documented, discoverable". The help

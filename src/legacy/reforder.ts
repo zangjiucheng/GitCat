@@ -112,18 +112,21 @@ export function mergeRefChips<T extends Chip>(refs: readonly T[]): MergedChip[] 
 }
 
 // Rotate `list` left by `rot` places (any integer; negative and out-of-range
-// values wrap into [0, n)). Empty in, empty out. Never mutates the argument.
+// values wrap into [0, n)). Empty in, empty out. Never mutates the argument,
+// and returns it AS-IS when the rotation is a no-op — the common case, since a
+// row only rotates after a click on its +N pill — so the per-row per-frame
+// paint path doesn't copy a list nobody will change (#32). Hence the readonly
+// return: a caller that wants to mutate must copy.
 //
 // Lives here rather than inline in main.ts's displayChipsFor because rotation
 // must walk the MERGED display list (what's actually painted — a local+remote
 // pair folded into one chip counts once), never the raw per-commit ref list;
 // keeping the math next to mergeRefChips makes that dependency obvious and
 // lets both be exercised by the same unit tests.
-export function rotateChips<T>(list: readonly T[], rot: number): T[] {
+export function rotateChips<T>(list: readonly T[], rot: number): readonly T[] {
   const n = list.length;
-  if (n === 0) return [];
-  const k = ((rot % n) + n) % n;
-  return k === 0 ? list.slice() : list.slice(k).concat(list.slice(0, k));
+  const k = n === 0 ? 0 : ((rot % n) + n) % n;
+  return k === 0 ? list : list.slice(k).concat(list.slice(0, k));
 }
 
 // The whole display pipeline in one place: priority sort, THEN fold local +
@@ -143,6 +146,6 @@ export function displayChips(
   refs: readonly Chip[] | null | undefined,
   tagsFirst: boolean,
   rot: number,
-): MergedChip[] {
+): readonly MergedChip[] {
   return rotateChips(mergeRefChips(orderRefs(refs, tagsFirst)), rot);
 }

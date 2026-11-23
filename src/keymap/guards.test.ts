@@ -67,6 +67,16 @@ describe("notInTerminal", () => {
   });
 });
 
+describe("notOnSplitter", () => {
+  it("bails on a panel edge or a separator, and nowhere else", () => {
+    document.body.innerHTML = `<div class="resize-handle" id="h" tabindex="0"></div><div role="separator" id="s" tabindex="0"></div><canvas id="c"></canvas>`;
+    expect(GUARDS.notOnSplitter(ctx(document.getElementById("h")))).toBe(false);
+    expect(GUARDS.notOnSplitter(ctx(document.getElementById("s")))).toBe(false);
+    expect(GUARDS.notOnSplitter(ctx(document.getElementById("c")))).toBe(true);
+    expect(GUARDS.notOnSplitter(ctx(null))).toBe(true);
+  });
+});
+
 describe("graphHasRows", () => {
   it("reads bridge.G.N and tolerates a null graph", () => {
     expect(GUARDS.graphHasRows(ctx(null))).toBe(true);

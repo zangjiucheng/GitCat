@@ -8,6 +8,7 @@ export type GuardName =
   | "noScrimOpen"          // document.querySelector(".scrim.on")
   | "noPopoverOpen"        // document.querySelector(".ref-pop") — NOT a scrim; see guards.ts
   | "notInTerminal"        // e.target.closest(".term-drawer")
+  | "notOnSplitter"        // e.target.closest('.resize-handle, [role="separator"]')
   | "graphHasRows"
   | "inTauri";
 

@@ -67,6 +67,11 @@ export const GUARDS: GuardTable = {
    *  registers no attachCustomKeyEventHandler." */
   notInTerminal: (c: KeyCtx) => !(c.event.target as Element | null)?.closest?.(".term-drawer"),
 
+  /** A focused splitter or panel edge owns its arrow keys — they resize it
+   *  (#136). Without this the graph's arrow bindings, whose scope stays
+   *  active when focus sits on an edge outside any pane, select rows instead. */
+  notOnSplitter: (c: KeyCtx) => !(c.event.target as Element | null)?.closest?.('.resize-handle, [role="separator"]'),
+
   graphHasRows: () => ((bridge.G as unknown as { N?: number } | null)?.N ?? 0) > 0,
 
   inTauri: () => !!(window as unknown as { __TAURI__?: unknown }).__TAURI__,

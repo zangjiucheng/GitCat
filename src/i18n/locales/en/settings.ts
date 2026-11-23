@@ -27,10 +27,12 @@ export default {
   graph: "Graph",
   show_all_tags_hint: "When a commit has more than one tag, draw all of them instead of just the first",
   show_all_tags: "Show all tags on a commit",
+  label_priority: "Label priority",
   label_priority_desc:
     "When a commit's labels don't all fit, show this kind first. Click a row's <b>+N</b> chip to cycle the rest into view.",
   label_priority_tags: "Tags first",
   label_priority_branches: "Branches first",
+  label_layout: "Label position",
   label_layout_desc:
     "Inline draws a commit's ref chips right before its subject text; Left column keeps them in a separate, resizable column.",
   label_layout_inline: "Inline (before the subject)",
