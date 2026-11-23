@@ -35,6 +35,13 @@ describe("orderRefs", () => {
     expect(labels(orderRefs(twoTags, false))).toEqual(["main", "v2.0", "v1.9"]);
   });
 
+  it("returns the input itself when the rotation is a no-op (#32)", () => {
+    const input = ["a", "b", "c"];
+    expect(rotateChips(input, 0)).toBe(input);
+    expect(rotateChips(input, 3)).toBe(input);
+    expect(rotateChips(input, 1)).not.toBe(input);
+  });
+
   it("does not mutate the input array", () => {
     const before = labels(MIXED);
     orderRefs(MIXED, false);
