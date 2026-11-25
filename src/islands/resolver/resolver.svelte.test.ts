@@ -54,6 +54,7 @@ vi.mock("../../ipc/bindings", () => ({
     resolveConflictWithExternalTool: vi.fn(),
     conflictFileHunks: vi.fn(),
     resolveConflictHunks: vi.fn(),
+    aiSuggestHunk: vi.fn(),
     currentUpstream: vi.fn(),
     fetch: vi.fn(),
   },
@@ -2244,5 +2245,99 @@ describe("interactive-rebase 'editing' state", () => {
 
     expect(resolver.editing).toBe(false);
     expect(resolver.files).toEqual([FILE_A]);
+  });
+});
+
+// LLM Resolver: Suggest fills the hunk's textarea and never saves; Undo puts
+// back exactly what was there.
+describe("suggest()", () => {
+  const fileHunks = (partial: Partial<ConflictFileHunks> = {}): ConflictFileHunks => ({ path: FILE_A.path, binary: false, hunks: [], ...partial });
+
+  async function loadOneConflict() {
+    resolver.repo = "repo1";
+    resolver.demo = false;
+    resolver.files = [FILE_A];
+    resolver.selected = null;
+    resolver.remaining = new Set([FILE_A.path]);
+    vi.mocked(commands.conflictFileHunks).mockResolvedValueOnce(
+      ok(
+        fileHunks({
+          hunks: [
+            { kind: "context", context: "shared\n", ours: null, base: null, theirs: null },
+            { kind: "conflict", context: null, ours: "a = 1\n", base: "a = 0\n", theirs: "a = 2\n" },
+          ],
+        }),
+      ),
+    );
+    resolver.select(FILE_A.path);
+    await vi.waitFor(() => expect(resolver.editHunks).toHaveLength(2));
+  }
+
+  it("asks for the hunk by index and drops the answer into its textarea with the note", async () => {
+    await loadOneConflict();
+    resolver.setEditValue(1, "my own edit\n");
+    vi.mocked(commands.aiSuggestHunk).mockResolvedValueOnce(ok({ resolution: "a = 3\n", explanation: "Kept both.", model: "claude-opus-5-5" }));
+
+    await resolver.suggest(1);
+
+    expect(commands.aiSuggestHunk).toHaveBeenCalledWith("repo1", FILE_A.path, 1, expect.any(String));
+    expect(resolver.editValues[1]).toBe("a = 3\n");
+    expect(resolver.aiNotes[1]).toBe("Kept both.");
+    expect(commands.resolveConflictHunks).not.toHaveBeenCalled();
+
+    resolver.undoSuggestion(1);
+    expect(resolver.editValues[1]).toBe("my own edit\n");
+    expect(resolver.aiNotes[1]).toBeNull();
+  });
+
+  it("a backend error goes to Tama and leaves the textarea alone", async () => {
+    await loadOneConflict();
+    vi.mocked(commands.aiSuggestHunk).mockResolvedValueOnce(err("No API key."));
+
+    await resolver.suggest(1);
+
+    expect(bridge.tama.warn).toHaveBeenCalledWith("No API key.");
+    expect(resolver.editValues[1]).toBe("a = 1\n");
+    expect(resolver.aiBusy[1]).toBe(false);
+  });
+
+  it("does nothing for a context hunk", async () => {
+    await loadOneConflict();
+    await resolver.suggest(0);
+    expect(commands.aiSuggestHunk).not.toHaveBeenCalled();
+  });
+
+  it("drops an answer that lands after the user moved to another file", async () => {
+    await loadOneConflict();
+    let release!: (v: unknown) => void;
+    vi.mocked(commands.aiSuggestHunk).mockReturnValueOnce(new Promise((r) => (release = r)) as never);
+    const pending = resolver.suggest(1);
+    resolver.selected = "elsewhere.ts";
+    release(ok({ resolution: "late\n", explanation: "", model: "m" }));
+    await pending;
+    expect(resolver.editValues[1]).not.toBe("late\n");
+  });
+
+  it("a second Suggest still undoes back to the user's own text", async () => {
+    await loadOneConflict();
+    resolver.setEditValue(1, "mine\n");
+    vi.mocked(commands.aiSuggestHunk)
+      .mockResolvedValueOnce(ok({ resolution: "first\n", explanation: "1", model: "m" }))
+      .mockResolvedValueOnce(ok({ resolution: "second\n", explanation: "2", model: "m" }));
+    await resolver.suggest(1);
+    await resolver.suggest(1);
+    expect(resolver.editValues[1]).toBe("second\n");
+    resolver.undoSuggestion(1);
+    expect(resolver.editValues[1]).toBe("mine\n");
+  });
+
+  it("Use theirs after a suggestion drops the note, and Undo can't overwrite it", async () => {
+    await loadOneConflict();
+    vi.mocked(commands.aiSuggestHunk).mockResolvedValueOnce(ok({ resolution: "a = 3\n", explanation: "e", model: "m" }));
+    await resolver.suggest(1);
+    resolver.useSide(1, "theirs");
+    expect(resolver.aiNotes[1]).toBeNull();
+    resolver.undoSuggestion(1);
+    expect(resolver.editValues[1]).toBe("a = 2\n");
   });
 });

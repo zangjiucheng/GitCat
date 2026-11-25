@@ -93,13 +93,15 @@ const CURATED_CONFIG_KEYS = CURATED_CONFIG_FIELDS.map((f) => f.key);
 // Git Identity (the one section with its own explicit Save button), and Git
 // Config (curated fields + the Advanced raw editor — kept together since
 // both read/write the exact same underlying config store via configScope).
-export type SettingsTab = "general" | "tama" | "identity" | "gitconfig";
+export type SettingsTab = "general" | "tama" | "identity" | "gitconfig" | "ai";
 
 export const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "tama", label: "Tama" },
   { id: "identity", label: "Git Identity" },
   { id: "gitconfig", label: "Git Config" },
+  // LLM Resolver (ai_resolve.rs): provider, model and key, app-level.
+  { id: "ai", label: "AI" },
 ];
 
 // Safety-Manager snapshot auto-cleanup policy — see PersistedSettings below.

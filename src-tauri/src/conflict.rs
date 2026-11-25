@@ -602,11 +602,14 @@ fn stage_full_text(repo: &Repository, entry: Option<&IndexEntry>) -> (String, bo
 /// `workdir.rs`'s `discard-backup/` and `git_rebase.rs`'s `rebase-todo/`
 /// (see that module's own `todo_dir` comment), rather than
 /// `std::env::temp_dir()` — keeps it repo-scoped, inspectable, and cleaned
-/// up the same way. Fixed filenames (ours/base/theirs) are fine: this
-/// scratch space is written, read, and removed within one synchronous
-/// command call, never left around between calls.
+/// up the same way. Each call gets its own subfolder: the hunk editor and an
+/// LLM Resolver suggestion (ai_resolve.rs) can read hunks at the same time,
+/// and a shared folder would let one call delete or overwrite the other's
+/// ours/base/theirs mid-`merge-file`.
 fn scratch_dir(repo: &Repository) -> std::path::PathBuf {
-    repo.path().join("gitgui").join("conflict-merge-file")
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    repo.path().join("gitgui").join("conflict-merge-file").join(format!("{}-{n}", std::process::id()))
 }
 
 /// Parse `git merge-file --diff3 -L ours -L base -L theirs -p`'s output into
@@ -621,7 +624,7 @@ fn scratch_dir(repo: &Repository) -> std::path::PathBuf {
 /// one once resolved — a cosmetic, EOF-only newline-normalization edge case
 /// judged not worth the extra bookkeeping this app's other line-based tools
 /// (e.g. workdir.rs's hunk staging) don't attempt either.
-fn parse_diff3_hunks(text: &str) -> Result<Vec<ConflictHunk>, String> {
+pub(crate) fn parse_diff3_hunks(text: &str) -> Result<Vec<ConflictHunk>, String> {
     #[derive(PartialEq)]
     enum St {
         Context,
@@ -756,4 +759,21 @@ fn resolve_conflict_hunks_inner(path: String, file: String, resolved_content: St
         format!("Saved your resolution for {file}. {remaining} file(s) still conflicted.")
     };
     ResolveResult { ok: true, remaining, message, cancelled: false }
+}
+
+/// The conflict hunks of `file`, for `ai_resolve` — the same read the hunk
+/// editor does, so the model sees exactly what the user is editing. A binary
+/// file has no hunks to suggest for.
+pub(crate) fn conflict_file_hunks_for_ai(path: &str, file: &str) -> Result<Vec<ConflictHunk>, String> {
+    let r = conflict_file_hunks_inner(path.to_string(), file.to_string())?;
+    if r.binary {
+        return Err(ierr("err_ai.binary_file"));
+    }
+    Ok(r.hunks)
+}
+
+/// The in-progress operation ("merge", "rebase", "cherry-pick", …) for the
+/// model's context; "merge" when it can't be read.
+pub(crate) fn conflict_op_for_ai(path: &str) -> String {
+    conflict_status_inner(path).map(|s| s.op).ok().filter(|o| !o.is_empty()).unwrap_or_else(|| "merge".to_string())
 }

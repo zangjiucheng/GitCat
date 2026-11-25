@@ -1859,6 +1859,10 @@ body.diff-only .modal-foot{display:none}
 .cf-edit-textarea{width:100%;min-height:64px;resize:vertical;font-family:var(--mono);font-size:11px;line-height:1.5;
   padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-control);color:var(--text)}
 .cf-edit-textarea:focus{outline:none;border-color:var(--accent)}
+/* LLM Resolver: the model's one-line explanation under a suggested hunk. */
+.cf-ai-note{display:flex;align-items:flex-start;gap:8px;margin-top:4px;font-size:11px;line-height:1.45}
+.cf-ai-note .mut{flex:1}
+.cf-ai-note .btn{padding:2px 8px;font-size:11px;flex:none}
 /* font-family explicit (not inherited from .perf's monospace, which fits
    the fps/ms debug readout next to it but reads as leftover code/debug
    chrome for an ordinary user-facing setting label like this one). */

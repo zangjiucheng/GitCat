@@ -207,4 +207,13 @@ export default {
   abort_squash: "Abort squash",
   abort_am: "Abort patch apply",
   abort_pick: "Abort pick",
+  // LLM Resolver (Settings → AI).
+  ai_suggest: "Suggest",
+  ai_suggesting: "Thinking…",
+  ai_suggest_title: "Ask the model in Settings → AI to merge both sides of this conflict. You review it before saving.",
+  ai_undo: "Undo suggestion",
+  ai_failed: "Couldn't get a suggestion.",
+  ai_failed_e: "Couldn't get a suggestion — {error}",
+  ai_no_note: "Suggested by the model — review before saving.",
+  ai_demo_note: "Demo: a real suggestion would merge both sides here.",
 };

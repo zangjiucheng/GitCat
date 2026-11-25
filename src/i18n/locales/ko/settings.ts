@@ -6,6 +6,7 @@ export default {
   tab_tama: "Tama",
   tab_identity: "Git 사용자 정보",
   tab_gitconfig: "Git 설정",
+  tab_ai: "AI",
   language: "언어",
   language_hint: "앱의 표시 언어예요. 즉시 적용돼요.",
   cli_h4: "명령줄",

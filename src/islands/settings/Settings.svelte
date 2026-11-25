@@ -29,6 +29,7 @@
   import { keymap } from "@/keymap/registry.ts";
   import type { ScopeHandle } from "@/keymap/scopes.ts";
   import { IN_TAURI } from "../../ipc/env";
+  import AiSettings from "../aisettings/AiSettings.svelte";
 
   // Switching update channel: persist the choice, then immediately surface what's
   // available on the NEWLY-selected channel — turning nightly ON offers the
@@ -525,6 +526,10 @@
           {@html t("settings.identity_local_note")}
         </p>
       {/if}
+      {/if}
+
+      {#if settingsCtrl.activeTab === "ai"}
+        <AiSettings />
       {/if}
 
       {#if settingsCtrl.activeTab === "gitconfig"}

@@ -1,3 +1,4 @@
+pub mod ai_resolve; // LLM Resolver: opt-in model suggestion for one conflict hunk (settings + one request per click)
 pub mod askpass; // SSH askpass helper: this same exe, re-launched, answers ssh's host-key-confirmation prompt via a native dialog — see its own module doc
 pub mod blame; // read-only line-annotation (git blame) view
 pub mod blocking; // run a repo-touching command's body off the main thread — see its own doc comment
@@ -353,6 +354,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
         tool_settings::suggest_commit_msg_command,
         tool_settings::open_diff_tool,
         tool_settings::resolve_conflict_with_external_tool,
+        // LLM Resolver: an opt-in suggestion for one conflict hunk — see
+        // ai_resolve.rs's module doc for what is sent and where.
+        ai_resolve::get_ai_settings,
+        ai_resolve::set_ai_settings,
+        ai_resolve::ai_suggest_hunk,
         // PER-44: multiple named diff/merge/commit tools (list + active selection)
         tool_settings::save_named_tool,
         tool_settings::remove_named_tool,

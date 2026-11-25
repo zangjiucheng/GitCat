@@ -98,7 +98,7 @@ import { commands } from "../../ipc/bindings";
 import * as bridge from "../../legacy/bridge";
 import { workdirCtrl } from "../workdir/workdir.svelte.ts";
 import { mainlinePickerCtrl } from "../mainlinepicker/mainlinepicker.svelte.ts";
-import { be, t } from "@/i18n/i18n.svelte.ts";
+import { be, t, locale } from "@/i18n/i18n.svelte.ts";
 import type { ApplyPatchResult, ConflictFile, ConflictHunk, MergeResult, MergeSquashResult, PickResult, RebaseResult, RevertResult, StashResolveResult, WorkdirResult } from "../../ipc/bindings";
 
 // specta generates `side: string`; keep the precise union at the call boundary.
@@ -260,6 +260,15 @@ class ResolverState {
   // — see useSide()) so hunk buttons and free-form editing compose rather
   // than being two separate, mutually-exclusive modes.
   editValues = $state<string[]>([]);
+  // LLM Resolver (ai_resolve.rs), per hunk index, parallel to editValues:
+  // `aiBusy` while a suggestion is in flight, `aiNotes` the model's one-line
+  // explanation once it lands, and `aiPrev` what the textarea held before it
+  // did, so "Undo suggestion" puts back exactly what the user had, edits
+  // included. A suggestion only ever fills the textarea; Save is still the
+  // user's.
+  aiBusy = $state<boolean[]>([]);
+  aiNotes = $state<(string | null)[]>([]);
+  aiPrev = $state<(string | null)[]>([]);
   // The in-progress op driving this conflict, e.g. "cherry-pick" | "merge".
   // Set optimistically by startPick/startMerge/startRebase/startRevert/
   // openDemo; re-derived authoritatively from conflict_status().op on every
@@ -1023,11 +1032,13 @@ class ResolverState {
       this.editBinary = false;
       this.editHunks = [{ kind: "conflict", context: null, ours: f.ours, base: f.base, theirs: f.theirs }];
       this.editValues = [f.ours];
+      this.clearSuggestions();
       return;
     }
     this.editLoading = true;
     this.editHunks = [];
     this.editValues = [];
+    this.clearSuggestions();
     this.editBinary = false;
     try {
       const r = await commands.conflictFileHunks(this.repo, f.path);
@@ -1055,6 +1066,7 @@ class ResolverState {
   private clearHunks() {
     this.editHunks = [];
     this.editValues = [];
+    this.clearSuggestions();
     this.editBinary = false;
     this.editLoading = false;
   }
@@ -1068,10 +1080,67 @@ class ResolverState {
     if (!h || h.kind !== "conflict") return;
     const text = side === "ours" ? h.ours : h.theirs;
     this.editValues[i] = text ?? "";
+    // The textarea no longer holds the suggestion: drop its note and Undo,
+    // which would otherwise silently replace the side just taken.
+    this.aiNotes[i] = null;
+    this.aiPrev[i] = null;
   }
 
   setEditValue(i: number, value: string) {
     this.editValues[i] = value;
+  }
+
+  private clearSuggestions() {
+    this.aiBusy = [];
+    this.aiNotes = [];
+    this.aiPrev = [];
+  }
+
+  // Ask the configured model for hunk `i` (Settings → AI). The backend
+  // re-reads the hunk from the index itself; this passes only which one. The
+  // answer lands in the textarea the way "Use theirs" would, with the model's
+  // explanation under it, and only if the user is still on the same file.
+  async suggest(i: number) {
+    const f = this.current;
+    const h = this.editHunks[i];
+    if (!f || !h || h.kind !== "conflict" || this.aiBusy[i]) return;
+    this.aiBusy[i] = true;
+    try {
+      let resolution: string;
+      let explanation: string;
+      if (this.demo) {
+        // Design mode: no backend, no model. Stack both sides so the flow
+        // (fill, note, undo) can be seen.
+        resolution = (h.ours ?? "") + (h.theirs ?? "");
+        explanation = t("resolver.ai_demo_note");
+      } else {
+        const r = await commands.aiSuggestHunk(this.repo, f.path, i, locale());
+        if (r.status !== "ok") {
+          bridge.tama.warn(be(r.error) || t("resolver.ai_failed"));
+          return;
+        }
+        resolution = r.data.resolution;
+        explanation = r.data.explanation;
+      }
+      if (this.current?.path !== f.path || this.editHunks[i] !== h) return;
+      // A second Suggest keeps the first "before": Undo always returns to
+      // what the user had, never to an earlier suggestion.
+      this.aiPrev[i] ??= this.editValues[i] ?? "";
+      this.editValues[i] = resolution;
+      this.aiNotes[i] = explanation || t("resolver.ai_no_note");
+    } catch (e) {
+      bridge.tama.warn(t("resolver.ai_failed_e", { error: String(e) }));
+    } finally {
+      this.aiBusy[i] = false;
+    }
+  }
+
+  undoSuggestion(i: number) {
+    const prev = this.aiPrev[i];
+    if (prev == null) return;
+    this.editValues[i] = prev;
+    this.aiPrev[i] = null;
+    this.aiNotes[i] = null;
   }
 
   // The whole file's resolved content — every hunk's current text, in
