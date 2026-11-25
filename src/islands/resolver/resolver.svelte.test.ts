@@ -2317,4 +2317,27 @@ describe("suggest()", () => {
     await pending;
     expect(resolver.editValues[1]).not.toBe("late\n");
   });
+
+  it("a second Suggest still undoes back to the user's own text", async () => {
+    await loadOneConflict();
+    resolver.setEditValue(1, "mine\n");
+    vi.mocked(commands.aiSuggestHunk)
+      .mockResolvedValueOnce(ok({ resolution: "first\n", explanation: "1", model: "m" }))
+      .mockResolvedValueOnce(ok({ resolution: "second\n", explanation: "2", model: "m" }));
+    await resolver.suggest(1);
+    await resolver.suggest(1);
+    expect(resolver.editValues[1]).toBe("second\n");
+    resolver.undoSuggestion(1);
+    expect(resolver.editValues[1]).toBe("mine\n");
+  });
+
+  it("Use theirs after a suggestion drops the note, and Undo can't overwrite it", async () => {
+    await loadOneConflict();
+    vi.mocked(commands.aiSuggestHunk).mockResolvedValueOnce(ok({ resolution: "a = 3\n", explanation: "e", model: "m" }));
+    await resolver.suggest(1);
+    resolver.useSide(1, "theirs");
+    expect(resolver.aiNotes[1]).toBeNull();
+    resolver.undoSuggestion(1);
+    expect(resolver.editValues[1]).toBe("a = 2\n");
+  });
 });

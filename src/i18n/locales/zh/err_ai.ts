@@ -6,6 +6,7 @@ export default {
   bad_base_url: "地址必须以 http:// 或 https:// 开头 — 当前是 {url}",
   disabled: "AI 建议已关闭。请在 设置 → AI 中开启。",
   no_key: "没有 API key。请在 设置 → AI 中填写,或设置 ANTHROPIC_API_KEY。",
+  insecure_key: "不会通过明文 http 把 API key 发送到 {url}。请改用 https,或使用本机(localhost)上的服务。",
   no_model: "没有选择模型。请在 设置 → AI 中填写模型名。",
   not_a_conflict: "文件的这一部分不是冲突。",
   binary_file: "这是二进制文件,无法给出建议 — 请直接选用一侧。",

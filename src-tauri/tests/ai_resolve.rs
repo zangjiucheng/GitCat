@@ -128,10 +128,16 @@ fn openai_compatible_request_needs_no_key_and_reads_choices() {
 #[test]
 fn a_missing_key_or_model_fails_before_any_request() {
     let s = AiSettings { enabled: true, provider: AiProvider::Anthropic, base_url: "http://127.0.0.1:9".into(), ..Default::default() };
-    // Only meaningful when the developer's own environment doesn't supply one.
-    if std::env::var("ANTHROPIC_API_KEY").is_err() {
-        assert_eq!(request_suggestion(&s, &hunk()).unwrap_err(), "i18n:err_ai.no_key");
-    }
+    // ANTHROPIC_API_KEY is only used for api.anthropic.com, so this holds on
+    // a developer machine that has it set, too.
+    assert_eq!(request_suggestion(&s, &hunk()).unwrap_err(), "i18n:err_ai.no_key");
     let o = AiSettings { enabled: true, provider: AiProvider::OpenaiCompatible, base_url: "http://127.0.0.1:9".into(), ..Default::default() };
     assert_eq!(request_suggestion(&o, &hunk()).unwrap_err(), "i18n:err_ai.no_model");
+}
+
+#[test]
+fn a_key_is_never_sent_over_plain_http_to_another_machine() {
+    let s = AiSettings { enabled: true, provider: AiProvider::OpenaiCompatible, model: "m".into(), base_url: "http://lan-box.invalid:8080/v1".into(), api_key: "sk-secret".into() };
+    let err = request_suggestion(&s, &hunk()).unwrap_err();
+    assert!(err.starts_with("i18n:err_ai.insecure_key"), "{err}");
 }

@@ -6,6 +6,7 @@ export default {
   bad_base_url: "주소는 http:// 또는 https://로 시작해야 해요 — 입력값: {url}",
   disabled: "AI 제안이 꺼져 있어요. 설정 → AI에서 켜 주세요.",
   no_key: "API 키가 없어요. 설정 → AI에서 추가하거나 ANTHROPIC_API_KEY를 설정하세요.",
+  insecure_key: "API 키를 암호화되지 않은 http로 {url}에 보내지 않아요. https를 쓰거나 이 컴퓨터(localhost)의 러너를 사용하세요.",
   no_model: "모델이 선택되지 않았어요. 설정 → AI에서 모델 이름을 입력하세요.",
   not_a_conflict: "파일의 이 부분은 충돌이 아니에요.",
   binary_file: "바이너리 파일이라 제안할 수 없어요 — 한쪽을 선택하세요.",

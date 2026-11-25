@@ -27,4 +27,7 @@ The resolver can ask a language model how to merge one conflict. This is **off u
   - **OpenAI-compatible** works with a local runner such as Ollama or LM Studio, so your code never leaves your machine. The default endpoint is `http://localhost:11434/v1`.
 - **What is sent:** pressing ✨ **Suggest** on a conflict sends only that conflict — the file path, both sides, the common ancestor, and about 40 unchanged lines on each side. Nothing else from the repository is sent.
 - **What happens next:** the suggestion goes into that conflict's text box, with a one-line explanation under it. It is only a draft, like **Use ours** or **Use theirs**: you can edit it, or press **Undo suggestion** to get back what was there before. Nothing is written to your files until you press **Save resolution**.
-- **The API key** is stored in GitCat's settings folder and is never shown again after you save it. If you don't save one, GitCat uses `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` from the environment.
+- **The API key** is stored in GitCat's settings folder and is never shown again after you save it.
+  - A saved key belongs to one provider. Switching provider removes it, so you enter a new key for the new provider.
+  - If you don't save a key, GitCat uses `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` from the environment, but only when the endpoint is `api.anthropic.com` or `api.openai.com` itself.
+  - A key is never sent over plain `http://` except to this machine (`localhost`). For any other host, use `https://`.

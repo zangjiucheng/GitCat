@@ -6,6 +6,7 @@ export default {
   bad_base_url: "The endpoint must start with http:// or https:// — got {url}",
   disabled: "AI suggestions are turned off. Turn them on in Settings → AI.",
   no_key: "No API key. Add one in Settings → AI, or set ANTHROPIC_API_KEY.",
+  insecure_key: "Won't send the API key over plain http to {url}. Use https, or a runner on this machine (localhost).",
   no_model: "No model chosen. Name the model in Settings → AI.",
   not_a_conflict: "That part of the file isn't a conflict.",
   binary_file: "This file is binary, so there's nothing to suggest — take one side instead.",

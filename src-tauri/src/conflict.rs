@@ -602,11 +602,14 @@ fn stage_full_text(repo: &Repository, entry: Option<&IndexEntry>) -> (String, bo
 /// `workdir.rs`'s `discard-backup/` and `git_rebase.rs`'s `rebase-todo/`
 /// (see that module's own `todo_dir` comment), rather than
 /// `std::env::temp_dir()` — keeps it repo-scoped, inspectable, and cleaned
-/// up the same way. Fixed filenames (ours/base/theirs) are fine: this
-/// scratch space is written, read, and removed within one synchronous
-/// command call, never left around between calls.
+/// up the same way. Each call gets its own subfolder: the hunk editor and an
+/// LLM Resolver suggestion (ai_resolve.rs) can read hunks at the same time,
+/// and a shared folder would let one call delete or overwrite the other's
+/// ours/base/theirs mid-`merge-file`.
 fn scratch_dir(repo: &Repository) -> std::path::PathBuf {
-    repo.path().join("gitgui").join("conflict-merge-file")
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    repo.path().join("gitgui").join("conflict-merge-file").join(format!("{}-{n}", std::process::id()))
 }
 
 /// Parse `git merge-file --diff3 -L ours -L base -L theirs -p`'s output into
@@ -621,7 +624,7 @@ fn scratch_dir(repo: &Repository) -> std::path::PathBuf {
 /// one once resolved — a cosmetic, EOF-only newline-normalization edge case
 /// judged not worth the extra bookkeeping this app's other line-based tools
 /// (e.g. workdir.rs's hunk staging) don't attempt either.
-fn parse_diff3_hunks(text: &str) -> Result<Vec<ConflictHunk>, String> {
+pub(crate) fn parse_diff3_hunks(text: &str) -> Result<Vec<ConflictHunk>, String> {
     #[derive(PartialEq)]
     enum St {
         Context,

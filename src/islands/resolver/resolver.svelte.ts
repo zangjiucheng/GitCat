@@ -1080,6 +1080,10 @@ class ResolverState {
     if (!h || h.kind !== "conflict") return;
     const text = side === "ours" ? h.ours : h.theirs;
     this.editValues[i] = text ?? "";
+    // The textarea no longer holds the suggestion: drop its note and Undo,
+    // which would otherwise silently replace the side just taken.
+    this.aiNotes[i] = null;
+    this.aiPrev[i] = null;
   }
 
   setEditValue(i: number, value: string) {
@@ -1119,7 +1123,9 @@ class ResolverState {
         explanation = r.data.explanation;
       }
       if (this.current?.path !== f.path || this.editHunks[i] !== h) return;
-      this.aiPrev[i] = this.editValues[i] ?? "";
+      // A second Suggest keeps the first "before": Undo always returns to
+      // what the user had, never to an earlier suggestion.
+      this.aiPrev[i] ??= this.editValues[i] ?? "";
       this.editValues[i] = resolution;
       this.aiNotes[i] = explanation || t("resolver.ai_no_note");
     } catch (e) {

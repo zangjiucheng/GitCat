@@ -62,6 +62,24 @@ const ANTHROPIC_BASE: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2026-10-21";
 const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 const OPENAI_BASE: &str = "http://localhost:11434/v1"; // Ollama's default
+const OPENAI_OFFICIAL_BASE: &str = "https://api.openai.com/v1";
+
+/// A key may go over https anywhere, but over plain http only to this
+/// machine — a LAN runner on http:// would otherwise see it in clear text.
+pub fn key_may_travel_to(base_url: &str) -> bool {
+    if base_url.starts_with("https://") {
+        return true;
+    }
+    let Some(rest) = base_url.strip_prefix("http://") else { return false };
+    let authority = rest.split('/').next().unwrap_or("");
+    let host_port = authority.rsplit('@').next().unwrap_or("");
+    let host = if host_port.starts_with('[') {
+        host_port.split(']').next().map(|h| format!("{h}]")).unwrap_or_default()
+    } else {
+        host_port.split(':').next().unwrap_or("").to_ascii_lowercase()
+    };
+    host == "localhost" || host == "[::1]" || host.starts_with("127.")
+}
 
 #[derive(Serialize, Deserialize, specta::Type, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -123,6 +141,23 @@ impl AiSettings {
         }
     }
 
+    /// The provider's own hosted API — the only endpoint an environment
+    /// variable's key is ever sent to. `OPENAI_API_KEY` is meant for OpenAI,
+    /// not for whatever runner the endpoint field points at.
+    fn official_base(&self) -> &'static str {
+        match self.provider {
+            AiProvider::Anthropic => ANTHROPIC_BASE,
+            AiProvider::OpenaiCompatible => OPENAI_OFFICIAL_BASE,
+        }
+    }
+
+    fn env_key(&self) -> Option<String> {
+        if self.effective_base_url() != self.official_base() {
+            return None;
+        }
+        std::env::var(self.env_var()).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    }
+
     fn env_var(&self) -> &'static str {
         match self.provider {
             AiProvider::Anthropic => "ANTHROPIC_API_KEY",
@@ -130,13 +165,14 @@ impl AiSettings {
         }
     }
 
-    /// The stored key, else the provider's environment variable.
+    /// The stored key, else the provider's environment variable when the
+    /// endpoint is the provider's own API.
     pub fn effective_api_key(&self) -> Option<String> {
         let k = self.api_key.trim();
         if !k.is_empty() {
             return Some(k.to_string());
         }
-        std::env::var(self.env_var()).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+        self.env_key()
     }
 
     pub fn view(&self) -> AiSettingsView {
@@ -146,7 +182,7 @@ impl AiSettings {
             model: self.model.clone(),
             base_url: self.base_url.clone(),
             has_api_key: !self.api_key.trim().is_empty(),
-            env_api_key: self.api_key.trim().is_empty() && std::env::var(self.env_var()).map(|v| !v.trim().is_empty()).unwrap_or(false),
+            env_api_key: self.api_key.trim().is_empty() && self.env_key().is_some(),
         }
     }
 }
@@ -182,14 +218,26 @@ pub fn save_to(path: &Path, s: &AiSettings) -> Result<(), String> {
     let mut tmp = path.as_os_str().to_os_string();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, json).map_err(|e| ierrp("err_ai.save_failed", &[("detail", &e.to_string())]))?;
-    // The file can hold an API key: owner-only, before it takes the real name.
+    write_private(&tmp, json.as_bytes()).map_err(|e| ierrp("err_ai.save_failed", &[("detail", &e.to_string())]))?;
+    std::fs::rename(&tmp, path).map_err(|e| ierrp("err_ai.save_failed", &[("detail", &e.to_string())]))
+}
+
+/// The file can hold an API key, so on Unix it is created owner-only (0600) —
+/// never written world-readable first and narrowed after. A leftover tmp
+/// from a crashed save is removed so the mode applies to a fresh file.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let _ = std::fs::remove_file(path);
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
     }
-    std::fs::rename(&tmp, path).map_err(|e| ierrp("err_ai.save_failed", &[("detail", &e.to_string())]))
+    let mut f = o.open(path)?;
+    f.write_all(bytes)?;
+    f.sync_all()
 }
 
 fn settings_lock() -> &'static std::sync::Mutex<()> {
@@ -199,7 +247,9 @@ fn settings_lock() -> &'static std::sync::Mutex<()> {
 
 /// Merge a settings update. `api_key`: `None` keeps the stored key, `Some("")`
 /// clears it, anything else replaces it — so the pane never has to echo a key
-/// it was never given.
+/// it was never given. A key belongs to its provider: switching provider
+/// without typing a new one drops it, so an Anthropic key is never handed to
+/// an OpenAI-compatible endpoint.
 pub fn apply_update(cur: &AiSettings, enabled: bool, provider: AiProvider, model: String, base_url: String, api_key: Option<String>) -> Result<AiSettings, String> {
     let base_url = base_url.trim().to_string();
     if !base_url.is_empty() && !(base_url.starts_with("https://") || base_url.starts_with("http://")) {
@@ -211,7 +261,8 @@ pub fn apply_update(cur: &AiSettings, enabled: bool, provider: AiProvider, model
         model: model.trim().to_string(),
         base_url,
         api_key: match api_key {
-            None => cur.api_key.clone(),
+            None if provider == cur.provider => cur.api_key.clone(),
+            None => String::new(),
             Some(k) => k.trim().to_string(),
         },
     })
@@ -333,24 +384,14 @@ pub fn head_lines(s: &str, n: usize) -> String {
     }
 }
 
-/// The editor joins hunk texts with "" and every git-produced side ends in a
-/// newline, so a resolution must too — otherwise it glues itself onto the
-/// next context line. A model that drops (or adds) the final newline is
-/// corrected to match the OURS side.
-pub fn normalize_resolution(resolution: &str, ours: &str) -> String {
+/// The editor joins hunk texts with "", and `parse_diff3_hunks` leaves every
+/// side either empty or ending in "\n" — so a non-empty resolution must end in
+/// "\n" too, or it glues itself onto the next context line. That holds even
+/// when OURS is empty (ours deleted the region): a suggestion is whole lines.
+pub fn normalize_resolution(resolution: &str) -> String {
     let mut r = resolution.to_string();
-    let crlf = ours.ends_with("\r\n");
-    if ours.ends_with('\n') {
-        if !r.is_empty() && !r.ends_with('\n') {
-            r.push_str(if crlf { "\r\n" } else { "\n" });
-        }
-    } else {
-        while r.ends_with('\n') {
-            r.pop();
-            if r.ends_with('\r') {
-                r.pop();
-            }
-        }
+    if !r.is_empty() && !r.ends_with('\n') {
+        r.push('\n');
     }
     r
 }
@@ -484,6 +525,9 @@ pub fn request_suggestion(settings: &AiSettings, h: &HunkInput) -> Result<AiSugg
     }
     let base = settings.effective_base_url();
     let key = settings.effective_api_key();
+    if key.is_some() && !key_may_travel_to(&base) {
+        return Err(ierrp("err_ai.insecure_key", &[("url", &base)]));
+    }
     let c = client()?;
     let (url, req, body) = match settings.provider {
         AiProvider::Anthropic => {
@@ -522,7 +566,7 @@ pub fn request_suggestion(settings: &AiSettings, h: &HunkInput) -> Result<AiSugg
         AiProvider::OpenaiCompatible => parse_openai(&v)?,
     };
     Ok(AiSuggestion {
-        resolution: normalize_resolution(&resolution, &h.ours),
+        resolution: normalize_resolution(&resolution),
         explanation,
         model: if answered.is_empty() { model } else { answered },
     })
@@ -623,13 +667,69 @@ mod tests {
     }
 
     #[test]
-    fn the_resolution_ends_the_way_ours_ends() {
-        assert_eq!(normalize_resolution("x = 3;", "x = 1;\n"), "x = 3;\n");
-        assert_eq!(normalize_resolution("x = 3;", "x = 1;\r\n"), "x = 3;\r\n");
-        assert_eq!(normalize_resolution("x = 3;\n", "x = 1;\n"), "x = 3;\n");
-        assert_eq!(normalize_resolution("x = 3;\n", "x = 1;"), "x = 3;");
+    fn a_resolution_is_whole_lines() {
+        assert_eq!(normalize_resolution("x = 3;"), "x = 3;\n");
+        assert_eq!(normalize_resolution("x = 3;\n"), "x = 3;\n");
         // An empty resolution (delete the region) stays empty.
-        assert_eq!(normalize_resolution("", "x = 1;\n"), "");
+        assert_eq!(normalize_resolution(""), "");
+    }
+
+    #[test]
+    fn a_suggestion_for_an_empty_ours_side_does_not_glue_onto_the_next_line() {
+        // `git merge-file --diff3` when ours deleted lines theirs changed:
+        // the OURS section is empty. The editor joins hunks with "".
+        let out = "keep\n<<<<<<< ours\n||||||| base\nold1\nold2\n=======\nnew1\nnew2\n>>>>>>> theirs\nz\n";
+        let hunks = crate::conflict::parse_diff3_hunks(out).unwrap();
+        let i = hunks.iter().position(|h| h.kind == "conflict").unwrap();
+        assert_eq!(hunks[i].ours.as_deref(), Some(""));
+        let saved: String = hunks
+            .iter()
+            .enumerate()
+            .map(|(j, h)| if j == i { normalize_resolution("new1\nnew2") } else { h.context.clone().unwrap_or_default() })
+            .collect();
+        assert_eq!(saved, "keep\nnew1\nnew2\nz\n");
+    }
+
+    #[test]
+    fn switching_provider_drops_the_stored_key() {
+        let cur = AiSettings { api_key: "sk-ant".into(), ..Default::default() };
+        let switched = apply_update(&cur, true, AiProvider::OpenaiCompatible, "m".into(), "http://lan-box:8080/v1".into(), None).unwrap();
+        assert_eq!(switched.api_key, "", "an Anthropic key must not follow the user to another endpoint");
+        let typed = apply_update(&cur, true, AiProvider::OpenaiCompatible, "m".into(), "".into(), Some("sk-local".into())).unwrap();
+        assert_eq!(typed.api_key, "sk-local");
+    }
+
+    #[test]
+    fn a_key_goes_over_plain_http_only_to_this_machine() {
+        assert!(key_may_travel_to("https://api.anthropic.com"));
+        assert!(key_may_travel_to("https://lan-box/v1"));
+        assert!(key_may_travel_to("http://localhost:11434/v1"));
+        assert!(key_may_travel_to("http://127.0.0.1:9"));
+        assert!(key_may_travel_to("http://[::1]:8080/v1"));
+        assert!(!key_may_travel_to("http://lan-box:8080/v1"));
+        assert!(!key_may_travel_to("http://localhost.evil.com/v1"));
+        assert!(!key_may_travel_to("http://127.0.0.1@evil.com/v1"));
+        assert!(!key_may_travel_to("ftp://localhost"));
+    }
+
+    #[test]
+    fn an_environment_key_is_only_for_the_providers_own_api() {
+        let local = AiSettings { provider: AiProvider::OpenaiCompatible, ..Default::default() };
+        assert!(local.env_key().is_none(), "the default endpoint is a local runner, not OpenAI");
+        let proxy = AiSettings { base_url: "https://proxy.example/".into(), ..Default::default() };
+        assert!(proxy.env_key().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_settings_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("gitcat-ai-perm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(FILE_NAME);
+        save_to(&p, &AiSettings { api_key: "k".into(), ..Default::default() }).unwrap();
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
